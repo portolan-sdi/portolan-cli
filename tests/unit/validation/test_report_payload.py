@@ -9,14 +9,20 @@ itself.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 from rashid.model import Finding, Report, Severity
 
+from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.validation.remediation import Bucket
-from portolan_cli.validation.report import build_check_payload
-from portolan_cli.validation.runner import CheckOutcome, LiveHint
+from portolan_cli.validation.report import (
+    annotate_survivors,
+    build_check_payload,
+    build_fix_payload,
+)
+from portolan_cli.validation.runner import CheckOutcome, LiveHint, WorkflowNotice
 
 pytestmark = pytest.mark.unit
 
@@ -38,12 +44,14 @@ def _outcome(
     legacy_note: str | None = None,
     live_hint: LiveHint | None = None,
     format_report: Any = None,
+    workflow_notice: WorkflowNotice | None = None,
 ) -> CheckOutcome:
     return CheckOutcome(
         report=Report(findings=findings, files_checked=files_checked),
         format_report=format_report,
         legacy_note=legacy_note,
         live_hint=live_hint,
+        workflow_notice=workflow_notice,
     )
 
 
@@ -190,3 +198,130 @@ class TestOptionalSections:
 
     def test_format_section_absent_otherwise(self) -> None:
         assert "format" not in build_check_payload(_outcome([]), mode="metadata")
+
+
+class TestWorkflowSection:
+    def test_notice_is_emitted_when_present(self) -> None:
+        notice = WorkflowNotice(
+            unregistered=["roads/stray.parquet"],
+            missing=[],
+            message="1 data file(s) on disk are not registered in the catalog.",
+        )
+        payload = build_check_payload(_outcome([], workflow_notice=notice), mode="all")
+        assert payload["workflow"] == {
+            "unregistered": ["roads/stray.parquet"],
+            "missing": [],
+            "message": "1 data file(s) on disk are not registered in the catalog.",
+        }
+
+    def test_unregistered_files_are_not_findings(self) -> None:
+        """The notice is a workflow channel: it never becomes a PTL-* finding."""
+        notice = WorkflowNotice(unregistered=["roads/stray.parquet"], missing=[], message="x")
+        payload = build_check_payload(_outcome([], workflow_notice=notice), mode="all")
+        assert payload["findings"] == []
+        assert payload["error_count"] == 0
+        assert payload["passed"] is True
+
+    def test_workflow_absent_otherwise(self) -> None:
+        assert "workflow" not in build_check_payload(_outcome([]), mode="all")
+
+
+def _fix_payload(
+    *,
+    fixer_report: FixReport | None = None,
+    applied: list[str] | None = None,
+    selected: list[str] | None = None,
+    skipped: dict[str, list[str]] | None = None,
+    pre_findings: list[Finding] | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    return build_fix_payload(
+        legacy={"metadata_fix": {}},
+        fixer_report=fixer_report if fixer_report is not None else FixReport(),
+        applied=applied if applied is not None else [],
+        selected=selected if selected is not None else [],
+        skipped=skipped if skipped is not None else {},
+        pre_findings=pre_findings if pre_findings is not None else [],
+        dry_run=dry_run,
+    )
+
+
+class TestFixPayloadAccounting:
+    """`applied` means changed; a fixer that ran and changed nothing is skipped."""
+
+    def test_selected_and_skipped_are_reported_alongside_applied(self) -> None:
+        payload = _fix_payload(
+            selected=["titles", "bbox"],
+            applied=["titles"],
+            skipped={"bbox": ["No child extents to recompute the bbox from"]},
+        )
+        assert payload["selected"] == ["titles", "bbox"]
+        assert payload["applied"] == ["titles"]
+        assert payload["skipped"] == {"bbox": ["No child extents to recompute the bbox from"]}
+
+    def test_a_fixer_that_changed_nothing_is_not_applied(self) -> None:
+        payload = _fix_payload(selected=["bbox"], applied=[], skipped={"bbox": ["nothing to do"]})
+        assert payload["applied"] == []
+        assert payload["selected"] == ["bbox"]
+
+    def test_skips_are_not_counted_as_successes(self, tmp_path: Path) -> None:
+        report = FixReport(
+            results=[FixResult(tmp_path / "collection.json", FixAction.SKIPPED, True, "no bbox")]
+        )
+        payload = _fix_payload(
+            fixer_report=report, selected=["bbox"], skipped={"bbox": ["no bbox"]}
+        )
+        assert payload["fixers"]["success_count"] == 0
+        assert payload["fixers"]["total_count"] == 0
+        assert payload["fixers"]["skipped_count"] == 1
+
+    def test_auto_count_denominator_is_the_pre_fix_findings(self) -> None:
+        payload = _fix_payload(
+            pre_findings=[_finding("PTL-BBX-001"), _finding("PTL-LIC-001")],
+        )
+        assert payload["auto_count"] == 1
+
+    def test_legacy_and_dry_run_keys_survive(self) -> None:
+        payload = _fix_payload(dry_run=True)
+        assert payload["metadata_fix"] == {}
+        assert payload["dry_run"] is True
+
+
+class TestSurvivorIndexing:
+    def test_two_findings_of_one_rule_on_one_file_both_survive(self) -> None:
+        payload = _fix_payload(pre_findings=[_finding("PTL-BBX-001"), _finding("PTL-BBX-001")])
+        annotate_survivors(payload, _outcome([_finding("PTL-BBX-001"), _finding("PTL-BBX-001")]))
+
+        assert [item["index"] for item in payload["survivors"]] == [0, 1]
+        assert len(payload["survivors"]) == 2
+        assert payload["fixed_count"] == 0
+
+    def test_index_restarts_per_rule_and_path(self) -> None:
+        payload = _fix_payload()
+        annotate_survivors(
+            payload,
+            _outcome(
+                [
+                    _finding("PTL-BBX-001"),
+                    _finding("PTL-LNK-001"),
+                    _finding("PTL-BBX-001"),
+                ]
+            ),
+        )
+
+        indexes = {(item["rule_id"], item["index"]) for item in payload["survivors"]}
+        assert indexes == {("PTL-BBX-001", 0), ("PTL-BBX-001", 1), ("PTL-LNK-001", 0)}
+
+    def test_json_pointer_still_distinguishes_survivors(self) -> None:
+        payload = _fix_payload()
+        annotate_survivors(
+            payload,
+            _outcome(
+                [
+                    _finding("PTL-BBX-001", json_pointer="/extent"),
+                    _finding("PTL-BBX-001", json_pointer="/bbox"),
+                ]
+            ),
+        )
+
+        assert [item["index"] for item in payload["survivors"]] == [0, 0]

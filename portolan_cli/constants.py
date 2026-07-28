@@ -6,19 +6,22 @@ to avoid duplication and ensure consistency.
 
 from __future__ import annotations
 
+from rashid.schema import bundled_schema_versions
+
 from portolan_cli import extension_registry as _reg
 
 # Version of the Portolan specification this CLI validates against (issue #566).
 #
-# SemVer, pre-1.0: breaking spec changes bump the MINOR until 1.0 (see the
-# Versioning section of spec/README.md for the bump policy). The canonical
-# machine-readable home is spec/schema/spec-version.json; this constant mirrors
-# it so the value is available at runtime without shipping spec/ inside the
-# installed package. A spec-compliance test keeps the two in sync.
+# DERIVED from the profile schemas rashid bundles in its wheel (ADR-0057), so
+# the CLI and the validator cannot drift: whichever spec version rashid can
+# actually validate against is the one `check` reports and the one generation
+# stamps. ``bundled_schema_versions()`` returns tags like ("v0.1.0",) sorted
+# ascending; the newest wins and the leading "v" is dropped, because the URI
+# template below and the JSON payload both want a bare SemVer triple.
 #
 # NOTE: This is the version of the *specification as a whole*. It is distinct
 # from versions.SPEC_VERSION, which versions the versions.json manifest schema.
-PORTOLAN_SPEC_VERSION: str = "0.1.0"
+PORTOLAN_SPEC_VERSION: str = max(bundled_schema_versions()).removeprefix("v")
 
 # The versioned Portolan profile schema URI every catalog and collection
 # declares in ``stac_extensions`` (issue #654; rashid PTL-CNF-001/002). Its

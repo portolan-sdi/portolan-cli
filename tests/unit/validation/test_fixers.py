@@ -147,14 +147,14 @@ class TestApplyFixers:
             fixers_module, "FIXERS", {"schema_uri": make("schema_uri"), "titles": make("titles")}
         )
 
-        report = apply_fixers(
+        run = apply_fixers(
             tmp_path,
             [_finding("PTL-TTL-001"), _finding("PTL-TTL-003"), _finding("PTL-CNF-001")],
             dry_run=False,
         )
 
         assert calls == ["schema_uri", "titles"]
-        assert [r.message for r in report.results] == ["schema_uri", "titles"]
+        assert [r.message for r in run.report.results] == ["schema_uri", "titles"]
 
     def test_skip_excludes_a_key(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         calls: list[str] = []
@@ -190,14 +190,14 @@ class TestApplyFixers:
             raise OSError("disk went away")
 
         monkeypatch.setattr(fixers_module, "FIXERS", {"titles": boom})
-        report = apply_fixers(tmp_path, [_finding("PTL-TTL-001")], dry_run=False)
+        run = apply_fixers(tmp_path, [_finding("PTL-TTL-001")], dry_run=False)
 
-        assert report.failure_count == 1
-        assert "disk went away" in report.results[0].message
+        assert run.report.failure_count == 1
+        assert "disk went away" in run.report.results[0].message
 
     def test_no_auto_findings_produces_an_empty_report(self, tmp_path: Path) -> None:
-        report = apply_fixers(tmp_path, [_finding("PTL-LIC-001")], dry_run=False)
-        assert report.results == []
+        run = apply_fixers(tmp_path, [_finding("PTL-LIC-001")], dry_run=False)
+        assert run.report.results == []
 
     def test_dry_run_writes_nothing(self, tmp_path: Path) -> None:
         collection = _tiny_catalog(tmp_path)
@@ -220,6 +220,98 @@ class TestApplyFixers:
         )
 
         assert _snapshot(tmp_path) == before
+
+
+class TestFixerRun:
+    """The run tells the caller which fixers were asked for, which acted, and why not."""
+
+    @staticmethod
+    def _acting(root: Path, dry_run: bool) -> list[FixResult]:
+        return [FixResult(root / "acted", FixAction.UPDATED, True, "acted")]
+
+    @staticmethod
+    def _skipping(root: Path, dry_run: bool) -> list[FixResult]:
+        return [
+            FixResult(root / "a.json", FixAction.SKIPPED, True, "nothing to derive it from"),
+            FixResult(root / "b.json", FixAction.SKIPPED, True, "nothing to derive it from"),
+        ]
+
+    def _patch(self, monkeypatch: pytest.MonkeyPatch, registry: dict[str, Any]) -> None:
+        monkeypatch.setattr(fixers_module, "FIXERS", registry)
+
+    def test_applied_lists_only_fixers_that_changed_something(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._patch(monkeypatch, {"schema_uri": self._acting, "titles": self._skipping})
+
+        run = apply_fixers(
+            tmp_path, [_finding("PTL-CNF-001"), _finding("PTL-TTL-001")], dry_run=False
+        )
+
+        assert run.selected == ["schema_uri", "titles"]
+        assert run.applied == ["schema_uri"]
+
+    def test_skip_reasons_dedupe_a_fully_skipped_fixer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._patch(monkeypatch, {"titles": self._skipping})
+
+        run = apply_fixers(tmp_path, [_finding("PTL-TTL-001")], dry_run=False)
+
+        assert run.skip_reasons == {"titles": ["nothing to derive it from"]}
+
+    def test_a_fixer_that_acted_has_no_skip_reason(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._patch(monkeypatch, {"schema_uri": self._acting})
+
+        run = apply_fixers(tmp_path, [_finding("PTL-CNF-001")], dry_run=False)
+
+        assert run.skip_reasons == {}
+
+    def test_skip_parameter_removes_the_key_from_selected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._patch(monkeypatch, {"schema_uri": self._acting, "titles": self._acting})
+
+        run = apply_fixers(
+            tmp_path,
+            [_finding("PTL-CNF-001"), _finding("PTL-TTL-001")],
+            dry_run=False,
+            skip={"titles"},
+        )
+
+        assert run.selected == ["schema_uri"]
+
+    def test_a_raising_fixer_is_selected_but_not_applied(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(root: Path, dry_run: bool) -> list[FixResult]:
+            raise OSError("disk went away")
+
+        self._patch(monkeypatch, {"titles": boom})
+
+        run = apply_fixers(tmp_path, [_finding("PTL-TTL-001")], dry_run=False)
+
+        assert run.selected == ["titles"]
+        assert run.applied == []
+        assert run.report.failure_count == 1
+
+
+class TestComposedFixers:
+    """`required_files` already runs `agents` and `readme`; it must not run them twice."""
+
+    def test_composite_absorbs_its_members(self) -> None:
+        keys = auto_fixer_keys(
+            [_finding("PTL-FIL-001"), _finding("PTL-FIL-002"), _finding("PTL-FIL-003")]
+        )
+        assert keys == ["required_files"]
+
+    def test_members_still_run_without_the_composite(self) -> None:
+        assert auto_fixer_keys([_finding("PTL-FIL-003")]) == ["readme"]
+
+    def test_registry_still_exposes_every_member(self) -> None:
+        assert {"required_files", "agents", "readme"} <= set(FIXERS)
 
 
 class TestLinksFixer:
@@ -465,7 +557,7 @@ class TestBboxFixer:
         results = FIXERS["bbox"](tmp_path, False)
 
         assert [r.action for r in results] == [FixAction.SKIPPED]
-        assert "no valid child bbox" in results[0].message
+        assert "nothing readable to derive it from" in results[0].message
 
     def test_dry_run_writes_nothing(self, tmp_path: Path) -> None:
         self._collection_with_items(tmp_path, [200.0, -95.0, 300.0, 95.0])
@@ -519,14 +611,32 @@ class TestAssetsFixer:
         assert asset["type"] == "application/x-custom"
         assert results == []
 
-    def test_unknown_extension_falls_back_to_octet_stream(self, tmp_path: Path) -> None:
+    def test_unknown_extension_is_skipped_not_guessed(self, tmp_path: Path) -> None:
+        """`application/octet-stream` carries no information; do not write it (#682)."""
         collection = self._collection_with_asset(tmp_path, {"href": "./notes.qqq"})
 
-        FIXERS["assets"](tmp_path, False)
+        results = FIXERS["assets"](tmp_path, False)
 
         asset = _read_json(collection / "collection.json")["assets"]["data"]
-        assert asset["type"] == "application/octet-stream"
-        assert asset["roles"] == ["data"]
+        assert "type" not in asset
+        assert "roles" not in asset
+        assert [r.action for r in results] == [FixAction.SKIPPED]
+        assert "not in the extension registry" in results[0].message
+
+    def test_a_known_asset_is_still_typed_beside_an_unknown_one(self, tmp_path: Path) -> None:
+        collection = _tiny_catalog(tmp_path)
+        data = _read_json(collection / "collection.json")
+        data["assets"] = {
+            "data": {"href": "./roads.parquet"},
+            "notes": {"href": "./notes.qqq"},
+        }
+        _write_json(collection / "collection.json", data)
+
+        results = FIXERS["assets"](tmp_path, False)
+
+        assets = _read_json(collection / "collection.json")["assets"]
+        assert assets["data"]["type"] == "application/vnd.apache.parquet"
+        assert {r.action for r in results} == {FixAction.UPDATED, FixAction.SKIPPED}
 
     def test_dry_run_writes_nothing(self, tmp_path: Path) -> None:
         self._collection_with_asset(tmp_path, {"href": "./roads.parquet"})
@@ -694,49 +804,6 @@ class TestItemMirrorFixer:
         assert _snapshot(tmp_path) == before
 
 
-class TestItemMirrorSceneDetection:
-    """PTL-MIR-001: only COG items make a collection owe a mirror.
-
-    A GeoTIFF becomes a COG through the ``profile=cloud-optimized`` parameter.
-    Matching the ``image/tiff`` prefix alone counted every GeoTIFF as a scene,
-    and the fixer then generated mirrors rashid had not asked for. Scene
-    detection now comes from rashid's ``has_cog``.
-    """
-
-    def _catalog_with_raster_item(self, root: Path, media_type: str) -> Path:
-        collection = _tiny_catalog(root)
-        _write_json(
-            collection / "scene-a" / "scene-a.json",
-            {
-                "type": "Feature",
-                "stac_version": "1.1.0",
-                "id": "scene-a",
-                "geometry": None,
-                "bbox": [0.0, 0.0, 1.0, 1.0],
-                "properties": {"datetime": "2024-01-01T00:00:00Z"},
-                "assets": {"image": {"href": "./scene-a.tif", "type": media_type}},
-                "links": [],
-            },
-        )
-        return collection
-
-    def test_plain_geotiff_items_earn_no_mirror(self, tmp_path: Path) -> None:
-        self._catalog_with_raster_item(tmp_path, "image/tiff; application=geotiff")
-        before = _snapshot(tmp_path)
-
-        assert FIXERS["item_mirror"](tmp_path, False) == []
-        assert _snapshot(tmp_path) == before
-
-    def test_cog_items_are_recognised_as_scenes(self, tmp_path: Path) -> None:
-        self._catalog_with_raster_item(
-            tmp_path, "image/tiff; application=geotiff; profile=cloud-optimized"
-        )
-
-        results = FIXERS["item_mirror"](tmp_path, True)
-
-        assert results, "a COG scene collection should be offered a mirror"
-
-
 class TestPartitionFixer:
     """PTL-PRT-001: the partition block is readable off the Hive layout on disk."""
 
@@ -806,3 +873,381 @@ class TestRequiredFilesFixer:
 
         assert _snapshot(tmp_path) == before
         assert results != []
+
+
+class TestMarkdownLinkGapParity:
+    """The readme/agents fixers must fire on every case rashid PTL-FIL-002/-003 flags."""
+
+    def _scaffolded(self, tmp_path: Path) -> Path:
+        """A catalog whose README/AGENTS files and links already conform."""
+        _tiny_catalog(tmp_path)
+        FIXERS["required_files"](tmp_path, False)
+        return tmp_path / "catalog.json"
+
+    def _mutate_link(self, catalog_json: Path, rel: str, **changes: Any) -> None:
+        data = _read_json(catalog_json)
+        for link in data["links"]:
+            if link.get("rel") == rel:
+                link.update(changes)
+        _write_json(catalog_json, data)
+
+    def test_conforming_tree_is_left_alone(self, tmp_path: Path) -> None:
+        self._scaffolded(tmp_path)
+
+        assert FIXERS["readme"](tmp_path, False) == []
+        assert FIXERS["agents"](tmp_path, False) == []
+
+    @pytest.mark.parametrize(
+        ("fixer", "rel", "changes"),
+        [
+            ("readme", "describedby", {"type": "text/html"}),
+            ("readme", "describedby", {"href": "/etc/README.md"}),
+            ("readme", "describedby", {"href": "./nowhere/README.md"}),
+            ("agents", "agents", {"type": "text/html"}),
+            ("agents", "agents", {"href": "/etc/AGENTS.md"}),
+            ("agents", "agents", {"href": "./nowhere/AGENTS.md"}),
+        ],
+    )
+    def test_a_broken_link_is_detected(
+        self, tmp_path: Path, fixer: str, rel: str, changes: dict[str, Any]
+    ) -> None:
+        catalog_json = self._scaffolded(tmp_path)
+        self._mutate_link(catalog_json, rel, **changes)
+
+        results = FIXERS[fixer](tmp_path, False)
+
+        assert [r.file_path for r in results] == [catalog_json]
+
+    def test_a_missing_file_is_detected(self, tmp_path: Path) -> None:
+        self._scaffolded(tmp_path)
+        (tmp_path / "README.md").unlink()
+
+        results = FIXERS["readme"](tmp_path, False)
+
+        assert [r.file_path for r in results] == [tmp_path / "catalog.json"]
+        assert (tmp_path / "README.md").exists()
+
+    def test_a_gap_the_repair_cannot_close_is_reported_skipped(self, tmp_path: Path) -> None:
+        """`check --fix` must not claim a repair whose finding will survive."""
+        catalog_json = self._scaffolded(tmp_path)
+        self._mutate_link(catalog_json, "agents", href=str(tmp_path / "AGENTS.md"))
+
+        results = FIXERS["agents"](tmp_path, False)
+
+        assert [r.action for r in results] == [FixAction.SKIPPED]
+        assert "by hand" in results[0].message
+
+
+class TestConvertFixer:
+    """`convert` is registered but does nothing: conversion belongs to the geo-asset pass."""
+
+    def test_convertible_bytes_are_untouched(self, tmp_path: Path) -> None:
+        collection = _tiny_catalog(tmp_path)
+        source = collection / "roads.geojson"
+        source.write_text('{"type": "FeatureCollection", "features": []}', encoding="utf-8")
+        before = _snapshot(tmp_path)
+
+        results = FIXERS["convert"](tmp_path, False)
+
+        assert _snapshot(tmp_path) == before
+        assert [r.action for r in results] == [FixAction.SKIPPED]
+
+    def test_the_skip_names_the_pass_that_owns_conversion(self, tmp_path: Path) -> None:
+        _tiny_catalog(tmp_path)
+
+        results = FIXERS["convert"](tmp_path, False)
+
+        assert results[0].message == (
+            "Conversion runs in the geo-asset pass; re-run `portolan check --fix` "
+            "without --metadata"
+        )
+
+
+def _copy_fixture(name: str, destination: Path) -> Path:
+    """Copy a repo test fixture next to a STAC object under ``tmp_path``."""
+    import shutil
+
+    source = Path(__file__).resolve().parents[2] / "fixtures" / name
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(source, destination)
+    return destination
+
+
+#: A GeoParquet fixture and the WGS84 footprint actually recorded in its
+#: metadata — not a default, not a whole-world stand-in the fixer could invent.
+_FIXTURE = "scan/clean_flat/example.parquet"
+_FIXTURE_BBOX = (-180.0, -90.0, 180.0, 83.6451)
+
+
+class TestBboxFixerFromAssets:
+    """PTL-BBX-001 also fires on items and on ADR-0031 asset-only collections."""
+
+    def _item(self, collection: Path, *, bbox: Any, assets: dict[str, Any], **extra: Any) -> Path:
+        item_json = collection / "scene-a" / "scene-a.json"
+        data: dict[str, Any] = {
+            "type": "Feature",
+            "stac_version": "1.1.0",
+            "id": "scene-a",
+            "properties": {"datetime": "2024-01-01T00:00:00Z"},
+            "assets": assets,
+            "links": [],
+            **extra,
+        }
+        if bbox is not None:
+            data["bbox"] = bbox
+        _write_json(item_json, data)
+        return item_json
+
+    def test_item_bbox_is_recomputed_from_its_own_asset(self, tmp_path: Path) -> None:
+        collection = _tiny_catalog(tmp_path)
+        _copy_fixture(_FIXTURE, collection / "scene-a" / "data.parquet")
+        item_json = self._item(
+            collection,
+            bbox=[200.0, -95.0, 300.0, 95.0],
+            assets={"data": {"href": "./data.parquet"}},
+        )
+
+        FIXERS["bbox"](tmp_path, False)
+
+        assert _read_json(item_json)["bbox"] == pytest.approx(_FIXTURE_BBOX)
+
+    def test_a_valid_item_bbox_is_left_alone(self, tmp_path: Path) -> None:
+        collection = _tiny_catalog(tmp_path)
+        _copy_fixture(_FIXTURE, collection / "scene-a" / "data.parquet")
+        self._item(
+            collection, bbox=[0.0, 0.0, 1.0, 1.0], assets={"data": {"href": "./data.parquet"}}
+        )
+        before = _snapshot(tmp_path)
+
+        FIXERS["bbox"](tmp_path, False)
+
+        assert _snapshot(tmp_path) == before
+
+    def test_geometry_is_synthesized_when_absent(self, tmp_path: Path) -> None:
+        collection = _tiny_catalog(tmp_path)
+        _copy_fixture(_FIXTURE, collection / "scene-a" / "data.parquet")
+        item_json = self._item(
+            collection,
+            bbox=[200.0, -95.0, 300.0, 95.0],
+            assets={"data": {"href": "./data.parquet"}},
+        )
+
+        FIXERS["bbox"](tmp_path, False)
+
+        geometry = _read_json(item_json)["geometry"]
+        assert geometry["type"] == "Polygon"
+        assert geometry["coordinates"][0][0] == pytest.approx([_FIXTURE_BBOX[0], _FIXTURE_BBOX[1]])
+
+    def test_an_existing_geometry_is_never_overwritten(self, tmp_path: Path) -> None:
+        collection = _tiny_catalog(tmp_path)
+        _copy_fixture(_FIXTURE, collection / "scene-a" / "data.parquet")
+        hand_written = {"type": "Point", "coordinates": [4.3, 52.07]}
+        item_json = self._item(
+            collection,
+            bbox=[200.0, -95.0, 300.0, 95.0],
+            assets={"data": {"href": "./data.parquet"}},
+            geometry=hand_written,
+        )
+
+        FIXERS["bbox"](tmp_path, False)
+
+        assert _read_json(item_json)["geometry"] == hand_written
+
+    def test_an_unreadable_suffix_is_skipped_never_invented(self, tmp_path: Path) -> None:
+        collection = _tiny_catalog(tmp_path)
+        (collection / "scene-a").mkdir(parents=True, exist_ok=True)
+        (collection / "scene-a" / "notes.qqq").write_bytes(b"not geospatial")
+        item_json = self._item(
+            collection,
+            bbox=[200.0, -95.0, 300.0, 95.0],
+            assets={"data": {"href": "./notes.qqq"}},
+        )
+
+        results = FIXERS["bbox"](tmp_path, False)
+
+        assert _read_json(item_json)["bbox"] == [200.0, -95.0, 300.0, 95.0]
+        assert item_json in [r.file_path for r in results if r.action is FixAction.SKIPPED]
+
+    def test_asset_only_collection_extent_is_recomputed(self, tmp_path: Path) -> None:
+        """ADR-0031: a vector collection carries the data itself and has no children."""
+        collection = _tiny_catalog(tmp_path)
+        _copy_fixture(_FIXTURE, collection / "roads.parquet")
+        data = _read_json(collection / "collection.json")
+        data["extent"]["spatial"]["bbox"] = [[200.0, -95.0, 300.0, 95.0]]
+        data["assets"] = {"data": {"href": "./roads.parquet"}}
+        _write_json(collection / "collection.json", data)
+
+        FIXERS["bbox"](tmp_path, False)
+
+        extent = _read_json(collection / "collection.json")["extent"]["spatial"]["bbox"]
+        assert extent[0] == pytest.approx(list(_FIXTURE_BBOX))
+
+    def test_child_bboxes_still_win_over_collection_assets(self, tmp_path: Path) -> None:
+        collection = _tiny_catalog(tmp_path)
+        _copy_fixture(_FIXTURE, collection / "roads.parquet")
+        data = _read_json(collection / "collection.json")
+        data["extent"]["spatial"]["bbox"] = [[200.0, -95.0, 300.0, 95.0]]
+        data["assets"] = {"data": {"href": "./roads.parquet"}}
+        _write_json(collection / "collection.json", data)
+        self._item(collection, bbox=[0.0, 0.0, 2.0, 2.0], assets={})
+
+        FIXERS["bbox"](tmp_path, False)
+
+        extent = _read_json(collection / "collection.json")["extent"]["spatial"]["bbox"]
+        assert extent == [[0.0, 0.0, 2.0, 2.0]]
+
+    def test_a_repaired_item_feeds_the_collection_extent(self, tmp_path: Path) -> None:
+        collection = _tiny_catalog(tmp_path)
+        _copy_fixture(_FIXTURE, collection / "scene-a" / "data.parquet")
+        self._item(
+            collection,
+            bbox=[200.0, -95.0, 300.0, 95.0],
+            assets={"data": {"href": "./data.parquet"}},
+        )
+        data = _read_json(collection / "collection.json")
+        data["extent"]["spatial"]["bbox"] = [[200.0, -95.0, 300.0, 95.0]]
+        _write_json(collection / "collection.json", data)
+
+        FIXERS["bbox"](tmp_path, False)
+
+        extent = _read_json(collection / "collection.json")["extent"]["spatial"]["bbox"]
+        assert extent[0] == pytest.approx(list(_FIXTURE_BBOX))
+
+    def test_dry_run_writes_nothing(self, tmp_path: Path) -> None:
+        collection = _tiny_catalog(tmp_path)
+        _copy_fixture(_FIXTURE, collection / "scene-a" / "data.parquet")
+        self._item(
+            collection,
+            bbox=[200.0, -95.0, 300.0, 95.0],
+            assets={"data": {"href": "./data.parquet"}},
+        )
+        before = _snapshot(tmp_path)
+
+        results = FIXERS["bbox"](tmp_path, True)
+
+        assert _snapshot(tmp_path) == before
+        assert [r.action for r in results] == [FixAction.UPDATED]
+
+
+class TestItemMirrorCogPredicate:
+    """PTL-MIR-001 is scoped to COG scene items, not to any TIFF."""
+
+    def _collection_with_raster_item(self, tmp_path: Path, media_type: str) -> Path:
+        collection = _tiny_catalog(tmp_path)
+        _write_json(
+            collection / "scene-a" / "scene-a.json",
+            {
+                "type": "Feature",
+                "stac_version": "1.1.0",
+                "id": "scene-a",
+                "geometry": None,
+                "bbox": [0.0, 0.0, 1.0, 1.0],
+                "properties": {"datetime": "2024-01-01T00:00:00Z"},
+                "assets": {"data": {"href": "./scene-a.tif", "type": media_type}},
+                "links": [],
+            },
+        )
+        return collection
+
+    def test_a_plain_tiff_does_not_request_a_mirror(self, tmp_path: Path) -> None:
+        self._collection_with_raster_item(tmp_path, "image/tiff")
+
+        assert FIXERS["item_mirror"](tmp_path, True) == []
+
+    def test_a_geotiff_without_the_profile_does_not_request_a_mirror(self, tmp_path: Path) -> None:
+        # what item.py writes for a .tif, so it is the value that actually
+        # reaches this predicate on a real catalog
+        self._collection_with_raster_item(tmp_path, "image/tiff; application=geotiff")
+        before = _snapshot(tmp_path)
+
+        assert FIXERS["item_mirror"](tmp_path, False) == []
+        assert _snapshot(tmp_path) == before
+
+    def test_a_cog_profile_requests_a_mirror(self, tmp_path: Path) -> None:
+        self._collection_with_raster_item(
+            tmp_path, "image/tiff; application=geotiff; profile=cloud-optimized"
+        )
+
+        results = FIXERS["item_mirror"](tmp_path, True)
+
+        assert [r.action for r in results] == [FixAction.CREATED]
+
+    def test_dry_run_reports_the_action_the_real_run_takes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli import stac_parquet
+
+        monkeypatch.setattr(stac_parquet, "generate_items_parquet", lambda directory: None)
+        monkeypatch.setattr(stac_parquet, "add_parquet_link_to_collection", lambda directory: None)
+        self._collection_with_raster_item(
+            tmp_path, "image/tiff; application=geotiff; profile=cloud-optimized"
+        )
+
+        dry = FIXERS["item_mirror"](tmp_path, True)
+        real = FIXERS["item_mirror"](tmp_path, False)
+
+        assert [r.action for r in dry] == [r.action for r in real] == [FixAction.CREATED]
+
+
+class TestPmtilesFixer:
+    """PTL-VIZ-003: a PMTiles asset carries a collection-level rel='pmtiles' link."""
+
+    def _collection_with_pmtiles(self, tmp_path: Path) -> Path:
+        collection = _tiny_catalog(tmp_path)
+        (collection / "roads.pmtiles").write_bytes(b"pmtiles")
+        data = _read_json(collection / "collection.json")
+        data["assets"] = {"tiles": {"href": "./roads.pmtiles", "type": "application/vnd.pmtiles"}}
+        _write_json(collection / "collection.json", data)
+        return collection
+
+    def test_the_link_and_extension_are_added(self, tmp_path: Path) -> None:
+        collection = self._collection_with_pmtiles(tmp_path)
+
+        results = FIXERS["pmtiles"](tmp_path, False)
+
+        fixed = _read_json(collection / "collection.json")
+        assert [link["href"] for link in fixed["links"] if link["rel"] == "pmtiles"] == [
+            "./roads.pmtiles"
+        ]
+        assert [r.action for r in results] == [FixAction.UPDATED]
+
+    def test_a_collection_without_pmtiles_is_untouched(self, tmp_path: Path) -> None:
+        _tiny_catalog(tmp_path)
+        before = _snapshot(tmp_path)
+
+        assert FIXERS["pmtiles"](tmp_path, False) == []
+        assert _snapshot(tmp_path) == before
+
+    def test_a_registered_link_is_not_duplicated(self, tmp_path: Path) -> None:
+        collection = self._collection_with_pmtiles(tmp_path)
+        FIXERS["pmtiles"](tmp_path, False)
+        before = _snapshot(tmp_path)
+
+        assert FIXERS["pmtiles"](tmp_path, False) == []
+        assert _snapshot(tmp_path) == before
+        assert collection.exists()
+
+    def test_dry_run_writes_nothing(self, tmp_path: Path) -> None:
+        self._collection_with_pmtiles(tmp_path)
+        before = _snapshot(tmp_path)
+
+        results = FIXERS["pmtiles"](tmp_path, True)
+
+        assert _snapshot(tmp_path) == before
+        assert len(results) == 1
+
+
+class TestNodeWriting:
+    def test_non_ascii_titles_survive_a_fixer_write(self, tmp_path: Path) -> None:
+        """`write_json_atomic` keeps `ensure_ascii=False`, so "Córdoba" stays literal."""
+        collection = _tiny_catalog(tmp_path)
+        data = _read_json(collection / "collection.json")
+        data["title"] = "Córdoba"
+        data["links"] = [{"rel": "self", "href": "./collection.json"}]
+        _write_json(collection / "collection.json", data)
+
+        FIXERS["links"](tmp_path, False)
+
+        raw = (collection / "collection.json").read_text(encoding="utf-8")
+        assert "Córdoba" in raw
+        assert "\\u00f3" not in raw

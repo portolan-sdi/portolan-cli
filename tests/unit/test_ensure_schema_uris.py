@@ -55,3 +55,16 @@ class TestEnsureSchemaUris:
         (tmp_path / "catalog.json").write_text("{not json", encoding="utf-8")
 
         assert ensure_schema_uris(tmp_path) is False
+
+
+class TestHiddenDirectories:
+    def test_ignores_stac_files_under_dot_directories(self, tmp_path: Path) -> None:
+        """A cached/scratch catalog under ``.portolan/`` is not part of the tree."""
+        _write(tmp_path / "catalog.json", {"type": "Catalog", "id": "root"})
+        hidden = tmp_path / ".portolan" / "backup" / "collection.json"
+        _write(hidden, {"type": "Collection", "id": "backup"})
+        before = hidden.read_text(encoding="utf-8")
+
+        ensure_schema_uris(tmp_path)
+
+        assert hidden.read_text(encoding="utf-8") == before

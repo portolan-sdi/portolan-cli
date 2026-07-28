@@ -99,12 +99,14 @@ class TestCheckCommand:
         self, runner: CliRunner, valid_catalog: Path, extra_flags: list[str]
     ) -> None:
         """check --json reports the Portolan spec version across every scope (#566)."""
-        from portolan_cli.constants import PORTOLAN_SPEC_VERSION
+        from rashid.schema import bundled_schema_versions
+
+        expected = max(bundled_schema_versions()).removeprefix("v")
 
         result = runner.invoke(cli, ["check", str(valid_catalog), *extra_flags, "--json"])
         assert result.exit_code == 0
         envelope = json.loads(result.output)
-        assert envelope["data"]["spec_version"] == PORTOLAN_SPEC_VERSION
+        assert envelope["data"]["spec_version"] == expected
 
     @pytest.mark.unit
     def test_check_json_names_the_validator(self, runner: CliRunner, valid_catalog: Path) -> None:
@@ -467,7 +469,7 @@ class TestCheckMetadataFixFlag:
         ):
             from portolan_cli.metadata.fix import FixReport
 
-            mock_fix.return_value = FixReport(results=[], skipped_count=0)
+            mock_fix.return_value = FixReport(results=[], fresh_skipped=0)
             result = runner.invoke(
                 cli, ["check", str(valid_catalog_with_parquet), "--metadata", "--fix"]
             )
@@ -490,7 +492,7 @@ class TestCheckMetadataFixFlag:
         ):
             from portolan_cli.metadata.fix import FixReport
 
-            mock_fix.return_value = FixReport(results=[], skipped_count=0)
+            mock_fix.return_value = FixReport(results=[], fresh_skipped=0)
             result = runner.invoke(
                 cli, ["check", str(valid_catalog_with_parquet), "--metadata", "--fix", "--json"]
             )
@@ -549,7 +551,7 @@ class TestCheckMetadataFixFlag:
         ):
             from portolan_cli.metadata.fix import FixReport
 
-            mock_fix.return_value = FixReport(results=[], skipped_count=0)
+            mock_fix.return_value = FixReport(results=[], fresh_skipped=0)
             result = runner.invoke(
                 cli, ["check", str(valid_catalog_with_parquet), "--metadata", "--fix"]
             )
@@ -586,7 +588,7 @@ class TestCheckMetadataFixFlag:
         ):
             from portolan_cli.metadata.fix import FixReport
 
-            mock_fix.return_value = FixReport(results=[], skipped_count=0)
+            mock_fix.return_value = FixReport(results=[], fresh_skipped=0)
             result = runner.invoke(
                 cli,
                 ["check", str(valid_catalog_with_parquet), "--metadata", "--fix", "--dry-run"],
@@ -617,7 +619,7 @@ class TestCheckMetadataFixFlag:
             mock_check.return_value = CheckReport(
                 root=valid_catalog_with_parquet, files=[], conversion_report=None
             )
-            mock_fix.return_value = FixReport(results=[], skipped_count=0)
+            mock_fix.return_value = FixReport(results=[], fresh_skipped=0)
 
             result = runner.invoke(cli, ["check", str(valid_catalog_with_parquet), "--fix"])
 
@@ -715,3 +717,82 @@ class TestCheckConfig:
         result = runner.invoke(cli, ["check", str(root), "--metadata"])
         assert result.exit_code == 0
         assert rule_id not in result.output
+
+
+class TestFixSplitRendering:
+    """`_print_fix_split` reports what changed, not what was attempted.
+
+    These drive the renderer directly: the accounting bugs it fixes are about
+    which payload keys it reads, and a synthetic payload pins that exactly.
+    """
+
+    @staticmethod
+    def _render(capsys: pytest.CaptureFixture[str], **fix: Any) -> str:
+        from portolan_cli.cli import _print_fix_split
+
+        payload = {"findings": fix.pop("findings", []), "fix": {"fixed_count": 0, **fix}}
+        _print_fix_split(payload)
+        return capsys.readouterr().out
+
+    @pytest.mark.unit
+    def test_applied_lists_only_fixers_that_changed_something(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        out = self._render(
+            capsys,
+            selected=["titles", "bbox"],
+            applied=["titles"],
+            skipped={"bbox": ["No child extents to recompute from"]},
+        )
+        assert "Applied: titles" in out
+        assert "Applied: titles, bbox" not in out
+
+    @pytest.mark.unit
+    def test_applied_line_is_omitted_when_nothing_changed(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        out = self._render(
+            capsys, selected=["bbox"], applied=[], skipped={"bbox": ["nothing to recompute"]}
+        )
+        assert "Applied:" not in out
+
+    @pytest.mark.unit
+    def test_skip_reason_is_shown_without_verbose(self, capsys: pytest.CaptureFixture[str]) -> None:
+        out = self._render(
+            capsys,
+            selected=["bbox"],
+            applied=[],
+            skipped={"bbox": ["No child extents to recompute from"]},
+        )
+        assert "Skipped (1)" in out
+        assert "bbox: No child extents to recompute from" in out
+
+    @pytest.mark.unit
+    def test_no_skipped_section_when_every_fixer_worked(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        out = self._render(capsys, selected=["titles"], applied=["titles"], skipped={})
+        assert "Skipped (" not in out
+
+    @pytest.mark.unit
+    def test_each_repeat_finding_is_annotated_as_a_survivor(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Two same-rule findings on one file with no pointer are two defects."""
+        finding = {
+            "rule_id": "PTL-BBX-001",
+            "path": "roads/collection.json",
+            "requirement": "Recompute the bbox.",
+        }
+        out = self._render(
+            capsys,
+            findings=[dict(finding), dict(finding)],
+            selected=["bbox"],
+            applied=[],
+            skipped={"bbox": ["nothing to recompute"]},
+            survivors=[
+                {"rule_id": "PTL-BBX-001", "path": "roads/collection.json", "index": 0},
+                {"rule_id": "PTL-BBX-001", "path": "roads/collection.json", "index": 1},
+            ],
+        )
+        assert out.count("the automatic fix did not resolve this") == 2

@@ -4688,7 +4688,7 @@ requires-dist = [
     { name = "antimeridian", specifier = ">=0.3.11" },
     { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.9.3" },
     { name = "boto3", marker = "extra == 'e2e'", specifier = ">=1.35.0" },
-    { name = "click", specifier = ">=8.3.3,<8.5" },
+    { name = "click", specifier = ">=8.4,<8.5" },
     { name = "codespell", marker = "extra == 'dev'", specifier = ">=2.4.1" },
     { name = "commitizen", marker = "extra == 'dev'", specifier = ">=4.13.4" },
     { name = "contextily", marker = "extra == 'thumbnails'", specifier = ">=1.5.0" },

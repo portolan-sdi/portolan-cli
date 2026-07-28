@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 
 import pytest
+from rashid.schema import bundled_schema_versions
 
 from portolan_cli.constants import PORTOLAN_SCHEMA_URI, PORTOLAN_SPEC_VERSION
 from portolan_cli.stac import ensure_portolan_schema_uri
@@ -28,8 +29,15 @@ class TestSchemaUriConstant:
     def test_uri_matches_rashid_pattern(self) -> None:
         assert RASHID_PATTERN.match(PORTOLAN_SCHEMA_URI)
 
-    def test_uri_embeds_the_spec_version(self) -> None:
-        assert f"/v{PORTOLAN_SPEC_VERSION}/" in PORTOLAN_SCHEMA_URI
+    def test_spec_version_is_the_newest_schema_rashid_bundles(self) -> None:
+        """The CLI cannot drift from the validator: it reads the version off it."""
+        newest = max(bundled_schema_versions())
+
+        assert PORTOLAN_SPEC_VERSION == newest.removeprefix("v")
+
+    def test_spec_version_is_a_bare_semver_triple(self) -> None:
+        """No leading ``v``: the URI template and the JSON payload both want digits."""
+        assert re.fullmatch(r"\d+\.\d+\.\d+", PORTOLAN_SPEC_VERSION)
 
 
 class TestEnsurePortolanSchemaUri:

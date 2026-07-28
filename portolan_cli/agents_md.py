@@ -6,11 +6,12 @@ Portolan requires every catalog and collection to carry an ``AGENTS.md`` file
 content is human-authored — Portolan only scaffolds an empty template when the
 file is absent and never overwrites an existing one.
 
-This module is deliberately stdlib-only. It is imported by both the generation
-paths (``catalog.py``, ``add.py``, ``metadata/fix.py``) and the validation layer
-(``validation/rules.py``). Keeping it free of ``click``/``rich``/``config`` /
-``output`` preserves the ``validation-no-framework-leakage`` import-linter
-contract, the same reason ``pmtiles_links.py`` exists as a leaf.
+This module is deliberately stdlib-only (plus the shared atomic JSON writer). It
+is imported by both the generation paths (``catalog.py``, ``add.py``,
+``metadata/fix.py``) and the ``check --fix`` adapter
+(``validation/fixers.py``). Keeping it free of ``click``/``rich``/``config`` /
+``output`` preserves the ``validation-is-an-adapter`` import-linter contract,
+the same reason ``pmtiles_links.py`` exists as a leaf.
 """
 
 from __future__ import annotations
@@ -18,6 +19,9 @@ from __future__ import annotations
 import json
 from pathlib import Path, PurePath
 from typing import Any
+from urllib.parse import urlparse
+
+from portolan_cli.json_io import write_json_atomic
 
 #: Canonical filename for the AI/agent metadata file (uppercase, matching the
 #: cross-tool ``AGENTS.md`` convention — like ``README.md``).
@@ -34,6 +38,88 @@ AGENTS_LINK_TITLE = "Agent/LLM usage guide"
 
 #: Relative href used when the ``AGENTS.md`` sits next to the STAC JSON.
 AGENTS_LINK_HREF = f"./{AGENTS_MD_FILENAME}"
+
+
+def visible_stac_files(catalog_root: Path) -> list[Path]:
+    """Every ``catalog.json``/``collection.json`` in the *visible* catalog tree.
+
+    Dot-directories (``.portolan/``, ``.git/``, editor scratch dirs) hold caches
+    and backups, not published STAC objects; a sweep that descends into them
+    rewrites files no publisher asked about. Shared by every catalog-wide sweep
+    so they all walk exactly the same set.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+
+    Returns:
+        Sorted catalog paths first, then sorted collection paths.
+    """
+    found: list[Path] = []
+    for pattern in ("catalog.json", "collection.json"):
+        for path in sorted(catalog_root.rglob(pattern)):
+            rel_parts = path.parent.relative_to(catalog_root).parts
+            if any(part.startswith(".") for part in rel_parts):
+                continue
+            found.append(path)
+    return found
+
+
+def _is_absolute_href(href: str) -> bool:
+    """True for hrefs with a URI scheme or a leading slash (rashid's ``is_absolute_href``)."""
+    return href.startswith("/") or bool(urlparse(href).scheme)
+
+
+def markdown_link_gap(stac_path: Path, data: dict[str, Any], *, rel: str, target: str) -> bool:
+    """True when ``data`` fails rashid's sibling-markdown-link check for ``rel``.
+
+    Replicates the four cases rashid's ``_check_markdown_link`` (PTL-FIL-002 for
+    ``AGENTS.md``, PTL-FIL-003 for ``README.md``) flags: no link carrying ``rel``;
+    a matching link whose ``type`` is not ``text/markdown``; an href that is
+    missing, empty, or absolute; and an href that does not resolve to the sibling
+    ``target`` (or resolves to a file that is absent). Like rashid, *every*
+    matching link is graded, not just the first.
+
+    Replicated rather than imported because rashid exposes no public predicate
+    yet — https://github.com/portolan-sdi/rashid/issues/57 tracks the export.
+
+    Args:
+        stac_path: Path of the STAC JSON; its parent is the sibling directory.
+        data: The parsed STAC object.
+        rel: Link relation to grade (``"agents"`` / ``"describedby"``).
+        target: Sibling filename the link must resolve to.
+
+    Returns:
+        True when the object needs repair.
+    """
+    links = data.get("links")
+    if not isinstance(links, list):
+        return True
+
+    directory = stac_path.parent
+    expected = (directory / target).resolve()
+    matches = [link for link in links if isinstance(link, dict) and link.get("rel") == rel]
+    if not matches:
+        return True
+
+    for link in matches:
+        if link.get("type") != AGENTS_MEDIA_TYPE:
+            return True
+        href = link.get("href")
+        if not isinstance(href, str) or not href or _is_absolute_href(href):
+            return True
+        if (directory / href).resolve() != expected or not expected.is_file():
+            return True
+    return False
+
+
+def agents_link_gap(stac_path: Path, data: dict[str, Any]) -> bool:
+    """True when ``data``'s ``AGENTS.md`` link does not satisfy rashid PTL-FIL-002.
+
+    The already-parsed counterpart of :func:`agents_md_gap`, for callers that
+    hold the STAC dict (``check --fix`` fixers). Every case it reports is
+    repaired by :func:`ensure_agents_md`.
+    """
+    return markdown_link_gap(stac_path, data, rel=AGENTS_LINK_REL, target=AGENTS_MD_FILENAME)
 
 
 def find_agents_link(links: list[Any]) -> dict[str, Any] | None:
@@ -215,7 +301,7 @@ def ensure_agents_md(stac_json: Path) -> bool:
         changed = True
 
     if changed:
-        stac_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        write_json_atomic(stac_json, data)
 
     return changed
 
@@ -235,12 +321,7 @@ def ensure_agents_md_tree(catalog_root: Path) -> bool:
         True if any file was created or modified.
     """
     changed_any = False
-    for stac_json in sorted(
-        [*catalog_root.rglob("catalog.json"), *catalog_root.rglob("collection.json")]
-    ):
-        rel_parts = stac_json.parent.relative_to(catalog_root).parts
-        if any(part.startswith(".") for part in rel_parts):
-            continue
+    for stac_json in visible_stac_files(catalog_root):
         if ensure_agents_md(stac_json):
             changed_any = True
     return changed_any
