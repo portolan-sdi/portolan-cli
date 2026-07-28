@@ -8,12 +8,17 @@ rashid says what is wrong. This table says who fixes it:
 - ``EXTERNAL`` — not in the catalog at all. Range and CORS defects are settings
   on the server hosting the published bytes.
 
-The ``fixer`` key on an AUTO row names the entry Phase 3 registers in the fixer
-registry; the comment beside each group points at the repairer that already
-exists. Nothing dispatches on these keys yet — ``--fix`` still drives
-``scan.check.run_fix_workflow``, which covers the metadata and geo-asset
-repairs. The table exists now so the JSON payload can tell an agent, today,
-which findings are worth waiting on and which need its attention.
+The ``fixer`` key on an AUTO row is what ``--fix`` dispatches on:
+:data:`portolan_cli.validation.fixers.FIXERS` maps each key to the repairer that
+runs, and ``fixers.auto_fixer_keys`` selects the keys by membership in that
+dict. The key is therefore a live identifier, not a label — renaming one here
+without renaming it in ``FIXERS`` silently drops the rule out of the AUTO
+selection and ``--fix`` stops repairing it, with no error anywhere. That is why
+``TestRegistryCompleteness`` in ``tests/unit/validation/test_fixers.py`` pins the
+correspondence in both directions.
+
+``--fix`` still also drives ``scan.check.run_fix_workflow`` alongside the
+registry, but for item freshness against the filesystem, which no rule reports.
 
 ``requirement`` is the imperative sentence shown for a finding, phrased so it
 reads as an instruction on its own, without the rule id or the message.
@@ -68,7 +73,9 @@ def _external(requirement: str) -> Remediation:
 
 RULE_REMEDIATION: dict[str, Remediation] = {
     # ---- files: scaffolding and links are mechanical, prose is not ----
-    # fixer `required_files` composes readme.ensure_readmes + metadata.fix.repair_agents_md
+    # fixer `required_files` composes readme.ensure_readmes + metadata.fix.repair_agents_md.
+    # It subsumes `agents` and `readme`: when this row fires, fixers.auto_fixer_keys
+    # drops those two from the selection so the same repair does not run three times.
     "PTL-FIL-001": _auto(
         "required_files",
         "Every catalog and collection directory must contain README.md and AGENTS.md.",

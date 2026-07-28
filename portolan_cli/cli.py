@@ -1480,11 +1480,16 @@ def _print_fix_split(payload: dict[str, Any]) -> None:
     The "Action required" list is the agent's stopping condition — every entry
     carries the imperative requirement for the defect, and a survivor of an AUTO
     fixer says so, so nobody re-runs --fix hoping for a different answer.
+
+    "Applied" names only fixers that changed something, and every fixer that ran
+    without changing anything is listed with its reason at default verbosity: a
+    skip an operator cannot see reads as a silent success.
     """
     fix_data: dict[str, Any] = payload.get("fix", {})
     applied = fix_data.get("applied", [])
+    skipped: dict[str, list[str]] = fix_data.get("skipped", {})
     survivors = {
-        (item["rule_id"], item["path"], item.get("json_pointer"))
+        (item["rule_id"], item["path"], item.get("json_pointer"), item.get("index", 0))
         for item in fix_data.get("survivors", [])
     }
     findings = payload.get("findings", [])
@@ -1493,16 +1498,24 @@ def _print_fix_split(payload: dict[str, Any]) -> None:
     success(f"Fixed automatically ({fixed})")
     if applied:
         detail(f"  Applied: {', '.join(applied)}")
+    if skipped:
+        info_output(f"Skipped ({len(skipped)}):")
+        for fixer_key, reasons in skipped.items():
+            detail(f"  {fixer_key}: {reasons[0] if reasons else 'nothing to change'}")
 
     if not findings:
         return
     info_output(f"Action required ({len(findings)}):")
+    seen: dict[tuple[str, str | None, str | None], int] = {}
     for finding in findings:
         requirement = (
             finding.get("requirement") or finding.get("fix_hint") or finding.get("message", "")
         )
         line = f"{finding['rule_id']} {finding['path']}: {requirement}"
-        if (finding["rule_id"], finding["path"], finding.get("json_pointer")) in survivors:
+        key = (finding["rule_id"], finding["path"], finding.get("json_pointer"))
+        index = seen.get(key, 0)
+        seen[key] = index + 1
+        if (*key, index) in survivors:
             line += " [the automatic fix did not resolve this]"
         detail(f"  {line}")
 
@@ -1528,10 +1541,18 @@ def _should_validate(path: Path, *, run_metadata: bool, fix: bool) -> bool:
 
 
 def _check_failed(payload: dict[str, Any], *, strict: bool) -> bool:
-    """Decide the exit code: errors always fail, warnings only under --strict."""
+    """Decide the exit code: errors always fail, warnings only under --strict.
+
+    The workflow notice (unregistered or vanished data files) is not a
+    conformance defect, so on its own it never flips a default run. Under
+    ``--strict``, where a catalog is asserted to be publishable, an unaccounted
+    file is a failure.
+    """
     if payload.get("error_count"):
         return True
-    return strict and bool(payload.get("warning_count"))
+    if not strict:
+        return False
+    return bool(payload.get("warning_count")) or bool(payload.get("workflow"))
 
 
 def _render_check(
@@ -1551,6 +1572,8 @@ def _render_check(
     """
     if outcome.legacy_note is not None:
         warn(outcome.legacy_note)
+    if outcome.workflow_notice is not None:
+        warn(outcome.workflow_notice.message)
 
     if outcome.report is not None:
         if verbose or not post_fix:
@@ -1606,15 +1629,22 @@ def _run_fix_and_repairs(
         The JSON ``fix`` section and whether a fix failed.
     """
     from portolan_cli.scan.check import resolve_catalog_root_for_check
-    from portolan_cli.validation.fixers import apply_fixers, auto_fixer_keys
+    from portolan_cli.validation.fixers import apply_fixers
 
     fixer_report = FixReport()
     applied: list[str] = []
+    selected: list[str] = []
+    skip_reasons: dict[str, list[str]] = {}
     if run_metadata and findings:
         catalog_root = resolve_catalog_root_for_check(path) or path
         skip = {"convert"} if run_geo_assets else set()
-        applied = [key for key in auto_fixer_keys(findings) if key not in skip]
-        fixer_report = apply_fixers(catalog_root, findings, dry_run=dry_run, skip=skip)
+        run = apply_fixers(catalog_root, findings, dry_run=dry_run, skip=skip)
+        fixer_report = run.report
+        # What the fixers *did*, not what the findings asked for: a fixer that
+        # ran and changed nothing is a skip with a reason, never an "Applied".
+        applied = run.applied
+        selected = run.selected
+        skip_reasons = run.skip_reasons
 
     legacy_data, legacy_failed = _run_legacy_fix_workflow(
         path=path,
@@ -1640,6 +1670,8 @@ def _run_fix_and_repairs(
         legacy=legacy_data,
         fixer_report=fixer_report,
         applied=applied,
+        selected=selected,
+        skipped=skip_reasons,
         pre_findings=findings,
         dry_run=dry_run,
     )
