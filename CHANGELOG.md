@@ -18,6 +18,47 @@ history, so this section is replaced by the generated entries at that point.
   than hardcoded in the CLI. It is `0.1.0`; the CLI previously claimed `0.1.1`,
   a version no shipped schema ever matched.
 
+### Fix
+
+- **stac**: every STAC and `versions.json` write goes through
+  `json_io.write_json_atomic`, so an interrupted write can no longer leave a
+  half-written `collection.json`. Every file now gets identical bytes: UTF-8,
+  two-space indent, no ASCII escaping, and a trailing newline. On a catalog
+  written by an older version, expect a one-time byte-level diff the first time
+  each file is rewritten. Non-ASCII text such as `Córdoba` is stored as the
+  literal character rather than an escape sequence.
+- **readme**: a foreign `rel="describedby"` link survives the README sweep. Only
+  the link resolving to the sibling `README.md` is normalized; a data dictionary
+  or methodology PDF is left alone and the README link is appended beside it.
+- **check**: `--fix` reports what it actually did. The `fix` payload carries
+  `selected`, `applied`, and `skipped`; `applied` names only fixers that changed
+  something, and every selected fixer that changed nothing carries a skip reason.
+  Skip reasons print at default verbosity, not just under `--verbose`. `SKIPPED`
+  results no longer count as fixes in `FixReport`.
+- **check**: a data file on disk that no manifest registers, and a registered
+  asset whose file is gone, are reported in a `workflow` section rather than as
+  conformance findings. The notice does not fail a default run; `--strict` fails
+  on it. `portolan add` clears it.
+- **check**: the `bbox` fixer repairs an extent from the asset it describes,
+  reading GeoParquet, COG, FlatGeobuf, and PMTiles and reprojecting to WGS84. An
+  ADR-0031 asset-only collection falls back to its own assets. An unreadable file
+  or unknown suffix skips with a reason, and an existing geometry is never
+  overwritten.
+- **check**: the `convert` fixer is registered but inert. It used to run a
+  conversion sweep from `--metadata --fix`, rewriting asset bytes the operator
+  never asked about and losing the geo-asset pass's worker and force settings. It
+  now reports the hand-off and leaves the bytes alone.
+- **check**: the `item_mirror` fixer requires `profile=cloud-optimized`, matching
+  the rule that selects it, and reports the same action in dry run as in a real
+  run.
+- **check**: selecting a composite fixer no longer also selects its members, so
+  `PTL-FIL-001` and `PTL-FIL-002` firing together run the README and AGENTS.md
+  repairs once instead of three times.
+- **check**: the `assets` fixer no longer writes `application/octet-stream` for
+  an extension it does not recognize.
+- **deps**: raise the `click` floor to `8.4`. `temporal.FlexibleDateTime`
+  subscripts `click.ParamType`, which 8.3.x cannot do.
+
 ## v1.0.0a0 (2026-06-03)
 
 ### BREAKING CHANGE
