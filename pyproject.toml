@@ -27,7 +27,7 @@ classifiers = [
 ]
 dependencies = [
     "antimeridian>=0.3.11",  # RFC 7946 compliant antimeridian handling for STAC bbox
-    "click>=8.3.3,<8.5",  # PYSEC-2026-2132 fix; 8.4 makes ParamType generic (see temporal.FlexibleDateTime)
+    "click>=8.4,<8.5",  # PYSEC-2026-2132 fix; 8.4 makes ParamType generic (temporal.FlexibleDateTime subscripts it)
     "defusedxml>=0.7.1",  # Safe XML parsing (XXE protection) for CSW/ISO 19139 metadata
     "geoparquet-io>=1.3.0",  # WFS auto-tile + 100K page_size defaults (Issue #529); git main pinned via [tool.uv.sources]
     "httpx>=0.27.0",  # HTTP client for ArcGIS REST API discovery
@@ -228,10 +228,6 @@ skips = []  # Add specific checks to skip if needed, e.g., ["B101"]
 # "BU" is the INSPIRE theme code for Buildings (used in test fixtures)
 # "disjointness" is a real set-theory term (codespell wants "disjointedness")
 ignore-words-list = "nd,bu,ue,adresse,projet,environnement,copie,explicite,connexion,objets,visibles,issus,fonction,mesures,informations,disjointness"
-# Vendored upstream STAC schemas are byte-identical third-party data (they carry
-# upstream's own typos, e.g. "sumamry" in collection.json). Never spell-check them;
-# a refresh re-imports upstream text verbatim. Keep in sync with the ci.yml --skip.
-skip = "portolan_cli/validation/_vendored"
 
 # ---------- dead code ----------
 
@@ -239,7 +235,6 @@ skip = "portolan_cli/validation/_vendored"
 min_confidence = 80
 paths = ["portolan_cli", "tests", "vulture_whitelist.py"]
 exclude = [
-    "portolan_cli/validation/rules.py",  # Abstract methods have unused params
     "portolan_cli/backends/protocol.py",  # Protocol method params are intentionally unused
     "portolan_cli/backends/json_file.py",  # Stub methods raise NotImplementedError
     "portolan_cli/backends/iceberg/backend.py",  # Protocol methods + lifecycle hooks

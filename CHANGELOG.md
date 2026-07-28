@@ -1,3 +1,23 @@
+## Unreleased
+
+Notes for the next release. `cz bump` regenerates this file from the commit
+history, so this section is replaced by the generated entries at that point.
+
+### BREAKING CHANGE
+
+- `check --json` reports a different payload. The `results` list is gone,
+  replaced by rashid's `findings`, each carrying a `PTL-*` rule id. The
+  envelope adds `mode`, `spec_version`, `validator` (name and version),
+  and `counts_by_remediation`. With `--fix`, a `fix` section reports the
+  `fixers` that ran, what they `applied`, and the `survivors` that outlived
+  the re-check. Consumers that read `results` must be updated.
+- `--strict` now affects only the exit code. It no longer promotes findings:
+  each keeps the severity the validator declares, so the same catalog produces
+  the same findings with and without the flag.
+- The reported `spec_version` is derived from the schemas rashid bundles rather
+  than hardcoded in the CLI. It is `0.1.0`; the CLI previously claimed `0.1.1`,
+  a version no shipped schema ever matched.
+
 ## v1.0.0a0 (2026-06-03)
 
 ### BREAKING CHANGE

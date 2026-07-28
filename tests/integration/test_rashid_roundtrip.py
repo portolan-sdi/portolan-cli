@@ -28,7 +28,7 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 from portolan_cli.constants import PORTOLAN_SCHEMA_URI
 
-pytestmark = [pytest.mark.integration, pytest.mark.slow]
+pytestmark = pytest.mark.integration
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "simple.parquet"
 

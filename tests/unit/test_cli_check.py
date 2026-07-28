@@ -99,12 +99,14 @@ class TestCheckCommand:
         self, runner: CliRunner, valid_catalog: Path, extra_flags: list[str]
     ) -> None:
         """check --json reports the Portolan spec version across every scope (#566)."""
-        from portolan_cli.constants import PORTOLAN_SPEC_VERSION
+        from rashid.schema import bundled_schema_versions
+
+        expected = max(bundled_schema_versions()).removeprefix("v")
 
         result = runner.invoke(cli, ["check", str(valid_catalog), *extra_flags, "--json"])
         assert result.exit_code == 0
         envelope = json.loads(result.output)
-        assert envelope["data"]["spec_version"] == PORTOLAN_SPEC_VERSION
+        assert envelope["data"]["spec_version"] == expected
 
     @pytest.mark.unit
     def test_check_json_names_the_validator(self, runner: CliRunner, valid_catalog: Path) -> None:
