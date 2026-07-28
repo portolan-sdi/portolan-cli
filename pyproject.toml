@@ -413,9 +413,6 @@ dev = [
 # (auto-tile, 100K page_size) before they hit a PyPI release.
 geoparquet-io = { git = "https://github.com/geoparquet/geoparquet-io.git", branch = "main" }
 
-# TEMPORARY until rashid 0.1.1 is on PyPI; delete this source pin at release.
-rashid = { git = "https://github.com/portolan-sdi/rashid", branch = "docs/release-prep" }
-
 [tool.menard]
 mode = "block"
 transitive_depth = 1
