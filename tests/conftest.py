@@ -54,6 +54,21 @@ if _MUTMUT_ENV_KEY in os.environ:
     )
     _hypothesis_settings.load_profile("mutmut")
 
+    # Under mutmut the whole suite runs in one long-lived process that pytest
+    # did not start, so the root logger arrives carrying whatever handlers and
+    # level that process left on it. Library records (rasterio and GDAL are the
+    # loud ones) then reach the stream CliRunner captures, and every test that
+    # does json.loads(result.output) dies on "Extra data" past the envelope.
+    # That is how the mutation gate failed on #612. Reset the root logger to the
+    # state a plain pytest run starts from: no handlers, level WARNING. pytest
+    # adds its own capture handlers per test phase, so caplog is unaffected.
+    import logging as _logging
+
+    _root_logger = _logging.getLogger()
+    for _handler in list(_root_logger.handlers):
+        _root_logger.removeHandler(_handler)
+    _root_logger.setLevel(_logging.WARNING)
+
 
 @contextmanager
 def cleared_environ(**overrides: str) -> Iterator[None]:

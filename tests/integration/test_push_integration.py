@@ -1227,7 +1227,10 @@ class TestPushOutputInvariants:
     )
     @settings(
         max_examples=50,
-        suppress_health_check=[HealthCheck.function_scoped_fixture],
+        suppress_health_check=[
+            HealthCheck.function_scoped_fixture,
+            HealthCheck.differing_executors,
+        ],
         deadline=None,  # CLI invocation can be slow
     )
     def test_dry_run_never_shows_nothing_to_push(
@@ -1281,7 +1284,10 @@ class TestPushOutputInvariants:
     )
     @settings(
         max_examples=25,
-        suppress_health_check=[HealthCheck.function_scoped_fixture],
+        suppress_health_check=[
+            HealthCheck.function_scoped_fixture,
+            HealthCheck.differing_executors,
+        ],
         deadline=None,  # CLI invocation can be slow
     )
     def test_non_dry_run_zero_versions_shows_nothing_to_push(
@@ -1334,7 +1340,10 @@ class TestPushOutputInvariants:
     )
     @settings(
         max_examples=25,
-        suppress_health_check=[HealthCheck.function_scoped_fixture],
+        suppress_health_check=[
+            HealthCheck.function_scoped_fixture,
+            HealthCheck.differing_executors,
+        ],
         deadline=None,  # CLI invocation can be slow
     )
     def test_successful_push_with_versions_shows_pushed_message(

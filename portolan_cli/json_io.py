@@ -59,7 +59,9 @@ def write_text_atomic(path: Path, content: str) -> None:
         suffix=".tmp",
     )
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        # newline="" disables platform newline translation: without it Windows
+        # writes \r\n, and catalogs stop being byte-identical across platforms.
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(content)
         # Atomic rename (POSIX guarantees atomicity for same-filesystem renames).
         os.replace(tmp_path, path)
