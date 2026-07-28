@@ -651,11 +651,11 @@ def run_fix_workflow(
                 ensure_readmes(catalog_root)
 
             # Issue #569: backfill the rel="pmtiles" web-map-links link on
-            # collections with a PMTiles asset but no link (RULE-0061).
+            # collections with a PMTiles asset but no link (rashid PTL-VIZ-003).
             metadata_fix_report.results.extend(repair_pmtiles_links(catalog_root, dry_run=dry_run))
 
             # ADR-0052: scaffold AGENTS.md and backfill the rel="agents" link on
-            # catalogs and collections that lack them (RULE-0080/0081).
+            # catalogs and collections that lack them (rashid PTL-FIL-002).
             metadata_fix_report.results.extend(repair_agents_md(catalog_root, dry_run=dry_run))
 
             outcome.metadata_fix_report = metadata_fix_report

@@ -429,7 +429,7 @@ def ensure_web_map_links_extension(collection_path: Path) -> bool:
     Adds ``WEB_MAP_LINKS_EXTENSION`` to ``stac_extensions`` if absent, without
     touching any links (so existing ``pmtiles:layers`` overrides are preserved).
     Used by ``check --fix`` to repair a collection that carries the PMTiles link
-    but omits the extension declaration (RULE-0061 assertion 3).
+    but omits the extension declaration (part of rashid PTL-VIZ-003).
 
     Args:
         collection_path: Path to collection directory.
@@ -460,7 +460,7 @@ def add_pmtiles_link_to_collection(
 ) -> None:
     """Add a ``rel="pmtiles"`` collection link following web-map-links (Issue #569).
 
-    The link coexists with the PMTiles *asset* (RULE-0060) and satisfies RULE-0061.
+    The link coexists with the PMTiles *asset* and satisfies rashid PTL-VIZ-003.
     It declares the web-map-links extension in ``stac_extensions`` and carries the
     ``pmtiles:layers`` array of default-visible vector layers. The link is keyed by
     its ``href`` so multiple PMTiles in one collection each get their own link, and

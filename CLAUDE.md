@@ -68,7 +68,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0008](context/shared/adr/0008-pipx-for-installation.md) | pipx for global installation, uv for development |
 | [0009](context/shared/adr/0009-output-dry-run-and-verbose-modes.md) | Dry-run and verbose modes in output functions |
 | [0010](context/shared/adr/0010-delegate-conversion-validation.md) | Delegate conversion/validation to upstream libraries |
-| [0011](context/shared/adr/0011-mvp-validation-framework.md) | MVP validation framework for format handlers |
+| [0011](context/shared/adr/0011-mvp-validation-framework.md) | ~~MVP validation framework~~ Superseded by ADR-0057 |
 | [0012](context/shared/adr/0012-flat-catalog-hierarchy.md) | Flat catalog hierarchy (no nested collections) |
 | [0013](context/shared/adr/0013-gitingest-auto-fetch.md) | Auto-fetch dependency docs via gitingest |
 | [0014](context/shared/adr/0014-accept-non-cloud-native-formats.md) | Accept non-cloud-native formats with warnings |
@@ -105,15 +105,16 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0045](context/shared/adr/0045-styles-as-stac-assets.md) | Styles as standalone STAC assets (supersedes ADR-0043 style storage) |
 | [0046](context/shared/adr/0046-iceberg-as-optional-extra.md) | Iceberg as optional `[iceberg]` extra, not separate package (supersedes 0004) |
 | [0047](context/shared/adr/0047-non-geo-tabular-data-support.md) | Non-geo tabular data: opt-in support, GPIO routing, AOI inheritance |
-| [0048](context/shared/adr/0048-cli-as-spec-source.md) | CLI repo as spec source of truth; portolan-spec becomes read-only mirror |
+| [0048](context/shared/adr/0048-cli-as-spec-source.md) | ~~CLI repo as spec source~~ Superseded by ADR-0057 (portolan-spec owns the spec) |
 | [0049](context/shared/adr/0049-stac-geoparquet-scalability.md) | STAC-GeoParquet required for collections >1000 items |
 | [0050](context/shared/adr/0050-pmtiles-visualization-requirement.md) | PMTiles required for vector datasets >100 MB |
 | [0051](context/shared/adr/0051-self-contained-catalog-type.md) | SELF_CONTAINED catalog type (relative links, portable) |
-| [0052](context/shared/adr/0052-llms-txt-requirement.md) | Require AGENTS.md for AI/LLM integration at catalog and collection levels (supersedes llms.txt); schema-required link + RULE-0080/0081 enforcement + generation |
+| [0052](context/shared/adr/0052-llms-txt-requirement.md) | Require AGENTS.md for AI/LLM integration at catalog and collection levels (supersedes llms.txt); schema-required link + rashid PTL-FIL enforcement + generation |
 | [0053](context/shared/adr/0053-mandatory-human-readable-titles.md) | Mandatory human-readable titles/descriptions; auto-humanize slugs; title on child/item links |
 | [0054](context/shared/adr/0054-arcgis-folder-recursion-and-structure.md) | ArcGIS folder recursion (default-on), folder URLs, token auth pass-through, nested-folder subcatalogs |
 | [0055](context/shared/adr/0055-extension-registry-single-source.md) | Single-source the recognized-extension vocabulary via a typed in-package registry (derives the formats/constants/scan_classify/add maps; drops dead `.raquet`) |
-| [0056](context/shared/adr/0056-hermetic-shipped-schema-validation.md) | Validate compliance against the shipped STAC schemas via a vendored STAC v1.1.0 `$ref` closure + `referencing.Registry` (hermetic); `format` off pending href policy (#573); deletes inline stubs (#557) |
+| [0056](context/shared/adr/0056-hermetic-shipped-schema-validation.md) | ~~Hermetic shipped-schema validation~~ Superseded by ADR-0057 (rashid ships the schemas) |
+| [0057](context/shared/adr/0057-rashid-as-conformance-validator.md) | rashid as the conformance validator: PTL-* ids verbatim, metadata+structural+data default passes, AUTO/INSTRUCT/EXTERNAL remediation buckets, spec owned by portolan-spec (supersedes 0011, 0048, 0056) |
 
 ## Common Commands
 

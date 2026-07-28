@@ -213,7 +213,7 @@ def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> lis
 
 
 def repair_pmtiles_links(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
-    """Backfill the ``rel="pmtiles"`` web-map-links link on collections (RULE-0061).
+    """Backfill the ``rel="pmtiles"`` web-map-links link on collections (rashid PTL-VIZ-003).
 
     Repairs what :class:`~portolan_cli.validation.rules.PMTilesLinkRule` flags: a
     collection that registers a PMTiles asset but does not emit a collection-level
@@ -266,7 +266,7 @@ def _repair_pmtiles_collection(collection_json: Path, *, dry_run: bool) -> FixRe
     linked_hrefs = pmtiles_link_hrefs(data.get("links", []))
     missing = [href for href in pmtiles_hrefs if href not in linked_hrefs]
     # A collection may have all its links yet still lack the web-map-links
-    # extension declaration (e.g. a hand-edited collection.json). RULE-0061
+    # extension declaration (e.g. a hand-edited collection.json). The PMTiles-link rule
     # flags that too, so repair it here to keep check and --fix in agreement.
     missing_extension = WEB_MAP_LINKS_EXTENSION not in data.get("stac_extensions", [])
     if not missing and not missing_extension:
@@ -300,7 +300,7 @@ def _repair_pmtiles_collection(collection_json: Path, *, dry_run: bool) -> FixRe
 
 
 def repair_agents_md(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
-    """Backfill missing ``AGENTS.md`` files and ``rel="agents"`` links (RULE-0080/0081).
+    """Backfill missing ``AGENTS.md`` files and ``rel="agents"`` links (rashid PTL-FIL-001/-002).
 
     Repairs what
     :class:`~portolan_cli.validation.rules.CatalogAgentsMdLinkRule` and
