@@ -265,6 +265,54 @@ class TestRashidRoundtrip:
         assert data["fix"]["dry_run"] is True
         assert data["fix"]["applied"] != []
 
+    def test_dry_run_does_not_claim_every_finding_survived(self, catalog: Path) -> None:
+        """A dry run never re-checks, so it must not report survivors at all.
+
+        The re-check is what makes a survivor knowable. Reusing the pre-fix
+        result as the post-fix one made every AUTO finding "survive" and drove
+        ``fixed_count`` to 0 — the exact inverse of what the same fixers achieve
+        for real, and a reading that tells an agent repair is pointless.
+        """
+        _corrupt(catalog)
+
+        dry = _check_json(catalog, "--fix", "--dry-run")["fix"]
+
+        assert dry["survivors"] is None
+        assert dry["fixed_count"] is None
+        # The selection is still reported: that is what a dry run is for.
+        assert dry["auto_count"] > 0
+        assert "checksum" in dry["applied"]
+
+    def test_dry_run_and_real_fix_select_the_same_fixers(self, catalog: Path) -> None:
+        """The preview is only useful if it predicts the run it previews."""
+        _corrupt(catalog)
+        dry = _check_json(catalog, "--fix", "--dry-run")["fix"]
+
+        real = _check_json(catalog, "--fix")["fix"]
+
+        assert dry["selected"] == real["selected"]
+        assert dry["applied"] == real["applied"]
+        assert dry["auto_count"] == real["auto_count"]
+
+    def test_dry_run_human_output_names_the_fixers_it_would_run(self, catalog: Path) -> None:
+        """Without this the preview is byte-identical to a plain ``check``."""
+        _corrupt(catalog)
+
+        result = CliRunner().invoke(
+            cli,
+            ["check", str(catalog), "--metadata", "--fix", "--dry-run"],
+            catch_exceptions=False,
+        )
+
+        assert "Would apply: " in result.output
+        assert "checksum" in result.output.split("Would apply: ")[1].splitlines()[0]
+        # Nothing was written, so nothing may be reported as done.
+        assert "Fixed automatically (" not in result.output
+        assert "Applied: " not in result.output
+        # The findings list above already gives every requirement; a second
+        # "Action required" block would print each survivor twice.
+        assert "Action required (" not in result.output
+
 
 def _disable_generation_gaps(root: Path) -> None:
     """Silence the tracked generation gaps so exit codes are about this test."""

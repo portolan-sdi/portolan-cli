@@ -1458,13 +1458,23 @@ def _execute_check_workflow(
         )
     payload = build_check_payload(outcome, mode=mode, fix_failed=fix_failed)
     if fix_data is not None:
-        annotate_survivors(
-            fix_data,
-            outcome,
-            pre_findings=list(pre_outcome.report.findings)
-            if pre_outcome is not None and pre_outcome.report is not None
-            else [],
-        )
+        if dry_run:
+            # A survivor is only knowable from a re-check, and a dry run wrote
+            # nothing to re-check. Annotating here compares the pre-fix findings
+            # against themselves, so every AUTO defect reads as having outlived
+            # a pass that never ran, and `fixed_count` lands on 0 next to the
+            # fixers the same catalog really does repair. Null reports what a
+            # preview knows: nothing was measured.
+            fix_data["survivors"] = None
+            fix_data["fixed_count"] = None
+        else:
+            annotate_survivors(
+                fix_data,
+                outcome,
+                pre_findings=list(pre_outcome.report.findings)
+                if pre_outcome is not None and pre_outcome.report is not None
+                else [],
+            )
         payload["fix"] = fix_data
     failed = fix_failed or _check_failed(payload, strict=strict)
 
@@ -1473,14 +1483,23 @@ def _execute_check_workflow(
     else:
         post_fix = fix_data is not None and not dry_run
         _render_check(outcome, payload, verbose=verbose, strict=strict, post_fix=post_fix)
-        if post_fix:
-            _print_fix_split(payload)
+        if fix_data is not None:
+            _print_fix_split(payload, dry_run=dry_run)
 
     if failed:
         raise SystemExit(1)
 
 
-def _print_fix_split(payload: dict[str, Any]) -> None:
+def _print_fix_skips(skipped: dict[str, list[str]]) -> None:
+    """List every fixer that ran and changed nothing, with its reason."""
+    if not skipped:
+        return
+    info_output(f"Skipped ({len(skipped)}):")
+    for fixer_key, reasons in skipped.items():
+        detail(f"  {fixer_key}: {reasons[0] if reasons else 'nothing to change'}")
+
+
+def _print_fix_split(payload: dict[str, Any], *, dry_run: bool = False) -> None:
     """Render the post-fix verdict: what --fix handled, what still needs a person.
 
     The "Action required" list is the agent's stopping condition — every entry
@@ -1490,24 +1509,34 @@ def _print_fix_split(payload: dict[str, Any]) -> None:
     "Applied" names only fixers that changed something, and every fixer that ran
     without changing anything is listed with its reason at default verbosity: a
     skip an operator cannot see reads as a silent success.
+
+    Under ``dry_run`` the report stops after the selection. No re-check ran, so
+    there is no survivor set to annotate and no repair count to give. What a
+    preview can honestly report is which fixers the findings selected and how
+    many AUTO defects they were selected against. A dry run keeps the findings
+    list above, which already carries the requirement for each one.
     """
     fix_data: dict[str, Any] = payload.get("fix", {})
     applied = fix_data.get("applied", [])
     skipped: dict[str, list[str]] = fix_data.get("skipped", {})
+
+    if dry_run:
+        success(f"Would fix automatically ({fix_data.get('auto_count', 0)})")
+        if applied:
+            detail(f"  Would apply: {', '.join(applied)}")
+        _print_fix_skips(skipped)
+        return
+
     survivors = {
         (item["rule_id"], item["path"], item.get("json_pointer"), item.get("index", 0))
-        for item in fix_data.get("survivors", [])
+        for item in fix_data.get("survivors") or []
     }
     findings = payload.get("findings", [])
 
-    fixed = fix_data.get("fixed_count", 0)
-    success(f"Fixed automatically ({fixed})")
+    success(f"Fixed automatically ({fix_data.get('fixed_count', 0)})")
     if applied:
         detail(f"  Applied: {', '.join(applied)}")
-    if skipped:
-        info_output(f"Skipped ({len(skipped)}):")
-        for fixer_key, reasons in skipped.items():
-            detail(f"  {fixer_key}: {reasons[0] if reasons else 'nothing to change'}")
+    _print_fix_skips(skipped)
 
     if not findings:
         return
