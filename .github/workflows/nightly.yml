@@ -15,6 +15,43 @@ permissions:
   contents: read
 
 jobs:
+  rashid-main:
+    # Early warning for upstream validator drift: validate a freshly generated
+    # catalog against rashid's main branch (the released pin is exercised by
+    # regular CI). A failure here means an unreleased rashid rule change will
+    # break `portolan check` at its next release — fix generation, or raise it
+    # upstream, before that release ships (ADR-0057).
+    name: Conformance vs rashid main
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Set up Python
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: uv python install 3.11
+
+      - name: Install dependencies with rashid from main
+        run: |
+          uv sync --all-extras
+          uv pip install --reinstall \
+            "rashid @ git+https://github.com/portolan-sdi/rashid@main"
+
+      - name: Validate a generated catalog against rashid main
+        run: |
+          uv run pytest \
+            tests/integration/test_generated_catalog_conformance.py \
+            -q --no-cov
+
   mutation:
     name: Mutation Testing
     runs-on: ubuntu-latest

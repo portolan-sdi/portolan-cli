@@ -126,19 +126,19 @@ render paths.
   breaks PMTiles for any projected source.
 - A generated `.pmtiles` MUST be a **collection-level** asset AND have a
   `rel: "pmtiles"` link (web-map-links extension). Item-level-only is
-  non-conformant (RULE-0060 / RULE-0061, both errors). PMTiles discovery
+  non-conformant (rashid PTL-VIZ-003, an error). PMTiles discovery
   (`_find_geoparquet_assets`) only scans collection-level assets.
 
 ## Styles are standalone STAC assets (ADR-0045, supersedes 0043)
 
 - A style is a complete **Mapbox GL v8** JSON file in `{collection}/styles/`,
   not inline in the STAC. Asset key `styles/{stem}`, `type: "application/json"`,
-  `roles` containing `"style"` (RULE-0066).
-- The style JSON MUST have `version == 8`, `sources`, `layers` (RULE-0068).
+  `roles` containing `"style"` (rashid PTL-VIZ-002).
+- The style JSON MUST have `version == 8`, `sources`, `layers` (Mapbox GL spec; rashid checks the media type via PTL-VIZ-005).
   `sources.data.url` is a **relative** path to the PMTiles (`../file.pmtiles`),
   `layers[].source` is always `"data"`.
 - `portolan:styles` is an ordered array of asset keys (first = default), and
-  every entry MUST reference an existing asset (RULE-0067). Vary default colors
+  every entry MUST reference an existing asset. Vary default colors
   across a catalog so it is not monotone.
 
 ## Partitioning: let geoparquet-io name things, detect Hive by pattern

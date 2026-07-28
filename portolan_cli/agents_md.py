@@ -2,7 +2,7 @@
 
 Portolan requires every catalog and collection to carry an ``AGENTS.md`` file
 (Markdown, minimal) referenced by a ``rel="agents"`` link in its STAC JSON
-(ADR-0052, RULE-0080/0081). ``AGENTS.md`` is a **link**, not an asset, and its
+(ADR-0052; rashid PTL-FIL-001/-002). ``AGENTS.md`` is a **link**, not an asset, and its
 content is human-authored — Portolan only scaffolds an empty template when the
 file is absent and never overwrites an existing one.
 

@@ -455,7 +455,7 @@ def init_catalog(
     # never saw it.
 
     # Step 4b: AGENTS.md - scaffold the AI/agent guide and add its rel="agents"
-    # link (ADR-0052, RULE-0080). Emitting it here keeps freshly-created catalogs
+    # link (ADR-0052; rashid PTL-FIL-002). Emitting it here keeps freshly-created catalogs
     # schema-valid without a follow-up `check --fix`.
     from portolan_cli.agents_md import ensure_agents_md
 
@@ -624,7 +624,7 @@ def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None
         catalog_file.write_text(json.dumps(catalog_data, indent=2))
 
         # Intermediate catalogs are catalogs too: scaffold AGENTS.md and add the
-        # rel="agents" link so every catalog.json satisfies RULE-0080.
+        # rel="agents" link so every catalog.json satisfies rashid PTL-FIL-002.
         from portolan_cli.agents_md import ensure_agents_md
 
         ensure_agents_md(catalog_file)

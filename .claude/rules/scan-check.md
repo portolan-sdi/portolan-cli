@@ -126,7 +126,7 @@ scan-before-import). Shapefile renames move all sidecars together with rollback.
 - Shapefile sidecars (`.dbf`/`.shx`/`.prj`/...) are tracked then skipped, never
   imported directly. An incomplete shapefile (missing `.dbf`/`.shx`) is an ERROR.
 - A `.parquet` with no `geo` schema-metadata key is tabular, not GeoParquet, skip
-  it as `TABULAR_DATA`/`NOT_GEOSPATIAL` (RULE-0030).
+  it as `TABULAR_DATA`/`NOT_GEOSPATIAL` (the spec derives tabular from a geometry-less Parquet).
 - An image under 1 MiB is a thumbnail, larger images are raster data.
 - Catalogs reach 25k+ item dirs. Any per-directory or per-asset check must be
   O(n), the `_check_mixed_structure` O(n^2) bug hung for minutes on 27k dirs.
