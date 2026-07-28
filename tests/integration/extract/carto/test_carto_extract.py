@@ -133,7 +133,8 @@ def test_auto_init_tracks_non_geo_table_as_tabular_collection(tmp_path: Path) ->
     collection_json = tmp_path / "lookup" / "collection.json"
     assert collection_json.exists()
     coll = json.loads(collection_json.read_text())
-    assert coll.get("portolan:geospatial") is False
+    # Tabular status is derived from asset content, not flagged (issue #654).
+    assert "portolan:geospatial" not in coll
 
     # Provenance via-link still wired for the tabular collection.
     via = [link for link in coll.get("links", []) if link.get("rel") == "via"]

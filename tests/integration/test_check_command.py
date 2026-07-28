@@ -15,6 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
+from portolan_cli.constants import PORTOLAN_SCHEMA_URI
 
 
 @pytest.fixture
@@ -760,15 +761,16 @@ class TestCheckMetadataFixFlag:
         )
         assert metadata_fix["failure_count"] == 0
 
-    def test_metadata_fix_backfills_tabular_geospatial_flag(
+    def test_metadata_fix_stamps_schema_uri_without_geospatial_flag(
         self,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
-        """check --metadata --fix wires repair_tabular_flags (issue #481, RULE-0090).
+        """check --metadata --fix declares the profile URI (issue #654).
 
-        End-to-end through the CLI: a tabular collection missing
-        portolan:geospatial: false must have the flag backfilled on disk.
+        End-to-end through the CLI: catalog and collection gain the versioned
+        Portolan schema URI, and the retired ``portolan:geospatial`` flag is not
+        written back onto a tabular collection.
         """
         import pyarrow as pa
         import pyarrow.parquet as pq
@@ -819,7 +821,10 @@ class TestCheckMetadataFixFlag:
 
         assert result.exit_code == 0, result.output
         data = json.loads(coll_json.read_text())
-        assert data["portolan:geospatial"] is False
+        assert "portolan:geospatial" not in data
+        assert PORTOLAN_SCHEMA_URI in data["stac_extensions"]
+        root = json.loads((catalog_dir / "catalog.json").read_text())
+        assert PORTOLAN_SCHEMA_URI in root["stac_extensions"]
 
     def test_metadata_fix_dry_run_flag(
         self,

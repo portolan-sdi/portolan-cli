@@ -18,7 +18,15 @@ from portolan_cli import extension_registry as _reg
 #
 # NOTE: This is the version of the *specification as a whole*. It is distinct
 # from versions.SPEC_VERSION, which versions the versions.json manifest schema.
-PORTOLAN_SPEC_VERSION: str = "0.1.1"
+PORTOLAN_SPEC_VERSION: str = "0.1.0"
+
+# The versioned Portolan profile schema URI every catalog and collection
+# declares in ``stac_extensions`` (issue #654; rashid PTL-CNF-001/002). Its
+# shape is fixed by the validator's pattern
+# ``^https://schemas\.portolan-sdi\.org/portolan/v\d+\.\d+\.\d+/schema\.json$``.
+PORTOLAN_SCHEMA_URI: str = (
+    f"https://schemas.portolan-sdi.org/portolan/v{PORTOLAN_SPEC_VERSION}/schema.json"
+)
 
 # The extension vocabulary below is DERIVED from portolan_cli.extension_registry
 # (the single source, ADR-0055). Edit rows there, not these members.

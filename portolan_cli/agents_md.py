@@ -218,3 +218,29 @@ def ensure_agents_md(stac_json: Path) -> bool:
         stac_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
     return changed
+
+
+def ensure_agents_md_tree(catalog_root: Path) -> bool:
+    """Scaffold ``AGENTS.md`` and its link across a whole catalog tree.
+
+    The per-object :func:`ensure_agents_md` covers what a single write path
+    touches; this covers everything ``add`` walks past, so a catalog created
+    before ADR-0052 (or by hand) gains its guide the next time it is written to
+    rather than only through ``check --fix`` (issue #654).
+
+    Args:
+        catalog_root: Root directory of the catalog.
+
+    Returns:
+        True if any file was created or modified.
+    """
+    changed_any = False
+    for stac_json in sorted(
+        [*catalog_root.rglob("catalog.json"), *catalog_root.rglob("collection.json")]
+    ):
+        rel_parts = stac_json.parent.relative_to(catalog_root).parts
+        if any(part.startswith(".") for part in rel_parts):
+            continue
+        if ensure_agents_md(stac_json):
+            changed_any = True
+    return changed_any

@@ -42,7 +42,6 @@ _EXEMPT_ERROR_RULES: frozenset[str] = frozenset(
         "catalog_json_valid",  # RULE-0050 (required files)
         "stac_fields",  # core STAC schema (catalog.schema.json)
         "stac_schema",  # core STAC schema validation
-        "tabular_geospatial_flag",  # RULE-0090
         "tabular_collection_level_assets",  # RULE-0094
     }
 )

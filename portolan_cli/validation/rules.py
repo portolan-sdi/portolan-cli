@@ -114,10 +114,9 @@ def classify_collection_data(collection_dir: Path, data: dict[str, Any]) -> str:
     A ``.parquet`` asset is only counted when its file is present locally and
     readable: ``is_geoparquet`` cannot distinguish "plain Parquet" from "file
     missing / remote / unreadable" (both yield ``False``). Treating an
-    unresolvable Parquet as tabular would raise a false RULE-0090 ERROR — and,
-    worse, drive ``--fix`` to stamp ``portolan:geospatial: false`` onto an
-    actually-spatial collection (e.g. one checked before its data is pulled, or
-    one whose asset href is remote). So such assets are left unclassified.
+    unresolvable Parquet as tabular would mislabel an actually-spatial
+    collection (e.g. one checked before its data is pulled, or one whose asset
+    href is remote), so such assets are left unclassified.
 
     Args:
         collection_dir: Directory containing the collection.json (for href resolution).
@@ -166,13 +165,12 @@ def classify_collection_data(collection_dir: Path, data: dict[str, Any]) -> str:
 def _is_tabular_collection(collection_dir: Path, data: dict[str, Any]) -> bool:
     """Return True if a collection is non-spatial (tabular).
 
-    A collection counts as tabular when it is either explicitly flagged
-    ``portolan:geospatial: false`` or detected as tabular by asset content
-    (:func:`classify_collection_data`). Keying off *both* signals means a single
-    ``check`` pass surfaces the schema / temporal / layout recommendations
-    (RULE-0091/0093/0094) on a tabular collection even before its
-    ``portolan:geospatial`` flag is backfilled (RULE-0090) — instead of hiding
-    them until a second pass.
+    Tabular status is *derived* from asset content
+    (:func:`classify_collection_data`): a geometry-less Parquet (or a CSV/XLSX)
+    makes the collection non-spatial. Portolan no longer writes a
+    ``portolan:geospatial`` flag (issue #654, ADR-0047 as amended), but a legacy
+    catalog that carries one is still honoured on read, so collections whose
+    assets cannot be resolved locally keep their recorded classification.
     """
     if data.get("portolan:geospatial") is False:
         return True
@@ -1159,35 +1157,6 @@ def _summarize(issues: list[str]) -> str:
     if len(issues) > 5:
         preview += f" (+{len(issues) - 5} more)"
     return preview
-
-
-class TabularGeospatialFlagRule(ValidationRule):
-    """RULE-0090: tabular collections MUST set ``portolan:geospatial: false``.
-
-    The flag distinguishes intentionally non-spatial collections from spatial
-    collections with a missing extent, so federation agents can route queries.
-    Fires for collections whose assets are tabular (CSV/XLSX or plain Parquet)
-    when the flag is not explicitly ``false``.
-    """
-
-    name = "tabular_geospatial_flag"
-    severity = Severity.ERROR
-    description = "Verify tabular collections set portolan:geospatial: false"
-
-    def check(self, catalog_path: Path) -> ValidationResult:
-        issues: list[str] = []
-        for collection_dir, data in _iter_collections(catalog_path):
-            if classify_collection_data(collection_dir, data) != "tabular":
-                continue
-            if data.get("portolan:geospatial") is not False:
-                issues.append(f"{collection_dir.name}: missing portolan:geospatial: false")
-
-        if issues:
-            return self._fail(
-                f"{len(issues)} tabular collection(s) not marked non-spatial: {_summarize(issues)}",
-                fix_hint="Run 'portolan check --fix' to add portolan:geospatial: false",
-            )
-        return self._pass("All tabular collections are marked non-spatial")
 
 
 class TabularTableExtensionRule(ValidationRule):

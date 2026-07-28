@@ -476,6 +476,17 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot write AGENTS.md: {e}") from e
 
+    # Step 4c: declare the Portolan profile schema URI and scaffold README.md
+    # with its rel="describedby" link (issue #654), so a catalog conforms the
+    # moment it is created, before anything is added to it.
+    from portolan_cli.readme import ensure_readmes
+
+    try:
+        ensure_schema_uris(path)
+        ensure_readmes(path)
+    except OSError as e:
+        raise CatalogInitError(f"Cannot write catalog conformance files: {e}") from e
+
     # Step 5: config.yaml - sentinel file per issue #290 (sufficient for MANAGED state)
     # Written LAST for atomicity: if any previous step fails, directory stays FRESH
     # and init can be safely retried. Also serves as user configuration file for
@@ -817,6 +828,44 @@ def ensure_link_titles(catalog_root: Path) -> bool:
                 file_changed = True
 
         if file_changed:
+            stac_file.write_text(json.dumps(content, indent=2), encoding="utf-8")
+            changed_any = True
+
+    return changed_any
+
+
+def ensure_schema_uris(catalog_root: Path) -> bool:
+    """Declare the Portolan profile schema URI across a catalog tree (issue #654).
+
+    Walks every ``catalog.json`` and ``collection.json`` under ``catalog_root``
+    and stamps the versioned profile URI into ``stac_extensions``. Items are left
+    alone: the conformance claim lives on catalogs and collections.
+
+    Idempotent — a tree that already declares the current URI is not rewritten.
+    Shared by ``init``, ``add``, and the ``check --fix`` repair path so all three
+    produce the same output.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+
+    Returns:
+        True if any file was modified.
+    """
+    from portolan_cli.stac import ensure_portolan_schema_uri
+
+    changed_any = False
+    stac_files = sorted(catalog_root.rglob("catalog.json")) + sorted(
+        catalog_root.rglob("collection.json")
+    )
+
+    for stac_file in stac_files:
+        try:
+            content = json.loads(stac_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(content, dict):
+            continue
+        if ensure_portolan_schema_uri(content):
             stac_file.write_text(json.dumps(content, indent=2), encoding="utf-8")
             changed_any = True
 

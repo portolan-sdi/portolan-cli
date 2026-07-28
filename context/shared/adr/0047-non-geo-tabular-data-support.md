@@ -1,7 +1,7 @@
 # ADR-0047: Non-Geo Tabular Data Support
 
 ## Status
-Accepted
+Accepted (section 7 amended 2026-07-27)
 
 ## Context
 
@@ -107,6 +107,25 @@ This explicit flag enables:
 - Consumers to understand bbox semantics (AOI vs footprint)
 
 The CLI sets this flag automatically in `_ensure_tabular_collection()` when creating new tabular-only collections.
+
+#### Amended 2026-07-27 (issue #654): the flag is dropped in favour of derivation
+
+Portolan spec v0.1 defines no `portolan:` namespace, so a flag no consumer can
+validate is not worth the field. Tabular status is now **derived** from asset
+content — a collection whose data assets are geometry-less Parquet (or CSV/XLSX)
+is tabular — which is what `classify_collection_data()` already computed and
+what RULE-0090 checked the flag against.
+
+What changed:
+- `_ensure_tabular_collection()` no longer writes `portolan:geospatial: false`.
+- RULE-0090 (`TabularGeospatialFlagRule`) and its `check --fix` repair
+  (`repair_tabular_flags`) are removed: with nothing writing the flag, the rule
+  only reported that generation and validation disagreed.
+- The rest of the tabular rules (RULE-0091/0093/0094) key off the derived
+  classification, and still honour the flag when a legacy catalog carries one.
+
+The bbox semantics above are unchanged; they now follow from the derivation
+rather than from a declared field.
 
 ## Consequences
 

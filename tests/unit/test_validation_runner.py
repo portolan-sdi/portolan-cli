@@ -93,10 +93,11 @@ class TestCheck:
         # No .portolan dir = first rule fails
         report = check(tmp_path)
 
-        # Should have run all 19 default rules even though the first one failed
+        # Should have run all 18 default rules even though the first one failed
         # (6 original + 2 partition rules + 3 STAC rules: StacSchemaRule,
         # StacLintRule, MandatoryTitlesRule + 1 BboxValidRule for issue #516
-        # + 4 tabular rules for issue #481 + 1 PMTilesLinkRule for issue #569
+        # + 3 tabular rules for issue #481, minus RULE-0090 which issue #654
+        # retired + 1 PMTilesLinkRule for issue #569
         # + 2 AGENTS.md rules for ADR-0052 RULE-0080/0081).
         # Verifies no short-circuit on failure.
-        assert len(report.results) == 19
+        assert len(report.results) == 18

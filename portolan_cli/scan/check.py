@@ -629,7 +629,6 @@ def run_fix_workflow(
         from portolan_cli.metadata.fix import (
             repair_agents_md,
             repair_pmtiles_links,
-            repair_tabular_flags,
             repair_titles_and_links,
         )
         from portolan_cli.metadata.scan import scan_catalog_metadata
@@ -662,9 +661,15 @@ def run_fix_workflow(
                 repair_titles_and_links(catalog_root, dry_run=dry_run)
             )
 
-            # Issue #481: backfill portolan:geospatial: false on tabular
-            # collections (RULE-0090) as part of the metadata fix.
-            metadata_fix_report.results.extend(repair_tabular_flags(catalog_root, dry_run=dry_run))
+            # Issue #654: stamp the Portolan profile schema URI and scaffold the
+            # README + rel="describedby" link on catalogs and collections that
+            # predate them, matching what `init`/`add` emit.
+            if not dry_run:
+                from portolan_cli.catalog import ensure_schema_uris
+                from portolan_cli.readme import ensure_readmes
+
+                ensure_schema_uris(catalog_root)
+                ensure_readmes(catalog_root)
 
             # Issue #569: backfill the rel="pmtiles" web-map-links link on
             # collections with a PMTiles asset but no link (RULE-0061).

@@ -201,9 +201,14 @@ class TestCreateCollectionMetadata:
         assert temporal["interval"] == [[None, None]]
 
     def test_summaries_include_band_info(self, multiband_metadata: ImageServerMetadata) -> None:
-        """Summaries include band information."""
+        """Summaries carry one core `bands` entry per band (issue #654)."""
         result = create_collection_metadata(multiband_metadata, "https://example.com")
-        assert "summaries" in result
+
+        summaries = result["summaries"]
+        assert "raster:bands" not in summaries
+        assert "eo:bands" not in summaries
+        assert len(summaries["bands"]) == multiband_metadata.band_count
+        assert summaries["bands"][0]["name"] == "band_1"
 
     def test_links_include_source(self, sample_metadata: ImageServerMetadata) -> None:
         """Links include source URL to ImageServer."""
@@ -361,11 +366,15 @@ class TestCreateItemMetadata:
         assert "roles" in data_asset
         assert "data" in data_asset["roles"]
 
-    def test_includes_raster_extension(
+    def test_bands_are_core_stac_without_the_raster_extension(
         self, sample_tile: TileSpec, sample_metadata: ImageServerMetadata
     ) -> None:
-        """Item includes raster STAC extension."""
+        """Band metadata uses the core v1.1.0 `bands` array (issue #654)."""
         result = create_item_metadata(sample_tile, sample_metadata, "data.tif")
+
+        data_asset = result["assets"]["data"]
+        assert "raster:bands" not in data_asset
+        assert data_asset["bands"]
+
         extensions = result.get("stac_extensions", [])
-        raster_ext = [ext for ext in extensions if "raster" in ext]
-        assert len(raster_ext) >= 1
+        assert [ext for ext in extensions if "raster" in ext] == []
