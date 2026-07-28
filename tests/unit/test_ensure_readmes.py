@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.readme import ensure_readmes
+from portolan_cli.readme import ensure_readmes, readme_link_gap
 
 pytestmark = pytest.mark.unit
 
@@ -92,9 +92,9 @@ class TestEnsureReadmes:
 
         assert readme.read_text(encoding="utf-8") == "# Hand written\n"
 
-    def test_normalizes_a_malformed_describedby_link(self, tmp_path: Path) -> None:
+    def test_normalizes_a_wrong_type_readme_link(self, tmp_path: Path) -> None:
         catalog = _catalog()
-        catalog["links"] = [{"rel": "describedby", "href": "./readme.txt"}]
+        catalog["links"] = [{"rel": "describedby", "href": "./README.md", "type": "text/plain"}]
         _write(tmp_path / "catalog.json", catalog)
 
         assert ensure_readmes(tmp_path) is True
@@ -102,10 +102,134 @@ class TestEnsureReadmes:
         described = [
             link for link in _links(tmp_path / "catalog.json") if link["rel"] == "describedby"
         ]
+        assert len(described) == 1
         assert described[0]["href"] == "./README.md"
         assert described[0]["type"] == "text/markdown"
+
+    def test_preserves_a_foreign_describedby_link(self, tmp_path: Path) -> None:
+        """A non-README ``describedby`` link (e.g. a data dictionary) must survive.
+
+        Regression: the link scan used to take the *first* ``describedby`` link
+        and overwrite it with the README link, destroying the publisher's
+        pointer to their own documentation on every ``add``.
+        """
+        data_dictionary = {
+            "rel": "describedby",
+            "href": "./data-dictionary.pdf",
+            "type": "application/pdf",
+            "title": "Data dictionary",
+        }
+        catalog = _catalog()
+        catalog["links"] = [dict(data_dictionary)]
+        _write(tmp_path / "catalog.json", catalog)
+
+        assert ensure_readmes(tmp_path) is True
+
+        described = [
+            link for link in _links(tmp_path / "catalog.json") if link["rel"] == "describedby"
+        ]
+        assert data_dictionary in described
+        assert {
+            "rel": "describedby",
+            "href": "./README.md",
+            "type": "text/markdown",
+            "title": "Human-readable documentation",
+        } in described
+
+    def test_normalizes_the_readme_link_beside_a_foreign_one(self, tmp_path: Path) -> None:
+        catalog = _catalog()
+        catalog["links"] = [
+            {"rel": "describedby", "href": "./data-dictionary.pdf", "type": "application/pdf"},
+            {"rel": "describedby", "href": "./README.md", "type": "text/plain"},
+        ]
+        _write(tmp_path / "catalog.json", catalog)
+
+        assert ensure_readmes(tmp_path) is True
+
+        described = [
+            link for link in _links(tmp_path / "catalog.json") if link["rel"] == "describedby"
+        ]
+        assert len(described) == 2
+        assert described[0]["type"] == "application/pdf"
+        assert described[1]["type"] == "text/markdown"
 
     def test_skips_unparseable_files(self, tmp_path: Path) -> None:
         (tmp_path / "catalog.json").write_text("{not json", encoding="utf-8")
 
         assert ensure_readmes(tmp_path) is False
+
+    def test_ignores_stac_files_in_hidden_directories(self, tmp_path: Path) -> None:
+        _write(tmp_path / "catalog.json", _catalog())
+        hidden = tmp_path / ".portolan" / "cache" / "collection.json"
+        _write(hidden, _collection())
+        before = hidden.read_text(encoding="utf-8")
+
+        ensure_readmes(tmp_path)
+
+        assert hidden.read_text(encoding="utf-8") == before
+        assert not (hidden.parent / "README.md").exists()
+
+
+class TestReadmeLinkGap:
+    """The four cases rashid PTL-FIL-003 flags (see readme_link_gap)."""
+
+    def _catalog_with(self, tmp_path: Path, links: list[dict[str, str]]) -> dict[str, object]:
+        catalog = _catalog()
+        catalog["links"] = links
+        return catalog
+
+    def test_no_gap_when_link_and_file_are_correct(self, tmp_path: Path) -> None:
+        (tmp_path / "README.md").write_text("# Root\n", encoding="utf-8")
+        data = self._catalog_with(
+            tmp_path,
+            [{"rel": "describedby", "href": "./README.md", "type": "text/markdown"}],
+        )
+
+        assert readme_link_gap(tmp_path / "catalog.json", data) is False
+
+    def test_gap_when_link_is_absent(self, tmp_path: Path) -> None:
+        (tmp_path / "README.md").write_text("# Root\n", encoding="utf-8")
+
+        assert readme_link_gap(tmp_path / "catalog.json", self._catalog_with(tmp_path, [])) is True
+
+    def test_gap_when_type_is_wrong(self, tmp_path: Path) -> None:
+        (tmp_path / "README.md").write_text("# Root\n", encoding="utf-8")
+        data = self._catalog_with(
+            tmp_path,
+            [{"rel": "describedby", "href": "./README.md", "type": "text/plain"}],
+        )
+
+        assert readme_link_gap(tmp_path / "catalog.json", data) is True
+
+    @pytest.mark.parametrize("href", ["", "/abs/README.md", "https://example.com/README.md"])
+    def test_gap_when_href_is_missing_empty_or_absolute(self, tmp_path: Path, href: str) -> None:
+        (tmp_path / "README.md").write_text("# Root\n", encoding="utf-8")
+        data = self._catalog_with(
+            tmp_path,
+            [{"rel": "describedby", "href": href, "type": "text/markdown"}],
+        )
+
+        assert readme_link_gap(tmp_path / "catalog.json", data) is True
+
+    def test_gap_when_href_key_is_absent(self, tmp_path: Path) -> None:
+        (tmp_path / "README.md").write_text("# Root\n", encoding="utf-8")
+        data = self._catalog_with(tmp_path, [{"rel": "describedby", "type": "text/markdown"}])
+
+        assert readme_link_gap(tmp_path / "catalog.json", data) is True
+
+    def test_gap_when_href_does_not_resolve_to_the_sibling_readme(self, tmp_path: Path) -> None:
+        (tmp_path / "README.md").write_text("# Root\n", encoding="utf-8")
+        data = self._catalog_with(
+            tmp_path,
+            [{"rel": "describedby", "href": "../README.md", "type": "text/markdown"}],
+        )
+
+        assert readme_link_gap(tmp_path / "catalog.json", data) is True
+
+    def test_gap_when_the_readme_file_is_missing(self, tmp_path: Path) -> None:
+        data = self._catalog_with(
+            tmp_path,
+            [{"rel": "describedby", "href": "./README.md", "type": "text/markdown"}],
+        )
+
+        assert readme_link_gap(tmp_path / "catalog.json", data) is True

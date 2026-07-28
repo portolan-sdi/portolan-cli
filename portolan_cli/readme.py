@@ -32,12 +32,15 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote
 
+from portolan_cli.agents_md import markdown_link_gap
+from portolan_cli.agents_md import visible_stac_files as _visible_stac_files
 from portolan_cli.config import load_merged_metadata
 from portolan_cli.errors import ConfigInvalidStructureError
+from portolan_cli.json_io import write_json_atomic
 
 # Keyword-badge rendering limits (#515). A junk-dominated list is a machine dump
 # (e.g. WFS layer ids seeded into metadata.yaml at extraction) and is suppressed;
@@ -988,6 +991,9 @@ def generate_catalog_readme(catalog_path: Path) -> str:
     return "\n".join(sections)
 
 
+#: Canonical filename for the human-readable documentation file.
+README_FILENAME = "README.md"
+
 #: STAC link relation that references the human-readable README.
 README_LINK_REL = "describedby"
 
@@ -1011,20 +1017,72 @@ def _build_readme_link() -> dict[str, str]:
     }
 
 
-def _ensure_readme_link(data: dict[str, Any]) -> bool:
-    """Insert or normalize the ``rel="describedby"`` link. True when changed."""
+def _href_targets_readme(directory: Path, href: str) -> bool:
+    """True when ``href`` (relative to ``directory``) points at the sibling README.
+
+    Resolved-path comparison is the primary test; the basename fallback catches
+    a link whose target does not exist yet (the resolve still succeeds, but a
+    caller may be repairing a tree mid-scaffold).
+    """
+    if not href:
+        return False
+    try:
+        resolved = (directory / href).resolve()
+    except (OSError, ValueError):
+        return PurePosixPath(href).name == README_FILENAME
+    if resolved == (directory / README_FILENAME).resolve():
+        return True
+    return PurePosixPath(href).name == README_FILENAME
+
+
+def _ensure_readme_link(directory: Path, data: dict[str, Any]) -> bool:
+    """Insert or normalize the README's ``rel="describedby"`` link. True when changed.
+
+    A STAC object may carry several ``describedby`` links (a data dictionary, a
+    methodology PDF, ...). Only the one pointing at the sibling ``README.md`` is
+    normalized; every other link is left untouched, and the README link is
+    appended when none of them targets it. Overwriting the first ``describedby``
+    link destroyed publisher-authored documentation pointers on every ``add``.
+    """
     links = data.setdefault("links", [])
     if not isinstance(links, list):
         return False
     expected = _build_readme_link()
     for link in links:
-        if isinstance(link, dict) and link.get("rel") == README_LINK_REL:
-            if all(link.get(key) == value for key, value in expected.items()):
-                return False
-            link.update(expected)
-            return True
+        if not isinstance(link, dict) or link.get("rel") != README_LINK_REL:
+            continue
+        if not _href_targets_readme(directory, str(link.get("href") or "")):
+            continue
+        if all(link.get(key) == value for key, value in expected.items()):
+            return False
+        link.update(expected)
+        return True
     links.append(expected)
     return True
+
+
+def readme_link_gap(stac_path: Path, data: dict[str, Any]) -> bool:
+    """True when ``data``'s README link does not satisfy rashid PTL-FIL-003.
+
+    Replicates the four cases rashid's ``_check_markdown_link`` flags for
+    ``rel="describedby"`` / ``README.md``: no link with the rel; a link whose
+    ``type`` is not ``text/markdown``; an href that is missing, empty, or
+    absolute; and an href that does not resolve to the sibling ``README.md`` (or
+    resolves to one that does not exist). Every case is repaired by
+    :func:`ensure_readmes`, so ``check --fix`` can act on the answer.
+
+    Replicated rather than imported because rashid exposes no public predicate
+    yet — https://github.com/portolan-sdi/rashid/issues/57 tracks the export.
+
+    Args:
+        stac_path: Path of the ``catalog.json``/``collection.json`` (its parent
+            directory is where ``README.md`` must sit).
+        data: The parsed STAC object.
+
+    Returns:
+        True when the object needs repair.
+    """
+    return markdown_link_gap(stac_path, data, rel=README_LINK_REL, target=README_FILENAME)
 
 
 def ensure_readmes(catalog_root: Path) -> bool:
@@ -1045,9 +1103,7 @@ def ensure_readmes(catalog_root: Path) -> bool:
         True if any file was written or modified.
     """
     changed_any = False
-    stac_files = sorted(catalog_root.rglob("catalog.json")) + sorted(
-        catalog_root.rglob("collection.json")
-    )
+    stac_files = _visible_stac_files(catalog_root)
 
     for stac_file in stac_files:
         try:
@@ -1058,7 +1114,7 @@ def ensure_readmes(catalog_root: Path) -> bool:
             continue
 
         directory = stac_file.parent
-        readme_path = directory / "README.md"
+        readme_path = directory / README_FILENAME
         if not readme_path.exists():
             content = (
                 generate_readme_for_collection(directory, catalog_root)
@@ -1068,8 +1124,8 @@ def ensure_readmes(catalog_root: Path) -> bool:
             readme_path.write_text(content, encoding="utf-8")
             changed_any = True
 
-        if _ensure_readme_link(data):
-            stac_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        if _ensure_readme_link(directory, data):
+            write_json_atomic(stac_file, data)
             changed_any = True
 
     return changed_any

@@ -15,6 +15,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from portolan_cli.agents_md import visible_stac_files
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata.models import (
     MetadataCheckResult,
     MetadataReport,
@@ -71,28 +73,44 @@ class FixResult:
 class FixReport:
     """Aggregate report of fix results.
 
+    A SKIPPED result is not a fix: an ORPHANED file or a collection-level asset
+    is *reported* with an explanation and left alone. Counting it as a fix made
+    ``check --fix`` claim work it had not done, so the counts below derive from
+    each result's action rather than from the length of the list.
+
     Attributes:
         results: List of individual fix results.
-        skipped_count: Number of files skipped (already FRESH).
+        fresh_skipped: Number of files skipped before any fix was attempted
+            (already FRESH, so no FixResult was produced for them).
     """
 
     results: list[FixResult] = field(default_factory=list)
-    skipped_count: int = 0
+    fresh_skipped: int = 0
+
+    @property
+    def _fixes(self) -> list[FixResult]:
+        """Results that actually changed something (CREATED or UPDATED)."""
+        return [r for r in self.results if r.action in (FixAction.CREATED, FixAction.UPDATED)]
 
     @property
     def total_count(self) -> int:
         """Total number of files that were fixed (not skipped)."""
-        return len(self.results)
+        return len(self._fixes)
 
     @property
     def success_count(self) -> int:
         """Number of successful fixes."""
-        return sum(1 for r in self.results if r.success)
+        return sum(1 for r in self._fixes if r.success)
 
     @property
     def failure_count(self) -> int:
         """Number of failed fixes."""
         return sum(1 for r in self.results if not r.success)
+
+    @property
+    def skipped_count(self) -> int:
+        """Files left alone: FRESH ones plus every SKIPPED result."""
+        return self.fresh_skipped + sum(1 for r in self.results if r.action is FixAction.SKIPPED)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
@@ -127,24 +145,23 @@ def fix_metadata(
         FixReport with results of all fix operations.
     """
     fix_results: list[FixResult] = []
-    skipped_count = 0
+    fresh_skipped = 0
 
     for check_result in report.results:
         if check_result.status == MetadataStatus.FRESH:
-            skipped_count += 1
+            fresh_skipped += 1
             continue
 
         result = _fix_single_file(check_result, directory, dry_run=dry_run)
         fix_results.append(result)
 
-    return FixReport(results=fix_results, skipped_count=skipped_count)
+    return FixReport(results=fix_results, fresh_skipped=fresh_skipped)
 
 
 def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
     """Populate human-readable titles/descriptions and link titles (Issue #502).
 
-    Repairs what :class:`~portolan_cli.validation.stac_rules.MandatoryTitlesRule`
-    flags:
+    Repairs what rashid's mandatory-title rules (PTL-TTL-001/-002/-003) flag:
 
     - every catalog/collection gets a human-readable title (derived from its id
       when missing or technical) and a description (defaulting to the title);
@@ -165,9 +182,7 @@ def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> lis
 
     results: list[FixResult] = []
 
-    stac_files = sorted(catalog_root.rglob("catalog.json")) + sorted(
-        catalog_root.rglob("collection.json")
-    )
+    stac_files = visible_stac_files(catalog_root)
     for stac_file in stac_files:
         try:
             data = json.loads(stac_file.read_text(encoding="utf-8"))
@@ -191,7 +206,7 @@ def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> lis
 
         if changed:
             if not dry_run:
-                stac_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                write_json_atomic(stac_file, data)
             results.append(
                 FixResult(
                     file_path=stac_file,
@@ -215,7 +230,7 @@ def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> lis
 def repair_pmtiles_links(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
     """Backfill the ``rel="pmtiles"`` web-map-links link on collections (rashid PTL-VIZ-003).
 
-    Repairs what :class:`~portolan_cli.validation.rules.PMTilesLinkRule` flags: a
+    Repairs what rashid PTL-VIZ-003 flags: a
     collection that registers a PMTiles asset but does not emit a collection-level
     ``rel="pmtiles"`` link. For each PMTiles asset lacking a matching link, the link
     is added (with the web-map-links extension declared and ``pmtiles:layers`` set
@@ -302,9 +317,8 @@ def _repair_pmtiles_collection(collection_json: Path, *, dry_run: bool) -> FixRe
 def repair_agents_md(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
     """Backfill missing ``AGENTS.md`` files and ``rel="agents"`` links (rashid PTL-FIL-001/-002).
 
-    Repairs what
-    :class:`~portolan_cli.validation.rules.CatalogAgentsMdLinkRule` and
-    :class:`~portolan_cli.validation.rules.CollectionAgentsMdLinkRule` flag: a
+    Repairs what rashid PTL-FIL-001 (required files) and PTL-FIL-002
+    (``rel="agents"`` link) flag: a
     catalog or collection missing its ``AGENTS.md`` file or the link that
     references it. For each affected STAC object the file is scaffolded (never
     overwriting an existing, human-authored one) and the link is added or
@@ -321,12 +335,7 @@ def repair_agents_md(catalog_root: Path, *, dry_run: bool = False) -> list[FixRe
 
     results: list[FixResult] = []
 
-    for stac_json in sorted(
-        [*catalog_root.rglob("catalog.json"), *catalog_root.rglob("collection.json")]
-    ):
-        rel_parts = stac_json.parent.relative_to(catalog_root).parts
-        if any(part.startswith(".") for part in rel_parts):
-            continue
+    for stac_json in visible_stac_files(catalog_root):
         if agents_md_gap(stac_json) is None:
             continue
         if not dry_run:
@@ -379,7 +388,7 @@ def _repair_item_titles(
         if properties.get("title") != new_title:
             if not dry_run:
                 properties["title"] = new_title
-                item_file.write_text(json.dumps(item_data, indent=2), encoding="utf-8")
+                write_json_atomic(item_file, item_data)
             results.append(
                 FixResult(
                     file_path=item_file,

@@ -1027,7 +1027,13 @@ portolan readme
 **Automatic scaffolding:** `init`, `add`, and `check --fix` scaffold a `README.md`
 next to every `catalog.json` and `collection.json` that lacks one, and add the
 `rel="describedby"` link the spec requires. An existing README is never
-overwritten — run `portolan readme` to refresh a stale one.
+overwritten — run `portolan readme` to refresh a stale one. Files under
+dot-directories (`.portolan/`, `.git/`) are skipped: they hold caches, not
+published STAC objects.
+
+Only the `describedby` link that points at the sibling `README.md` is managed.
+Other `describedby` links you author — a data dictionary, a methodology PDF —
+are left exactly as written, and the README link is added alongside them.
 
 ### Data Defaults
 

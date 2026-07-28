@@ -23,6 +23,7 @@ from pystac.summaries import Summarizer, SummaryStrategy
 
 from portolan_cli.constants import PARTITION_EXTENSION_URI, PORTOLAN_SCHEMA_URI
 from portolan_cli.humanize import humanize_slug
+from portolan_cli.json_io import write_json_atomic
 
 # Any versioned Portolan profile URI, not just the current one: matching the
 # whole family is what lets a stale claim be rewritten rather than duplicated.
@@ -1538,7 +1539,7 @@ def update_catalog_file_statistics(catalog_root: Path) -> None:
         catalog_data["portolan:total_size_bytes"] = total_size
         catalog_data["portolan:asset_count"] = asset_count
         catalog_data["portolan:collection_count"] = collection_count
-        catalog_path.write_text(json.dumps(catalog_data, indent=2) + "\n")
+        write_json_atomic(catalog_path, catalog_data)
     except (json.JSONDecodeError, OSError):
         pass
 
@@ -1589,7 +1590,7 @@ def add_via_link(
     }
     links.append(via_link)
 
-    collection_path.write_text(json.dumps(collection_data, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(collection_path, collection_data)
 
 
 def is_technical_name(text: str | None) -> bool:
@@ -1722,8 +1723,6 @@ def update_stac_metadata(
         updated = True
 
     if updated:
-        path.write_text(
-            json.dumps(stac_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-        )
+        write_json_atomic(path, stac_data)
 
     return updated

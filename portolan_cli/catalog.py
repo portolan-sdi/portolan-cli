@@ -16,7 +16,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, overload
 
+from portolan_cli.agents_md import visible_stac_files
 from portolan_cli.errors import CatalogAlreadyExistsError
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.models.catalog import CatalogModel
 
 if sys.version_info >= (3, 11):
@@ -621,7 +623,7 @@ def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None
             ],
         }
 
-        catalog_file.write_text(json.dumps(catalog_data, indent=2))
+        write_json_atomic(catalog_file, catalog_data)
 
         # Intermediate catalogs are catalogs too: scaffold AGENTS.md and add the
         # rel="agents" link so every catalog.json satisfies rashid PTL-FIL-002.
@@ -696,7 +698,7 @@ def _ensure_root_links_to_child(catalog_root: Path, child_href: str) -> None:
     # Add the child link
     links.append({"rel": "child", "href": child_href, "type": "application/json"})
     content["links"] = links
-    catalog_file.write_text(json.dumps(content, indent=2), encoding="utf-8")
+    write_json_atomic(catalog_file, content)
 
 
 def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
@@ -715,7 +717,7 @@ def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
     # Add the child link
     links.append({"rel": "child", "href": child_href, "type": "application/json"})
     content["links"] = links
-    catalog_file.write_text(json.dumps(content, indent=2), encoding="utf-8")
+    write_json_atomic(catalog_file, content)
 
 
 def _link_title_from_target(
@@ -783,9 +785,7 @@ def ensure_link_titles(catalog_root: Path) -> bool:
     """
     changed_any = False
 
-    stac_files = sorted(catalog_root.rglob("catalog.json")) + sorted(
-        catalog_root.rglob("collection.json")
-    )
+    stac_files = visible_stac_files(catalog_root)
 
     for stac_file in stac_files:
         try:
@@ -815,7 +815,7 @@ def ensure_link_titles(catalog_root: Path) -> bool:
                 file_changed = True
 
         if file_changed:
-            stac_file.write_text(json.dumps(content, indent=2), encoding="utf-8")
+            write_json_atomic(stac_file, content)
             changed_any = True
 
     return changed_any
@@ -841,9 +841,7 @@ def ensure_schema_uris(catalog_root: Path) -> bool:
     from portolan_cli.stac import ensure_portolan_schema_uri
 
     changed_any = False
-    stac_files = sorted(catalog_root.rglob("catalog.json")) + sorted(
-        catalog_root.rglob("collection.json")
-    )
+    stac_files = visible_stac_files(catalog_root)
 
     for stac_file in stac_files:
         try:
@@ -853,7 +851,7 @@ def ensure_schema_uris(catalog_root: Path) -> bool:
         if not isinstance(content, dict):
             continue
         if ensure_portolan_schema_uri(content):
-            stac_file.write_text(json.dumps(content, indent=2), encoding="utf-8")
+            write_json_atomic(stac_file, content)
             changed_any = True
 
     return changed_any

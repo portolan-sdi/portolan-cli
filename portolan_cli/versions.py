@@ -35,13 +35,13 @@ Structure:
 from __future__ import annotations
 
 import json
-import os
 import re
-import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from portolan_cli.json_io import write_json_atomic
 
 # Spec version constant (MINOR #12)
 SPEC_VERSION = "1.0.0"
@@ -235,30 +235,7 @@ def write_versions(path: Path, versions_file: VersionsFile) -> None:
         path: Destination path for the versions.json file.
         versions_file: The VersionsFile to serialize.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    data = _serialize_versions_file(versions_file)
-    content = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-
-    # Atomic write: write to temp file in same directory, then rename
-    # This ensures the file is never in a partial/corrupted state
-    fd, tmp_path = tempfile.mkstemp(
-        dir=path.parent,
-        prefix=".versions_",
-        suffix=".tmp",
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(content)
-        # Atomic rename (POSIX guarantees atomicity for same-filesystem renames)
-        os.replace(tmp_path, path)
-    except Exception:
-        # Clean up temp file on failure
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    write_json_atomic(path, _serialize_versions_file(versions_file))
 
 
 def _serialize_asset(asset: Asset) -> dict[str, Any]:

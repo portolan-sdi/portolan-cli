@@ -469,7 +469,7 @@ class TestCheckMetadataFixFlag:
         ):
             from portolan_cli.metadata.fix import FixReport
 
-            mock_fix.return_value = FixReport(results=[], skipped_count=0)
+            mock_fix.return_value = FixReport(results=[], fresh_skipped=0)
             result = runner.invoke(
                 cli, ["check", str(valid_catalog_with_parquet), "--metadata", "--fix"]
             )
@@ -492,7 +492,7 @@ class TestCheckMetadataFixFlag:
         ):
             from portolan_cli.metadata.fix import FixReport
 
-            mock_fix.return_value = FixReport(results=[], skipped_count=0)
+            mock_fix.return_value = FixReport(results=[], fresh_skipped=0)
             result = runner.invoke(
                 cli, ["check", str(valid_catalog_with_parquet), "--metadata", "--fix", "--json"]
             )
@@ -551,7 +551,7 @@ class TestCheckMetadataFixFlag:
         ):
             from portolan_cli.metadata.fix import FixReport
 
-            mock_fix.return_value = FixReport(results=[], skipped_count=0)
+            mock_fix.return_value = FixReport(results=[], fresh_skipped=0)
             result = runner.invoke(
                 cli, ["check", str(valid_catalog_with_parquet), "--metadata", "--fix"]
             )
@@ -588,7 +588,7 @@ class TestCheckMetadataFixFlag:
         ):
             from portolan_cli.metadata.fix import FixReport
 
-            mock_fix.return_value = FixReport(results=[], skipped_count=0)
+            mock_fix.return_value = FixReport(results=[], fresh_skipped=0)
             result = runner.invoke(
                 cli,
                 ["check", str(valid_catalog_with_parquet), "--metadata", "--fix", "--dry-run"],
@@ -619,7 +619,7 @@ class TestCheckMetadataFixFlag:
             mock_check.return_value = CheckReport(
                 root=valid_catalog_with_parquet, files=[], conversion_report=None
             )
-            mock_fix.return_value = FixReport(results=[], skipped_count=0)
+            mock_fix.return_value = FixReport(results=[], fresh_skipped=0)
 
             result = runner.invoke(cli, ["check", str(valid_catalog_with_parquet), "--fix"])
 
