@@ -365,7 +365,15 @@ class TestCheckMetadataGeoAssetsFlags:
 class TestCheckFlagCombinationsHypothesis:
     """Property-based tests for check command flag combinations."""
 
-    @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], max_examples=20)
+    # differing_executors: mutmut re-invokes each test through its own runner,
+    # so these class methods legitimately run under more than one executor.
+    @settings(
+        suppress_health_check=[
+            HealthCheck.function_scoped_fixture,
+            HealthCheck.differing_executors,
+        ],
+        max_examples=20,
+    )
     @given(metadata=st.booleans(), geo_assets=st.booleans(), json_output=st.booleans())
     @pytest.mark.unit
     def test_all_flag_combinations(
@@ -393,7 +401,15 @@ class TestCheckFlagCombinationsHypothesis:
             assert output["success"] is True
             assert output["command"] == "check"
 
-    @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], max_examples=20)
+    # differing_executors: mutmut re-invokes each test through its own runner,
+    # so these class methods legitimately run under more than one executor.
+    @settings(
+        suppress_health_check=[
+            HealthCheck.function_scoped_fixture,
+            HealthCheck.differing_executors,
+        ],
+        max_examples=20,
+    )
     @given(metadata=st.booleans(), geo_assets=st.booleans())
     @pytest.mark.unit
     def test_json_mode_field_matches_flags(
@@ -418,7 +434,15 @@ class TestCheckFlagCombinationsHypothesis:
 
         assert json.loads(result.output)["data"]["mode"] == expected_mode
 
-    @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], max_examples=20)
+    # differing_executors: mutmut re-invokes each test through its own runner,
+    # so these class methods legitimately run under more than one executor.
+    @settings(
+        suppress_health_check=[
+            HealthCheck.function_scoped_fixture,
+            HealthCheck.differing_executors,
+        ],
+        max_examples=20,
+    )
     @given(fix=st.booleans(), dry_run=st.booleans())
     @pytest.mark.unit
     def test_dry_run_without_fix_warns(
