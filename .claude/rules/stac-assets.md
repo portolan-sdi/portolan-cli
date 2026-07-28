@@ -20,11 +20,13 @@ overwrite-on-re-add) have been fixed, reverted, and re-fixed many times. Read
 this before touching any module that writes `catalog.json`, `collection.json`,
 `item.json`, or asset entries.
 
-The canonical spec for everything below lives in this repo under `spec/` (the
-`portolan-spec` GitHub repo is a read-only mirror, ADR-0048). The
-machine-readable rule matrix is `spec/schema/rules.yaml` (RULE-0001..RULE-0095).
-The CLI validators in `portolan_cli/validation/` must satisfy it, so when you
-change STAC output, check the relevant RULE-id there.
+The canonical spec lives in the `portolan-spec` repo, and `rashid` is its
+executable form: it owns the rule set (`PTL-*` ids citing `PORTO-*` spec
+requirements) that `portolan check` reports (ADR-0057). What Portolan generates
+must satisfy it, so when you change STAC output, run
+`tests/integration/test_generated_catalog_conformance.py` — the gate that runs
+rashid over a freshly generated catalog. The `RULE-*` ids some comments below
+still cite are the retired native namespace; treat them as historical.
 
 ## The `add` flow (where each artifact is written)
 
@@ -205,8 +207,8 @@ Pair the fix with a regression test that fails before and passes after.
 
 ## Where to investigate further
 
-- `spec/structure.md`, `spec/core.md`, `spec/versions.md`,
-  `spec/formats/vector.md`, `spec/schema/rules.yaml` (the RULE-ids cited above).
+- The portolan-spec repo (structure, core, versions, vector formats), and
+  rashid's rule set, which is what `portolan check` enforces.
 - ADRs 0028 (all files as assets), 0031 (collection-level vector assets),
   0032 (nested catalogs, flat collections), 0038 (metadata.yaml enrichment),
   0041 (STAC manifest canonical), 0047 (tabular), 0051 (SELF_CONTAINED).

@@ -169,9 +169,9 @@ Raster band metadata lands on the data asset, see `.claude/rules/stac-assets.md`
 ## Where to investigate further
 
 - ADRs 0010, 0014, 0019, 0020, 0026, 0042, 0043, 0045, 0049, 0050.
-- `spec/formats/vector.md`, `spec/formats/raster.md`, `spec/best-practices.md`,
-  `spec/schema/rules.yaml` (RULE-0030..0032 classification, 0060..0068 PMTiles
-  and styles).
+- The portolan-spec repo (vector and raster formats, best practices), and
+  rashid's PTL-DAT-* / PTL-VIZ-* rules, which enforce classification, PMTiles,
+  and styles.
 - The three `context/shared/known-issues/` files named above.
 - The `stac-partition-extension` repo schema for partition field shapes.
 - Tests: `tests/integration/test_gpio_integration.py`,

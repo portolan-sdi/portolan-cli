@@ -1,12 +1,20 @@
-"""Validation framework for Portolan catalogs.
+"""Adapter over rashid, the Portolan conformance validator (ADR-0057).
 
-This module provides the public API for validating catalogs:
-- check(): Run validation rules against a catalog
-- ValidationReport: Aggregate validation results
-- ValidationRule: Base class for custom rules
+`portolan check` does not implement validation rules. rashid owns the rule set
+(``PTL-*`` ids citing ``PORTO-*`` spec requirements) and the structural, schema,
+data, and live passes. This package translates between rashid and the CLI:
 
-Per ADR-0011, this is an MVP that validates catalog structure only.
-Collection-specific and remote validation comes in later versions.
+- :mod:`~portolan_cli.validation.config` — ``.portolan/config.yaml`` to
+  ``rashid.RulesConfig``, plus the published base URL.
+- :mod:`~portolan_cli.validation.runner` — one call that runs rashid and the
+  source-file convertibility check, returning a :class:`CheckOutcome`.
+- :mod:`~portolan_cli.validation.remediation` — who fixes which rule id.
+- :mod:`~portolan_cli.validation.report` — the JSON payload `--json` emits.
+- :mod:`~portolan_cli.validation.legacy` — detect pre-schema-URI catalogs.
+
+Nothing here renders output: :mod:`report` returns plain dicts and ``cli.py``
+does the printing, so the dependency runs one way (import-linter contract
+``validation-is-an-adapter``).
 
 Input hardening (ADR-0030) lives in the top-level
 :mod:`portolan_cli.input_hardening` leaf, not here: sanitizing agent-supplied
@@ -30,25 +38,31 @@ from portolan_cli.input_hardening import (
     validate_remote_url,
     validate_safe_path,
 )
-from portolan_cli.validation.results import (
-    Severity,
-    ValidationReport,
-    ValidationResult,
+from portolan_cli.validation.remediation import (
+    DEFAULT_REMEDIATION,
+    RULE_REMEDIATION,
+    Bucket,
+    Remediation,
+    remediation_for,
 )
-from portolan_cli.validation.rules import ValidationRule
-from portolan_cli.validation.runner import check
+from portolan_cli.validation.report import build_check_payload
+from portolan_cli.validation.runner import CheckOutcome, LiveHint, run_check
 
 __all__ = [
-    "Severity",
-    "ValidationReport",
-    "ValidationResult",
-    "ValidationRule",
-    "check",
+    "Bucket",
+    "CheckOutcome",
+    "DEFAULT_REMEDIATION",
     "InputValidationError",
-    "validate_safe_path",
+    "LiveHint",
+    "RULE_REMEDIATION",
+    "Remediation",
+    "build_check_payload",
+    "remediation_for",
+    "run_check",
     "validate_collection_id",
-    "validate_item_id",
-    "validate_remote_url",
     "validate_config_key",
     "validate_config_value",
+    "validate_item_id",
+    "validate_remote_url",
+    "validate_safe_path",
 ]
