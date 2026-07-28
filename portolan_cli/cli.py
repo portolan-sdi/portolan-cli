@@ -1465,8 +1465,9 @@ def _execute_check_workflow(
     if use_json:
         _output_check_json(payload, failed=failed)
     else:
-        _render_check(outcome, payload, verbose=verbose, strict=strict)
-        if fix_data is not None and not dry_run:
+        post_fix = fix_data is not None and not dry_run
+        _render_check(outcome, payload, verbose=verbose, strict=strict, post_fix=post_fix)
+        if post_fix:
             _print_fix_split(payload)
 
     if failed:
@@ -1533,15 +1534,30 @@ def _check_failed(payload: dict[str, Any], *, strict: bool) -> bool:
     return strict and bool(payload.get("warning_count"))
 
 
-def _render_check(outcome: Any, payload: dict[str, Any], *, verbose: bool, strict: bool) -> None:
-    """Render the human-readable check result."""
+def _render_check(
+    outcome: Any,
+    payload: dict[str, Any],
+    *,
+    verbose: bool,
+    strict: bool,
+    post_fix: bool = False,
+) -> None:
+    """Render the human-readable check result.
+
+    After ``--fix`` the per-finding list and the remediation split are dropped:
+    :func:`_print_fix_split` says the same things better, naming what was fixed
+    and giving every remaining finding its requirement. Printing both listed each
+    survivor twice. ``--verbose`` keeps the raw findings for the detail.
+    """
     if outcome.legacy_note is not None:
         warn(outcome.legacy_note)
 
     if outcome.report is not None:
-        _print_findings(outcome.report, verbose=verbose)
+        if verbose or not post_fix:
+            _print_findings(outcome.report, verbose=verbose)
         _print_check_summary(outcome.report, strict=strict)
-        _print_remediation_split(payload)
+        if not post_fix:
+            _print_remediation_split(payload)
 
     if outcome.format_report is not None:
         info_output("Source files:")

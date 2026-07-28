@@ -228,6 +228,31 @@ class TestRashidRoundtrip:
         assert "Render a thumbnail" in result.output
         assert "the automatic fix did not resolve this" in result.output
 
+    def test_post_fix_output_lists_each_survivor_once(self, catalog: Path) -> None:
+        """The raw finding list is dropped after --fix; only the split remains."""
+        _corrupt(catalog)
+
+        result = CliRunner().invoke(
+            cli, ["check", str(catalog), "--metadata", "--fix"], catch_exceptions=False
+        )
+
+        assert result.output.count("PTL-VIZ-001") == 1
+        # The pre-fix rendering's headings are gone: the split replaces them.
+        assert "Errors (" not in result.output
+        assert "fixable by `portolan check --fix`" not in result.output
+
+    def test_verbose_keeps_the_raw_findings_after_fix(self, catalog: Path) -> None:
+        _corrupt(catalog)
+
+        result = CliRunner().invoke(
+            cli,
+            ["check", str(catalog), "--metadata", "--fix", "--verbose"],
+            catch_exceptions=False,
+        )
+
+        assert "Errors (" in result.output
+        assert "Action required (" in result.output
+
     def test_dry_run_writes_nothing(self, catalog: Path) -> None:
         _corrupt(catalog)
         before = _snapshot(catalog)
