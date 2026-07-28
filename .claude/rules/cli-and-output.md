@@ -4,7 +4,7 @@ paths:
   - "portolan_cli/output.py"
   - "portolan_cli/json_output.py"
   - "portolan_cli/errors.py"
-  - "portolan_cli/validation/input_hardening.py"
+  - "portolan_cli/input_hardening.py"
   - "portolan_cli/add_progress.py"
   - "portolan_cli/scan_progress.py"
   - "portolan_cli/upload_progress.py"
@@ -75,7 +75,7 @@ type** (cap around 100) into a summary. `--verbose` adds per-file detail, `--jso
 disables Rich entirely. Dry-run summary counts MUST match the files listed, no
 "Would push N" followed by "Nothing to push".
 
-## Harden every agent-supplied input (validation/input_hardening.py)
+## Harden every agent-supplied input (input_hardening.py)
 
 Agents hallucinate paths, embed query params, double-encode, and inject control
 chars. Validate before any filesystem, API, or URL use:
@@ -96,5 +96,5 @@ the executor.
 - ADRs 0007 (CLI wraps API), 0009 (dry-run and verbose), 0030 (agent-native JSON
   and input hardening), 0040 (progress and summary).
 - `json_output.py` (`OutputEnvelope`, `ErrorDetail`), `errors.py` (the
-  `PortolanError` hierarchy), `validation/input_hardening.py` (the validators).
+  `PortolanError` hierarchy), `input_hardening.py` (the validators).
 - The sync rules in `sync.md` for how credentials and dry-run behave end to end.

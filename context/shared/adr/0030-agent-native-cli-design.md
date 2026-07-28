@@ -53,7 +53,7 @@ Without agent-native design, agents must parse brittle human-readable output and
 
 ### 2. Input Validation Against Hallucinations
 
-**All user inputs validated through `portolan_cli/validation/input_hardening.py`:**
+**All user inputs validated through `portolan_cli/input_hardening.py`:**
 
 - `validate_safe_path()` — Reject path traversals, canonicalize paths
 - `validate_collection_id()` — Reject control chars, query params, encoding
@@ -119,7 +119,7 @@ Rationale:
 
 ## Implementation
 
-- **Module**: `portolan_cli/validation/input_hardening.py`
+- **Module**: `portolan_cli/input_hardening.py`
 - **Tests**: `tests/unit/test_input_hardening.py` (46 tests, 97% coverage)
 - **Commands**: All 14 commands support `--json` (init, list, info, check, scan, add, rm, push, pull, sync, clone, config, clean)
 - **Validation**: Applied at CLI entry points before business logic
