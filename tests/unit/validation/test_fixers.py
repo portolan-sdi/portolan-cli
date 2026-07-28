@@ -694,6 +694,49 @@ class TestItemMirrorFixer:
         assert _snapshot(tmp_path) == before
 
 
+class TestItemMirrorSceneDetection:
+    """PTL-MIR-001: only COG items make a collection owe a mirror.
+
+    A GeoTIFF becomes a COG through the ``profile=cloud-optimized`` parameter.
+    Matching the ``image/tiff`` prefix alone counted every GeoTIFF as a scene,
+    and the fixer then generated mirrors rashid had not asked for. Scene
+    detection now comes from rashid's ``has_cog``.
+    """
+
+    def _catalog_with_raster_item(self, root: Path, media_type: str) -> Path:
+        collection = _tiny_catalog(root)
+        _write_json(
+            collection / "scene-a" / "scene-a.json",
+            {
+                "type": "Feature",
+                "stac_version": "1.1.0",
+                "id": "scene-a",
+                "geometry": None,
+                "bbox": [0.0, 0.0, 1.0, 1.0],
+                "properties": {"datetime": "2024-01-01T00:00:00Z"},
+                "assets": {"image": {"href": "./scene-a.tif", "type": media_type}},
+                "links": [],
+            },
+        )
+        return collection
+
+    def test_plain_geotiff_items_earn_no_mirror(self, tmp_path: Path) -> None:
+        self._catalog_with_raster_item(tmp_path, "image/tiff; application=geotiff")
+        before = _snapshot(tmp_path)
+
+        assert FIXERS["item_mirror"](tmp_path, False) == []
+        assert _snapshot(tmp_path) == before
+
+    def test_cog_items_are_recognised_as_scenes(self, tmp_path: Path) -> None:
+        self._catalog_with_raster_item(
+            tmp_path, "image/tiff; application=geotiff; profile=cloud-optimized"
+        )
+
+        results = FIXERS["item_mirror"](tmp_path, True)
+
+        assert results, "a COG scene collection should be offered a mirror"
+
+
 class TestPartitionFixer:
     """PTL-PRT-001: the partition block is readable off the Hive layout on disk."""
 

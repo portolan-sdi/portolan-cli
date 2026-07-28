@@ -36,8 +36,8 @@ from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from rashid.api import STRUCTURAL_RELS, has_cog, links_of, roles_of
 from rashid.catalog import CatalogGraph, Node, is_absolute_href
-from rashid.rules._common import STRUCTURAL_RELS, links_of, roles_of
 
 from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.validation.remediation import Bucket, remediation_for
@@ -371,14 +371,10 @@ def _register_mirror(node: Node) -> bool:
 
 
 def _has_cog_items(node: Node, graph: CatalogGraph) -> bool:
-    for child in graph.children_of(node):
-        if child.kind != "item":
-            continue
-        for asset in _assets_of(child).values():
-            media_type = asset.get("type")
-            if isinstance(media_type, str) and media_type.strip().lower().startswith("image/tiff"):
-                return True
-    return False
+    # has_cog is what PTL-MIR-001 counts as a scene. Reading the answer from
+    # rashid keeps the fixer from generating a mirror for a collection the
+    # rule never flagged.
+    return any(child.kind == "item" and has_cog(child) for child in graph.children_of(node))
 
 
 def _generate_mirror(node: Node, *, dry_run: bool) -> FixResult:
