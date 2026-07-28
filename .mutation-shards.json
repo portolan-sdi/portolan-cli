@@ -1,0 +1,22 @@
+{
+  "_comment": [
+    "Per-shard mutation kill rates for the nightly sweep (nightly.yml). A shard",
+    "must hold its own recorded rate, minus 'tolerance' percentage points, on top",
+    "of the repo-wide floor in .mutation-baseline. See scripts/mutation_score.py",
+    "and context/shared/documentation/ci.md.",
+    "",
+    "'shards' starts empty on purpose. Shard membership is a hash of each file's",
+    "path (scripts/shard_select.py), so the one rate measured before this file",
+    "existed (44.63%, shard 8 under index-based assignment, run 30244241948)",
+    "describes a different set of files and would gate the wrong thing. Each",
+    "sweep prints the line to add for the shard it just measured; paste it in.",
+    "",
+    "Raising a recorded rate after writing tests is the ratchet. LOWERING one",
+    "requires a justification in the PR that does so, same as .mutation-baseline.",
+    "Changing num_shards invalidates every rate: the tree is re-partitioned, so",
+    "the scorer refuses to run until they are re-measured."
+  ],
+  "num_shards": 25,
+  "tolerance": 3.0,
+  "shards": {}
+}
