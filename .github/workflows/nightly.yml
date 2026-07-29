@@ -20,7 +20,7 @@ jobs:
     # catalog against rashid's main branch (the released pin is exercised by
     # regular CI). A failure here means an unreleased rashid rule change will
     # break `portolan check` at its next release — fix generation, or raise it
-    # upstream, before that release ships (ADR-0057).
+    # upstream, before that release ships.
     name: Conformance vs rashid main
     runs-on: ubuntu-latest
     timeout-minutes: 20

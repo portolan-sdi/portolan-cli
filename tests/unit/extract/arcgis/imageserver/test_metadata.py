@@ -193,7 +193,7 @@ class TestCreateCollectionMetadata:
         assert len(spatial["bbox"][0]) == 4
 
     def test_temporal_extent_is_open(self, sample_metadata: ImageServerMetadata) -> None:
-        """Temporal extent is open interval (null dates) per ADR-0035."""
+        """Temporal extent is open interval (null dates)."""
         result = create_collection_metadata(sample_metadata, "https://example.com")
         temporal = result["extent"]["temporal"]
         assert "interval" in temporal

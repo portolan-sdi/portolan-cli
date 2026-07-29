@@ -34,12 +34,12 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
-    """Create an initialized Portolan catalog structure (per ADR-0023)."""
+    """Create an initialized Portolan catalog structure."""
     # Create .portolan for internal state
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
 
-    # catalog.json at root level (per ADR-0023)
+    # catalog.json at root level
     catalog_data = {
         "type": "Catalog",
         "stac_version": "1.0.0",
@@ -336,7 +336,7 @@ class TestListItems:
     def test_list_skips_non_directory_at_root(self, initialized_catalog: Path) -> None:
         """list_items skips files at root level (not directories).
 
-        Per ADR-0023: Collections are directories at root level.
+        Collections are directories at root level.
         """
         # Create a file (not directory) at root
         (initialized_catalog / "not-a-collection.txt").write_text("not a dir")
@@ -348,7 +348,7 @@ class TestListItems:
     def test_list_skips_collection_without_json(self, initialized_catalog: Path) -> None:
         """list_items skips directories without collection.json.
 
-        Per ADR-0023: Collections live at root level, identified by collection.json.
+        Collections live at root level, identified by collection.json.
         """
         # Create directory at root without collection.json
         col_dir = initialized_catalog / "incomplete"
@@ -362,9 +362,9 @@ class TestListItems:
     def test_list_skips_missing_item_files(self, initialized_catalog: Path) -> None:
         """list_items skips items where item.json doesn't exist.
 
-        Per ADR-0023: Collections live at root level.
+        Collections live at root level.
         """
-        # Create collection at root (per ADR-0023)
+        # Create collection at root
         col_dir = initialized_catalog / "col"
         col_dir.mkdir(parents=True)
 
@@ -390,9 +390,9 @@ class TestListItems:
     def test_list_detects_raster_format(self, initialized_catalog: Path) -> None:
         """list_items correctly identifies raster format from .tif assets.
 
-        Per ADR-0023: Collections live at root level, not inside .portolan/.
+        Collections live at root level, not inside .portolan/.
         """
-        # Create collection directory at root (per ADR-0023)
+        # Create collection directory at root
         col_dir = initialized_catalog / "imagery"
         col_dir.mkdir(parents=True)
 
@@ -436,9 +436,9 @@ class TestListItems:
     def test_list_all_items(self, initialized_catalog: Path) -> None:
         """list_items returns all items across collections.
 
-        Per ADR-0023: Collections live at root level, not inside .portolan/.
+        Collections live at root level, not inside .portolan/.
         """
-        # Create collection directory at root (per ADR-0023)
+        # Create collection directory at root
         col1_dir = initialized_catalog / "col1"
         col1_dir.mkdir(parents=True)
 
@@ -475,7 +475,7 @@ class TestListItems:
         }
         (item_dir / "item1.json").write_text(json.dumps(item_data))
 
-        # Update catalog to link to collection (catalog.json is at root per ADR-0023)
+        # Update catalog to link to collection (catalog.json is at root)
         catalog_data = json.loads((initialized_catalog / "catalog.json").read_text())
         catalog_data["links"].append({"rel": "child", "href": "./col1/collection.json"})
         (initialized_catalog / "catalog.json").write_text(json.dumps(catalog_data))
@@ -490,9 +490,9 @@ class TestListItems:
     def test_list_items_filter_by_collection(self, initialized_catalog: Path) -> None:
         """list_items filters by collection when specified.
 
-        Per ADR-0023: Collections live at root level.
+        Collections live at root level.
         """
-        # Create two collections at root (per ADR-0023)
+        # Create two collections at root
         for col_id in ["col1", "col2"]:
             col_dir = initialized_catalog / col_id
             col_dir.mkdir(parents=True)
@@ -527,7 +527,7 @@ class TestListItems:
             }
             (item_dir / f"item-{col_id}.json").write_text(json.dumps(item_data))
 
-        # Update catalog links (catalog.json is at root per ADR-0023)
+        # Update catalog links (catalog.json is at root)
         catalog_data = json.loads((initialized_catalog / "catalog.json").read_text())
         catalog_data["links"] = [
             {"rel": "child", "href": "./col1/collection.json"},
@@ -549,9 +549,9 @@ class TestGetItemInfo:
     def test_get_item_info_existing(self, initialized_catalog: Path) -> None:
         """get_item_info returns info for existing item.
 
-        Per ADR-0023: Collections live at root level.
+        Collections live at root level.
         """
-        # Create collection at root (per ADR-0023)
+        # Create collection at root
         col_dir = initialized_catalog / "test-col"
         col_dir.mkdir(parents=True)
 
@@ -860,7 +860,7 @@ class TestPathSegmentValidation:
         pytest.param("", id="empty"),
     ]
 
-    # collection_id allows slashes per ADR-0032 (nested catalogs),
+    # collection_id allows slashes (nested catalogs),
     # but still rejects traversal, backslashes, and special segments
     _UNSAFE_COLLECTION_IDS = [
         pytest.param("../etc", id="traversal"),
@@ -903,7 +903,7 @@ class TestPathSegmentValidation:
     ) -> None:
         """add rejects collection_id values with traversal or backslashes.
 
-        Per ADR-0032, forward slashes ARE allowed for nested catalog paths
+        Forward slashes ARE allowed for nested catalog paths
         (e.g., 'climate/hittekaart'), but traversal segments are rejected.
         """
         geojson_path = tmp_path / "data.geojson"
@@ -946,7 +946,7 @@ class TestUpdateVersionsHref:
         )
 
         versions = read_versions(collection_dir / "versions.json")
-        # Asset key uses item-scoped format: {item_id}/{filename} (per ADR-0028)
+        # Asset key uses item-scoped format: {item_id}/{filename}
         asset = versions.versions[0].assets["census-2020/census-2020.parquet"]
 
         assert asset.href == "agriculture/census-2020/census-2020.parquet"
@@ -972,7 +972,7 @@ class TestUpdateVersionsHref:
         )
 
         versions = read_versions(collection_dir / "versions.json")
-        # Asset key uses item-scoped format: {item_id}/{filename} (per ADR-0028)
+        # Asset key uses item-scoped format: {item_id}/{filename}
         asset = versions.versions[0].assets["pop-data/pop-data.parquet"]
 
         resolved = catalog_root / asset.href
@@ -1396,7 +1396,7 @@ class TestMultiAssetUpdateVersions:
         assert len(versions.versions) == 1
         assets = versions.versions[0].assets
 
-        # All three files should be tracked with item-scoped keys (per ADR-0028)
+        # All three files should be tracked with item-scoped keys
         assert "my-item/my-item.parquet" in assets
         assert "my-item/thumbnail.png" in assets
         assert "my-item/metadata.xml" in assets
@@ -1432,7 +1432,7 @@ class TestMultiAssetUpdateVersions:
         )
 
         versions = read_versions(collection_dir / "versions.json")
-        # Single asset still uses item-scoped key format (per ADR-0028)
+        # Single asset still uses item-scoped key format
         asset = versions.versions[0].assets["census-2020/census-2020.parquet"]
         assert asset.href == "agriculture/census-2020/census-2020.parquet"
         assert len(asset.sha256) == 64  # SHA-256 hex computed by backend

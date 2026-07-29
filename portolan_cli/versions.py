@@ -1,7 +1,7 @@
 """Versions module - manages versions.json for collection versioning.
 
 The versions.json file is the single source of truth for collection versioning,
-sync state, and integrity checksums (see ADR-0005).
+sync state, and integrity checksums.
 
 Structure:
     {
@@ -49,7 +49,7 @@ SPEC_VERSION = "1.0.0"
 
 @dataclass(frozen=True)
 class SchemaInfo:
-    """Schema information for breaking change detection (ADR-0005).
+    """Schema information for breaking change detection.
 
     Attributes:
         type: Schema type identifier (e.g., "geoparquet", "cog").
@@ -75,10 +75,10 @@ class Asset:
         source_mtime: Optional Unix timestamp of the source file when
             conversion occurred. Used to detect when source has changed.
         mtime: Optional Unix timestamp of the asset file itself.
-            Used for fast-path change detection per ADR-0017.
+            Used for fast-path change detection.
         feature_count: Optional feature/row count (pixel count for rasters)
             captured when the asset was tracked. Lets a touched-but-identical
-            asset read FRESH instead of a spurious STALE (ADR-0017 heuristics).
+            asset read FRESH instead of a spurious STALE (heuristics).
         schema_fingerprint: Optional hash of the asset schema captured when the
             asset was tracked. Used to detect breaking schema changes.
     """
@@ -103,7 +103,7 @@ class Version:
         breaking: Whether this version has breaking changes.
         assets: Mapping of filename to Asset metadata.
         changes: List of filenames that changed in this version.
-        schema: Optional schema fingerprint for breaking change detection (ADR-0005).
+        schema: Optional schema fingerprint for breaking change detection.
         message: Optional human-readable description of the change.
     """
 
@@ -185,16 +185,16 @@ def _parse_versions_file(data: dict[str, Any]) -> VersionsFile:
                     # Optional source tracking fields with defaults
                     source_path=asset_data.get("source_path"),
                     source_mtime=asset_data.get("source_mtime"),
-                    # Optional asset mtime for ADR-0017 fast-path
+                    # Optional asset mtime for fast-path
                     mtime=asset_data.get("mtime"),
-                    # Optional freshness heuristics (ADR-0017)
+                    # Optional freshness heuristics
                     feature_count=asset_data.get("feature_count"),
                     schema_fingerprint=asset_data.get("schema_fingerprint"),
                 )
                 for name, asset_data in v["assets"].items()
             }
 
-            # Parse optional schema (ADR-0005)
+            # Parse optional schema
             schema_data = v.get("schema")
             schema = None
             if schema_data is not None:
@@ -287,7 +287,7 @@ def _serialize_version(v: Version) -> dict[str, Any]:
         "assets": {name: _serialize_asset(asset) for name, asset in v.assets.items()},
         "changes": v.changes,
     }
-    # Only include optional fields when present (ADR-0005)
+    # Only include optional fields when present
     if v.schema is not None:
         data["schema"] = {
             "type": v.schema.type,
@@ -329,8 +329,7 @@ def add_version(
     This function is immutable - it returns a new VersionsFile rather than
     modifying the input.
 
-    Each version is a complete SNAPSHOT of all assets at that point in time
-    (per ADR-0005). New assets are merged with the previous version's assets,
+    Each version is a complete SNAPSHOT of all assets at that point in time. New assets are merged with the previous version's assets,
     and any assets in `removed` are excluded.
 
     Args:
@@ -338,7 +337,7 @@ def add_version(
         version: The new version string (e.g., "1.1.0").
         assets: Mapping of filename to Asset to add or update in this version.
         breaking: Whether this version has breaking changes.
-        schema: Optional schema fingerprint for breaking change detection (ADR-0005).
+        schema: Optional schema fingerprint for breaking change detection.
         message: Optional human-readable description of the change.
         removed: Optional set of asset keys to remove from the snapshot.
 

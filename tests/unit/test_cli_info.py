@@ -37,7 +37,7 @@ def catalog_with_tracked_file(tmp_path: Path, valid_points_parquet: Path) -> Pat
     catalog_root = tmp_path / "catalog"
     catalog_root.mkdir()
 
-    # Create .portolan directory (for MANAGED state per ADR-0027)
+    # Create .portolan directory (for MANAGED state)
     portolan_dir = catalog_root / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("# Portolan config\n")
@@ -133,13 +133,13 @@ def catalog_with_tracked_file(tmp_path: Path, valid_points_parquet: Path) -> Pat
 
 @pytest.fixture
 def catalog_with_subcatalog(tmp_path: Path, valid_points_parquet: Path) -> Path:
-    """Create a catalog with a subcatalog (nested catalog structure per ADR-0032)."""
+    """Create a catalog with a subcatalog (nested catalog structure)."""
 
     # Create root catalog structure
     catalog_root = tmp_path / "catalog"
     catalog_root.mkdir()
 
-    # Create .portolan directory (for MANAGED state per ADR-0027)
+    # Create .portolan directory (for MANAGED state)
     portolan_dir = catalog_root / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("# Portolan config\n")
@@ -161,7 +161,7 @@ def catalog_with_subcatalog(tmp_path: Path, valid_points_parquet: Path) -> Path:
     subcatalog_dir = catalog_root / "climate"
     subcatalog_dir.mkdir()
 
-    # Create subcatalog's .portolan directory (per ADR-0039)
+    # Create subcatalog's .portolan directory
     subcatalog_portolan = subcatalog_dir / ".portolan"
     subcatalog_portolan.mkdir()
     (subcatalog_portolan / "config.yaml").write_text("# Subcatalog config\n")
@@ -417,7 +417,7 @@ class TestInfoDotArgument:
     def test_info_dot_at_catalog_root_json_output(
         self, cli_runner: CliRunner, catalog_with_tracked_file: Path
     ) -> None:
-        """Test that `portolan info . --json` produces catalog JSON."""
+        """Test that `portolan info. --json` produces catalog JSON."""
         from portolan_cli.cli import cli
 
         result = cli_runner.invoke(
@@ -509,7 +509,7 @@ class TestInfoDotArgument:
     ) -> None:
         """Test that catalog.json takes precedence when both files exist.
 
-        Per ADR-0032 Pattern 2, a directory CAN have both catalog.json and
+        Pattern 2, a directory CAN have both catalog.json and
         collection.json (e.g., a collection with sub-catalogs organizing items).
         When both exist, we prefer catalog.json since it represents the
         organizational structure.

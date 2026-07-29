@@ -43,7 +43,7 @@ def multi_collection_catalog(tmp_path: Path) -> Path:
     catalog_dir = tmp_path / "catalog"
     catalog_dir.mkdir()
 
-    # Create .portolan/config.yaml (sentinel file per ADR-0029)
+    # Create .portolan/config.yaml (sentinel file)
     # Note: remote set via env var, not config.yaml (Issue #356)
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()

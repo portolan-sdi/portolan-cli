@@ -1,6 +1,6 @@
 """Tests for temporal extent handling.
 
-Per ADR-0035: Default to null (open interval), mark provisional, flag in check.
+Default to null (open interval), mark provisional, flag in check.
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ class TestFlexibleDatetimeType:
 
 
 class TestCreateItemDatetime:
-    """Tests for create_item datetime handling per ADR-0035."""
+    """Tests for create_item datetime handling."""
 
     def test_create_item_with_explicit_datetime(self) -> None:
         """Should use provided datetime when specified."""
@@ -101,7 +101,7 @@ class TestCreateItemDatetime:
         assert "portolan:datetime_provisional" not in item.properties
 
     def test_create_item_with_none_datetime_marks_provisional(self) -> None:
-        """Should use open interval and mark as provisional when datetime is None (ADR-0035)."""
+        """Should use open interval and mark as provisional when datetime is None."""
         from portolan_cli.stac import create_item
 
         item = create_item(

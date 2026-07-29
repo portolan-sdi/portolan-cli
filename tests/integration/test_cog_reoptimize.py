@@ -8,7 +8,7 @@ Covers:
 - check_directory(force=, workers=): unions CLOUD_NATIVE rasters into the fix set
   and threads force/workers through; dry-run preview lists forced COGs.
 
-Per ADR-0010, conversion itself is delegated to rio-cogeo; these tests verify
+Conversion itself is delegated to rio-cogeo; these tests verify
 Portolan's orchestration (the force bypass, parallelism, and check threading),
 not raster math.
 """
@@ -82,7 +82,7 @@ class TestConvertFileForce:
 
         assert result.status == ConversionStatus.SUCCESS
         assert result.output is not None
-        # In-place re-encode (ADR-0020: rasters convert in place).
+        # In-place re-encode (rasters convert in place).
         assert result.output.resolve() == cog.resolve()
         assert _overview_count(cog) >= 1
 

@@ -12,7 +12,7 @@ Key mappings:
 
 References:
 - STAC Spec: https://stacspec.org/
-- ADR-0035: Temporal extent handling (use null for unknown dates)
+- Temporal extent handling (use null for unknown dates)
 """
 
 from __future__ import annotations
@@ -107,7 +107,7 @@ def create_collection_metadata(
                 "bbox": [list(wgs84_bbox)],
             },
             "temporal": {
-                # Open interval per ADR-0035: unknown acquisition dates
+                # Open interval: unknown acquisition dates
                 "interval": [[None, None]],
             },
         },

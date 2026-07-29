@@ -122,8 +122,7 @@ def place_geojson_in_collection(
 ) -> Path:
     """Write a GeoJSON file into the expected catalog directory structure.
 
-    For vector data (GeoJSON), portolan-cli uses collection-level assets
-    (ADR-0031): parent directory = collection. So:
+    For vector data (GeoJSON), portolan-cli uses collection-level assets: parent directory = collection. So:
       catalog_root/collection/data.geojson -> collection = "collection"
 
     Returns the file path.

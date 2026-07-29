@@ -11,7 +11,7 @@ Modules:
 - orchestrator: CLI-facing wrapper for Click commands
 
 Note: STAC metadata is created via the Portolan API (init_catalog + add_files)
-after extraction, not by the extractor itself (per ADR-0007, ADR-0031).
+after extraction, not by the extractor itself.
 """
 
 from __future__ import annotations

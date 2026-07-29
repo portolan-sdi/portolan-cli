@@ -4,7 +4,7 @@ These tests exercise the full add/rm workflow with real file operations,
 verifying that format conversion, metadata extraction, STAC creation,
 and file management work end-to-end.
 
-Per ADR-0022: Git-style implicit tracking
+Git-style implicit tracking
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ class TestAddIntegration:
         # Assert
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
-        # Verify STAC structure created (per ADR-0023)
+        # Verify STAC structure created
         assert (collection_dir / "collection.json").exists()
         assert (collection_dir / "versions.json").exists()
 
@@ -193,7 +193,7 @@ class TestAddIntegration:
     def test_add_infers_collection_from_path(
         self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
-        """add infers full nested collection ID from path (ADR-0032)."""
+        """add infers full nested collection ID from path."""
         # Set up: deeply nested file
         nested_dir = initialized_catalog / "demographics" / "census" / "2020"
         nested_dir.mkdir(parents=True)
@@ -210,7 +210,7 @@ class TestAddIntegration:
         # Assert
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
-        # Per ADR-0032: collection at leaf level with full nested path
+        # Collection at leaf level with full nested path
         collection_json = (
             initialized_catalog / "demographics" / "census" / "2020" / "collection.json"
         )
@@ -225,7 +225,6 @@ class TestAddIntegration:
     ) -> None:
         """Adding a file captures all geo files in the same directory.
 
-        Per ADR-0028 ("Track ALL files in item directories as assets"):
         - When adding a file, ALL geo files in the directory are captured as assets
         - Adding an already-tracked file is a no-op (is_current returns True)
 
@@ -236,7 +235,7 @@ class TestAddIntegration:
         import json
 
         # Set up: create collection with two files in SAME directory
-        # Per ADR-0032: leaf directory = one collection
+        # Leaf directory = one collection
         collection_dir = initialized_catalog / "snapshot-test"
         collection_dir.mkdir(parents=True)
         shutil.copy(valid_points_geojson, collection_dir / "file-a.geojson")
@@ -255,7 +254,7 @@ class TestAddIntegration:
         )
         assert result1.exit_code == 0, f"First add failed: {result1.output}"
 
-        # Check version 1.0.0 has BOTH files (per ADR-0028)
+        # Check version 1.0.0 has BOTH files
         versions_path = collection_dir / "versions.json"
         with open(versions_path) as f:
             v1 = json.load(f)
@@ -264,7 +263,7 @@ class TestAddIntegration:
         asset_keys = list(v1["versions"][0]["assets"].keys())
         assert any("file-a" in k for k in asset_keys), f"file-a not in assets: {asset_keys}"
         assert any("file-b" in k for k in asset_keys), (
-            f"file-b should be captured by ADR-0028 directory scan: {asset_keys}"
+            f"file-b should be captured by directory scan: {asset_keys}"
         )
 
         # Act 2: Add second file - should be no-op since already tracked
@@ -294,7 +293,7 @@ class TestAddItemIdOverrideIntegration:
 
     Issue #136: Users should be able to override automatic item ID derivation.
 
-    Per ADR-0031: --item-id only applies to raster data (item-level assets).
+    --item-id only applies to raster data (item-level assets).
     Vector data is collection-level and doesn't create items.
     """
 
@@ -304,14 +303,14 @@ class TestAddItemIdOverrideIntegration:
     ) -> None:
         """add --item-id creates STAC item with the custom ID.
 
-        Per ADR-0031: Raster data = item-level asset (grandparent = collection).
-        Per ADR-0032: For rasters, collection is the grandparent, item is the parent.
+        Raster data = item-level asset (grandparent = collection).
+        For rasters, collection is the grandparent, item is the parent.
         The --item-id flag overrides the default item ID (parent directory name).
         """
         import json
 
         # Set up: create structure for raster data
-        # Per ADR-0031: Raster structure is collection/item_dir/data.tif
+        # Raster structure is collection/item_dir/data.tif
         # imagery = collection, scene-001 = item directory
         collection_dir = initialized_catalog / "imagery"
         item_dir = collection_dir / "scene-001"
@@ -336,14 +335,14 @@ class TestAddItemIdOverrideIntegration:
         # Assert
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
-        # Per ADR-0031: versions.json is at the collection level (imagery/)
+        # Versions.json is at the collection level (imagery/)
         versions_path = collection_dir / "versions.json"
         assert versions_path.exists(), "versions.json not created at collection level"
         with open(versions_path) as f:
             versions = json.load(f)
         assert len(versions["versions"]) > 0, "No version entries created"
 
-        # Per ADR-0031: Raster item JSON is at item_dir/{item_id}.json
+        # Raster item JSON is at item_dir/{item_id}.json
         # The item_id is custom, but the item JSON stays alongside the data.
         item_json_path = item_dir / "custom-scene-2024.json"
         assert item_json_path.exists(), f"Item JSON not found at {item_json_path}"
@@ -360,11 +359,11 @@ class TestAddItemIdOverrideIntegration:
     ) -> None:
         """add --item-id results in STAC item.json with custom ID field.
 
-        Per ADR-0031: Raster data = item-level asset with item.json.
+        Raster data = item-level asset with item.json.
         """
         import json
 
-        # Set up: raster structure per ADR-0031
+        # Set up: raster structure
         collection_dir = initialized_catalog / "imagery"
         item_dir = collection_dir / "original-dir"
         item_dir.mkdir(parents=True)
@@ -387,7 +386,7 @@ class TestAddItemIdOverrideIntegration:
 
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
-        # Per ADR-0031: Raster item JSON at item_dir/{item_id}.json (flat structure)
+        # Raster item JSON at item_dir/{item_id}.json (flat structure)
         item_json_path = item_dir / "my-custom-item.json"
         assert item_json_path.exists(), f"Item JSON not found at {item_json_path}"
 
@@ -403,10 +402,10 @@ class TestAddItemIdOverrideIntegration:
     def test_add_without_item_id_derives_from_directory(
         self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
-        """Without --item-id, item ID is derived from collection directory (ADR-0032)."""
+        """Without --item-id, item ID is derived from collection directory."""
         import json
 
-        # Per ADR-0032: file's parent directory is the leaf collection
+        # File's parent directory is the leaf collection
         # Using single-level collection to avoid nested catalog complexity
         collection_dir = initialized_catalog / "census-2020"
         collection_dir.mkdir(parents=True)
@@ -427,7 +426,7 @@ class TestAddItemIdOverrideIntegration:
 
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
-        # Per ADR-0032: collection.json and versions.json at collection level
+        # Collection.json and versions.json at collection level
         collection_json_path = collection_dir / "collection.json"
         assert collection_json_path.exists(), f"Collection JSON not found at {collection_json_path}"
 

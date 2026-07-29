@@ -1,6 +1,5 @@
 """Unit tests for collection ID inference based on format type.
 
-Per ADR-0031:
 - Vector data: parent directory = collection (collection-level asset)
 - Raster data: grandparent directory = collection, parent = item
 
@@ -23,7 +22,7 @@ from portolan_cli.add import infer_nested_collection_id
 
 
 class TestCollectionInferenceByFormat:
-    """Tests that collection inference respects ADR-0031 format distinctions."""
+    """Tests that collection inference respects format distinctions."""
 
     @pytest.mark.unit
     def test_vector_file_uses_parent_as_collection(self, tmp_path: Path) -> None:

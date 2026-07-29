@@ -221,7 +221,7 @@ class TestStatisticsShaping:
 
 
 class TestFixCollectionLevelAssetHrefs:
-    """ADR-0031 / RULE-0010: collection-level hrefs are ./file and keys are stems."""
+    """/ RULE-0010: collection-level hrefs are ./file and keys are stems."""
 
     def test_primary_data_key_becomes_stem_and_href_normalized(self) -> None:
         assets = {
@@ -248,7 +248,7 @@ class TestFixCollectionLevelAssetHrefs:
 
 
 class TestValidateCollectionId:
-    """_validate_collection_id security + STAC-compliance checks (ADR-0032)."""
+    """_validate_collection_id security + STAC-compliance checks."""
 
     def test_valid_nested_id_passes(self) -> None:
         _validate_collection_id("boundaries/districts")  # no raise

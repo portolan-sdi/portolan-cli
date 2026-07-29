@@ -856,7 +856,7 @@ def format_scan_output(
 
 
 # =============================================================================
-# Phase 3: Enhanced Output for Nested Catalogs (ADR-0032)
+# Phase 3: Enhanced Output for Nested Catalogs
 # =============================================================================
 
 
@@ -872,7 +872,7 @@ def _get_collection_id(file: ScannedFile) -> str | None:
     Returns:
         Collection ID if present, None otherwise.
     """
-    # Primary: top-level field (ADR-0032 nested catalog support)
+    # Primary: top-level field (nested catalog support)
     if file.inferred_collection_id:
         return file.inferred_collection_id
     # Fallback: metadata dict (backward compatibility)
@@ -1103,7 +1103,7 @@ def generate_structure_recommendation(result: ScanResult) -> str:
     lines.append(f"Structure detected: {desc}")
 
     if pattern.is_nested:
-        lines.append("  Nested catalog structure (ADR-0032)")
+        lines.append(" Nested catalog structure")
 
     # Commands to run
     if pattern.suggested_commands:
@@ -1211,8 +1211,8 @@ def format_issue_verbose(issue: ScanIssue) -> str:
 
     # Add spec references for specific issue types
     spec_refs = {
-        IssueType.MULTIPLE_PRIMARIES: "See ADR-0031: One primary geo-asset per directory",
-        IssueType.MIXED_FLAT_MULTIITEM: "See ADR-0032: Nested catalogs with flat collections",
+        IssueType.MULTIPLE_PRIMARIES: "One primary geo-asset per directory",
+        IssueType.MIXED_FLAT_MULTIITEM: "Nested catalogs with flat collections",
     }
 
     if issue.issue_type in spec_refs:

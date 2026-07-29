@@ -3,7 +3,7 @@
 Tests the add_vector_extension() function that adds vector:geometry_types
 to STAC items from GeoParquet metadata.
 
-Per ADR-0037: Use experimental extensions, accept migration cost.
+Use experimental extensions, accept migration cost.
 """
 
 from __future__ import annotations

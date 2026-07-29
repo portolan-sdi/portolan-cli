@@ -12,7 +12,7 @@ from portolan_cli import extension_registry as _reg
 
 # Version of the Portolan specification this CLI validates against (issue #566).
 #
-# DERIVED from the profile schemas rashid bundles in its wheel (ADR-0057), so
+# DERIVED from the profile schemas rashid bundles in its wheel, so
 # the CLI and the validator cannot drift: whichever spec version rashid can
 # actually validate against is the one `check` reports and the one generation
 # stamps. ``bundled_schema_versions()`` returns tags like ("v0.1.0",) sorted
@@ -31,7 +31,7 @@ PORTOLAN_SCHEMA_URI: str = (
     f"https://schemas.portolan-sdi.org/portolan/v{PORTOLAN_SPEC_VERSION}/schema.json"
 )
 
-# The partition extension a Hive-partitioned collection declares (ADR-0042).
+# The partition extension a Hive-partitioned collection declares.
 # rashid's PTL-PRT-001 recognizes the incubating URI namespace, so generation
 # and `check --fix` both emit this one; the older github.io URL it replaced was
 # never a URI the validator accepted.
@@ -40,13 +40,13 @@ PARTITION_EXTENSION_URI: str = (
 )
 
 # The extension vocabulary below is DERIVED from portolan_cli.extension_registry
-# (the single source, ADR-0055). Edit rows there, not these members.
+# (the single source). Edit rows there, not these members.
 
 # Extensions we recognize as geospatial files (.gdb is a FileGDB directory,
 # handled specially in detection code).
 GEOSPATIAL_EXTENSIONS: frozenset[str] = _reg.extensions_where(is_geospatial=True)
 
-# Tabular data that may or may not carry geometry columns (ADR-0028). Includes
+# Tabular data that may or may not carry geometry columns. Includes
 # .parquet (issue #177) and .xlsx/.xls (issue #432).
 TABULAR_EXTENSIONS: frozenset[str] = _reg.extensions_where(is_tabular=True)
 
@@ -59,7 +59,7 @@ SIDECAR_PATTERNS: dict[str, list[str]] = {
     primary: list(patterns) for primary, patterns in _reg.SIDECAR_OF.items()
 }
 
-# Change detection constants (per ADR-0017)
+# Change detection constants
 # 2 second tolerance for NFS/CIFS compatibility where mtime resolution is coarse
 MTIME_TOLERANCE_SECONDS: float = 2.0
 
@@ -69,7 +69,7 @@ PORTOLAN_DIR: str = ".portolan"
 # Maximum depth for catalog root discovery (prevent traversing to filesystem root)
 MAX_CATALOG_SEARCH_DEPTH: int = 20
 
-# Maximum depth for nested catalogs (per ADR-0032)
+# Maximum depth for nested catalogs
 # Prevents excessive nesting which likely indicates misconfiguration
 MAX_CATALOG_DEPTH: int = 10
 

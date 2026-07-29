@@ -28,7 +28,7 @@ _MESSAGE = (
 )
 
 #: Depth of the collection scan. Collections sit one level below the root
-#: (ADR-0032 nests catalogs, never collections), and one legacy marker is
+#: (nests catalogs, never collections), and one legacy marker is
 #: enough — this does not walk the whole tree to count them.
 _SCAN_GLOB = "*/collection.json"
 

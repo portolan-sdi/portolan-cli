@@ -1,4 +1,4 @@
-"""Tests for collection ID path syntax (nested catalogs per ADR-0032)."""
+"""Tests for collection ID path syntax (nested catalogs)."""
 
 import pytest
 
@@ -81,7 +81,7 @@ class TestCollectionIdPathSyntax:
         assert not is_valid
 
     def test_validate_path_allows_segment_starting_with_number(self) -> None:
-        """Test that path segments starting with numbers are valid (ADR-0032)."""
+        """Test that path segments starting with numbers are valid."""
         is_valid, error = validate_collection_id("environment/2024")
         assert is_valid
         is_valid, error = validate_collection_id("2024/january")
@@ -137,7 +137,7 @@ class TestCollectionIdPathSyntax:
             normalize_collection_id("///")
 
     def test_normalize_path_with_numeric_segment(self) -> None:
-        """Test normalizing path with segment starting with number (ADR-0032)."""
+        """Test normalizing path with segment starting with number."""
         # Numbers at segment start are now valid - no 'n' prefix
         result = normalize_collection_id("environment/2024")
         assert result == "environment/2024"
@@ -154,7 +154,7 @@ class TestCollectionIdPathSyntax:
         assert result == "environment/n_quality"
 
     def test_normalize_numeric_first_segment(self) -> None:
-        """Test normalizing path where first segment starts with number (ADR-0032)."""
+        """Test normalizing path where first segment starts with number."""
         # Numbers at segment start are now valid - no 'n' prefix
         result = normalize_collection_id("2024/january")
         assert result == "2024/january"

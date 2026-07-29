@@ -4,8 +4,8 @@ Provides file-focused inspection that delegates to upstream libraries
 (geoparquet-io, rio-cogeo) for metadata extraction, adding version info
 from versions.json when files are tracked.
 
-Per ADR-0007, all logic lives here; the CLI is a thin wrapper.
-Per ADR-0022, the output format follows the specified structure.
+All logic lives here; the CLI is a thin wrapper.
+The output format follows the specified structure.
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ class FileInfo:
         return data
 
     def format_human(self) -> list[str]:
-        """Format for human-readable output per ADR-0022.
+        """Format for human-readable output.
 
         Returns:
             List of output lines in the format:
@@ -327,7 +327,7 @@ def _lookup_version(path: Path, catalog_root: Path) -> str | None:
     if len(parts) < 2:
         return None
 
-    # First part is collection ID (per ADR-0022 subdirectory = collection)
+    # First part is collection ID ( subdirectory = collection)
     collection_id = parts[0]
     versions_path = catalog_root / collection_id / "versions.json"
 
@@ -357,7 +357,7 @@ def _lookup_version(path: Path, catalog_root: Path) -> str | None:
     item_id = path.parent.name if path.parent != catalog_root else ""
 
     for asset_name, _asset in current_version_obj.assets.items():
-        # Check item-scoped key format (new format per ADR-0028)
+        # Check item-scoped key format (new format)
         if item_id and asset_name == f"{item_id}/{filename}":
             return f"v{versions_file.current_version}"
         # Check legacy format (just filename)

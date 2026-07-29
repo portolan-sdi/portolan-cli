@@ -10,8 +10,6 @@ Workflow:
 4. Check: Validate cloud-native status, optionally convert with --fix
 5. Push: Upload changes to remote storage
 
-See ADR-0005 for versions.json as single source of truth.
-See ADR-0007 for CLI wraps Python API (all logic in library layer).
 """
 
 from __future__ import annotations
@@ -169,8 +167,7 @@ def list_remote_collections(
     """List all collections available in a remote catalog.
 
     Recursively fetches catalog.json files and parses STAC child links
-    to discover collection names. Handles nested catalog structures
-    per ADR-0032 (nested catalogs with flat collections).
+    to discover collection names. Handles nested catalog structures (nested catalogs with flat collections).
 
     Args:
         remote_url: Remote catalog URL (e.g., s3://bucket/catalog).

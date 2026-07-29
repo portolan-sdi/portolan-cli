@@ -1,12 +1,12 @@
 # Feature: Versioning Stress Tests
 
 **Issue:** [#339](https://github.com/portolan-sdi/portolan-cli/issues/339) - versions.json not populated after portolan add
-**Related:** ADR-0005 (versions.json as single source of truth)
+**Related:** (versions.json as single source of truth)
 **Status:** ✅ FIXED
 
 ## Context
 
-Two separate `versions.json` files exist per ADR-0005:
+Two separate `versions.json` files exist:
 - **Catalog-level:** `<catalog>/versions.json` — aggregate view of all collections (updated by add)
 - **Collection-level:** `<catalog>/<collection>/versions.json` — detailed version history (updated by add)
 
@@ -44,7 +44,7 @@ The fix adds `update_catalog_versions()` to populate collection state after each
 
 ## Snapshot Model Accumulation
 
-Per ADR-0005, each version is a complete snapshot containing all assets.
+Each version is a complete snapshot containing all assets.
 
 ### Happy Path
 - [ ] Second `add` preserves first version's assets in snapshot

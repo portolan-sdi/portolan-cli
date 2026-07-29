@@ -5,7 +5,7 @@ populated correctly at the collection level (not catalog level).
 
 See:
 - tests/specs/versioning_stress.md for human test specification
-- ADR-0005 for versions.json as single source of truth
+- for versions.json as single source of truth
 - Issue #339 for the original bug report
 
 Note: remote is a sensitive setting and must be set via env var (Issue #356).
@@ -273,7 +273,7 @@ class TestAddPopulatesVersions:
 
 
 class TestCatalogLevelVersioning:
-    """Verify catalog-level versions.json IS updated by add (per ADR-0005).
+    """Verify catalog-level versions.json IS updated by add.
 
     Issue #339 reported that catalog-level versions.json showed empty collections
     after add. This was a real bug, not user confusion. These tests verify the fix.
@@ -516,7 +516,7 @@ class TestAddThenPushSeesFiles:
 
 
 class TestSnapshotModelAccumulation:
-    """Verify each version is a complete snapshot (ADR-0005)."""
+    """Verify each version is a complete snapshot."""
 
     @pytest.mark.integration
     def test_second_add_preserves_first_assets(

@@ -454,7 +454,7 @@ def _backfill_asset(asset: dict[str, Any], href: str) -> bool | None:
 
 
 def _fix_assets(root: Path, dry_run: bool) -> list[FixResult]:
-    """Backfill asset media type and roles from the extension registry (ADR-0055)."""
+    """Backfill asset media type and roles from the extension registry."""
     results: list[FixResult] = []
     for node in _graph(root).iter("collection", "item"):
         changed = False
@@ -613,7 +613,7 @@ def _generate_mirror(node: Node, *, dry_run: bool) -> FixResult:
 
 
 def _fix_item_mirror(root: Path, dry_run: bool) -> list[FixResult]:
-    """Publish and register the stac-geoparquet item mirror (ADR-0049)."""
+    """Publish and register the stac-geoparquet item mirror."""
     results: list[FixResult] = []
     graph = _graph(root)
     for node in graph.iter("collection"):
@@ -642,7 +642,7 @@ def _is_partitioned(node: Node) -> bool:
 
 
 def _fix_partition(root: Path, dry_run: bool) -> list[FixResult]:
-    """Populate the partition: block from the Hive layout on disk (ADR-0042)."""
+    """Populate the partition: block from the Hive layout on disk."""
     from portolan_cli.constants import PARTITION_EXTENSION_URI
     from portolan_cli.partitioning import build_glob_pattern, detect_partitioning
 
@@ -768,7 +768,7 @@ def _fix_readme(root: Path, dry_run: bool) -> list[FixResult]:
 
 
 def _fix_agents(root: Path, dry_run: bool) -> list[FixResult]:
-    """Scaffold AGENTS.md and its rel='agents' link (ADR-0052)."""
+    """Scaffold AGENTS.md and its rel='agents' link."""
     from portolan_cli.agents_md import ensure_agents_md_tree
 
     return _fix_markdown_requirement(
@@ -786,7 +786,7 @@ def _fix_required_files(root: Path, dry_run: bool) -> list[FixResult]:
 
 
 def _fix_titles(root: Path, dry_run: bool) -> list[FixResult]:
-    """Derive titles and descriptions, and backfill child/item link titles (ADR-0053)."""
+    """Derive titles and descriptions, and backfill child/item link titles."""
     from portolan_cli.metadata.fix import repair_titles_and_links
 
     return repair_titles_and_links(root, dry_run=dry_run)

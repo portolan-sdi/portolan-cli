@@ -1,7 +1,7 @@
 """Run rashid over a catalog and return everything `check` needs to render.
 
 One call, one outcome. The CLI does not orchestrate passes; it says which ones
-it wants and gets a :class:`CheckOutcome` back (ADR-0007).
+it wants and gets a :class:`CheckOutcome` back.
 
 Which passes run by default, and why:
 
@@ -120,7 +120,7 @@ def _notice_message(unregistered: list[str], missing: list[str]) -> str:
     """Say what is unaccounted for, and who can settle it.
 
     Neither case is something ``--fix`` resolves. An orphan is explicitly not
-    auto-fixable (ADR-0041): fabricating an ``item.json`` for a file nobody
+    auto-fixable: fabricating an ``item.json`` for a file nobody
     registered guesses at metadata. A missing asset is bytes that are gone, and
     no repair pass can bring them back.
     """

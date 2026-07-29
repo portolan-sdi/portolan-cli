@@ -1,7 +1,7 @@
 """Tests for collection summaries functionality.
 
 Tests the update_collection_summaries function that aggregates item properties.
-Per ADR-0036: Hybrid field detection, categorical only, no numeric aggregation.
+Hybrid field detection, categorical only, no numeric aggregation.
 """
 
 from __future__ import annotations

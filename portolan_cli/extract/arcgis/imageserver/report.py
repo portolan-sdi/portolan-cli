@@ -143,7 +143,7 @@ class ImageServerMetadataExtracted:
         pixel_size_y: Pixel size in Y direction (native units).
         extent_bbox: Full extent as [minx, miny, maxx, maxy].
 
-        # FeatureServer-parity fields (for metadata.yaml population per ADR-0038):
+        # FeatureServer-parity fields (for metadata.yaml population):
         service_description: Extended service description (maps to processing_notes).
         author: Author from documentInfo (maps to contact.name).
         keywords: Keywords from documentInfo (list of strings).

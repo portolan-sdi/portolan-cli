@@ -363,7 +363,7 @@ conversion:
         non_cog_tif: Path,
         tmp_path: Path,
     ) -> None:
-        """Convert without catalog_path uses ADR-0019 defaults."""
+        """Convert without catalog_path uses the built-in defaults."""
         import rasterio
 
         from portolan_cli.convert import ConversionStatus, convert_file

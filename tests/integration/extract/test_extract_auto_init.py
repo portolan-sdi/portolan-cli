@@ -147,7 +147,7 @@ class TestAutoInitCatalog:
 
         _auto_init_catalog(output_dir, report)
 
-        # Should have .portolan/config.yaml (per ADR-0027)
+        # Should have .portolan/config.yaml
         assert (output_dir / ".portolan" / "config.yaml").exists(), "config.yaml should exist"
 
     def test_auto_init_creates_collection_per_layer(self, tmp_path: Path) -> None:

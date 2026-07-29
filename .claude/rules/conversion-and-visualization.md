@@ -21,7 +21,7 @@ visualizations. Two themes cause almost every bug here: **non-3857 / non-4326
 data breaks downstream tools when reprojection is skipped or done wrong**, and
 **a fix lands in one render path but not its twin**. We orchestrate upstream
 libraries (`geoparquet-io`, `rio-cogeo`, `contextily`, `tippecanoe`), we do not
-reimplement geometry or raster math (ADR-0010).
+reimplement geometry or raster math.
 
 ## Delegate, never reimplement, and guard the known crashes
 
@@ -79,7 +79,7 @@ render paths.
   to the PMTiles path (commit `c41da07`, #468). When you change rendering or CRS
   logic here, grep for every `add_basemap(` call and apply the change to **both**
   paths, then assert parity. Basemaps are for **vector** thumbnails only, raster
-  thumbnails get no basemap (ADR-0043).
+  thumbnails get no basemap.
 - `contextily` is an optional lazy import, guard for its absence.
 - **The matplotlib floor is a punchy data-aware preset, NOT the extracted style**
   (#518, Track 1). The WFS/Mapbox style is pale by design (`fill-opacity 0.2`,
@@ -118,8 +118,7 @@ render paths.
 
 ## PMTiles: thread src_crs through, register at collection level
 
-- PMTiles is required for vector datasets > 100 MB and recommended > 10 MB
-  (ADR-0050). Generate alongside the GeoParquet.
+- PMTiles is required for vector datasets > 100 MB and recommended > 10 MB. Generate alongside the GeoParquet.
 - `pmtiles.src_crs` from `.portolan/config.yaml` must be threaded
   `get_pmtiles_settings()` (in `pmtiles.py`) -> `generate_pmtiles_for_collection()`
   -> `gpio-pmtiles`, which reprojects to WGS84 before tippecanoe. Dropping it
@@ -129,7 +128,7 @@ render paths.
   non-conformant (rashid PTL-VIZ-003, an error). PMTiles discovery
   (`_find_geoparquet_assets`) only scans collection-level assets.
 
-## Styles are standalone STAC assets (ADR-0045, supersedes 0043)
+## Styles are standalone STAC assets (supersedes 0043)
 
 - A style is a complete **Mapbox GL v8** JSON file in `{collection}/styles/`,
   not inline in the STAC. Asset key `styles/{stem}`, `type: "application/json"`,
@@ -155,20 +154,19 @@ render paths.
   on-disk Hive structure (an integration test reads it back via DuckDB).
 - Each partition is a STAC item with its own bbox. The collection adds the
   partition extension URL to `stac_extensions` and sets `partition:scheme` and
-  `partition:keys` (ADR-0042). `partitioning.py` is the reference implementation
+  `partition:keys`. `partitioning.py` is the reference implementation
   named by the `stac-partition-extension` repo, so its output must match that
   schema exactly.
 
-## COG and output-location defaults (ADR-0019, ADR-0020)
+## COG and output-location defaults
 
 COG defaults are DEFLATE, predictor=2, 512x512 tiles, nearest resampling.
 Conversion output goes **side-by-side for vectors, in-place for rasters**.
-Accept non-cloud-native formats with a warning, do not hard-fail (ADR-0014).
+Accept non-cloud-native formats with a warning, do not hard-fail.
 Raster band metadata lands on the data asset, see `.claude/rules/stac-assets.md`.
 
 ## Where to investigate further
 
-- ADRs 0010, 0014, 0019, 0020, 0026, 0042, 0043, 0045, 0049, 0050.
 - The portolan-spec repo (vector and raster formats, best practices), and
   rashid's PTL-DAT-* / PTL-VIZ-* rules, which enforce classification, PMTiles,
   and styles.

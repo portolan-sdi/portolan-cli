@@ -1,6 +1,6 @@
 """Catalog management for Portolan.
 
-Primary API (v2, per ADR-0023):
+Primary API (v2):
 - init_catalog(): Initialize catalog with STAC catalog.json at root level
 - detect_state(): Detect catalog state (MANAGED, UNMANAGED_STAC, FRESH)
 - create_catalog(): Create a CatalogModel with auto-extracted fields
@@ -81,7 +81,7 @@ def detect_state(path: Path) -> CatalogState:
     Checks only file/directory existence - does NOT read file contents.
     This ensures fast detection without I/O overhead.
 
-    The detection logic (per issue #290, updating ADR-0027):
+    The detection logic (per issue #290, updating ):
     1. If .portolan/config.yaml exists -> MANAGED
     2. If catalog.json exists at root (and not MANAGED) -> UNMANAGED_STAC
     3. Otherwise -> FRESH
@@ -129,7 +129,7 @@ def find_catalog_root(
     and walking up parent directories. This provides git-style behavior
     where commands work from any subdirectory within a catalog.
 
-    Per ADR-0029 and issue #290, this uses .portolan/config.yaml as the sole sentinel,
+    issue #290, this uses .portolan/config.yaml as the sole sentinel,
     unifying detection across all CLI commands. By default (require_operational=True),
     it also requires catalog.json to exist to avoid detecting half-initialized repos.
 
@@ -334,13 +334,13 @@ def init_catalog(
 
     Creates (in order for partial failure recovery):
     1. .portolan/ directory
-    2. versions.json at ROOT level (file backend only, consumer-visible per ADR-0023)
+    2. versions.json at ROOT level (file backend only, consumer-visible)
     3. catalog.json at ROOT level (valid STAC catalog via pystac)
     4. Self link in catalog.json
     5. .portolan/config.yaml — sentinel file, written LAST (per issue #290)
 
     Write order ensures failed runs stay in FRESH state (retry-safe).
-    Per ADR-0023: versions.json is user-visible metadata and lives at the
+    Versions.json is user-visible metadata and lives at the
     catalog root alongside STAC files; only internal tooling state goes in
     .portolan/.
 
@@ -418,7 +418,7 @@ def init_catalog(
         raise CatalogInitError(f"Cannot create .portolan directory: {e}") from e
 
     # Step 2: versions.json - only for file backend
-    # Per ADR-0023: versions.json is consumer-visible metadata and must live at
+    # Versions.json is consumer-visible metadata and must live at
     # the catalog root alongside STAC files, NOT inside .portolan/ (which is
     # reserved for internal tooling state only).
     # Written early so failure here leaves directory in FRESH state.
@@ -450,14 +450,14 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot write catalog.json: {e}") from e
 
-    # No self link: a SELF_CONTAINED catalog omits it (ADR-0051), which is also
+    # No self link: a SELF_CONTAINED catalog omits it, which is also
     # what pystac emits and what rashid's PTL-LNK-005 enforces. `init` used to
     # append one by hand; `add` then stripped it, so only init-only catalogs
     # carried the violation and the conformance gate (which runs init + add)
     # never saw it.
 
     # Step 4b: AGENTS.md - scaffold the AI/agent guide and add its rel="agents"
-    # link (ADR-0052; rashid PTL-FIL-002). Emitting it here keeps freshly-created catalogs
+    # link (rashid PTL-FIL-002). Emitting it here keeps freshly-created catalogs
     # schema-valid without a follow-up `check --fix`.
     from portolan_cli.agents_md import ensure_agents_md
 
@@ -553,7 +553,7 @@ class Catalog:
 
 
 def intermediate_catalog_ids(collection_id: str) -> list[str]:
-    """Return the ancestor sub-catalog ids for a nested collection (ADR-0032).
+    """Return the ancestor sub-catalog ids for a nested collection.
 
     These are the intermediate directory levels between the catalog root and the
     leaf collection, each of which holds a ``catalog.json`` (created by
@@ -577,7 +577,7 @@ def intermediate_catalog_ids(collection_id: str) -> list[str]:
 
 
 def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None:
-    """Create intermediate catalog.json files for nested collection paths (ADR-0032).
+    """Create intermediate catalog.json files for nested collection paths.
 
     For a nested collection ID like "climate/hittekaart", this creates:
     - climate/catalog.json (intermediate catalog)
@@ -595,7 +595,7 @@ def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None
     """
     # Create catalog.json at each intermediate level (all but the last).
     # intermediate_catalog_ids is the shared source of truth for this walk,
-    # also used by push discovery (keeps add/push in lockstep, ADR-0032).
+    # also used by push discovery (keeps add/push in lockstep).
     for i, intermediate_path in enumerate(intermediate_catalog_ids(collection_id)):
         catalog_dir = catalog_root / intermediate_path
         catalog_file = catalog_dir / "catalog.json"
@@ -633,7 +633,7 @@ def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None
 
 
 def update_catalog_links_for_nested(catalog_root: Path, collection_id: str) -> None:
-    """Update catalog links for nested collection structure (ADR-0032).
+    """Update catalog links for nested collection structure.
 
     Ensures:
     - Root catalog links to intermediate catalogs (not directly to leaf collections)
@@ -742,7 +742,7 @@ def _link_title_from_target(
 
     target = (stac_file.parent / href).resolve()
 
-    # ADR-0030 input hardening: ignore ``../`` hrefs that resolve outside the
+    # input hardening: ignore ``../`` hrefs that resolve outside the
     # catalog so a crafted link can't read files elsewhere on disk.
     root = catalog_root.resolve()
     if target != root and root not in target.parents:
@@ -864,7 +864,7 @@ def update_catalog_versions(
     asset_count: int,
     total_size_bytes: int,
 ) -> None:
-    """Update catalog-level versions.json with collection state (ADR-0005).
+    """Update catalog-level versions.json with collection state.
 
     The catalog-level versions.json tracks aggregate state of all collections,
     providing a quick overview without needing to read each collection's

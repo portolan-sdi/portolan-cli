@@ -1,6 +1,6 @@
 """Unit tests for 'portolan add .' at catalog root (Issue #137).
 
-Tests the fix for: add . fails at catalog root with
+Tests the fix for: add. fails at catalog root with
 "Cannot determine collection from path: /path/to/my-catalog"
 
 The root cause: resolve_collection_id raises ValueError when path == catalog_root
@@ -31,10 +31,10 @@ def runner() -> CliRunner:
 
 
 def setup_catalog(path: Path) -> None:
-    """Create an initialized Portolan catalog (per ADR-0023, ADR-0029).
+    """Create an initialized Portolan catalog.
 
     Creates full managed catalog structure with:
-    - .portolan/config.yaml (sentinel per ADR-0029)
+    - .portolan/config.yaml (sentinel)
     (Note: state.json removed per issue #290)
     - catalog.json at root (STAC standard)
     """
@@ -56,7 +56,7 @@ class TestAddAtCatalogRoot:
 
     @pytest.mark.unit
     def test_add_dot_at_catalog_root_succeeds(self, runner: CliRunner) -> None:
-        """add . at catalog root does not raise 'Cannot determine collection' error."""
+        """add. at catalog root does not raise 'Cannot determine collection' error."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -82,7 +82,7 @@ class TestAddAtCatalogRoot:
     def test_add_dot_at_catalog_root_calls_add_files_with_no_collection_id(
         self, runner: CliRunner
     ) -> None:
-        """add . passes collection_id=None so add_files infers per-file."""
+        """add. passes collection_id=None so add_files infers per-file."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -110,7 +110,7 @@ class TestAddAtCatalogRoot:
 
     @pytest.mark.unit
     def test_add_dot_at_catalog_root_passes_catalog_root_path(self, runner: CliRunner) -> None:
-        """add . passes the catalog root path itself to add_files."""
+        """add. passes the catalog root path itself to add_files."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -137,7 +137,7 @@ class TestAddAtCatalogRoot:
 
     @pytest.mark.unit
     def test_add_dot_returns_results_from_multiple_collections(self, runner: CliRunner) -> None:
-        """add . aggregates results from multiple collections in output."""
+        """add. aggregates results from multiple collections in output."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -174,7 +174,7 @@ class TestAddAtCatalogRoot:
                 )
 
                 assert result.exit_code == 0, f"Expected success, got: {result.output}"
-                # Per ADR-0040: default output is summary only, no per-collection details
+                # Default output is summary only, no per-collection details
                 # Collection names only shown with --verbose flag
                 assert "2 files" in result.output, f"Expected '2 files' in output: {result.output}"
                 assert "2 collections" in result.output, (
@@ -183,7 +183,7 @@ class TestAddAtCatalogRoot:
 
     @pytest.mark.unit
     def test_add_dot_at_catalog_root_with_json_output(self, runner: CliRunner) -> None:
-        """add . --format json at catalog root returns valid JSON envelope."""
+        """add. --format json at catalog root returns valid JSON envelope."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -214,7 +214,7 @@ class TestAddAtCatalogRoot:
 
     @pytest.mark.unit
     def test_add_dot_empty_catalog_succeeds(self, runner: CliRunner) -> None:
-        """add . on a catalog with no geo-files exits gracefully with informative message."""
+        """add. on a catalog with no geo-files exits gracefully with informative message."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -237,7 +237,7 @@ class TestAddAtCatalogRoot:
 
     @pytest.mark.unit
     def test_add_dot_not_a_catalog_fails(self, runner: CliRunner) -> None:
-        """add . on non-catalog directory still fails with appropriate error."""
+        """add. on non-catalog directory still fails with appropriate error."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             # No .portolan/config.yaml - not a managed catalog
@@ -248,7 +248,7 @@ class TestAddAtCatalogRoot:
             )
 
             assert result.exit_code == 1
-            # Per ADR-0029, error message references .portolan/config.yaml sentinel
+            # Error message references .portolan/config.yaml sentinel
             assert "no .portolan/config.yaml found" in result.output.lower()
 
     @pytest.mark.unit
@@ -311,7 +311,7 @@ class TestAddCatalogRootCollectionInference:
 
     @pytest.mark.unit
     def test_add_root_with_portolan_dir_flag(self, runner: CliRunner) -> None:
-        """add . with explicit --portolan-dir works correctly."""
+        """add. with explicit --portolan-dir works correctly."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)

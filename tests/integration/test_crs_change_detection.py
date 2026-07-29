@@ -31,7 +31,7 @@ def runner() -> CliRunner:
 def catalog_with_3857_geoparquet(tmp_path: Path) -> tuple[Path, Path, Path]:
     """Create a catalog with a GeoParquet file in EPSG:3857.
 
-    Uses collection-level asset (file directly in collection dir) per ADR-0031.
+    Uses collection-level asset (file directly in collection dir).
 
     Returns:
         Tuple of (catalog_root, collection_dir, geoparquet_path).

@@ -1,4 +1,4 @@
-"""Tests for metadata.yaml schema and validation (ADR-0038).
+"""Tests for metadata.yaml schema and validation.
 
 Tests metadata validation including:
 - Required field detection (contact, license only - title/description come from STAC)

@@ -8,11 +8,11 @@ and asset-role maps).
 
 This module is the one place that vocabulary lives now. Every frozenset/dict in
 those modules is *derived* from :data:`EXTENSION_REGISTRY` (see the derivation
-helpers below). See ADR-0055.
+helpers below). See.
 
 The registry used to also gate ``spec/extensions.md`` through a parity test.
 Both are gone: the spec moved to the portolan-spec repo and validation moved to
-rashid (ADR-0057), so nothing re-homes that vocabulary doc yet — issue #563
+rashid, so nothing re-homes that vocabulary doc yet — issue #563
 tracks publishing it from this registry.
 
 It is deliberately a stdlib-only leaf that imports nothing from ``portolan_cli``,

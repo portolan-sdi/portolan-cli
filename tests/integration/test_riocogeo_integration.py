@@ -1,7 +1,7 @@
 """Integration tests verifying rio-cogeo works with our fixtures.
 
 These tests confirm that rio-cogeo can convert and validate raster
-files. Per ADR-0010, Portolan delegates conversion to rio-cogeo.
+files. Portolan delegates conversion to rio-cogeo.
 """
 
 from __future__ import annotations

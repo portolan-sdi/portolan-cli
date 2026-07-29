@@ -214,7 +214,7 @@ def is_case_sensitive_fs(tmp_path: Path) -> bool:
 
 
 class TestDetectStateConfigYamlSentinel:
-    """Tests for config.yaml as the sole sentinel file (ADR-0027, updated per issue #290).
+    """Tests for config.yaml as the sole sentinel file (updated per issue #290).
 
     Per issue #290, config.yaml alone is sufficient for MANAGED state.
     state.json was removed as a sentinel requirement.
@@ -256,7 +256,7 @@ class TestDetectStateConfigYamlSentinel:
     def test_old_config_json_not_recognized(self, tmp_path: Path) -> None:
         """Old config.json (without config.yaml) should NOT be MANAGED.
 
-        Per ADR-0027, we no longer recognize config.json as the sentinel.
+        We no longer recognize config.json as the sentinel.
         """
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()

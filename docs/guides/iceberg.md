@@ -25,7 +25,7 @@ pipx install portolan-cli[iceberg]
 # Initialize a catalog with the Iceberg backend
 portolan init my-catalog --backend iceberg
 
-# Add data (collection is inferred from the parent directory per ADR-0022;
+# Add data (collection is inferred from the parent directory;
 # there is no --collection flag — place files under the collection dir first)
 portolan add boundaries/data.parquet
 

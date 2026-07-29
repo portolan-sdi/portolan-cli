@@ -1,7 +1,7 @@
 """The conformance gate: a freshly generated catalog passes rashid (issue #654).
 
 Builds a catalog the way a user does — ``portolan init`` then ``portolan add``,
-with the metadata.yaml enrichment ADR-0038 expects — and runs rashid's metadata
+with the metadata.yaml enrichment expects — and runs rashid's metadata
 pass over the result. Any generation change that breaks spec conformance fails
 here, so the gate is the executable form of "Portolan emits conformant catalogs".
 """

@@ -100,7 +100,7 @@ class TestExtractionConfig:
     def test_default_compression(self) -> None:
         """Default compression is DEFLATE (via cog_settings)."""
         config = ExtractionConfig()
-        # compression is now in cog_settings (per ADR-0019)
+        # compression is now in cog_settings
         assert config.cog_settings.compression == "DEFLATE"
         # Legacy field is None when using cog_settings
         assert config.compression is None

@@ -159,7 +159,7 @@ def catalog_with_data(tmp_path: Path, s3_bucket: tuple[str, str]) -> Path:
 
 @pytest.fixture
 def nested_catalog_with_data(tmp_path: Path, s3_bucket: tuple[str, str]) -> Path:
-    """A nested catalog (ADR-0032) with intermediate catalog.json files (Issue #547, #552)."""
+    """A nested catalog with intermediate catalog.json files (Issue #547, #552)."""
     bucket_name, endpoint_url = s3_bucket
 
     catalog_dir = tmp_path / "catalog"

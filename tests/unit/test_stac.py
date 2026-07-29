@@ -142,13 +142,13 @@ class TestCreateItem:
 
     @pytest.mark.unit
     def test_create_item_default_datetime_is_null_with_provisional_marker(self) -> None:
-        """create_item uses null datetime (open interval) when not specified (ADR-0035)."""
+        """create_item uses null datetime (open interval) when not specified."""
         item = create_item(
             item_id="now-item",
             bbox=[0, 0, 1, 1],
         )
 
-        # Per ADR-0035: datetime is null, start/end use sentinel range (STAC 1.1.0 compliance)
+        # Datetime is null, start/end use sentinel range (STAC 1.1.0 compliance)
         assert item.datetime is None
         assert item.properties["start_datetime"] == "1900-01-01T00:00:00Z"
         assert item.properties["end_datetime"] == "9999-12-31T23:59:59Z"

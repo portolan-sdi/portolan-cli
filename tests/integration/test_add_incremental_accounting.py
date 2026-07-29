@@ -212,7 +212,7 @@ class TestRowCountAccounting:
         Bug: Stray parquet files (temp files, internal state) should not be
         included in table:row_count aggregation.
 
-        Note: Per ADR-0028, portolan add auto-discovers ALL files in the
+        Note: Portolan add auto-discovers ALL files in the
         collection directory, so the only way to have a truly "untracked"
         parquet is to place it in .portolan/ (which is explicitly excluded
         from both discovery and row counting).

@@ -1,6 +1,6 @@
 """Tests for recursive collection discovery in nested catalog structures.
 
-Per ADR-0032 (Nested Catalogs with Flat Collections), discover_collections()
+Discover_collections()
 must find collections at any depth, not just direct subdirectories.
 """
 
