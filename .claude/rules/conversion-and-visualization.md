@@ -160,7 +160,11 @@ render paths.
 
 ## COG and output-location defaults
 
-COG defaults are DEFLATE, predictor=2, 512x512 tiles, nearest resampling.
+COG defaults are DEFLATE and 512x512 tiles. Predictor and overview resampling
+default to `auto`, meaning `derive_cog_defaults()` reads them off the source
+raster's dtype: floats get predictor 3 and `average`, integers get predictor 2
+and `nearest`, multi-band uint8 imagery gets no predictor. Call
+`resolve_cog_settings()` before handing a profile to rio-cogeo (Issue #690).
 Conversion output goes **side-by-side for vectors, in-place for rasters**.
 Accept non-cloud-native formats with a warning, do not hard-fail.
 Raster band metadata lands on the data asset, see `.claude/rules/stac-assets.md`.

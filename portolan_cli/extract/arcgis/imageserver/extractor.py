@@ -70,7 +70,7 @@ import httpx
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import cog_profiles
 
-from portolan_cli.conversion_config import CogSettings, get_cog_settings
+from portolan_cli.conversion_config import CogSettings, get_cog_settings, resolve_cog_settings
 from portolan_cli.extract.arcgis.imageserver.discovery import discover_imageserver
 from portolan_cli.extract.arcgis.imageserver.report import (
     ImageServerExtractionReport,
@@ -371,30 +371,33 @@ async def _convert_to_cog(
     loop = asyncio.get_event_loop()
 
     def _do_convert() -> None:
+        # Fill in any "auto" field from the downloaded tile (Issue #690)
+        settings = resolve_cog_settings(cog_settings, input_path)
+
         # Get base profile and customize with our settings
-        profile = cog_profiles.get(cog_settings.compression.lower())  # type: ignore[no-untyped-call]
+        profile = cog_profiles.get(settings.compression.lower())  # type: ignore[no-untyped-call]
 
         # Apply predictor (for lossless compression)
-        if cog_settings.compression.upper() not in ("JPEG", "WEBP"):
-            profile["predictor"] = cog_settings.predictor
+        if settings.compression.upper() not in ("JPEG", "WEBP"):
+            profile["predictor"] = settings.predictor
 
         # Apply quality for lossy compression
-        if cog_settings.quality is not None and cog_settings.compression.upper() in (
+        if settings.quality is not None and settings.compression.upper() in (
             "JPEG",
             "WEBP",
         ):
-            profile["quality"] = cog_settings.quality
+            profile["quality"] = settings.quality
 
         # Apply tile size
-        profile["blockxsize"] = cog_settings.tile_size
-        profile["blockysize"] = cog_settings.tile_size
+        profile["blockxsize"] = settings.tile_size
+        profile["blockysize"] = settings.tile_size
 
         cog_translate(
             str(input_path),
             str(output_path),
             profile,
             # CogSettings.resampling is validated at config load time
-            overview_resampling=cog_settings.resampling,  # type: ignore[arg-type]
+            overview_resampling=settings.resampling,  # type: ignore[arg-type]
             quiet=True,
         )
 
