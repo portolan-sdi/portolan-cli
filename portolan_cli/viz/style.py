@@ -267,7 +267,7 @@ def write_style_file(
         raise ValueError(msg)
     style_dir.mkdir(parents=True, exist_ok=True)
     style_path = style_dir / f"{name}.json"
-    style_path.write_text(json.dumps(style_dict, indent=2))
+    style_path.write_text(json.dumps(style_dict, indent=2), encoding="utf-8")
     return style_path
 
 
@@ -408,7 +408,7 @@ def discover_styles(collection_path: Path) -> list[StyleInfo]:
 
     for path in sorted(styles_dir.glob("*.json")):
         try:
-            style_data = json.loads(path.read_text())
+            style_data = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Skipping style file %s: %s", path, e)
             continue
@@ -473,7 +473,7 @@ def register_style_assets(
     if not collection_json_path.exists():
         return
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     assets = data.get("assets", {})
 
     # Remove stale style assets (assets with "styles/" prefix that no longer have files)
@@ -502,7 +502,7 @@ def register_style_assets(
     else:
         data.pop("portolan:styles", None)
 
-    collection_json_path.write_text(json.dumps(data, indent=2))
+    collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 # =============================================================================
@@ -582,7 +582,7 @@ def register_legend_assets(
     if not collection_json_path.exists():
         return
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     assets = data.get("assets", {})
 
     # Remove stale legend assets (assets with "legends/" prefix that no longer have files)
@@ -609,7 +609,7 @@ def register_legend_assets(
     else:
         data.pop("portolan:legends", None)
 
-    collection_json_path.write_text(json.dumps(data, indent=2))
+    collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 # =============================================================================

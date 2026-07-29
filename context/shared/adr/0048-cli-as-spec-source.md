@@ -1,7 +1,7 @@
 # ADR-0048: CLI Repository as Specification Source of Truth
 
 ## Status
-Accepted
+Superseded by [ADR-0057](0057-rashid-as-conformance-validator.md): the direction reversed in 2026-07 — portolan-spec is the human-owned source of truth (the sync workflow was deleted in #646) and the CLI consumes the spec through rashid.
 
 ## Context
 

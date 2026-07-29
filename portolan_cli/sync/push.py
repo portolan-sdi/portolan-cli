@@ -817,7 +817,7 @@ def _load_versioned_asset_paths(catalog_root: Path, collection: str) -> set[str]
         return set()
 
     try:
-        data = json.loads(versions_file.read_text())
+        data = json.loads(versions_file.read_text(encoding="utf-8"))
         versioned_paths: set[str] = set()
 
         # Extract asset paths from all versions

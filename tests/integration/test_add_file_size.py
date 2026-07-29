@@ -102,12 +102,12 @@ class TestFileSizePopulation:
         collection_data = json.loads(collection_jsons[0].read_text())
         assets = collection_data.get("assets", {})
 
-        # Check that file:checksum is populated with sha256 prefix
+        # file:checksum is a hex multihash: 1220 (sha2-256, 32 bytes) + digest.
         for asset_key, asset in assets.items():
             assert "file:checksum" in asset, f"Asset {asset_key} missing file:checksum"
             checksum = asset["file:checksum"]
-            assert checksum.startswith("sha256:"), "Checksum should start with sha256:"
-            assert len(checksum) > 70, f"Checksum too short: {checksum}"
+            assert checksum.startswith("1220"), f"Checksum is not a sha2-256 multihash: {checksum}"
+            assert len(checksum) == 68, f"Unexpected checksum length: {checksum}"
 
     @pytest.mark.integration
     def test_add_populates_collection_aggregates(

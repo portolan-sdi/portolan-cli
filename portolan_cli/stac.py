@@ -11,15 +11,25 @@ Key conventions:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 import pystac
 from pystac.summaries import Summarizer, SummaryStrategy
 
+from portolan_cli.constants import PARTITION_EXTENSION_URI, PORTOLAN_SCHEMA_URI
 from portolan_cli.humanize import humanize_slug
+from portolan_cli.json_io import write_json_atomic
+
+# Any versioned Portolan profile URI, not just the current one: matching the
+# whole family is what lets a stale claim be rewritten rather than duplicated.
+PORTOLAN_SCHEMA_URI_PATTERN = re.compile(
+    r"^https://schemas\.portolan-sdi\.org/portolan/v\d+\.\d+\.\d+/schema\.json$"
+)
 
 
 class MergeStrategy(Enum):
@@ -501,6 +511,35 @@ def apply_human_titles(collection: pystac.Collection, metadata: object) -> None:
         collection.description = description.strip()
 
 
+def apply_human_license(collection: pystac.Collection, metadata: object) -> None:
+    """Apply the human-authored license from metadata.yaml (issue #654).
+
+    ``license`` is a required metadata.yaml field (ADR-0038); without this the
+    collection kept the ``other`` placeholder even when the human had declared an
+    SPDX identifier. ``license_url``, when present, becomes the ``rel="license"``
+    link that a non-SPDX license needs to be resolvable.
+
+    Args:
+        collection: The collection to update in place.
+        metadata: The merged metadata.yaml mapping (other types are ignored).
+    """
+    if not isinstance(metadata, dict):
+        return
+
+    license_id = metadata.get("license")
+    if isinstance(license_id, str) and license_id.strip():
+        collection.license = license_id.strip()
+
+    license_url = metadata.get("license_url")
+    if not isinstance(license_url, str) or not license_url.strip():
+        return
+    href = license_url.strip()
+    for link in collection.links:
+        if link.rel == "license" and link.href == href:
+            return
+    collection.add_link(pystac.Link(rel="license", target=href, title="License"))
+
+
 def add_partition_metadata_to_collection(
     collection: pystac.Collection,
     partition_metadata: dict[str, object],
@@ -740,8 +779,46 @@ EXTENSION_URLS = {
     "raster": "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
     "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",  # Reserved for future
     "vector": "https://stac-extensions.github.io/vector/v0.1.0/schema.json",  # Proposal maturity
-    "partition": "https://portolan-sdi.github.io/stac-partition-extension/v1.0.0/schema.json",
+    "partition": PARTITION_EXTENSION_URI,
 }
+
+
+def ensure_portolan_schema_uri(document: dict[str, Any]) -> bool:
+    """Declare the versioned Portolan profile schema URI on a catalog or collection.
+
+    The profile URI is the machine-readable conformance claim: every catalog and
+    collection MUST carry exactly one (issue #654). This appends
+    :data:`~portolan_cli.constants.PORTOLAN_SCHEMA_URI` when absent, and rewrites
+    a URI left over from an older spec version in place, so re-stamping a catalog
+    upgrades it instead of accumulating claims. Other extension declarations keep
+    their relative order.
+
+    Args:
+        document: Parsed ``catalog.json`` or ``collection.json``, mutated in place.
+
+    Returns:
+        True when ``stac_extensions`` changed, False when it already conformed.
+    """
+    existing = document.get("stac_extensions")
+    declared: list[str] = list(existing) if isinstance(existing, list) else []
+
+    kept: list[str] = []
+    stamped = False
+    for uri in declared:
+        if isinstance(uri, str) and PORTOLAN_SCHEMA_URI_PATTERN.match(uri):
+            # Collapse every profile claim (stale or duplicate) onto the first.
+            if not stamped:
+                kept.append(PORTOLAN_SCHEMA_URI)
+                stamped = True
+            continue
+        kept.append(uri)
+    if not stamped:
+        kept.append(PORTOLAN_SCHEMA_URI)
+
+    if kept == declared and isinstance(existing, list):
+        return False
+    document["stac_extensions"] = kept
+    return True
 
 
 def build_stac_extensions(properties: dict[str, object]) -> list[str]:
@@ -766,9 +843,11 @@ def build_stac_extensions(properties: dict[str, object]) -> list[str]:
     if any(k.startswith("proj:") for k in properties):
         extensions.append(EXTENSION_URLS["projection"])
 
-    # Check for raster extension fields
-    # STAC v1.1.0 uses unified 'bands' array at top level (not raster:bands)
-    if any(k.startswith("raster:") for k in properties) or "bands" in properties:
+    # Check for raster extension fields.
+    # The unified `bands` array (with its `statistics`) is core STAC v1.1.0, so
+    # it does not imply the raster extension — only genuinely `raster:`-prefixed
+    # fields such as raster:spatial_resolution do (issue #654).
+    if any(k.startswith("raster:") for k in properties):
         extensions.append(EXTENSION_URLS["raster"])
 
     # Check for file extension fields
@@ -1445,7 +1524,7 @@ def update_catalog_file_statistics(catalog_root: Path) -> None:
     for collection_json in catalog_root.rglob("collection.json"):
         # Skip if it's not a direct child pattern (avoid nested catalogs confusion)
         try:
-            data = json.loads(collection_json.read_text())
+            data = json.loads(collection_json.read_text(encoding="utf-8"))
             if data.get("type") != "Collection":
                 continue
             collection_count += 1
@@ -1456,11 +1535,11 @@ def update_catalog_file_statistics(catalog_root: Path) -> None:
 
     # Update catalog.json
     try:
-        catalog_data = json.loads(catalog_path.read_text())
+        catalog_data = json.loads(catalog_path.read_text(encoding="utf-8"))
         catalog_data["portolan:total_size_bytes"] = total_size
         catalog_data["portolan:asset_count"] = asset_count
         catalog_data["portolan:collection_count"] = collection_count
-        catalog_path.write_text(json.dumps(catalog_data, indent=2) + "\n")
+        write_json_atomic(catalog_path, catalog_data)
     except (json.JSONDecodeError, OSError):
         pass
 
@@ -1511,7 +1590,7 @@ def add_via_link(
     }
     links.append(via_link)
 
-    collection_path.write_text(json.dumps(collection_data, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(collection_path, collection_data)
 
 
 def is_technical_name(text: str | None) -> bool:
@@ -1644,8 +1723,6 @@ def update_stac_metadata(
         updated = True
 
     if updated:
-        path.write_text(
-            json.dumps(stac_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-        )
+        write_json_atomic(path, stac_data)
 
     return updated

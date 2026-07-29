@@ -292,7 +292,7 @@ class ExtractionReport:
 def save_report(report: ExtractionReport, path: Path) -> None:
     """Save extraction report to JSON file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report.to_dict(), indent=2))
+    path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
 
 
 def load_report(path: Path) -> ExtractionReport:
@@ -300,5 +300,5 @@ def load_report(path: Path) -> ExtractionReport:
     if not path.exists():
         raise FileNotFoundError(f"Report not found: {path}")
 
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     return ExtractionReport.from_dict(data)

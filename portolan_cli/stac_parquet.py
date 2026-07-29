@@ -30,11 +30,54 @@ import json
 from pathlib import Path
 from typing import Any
 
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import info, warn
 
 # Constants
 PARQUET_FILENAME = "items.parquet"
 PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
+
+
+def _resolve_href(base_dir: Path, href: str) -> Path:
+    """Resolve a STAC link href against the directory holding the linking object."""
+    if href.startswith("./"):
+        return base_dir / href[2:]
+    if href.startswith("../"):
+        return (base_dir / href).resolve()
+    return base_dir / href
+
+
+def _owned_item_hrefs(node_json_path: Path) -> list[tuple[str, Path]]:
+    """Every (href, path) pair for the items the object at ``node_json_path`` owns.
+
+    A catalog may sit below a collection to organize its items (core.md:168-170),
+    so ownership follows ``rel="child"`` links down into catalogs rather than
+    stopping at the collection's own ``rel="item"`` links. Descent stops at a
+    child collection, whose items belong to that collection instead.
+
+    The href is carried alongside the resolved path because it is what the
+    operator wrote and therefore what a stale-link error should name.
+    """
+    if not node_json_path.exists():
+        return []
+
+    data = json.loads(node_json_path.read_text(encoding="utf-8"))
+    base_dir = node_json_path.parent
+    owned: list[tuple[str, Path]] = []
+
+    for link in data.get("links", []):
+        href = link.get("href", "")
+        if not isinstance(href, str) or not href:
+            continue
+        rel = link.get("rel")
+        if rel == "item":
+            owned.append((href, _resolve_href(base_dir, href)))
+        elif rel == "child":
+            child_path = _resolve_href(base_dir, href)
+            if child_path.name == "catalog.json":
+                owned.extend(_owned_item_hrefs(child_path))
+
+    return owned
 
 
 def count_items(collection_path: Path) -> int:
@@ -53,10 +96,7 @@ def count_items(collection_path: Path) -> int:
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found in {collection_path}")
 
-    data = json.loads(collection_json_path.read_text())
-    links = data.get("links", [])
-
-    return sum(1 for link in links if link.get("rel") == "item")
+    return len(_owned_item_hrefs(collection_json_path))
 
 
 def should_suggest_parquet(collection_path: Path, threshold: int = 100) -> bool:
@@ -87,7 +127,7 @@ def has_parquet_link(collection_path: Path) -> bool:
     if not collection_json_path.exists():
         return False
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
 
     # Check link
     links = data.get("links", [])
@@ -120,29 +160,17 @@ def _load_item_dicts(collection_path: Path) -> list[dict[str, Any]]:
         ValueError: If no items found.
     """
     collection_json_path = collection_path / "collection.json"
-    data = json.loads(collection_json_path.read_text())
-    links = data.get("links", [])
+    owned = _owned_item_hrefs(collection_json_path)
 
-    item_links = [link for link in links if link.get("rel") == "item"]
-
-    if not item_links:
+    if not owned:
         raise ValueError(f"No items found in collection at {collection_path}")
 
     items = []
     missing_hrefs = []
 
-    for link in item_links:
-        href = link.get("href", "")
-        # Resolve relative paths
-        if href.startswith("./"):
-            item_path = collection_path / href[2:]
-        elif href.startswith("../"):
-            item_path = (collection_path / href).resolve()
-        else:
-            item_path = collection_path / href
-
+    for href, item_path in owned:
         if item_path.exists():
-            item_data = json.loads(item_path.read_text())
+            item_data = json.loads(item_path.read_text(encoding="utf-8"))
             items.append(item_data)
         else:
             missing_hrefs.append(href)
@@ -222,7 +250,7 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found in {collection_path}")
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     modified = False
 
     # --- Add link (rel="items") ---
@@ -245,27 +273,38 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
     # --- Add collection-level asset (per ADR-0031) ---
     # Uses community convention: key="geoparquet-items", roles=["stac-items"]
     # Ref: https://planetarycomputer.microsoft.com/api/stac/v1/collections/naip
+    # The spec-normative role is "collection-mirror" (PORTO-FMT-041, rashid
+    # PTL-MIR-002); it travels alongside the community role so both readers work.
     assets = data.get("assets", {})
     asset_key = "geoparquet-items"
 
-    # Check if asset already exists (by key or by href)
-    has_asset = asset_key in assets or any(
-        asset.get("href") == f"./{PARQUET_FILENAME}" for asset in assets.values()
-    )
-
-    if not has_asset:
+    # Match by key or by href, then make sure every match carries the
+    # spec-normative role: a catalog written before "collection-mirror" existed
+    # has the asset but only the community role, and PTL-MIR-002 flags it.
+    matching = [
+        asset
+        for key, asset in assets.items()
+        if key == asset_key or asset.get("href") == f"./{PARQUET_FILENAME}"
+    ]
+    if matching:
+        for asset in matching:
+            roles = asset.setdefault("roles", [])
+            if "collection-mirror" not in roles:
+                roles.append("collection-mirror")
+                modified = True
+    else:
         assets[asset_key] = {
             "href": f"./{PARQUET_FILENAME}",
             "type": PARQUET_MEDIA_TYPE,
             "title": "STAC items as GeoParquet",
-            "roles": ["stac-items"],
+            "roles": ["stac-items", "collection-mirror"],
         }
         data["assets"] = assets
         modified = True
 
     # Write back only if changes were made
     if modified:
-        collection_json_path.write_text(json.dumps(data, indent=2))
+        write_json_atomic(collection_json_path, data)
 
 
 def remove_parquet_link_from_collection(collection_path: Path) -> bool:
@@ -283,7 +322,7 @@ def remove_parquet_link_from_collection(collection_path: Path) -> bool:
     if not collection_json_path.exists():
         return False
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     modified = False
 
     # Remove link
@@ -317,7 +356,7 @@ def remove_parquet_link_from_collection(collection_path: Path) -> bool:
                 break
 
     if modified:
-        collection_json_path.write_text(json.dumps(data, indent=2))
+        write_json_atomic(collection_json_path, data)
 
     return modified
 

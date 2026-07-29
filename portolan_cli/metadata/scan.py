@@ -490,7 +490,7 @@ def _is_non_local_asset(asset: Any) -> bool:
 
 def _safe_read_json(path: Path) -> dict[str, Any] | None:
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return None

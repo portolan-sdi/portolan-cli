@@ -176,7 +176,7 @@ def read_collection_json(path: Path) -> CollectionModel:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     return CollectionModel.from_dict(data)
@@ -197,7 +197,7 @@ def read_schema_json(path: Path) -> SchemaModel:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     return SchemaModel.from_dict(data)
@@ -221,7 +221,7 @@ def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
         return []
 
     try:
-        with open(catalog_path) as f:
+        with open(catalog_path, encoding="utf-8") as f:
             catalog_data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return []
@@ -251,7 +251,7 @@ def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
             continue
 
         try:
-            with open(collection_path) as f:
+            with open(collection_path, encoding="utf-8") as f:
                 collection_data = json.load(f)
 
             # Extract bbox from extent
@@ -319,7 +319,7 @@ def _get_metadata_yaml_bbox(collection_dir: Path) -> list[float] | None:
     try:
         import yaml
 
-        with open(metadata_path) as f:
+        with open(metadata_path, encoding="utf-8") as f:
             metadata = yaml.safe_load(f) or {}
 
         # Check for explicit bbox in metadata.yaml

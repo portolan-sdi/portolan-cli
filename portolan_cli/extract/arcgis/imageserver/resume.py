@@ -98,7 +98,7 @@ def load_resume_state(
         return None
 
     try:
-        content = report_path.read_text()
+        content = report_path.read_text(encoding="utf-8")
         if not content.strip():
             return None
 
@@ -222,4 +222,4 @@ def save_resume_state(state: ImageServerResumeState, report_path: Path) -> None:
         },
     }
 
-    report_path.write_text(json.dumps(data, indent=2))
+    report_path.write_text(json.dumps(data, indent=2), encoding="utf-8")

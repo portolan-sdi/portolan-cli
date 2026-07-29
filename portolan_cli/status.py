@@ -177,7 +177,7 @@ def _is_stac_item(file_path: Path) -> bool:
     try:
         import json
 
-        data = json.loads(file_path.read_text())
+        data = json.loads(file_path.read_text(encoding="utf-8"))
         return bool(data.get("type") == "Feature")
     except (json.JSONDecodeError, OSError, KeyError):
         return False

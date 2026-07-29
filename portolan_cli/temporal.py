@@ -79,10 +79,14 @@ def parse_flexible_datetime(value: str | None) -> datetime | None:
     raise ValueError(f"Invalid datetime format: {value!r}. Use ISO 8601 (e.g., 2024-01-15)")
 
 
-class FlexibleDateTime(click.ParamType):
+class FlexibleDateTime(click.ParamType["datetime | None"]):
     """Click parameter type for flexible datetime parsing.
 
     Accepts multiple formats and returns None for empty input.
+
+    ``ParamType`` is generic in the converted value from click 8.4 on; the
+    parameter is a string annotation because the class is not subscriptable at
+    runtime in that release's stubs-only form.
     """
 
     name = "datetime"

@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-from pathlib import Path
+import posixpath
+from pathlib import Path, PurePath
 from typing import Any
 
 import pystac
@@ -47,6 +47,7 @@ from portolan_cli.stac import (
     add_partition_metadata_to_collection,
     add_table_extension,
     aggregate_table_metadata,
+    apply_human_license,
     apply_human_titles,
     create_collection,
     load_catalog,
@@ -95,6 +96,29 @@ def _deduplicate_collection_item_links(collection: pystac.Collection) -> None:
     collection.links = unique_links
 
 
+def relative_root_href(catalog_root: PurePath, collection_dir: PurePath) -> str:
+    """The href from ``collection_dir`` to the root ``catalog.json``, in POSIX.
+
+    A STAC href is a relative URL reference, so the separator is ``/`` on every
+    platform. ``os.path.relpath`` returns the *native* one, which on Windows
+    shipped ``..\\catalog.json`` — not a Windows spelling of the parent link but
+    a filename containing backslashes, which resolves nowhere (rashid
+    PTL-LNK-006). Normalizing both sides to POSIX first keeps the computation
+    itself platform-independent.
+
+    Args:
+        catalog_root: Directory holding the root ``catalog.json``.
+        collection_dir: Directory the link will live in.
+
+    Returns:
+        A relative POSIX href, e.g. ``../catalog.json``.
+    """
+    return posixpath.relpath(
+        posixpath.join(PurePath(catalog_root).as_posix(), "catalog.json"),
+        PurePath(collection_dir).as_posix(),
+    )
+
+
 def _fix_collection_links(
     collection_json_path: Path,
     catalog_root: Path,
@@ -110,7 +134,7 @@ def _fix_collection_links(
         return
 
     collection_data = json.loads(collection_json_path.read_text(encoding="utf-8"))
-    relative_root = os.path.relpath(catalog_root / "catalog.json", collection_dir)
+    relative_root = relative_root_href(catalog_root, collection_dir)
 
     # Update root link to point to catalog
     for link in collection_data.get("links", []):
@@ -215,7 +239,7 @@ def _save_collection_with_links(
     _fix_collection_links(collection_json_path, catalog_root, collection_dir)
     _update_catalog_links(catalog_root, collection_id)
 
-    # Scaffold AGENTS.md and add the rel="agents" link (ADR-0052, RULE-0081).
+    # Scaffold AGENTS.md and add the rel="agents" link (ADR-0052; rashid PTL-FIL-002).
     # Idempotent and merge-safe: never overwrites an existing AGENTS.md, only
     # adds the link when absent, so re-running `add` preserves human edits.
     from portolan_cli.agents_md import ensure_agents_md
@@ -965,9 +989,11 @@ def _finalize_collection(
         initial_bbox=first_item.bbox,
     )
 
-    # Issue #502: apply human title/description overrides from
+    # Issue #502/#654: apply human title/description/license overrides from
     # metadata.yaml (highest precedence over the auto-derived defaults).
-    apply_human_titles(collection, load_merged_metadata(collection_dir, catalog_root))
+    merged_metadata = load_merged_metadata(collection_dir, catalog_root)
+    apply_human_titles(collection, merged_metadata)
+    apply_human_license(collection, merged_metadata)
 
     # Add items or collection-level assets to collection (in memory)
     _add_prepared_items_to_collection(collection, items, merge_strategy)
@@ -1051,9 +1077,20 @@ def finalize_items(
     # Issue #502: backfill human-readable titles onto child/item links so STAC
     # Browser renders names without fetching every child. Done once per batch
     # (O(catalog), not per-collection) after all collections are written.
-    from portolan_cli.catalog import ensure_link_titles
+    from portolan_cli.catalog import ensure_link_titles, ensure_schema_uris
 
     ensure_link_titles(catalog_root)
+
+    # ADR-0052 / issue #654: every catalog and collection declares the Portolan
+    # profile schema URI and carries AGENTS.md and README.md behind their links.
+    # Swept once per batch so subcatalogs created along the way (ADR-0032
+    # nesting) and pre-existing objects are covered, not just what was written.
+    from portolan_cli.agents_md import ensure_agents_md_tree
+    from portolan_cli.readme import ensure_readmes
+
+    ensure_schema_uris(catalog_root)
+    ensure_agents_md_tree(catalog_root)
+    ensure_readmes(catalog_root)
 
     # Issue #501: update catalog-level aggregate file statistics
     # Done after all collections are finalized so totals are accurate.
