@@ -92,7 +92,7 @@ jobs:
         # - update-freshness: stamps today's date into freshness markers, so it
         #   is non-deterministic across days — a validation gate, not a mutation,
         #   is what CI needs. Doc drift is still caught by menard-check and
-        #   validate-claude-md (both non-mutating), which DO run here.
+        #   validate-agents-md (both non-mutating), which DO run here.
         env:
           SKIP: no-commit-to-branch,fast-tests,update-freshness
         run: uvx prek run --all-files --show-diff-on-failure

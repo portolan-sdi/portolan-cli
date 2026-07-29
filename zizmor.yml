@@ -1,0 +1,18 @@
+# Synced from portolan-sdi/portolan-ops (templates/repo/zizmor.yml).
+# Edit it there. Local changes are overwritten on the next sync.
+#
+# zizmor requires a hash pin on every `uses:` clause by default, and it
+# rejects the family CI caller, which names a tag instead.
+#
+# The tag is deliberate. `@v1` moves with each release of the shared
+# workflow, so hash-pinning it would freeze this repo on one commit and
+# defeat the release mechanism (portolan-ops, norms/ci.md).
+#
+# Supplying any policy replaces zizmor's default outright, so the
+# wildcard below restores hash-pinning for every other action.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        portolan-sdi/portolan-ops/*: ref-pin
+        "*": hash-pin

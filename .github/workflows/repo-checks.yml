@@ -1,0 +1,32 @@
+# Thin caller — synced from portolan-sdi/portolan-ops (ci/repo-checks.yml).
+# Edit it there. Local changes are overwritten on the next sync.
+#
+# Unlike the family CI callers, this one is synced. It takes no
+# repo-specific inputs, so every repo runs the same file and the rules
+# stay comparable across the org (portolan-ops, norms/ci.md).
+name: Repo checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  issues:
+    types: [opened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    # v1 is a moving major tag. Changes to the budget, the evidence rule,
+    # or the file layout reach this repo when the tag moves, not when ops
+    # merges.
+    uses: portolan-sdi/portolan-ops/.github/workflows/reusable-repo-checks.yml@v1
+    permissions:
+      contents: read
+      issues: write

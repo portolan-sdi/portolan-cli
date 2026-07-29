@@ -178,7 +178,7 @@ IMPL_PROMPT="You are an implementation agent. Your job is to implement the plan 
 
 When the PR is created, output the PR URL and create a file: .implementation-complete with the PR URL inside.
 
-DO NOT skip tests. TDD is mandatory per CLAUDE.md."
+DO NOT skip tests. TDD is mandatory per AGENTS.md."
 
 echo "Launching implementation agent..."
 echo "Logging to: $IMPL_LOG"

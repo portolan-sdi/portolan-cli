@@ -72,8 +72,8 @@ and every command live. Top-level commands: `init`, `list`, `status`, `info`,
 `readme`, `stac-geoparquet`. Command groups with subcommands: `config`
 (set/get/list/unset), `metadata` (init/validate), `extract` (arcgis/wfs),
 `version` (current/list/bump/rollback/prune), `skills` (list/show). When you add
-or rename a command, the AST in `scripts/validate_claude_md.py` re-reads these
-decorators, so the root `CLAUDE.md` command references must stay accurate.
+or rename a command, the AST in `scripts/validate_agents_md.py` re-reads these
+decorators, so the root `AGENTS.md` command references must stay accurate.
 
 ## Library layer (ADR-0007: all logic lives here, never in cli.py)
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate auto-updated sections for CLAUDE.md.
+"""Generate auto-updated sections for AGENTS.md.
 
 This script generates sections that should stay in sync with the codebase:
 1. ADR Index - from context/shared/adr/
@@ -8,10 +8,10 @@ This script generates sections that should stay in sync with the codebase:
 4. CLI Commands - from portolan_cli/cli.py
 
 Usage:
-    python scripts/generate_claude_md_sections.py [--section SECTION] [--dry-run]
+    python scripts/generate_agents_md_sections.py [--section SECTION] [--dry-run]
 
 The script outputs the generated content to stdout. Use --dry-run to preview
-without updating CLAUDE.md.
+without updating AGENTS.md.
 """
 
 from __future__ import annotations
@@ -24,12 +24,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+# Repo-specific instructions live in AGENTS.md. CLAUDE.md only imports it,
+# because Claude Code reads CLAUDE.md and every other agent reads AGENTS.md.
+INSTRUCTIONS_FILE = "AGENTS.md"
+
 
 def get_project_root() -> Path:
-    """Find project root by looking for CLAUDE.md."""
+    """Find project root by looking for AGENTS.md."""
     current = Path(__file__).resolve().parent
     while current != current.parent:
-        if (current / "CLAUDE.md").exists():
+        if (current / INSTRUCTIONS_FILE).exists():
             return current
         current = current.parent
     return Path.cwd()
@@ -287,7 +291,7 @@ def generate_cli_commands(root: Path) -> str:
 
 
 def update_generated_section(claude_md: str, section_name: str, new_content: str) -> str:
-    """Update an auto-generated section in CLAUDE.md.
+    """Update an auto-generated section in AGENTS.md.
 
     Sections are marked with:
     <!-- auto-generated: {section_name} -->
@@ -305,7 +309,10 @@ def update_generated_section(claude_md: str, section_name: str, new_content: str
     updated, count = re.subn(pattern, replacement, claude_md, flags=re.DOTALL)
 
     if count == 0:
-        print(f"Warning: Section '{section_name}' not found in CLAUDE.md", file=sys.stderr)
+        print(
+            f"Warning: Section '{section_name}' not found in {INSTRUCTIONS_FILE}",
+            file=sys.stderr,
+        )
         return claude_md
 
     return updated
@@ -332,7 +339,7 @@ GENERATORS = {
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate auto-updated sections for CLAUDE.md")
+    parser = argparse.ArgumentParser(description="Generate auto-updated sections for AGENTS.md")
     parser.add_argument(
         "--section",
         choices=list(GENERATORS.keys()) + ["all"],
@@ -342,12 +349,12 @@ def main() -> int:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print generated content without updating CLAUDE.md",
+        help="Print generated content without updating AGENTS.md",
     )
     parser.add_argument(
         "--update",
         action="store_true",
-        help="Update CLAUDE.md in place (requires auto-generated markers)",
+        help="Update AGENTS.md in place (requires auto-generated markers)",
     )
 
     args = parser.parse_args()
@@ -369,21 +376,21 @@ def main() -> int:
             print(content)
         return 0
 
-    # Update CLAUDE.md
-    claude_md_path = root / "CLAUDE.md"
-    if not claude_md_path.exists():
-        print("ERROR: CLAUDE.md not found", file=sys.stderr)
+    # Update the instructions file
+    instructions_path = root / INSTRUCTIONS_FILE
+    if not instructions_path.exists():
+        print(f"ERROR: {INSTRUCTIONS_FILE} not found", file=sys.stderr)
         return 1
 
-    claude_md = claude_md_path.read_text()
+    claude_md = instructions_path.read_text()
     updated = claude_md
 
     for section, content in outputs.items():
         updated = update_generated_section(updated, section, content)
 
     if updated != claude_md:
-        claude_md_path.write_text(updated)
-        print(f"Updated CLAUDE.md with {len(outputs)} section(s)")
+        instructions_path.write_text(updated)
+        print(f"Updated {INSTRUCTIONS_FILE} with {len(outputs)} section(s)")
     else:
         print("No changes made (sections may not be marked for auto-generation)")
 
