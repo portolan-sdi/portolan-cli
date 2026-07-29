@@ -27,7 +27,7 @@ from portolan_cli import extension_registry as _reg
 
 # =============================================================================
 # Extension Mappings (DERIVED from extension_registry — the single source,
-# ADR-0055. Edit rows there, not these frozensets.)
+# . Edit rows there, not these frozensets.)
 # =============================================================================
 
 # Primary geospatial formats (GEO_ASSET). .parquet is NOT here — it needs a
@@ -264,7 +264,7 @@ def classify_file(
 
     # Check for STAC item files: JSON files named after their parent directory
     # Pattern: item_dir/item_dir.json (e.g., tile_0_0/tile_0_0.json)
-    # This is the standard Portolan item structure per ADR-0031
+    # This is the standard Portolan item structure
     if ext == ".json" and path.stem.lower() == path.parent.name.lower():
         return (
             FileCategory.STAC_METADATA,
@@ -279,7 +279,7 @@ def classify_file(
             f"{name} is a map style definition",
         )
 
-    # Check if file is inside a styles/ directory (ADR-0045)
+    # Check if file is inside a styles/ directory
     if path.parent.name == "styles" and ext == ".json":
         return (
             FileCategory.STYLE,

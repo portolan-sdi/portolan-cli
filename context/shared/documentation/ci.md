@@ -31,14 +31,13 @@ Install with: `uv tool install prek && prek install`
 
 - `ruff` / `ruff format` — Linting with auto-fix + formatting
 - `mypy` — Type checking (strict)
-- `import-linter` — Architecture contracts (ADR-0025)
+- `import-linter` — Architecture contracts
 - `codespell` — Spell checking
 - `vulture` / `xenon` / `pylint` — Dead code, complexity, duplicate code (R0801)
 - `bandit` — Static security analysis
 - `deptry` — Dependency hygiene
 - `actionlint` / `zizmor` — GitHub Actions workflow linting + supply-chain audit
-- `menard check` / `check-protected` — Documentation freshness + protected content
-- `validate-agents-md` — ADR index / reference validation
+- `validate-agents-md` — AGENTS.md reference validation
 - `pytest -m unit` — Fast unit tests (pre-push stage)
 - `commitizen` — Commit message validation (commit-msg stage)
 - Builtin hooks: trailing whitespace, YAML/TOML validation, large file detection
@@ -60,13 +59,13 @@ Workflow: `.github/workflows/ci.yml`
 
 Runs `prek run --all-files` — the *same* hooks developers run locally (see Tier 1),
 so CI and local hooks can't drift. Covers ruff, mypy, import-linter, codespell,
-vulture, xenon, pylint-duplicate, bandit, deptry, menard, actionlint, zizmor, and
+vulture, xenon, pylint-duplicate, bandit, deptry, actionlint, zizmor, and
 the builtin file hooks. Replaces the old separate `lint` and `dead-code` jobs.
 
 CI skips three hooks: `no-commit-to-branch` (fails on push-to-main), `fast-tests`
 (the `test` job covers them), and `update-freshness` (stamps today's date, so it's
-non-deterministic in CI — drift is still caught by the non-mutating `menard-check`
-and `validate-agents-md`).
+non-deterministic in CI — drift is still caught by the non-mutating
+`validate-agents-md`).
 
 #### `security` — Dependency Audit
 
@@ -343,14 +342,4 @@ Refactor the flagged function/module. Consider extracting helper functions or si
 
 ### "pip-audit found vulnerabilities"
 
-Update the affected dependency or add a temporary exception with justification in an ADR.
-
-### "menard: stale documentation detected"
-
-Code was modified but linked documentation wasn't updated. Options:
-1. Update the documentation to reflect the code changes
-2. Run `menard fix` for interactive resolution
-3. Run `menard fix-mark-reviewed <code-file> <doc-file>` if the doc doesn't need changes
-4. Run `menard fix-ignore <code-file> <doc-file>` to permanently ignore the relationship
-
-To see what changed: `menard list-stale --show-diff`
+Update the affected dependency, or add a temporary exception to `.pip-audit-ignores` with an expiry date and a stated reason.

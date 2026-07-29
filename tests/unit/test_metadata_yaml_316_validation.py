@@ -6,7 +6,6 @@ Tests the new metadata.yaml fields from GitHub issue #316:
 - citations (list of strings)
 - upstream_version (string)
 
-See ADR-0038 for metadata.yaml schema.
 """
 
 from __future__ import annotations

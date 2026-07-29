@@ -31,7 +31,7 @@ detail("Processing chunk 3/10...")         # Dimmed text
 - **bandit**, Security scanning
 - **pip-audit**, Dependency vulnerabilities
 
-All code must have type annotations (`mypy --strict`). The CLI is a thin Click layer, all logic lives in the library (ADR-0007).
+All code must have type annotations (`mypy --strict`). The CLI is a thin Click layer, all logic lives in the library.
 
 ## Coding conventions (enforced or de-facto in this repo)
 
@@ -58,7 +58,7 @@ All code must have type annotations (`mypy --strict`). The CLI is a thin Click l
   diagnostics use the stdlib `logging` module (already used across ~22 modules).
   Raw `print()` appears only inside progress rendering and JSON emission, do not
   use it for normal messaging.
-- **Architecture is enforced by import-linter** (`uv run lint-imports`, ADR-0025).
+- **Architecture is enforced by import-linter** (`uv run lint-imports`).
   Three contracts: `portolan_cli.cli` must not import `portolan_cli.backends`
   (only `backends.protocol` under `TYPE_CHECKING`), `backends.iceberg` must not
   import `cli`, and utility/leaf modules stay independent. Check

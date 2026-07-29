@@ -13,7 +13,7 @@ Only three things actually differ between the sources: the per-source title used
 for a ``via`` link, the source-URL that link points at, and the metadata
 serializer that produces the catalog-level ``ExtractedMetadata``. This module
 provides the shared skeleton and parametrizes those pieces via small callables,
-so each orchestrator keeps only its source-specific glue (see ADR-0007: all logic
+so each orchestrator keeps only its source-specific glue (: all logic
 lives in the library layer).
 
 All library imports are function-local, matching the orchestrators' existing

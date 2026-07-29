@@ -61,8 +61,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # Full history so menard's doc-freshness diffing has a base to compare.
-          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -84,7 +82,7 @@ jobs:
         # ONE rule source: CI runs the SAME hooks developers run locally
         # (prek.toml), not a re-listing of each tool with its own drifting args.
         # This covers ruff, ruff-format, mypy, import-linter, codespell, vulture,
-        # xenon, pylint-duplicate, bandit, deptry, menard doc-freshness,
+        # xenon, pylint-duplicate, bandit, deptry,
         # actionlint, zizmor, and the builtin file hooks.
         #
         # SKIP:
@@ -93,8 +91,8 @@ jobs:
         # - fast-tests: the full matrix runs in the `test` job below.
         # - update-freshness: stamps today's date into freshness markers, so it
         #   is non-deterministic across days — a validation gate, not a mutation,
-        #   is what CI needs. Doc drift is still caught by menard-check and
-        #   validate-agents-md (both non-mutating), which DO run here.
+        #   is what CI needs. Reference drift is still caught by
+        #   validate-agents-md (non-mutating), which DOES run here.
         env:
           SKIP: no-commit-to-branch,fast-tests,update-freshness
         run: uvx prek run --all-files --show-diff-on-failure

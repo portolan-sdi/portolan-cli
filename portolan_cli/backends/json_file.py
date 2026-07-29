@@ -1,14 +1,14 @@
 """File-based versioning backend using versions.json.
 
 This is the MVP implementation of VersioningBackend that stores version history
-in a JSON file. It assumes single-writer access (see ADR-0015).
+in a JSON file. It assumes single-writer access.
 
 For multi-user concurrent access, use an enterprise plugin backend.
 
 Implementation Status (MINOR #9, #10):
     - get_current_version: Implemented
     - list_versions: Implemented
-    - publish: Implemented (with schema and message support per ADR-0005)
+    - publish: Implemented (with schema and message support)
     - check_drift: Stub (deferred to sync implementation)
     - rollback: Deferred to enterprise plugin backends
     - prune: Deferred to enterprise plugin backends
@@ -43,7 +43,7 @@ class JsonFileBackend:
     """MVP versioning backend using versions.json.
 
     This backend uses the versions.json file as the single source of truth
-    for version history, sync state, and integrity checksums (ADR-0005).
+    for version history, sync state, and integrity checksums.
 
     Limitations:
         - Single-writer access only (no concurrent safety)
@@ -82,7 +82,7 @@ class JsonFileBackend:
         # Explicitly reject traversal attempts that survive Path.name
         if safe_collection in ("", ".", ".."):
             raise ValueError(f"Invalid collection name: {collection!r}")
-        # versions.json at collection root (per ADR-0023)
+        # versions.json at collection root
         return self._catalog_root / safe_collection / "versions.json"
 
     def get_current_version(self, collection: str) -> Version:
@@ -131,7 +131,7 @@ class JsonFileBackend:
     ) -> Version:
         """Publish a new version of a collection.
 
-        Stores schema fingerprint and message as per ADR-0005.
+        Stores schema fingerprint and message as.
         Uses atomic write to prevent corruption (CRITICAL #2).
 
         Args:
@@ -247,10 +247,7 @@ class JsonFileBackend:
         Raises:
             NotImplementedError: Rollback is deferred to enterprise plugin backends.
         """
-        raise NotImplementedError(
-            "Rollback is deferred to enterprise plugin backends. "
-            "See ADR-0015 for details on the two-tier versioning architecture."
-        )
+        raise NotImplementedError("Rollback is deferred to enterprise plugin backends. ")
 
     def prune(self, collection: str, keep: int, dry_run: bool) -> list[Version]:
         """Remove old versions, keeping the N most recent.
@@ -270,10 +267,7 @@ class JsonFileBackend:
         Raises:
             NotImplementedError: Prune is deferred to enterprise plugin backends.
         """
-        raise NotImplementedError(
-            "Prune is deferred to enterprise plugin backends. "
-            "See ADR-0015 for details on the two-tier versioning architecture."
-        )
+        raise NotImplementedError("Prune is deferred to enterprise plugin backends. ")
 
     def check_drift(self, collection: str) -> DriftReport:
         """Check for drift between local and remote state.

@@ -90,7 +90,7 @@ def _remove_one_file(
         item_dir = file_path.parent
         if not (item_dir / "collection.json").exists() and item_dir.is_dir():
             # Item-level asset: drop the whole item/partition dir, which owns
-            # item.json and every sibling asset (ADR-0028).
+            # item.json and every sibling asset.
             shutil.rmtree(item_dir)
         else:
             # Delete file from disk. missing_ok=True handles race conditions where

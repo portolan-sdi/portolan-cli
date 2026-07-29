@@ -3,7 +3,7 @@
 Uses the pmtiles package to read PMTiles header metadata.
 PMTiles store bounds in WGS84 (4326) but tiles are Web Mercator (3857).
 
-Per ADR-0031, PMTiles are collection-level assets when added to a catalog.
+PMTiles are collection-level assets when added to a catalog.
 """
 
 from __future__ import annotations

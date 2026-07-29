@@ -111,9 +111,14 @@ Settings are resolved in this order (highest to lowest):
 
 1. **CLI argument** (`--remote s3://...`)
 2. **Environment variable** (`PORTOLAN_REMOTE=s3://...`)
-3. **Collection config** (in `collections:` section)
-4. **Catalog config** (top-level in config.yaml)
-5. **Built-in default**
+3. **Hierarchical config** (a `.portolan/config.yaml` inside the collection directory)
+4. **Collection config** (in the `collections:` section of the catalog config)
+5. **Catalog config** (top-level in config.yaml)
+6. **Built-in default**
+
+Levels 3 and 4 both scope a setting to one collection. A `.portolan/config.yaml`
+placed in the collection directory wins over an entry in the catalog config's
+`collections:` section.
 
 ## Validation Configuration
 
@@ -125,10 +130,10 @@ The `check:` block tunes the rule set per catalog:
 check:
   # Rules to skip entirely. Use for rules a catalog cannot satisfy by policy.
   disabled:
-    - PTL-VIZ-001   # this catalog ships no thumbnails
+    - PTL-VIZ-001 # this catalog ships no thumbnails
   # Rules to re-rank. Values: error, warning, info.
   severity:
-    PTL-TMP-001: error   # a temporal extent is mandatory here
+    PTL-TMP-001: error # a temporal extent is mandatory here
 ```
 
 Rule ids come from `portolan check` output — every finding names the rule that
@@ -209,19 +214,19 @@ conversion:
   extensions:
     # Force-convert these cloud-native formats to GeoParquet
     convert:
-      - fgb      # FlatGeobuf
+      - fgb # FlatGeobuf
 
     # Keep these formats as-is (don't convert)
     preserve:
-      - shp      # Shapefiles
-      - gpkg     # GeoPackage
+      - shp # Shapefiles
+      - gpkg # GeoPackage
 
   paths:
     # Glob patterns for files to preserve regardless of format
     preserve:
-      - "archive/**"           # Everything in archive/
-      - "regulatory/*.shp"     # Regulatory shapefiles
-      - "legacy/**"            # Legacy data directory
+      - "archive/**" # Everything in archive/
+      - "regulatory/*.shp" # Regulatory shapefiles
+      - "legacy/**" # Legacy data directory
 ```
 
 ### Extension Overrides
@@ -237,8 +242,14 @@ Force-convert cloud-native formats to GeoParquet. Use when:
 conversion:
   extensions:
     convert:
-      - fgb       # FlatGeobuf -> GeoParquet
+      - fgb # FlatGeobuf -> GeoParquet
 ```
+
+This list applies to cloud-native formats only. Listing a convertible format
+such as `shp` or `gpkg` has no effect, because those already convert by default
+and the force-convert check runs only against cloud-native files. Listing an
+extension Portolan does not recognize also has no effect. Neither case raises an
+error, so a typo here fails silently.
 
 #### `extensions.preserve`
 
@@ -252,9 +263,9 @@ Keep convertible formats as-is. Use when:
 conversion:
   extensions:
     preserve:
-      - shp       # Keep Shapefiles
-      - gpkg      # Keep GeoPackage
-      - geojson   # Keep GeoJSON
+      - shp # Keep Shapefiles
+      - gpkg # Keep GeoPackage
+      - geojson # Keep GeoJSON
 ```
 
 ### Path Patterns
@@ -265,9 +276,9 @@ Use glob patterns to override behavior for specific directories or files.
 conversion:
   paths:
     preserve:
-      - "archive/**"           # All files in archive/ and subdirectories
-      - "regulatory/*.shp"     # Only .shp files in regulatory/
-      - "**/*.backup.geojson"  # Any .backup.geojson file
+      - "archive/**" # All files in archive/ and subdirectories
+      - "regulatory/*.shp" # Only .shp files in regulatory/
+      - "**/*.backup.geojson" # Any .backup.geojson file
 ```
 
 **Pattern syntax:**
@@ -280,19 +291,32 @@ conversion:
 
 ### COG Settings
 
-Configure Cloud-Optimized GeoTIFF conversion parameters. By default, Portolan uses ADR-0019 defaults (DEFLATE compression, predictor=2, 512×512 tiles, nearest resampling).
+Configure Cloud-Optimized GeoTIFF conversion parameters.
+
+Portolan ships one opinionated default set rather than per-datatype tuning:
+
+| Setting | Default | Why |
+|---------|---------|-----|
+| Compression | DEFLATE | Lossless, and every GeoTIFF reader supports it |
+| Predictor | 2 (horizontal differencing) | Improves the compression ratio across data types |
+| Tile size | 512×512 | Matches the rio-cogeo default; larger tiles mean fewer HTTP range requests |
+| Overview resampling | nearest | Safe for categorical data, elevation, and imagery alike |
+
+These favor batch conversion over per-file optimization. Reach for
+`rio_cogeo.cog_translate()` directly when a specific dataset needs WEBP for
+imagery or LERC for elevation.
 
 ```yaml
 conversion:
   cog:
-    compression: JPEG      # DEFLATE (default), JPEG, LZW, ZSTD, WEBP
-    quality: 95            # Quality 1-100 (applies to JPEG and WEBP)
-    tile_size: 512         # Internal tile size in pixels
-    predictor: 2           # 1=none, 2=horizontal (default), 3=floating point
-    resampling: nearest    # Overview resampling: nearest, bilinear, cubic, etc.
-    generate_thumbnail: true   # Auto-generate JPEG thumbnail (default: true)
-    thumbnail_max_size: 512    # Max dimension in pixels (default: 512)
-    thumbnail_quality: 75      # JPEG quality 1-100 (default: 75)
+    compression: JPEG # DEFLATE (default), JPEG, LZW, ZSTD, WEBP
+    quality: 95 # Quality 1-100 (applies to JPEG and WEBP)
+    tile_size: 512 # Internal tile size in pixels
+    predictor: 2 # 1=none, 2=horizontal (default), 3=floating point
+    resampling: nearest # Overview resampling: nearest, bilinear, cubic, etc.
+    generate_thumbnail: true # Auto-generate JPEG thumbnail (default: true)
+    thumbnail_max_size: 512 # Max dimension in pixels (default: 512)
+    thumbnail_quality: 75 # JPEG quality 1-100 (default: 75)
 ```
 
 !!! note "Validation"
@@ -308,11 +332,11 @@ Configure spatial optimization for GeoParquet conversion. Uses [geoparquet-io](h
 ```yaml
 conversion:
   vector:
-    spatial_index: h3     # h3 | quadkey | s2 | a5 | kdtree | none (default: none)
-    resolution: auto      # auto | explicit int (default: auto)
-    sort: hilbert         # hilbert | quadkey | none (default: none)
-    add_bbox: true        # Add bbox struct column (default: false)
-    partition: false      # Produce hive-partitioned output (default: false)
+    spatial_index: h3 # h3 | quadkey | s2 | a5 | kdtree | none (default: none)
+    resolution: auto # auto | explicit int (default: auto)
+    sort: hilbert # hilbert | quadkey | none (default: none)
+    add_bbox: true # Add bbox struct column (default: false)
+    partition: false # Produce hive-partitioned output (default: false)
 ```
 
 !!! note "Resolution defaults"
@@ -371,13 +395,13 @@ Configure automatic thumbnail generation for preview images. Thumbnails are regi
 ```yaml
 # .portolan/config.yaml
 thumbnails:
-  enabled: true              # Auto-generate thumbnails (default: true)
-  max_size: 512              # Max dimension in pixels (default: 512)
-  quality: 75                # JPEG quality 1-100 (default: 75)
+  enabled: true # Auto-generate thumbnails (default: true)
+  max_size: 512 # Max dimension in pixels (default: 512)
+  quality: 75 # JPEG quality 1-100 (default: 75)
   basemap:
-    provider: CartoDB.Positron  # Basemap tile provider (default)
-    opacity: 1.0             # Basemap opacity 0-1 (default: 1.0)
-    zoom_adjust: 0           # Zoom level adjustment (default: 0)
+    provider: CartoDB.Positron # Basemap tile provider (default)
+    opacity: 1.0 # Basemap opacity 0-1 (default: 1.0)
+    zoom_adjust: 0 # Zoom level adjustment (default: 0)
 ```
 
 ### Vector vs Raster Thumbnails
@@ -427,17 +451,17 @@ Vector assets get Mapbox GL style specs stored in `pmtiles:style`:
 styles:
   vector:
     point:
-      circle-color: "#3388ff"    # Point fill color
-      circle-radius: 4           # Point radius in pixels
-      circle-opacity: 0.8        # Point opacity
+      circle-color: "#3388ff" # Point fill color
+      circle-radius: 4 # Point radius in pixels
+      circle-opacity: 0.8 # Point opacity
     line:
-      line-color: "#3388ff"      # Line color
-      line-width: 2              # Line width in pixels
-      line-opacity: 0.8          # Line opacity
+      line-color: "#3388ff" # Line color
+      line-width: 2 # Line width in pixels
+      line-opacity: 0.8 # Line opacity
     polygon:
-      fill-color: "#3388ff"      # Polygon fill color
-      fill-opacity: 0.6          # Polygon fill opacity
-      fill-outline-color: "#2266cc"  # Polygon outline color
+      fill-color: "#3388ff" # Polygon fill color
+      fill-opacity: 0.6 # Polygon fill opacity
+      fill-outline-color: "#2266cc" # Polygon outline color
 ```
 
 ### Raster Styles (COG)
@@ -448,8 +472,8 @@ Raster assets get [STAC render extension](https://github.com/stac-extensions/ren
 # .portolan/config.yaml
 styles:
   raster:
-    colormap: viridis           # Named colormap (default: viridis)
-    rescale: [0, 255]           # Min/max for rescaling (optional)
+    colormap: viridis # Named colormap (default: viridis)
+    rescale: [0, 255] # Min/max for rescaling (optional)
 ```
 
 Common colormaps: `viridis`, `plasma`, `terrain`, `blues`, `reds`, `greens`.
@@ -469,10 +493,10 @@ Generate vector tile overviews from GeoParquet assets for efficient web map rend
 
 ```yaml
 # .portolan/config.yaml
-pmtiles.enabled: true     # Auto-generate during add (default: false)
-pmtiles.min_zoom: 0       # Minimum zoom level (default: auto-detect)
-pmtiles.max_zoom: 14      # Maximum zoom level (default: auto-detect)
-pmtiles.precision: 6      # Coordinate decimal precision (default: 6)
+pmtiles.enabled: true # Auto-generate during add (default: false)
+pmtiles.min_zoom: 0 # Minimum zoom level (default: auto-detect)
+pmtiles.max_zoom: 14 # Maximum zoom level (default: auto-detect)
+pmtiles.precision: 6 # Coordinate decimal precision (default: 6)
 pmtiles.layer: boundaries # Layer name in output (default: filename)
 pmtiles.attribution: "© OpenStreetMap contributors"
 ```
@@ -549,10 +573,10 @@ Split large GeoParquet files into spatially-organized partitions for better quer
 
 ```yaml
 # .portolan/config.yaml
-partitioning.enabled: true       # Enable auto-partitioning during add (default: true)
-partitioning.prompt: true        # Ask before partitioning in interactive mode (default: true)
-partitioning.threshold_gb: 2     # Size threshold in GB (default: 2.0)
-partitioning.strategy: kdtree    # Partitioning strategy (default: kdtree)
+partitioning.enabled: true # Enable auto-partitioning during add (default: true)
+partitioning.prompt: true # Ask before partitioning in interactive mode (default: true)
+partitioning.threshold_gb: 2 # Size threshold in GB (default: 2.0)
+partitioning.strategy: kdtree # Partitioning strategy (default: kdtree)
 partitioning.target_rows: 120000 # Target rows per partition (default: 120,000)
 ```
 
@@ -585,7 +609,7 @@ portolan partition data.parquet output/ --target-rows 50000
 ### How It Works
 
 - Uses [geoparquet-io](https://github.com/geoparquet/geoparquet-io) KD-tree partitioning
-- Creates Hive-style directory structure per ADR-0031
+- Creates Hive-style directory structure
 - Each partition becomes a STAC Item with its own bbox
 - Collection gets a glob asset for bulk access (e.g., `s3://bucket/collection/*.parquet`)
 
@@ -593,13 +617,13 @@ portolan partition data.parquet output/ --target-rows 50000
 
 ```
 collection/
-├── collection.json          # Glob asset for bulk access
+├── collection.json # Glob asset for bulk access
 ├── kdtree_cell=001/
-│   ├── item.json            # STAC Item with partition bbox
-│   └── data.parquet
+│ ├── item.json # STAC Item with partition bbox
+│ └── data.parquet
 ├── kdtree_cell=002/
-│   ├── item.json
-│   └── data.parquet
+│ ├── item.json
+│ └── data.parquet
 └── ...
 ```
 
@@ -611,18 +635,18 @@ Portolan automatically detects pre-existing Hive-partitioned data with arbitrary
 # Pre-existing structure (auto-detected):
 sites/
 ├── gms_feature_id=abc-123/
-│   └── contours.parquet
+│ └── contours.parquet
 ├── gms_feature_id=def-456/
-│   └── contours.parquet
+│ └── contours.parquet
 └── ...
 
 # Multi-level partitions are also supported:
 timeseries/
 ├── year=2023/
-│   ├── month=01/
-│   │   └── data.parquet
-│   └── month=02/
-│       └── data.parquet
+│ ├── month=01/
+│ │ └── data.parquet
+│ └── month=02/
+│ └── data.parquet
 └── year=2024/
     └── month=01/
         └── data.parquet
@@ -660,8 +684,8 @@ Generate `items.parquet` for collections with many items, enabling efficient spa
 
 ```yaml
 # .portolan/config.yaml
-parquet.enabled: true     # Auto-generate during add (default: false)
-parquet.threshold: 100    # Hint when items exceed threshold (default: 100)
+parquet.enabled: true # Auto-generate during add (default: false)
+parquet.threshold: 100 # Hint when items exceed threshold (default: 100)
 ```
 
 !!! note "Flat key syntax"
@@ -683,7 +707,7 @@ portolan add imagery/ --stac-geoparquet
 ### How It Works
 
 - Uses [stac-geoparquet](https://github.com/stac-utils/stac-geoparquet) library
-- Adds `items.parquet` as a collection-level asset (per [ADR-0031](../contributing.md)) and link with `rel: items`
+- Adds `items.parquet` as a collection-level asset and link with `rel: items`
 - Enables spatial filtering with a single HTTP request (vs N requests for items)
 
 | Setting | Default | Description |
@@ -761,12 +785,12 @@ collections:
   analytics:
     conversion:
       extensions:
-        convert: [fgb]  # Force GeoParquet for analytics queries
+        convert: [fgb] # Force GeoParquet for analytics queries
 
   archive:
     conversion:
       extensions:
-        preserve: [shp, gpkg, geojson]  # Preserve all original formats
+        preserve: [shp, gpkg, geojson] # Preserve all original formats
 ```
 
 This approach works well for most catalogs. For large catalogs with many collections, see [Hierarchical Configuration](#hierarchical-configuration-optional) below.
@@ -778,14 +802,14 @@ For large catalogs or when different maintainers manage different collections, y
 ```
 catalog/
   .portolan/
-    config.yaml           # Catalog defaults
+    config.yaml # Catalog defaults
   demographics/
     .portolan/
-      config.yaml         # Collection-specific overrides (optional)
+      config.yaml # Collection-specific overrides (optional)
     collection.json
-  historical/             # Subcatalog
+  historical/ # Subcatalog
     .portolan/
-      config.yaml         # Subcatalog defaults (optional)
+      config.yaml # Subcatalog defaults (optional)
     census-1990/
       collection.json
 ```
@@ -806,7 +830,7 @@ backend: file
 pmtiles.enabled: true
 
 # catalog/demographics/.portolan/config.yaml
-pmtiles.enabled: false  # Overrides parent (no PMTiles for this collection)
+pmtiles.enabled: false # Overrides parent (no PMTiles for this collection)
 # backend inherited from catalog
 ```
 
@@ -970,10 +994,10 @@ Like `config.yaml`, `metadata.yaml` supports hierarchical resolution:
 ```
 catalog/
   .portolan/
-    metadata.yaml         # Default contact and license
+    metadata.yaml # Default contact and license
   demographics/
     .portolan/
-      metadata.yaml       # Override or add collection-specific fields
+      metadata.yaml # Override or add collection-specific fields
 ```
 
 Child values override parent values. Use this to set catalog-wide defaults (license, contact) while adding collection-specific fields (known_issues, citation).
@@ -1046,13 +1070,13 @@ When source files lack certain metadata (nodata values, temporal info), you can 
 # .portolan/metadata.yaml
 defaults:
   temporal:
-    year: 2025              # Items default to 2025-01-01
+    year: 2025 # Items default to 2025-01-01
     # Or explicit bounds:
     # start: "2025-04-15"
     # end: "2025-05-30"
 
   raster:
-    nodata: 0               # Uniform nodata for all bands
+    nodata: 0 # Uniform nodata for all bands
     # Or per-band:
     # nodata: [0, 0, 255]
 ```

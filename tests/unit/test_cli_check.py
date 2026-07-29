@@ -1,6 +1,6 @@
 """Tests for 'portolan check' CLI command.
 
-Validation runs on rashid (ADR-0057), so these tests build catalogs through the
+Validation runs on rashid, so these tests build catalogs through the
 real generator rather than hand-writing catalog.json: a hand-built catalog trips
 half the PTL-* rule set before the test's own subject is reached. Findings a
 test asserts on are ones it introduces itself.

@@ -432,7 +432,7 @@ class TestCatalogInfo:
 
 
 # =============================================================================
-# Test: FileInfo Output Format (ADR-0022 compliant)
+# Test: FileInfo Output Format (compliant)
 # =============================================================================
 
 
@@ -456,14 +456,14 @@ class TestFileInfoOutputFormat:
 
     @pytest.mark.unit
     def test_file_info_format_human_readable(self, catalog_with_tracked_file: Path) -> None:
-        """Test that FileInfo produces human-readable output per ADR-0022."""
+        """Test that FileInfo produces human-readable output."""
         from portolan_cli.inspect import inspect_file
 
         file_path = catalog_with_tracked_file / "demographics" / "census" / "census.parquet"
         result = inspect_file(file_path, catalog_root=catalog_with_tracked_file)
         lines = result.format_human()
 
-        # Check ADR-0022 output format
+        # Check output format
         assert any("Format:" in line for line in lines)
         assert any("CRS:" in line for line in lines)
         assert any("Bbox:" in line for line in lines)

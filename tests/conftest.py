@@ -347,7 +347,7 @@ def temp_catalog_dir(tmp_path: Path) -> Iterator[Path]:
 
 @pytest.fixture
 def catalog_with_versions_for_dry_run(tmp_path: Path) -> Path:
-    """Catalog with ADR-0023-compliant structure for dry-run tests.
+    """Catalog with -compliant structure for dry-run tests.
 
     This fixture is used by TestDryRunNetworkIsolation classes across
     test_pull.py, test_push.py, and test_sync.py.
@@ -364,7 +364,7 @@ def catalog_with_versions_for_dry_run(tmp_path: Path) -> Path:
     catalog_dir = tmp_path / "catalog_dry_run"
     catalog_dir.mkdir()
 
-    # Create catalog.json at root (per ADR-0023)
+    # Create catalog.json at root
     catalog_data = {
         "type": "Catalog",
         "id": "test-catalog",
@@ -379,7 +379,7 @@ def catalog_with_versions_for_dry_run(tmp_path: Path) -> Path:
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("{}\n")
 
-    # Per ADR-0023: versions.json at <catalog_root>/<collection>/versions.json
+    # Versions.json at <catalog_root>/<collection>/versions.json
     collection_dir = catalog_dir / "test-collection"
     collection_dir.mkdir()
     versions_data = {
@@ -420,7 +420,7 @@ def fresh_catalog_no_versions(tmp_path: Path) -> Path:
     catalog_dir = tmp_path / "catalog_fresh"
     catalog_dir.mkdir()
 
-    # Create catalog.json at root (per ADR-0023)
+    # Create catalog.json at root
     catalog_data = {
         "type": "Catalog",
         "id": "test-catalog",
@@ -451,7 +451,7 @@ def catalog_with_multiple_versions(tmp_path: Path) -> Path:
     - v1.1.0: base.parquet + second.parquet (add)
     - v1.2.0: base.parquet + second.parquet + third.parquet (add)
 
-    Useful for testing snapshot model accumulation per ADR-0005.
+    Useful for testing snapshot model accumulation.
     Uses real SHA256 hashes computed from file content.
     """
     import hashlib
@@ -559,7 +559,7 @@ def catalog_with_multiple_versions(tmp_path: Path) -> Path:
 
 
 # =============================================================================
-# Conformant catalogs (rashid, ADR-0057)
+# Conformant catalogs (rashid)
 # =============================================================================
 
 # `portolan check` validates against rashid's PTL-* rule set, so a hand-built

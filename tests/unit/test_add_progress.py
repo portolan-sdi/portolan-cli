@@ -1,4 +1,4 @@
-"""Tests for add progress reporting (ADR-0040).
+"""Tests for add progress reporting.
 
 Tests verify:
 1. File pre-counting is accurate

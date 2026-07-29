@@ -5,7 +5,7 @@ paths:
   - "**/*.md"
 ---
 
-# Documentation and ADR rules
+# Documentation rules
 
 ## Documentation Accuracy (CRITICAL)
 
@@ -22,7 +22,7 @@ When documenting CLI commands:
 ## docs/ vs context/ distinction
 
 - **`docs/`**, Public-facing, human-readable documentation (tutorials, visual guides, user-oriented). Built with mkdocs and published.
-- **`context/`**, Internal, AI-oriented context (architectural plans, design docs, ADRs, research). Dense, structured, co-located with development. NOT published.
+- **`context/`**, Internal, AI-oriented context (architectural plans, design docs, maintainer rationale, research). Dense, structured, co-located with development. NOT published.
 
 Do NOT put architectural plans or design documents in `docs/`. Those belong in `context/shared/plans/`.
 
@@ -34,43 +34,53 @@ Do NOT put architectural plans or design documents in `docs/`. Those belong in `
 
 | What | Where | When |
 |------|-------|------|
-| Architectural decisions | `context/shared/adr/` | Any non-obvious design choice |
-| Known bugs/issues | `context/shared/known-issues/` | When a bug is identified but not yet fixed |
+| User-facing behavior and its reasoning | `docs/` | Anything an operator needs to predict what the CLI does |
+| Maintainer rationale | `context/shared/documentation/` | Why the code is shaped this way, rejected alternatives |
+| Known bugs/issues | `context/shared/known-issues/` | When a bug or environment constraint is identified but not fixed |
 | Non-obvious code | Inline comments | Code that would confuse a future reader |
-| API contracts | Docstrings | All public functions/classes |
-| Gotchas/quirks | AGENTS.md or inline | Anything that surprised you |
+| API contracts, gotchas at the call site | Docstrings | All public functions/classes |
+| Catalog conformance rules | portolan-spec repo | Anything normative about catalog shape |
 
-### ADR Guidelines
+### Record decisions next to what they govern
 
-Create an ADR (`context/shared/adr/NNNN-title.md`) when:
+This repo has no ADR directory. It had one, and the ADRs drifted: several
+described modules and CLI flags that were never built, and others restated rules
+the spec now owns. A decision record that outlives its subject is worse than no
+record, because it reads as authoritative.
 
-- Choosing between multiple valid approaches
-- Adopting a new dependency
-- Establishing a pattern that others should follow
-- Making a trade-off that isn't obvious
+Write the decision where someone will hit it while changing the thing:
 
-Use the template at `context/shared/adr/0000-template.md`. Every new ADR must be
-added to the ADR Index in the root `AGENTS.md` (enforced by
-`scripts/validate_agents_md.py`).
+- **A rule about catalog shape** belongs in portolan-spec, enforced by a rashid
+  `PTL-*` rule. Not here.
+- **A rule about how the CLI behaves** belongs in `docs/`, next to the setting or
+  command it governs.
+- **A constraint you accepted and did not fix** belongs in
+  `context/shared/known-issues/`, stated as a limitation with its workaround.
+- **A trade-off or rejected alternative** belongs in
+  `context/shared/documentation/` when it spans modules, or in the module's
+  docstring when it does not.
+
+Prefer the docstring. A rationale attached to the function it explains cannot
+drift away from it.
 
 ### Two Documentation Audiences
 
 | Audience | Location | Purpose |
 |----------|----------|---------|
 | **Humans** | `docs/` (mkdocs) | *How to use*, tutorials, visual guides |
-| **AI agents** | Docstrings, AGENTS.md, ADRs | *How to modify*, dense, structured, co-located with code |
+| **AI agents** | Docstrings, AGENTS.md, `.claude/rules/` | *How to modify*, dense, structured, co-located with code |
 
 ### Validating AI Guidance
 
 **When possible, back AI guidance with automated validation.** Documentation drifts, code doesn't lie.
 
-If AGENTS.md says "all ADRs must be listed in the index," enforce it with a script. If it says "use `output.py` for terminal messages," add a lint rule. The goal: make it impossible for guidance to become stale.
+If AGENTS.md names a command, enforce that the command exists with a script. If it says "use `output.py` for terminal messages," add a lint rule. The goal: make it impossible for guidance to become stale.
 
 **Pattern:**
 1. Write guidance in AGENTS.md
 2. Ask: "Can I validate this automatically?"
 3. If yes, write a script in `scripts/` and add a pre-commit hook
 
-**Example:** The ADR index in the root `AGENTS.md` is validated by `scripts/validate_agents_md.py`, which checks that all ADRs in `context/shared/adr/` are listed. This runs as a pre-commit hook, commits that add ADRs without updating AGENTS.md are blocked.
+**Example:** The command surface in the root `AGENTS.md` is validated by `scripts/validate_agents_md.py`, which re-reads the Click decorators in `cli.py`. Commits that rename a command without updating AGENTS.md are blocked.
 
 When adding new guidance, consider: can this be validated? If so, add a check.

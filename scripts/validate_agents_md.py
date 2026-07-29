@@ -2,7 +2,6 @@
 """Validate AGENTS.md references match actual files.
 
 This script checks that:
-1. All ADRs in context/shared/adr/ are listed in the AGENTS.md index
 2. All known issues in context/shared/known-issues/ are listed in AGENTS.md
 3. All links in AGENTS.md point to files that exist
 4. All file path references point to existing files
@@ -51,15 +50,8 @@ def get_project_root() -> Path:
 
 
 # =============================================================================
-# ADR and Known Issues Validators (existing)
+# Known Issues Validators
 # =============================================================================
-
-
-def extract_adr_links(claude_md: str) -> set[str]:
-    """Extract ADR file paths from AGENTS.md ADR index table."""
-    # Match: | [0001](context/shared/adr/0001-*.md) |
-    pattern = r"\[(\d{4})\]\((context/shared/adr/\d{4}-[^)]+\.md)\)"
-    return {match[1] for match in re.findall(pattern, claude_md)}
 
 
 def extract_known_issue_links(claude_md: str) -> set[str]:
@@ -67,16 +59,6 @@ def extract_known_issue_links(claude_md: str) -> set[str]:
     # Match: | [title](context/shared/known-issues/*.md) |
     pattern = r"\[([^\]]+)\]\((context/shared/known-issues/[^)]+\.md)\)"
     return {match[1] for match in re.findall(pattern, claude_md)}
-
-
-def get_actual_adrs(root: Path) -> set[str]:
-    """Get all ADR files (excluding template)."""
-    adr_dir = root / "context" / "shared" / "adr"
-    if not adr_dir.exists():
-        return set()
-    return {
-        f"context/shared/adr/{f.name}" for f in adr_dir.glob("*.md") if f.name != "0000-template.md"
-    }
 
 
 def get_actual_known_issues(root: Path) -> set[str]:
@@ -89,31 +71,6 @@ def get_actual_known_issues(root: Path) -> set[str]:
         for f in issues_dir.glob("*.md")
         if f.name != "example.md"
     }
-
-
-def validate_adrs(claude_md: str, root: Path) -> ValidationResult:
-    """Check all ADRs are indexed in AGENTS.md."""
-    result = ValidationResult(validator="ADR Index")
-
-    linked_adrs = extract_adr_links(claude_md)
-    actual_adrs = get_actual_adrs(root)
-
-    missing_from_index = actual_adrs - linked_adrs
-    broken_links = linked_adrs - actual_adrs
-
-    if missing_from_index:
-        result.errors.append(
-            f"ADRs not in {INSTRUCTIONS_FILE} index:\n"
-            + "\n".join(f"  - {adr}" for adr in sorted(missing_from_index))
-        )
-
-    if broken_links:
-        result.errors.append(
-            f"ADR links in {INSTRUCTIONS_FILE} point to non-existent files:\n"
-            + "\n".join(f"  - {adr}" for adr in sorted(broken_links))
-        )
-
-    return result
 
 
 def validate_known_issues(claude_md: str, root: Path) -> ValidationResult:
@@ -151,7 +108,7 @@ def validate_file_paths(claude_md: str, root: Path) -> ValidationResult:
 
     Matches patterns like:
     - `path/to/file.py`
-    - `context/shared/adr/0001-example.md`
+    - `context/shared/known-issues/example.md`
     - `pyproject.toml`
 
     Excludes:
@@ -182,7 +139,6 @@ def validate_file_paths(claude_md: str, root: Path) -> ValidationResult:
         r"^item\.json$",  # STAC example files
         r"^data\.parquet$",  # Example data files
         r"demographics/",  # Example paths (STAC terminology section)
-        r"NNNN-",  # ADR template pattern
         r"^output\.py$",  # Common reference without full path
         r"\.env$",  # Environment files (examples)
         r"credentials\.json$",  # Credential file examples
@@ -567,7 +523,6 @@ def validate_freshness(claude_md: str, root: Path, stale_days: int = 30) -> Vali
 # =============================================================================
 
 VALIDATORS = [
-    validate_adrs,
     validate_known_issues,
     validate_file_paths,
     validate_cli_commands,
@@ -616,10 +571,9 @@ def main() -> int:
         print(f"Fix: Update {INSTRUCTIONS_FILE} to fix references, or update source files.")
         return 1
 
-    adr_count = len(extract_adr_links(claude_md))
     issue_count = len(extract_known_issue_links(claude_md))
     print(
-        f"{INSTRUCTIONS_FILE} validation passed: {adr_count} ADRs, {issue_count} known issues, "
+        f"{INSTRUCTIONS_FILE} validation passed: {issue_count} known issues, "
         f"{len(all_warnings)} warnings"
     )
     return 0

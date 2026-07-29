@@ -191,14 +191,12 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
-# menard (documentation sync)
-# Cache files are machine-local; links.toml should be committed
-.menard/cache/
-.menard/*.json
-.menard/*.state
-
 # Portolan catalog files (test artifacts)
 # These are created during testing but should not be committed to the repository
+# The bare catalog.json rule matches at any depth, so anything named catalog.json
+# that needs to ship (a vendored schema base, packaged fixture data) must be
+# allow-listed below. Omitting the allow-list drops the file from the wheel
+# silently, with no build error.
 .portolan/
 catalog.json
 !tests/fixtures/**/catalog.json

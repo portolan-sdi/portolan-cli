@@ -323,7 +323,7 @@ class TestTabularEnabledCheck:
 
         # File should be in skipped (tracked as collection-level tabular asset)
         # When tabular.enabled=true, standalone tabular files go to skipped
-        # (like other tracked-but-not-converted files per ADR-0028)
+        # (like other tracked-but-not-converted files)
         assert parquet_file in skipped
 
         # collection.json should exist and have the asset
@@ -342,7 +342,7 @@ class TestTabularEnabledCheck:
         A tabular-only add never reaches ``finalize_items``, which calls
         ``ensure_agents_md_tree``. Repairing only the collection it just wrote
         left a pre-existing root catalog without its AGENTS.md and
-        ``rel="agents"`` link (ADR-0052, issue #654) — the same catalog a geo
+        ``rel="agents"`` link (issue #654) — the same catalog a geo
         add would have fixed.
         """
         import json as json_mod
@@ -371,7 +371,7 @@ class TestTabularEnabledCheck:
     def test_tabular_companion_asset_works_regardless_of_config(self, tmp_path: Path) -> None:
         """Tabular files WITH a companion geo file work regardless of tabular.enabled.
 
-        This tests the ADR-0028 behavior: when a tabular file is in the same
+        This tests the behavior: when a tabular file is in the same
         directory as a geo file, it's tracked as a companion asset. This should
         work whether tabular.enabled is true or false.
 
@@ -757,7 +757,7 @@ class TestAoiInheritance:
         assert bbox == [-80.0, 35.0, -70.0, 45.0], "Existing extent should be preserved"
 
     def test_metadata_yaml_bbox_takes_priority(self, tmp_path: Path) -> None:
-        """Explicit bbox in metadata.yaml should override sibling inheritance (ADR-0047)."""
+        """Explicit bbox in metadata.yaml should override sibling inheritance."""
         from portolan_cli.add import add_files
 
         # Create catalog with a sibling geo collection
@@ -960,7 +960,7 @@ class TestTabularConversionIntegration:
 
 @pytest.mark.unit
 class TestPathTraversalProtection:
-    """Tests for path traversal protection in sibling bbox lookup (ADR-0030)."""
+    """Tests for path traversal protection in sibling bbox lookup."""
 
     def test_malicious_href_outside_catalog_ignored(self, tmp_path: Path) -> None:
         """Malicious hrefs pointing outside catalog should be ignored."""
@@ -1349,7 +1349,7 @@ extent:
 
 @pytest.mark.unit
 class TestTabularCollectionEmission:
-    """A tabular collection carries no portolan: fields (issue #654, ADR-0047).
+    """A tabular collection carries no portolan: fields (issue #654).
 
     Tabular status is derived from asset content, so the collection Portolan
     writes declares the profile schema URI and nothing from a private namespace.

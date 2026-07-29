@@ -115,9 +115,9 @@ class TestCatalogInit:
 
     @pytest.mark.unit
     def test_versions_json_at_catalog_root_not_portolan(self, tmp_path: Path) -> None:
-        """versions.json must be written to catalog root, not .portolan/ (ADR-0023).
+        """versions.json must be written to catalog root, not .portolan/.
 
-        ADR-0023 states: versions.json is consumer-visible metadata and must live
+        states: versions.json is consumer-visible metadata and must live
         alongside STAC files at the catalog root, not hidden inside .portolan/.
         """
         Catalog.init(tmp_path)
@@ -125,15 +125,15 @@ class TestCatalogInit:
         root_versions = tmp_path / "versions.json"
         portolan_versions = tmp_path / ".portolan" / "versions.json"
 
-        # versions.json MUST be at root (user-visible per ADR-0023)
+        # versions.json MUST be at root (user-visible)
         assert root_versions.exists(), (
             f"versions.json not found at catalog root {root_versions}; "
-            "per ADR-0023 it must live alongside STAC files, not inside .portolan/"
+            " it must live alongside STAC files, not inside .portolan/"
         )
         # versions.json must NOT be inside .portolan/ (that's for internal state only)
         assert not portolan_versions.exists(), (
             f"versions.json found at {portolan_versions}; "
-            "per ADR-0023 only internal tooling state belongs in .portolan/"
+            " only internal tooling state belongs in .portolan/"
         )
 
     @pytest.mark.unit

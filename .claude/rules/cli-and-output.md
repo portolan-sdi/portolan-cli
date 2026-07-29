@@ -13,9 +13,8 @@ paths:
 # CLI surface, output, and the agent-native contract
 
 This is the user-and-agent-facing boundary. Portolan is designed to be driven by
-AI agents (ADR-0030), so the JSON envelope and input hardening are a contract,
-not a convenience. `cli.py` is a thin Click layer, all logic stays in the library
-(ADR-0007). Several real bugs came from breaking the rules below.
+AI agents, so the JSON envelope and input hardening are a contract,
+not a convenience. `cli.py` is a thin Click layer, all logic stays in the library. Several real bugs came from breaking the rules below.
 
 ## Resolve the catalog root FIRST, then load .env and config
 
@@ -27,7 +26,7 @@ handler is: resolve root, load `.env` for that root, resolve sensitive settings,
 then do the work. Sensitive settings (`remote`, `profile`/`aws_profile`,
 `region`) come from env or `.env`, never `config.yaml` (which gets pushed).
 
-## The JSON envelope is stable and side-effect-honest (ADR-0030)
+## The JSON envelope is stable and side-effect-honest
 
 - Every command supports `--json` / `--format json` and returns the
   `OutputEnvelope` from `json_output.py`: `{success, command, data, errors}`.
@@ -61,13 +60,13 @@ reusing a generic one.
 - User-facing styled messages go through `output.py`
   (`success`/`info`/`warn`/`error`/`detail`), which is RLock-guarded for
   concurrent threads.
-- Match severity to outcome. A file accepted with no conversion (ADR-0014) is a
+- Match severity to outcome. A file accepted with no conversion is a
   WARNING, not an `error`/`✗ failed`. A file that was actually tracked must not
   print as failed.
 - Internal diagnostics use stdlib `logging`. Raw `print()` belongs only inside
   progress rendering and JSON emission.
 
-## Progress and summary model (ADR-0040)
+## Progress and summary model
 
 Long-running commands (`add`, `scan`, `push`) use a Rich progress bar
 (`transient=True`), surface errors immediately, and **batch repeated warnings by
@@ -93,7 +92,9 @@ the executor.
 
 ## Where to investigate further
 
-- ADRs 0007 (CLI wraps API), 0009 (dry-run and verbose), 0030 (agent-native JSON
+- `context/shared/documentation/agent-threat-model.md` for the failure patterns
+  `input_hardening.py` defends against, and why it rejects valid-looking input.
+
   and input hardening), 0040 (progress and summary).
 - `json_output.py` (`OutputEnvelope`, `ErrorDetail`), `errors.py` (the
   `PortolanError` hierarchy), `input_hardening.py` (the validators).

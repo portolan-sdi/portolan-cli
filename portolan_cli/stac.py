@@ -87,7 +87,7 @@ STAC_VERSION = "1.1.0"
 # link SHOULD be added by the user once the concrete license is known (issue #568).
 DEFAULT_LICENSE = "other"
 
-# Sentinel datetime values for provisional items (ADR-0035, STAC 1.1.0 compliance)
+# Sentinel datetime values for provisional items (STAC 1.1.0 compliance)
 # STAC 1.1.0 and pystac require start_datetime/end_datetime to be valid ISO 8601 strings
 # when datetime is null. These sentinel values indicate "unknown temporal extent" while
 # remaining parseable. The portolan:datetime_provisional marker flags these for review.
@@ -170,7 +170,7 @@ def create_item(
         item_id: Unique identifier for the item.
         bbox: Bounding box as [min_x, min_y, max_x, max_y] in WGS84.
         datetime: Acquisition/creation datetime. If None, creates an open temporal
-            interval (start/end both null) and marks as provisional (per ADR-0035).
+            interval (start/end both null) and marks as provisional.
         properties: Additional properties to include.
         assets: Asset dictionary to attach to the item.
 
@@ -189,7 +189,7 @@ def create_item(
     if not item_properties.get("title") or is_technical_name(str(item_properties.get("title"))):
         item_properties["title"] = humanize_slug(item_id)
 
-    # Per ADR-0035: If datetime not provided, mark as provisional so
+    # If datetime not provided, mark as provisional so
     # portolan check can flag incomplete items.
     # STAC 1.1.0 and pystac require start_datetime/end_datetime to be valid
     # ISO 8601 strings when datetime is null. We use an open-ended range
@@ -389,7 +389,7 @@ def add_asset_to_collection(
 ) -> None:
     """Add an asset directly to a collection (collection-level asset).
 
-    Per ADR-0031: Single vector files (GeoParquet, Shapefile, GeoPackage) are
+    Single vector files (GeoParquet, Shapefile, GeoPackage) are
     collection-level assets—no item.json, asset directly in collection.json.
 
     Issue #447 FIX: Before adding, check if ANY existing asset points to the same
@@ -440,7 +440,7 @@ def add_collection_properties_from_metadata(
 ) -> None:
     """Add STAC properties from metadata to a collection.
 
-    Used for collection-level assets (ADR-0031) where metadata properties
+    Used for collection-level assets where metadata properties
     should be applied directly to the collection instead of an item.
 
     Handles:
@@ -450,7 +450,7 @@ def add_collection_properties_from_metadata(
     - GeoParquetMetadata: proj:epsg from CRS (table extension handled separately)
 
     The collection-level ``proj:epsg`` must reflect the source *data* CRS. A
-    tracked ``.pmtiles`` companion (ADR-0028 tracks all files) reports a
+    tracked ``.pmtiles`` companion (tracks all files) reports a
     hardcoded ``proj:epsg: 3857`` for its tiles; that visualization artifact
     must never overwrite a real source CRS contributed by the vector data asset,
     regardless of the order assets are applied (issue #488).
@@ -489,7 +489,7 @@ def add_collection_properties_from_metadata(
 def apply_human_titles(collection: pystac.Collection, metadata: object) -> None:
     """Apply human-authored title/description from metadata.yaml (Issue #502).
 
-    Per ADR-0038 (revised), ``metadata.yaml`` may carry optional ``title`` and
+    ``metadata.yaml`` may carry optional ``title`` and
     ``description`` keys as the human override for the auto-derived values.
     These are the highest-precedence source: a human-authored title always wins
     over the slug-humanized default. Missing/blank values leave the existing
@@ -514,7 +514,7 @@ def apply_human_titles(collection: pystac.Collection, metadata: object) -> None:
 def apply_human_license(collection: pystac.Collection, metadata: object) -> None:
     """Apply the human-authored license from metadata.yaml (issue #654).
 
-    ``license`` is a required metadata.yaml field (ADR-0038); without this the
+    ``license`` is a required metadata.yaml field; without this the
     collection kept the ``other`` placeholder even when the human had declared an
     SPDX identifier. ``license_url``, when present, becomes the ``rel="license"``
     link that a non-SPDX license needs to be resolvable.
@@ -738,7 +738,7 @@ def update_collection_temporal_extent(
     """Update a collection's temporal extent to include an item's datetime.
 
     Widens the collection's temporal interval to encompass the item's datetime.
-    Per ADR-0035, items without datetime have null interval and are not included.
+    Items without datetime have null interval and are not included.
 
     Args:
         collection: The collection to update.
@@ -1221,7 +1221,7 @@ def add_vector_extension(
     """Add Vector extension fields to an item from GeoParquet metadata.
 
     Sets vector:geometry_types based on the geometry type(s) in the metadata.
-    Per ADR-0037: Use experimental extensions (Vector v0.1.0 is Proposal maturity).
+    Use experimental extensions (Vector v0.1.0 is Proposal maturity).
 
     Args:
         item: The STAC item to add extension fields to.
@@ -1392,7 +1392,7 @@ def add_collection_extensions_from_summaries(
             collection.stac_extensions.append(ext_url)
 
 
-# Per ADR-0036: Hybrid field detection for collection summaries
+# Hybrid field detection for collection summaries
 # Explicit fields with known strategies; auto-detect extension-prefixed fields
 SUMMARIZED_FIELDS: dict[str, SummaryStrategy] = {
     "proj:code": SummaryStrategy.ARRAY,  # Distinct CRS codes
@@ -1408,7 +1408,7 @@ def update_collection_summaries(collection: pystac.Collection) -> None:
     - Explicit strategies for core fields (proj:code, vector:geometry_types, gsd)
     - Auto-detect extension-prefixed fields (custom:*, etc.)
 
-    Per ADR-0036: Categorical fields only, no numeric aggregation across items.
+    Categorical fields only, no numeric aggregation across items.
 
     Args:
         collection: The collection to update summaries for.

@@ -1,4 +1,4 @@
-"""README generation from STAC + metadata.yaml (ADR-0038).
+"""README generation from STAC + metadata.yaml.
 
 This module generates README.md files from STAC metadata and
 .portolan/metadata.yaml content. The README is a pure output - always
@@ -623,7 +623,7 @@ def generate_readme(
     sections: list[str] = []
 
     # Aggregate assets from collection and items
-    # Collection-level assets (vector data per ADR-0031)
+    # Collection-level assets (vector data)
     assets = dict(stac.get("assets", {}))
     # Item-level assets (raster/temporal data)
     for item in stac.get("items", []):

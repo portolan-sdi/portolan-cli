@@ -47,7 +47,7 @@ def local_catalog(tmp_path: Path) -> Path:
     catalog_dir = tmp_path / "catalog"
     catalog_dir.mkdir()
 
-    # Create test/versions.json (per ADR-0023)
+    # Create test/versions.json
     versions_dir = catalog_dir / "test"
     versions_dir.mkdir(parents=True)
 
@@ -200,7 +200,7 @@ def local_catalog_malformed(tmp_path: Path) -> Path:
     catalog_dir = tmp_path / "catalog_malformed"
     catalog_dir.mkdir()
 
-    # Create test/versions.json (per ADR-0023) with missing required keys
+    # Create test/versions.json with missing required keys
     versions_dir = catalog_dir / "test"
     versions_dir.mkdir(parents=True)
 
@@ -2780,7 +2780,7 @@ class TestAssetDiffing:
             }
         }
 
-        # Local version has all 3001 assets (complete snapshot per ADR-0005)
+        # Local version has all 3001 assets (complete snapshot)
         all_assets = {**existing_assets, **new_asset}
         local_versions_data = {
             "versions": [

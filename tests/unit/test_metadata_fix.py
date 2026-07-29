@@ -231,7 +231,7 @@ class TestFixStaleAndBreaking:
         from portolan_cli.metadata.fix import FixAction, fix_metadata
 
         # Set up collection with existing item in hierarchical layout per
-        # ADR-0041 ({collection}/{item_id}/{item_id}.{ext}).
+        # ({collection}/{item_id}/{item_id}.{ext}).
         collection_dir = tmp_path / "test-collection"
         collection_dir.mkdir()
         _create_collection_json(collection_dir)
@@ -292,7 +292,7 @@ class TestFixStaleAndBreaking:
         from portolan_cli.metadata.fix import FixAction, fix_metadata
 
         # Set up collection with existing item in hierarchical layout per
-        # ADR-0041.
+        # .
         collection_dir = tmp_path / "test-collection"
         collection_dir.mkdir()
         _create_collection_json(collection_dir)
@@ -391,7 +391,7 @@ class TestFixStaleAndBreaking:
         collection_dir.mkdir()
         _create_collection_json(collection_dir)
 
-        # Hierarchical layout per ADR-0041: each item lives in its own
+        # Hierarchical layout: each item lives in its own
         # subdir keyed by item_id.
         fresh_dir = collection_dir / "fresh"
         missing_dir = collection_dir / "missing"

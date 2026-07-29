@@ -191,6 +191,32 @@ portolan push
 
 These files are synced with `portolan push` but aren't versioned—they're derived from or supplement the data.
 
+## Portolan owns the bucket
+
+Everything under the configured remote prefix belongs to Portolan. You supply
+credentials, an endpoint, and a bucket path; Portolan manages every file and the
+structure inside.
+
+Editing the bucket with another tool is unsupported. Local state is the single
+source of truth, and sync runs one direction. Portolan does not merge external
+changes, so a remote edit either gets overwritten by the next push or leaves the
+remote inconsistent with `versions.json`.
+
+Two consequences worth planning around. Adopting an existing bucket means
+letting Portolan rewrite its layout, so point it at a fresh prefix when the
+current contents matter. Two people pushing from different local states will
+overwrite each other, because the newer push wins rather than merging.
+
+The reasoning is consistency: a consumer reading the catalog gets files that
+match the manifest, and a CDN can cache them without worrying that they changed
+underneath it.
+
+!!! warning "Drift is not detected yet"
+    Portolan does not currently compare remote state against `versions.json`.
+    A file changed or deleted directly in the bucket goes unnoticed until
+    something downstream breaks. Treat the bucket as write-only through
+    `portolan push`.
+
 ## See Also
 
 - [Configuration](../reference/configuration.md) - Configure remote settings

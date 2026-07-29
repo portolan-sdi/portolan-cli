@@ -66,7 +66,7 @@ def async_catalog(tmp_path: Path) -> Path:
     }
     (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
 
-    # Create test/versions.json (per ADR-0023)
+    # Create test/versions.json
     versions_dir = catalog_dir / "test"
     versions_dir.mkdir(parents=True)
 

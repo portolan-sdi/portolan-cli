@@ -1,4 +1,4 @@
-"""Tests for collection-level asset handling (ADR-0031).
+"""Tests for collection-level asset handling.
 
 Issue #250: portolan add creates incorrect asset paths for collection-level assets.
 """
@@ -12,16 +12,16 @@ from portolan_cli.add import add
 
 @pytest.fixture
 def initialized_catalog(tmp_path):
-    """Create an initialized Portolan catalog structure (per ADR-0023)."""
+    """Create an initialized Portolan catalog structure."""
     # Create .portolan for internal state
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
 
-    # Create config.yaml (required per ADR-0029)
+    # Create config.yaml (required)
     config_data = "# Portolan configuration\n"
     (portolan_dir / "config.yaml").write_text(config_data)
 
-    # catalog.json at root level (per ADR-0023)
+    # catalog.json at root level
     catalog_data = {
         "type": "Catalog",
         "stac_version": "1.0.0",
@@ -36,7 +36,7 @@ def initialized_catalog(tmp_path):
 
 @pytest.mark.unit
 class TestCollectionLevelAssets:
-    """Test collection-level asset handling per ADR-0031."""
+    """Test collection-level asset handling."""
 
     def test_collection_level_asset_href_is_correct(self, initialized_catalog, fixtures_dir):
         """Test that collection-level assets get correct href in versions.json.
@@ -135,9 +135,9 @@ class TestCollectionLevelAssets:
         )
 
     def test_collection_level_vector_no_item_json(self, initialized_catalog, fixtures_dir):
-        """Test that collection-level vector assets do NOT create item.json (ADR-0031).
+        """Test that collection-level vector assets do NOT create item.json.
 
-        Per ADR-0031: Single vector files (GeoParquet, Shapefile, GeoPackage) are
+        Single vector files (GeoParquet, Shapefile, GeoPackage) are
         collection-level assets - no item.json, asset directly in collection.json.
         """
         # Arrange
@@ -178,7 +178,7 @@ class TestCollectionLevelAssets:
     ):
         """Test that collection-level vector assets appear in collection.json assets.
 
-        Per ADR-0031: The asset should be in collection.json's "assets" field,
+        The asset should be in collection.json's "assets" field,
         NOT as an item link.
         """
         # Arrange

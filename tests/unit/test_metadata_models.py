@@ -46,7 +46,7 @@ class TestMetadataStatus:
     @pytest.mark.unit
     def test_status_has_exactly_five_values(self) -> None:
         """MetadataStatus should have exactly 5 values (FRESH, STALE,
-        MISSING, BREAKING, ORPHANED — last added per ADR-0041)."""
+        MISSING, BREAKING, ORPHANED — last added)."""
         from portolan_cli.metadata.models import MetadataStatus
 
         assert len(MetadataStatus) == 5
@@ -514,7 +514,7 @@ class TestMetadataReport:
 
     @pytest.mark.unit
     def test_orphaned_does_not_pass(self) -> None:
-        """ORPHANED is a warning, not a pass. Per ADR-0041 the rule emits
+        """ORPHANED is a warning, not a pass. the rule emits
         passed=False for orphan-only reports; the report property must agree
         so JSON callers and the rule do not diverge."""
         from portolan_cli.metadata.models import (

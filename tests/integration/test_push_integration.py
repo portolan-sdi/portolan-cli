@@ -24,13 +24,13 @@ from hypothesis import strategies as st
 def catalog_with_versions(tmp_path: Path) -> Path:
     """Create a catalog with versions.json for integration tests.
 
-    Per ADR-0023: STAC files (catalog.json, collection.json, versions.json)
+    STAC files (catalog.json, collection.json, versions.json)
     live at root level; config.yaml goes in .portolan/.
     """
     catalog_dir = tmp_path / "catalog"
     catalog_dir.mkdir()
 
-    # Create catalog.json at root (per ADR-0023)
+    # Create catalog.json at root
     catalog_data = {
         "type": "Catalog",
         "id": "test-catalog",
@@ -44,7 +44,7 @@ def catalog_with_versions(tmp_path: Path) -> Path:
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
 
-    # Create collection directory at root with versions.json (per ADR-0023)
+    # Create collection directory at root with versions.json
     collection_dir = catalog_dir / "demographics"
     collection_dir.mkdir(parents=True)
 
@@ -112,7 +112,7 @@ def catalog_with_versions(tmp_path: Path) -> Path:
 def catalog_with_versions_malformed(tmp_path: Path) -> Path:
     """Create a catalog with invalid JSON in versions.json.
 
-    Per ADR-0023: versions.json lives at collection root level.
+    Versions.json lives at collection root level.
     """
     catalog_dir = tmp_path / "catalog_malformed"
     catalog_dir.mkdir()
@@ -145,7 +145,7 @@ def catalog_with_versions_malformed(tmp_path: Path) -> Path:
 def catalog_missing_versions_file(tmp_path: Path) -> Path:
     """Create a catalog without versions.json file.
 
-    Per ADR-0023: Collection directory exists at root but has no versions.json.
+    Collection directory exists at root but has no versions.json.
     """
     catalog_dir = tmp_path / "catalog_no_versions"
     catalog_dir.mkdir()
@@ -1658,7 +1658,7 @@ class TestPushAssetDiffingIntegration:
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
 
-        # Create .portolan/config.yaml (sentinel per ADR-0029)
+        # Create .portolan/config.yaml (sentinel)
         portolan_dir = catalog_dir / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("version: 1\n")
@@ -1702,7 +1702,7 @@ class TestPushAssetDiffingIntegration:
         (collection_dir / "new_file.parquet").write_bytes(b"new data")
 
         # Create local versions.json with both 1.0.0 (base) and 2.0.0 (new version)
-        # Per ADR-0005, each version has a complete snapshot of all assets
+        # Each version has a complete snapshot of all assets
         local_versions = {
             "spec_version": "1.0.0",
             "current_version": "2.0.0",

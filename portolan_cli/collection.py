@@ -237,7 +237,7 @@ def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
         if not href.endswith("collection.json"):
             continue
 
-        # Security: Validate path is within catalog_root (ADR-0030 path hardening)
+        # Security: Validate path is within catalog_root (path hardening)
         # Prevents path traversal via malicious hrefs like "../../../etc/passwd"
         try:
             collection_path = (catalog_root / href).resolve()
@@ -304,7 +304,7 @@ def _compute_union_bbox(bboxes: list[list[float]]) -> list[float]:
 
 
 def _get_metadata_yaml_bbox(collection_dir: Path) -> list[float] | None:
-    """Check metadata.yaml for explicit bbox (ADR-0047 priority 1).
+    """Check metadata.yaml for explicit bbox (priority 1).
 
     Args:
         collection_dir: Path to the collection directory.

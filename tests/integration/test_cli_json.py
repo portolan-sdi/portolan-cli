@@ -26,7 +26,7 @@ def valid_catalog(conformant_catalog: Path) -> Path:
     """A generated catalog that passes validation with no findings.
 
     Built through `portolan init` rather than by hand: validation runs on
-    rashid (ADR-0057) and a hand-written catalog.json trips a dozen PTL-* rules
+    rashid and a hand-written catalog.json trips a dozen PTL-* rules
     before these tests reach their subject, the JSON envelope.
     """
     return conformant_catalog

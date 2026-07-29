@@ -1,4 +1,4 @@
-"""Metadata YAML schema and validation (ADR-0038).
+"""Metadata YAML schema and validation.
 
 This module provides validation and template generation for .portolan/metadata.yaml
 files. These files contain ONLY human-enrichable fields that can't be derived from
@@ -42,7 +42,7 @@ from portolan_cli.config import load_merged_metadata
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# Required fields per ADR-0038 (revised)
+# Required fields (revised)
 # Title and description come from STAC, not metadata.yaml
 # =============================================================================
 

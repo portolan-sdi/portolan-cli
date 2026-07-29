@@ -62,7 +62,7 @@ flowchart TD
     RECHK --> CREPORT
 ```
 
-## `check` delegates conformance to rashid (ADR-0057)
+## `check` delegates conformance to rashid
 
 `portolan_cli/validation/` is an adapter, not a rule engine. `run_check` builds
 rashid's config, calls `rashid.validate`, and returns a `CheckOutcome` of plain
@@ -81,7 +81,7 @@ only AUTO rows name a `fixer` key in `validation.fixers.FIXERS`. A fixer takes
 AUTO finding that outlived the re-check, which is what stops an agent from
 calling `--fix` forever.
 
-## The STAC manifest is the canonical scan source for freshness (ADR-0041)
+## The STAC manifest is the canonical scan source for freshness
 
 `check --metadata` and `check --metadata --fix` MUST consume the **same**
 `scan_catalog_metadata(catalog_path)` (`metadata/scan.py`). It walks the STAC
@@ -115,16 +115,16 @@ output tells the operator what to write), or EXTERNAL (an optional dependency or
 a hosting change). If you add a status or a fixer, preserve this, either make it
 fixable or label the residue clearly in both halves.
 
-## Collection-level assets are NOT items (ADR-0031)
+## Collection-level assets are NOT items
 
-A registered collection-level asset (e.g. `items.parquet`, or an ADR-0031 single
+A registered collection-level asset (e.g. `items.parquet`, or an single
 vector file) has no companion `item.json`. Freshness-check it against
 `versions.json` directly (`_check_collection_level_asset`), never route it
 through the per-file item-JSON lookup, or it falsely reports MISSING. In
 `fix_metadata`, STALE/BREAKING on a collection-level asset is SKIPPED with a
 "re-run portolan add" message (regenerating it is `add`'s job, not `check`'s).
 
-## mtime + heuristics fast gate (ADR-0017)
+## mtime + heuristics fast gate
 
 Freshness uses a cheap gate before any expensive hashing. stored mtime is None
 means new. mtime unchanged means FRESH (fast path). mtime changed then compare
@@ -140,7 +140,7 @@ to dashes (including the extension), Windows reserved names get an underscore
 prefix, long paths get hash-truncated, invalid collection ids get fixed. It is
 gated to the FIX_FLAG set. **Format conversion is exclusively
 `check --fix --geo-assets`** (vectors to GeoParquet, rasters to COG via
-`convert_directory`, only `CONVERTIBLE` files). Keep these separate (ADR-0016
+`convert_directory`, only `CONVERTIBLE` files). Keep these separate (
 scan-before-import). Shapefile renames move all sidecars together with rollback.
 
 ## Classification and discovery gotchas
@@ -167,9 +167,9 @@ sources of successful conversions whose output exists, plus their sidecars.
 
 ## Where to investigate further
 
-- ADRs 0016 (scan before import), 0017 (mtime heuristics), 0034 (statistics),
-  0035 (temporal extent), 0041 (manifest canonical).
+- `context/shared/documentation/catalog-layout-contract.md` for the layout the
+  scanner assumes and the two boundaries it refuses to cross.
 - `metadata/scan.py` module docstring, it spells out the MISSING/ORPHANED split.
-- `portolan_cli/validation/`, the adapter in front of rashid (ADR-0057), and
+- `portolan_cli/validation/`, the adapter in front of rashid, and
   rashid itself for the rules. Rule ids are rashid's `PTL-*`, shown verbatim;
   each cites the `PORTO-*` spec requirements it enforces.

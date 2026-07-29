@@ -1,4 +1,4 @@
-"""Tests for README generation (ADR-0038).
+"""Tests for README generation.
 
 Tests README generation from STAC metadata + metadata.yaml:
 - Title/description from metadata.yaml override, else STAC, else id (#534, #502)

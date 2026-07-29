@@ -13,7 +13,7 @@ The `check:` block tunes validation per catalog::
 
 `publish.public_url` is where the catalog is served. It is not a credential —
 it is the same URL the catalog's README prints — so it lives in config.yaml
-rather than the environment (ADR-0024's sensitive-setting rule does not apply).
+rather than the environment (the sensitive-setting rule does not apply).
 `check --live` probes relative asset hrefs against it.
 """
 
@@ -26,7 +26,7 @@ from typing import Any
 from rashid.config import RulesConfig
 
 #: Config block replaced by ``check:``. Its keys named native ``RULE-*`` rules
-#: that no longer exist, so there is nothing to translate — see ADR-0057.
+#: that no longer exist, so there is nothing to translate —.
 LEGACY_BLOCK = "stac_lint"
 
 
@@ -55,7 +55,7 @@ def load_rules_config(root: Path) -> RulesConfig:
     if LEGACY_BLOCK in config:
         warnings.warn(
             f"`{LEGACY_BLOCK}:` in .portolan/config.yaml is ignored. Validation moved to "
-            "rashid's PTL-* rules (ADR-0057); the old RULE-* names have no equivalent, so "
+            "rashid's PTL-* rules; the old RULE-* names have no equivalent, so "
             "there is nothing to migrate automatically. Re-express the overrides you still "
             "want under `check:` with the PTL-* ids `portolan check` reports.",
             DeprecationWarning,

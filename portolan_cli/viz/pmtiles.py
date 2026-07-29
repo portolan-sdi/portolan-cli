@@ -144,7 +144,7 @@ def check_pmtiles_available() -> None:
     """
     # Check for gpio-pmtiles
     try:
-        import gpio_pmtiles  # type: ignore[import-untyped]  # noqa: F401
+        import gpio_pmtiles  # type: ignore[import-untyped] # noqa: F401
     except ImportError as e:
         raise PMTilesNotAvailableError() from e
 
@@ -876,7 +876,7 @@ def generate_pmtiles_for_collection(
             result.generated.append(pmtiles_path)
             generation_succeeded = True
 
-            # Generate default style file (ADR-0045)
+            # Generate default style file
             _write_default_style_for_geoparquet(
                 parquet_path=parquet_path,
                 layer_name=layer_name,
@@ -905,7 +905,7 @@ def generate_pmtiles_for_collection(
             )
             _track_side_step_assets(collection_path, pmtiles_path, thumb_path, catalog_root)
 
-    # Discover and register style assets (ADR-0045)
+    # Discover and register style assets
     from portolan_cli.viz.style import discover_styles, register_style_assets
 
     styles = discover_styles(collection_path)
@@ -931,7 +931,7 @@ class PMTilesSettings:
 
 
 def get_pmtiles_settings(catalog_root: Path, coll_id: str, coll_path: Path) -> PMTilesSettings:
-    """Resolve PMTiles settings for a collection via hierarchical config (ADR-0039)."""
+    """Resolve PMTiles settings for a collection via hierarchical config."""
     from portolan_cli.config import coerce_bool, coerce_int, get_setting
 
     def get(key: str) -> Any:
@@ -969,8 +969,7 @@ def generate_or_suggest_pmtiles(
 
     For each affected collection, resolves PMTiles settings and generates when
     ``--pmtiles`` was passed or ``pmtiles.enabled`` is configured. Generation runs
-    regardless of output mode so the JSON envelope reflects the final state
-    (ADR-0030); an explicitly-requested generation that fails exits non-zero.
+    regardless of output mode so the JSON envelope reflects the final state; an explicitly-requested generation that fails exits non-zero.
 
     Args:
         catalog_root: Catalog root directory.

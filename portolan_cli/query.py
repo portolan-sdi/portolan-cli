@@ -60,7 +60,7 @@ def list_items(
     Returns:
         List of ItemInfo objects.
     """
-    # Catalog at root level (per ADR-0023)
+    # Catalog at root level
     catalog_path = catalog_root / "catalog.json"
 
     if not catalog_path.exists():
@@ -68,7 +68,7 @@ def list_items(
 
     items: list[ItemInfo] = []
 
-    # Scan root-level directories for collections (per ADR-0023)
+    # Scan root-level directories for collections
     for col_dir in catalog_root.iterdir():
         if not col_dir.is_dir():
             continue
@@ -153,7 +153,7 @@ def get_item_info(
 
     collection_id, item_id = stac_id.split("/", 1)
 
-    # STAC at root level (per ADR-0023)
+    # STAC at root level
     item_path = catalog_root / collection_id / item_id / f"{item_id}.json"
 
     if not item_path.exists():
@@ -191,7 +191,7 @@ def is_current(
 ) -> bool:
     """Check if a file is unchanged compared to versions.json.
 
-    Uses mtime as fast-path (per ADR-0017), falls back to sha256 if mtime changed.
+    Uses mtime as fast-path, falls back to sha256 if mtime changed.
 
     Args:
         path: Path to the file to check.

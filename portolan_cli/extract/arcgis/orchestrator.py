@@ -218,9 +218,14 @@ def _service_output_dir(output_dir: Path, service_name: str) -> Path:
     """Map a (possibly folder-qualified) service name to a nested directory.
 
     "ecml/active_faults" -> output_dir/ecml/active_faults
-    "Top"                -> output_dir/top
+    "Top" -> output_dir/top
     Each path segment is slugified independently so the folder hierarchy is
-    preserved as nested subcatalogs (ADR-0032, ADR-0054).
+    preserved as nested subcatalogs.
+
+    Slugification can collide when two service names differ only in characters
+    it strips, ``turkiye`` and ``turkiye-alt`` for example. The second extraction
+    writes into the first one's directory. This is a known limitation and is not
+    mitigated; no uniquifying suffix is appended.
     """
     parts = [_slugify(p) for p in service_name.split("/") if p]
     result = output_dir
