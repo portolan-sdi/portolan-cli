@@ -293,17 +293,29 @@ conversion:
 
 Configure Cloud-Optimized GeoTIFF conversion parameters.
 
-Portolan ships one opinionated default set rather than per-datatype tuning:
-
 | Setting | Default | Why |
 |---------|---------|-----|
 | Compression | DEFLATE | Lossless, and every GeoTIFF reader supports it |
-| Predictor | 2 (horizontal differencing) | Improves the compression ratio across data types |
 | Tile size | 512×512 | Matches the rio-cogeo default; larger tiles mean fewer HTTP range requests |
-| Overview resampling | nearest | Safe for categorical data, elevation, and imagery alike |
+| Predictor | `auto` | Derived from the source raster's dtype |
+| Overview resampling | `auto` | Derived from the source raster's dtype |
 
-These favor batch conversion over per-file optimization. Reach for
-`rio_cogeo.cog_translate()` directly when a specific dataset needs WEBP for
+Predictor and overview resampling both depend on what the pixels mean, so
+Portolan reads them off the source rather than hardcoding one pair:
+
+| Source raster | Predictor | Resampling |
+|---------------|-----------|------------|
+| Floating point (elevation, model output) | 3 (floating point) | `average` |
+| Integer (class codes, counts) | 2 (horizontal differencing) | `nearest` |
+| Multi-band uint8 (RGB imagery) | 1 (none) | `nearest` |
+
+Averaging class codes would invent classes that do not exist, so integer data
+keeps `nearest`. Set `resampling: average` explicitly for continuous integer
+rasters where blocky overviews matter. A raster Portolan cannot open falls back
+to predictor 2 and `nearest`.
+
+Compression stays one opinionated value rather than per-datatype tuning. Reach
+for `rio_cogeo.cog_translate()` directly when a specific dataset needs WEBP for
 imagery or LERC for elevation.
 
 ```yaml
@@ -312,8 +324,8 @@ conversion:
     compression: JPEG # DEFLATE (default), JPEG, LZW, ZSTD, WEBP
     quality: 95 # Quality 1-100 (applies to JPEG and WEBP)
     tile_size: 512 # Internal tile size in pixels
-    predictor: 2 # 1=none, 2=horizontal (default), 3=floating point
-    resampling: nearest # Overview resampling: nearest, bilinear, cubic, etc.
+    predictor: auto # auto (default), 1=none, 2=horizontal, 3=floating point
+    resampling: auto # auto (default), nearest, bilinear, cubic, average, etc.
     generate_thumbnail: true # Auto-generate JPEG thumbnail (default: true)
     thumbnail_max_size: 512 # Max dimension in pixels (default: 512)
     thumbnail_quality: 75 # JPEG quality 1-100 (default: 75)
@@ -373,7 +385,8 @@ These are complementary. Use `conversion.vector` for consistent spatial optimiza
 | Scenario | Configuration |
 |----------|---------------|
 | RGB imagery (smaller files) | `compression: JPEG`, `quality: 95` |
-| Elevation data (lossless) | `compression: DEFLATE`, `predictor: 3` |
+| Elevation data (lossless) | `compression: DEFLATE` (predictor 3 is derived) |
+| Continuous integer rasters | `resampling: average` |
 | Analytics (fast reads) | `compression: LZW`, `tile_size: 256` |
 | Disable thumbnails | `generate_thumbnail: false` |
 | Large thumbnails for preview | `thumbnail_max_size: 1024`, `thumbnail_quality: 90` |

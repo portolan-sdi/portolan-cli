@@ -29,6 +29,7 @@ from portolan_cli.conversion_config import (
     VectorSettings,
     get_cog_settings,
     get_vector_settings,
+    resolve_cog_settings,
 )
 from portolan_cli.errors import (
     ConversionFailedError,
@@ -781,9 +782,9 @@ def _convert_raster(source: Path, output_dir: Path, settings: CogSettings | None
 
     Uses COG settings from config if provided, otherwise the built-in defaults:
     - DEFLATE compression
-    - Predictor=2 (horizontal differencing)
     - 512x512 tiles
-    - Nearest resampling
+    - Predictor and overview resampling derived from the source raster's dtype
+      (see derive_cog_defaults)
 
     Args:
         source: Source raster file.
@@ -805,6 +806,9 @@ def _convert_raster(source: Path, output_dir: Path, settings: CogSettings | None
     # Use defaults if no settings provided
     if settings is None:
         settings = CogSettings()
+
+    # Fill in any "auto" field from the raster itself (Issue #690)
+    settings = resolve_cog_settings(settings, source)
 
     output_path = output_dir / f"{source.stem}.tif"
 
