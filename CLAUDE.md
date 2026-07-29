@@ -109,7 +109,6 @@ portolan-cli/
 ├── context/               # AI/INTERNAL development context
 │   └── shared/            # Plans, research, reports
 │       ├── documentation/ # CI, tooling, maintainer rationale
-│       ├── plans/         # Architecture plans and design docs
 │       └── known-issues/  # Tracked issues and environment constraints
 └── .github/workflows/     # CI/CD pipelines
 ```

@@ -22,9 +22,11 @@ When documenting CLI commands:
 ## docs/ vs context/ distinction
 
 - **`docs/`**, Public-facing, human-readable documentation (tutorials, visual guides, user-oriented). Built with mkdocs and published.
-- **`context/`**, Internal, AI-oriented context (architectural plans, design docs, maintainer rationale, research). Dense, structured, co-located with development. NOT published.
+- **`context/`**, Internal, AI-oriented context (maintainer rationale, known issues, CI and tooling notes). Dense, structured, co-located with development. NOT published.
 
-Do NOT put architectural plans or design documents in `docs/`. Those belong in `context/shared/plans/`.
+Do NOT put architectural plans or design documents in `docs/`. Working plans are
+local scratch and are git-ignored; once a decision holds, record it in one of the
+four destinations below rather than leaving it in a plan.
 
 ## Documentation Bias
 

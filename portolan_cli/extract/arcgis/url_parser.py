@@ -5,7 +5,7 @@ Parses ArcGIS REST URLs to determine:
 - Service name (for default output directory naming)
 - Layer ID (if a specific layer is targeted)
 
-Per design doc (context/shared/plans/extract-arcgis-design.md):
+URL shapes and how each routes:
 - `*/FeatureServer` or `*/MapServer` -> single service extraction (vector)
 - `*/ImageServer` -> single service extraction (raster)
 - `*/rest/services` -> multi-service discovery and extraction
