@@ -125,11 +125,11 @@ hooks = [
   # === AUTO-UPDATE HOOKS ===
   # These regenerate content from code - keeps docs in sync automatically
   {
-    id = "update-claude-md",
-    name = "auto-update CLAUDE.md sections",
-    entry = "uv run python scripts/generate_claude_md_sections.py --update",
+    id = "update-agents-md",
+    name = "auto-update AGENTS.md sections",
+    entry = "uv run python scripts/generate_agents_md_sections.py --update",
     language = "system",
-    files = { glob = ["CLAUDE.md", "context/shared/adr/*.md", "context/shared/known-issues/*.md", "pyproject.toml", "portolan_cli/cli.py"] },
+    files = { glob = ["AGENTS.md", "context/shared/adr/*.md", "context/shared/known-issues/*.md", "pyproject.toml", "portolan_cli/cli.py"] },
     pass_filenames = false,
   },
   {
@@ -143,11 +143,11 @@ hooks = [
 
   # === VALIDATION HOOKS ===
   {
-    id = "validate-claude-md",
-    name = "validate CLAUDE.md references",
-    entry = "uv run python scripts/validate_claude_md.py",
+    id = "validate-agents-md",
+    name = "validate AGENTS.md references",
+    entry = "uv run python scripts/validate_agents_md.py",
     language = "system",
-    files = { glob = ["CLAUDE.md", "context/shared/adr/*.md", "context/shared/known-issues/*.md"] },
+    files = { glob = ["AGENTS.md", "context/shared/adr/*.md", "context/shared/known-issues/*.md"] },
     pass_filenames = false,
   },
   {

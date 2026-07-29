@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Auto-update freshness markers in CLAUDE.md when related code changes.
+"""Auto-update freshness markers in AGENTS.md when related code changes.
 
-This script maps code files to CLAUDE.md sections and updates freshness dates
+This script maps code files to AGENTS.md sections and updates freshness dates
 when those files are modified. Run by pre-commit when mapped files change.
 
 Usage:
@@ -19,7 +19,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# Map code files to CLAUDE.md section headers
+# Repo-specific instructions live in AGENTS.md. CLAUDE.md only imports it,
+# because Claude Code reads CLAUDE.md and every other agent reads AGENTS.md.
+INSTRUCTIONS_FILE = "AGENTS.md"
+
+# Map code files to AGENTS.md section headers
 # When a mapped file changes, update the freshness marker for that section
 FILE_TO_SECTION_MAP: dict[str, list[str]] = {
     "portolan_cli/output.py": ["Standardized Terminal Output"],
@@ -31,10 +35,10 @@ FILE_TO_SECTION_MAP: dict[str, list[str]] = {
 
 
 def get_project_root() -> Path:
-    """Find project root by looking for CLAUDE.md."""
+    """Find project root by looking for AGENTS.md."""
     current = Path(__file__).resolve().parent
     while current != current.parent:
-        if (current / "CLAUDE.md").exists():
+        if (current / INSTRUCTIONS_FILE).exists():
             return current
         current = current.parent
     return Path.cwd()
@@ -93,10 +97,10 @@ def get_sections_for_files(changed_files: list[str]) -> set[str]:
 def main() -> int:
     """Update freshness markers for changed files."""
     root = get_project_root()
-    claude_md_path = root / "CLAUDE.md"
+    instructions_path = root / INSTRUCTIONS_FILE
 
-    if not claude_md_path.exists():
-        print("ERROR: CLAUDE.md not found")
+    if not instructions_path.exists():
+        print(f"ERROR: {INSTRUCTIONS_FILE} not found")
         return 1
 
     # Get changed files from args (pre-commit passes them)
@@ -115,14 +119,14 @@ def main() -> int:
 
     # Update freshness markers
     today = datetime.now().strftime("%Y-%m-%d")
-    content = claude_md_path.read_text()
+    content = instructions_path.read_text()
     original = content
 
     for section in sections:
         content = update_freshness_marker(content, section, today)
 
     if content != original:
-        claude_md_path.write_text(content)
+        instructions_path.write_text(content)
         print(f"Updated freshness for: {', '.join(sorted(sections))}")
 
     return 0

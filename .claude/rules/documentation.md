@@ -39,7 +39,7 @@ Do NOT put architectural plans or design documents in `docs/`. Those belong in `
 | Known bugs/issues | `context/shared/known-issues/` | When a bug is identified but not yet fixed |
 | Non-obvious code | Inline comments | Code that would confuse a future reader |
 | API contracts | Docstrings | All public functions/classes |
-| Gotchas/quirks | CLAUDE.md or inline | Anything that surprised you |
+| Gotchas/quirks | AGENTS.md or inline | Anything that surprised you |
 
 ### ADR Guidelines
 
@@ -51,27 +51,27 @@ Create an ADR (`context/shared/adr/NNNN-title.md`) when:
 - Making a trade-off that isn't obvious
 
 Use the template at `context/shared/adr/0000-template.md`. Every new ADR must be
-added to the ADR Index in the root `CLAUDE.md` (enforced by
-`scripts/validate_claude_md.py`).
+added to the ADR Index in the root `AGENTS.md` (enforced by
+`scripts/validate_agents_md.py`).
 
 ### Two Documentation Audiences
 
 | Audience | Location | Purpose |
 |----------|----------|---------|
 | **Humans** | `docs/` (mkdocs) | *How to use*, tutorials, visual guides |
-| **AI agents** | Docstrings, CLAUDE.md, ADRs | *How to modify*, dense, structured, co-located with code |
+| **AI agents** | Docstrings, AGENTS.md, ADRs | *How to modify*, dense, structured, co-located with code |
 
 ### Validating AI Guidance
 
 **When possible, back AI guidance with automated validation.** Documentation drifts, code doesn't lie.
 
-If CLAUDE.md says "all ADRs must be listed in the index," enforce it with a script. If it says "use `output.py` for terminal messages," add a lint rule. The goal: make it impossible for guidance to become stale.
+If AGENTS.md says "all ADRs must be listed in the index," enforce it with a script. If it says "use `output.py` for terminal messages," add a lint rule. The goal: make it impossible for guidance to become stale.
 
 **Pattern:**
-1. Write guidance in CLAUDE.md
+1. Write guidance in AGENTS.md
 2. Ask: "Can I validate this automatically?"
 3. If yes, write a script in `scripts/` and add a pre-commit hook
 
-**Example:** The ADR index in the root `CLAUDE.md` is validated by `scripts/validate_claude_md.py`, which checks that all ADRs in `context/shared/adr/` are listed. This runs as a pre-commit hook, commits that add ADRs without updating CLAUDE.md are blocked.
+**Example:** The ADR index in the root `AGENTS.md` is validated by `scripts/validate_agents_md.py`, which checks that all ADRs in `context/shared/adr/` are listed. This runs as a pre-commit hook, commits that add ADRs without updating AGENTS.md are blocked.
 
 When adding new guidance, consider: can this be validated? If so, add a check.

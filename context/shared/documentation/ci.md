@@ -38,7 +38,7 @@ Install with: `uv tool install prek && prek install`
 - `deptry` — Dependency hygiene
 - `actionlint` / `zizmor` — GitHub Actions workflow linting + supply-chain audit
 - `menard check` / `check-protected` — Documentation freshness + protected content
-- `validate-claude-md` — ADR index / reference validation
+- `validate-agents-md` — ADR index / reference validation
 - `pytest -m unit` — Fast unit tests (pre-push stage)
 - `commitizen` — Commit message validation (commit-msg stage)
 - Builtin hooks: trailing whitespace, YAML/TOML validation, large file detection
@@ -66,7 +66,7 @@ the builtin file hooks. Replaces the old separate `lint` and `dead-code` jobs.
 CI skips three hooks: `no-commit-to-branch` (fails on push-to-main), `fast-tests`
 (the `test` job covers them), and `update-freshness` (stamps today's date, so it's
 non-deterministic in CI — drift is still caught by the non-mutating `menard-check`
-and `validate-claude-md`).
+and `validate-agents-md`).
 
 #### `security` — Dependency Audit
 

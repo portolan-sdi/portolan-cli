@@ -2,9 +2,9 @@
 
 These tests verify that the scripts in scripts/ work correctly:
 - update_freshness.py: Auto-updates freshness markers
-- generate_claude_md_sections.py: Generates ADR index, known issues, etc.
+- generate_agents_md_sections.py: Generates ADR index, known issues, etc.
 - generate_skill_md.py: Generates CLI commands, Python API sections
-- validate_claude_md.py: Validates CLAUDE.md references
+- validate_agents_md.py: Validates CLAUDE.md references
 - validate_skill_md.py: Validates SKILL.md structure
 """
 
@@ -114,12 +114,12 @@ Some content here.
 
 
 class TestGenerateClaudeMdSections:
-    """Tests for generate_claude_md_sections.py."""
+    """Tests for generate_agents_md_sections.py."""
 
     @pytest.mark.integration  # Uses tmp_path filesystem I/O
     def test_extract_adr_title_from_file(self, tmp_path: Path) -> None:
         """Should extract title from ADR file."""
-        from generate_claude_md_sections import extract_adr_title
+        from generate_agents_md_sections import extract_adr_title
 
         adr = tmp_path / "0001-test-decision.md"
         adr.write_text("# ADR-0001: My Test Decision\n\n## Status\nAccepted")
@@ -130,7 +130,7 @@ class TestGenerateClaudeMdSections:
     @pytest.mark.integration  # Uses tmp_path filesystem I/O
     def test_extract_adr_title_fallback_to_filename(self, tmp_path: Path) -> None:
         """Should fall back to filename if no heading found."""
-        from generate_claude_md_sections import extract_adr_title
+        from generate_agents_md_sections import extract_adr_title
 
         adr = tmp_path / "0002-another-decision.md"
         adr.write_text("No heading here, just content.")
@@ -141,7 +141,7 @@ class TestGenerateClaudeMdSections:
     @pytest.mark.integration  # Uses tmp_path filesystem I/O
     def test_generate_adr_index_produces_table(self, tmp_path: Path) -> None:
         """Should generate a markdown table for ADRs."""
-        from generate_claude_md_sections import generate_adr_index
+        from generate_agents_md_sections import generate_adr_index
 
         # Create ADR directory structure
         adr_dir = tmp_path / "context" / "shared" / "adr"
@@ -158,12 +158,12 @@ class TestGenerateClaudeMdSections:
 
 
 class TestValidateClaudeMd:
-    """Tests for validate_claude_md.py."""
+    """Tests for validate_agents_md.py."""
 
     @pytest.mark.unit
     def test_extract_adr_links_finds_links(self) -> None:
         """Should extract ADR links from markdown."""
-        from validate_claude_md import extract_adr_links
+        from validate_agents_md import extract_adr_links
 
         content = """
 | ADR | Decision |
@@ -179,7 +179,7 @@ class TestValidateClaudeMd:
     @pytest.mark.unit
     def test_extract_adr_links_ignores_non_adr_links(self) -> None:
         """Should not extract non-ADR links."""
-        from validate_claude_md import extract_adr_links
+        from validate_agents_md import extract_adr_links
 
         content = """
 See [this guide](docs/contributing.md) for details.
@@ -190,7 +190,7 @@ See [this guide](docs/contributing.md) for details.
     @pytest.mark.unit
     def test_validation_result_aggregates_errors(self) -> None:
         """ValidationResult should aggregate errors and warnings."""
-        from validate_claude_md import ValidationResult
+        from validate_agents_md import ValidationResult
 
         result = ValidationResult(validator="test")
         result.errors.append("Error 1")

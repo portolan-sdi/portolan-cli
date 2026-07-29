@@ -270,7 +270,7 @@ Always research before implementing:
 - **ALL** non-obvious decisions require an ADR in `context/shared/adr/`
 - **NO** new dependencies without discussion (document in ADR)
 
-<!-- freshness: last-verified: 2026-07-27 -->
+<!-- freshness: last-verified: 2026-07-29 -->
 ## Design Principles
 
 | Principle | Meaning | ADR |

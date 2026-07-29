@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Validate CLAUDE.md references match actual files.
+"""Validate AGENTS.md references match actual files.
 
 This script checks that:
-1. All ADRs in context/shared/adr/ are listed in the CLAUDE.md index
-2. All known issues in context/shared/known-issues/ are listed in CLAUDE.md
-3. All links in CLAUDE.md point to files that exist
+1. All ADRs in context/shared/adr/ are listed in the AGENTS.md index
+2. All known issues in context/shared/known-issues/ are listed in AGENTS.md
+3. All links in AGENTS.md point to files that exist
 4. All file path references point to existing files
 5. All CLI command references match actual Click commands
 6. All test markers match pyproject.toml definitions
@@ -25,6 +25,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+# Repo-specific instructions live in AGENTS.md. CLAUDE.md only imports it,
+# because Claude Code reads CLAUDE.md and every other agent reads AGENTS.md.
+INSTRUCTIONS_FILE = "AGENTS.md"
+
 
 @dataclass
 class ValidationResult:
@@ -36,10 +40,10 @@ class ValidationResult:
 
 
 def get_project_root() -> Path:
-    """Find project root by looking for CLAUDE.md."""
+    """Find project root by looking for AGENTS.md."""
     current = Path(__file__).resolve().parent
     while current != current.parent:
-        if (current / "CLAUDE.md").exists():
+        if (current / INSTRUCTIONS_FILE).exists():
             return current
         current = current.parent
     # Fallback to cwd
@@ -52,14 +56,14 @@ def get_project_root() -> Path:
 
 
 def extract_adr_links(claude_md: str) -> set[str]:
-    """Extract ADR file paths from CLAUDE.md ADR index table."""
+    """Extract ADR file paths from AGENTS.md ADR index table."""
     # Match: | [0001](context/shared/adr/0001-*.md) |
     pattern = r"\[(\d{4})\]\((context/shared/adr/\d{4}-[^)]+\.md)\)"
     return {match[1] for match in re.findall(pattern, claude_md)}
 
 
 def extract_known_issue_links(claude_md: str) -> set[str]:
-    """Extract known issue file paths from CLAUDE.md."""
+    """Extract known issue file paths from AGENTS.md."""
     # Match: | [title](context/shared/known-issues/*.md) |
     pattern = r"\[([^\]]+)\]\((context/shared/known-issues/[^)]+\.md)\)"
     return {match[1] for match in re.findall(pattern, claude_md)}
@@ -88,7 +92,7 @@ def get_actual_known_issues(root: Path) -> set[str]:
 
 
 def validate_adrs(claude_md: str, root: Path) -> ValidationResult:
-    """Check all ADRs are indexed in CLAUDE.md."""
+    """Check all ADRs are indexed in AGENTS.md."""
     result = ValidationResult(validator="ADR Index")
 
     linked_adrs = extract_adr_links(claude_md)
@@ -99,13 +103,13 @@ def validate_adrs(claude_md: str, root: Path) -> ValidationResult:
 
     if missing_from_index:
         result.errors.append(
-            "ADRs not in CLAUDE.md index:\n"
+            f"ADRs not in {INSTRUCTIONS_FILE} index:\n"
             + "\n".join(f"  - {adr}" for adr in sorted(missing_from_index))
         )
 
     if broken_links:
         result.errors.append(
-            "ADR links in CLAUDE.md point to non-existent files:\n"
+            f"ADR links in {INSTRUCTIONS_FILE} point to non-existent files:\n"
             + "\n".join(f"  - {adr}" for adr in sorted(broken_links))
         )
 
@@ -113,7 +117,7 @@ def validate_adrs(claude_md: str, root: Path) -> ValidationResult:
 
 
 def validate_known_issues(claude_md: str, root: Path) -> ValidationResult:
-    """Check all known issues are documented in CLAUDE.md."""
+    """Check all known issues are documented in AGENTS.md."""
     result = ValidationResult(validator="Known Issues")
 
     linked_issues = extract_known_issue_links(claude_md)
@@ -124,13 +128,13 @@ def validate_known_issues(claude_md: str, root: Path) -> ValidationResult:
 
     if missing_issues:
         result.errors.append(
-            "Known issues not in CLAUDE.md:\n"
+            f"Known issues not in {INSTRUCTIONS_FILE}:\n"
             + "\n".join(f"  - {issue}" for issue in sorted(missing_issues))
         )
 
     if broken_links:
         result.errors.append(
-            "Known issue links in CLAUDE.md point to non-existent files:\n"
+            f"Known issue links in {INSTRUCTIONS_FILE} point to non-existent files:\n"
             + "\n".join(f"  - {issue}" for issue in sorted(broken_links))
         )
 
@@ -143,7 +147,7 @@ def validate_known_issues(claude_md: str, root: Path) -> ValidationResult:
 
 
 def validate_file_paths(claude_md: str, root: Path) -> ValidationResult:
-    """Check that all backtick-quoted file paths in CLAUDE.md exist.
+    """Check that all backtick-quoted file paths in AGENTS.md exist.
 
     Matches patterns like:
     - `path/to/file.py`
@@ -172,7 +176,7 @@ def validate_file_paths(claude_md: str, root: Path) -> ValidationResult:
         r"\*",  # Wildcards
         r"\?",  # Wildcards
         r"^test_\w+\.py$",  # Generic test file patterns
-        r"^[A-Z_]+\.md$",  # Generic uppercase file patterns like README.md, CLAUDE.md
+        r"^[A-Z_]+\.md$",  # Generic uppercase file patterns like README.md, AGENTS.md
         r"^catalog\.json$",  # STAC example files
         r"^collection\.json$",  # STAC example files
         r"^item\.json$",  # STAC example files
@@ -205,7 +209,7 @@ def validate_file_paths(claude_md: str, root: Path) -> ValidationResult:
     if missing_paths:
         # Group by type for cleaner output
         result.warnings.append(
-            "File paths referenced in CLAUDE.md may not exist:\n"
+            f"File paths referenced in {INSTRUCTIONS_FILE} may not exist:\n"
             + "\n".join(f"  - {p}" for p in sorted(set(missing_paths)))
         )
 
@@ -319,7 +323,7 @@ def extract_cli_commands_from_source(root: Path) -> set[str]:
 
 
 def validate_cli_commands(claude_md: str, root: Path) -> ValidationResult:
-    """Check that CLI commands mentioned in CLAUDE.md exist.
+    """Check that CLI commands mentioned in AGENTS.md exist.
 
     Matches patterns like:
     - `portolan init`
@@ -331,7 +335,7 @@ def validate_cli_commands(claude_md: str, root: Path) -> ValidationResult:
     # Extract actual commands from source (including grouped subcommands like config-set)
     actual_commands = extract_cli_commands_from_source(root)
 
-    # Extract command references from CLAUDE.md
+    # Extract command references from AGENTS.md
     # Match: portolan <command> (in backticks or code blocks)
     pattern = r"`?portolan\s+([a-z][a-z0-9\-]*)`?"
 
@@ -389,13 +393,13 @@ def extract_pytest_markers_from_pyproject(root: Path) -> dict[str, str]:
 
 
 def validate_test_markers(claude_md: str, root: Path) -> ValidationResult:
-    """Check that test markers in CLAUDE.md match pyproject.toml definitions."""
+    """Check that test markers in AGENTS.md match pyproject.toml definitions."""
     result = ValidationResult(validator="Test Markers")
 
     # Extract markers from pyproject.toml
     defined_markers = extract_pytest_markers_from_pyproject(root)
 
-    # Extract markers referenced in CLAUDE.md
+    # Extract markers referenced in AGENTS.md
     # Match: @pytest.mark.X or pytest.mark.X
     pattern = r"@?pytest\.mark\.(\w+)"
     referenced_markers = set(re.findall(pattern, claude_md))
@@ -456,7 +460,7 @@ def _extract_defined_names(source_file: Path) -> set[str]:
 
 
 def validate_code_examples(claude_md: str, root: Path) -> ValidationResult:
-    """Check that import examples in CLAUDE.md are valid."""
+    """Check that import examples in AGENTS.md are valid."""
     result = ValidationResult(validator="Code Examples")
     pattern = (
         r"from\s+(portolan_cli(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s+import\s+([a-zA-Z_][a-zA-Z0-9_, ]*)"
@@ -494,7 +498,7 @@ def validate_code_examples(claude_md: str, root: Path) -> ValidationResult:
 
 @dataclass
 class FreshnessMarker:
-    """A freshness marker found in CLAUDE.md."""
+    """A freshness marker found in AGENTS.md."""
 
     section: str
     last_verified: datetime
@@ -502,7 +506,7 @@ class FreshnessMarker:
 
 
 def extract_freshness_markers(claude_md: str) -> list[FreshnessMarker]:
-    """Extract freshness markers from CLAUDE.md.
+    """Extract freshness markers from AGENTS.md.
 
     Format:
     <!-- freshness: last-verified: 2026-02-27 -->
@@ -595,13 +599,13 @@ def _print_messages(label: str, messages: list[str]) -> None:
 def main() -> int:
     """Run all validations and report results."""
     root = get_project_root()
-    claude_md_path = root / "CLAUDE.md"
+    instructions_path = root / INSTRUCTIONS_FILE
 
-    if not claude_md_path.exists():
-        print("ERROR: CLAUDE.md not found")
+    if not instructions_path.exists():
+        print(f"ERROR: {INSTRUCTIONS_FILE} not found")
         return 1
 
-    claude_md = claude_md_path.read_text()
+    claude_md = instructions_path.read_text()
     results = [v(claude_md, root) for v in VALIDATORS]
     all_errors, all_warnings = _collect_messages(results)
 
@@ -609,13 +613,13 @@ def main() -> int:
 
     if all_errors:
         _print_messages("ERRORS", all_errors)
-        print("Fix: Update CLAUDE.md to fix references, or update source files.")
+        print(f"Fix: Update {INSTRUCTIONS_FILE} to fix references, or update source files.")
         return 1
 
     adr_count = len(extract_adr_links(claude_md))
     issue_count = len(extract_known_issue_links(claude_md))
     print(
-        f"CLAUDE.md validation passed: {adr_count} ADRs, {issue_count} known issues, "
+        f"{INSTRUCTIONS_FILE} validation passed: {adr_count} ADRs, {issue_count} known issues, "
         f"{len(all_warnings)} warnings"
     )
     return 0

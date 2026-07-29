@@ -16,8 +16,8 @@ paths:
 4. **RUN TESTS AGAIN**, Verify they pass
 5. **ADD EDGE CASES**, Test error conditions
 
-Test markers are documented in the root `CLAUDE.md` (kept there because
-`scripts/validate_claude_md.py` and `scripts/generate_claude_md_sections.py`
+Test markers are documented in the root `AGENTS.md` (kept there because
+`scripts/validate_agents_md.py` and `scripts/generate_agents_md_sections.py`
 keep them in sync with `pyproject.toml`).
 
 **Real-world fixtures:** See `context/shared/documentation/test-fixtures.md` for details.
