@@ -36,7 +36,7 @@ def runner() -> CliRunner:
 
 
 def setup_catalog(path: Path) -> None:
-    """Create an initialized Portolan catalog (per ADR-0023 and ADR-0029)."""
+    """Create an initialized Portolan catalog ."""
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
@@ -294,7 +294,7 @@ class TestCliOutputWithFailures:
                     ["add", str(collection_dir)],
                 )
 
-                # Per ADR-0040: failures are shown with details
+                # Failures are shown with details
                 assert "failed" in result.output.lower()
                 assert "bad.parquet" in result.output
                 # Should exit with non-zero code due to failures

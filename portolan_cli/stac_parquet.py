@@ -234,7 +234,7 @@ def generate_items_parquet(collection_path: Path) -> Path:
 def add_parquet_link_to_collection(collection_path: Path) -> None:
     """Add items.parquet link and asset to collection.json.
 
-    Per ADR-0031 (collection-level assets), adds:
+    Adds:
     1. A link with rel="items" and type="application/vnd.apache.parquet"
     2. A collection-level asset for the GeoParquet file
 
@@ -270,7 +270,7 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
         data["links"] = links
         modified = True
 
-    # --- Add collection-level asset (per ADR-0031) ---
+    # --- Add collection-level asset ---
     # Uses community convention: key="geoparquet-items", roles=["stac-items"]
     # Ref: https://planetarycomputer.microsoft.com/api/stac/v1/collections/naip
     # The spec-normative role is "collection-mirror" (PORTO-FMT-041, rashid
@@ -419,7 +419,7 @@ def track_parquet_in_versions(collection_path: Path) -> None:
         new_version = "1.0.0"
 
     # Add version with parquet asset
-    # NOTE: add_version creates full snapshots per ADR-0005, which means push
+    # NOTE: add_version creates full snapshots, which means push
     # will try to re-upload all existing assets. See GitHub issue for push
     # optimization to diff assets instead of uploading entire snapshots.
     updated = add_version(
@@ -444,7 +444,7 @@ def generate_or_suggest_parquet(
     """Generate items.parquet for affected collections, or hint when suggested.
 
     For each affected collection, reads ``parquet.{enabled,threshold}`` with a
-    hierarchical lookup (ADR-0039) and decides whether to generate:
+    hierarchical lookup and decides whether to generate:
 
     - Generate when ``generate_parquet`` (explicit ``--stac-geoparquet``) is set,
       or when auto-generation is enabled and the item count exceeds the threshold.
@@ -452,7 +452,7 @@ def generate_or_suggest_parquet(
       hint suggesting ``portolan stac-geoparquet``.
 
     Generation always runs regardless of output mode so the JSON envelope reflects
-    the final state (ADR-0030). An explicitly-requested generation that fails
+    the final state. An explicitly-requested generation that fails
     re-raises; an auto-generation failure only warns.
 
     Args:
@@ -472,7 +472,7 @@ def generate_or_suggest_parquet(
         if not (coll_path / "collection.json").exists():
             continue
 
-        # Get settings per-collection with hierarchical lookup (ADR-0039)
+        # Get settings per-collection with hierarchical lookup
         parquet_enabled = coerce_bool(
             get_setting(
                 "parquet.enabled",

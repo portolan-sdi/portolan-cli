@@ -50,7 +50,7 @@ An ESRI File Geodatabase with 4 **empty** layers organized in feature datasets:
 
 ## Test Strategy
 
-Per [ADR-0010](../../../context/shared/adr/0010-delegate-conversion-validation.md), Portolan orchestrates conversion but delegates parsing to upstream libraries (geoparquet-io, GDAL). These fixtures test Portolan's **orchestration** of multi-layer files:
+Portolan orchestrates conversion but delegates parsing to upstream libraries (geoparquet-io, GDAL). These fixtures test Portolan's **orchestration** of multi-layer files:
 
 1. **Layer enumeration** — Does Portolan detect all layers?
 2. **Per-layer conversion** — Does each layer become a separate output file?

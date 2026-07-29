@@ -1,13 +1,13 @@
 """Regression tests for issue #465: O(n²) add on collection-level vector assets.
 
 `_scan_item_assets` scans the whole collection directory for every file added.
-For collection-level single-file vector assets (ADR-0031) `item_dir` IS the
+For collection-level single-file vector assets `item_dir` IS the
 collection dir, so adding N files re-checksums every sibling → O(n²) work. This
 made the 1000-file stress tests exceed the 300s nightly timeout.
 
 These are fast unit tests (copies of the cloud-native `simple.parquet` fixture,
 no GDAL conversion). Test 1 bounds the redundant scan; Test 2 guards against the
-fix over-skipping and dropping legitimate non-geo companion assets (ADR-0028).
+fix over-skipping and dropping legitimate non-geo companion assets.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ pytestmark = [pytest.mark.unit]
 
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
-    """Minimal initialized catalog (ADR-0023/0029)."""
+    """Minimal initialized catalog."""
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
@@ -107,8 +107,7 @@ def test_loose_non_geo_companions_are_not_dropped(
 
     Files like `.txt`/`.png` are filtered out of `files_to_process` and are never
     deferred, so at collection level they are tracked ONLY by the sibling scan.
-    The O(n²) fix must skip only *other items'* geo files, never these companions
-    (ADR-0028). Guards against an over-aggressive skip rule.
+    The O(n²) fix must skip only *other items'* geo files, never these companions. Guards against an over-aggressive skip rule.
     """
     collection_dir = initialized_catalog / "with-companions"
     collection_dir.mkdir()

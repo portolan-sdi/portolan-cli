@@ -1,6 +1,6 @@
 """Collection ID validation and normalization.
 
-Per portolan-spec/structure.md and ADR-0032, collection IDs SHOULD:
+Per portolan-spec/structure.md, collection IDs SHOULD:
 - Contain only lowercase letters, numbers, hyphens, underscores, and forward slashes
 - Start with a letter or number (not hyphen/underscore)
 - Be unique within the catalog
@@ -21,7 +21,7 @@ from pathlib import Path
 from portolan_cli.formats import FormatType, detect_format
 from portolan_cli.scan.detect import is_filegdb
 
-# Pattern for valid collection IDs (supports path syntax per ADR-0032):
+# Pattern for valid collection IDs (supports path syntax):
 # - Start with lowercase letter or number (year-based organization like 2020/)
 # - Followed by lowercase letters, numbers, hyphens, underscores, or forward slashes
 # - No leading/trailing/double slashes
@@ -178,7 +178,7 @@ def normalize_collection_id(collection_id: str) -> str:
 def resolve_collection_id(path: Path, catalog_root: Path) -> str:
     """Resolve collection ID from a file path.
 
-    Per ADR-0022: First path component (relative to catalog root) = collection ID.
+    First path component (relative to catalog root) = collection ID.
 
     Args:
         path: Path to the file.
@@ -211,9 +211,8 @@ def resolve_collection_id(path: Path, catalog_root: Path) -> str:
 def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
     """Infer nested collection ID from a file or directory-based data asset.
 
-    Per ADR-0031 (Collection-Level Assets for Vector Data) and ADR-0032
-    (Nested Catalogs with Flat Collections), the collection depth depends
-    on the format type:
+    Collection depth depends on the format type, because vector data is a
+    collection-level asset while raster data is organized into items:
 
     - **Vector data**: Parent directory = collection (collection-level asset)
       Example: demographics/boundaries.parquet -> collection = "demographics"
@@ -232,7 +231,7 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
         # Vector (collection-level)
         climate/hittekaart/data.parquet -> "climate/hittekaart"
         demographics/boundaries.geojson -> "demographics"
-        ocha/my_data.gdb -> "ocha"  (FileGDB directory)
+        ocha/my_data.gdb -> "ocha" (FileGDB directory)
 
         # Raster (item-level, needs subdirectory)
         imagery/2025/tile1/scene.tif -> "imagery/2025"
@@ -280,7 +279,7 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
     if is_asset and len(parts) == 1:
         raise ValueError(f"Data asset {path} must be in a subdirectory (collection)")
 
-    # Detect format type to determine collection depth (ADR-0031)
+    # Detect format type to determine collection depth
     # - Vector: parent directory = collection (collection-level asset)
     # - Raster: grandparent = collection, parent = item (item-level asset)
     format_type = detect_format(path)
@@ -292,7 +291,7 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
         if len(parts) < 3:
             raise ValueError(
                 f"Raster file {path} must be in a subdirectory (collection/item/). "
-                f"Per ADR-0031, raster data requires item-level organization."
+                f"Raster data requires item-level organization."
             )
         # Return grandparent as collection (all but last 2 components)
         collection_parts = parts[:-2]

@@ -10,7 +10,7 @@ This module orchestrates the extraction pipeline for ArcGIS ImageServer:
 
 The extractor does NOT create STAC metadata directly. Instead, it extracts
 COG files and then calls the Portolan API (init_catalog + add_files) to
-create proper STAC structure with items per raster (per ADR-0031).
+create proper STAC structure with items per raster.
 
 Typical usage:
     from portolan_cli.extract.arcgis.imageserver.extractor import (
@@ -150,7 +150,7 @@ class ExtractionConfig:
 
     Attributes:
         tile_size: Desired tile size in pixels (default 4096, per service limits).
-        cog_settings: COG conversion settings (from config.yaml or defaults per ADR-0019).
+        cog_settings: COG conversion settings (from config.yaml or defaults).
         max_retries: Maximum retry attempts per tile on failure.
         dry_run: If True, compute tiles but don't download anything.
         raw: If True, skip auto-init (only create COGs + report, no STAC catalog).
@@ -361,7 +361,7 @@ async def _convert_to_cog(
     """Convert a TIFF to COG format using settings from config.
 
     Runs rio-cogeo in a thread executor since it's CPU-bound.
-    Uses settings from .portolan/config.yaml per ADR-0019.
+    Uses settings from .portolan/config.yaml.
 
     Args:
         input_path: Path to input TIFF.
@@ -642,7 +642,7 @@ async def _process_tile(
     """Process a single tile: download and convert to COG.
 
     STAC metadata is NOT created here - that's handled by the Portolan API
-    via _auto_init_catalog() after extraction completes (per ADR-0007, ADR-0031).
+    via _auto_init_catalog() after extraction completes.
 
     Args:
         tile: Tile to process.
@@ -866,7 +866,7 @@ def _auto_init_catalog(
 
     Called automatically after extraction unless raw=True.
     Uses the Portolan API (init_catalog + add_files) to create
-    proper STAC structure with items per raster (per ADR-0031).
+    proper STAC structure with items per raster.
 
     Args:
         output_dir: Directory containing extracted COG files.
@@ -889,7 +889,7 @@ def _auto_init_catalog(
     # Initialize the catalog
     init_catalog(output_dir, title=service_name)
 
-    # Add all COG files - this creates items per raster (per ADR-0031)
+    # Add all COG files - this creates items per raster
     add_files(
         paths=cog_files,
         catalog_root=output_dir,

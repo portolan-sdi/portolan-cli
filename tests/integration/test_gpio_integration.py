@@ -1,7 +1,7 @@
 """Integration tests verifying geoparquet-io works with our fixtures.
 
 These tests confirm that geoparquet-io can convert our test fixtures
-to GeoParquet format. Per ADR-0010, Portolan delegates conversion
+to GeoParquet format. Portolan delegates conversion
 to geoparquet-io—these tests verify that delegation will work.
 """
 

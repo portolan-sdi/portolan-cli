@@ -1255,7 +1255,7 @@ class TestConvertFileEdgeCases:
     def test_shapefile_with_missing_sidecars(self, tmp_path: Path) -> None:
         """Shapefile with missing sidecars attempts conversion (delegates to geoparquet-io).
 
-        Per ADR-0010, we delegate to upstream libraries. geoparquet-io may handle
+        We delegate to upstream libraries. geoparquet-io may handle
         incomplete shapefiles differently.
         """
         from portolan_cli.convert import convert_file

@@ -677,12 +677,12 @@ class TestErrorHandling:
 
 
 # =============================================================================
-# Test: Collection-Level Asset (ADR-0031)
+# Test: Collection-Level Asset
 # =============================================================================
 
 
 class TestCollectionLevelAsset:
-    """Tests for collection-level asset per ADR-0031."""
+    """Tests for collection-level asset."""
 
     @pytest.mark.unit
     def test_add_parquet_creates_collection_asset(self, collection_with_items: Path) -> None:

@@ -1,7 +1,7 @@
 """Unit tests for versions.json read/write/update operations.
 
 Tests the versions module which manages the versions.json file that serves as
-the single source of truth for collection versioning (ADR-0005).
+the single source of truth for collection versioning.
 """
 
 from __future__ import annotations
@@ -825,12 +825,12 @@ class TestAddVersionSourceTracking:
 
 
 # =============================================================================
-# Phase 6: Schema Fingerprint Tests (CRITICAL #1 - ADR-0005)
+# Phase 6: Schema Fingerprint Tests (CRITICAL #1 - )
 # =============================================================================
 
 
 class TestSchemaFingerprintInVersion:
-    """Tests for schema fingerprint storage in versions.json (ADR-0005)."""
+    """Tests for schema fingerprint storage in versions.json."""
 
     @pytest.mark.unit
     def test_version_accepts_schema_fingerprint(self) -> None:
@@ -1407,7 +1407,7 @@ class TestSnapshotModel:
     """Tests for the snapshot versioning model (issues #141, #147).
 
     Each version should contain ALL assets at that point in time,
-    not just the newly-added ones. This is per ADR-0005.
+    not just the newly-added ones. This is.
     """
 
     @pytest.mark.unit

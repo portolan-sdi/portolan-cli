@@ -1,6 +1,6 @@
 """Unit tests for unified find_catalog_root function.
 
-Per ADR-0029, find_catalog_root() uses .portolan/config.yaml as the single sentinel
+Find_catalog_root() uses .portolan/config.yaml as the single sentinel
 for catalog root detection, unifying behavior across all CLI commands.
 """
 

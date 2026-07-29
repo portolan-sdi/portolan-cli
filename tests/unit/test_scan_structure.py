@@ -410,7 +410,7 @@ class TestStructureValidationEdgeCases:
         """Flat collection (all files in root, no subdirs) is valid structure.
 
         Uses flat_collection/ fixture: 3 parquet files, no subdirectories.
-        This is a valid "collection-level assets" pattern per ADR-0031.
+        This is a valid "collection-level assets" pattern.
         """
         from portolan_cli.scan.core import IssueType, scan_directory
 

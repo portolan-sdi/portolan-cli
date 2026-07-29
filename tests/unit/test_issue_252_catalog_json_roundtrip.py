@@ -3,7 +3,7 @@
 Tests that push uploads ALL STAC metadata files (catalog.json, collection.json,
 {item_id}.json) in addition to assets and versions.json.
 
-Design principle from ADR-0006: Portolan owns bucket contents.
+Design principle from: Portolan owns bucket contents.
 The catalog should round-trip perfectly: push -> clone should recreate the catalog.
 
 Test categories:

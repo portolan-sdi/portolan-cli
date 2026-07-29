@@ -3,7 +3,6 @@
 Tests the VersioningBackend protocol and get_backend() discovery function
 that allows external backends (like portolake) to integrate with portolan-cli.
 
-See ADR-0015 (Two-Tier Versioning Architecture) and ADR-0003 (Plugin Architecture).
 """
 
 from __future__ import annotations
@@ -306,7 +305,7 @@ class TestJsonFileBackend:
         """Whitespace-only collection name raises ValueError."""
         backend = JsonFileBackend()
         with pytest.raises(ValueError, match="Collection name cannot be empty"):
-            backend._versions_path("   ")
+            backend._versions_path(" ")
 
     @pytest.mark.unit
     def test_rollback_raises_not_implemented_with_clear_message(self) -> None:

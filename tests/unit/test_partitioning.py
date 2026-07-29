@@ -131,7 +131,7 @@ class TestPartitionGeoparquet:
             call_kwargs = mock_partition.call_args.kwargs
             assert call_kwargs["input_parquet"] == str(input_file)
             assert call_kwargs["output_folder"] == str(output_dir)
-            assert call_kwargs["hive"] is True  # Per ADR-0031
+            assert call_kwargs["hive"] is True  # Per
             assert call_kwargs["auto_target_rows"] == ("rows", 120_000)
 
     @pytest.mark.unit
@@ -667,7 +667,7 @@ class TestFinalizeItemPartitionWiring:
 
 
 class TestGlobTransformationPartitionExtension:
-    """Tests for partition:glob field emission (ADR-0042 transition)."""
+    """Tests for partition:glob field emission (transition)."""
 
     @pytest.mark.unit
     def test_transform_adds_both_glob_fields(self) -> None:

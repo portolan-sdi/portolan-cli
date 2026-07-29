@@ -1093,7 +1093,7 @@ _FIXTURE_BBOX = (-180.0, -90.0, 180.0, 83.6451)
 
 
 class TestBboxFixerFromAssets:
-    """PTL-BBX-001 also fires on items and on ADR-0031 asset-only collections."""
+    """PTL-BBX-001 also fires on items and on asset-only collections."""
 
     def _item(self, collection: Path, *, bbox: Any, assets: dict[str, Any], **extra: Any) -> Path:
         item_json = collection / "scene-a" / "scene-a.json"
@@ -1182,7 +1182,7 @@ class TestBboxFixerFromAssets:
         assert item_json in [r.file_path for r in results if r.action is FixAction.SKIPPED]
 
     def test_asset_only_collection_extent_is_recomputed(self, tmp_path: Path) -> None:
-        """ADR-0031: a vector collection carries the data itself and has no children."""
+        """a vector collection carries the data itself and has no children."""
         collection = _tiny_catalog(tmp_path)
         _copy_fixture(_FIXTURE, collection / "roads.parquet")
         data = _read_json(collection / "collection.json")

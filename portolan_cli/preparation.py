@@ -7,7 +7,7 @@ scanning, and STAC item construction. It writes item.json but performs no
 versions.json or collection-link updates — those are batched in
 ``add.finalize_items`` to keep versioning O(n) (see Issue #281).
 
-Per ADR-0007 the CLI stays a thin wrapper; ``add.py`` orchestrates on top of the
+the CLI stays a thin wrapper; ``add.py`` orchestrates on top of the
 routines here. This module deliberately imports nothing from ``add`` so the
 dependency edge is one-directional (add -> preparation).
 """
@@ -70,7 +70,7 @@ logger = logging.getLogger(__name__)
 # Files to ignore when scanning item directories for assets.
 # These are STAC/Portolan structural files, not user data.
 # AGENTS.md is referenced via a rel="agents" link, not tracked as an asset
-# (ADR-0052: "AGENTS.md is a link, not an asset").
+# ("AGENTS.md is a link, not an asset").
 IGNORED_FILES: frozenset[str] = frozenset(
     {
         "catalog.json",
@@ -82,7 +82,7 @@ IGNORED_FILES: frozenset[str] = frozenset(
 
 
 # Extension-to-MIME-type mapping for asset files. Derived from the extension
-# registry (the single source, ADR-0055). Edit rows there, not this map.
+# registry (the single source). Edit rows there, not this map.
 _MEDIA_TYPE_MAP: dict[str, str] = _reg.field_map("media_type")
 
 
@@ -100,7 +100,7 @@ _ROLE_KEYS: dict[str, str] = {
 
 
 # Extension-to-role mapping for asset files (data / thumbnail / metadata /
-# documentation). Derived from the extension registry (ADR-0055). Unknown
+# documentation). Derived from the extension registry. Unknown
 # extensions fall back to "data" in _get_asset_role().
 _ROLE_MAP: dict[str, str] = _reg.field_map("role")
 
@@ -141,29 +141,29 @@ def _scan_item_assets(
 ) -> tuple[dict[str, pystac.Asset], dict[str, tuple[Path, str, int]], list[str]]:
     """Scan an item directory for all trackable assets.
 
-    Per issue #133, ALL files in item directories are tracked as assets.
-    FileGDB directories (.gdb) are treated as single container assets (Issue #174).
-    Skips: non-FileGDB directories, symlinks, hidden files, STAC structural files.
+        Per issue #133, ALL files in item directories are tracked as assets.
+        FileGDB directories (.gdb) are treated as single container assets (Issue #174).
+        Skips: non-FileGDB directories, symlinks, hidden files, STAC structural files.
 
-    Args:
-        item_dir: Path to the item directory (where files are).
-        item_id: Item identifier (for skipping item.json).
-        primary_file: Path to the primary data file (gets "data" key).
-        collection_dir: Path to the collection directory.
-        exclude_names: Base filenames of OTHER items being added in the same
-            batch (their sources and converted outputs). For a collection-level
-            asset (``item_dir == collection_dir``) the flat collection directory
-            also holds every sibling asset, so without this the scan re-checksums
-            all siblings on every file — O(n²) (issue #465). Files here that do
-            not share the primary's stem are skipped; each is tracked by its own
-            ``prepare_item``. Loose companions (not in this set) are kept per
-            ADR-0028. Ignored for item-level (subdirectory) scans.
+        Args:
+            item_dir: Path to the item directory (where files are).
+            item_id: Item identifier (for skipping item.json).
+            primary_file: Path to the primary data file (gets "data" key).
+            collection_dir: Path to the collection directory.
+            exclude_names: Base filenames of OTHER items being added in the same
+                batch (their sources and converted outputs). For a collection-level
+                asset (``item_dir == collection_dir``) the flat collection directory
+                also holds every sibling asset, so without this the scan re-checksums
+                all siblings on every file — O(n²) (issue #465). Files here that do
+                not share the primary's stem are skipped; each is tracked by its own
+                ``prepare_item``. Loose companions (not in this set) are kept per
+    . Ignored for item-level (subdirectory) scans.
 
-    Returns:
-        Tuple of (stac_assets, asset_files, asset_paths):
-        - stac_assets: Dict mapping asset key to pystac.Asset
-        - asset_files: Dict mapping filename to (path, checksum, size) tuples
-        - asset_paths: List of absolute path strings
+        Returns:
+            Tuple of (stac_assets, asset_files, asset_paths):
+            - stac_assets: Dict mapping asset key to pystac.Asset
+            - asset_files: Dict mapping filename to (path, checksum, size) tuples
+            - asset_paths: List of absolute path strings
     """
     stac_assets: dict[str, pystac.Asset] = {}
     asset_files: dict[str, tuple[Path, str, int]] = {}
@@ -190,7 +190,7 @@ def _scan_item_assets(
 
         # Issue #465: skip siblings that belong to OTHER items in this batch.
         # Keep the primary and its own same-stem source/sidecars; keep loose
-        # companions (not in exclude_names) so ADR-0028 tracking is preserved.
+        # companions (not in exclude_names) so tracking is preserved.
         if (
             is_collection_level
             and file_path.stem != primary_stem
@@ -240,13 +240,13 @@ def _scan_item_assets(
         # PySTAC places item JSON at: {collection_dir}/{item_id}/{item_id}.json
         #
         # Case 1: Data at {collection_dir}/data.parquet (item_dir == collection_dir)
-        #   - Item JSON at {collection_dir}/{item_id}/{item_id}.json (subdirectory)
-        #   - Href needs ../{filename} to reach parent (collection) directory
+        # - Item JSON at {collection_dir}/{item_id}/{item_id}.json (subdirectory)
+        # - Href needs ../{filename} to reach parent (collection) directory
         #
         # Case 2: Data at {collection_dir}/{item_id}/data.parquet
-        #   - item_dir == {collection_dir}/{item_id}/
-        #   - Item JSON at same level: {collection_dir}/{item_id}/{item_id}.json
-        #   - Href just needs {filename} (same directory)
+        # - item_dir == {collection_dir}/{item_id}/
+        # - Item JSON at same level: {collection_dir}/{item_id}/{item_id}.json
+        # - Href just needs {filename} (same directory)
         #
         # The key: if item_dir IS the collection, PySTAC creates a subdirectory
         # and we need ../ to reach the files. Otherwise, files are already in
@@ -295,8 +295,8 @@ class PreparedItem:
         format_type: Vector or raster format.
         bbox: Bounding box [min_x, min_y, max_x, max_y] in WGS84.
         asset_files: Dict mapping filename to (path, checksum, size) tuples.
-        item_json_path: Path to item.json (None for collection-level vector assets per ADR-0031).
-        is_collection_level_asset: If True, asset is at collection level (ADR-0031).
+        item_json_path: Path to item.json (None for collection-level vector assets).
+        is_collection_level_asset: If True, asset is at collection level.
         stac_item: The PySTAC Item object (None for collection-level vector assets).
         stac_assets: Assets to add to collection.json (for collection-level assets).
         metadata: Extracted metadata (GeoParquet or COG) for table extension (Issue #304).
@@ -428,8 +428,7 @@ def _derive_item_id_and_asset_level(
         collection_dir: Collection directory path.
         item_id: Optional explicit item ID.
         format_type: Optional format type for Hive partition handling.
-            Vector formats in Hive partitions become collection-level assets
-            per ADR-0031.
+            Vector formats in Hive partitions become collection-level assets.
 
     Returns:
         Tuple of (item_id, is_collection_level_asset).
@@ -523,7 +522,7 @@ def _validate_collection_id(collection_id: str) -> None:
         ValueError: If the collection ID is invalid.
     """
     # First check: reject unsafe collection IDs (security check)
-    # Per ADR-0032: forward slashes allowed for nested catalogs
+    # Forward slashes allowed for nested catalogs
     if (
         not collection_id
         or "\\" in collection_id
@@ -531,7 +530,7 @@ def _validate_collection_id(collection_id: str) -> None:
         or any(part in {".", ".."} for part in collection_id.split("/"))
     ):
         raise ValueError(
-            f"Invalid collection_id '{collection_id}': backslashes and . or .. segments not allowed"
+            f"Invalid collection_id '{collection_id}': backslashes and. or .. segments not allowed"
         )
 
     # Second check: validate collection ID format per STAC spec
@@ -706,7 +705,7 @@ def _extract_statistics_best_effort(
         output_path: Path to the converted file.
         format_type: Format type (RASTER or VECTOR).
         catalog_root: Catalog root for config lookup.
-        collection_path: Collection directory for hierarchical config (ADR-0039).
+        collection_path: Collection directory for hierarchical config.
 
     Returns:
         Tuple of (band_stats, parquet_stats). Empty if disabled or failed.
@@ -772,7 +771,7 @@ def _add_statistics_to_properties(
 def _fix_collection_level_asset_hrefs(
     stac_assets: dict[str, pystac.Asset],
 ) -> dict[str, pystac.Asset]:
-    """Fix asset hrefs and keys for collection-level assets (ADR-0031).
+    """Fix asset hrefs and keys for collection-level assets.
 
     _scan_item_assets() computes hrefs relative to item.json, but for
     collection-level assets they should be relative to collection.json.
@@ -942,7 +941,7 @@ def prepare_item(
         title: Optional display title for the item.
         description: Optional description.
         item_id: Optional item ID (defaults to parent directory name).
-        item_datetime: Optional acquisition/creation datetime (per ADR-0035).
+        item_datetime: Optional acquisition/creation datetime.
         force: If True, bypass change detection (Issue #386).
         reconvert: If True, re-convert from source (requires force=True).
         exclude_sibling_names: Base filenames of other batch items (sources +
@@ -1002,7 +1001,7 @@ def prepare_item(
         if defaults_errors:
             raise ValueError(
                 "Invalid metadata.yaml defaults configuration:\n"
-                + "\n".join(f"  - {e}" for e in defaults_errors)
+                + "\n".join(f" - {e}" for e in defaults_errors)
             )
 
     # Step 4: Extract and transform bbox
@@ -1058,11 +1057,11 @@ def prepare_item(
     if format_type == FormatType.RASTER and defaults and isinstance(metadata, COGMetadata):
         _apply_nodata_defaults_to_bands(stac_properties, metadata, defaults, path)
 
-    # Step 7: Create STAC item or collection-level assets (per ADR-0031)
+    # Step 7: Create STAC item or collection-level assets
     # Collection-level vector assets: no item.json, assets go directly in collection.json
     # Item-level assets (rasters, partitioned vectors): create item.json as usual
     if is_collection_level_asset and format_type == FormatType.VECTOR:
-        # Collection-level vector asset: no item.json per ADR-0031
+        # Collection-level vector asset: no item.json
         return PreparedItem(
             item_id=item_id_resolved,
             collection_id=collection_id,

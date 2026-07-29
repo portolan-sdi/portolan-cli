@@ -1,7 +1,7 @@
 """Integration tests for adding cloud-native vector formats (PMTiles, FlatGeobuf).
 
 Per Issue #368: Adding PMTiles/FlatGeobuf should work without conversion.
-Per ADR-0031: Vector files are collection-level assets.
+Vector files are collection-level assets.
 
 These tests verify:
 1. PMTiles/FlatGeobuf are NOT converted to GeoParquet
@@ -231,7 +231,7 @@ class TestAddFlatGeobuf:
 
 
 class TestCollectionLevelAssetBehavior:
-    """Tests for ADR-0031: Collection-level asset registration."""
+    """Tests for: Collection-level asset registration."""
 
     @pytest.mark.integration
     def test_pmtiles_is_collection_level_asset(

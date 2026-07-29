@@ -67,7 +67,7 @@ _GLOB_CHARS = ("*", "?", "[")
 
 _NON_SPATIAL_NOTE = (
     "Non-spatial table (no geometry column); will be extracted as plain Parquet "
-    "into a tabular collection (ADR-0047)."
+    "into a tabular collection."
 )
 
 
@@ -193,7 +193,7 @@ def _extract_single_table(
 
     Spatial tables become optimized GeoParquet; non-spatial tables become plain
     Parquet (no ``geo`` metadata key) via gpio's ``geometry=False`` path, so they
-    can be routed into Portolan's tabular pipeline (ADR-0047). ``bbox`` is dropped
+    can be routed into Portolan's tabular pipeline. ``bbox`` is dropped
     for non-spatial tables because a bounding-box filter requires a geometry.
 
     Returns:
@@ -512,7 +512,7 @@ def _auto_init_catalog(
     def _post_init(out: Path, parquet_files: list[Path]) -> None:
         # Non-geo (tabular) outputs carry no `geo` metadata key; add_files only
         # accepts them as standalone collection-level assets when tabular support
-        # is enabled (ADR-0047). Enable it before add_files when any output is
+        # is enabled. Enable it before add_files when any output is
         # non-geo.
         from portolan_cli.config import set_setting
         from portolan_cli.formats import is_geoparquet

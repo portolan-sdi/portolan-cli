@@ -990,7 +990,7 @@ class TestDryRunNetworkIsolation:
 
     @pytest.fixture
     def catalog_with_versions(self, tmp_path: Path) -> Path:
-        """Catalog with ADR-0023-compliant structure for dry-run tests.
+        """Catalog with -compliant structure for dry-run tests.
 
         push() needs versions.json at <catalog_root>/<collection>/versions.json.
         The shared managed_catalog fixture puts it under .portolan/ instead.
@@ -1004,7 +1004,7 @@ class TestDryRunNetworkIsolation:
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("{}\n")
 
-        # Per ADR-0023: versions.json at <catalog_root>/<collection>/versions.json
+        # Versions.json at <catalog_root>/<collection>/versions.json
         collection_dir = catalog_dir / "test-collection"
         collection_dir.mkdir()
         versions_data = {

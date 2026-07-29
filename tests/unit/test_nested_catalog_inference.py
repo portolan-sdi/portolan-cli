@@ -1,4 +1,4 @@
-"""Tests for nested catalog inference (ADR-0032).
+"""Tests for nested catalog inference.
 
 These tests verify that Portolan correctly:
 1. Infers nested collection IDs (e.g., climate/hittekaart, not just climate)

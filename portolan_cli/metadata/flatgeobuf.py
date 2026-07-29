@@ -3,7 +3,7 @@
 Uses pyogrio to read FlatGeobuf header metadata without loading all data.
 Extracts bbox, CRS, schema, geometry type, and feature count.
 
-Per ADR-0031, FlatGeobuf files are collection-level assets when added to a catalog.
+FlatGeobuf files are collection-level assets when added to a catalog.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Unit tests for AGENTS.md scaffolding, link injection, and gap detection.
 
 Covers the framework-free leaf ``portolan_cli.agents_md`` and the ``check --fix``
-repair ``portolan_cli.metadata.fix.repair_agents_md`` (ADR-0052, RULE-0080/0081).
+repair ``portolan_cli.metadata.fix.repair_agents_md`` (RULE-0080/0081).
 """
 
 from __future__ import annotations

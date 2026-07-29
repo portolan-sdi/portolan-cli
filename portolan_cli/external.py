@@ -11,7 +11,7 @@ asset ``href`` is the remote URL, marked as external / not-managed, plus a
 ``rel:"via"`` provenance link to the source. No bytes are downloaded and no
 conversion runs.
 
-Per ADR-0031 a single vector file is a collection-level asset (no item.json),
+a single vector file is a collection-level asset (no item.json),
 so external single-file data maps cleanly onto one collection with one
 collection-level asset.
 
@@ -208,7 +208,7 @@ def add_external(
         FileNotFoundError: If ``catalog_root`` is not an initialised catalog.
         FileExistsError: If collection already exists and force=False.
     """
-    # ADR-0030: validate remote URL (rejects file://, path traversals, etc.)
+    # validate remote URL (rejects file://, path traversals, etc.)
     try:
         validate_remote_url(url)
     except InputValidationError as e:

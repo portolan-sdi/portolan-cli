@@ -124,7 +124,7 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     ),
     "PTL-LNK-004": _auto(
         "links",
-        "Make structural link hrefs relative so the catalog stays portable (ADR-0051).",
+        "Make structural link hrefs relative so the catalog stays portable.",
     ),
     "PTL-LNK-005": _auto("links", "Remove the self link; a SELF_CONTAINED catalog omits it."),
     "PTL-LNK-006": _auto(
@@ -183,7 +183,7 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     ),
     "PTL-VIZ-004": _instruct(
         "Generate a PMTiles derivative for this large vector collection so browsers can render it "
-        "(ADR-0050); run `portolan viz` with the [pmtiles] extra."
+        "; run `portolan viz` with the [pmtiles] extra."
     ),
     # fixer `styles` is new in Phase 3; it corrects the style asset media type
     "PTL-VIZ-005": _auto(
@@ -195,15 +195,15 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     # fixer `partition` wraps partitioning.py's schema read
     "PTL-PRT-001": _auto(
         "partition",
-        "Populate the partition: fields from the Hive layout on disk (ADR-0042).",
+        "Populate the partition: fields from the Hive layout on disk.",
     ),
     # ---- collections: restructuring a layout is a decision, not an edit ----
     "PTL-COL-001": _instruct(
-        "Expose the single file as a collection-level asset (ADR-0031) rather than an item."
+        "Expose the single file as a collection-level asset rather than an item."
     ),
     "PTL-COL-002": _instruct(
         "Flatten the nesting: a collection may not contain another collection. "
-        "Promote the inner collection to a subcatalog (ADR-0032)."
+        "Promote the inner collection to a subcatalog."
     ),
     "PTL-COL-003": _instruct(
         "Rename the collection to a slug that matches its directory and is unique in the catalog."
@@ -215,7 +215,7 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     # ---- temporal: an extent is a fact about the data, not about the file ----
     "PTL-TMP-001": _instruct(
         "Record the item's datetime, or its start_datetime/end_datetime interval, "
-        "from the source data (ADR-0035)."
+        "from the source data."
     ),
     "PTL-TMP-002": _instruct(
         "Correct the datetime fields: RFC 3339, with start_datetime no later than end_datetime."
@@ -252,7 +252,7 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     # fixer `item_mirror` wraps stac_parquet's items.parquet generation
     "PTL-MIR-001": _auto(
         "item_mirror",
-        "Generate the items.parquet mirror for this collection (ADR-0049).",
+        "Generate the items.parquet mirror for this collection.",
     ),
     "PTL-MIR-002": _auto(
         "item_mirror",
@@ -266,7 +266,7 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     "PTL-DAT-001": _auto("checksum", "Recompute file:checksum from the asset's current bytes."),
     "PTL-DAT-002": _auto("checksum", "Recompute file:size from the asset's current bytes."),
     "PTL-DAT-003": _auto("convert", "Convert the asset to the cloud-native format it declares."),
-    "PTL-DAT-004": _auto("convert", "Rewrite the raster as a valid COG (ADR-0019)."),
+    "PTL-DAT-004": _auto("convert", "Rewrite the raster as a valid COG."),
     "PTL-DAT-005": _instruct(
         "Reconcile the asset's bytes with the metadata describing them; they disagree about the "
         "data itself, which no rewrite can settle."
@@ -278,7 +278,7 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     "PTL-DAT-008": _auto("convert", "Rewrite the GeoParquet with row groups in the target size."),
     "PTL-DAT-009": _instruct(
         "Recompute the raster statistics from the source data; the COG's stored values are absent "
-        "or wrong (ADR-0034)."
+        "or wrong."
     ),
     "PTL-DAT-010": _instruct(
         "Investigate the raster's valid-data percentage: a nodata-dominated band usually means the "
@@ -289,13 +289,13 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "Rewrite the file against a supported GeoParquet version; the declared version predates "
         "what consumers read."
     ),
-    "PTL-DAT-013": _auto("convert", "Rewrite the COG with the 512x512 tile size (ADR-0019)."),
+    "PTL-DAT-013": _auto("convert", "Rewrite the COG with the 512x512 tile size."),
     "PTL-DAT-014": _instruct(
         "Align the partition schema with the files on disk; the layout and the declaration "
-        "disagree about the partitioning keys (ADR-0042)."
+        "disagree about the partitioning keys."
     ),
     "PTL-DAT-015": _instruct(
-        "Declare the non-geo table as tabular data (ADR-0047); it carries no geometry column."
+        "Declare the non-geo table as tabular data; it carries no geometry column."
     ),
     "PTL-DAT-016": _instruct(
         "Regenerate the items.parquet mirror from the current items; its contents have drifted "

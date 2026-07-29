@@ -374,7 +374,7 @@ class TestWorkflowNotice:
         assert _invoke(catalog, "--strict").exit_code == 1
 
     def test_fix_leaves_the_notice_standing_and_says_why(self, catalog: Path) -> None:
-        """An orphan is not auto-fixable (ADR-0041), so --fix must not claim it.
+        """An orphan is not auto-fixable, so --fix must not claim it.
 
         The notice survives the repair pass on purpose: `--fix` records a skip
         naming the two things that *would* settle it, and the next `check` says

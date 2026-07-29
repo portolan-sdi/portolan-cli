@@ -6,7 +6,7 @@ paths:
 # Architecture mindmap (read this first when navigating the code)
 
 Portolan is a thin Click shell over a fat library, with a pluggable versioning
-backend underneath (ADR-0007 CLI-wraps-API, enforced by import-linter, ADR-0025).
+backend underneath (CLI-wraps-API, enforced by import-linter).
 Use this map to find where a behavior lives before you start editing. Line
 numbers drift, treat them as a starting point and confirm in the file.
 
@@ -18,7 +18,7 @@ flowchart TD
     subgraph CLI["CLI layer (cli.py, thin Click shell)"]
         cmds["commands: init list status info check scan add rm<br/>push pull sync clone clean readme stac-geoparquet<br/>groups: config metadata extract version skills"]
     end
-    subgraph LIB["Library layer (all logic, ADR-0007)"]
+    subgraph LIB["Library layer (all logic)"]
         catalog["catalog.py<br/>find_catalog_root, init_catalog"]
         dataset["add.py<br/>add/rm orchestration + STAC build"]
         stac["stac.py, stac_parquet.py<br/>catalog, collection, item"]
@@ -39,7 +39,7 @@ flowchart TD
     end
     subgraph STORE["Storage and source of truth"]
         sentinel[".portolan/config.yaml<br/>catalog-root sentinel"]
-        versions["versions.json<br/>ADR-0005 truth"]
+        versions["versions.json<br/>truth"]
         stactree["STAC tree<br/>catalog, collection, item + assets"]
         object[("Object storage<br/>S3, GCS, Azure")]
     end
@@ -75,7 +75,7 @@ and every command live. Top-level commands: `init`, `list`, `status`, `info`,
 or rename a command, the AST in `scripts/validate_claude_md.py` re-reads these
 decorators, so the root `CLAUDE.md` command references must stay accurate.
 
-## Library layer (ADR-0007: all logic lives here, never in cli.py)
+## Library layer (all logic lives here, never in cli.py)
 
 `cli.py` parses flags, resolves the catalog root, loads `.env`, and delegates.
 The big orchestrators are `add.py` (add/rm, the largest module, drives STAC
@@ -84,7 +84,7 @@ build + conversion + versioning), `push.py`/`pull.py`/`sync.py` (remote I/O),
 `version_ops.py` (the only bridge from the library to a backend). See the
 subsystem table below and the path-scoped rules for each.
 
-## Backends layer and protocol fidelity (ADR-0003, ADR-0005, ADR-0046)
+## Backends layer and protocol fidelity
 
 - `backends/protocol.py` defines `@runtime_checkable class VersioningBackend`
   with `get_current_version`, `list_versions`, `publish`, `rollback`, `prune`,
@@ -110,26 +110,25 @@ Two enums in `formats.py`: `CloudNativeStatus` (`CLOUD_NATIVE` / `CONVERTIBLE` /
 routes to rio-cogeo, `UNKNOWN`). The extension vocabulary (which set each
 extension belongs to, plus its media type / role / display name) is
 single-sourced in `extension_registry.py` and *derived* into `formats.py`,
-`constants.py`, `scan_classify.py`, and `add.py` (ADR-0055) — edit the
+`constants.py`, `scan_classify.py`, and `add.py` — edit the
 registry rows, not the frozensets. `CLOUD_NATIVE_EXTENSIONS` is the derived source of truth for "already
 cloud-native, skip conversion" (`.fgb`, `.pmtiles`; `.parquet`/`.tif` need
 content inspection; `.zarr`/`.copc.laz` are cloud-native via dedicated branches).
-`convert.py` orchestrates only
-(ADR-0010): `CLOUD_NATIVE` -> SKIPPED, `UNSUPPORTED` -> returned with no error
-(ADR-0014, accept with a warning), else route by `detect_format` to
+`convert.py` orchestrates only: `CLOUD_NATIVE` -> SKIPPED, `UNSUPPORTED` -> returned with no error
+(accept with a warning), else route by `detect_format` to
 geoparquet-io or rio-cogeo. Never put geometry or raster math in our layer.
 
 ## Source-of-truth model
 
 - `versions.json` is the single source of truth for versions, checksums, sync
-  state, and history (ADR-0005). It lives at `{catalog_root}/{collection}/`
-  (collection-level, ADR-0023).
-- `.portolan/config.yaml` is the **only** catalog-root sentinel (ADR-0027/0029).
+  state, and history. It lives at `{catalog_root}/{collection}/`
+  (collection-level).
+- `.portolan/config.yaml` is the **only** catalog-root sentinel.
   `find_catalog_root` walks up looking for it, `detect_state` returns MANAGED
   only when it exists, and `init_catalog` writes it LAST for atomicity. Do not
   reintroduce a `state.json` sentinel.
 - The STAC tree (`catalog.json`, `collection.json`, `item.json`, assets) is what
-  gets published. It is SELF_CONTAINED with relative links (ADR-0051).
+  gets published. It is SELF_CONTAINED with relative links.
 
 ## Subsystem map (which module owns what, and its rule)
 
@@ -146,6 +145,7 @@ geoparquet-io or rio-cogeo. Never put geometry or raster math in our layer.
 
 ## Where to investigate further
 
-- `pyproject.toml` `[tool.importlinter]` for the exact contracts, and ADR-0025.
-- ADRs 0003, 0005, 0007, 0010, 0014, 0023, 0027, 0029, 0046, 0051.
+- `pyproject.toml` `[tool.importlinter]` for the exact contracts.
+- `context/shared/documentation/why-not-iceberg.md` for why the catalog layer
+  is STAC and Iceberg ships as an optional extra.
 - The per-subsystem rules in the table above for the gotchas in each area.

@@ -34,7 +34,7 @@ def initialized_catalog(tmp_path: Path) -> Path:
 
 
 class TestAddCatalogRootIntegration:
-    """Integration tests for add . at catalog root."""
+    """Integration tests for add. at catalog root."""
 
     @pytest.mark.integration
     def test_add_catalog_root_does_not_error(
@@ -43,7 +43,7 @@ class TestAddCatalogRootIntegration:
         initialized_catalog: Path,
         valid_points_geojson: Path,
     ) -> None:
-        """add . at catalog root completes without 'Cannot determine collection' error."""
+        """add. at catalog root completes without 'Cannot determine collection' error."""
         # Set up: create geo-files in collection subdirectories
         (initialized_catalog / "demographics").mkdir()
         shutil.copy(
@@ -71,7 +71,7 @@ class TestAddCatalogRootIntegration:
         initialized_catalog: Path,
         valid_points_geojson: Path,
     ) -> None:
-        """add . creates STAC collection structure for each subdirectory."""
+        """add. creates STAC collection structure for each subdirectory."""
         # Set up: multiple collection directories
         (initialized_catalog / "demographics").mkdir()
         shutil.copy(
@@ -86,7 +86,7 @@ class TestAddCatalogRootIntegration:
         )
 
         assert result.exit_code == 0, f"Add failed: {result.output}"
-        # STAC collection structure created per ADR-0023
+        # STAC collection structure created
         assert (initialized_catalog / "demographics" / "collection.json").exists(), (
             "collection.json was not created for 'demographics'"
         )
@@ -101,7 +101,7 @@ class TestAddCatalogRootIntegration:
         initialized_catalog: Path,
         valid_points_geojson: Path,
     ) -> None:
-        """add . processes all collection subdirectories."""
+        """add. processes all collection subdirectories."""
         # Set up: two collections
         (initialized_catalog / "col1").mkdir()
         (initialized_catalog / "col2").mkdir()
@@ -130,7 +130,7 @@ class TestAddCatalogRootIntegration:
         initialized_catalog: Path,
         valid_points_geojson: Path,
     ) -> None:
-        """add . infers full nested collection ID (ADR-0032 supersedes ADR-0022)."""
+        """add. infers full nested collection ID (supersedes )."""
         # Set up: deeply nested file
         nested_dir = initialized_catalog / "rivers" / "2020" / "q1"
         nested_dir.mkdir(parents=True)
@@ -143,7 +143,7 @@ class TestAddCatalogRootIntegration:
         )
 
         assert result.exit_code == 0, f"Add failed: {result.output}"
-        # Per ADR-0032: collection at leaf level with full nested path
+        # Collection at leaf level with full nested path
         assert (initialized_catalog / "rivers" / "2020" / "q1" / "collection.json").exists(), (
             "Collection 'rivers/2020/q1' was not created at leaf directory"
         )
@@ -162,7 +162,7 @@ class TestAddCatalogRootIntegration:
         initialized_catalog: Path,
         valid_points_geojson: Path,
     ) -> None:
-        """add . does not try to add files from .portolan directory."""
+        """add. does not try to add files from .portolan directory."""
         # .portolan dir is created by init
         (initialized_catalog / "real_data").mkdir()
         shutil.copy(valid_points_geojson, initialized_catalog / "real_data" / "data.geojson")
@@ -182,7 +182,7 @@ class TestAddCatalogRootIntegration:
         initialized_catalog: Path,
         valid_points_geojson: Path,
     ) -> None:
-        """add . can be run twice - second run silently skips unchanged files."""
+        """add. can be run twice - second run silently skips unchanged files."""
         (initialized_catalog / "data").mkdir()
         shutil.copy(valid_points_geojson, initialized_catalog / "data" / "points.geojson")
 
@@ -208,7 +208,7 @@ class TestAddCatalogRootIntegration:
         runner: CliRunner,
         initialized_catalog: Path,
     ) -> None:
-        """add . on empty catalog (no geo-files) exits cleanly."""
+        """add. on empty catalog (no geo-files) exits cleanly."""
         result = runner.invoke(
             cli,
             ["add", "--portolan-dir", str(initialized_catalog), str(initialized_catalog)],
@@ -219,7 +219,7 @@ class TestAddCatalogRootIntegration:
 
 
 class TestAddCatalogRootVsSubdirBehavior:
-    """Tests comparing add . vs add <subdir> behavior to ensure backward compat."""
+    """Tests comparing add. vs add <subdir> behavior to ensure backward compat."""
 
     @pytest.mark.integration
     def test_add_subdir_still_works(
@@ -300,9 +300,9 @@ class TestMultiCollectionOutput:
         initialized_catalog: Path,
         valid_points_geojson: Path,
     ) -> None:
-        """add . at catalog root shows all collections in output, not just the first.
+        """add. at catalog root shows all collections in output, not just the first.
 
-        Per ADR-0040: collection names only appear in --verbose mode.
+        Collection names only appear in --verbose mode.
         """
         # Set up: two collections with different files
         (initialized_catalog / "rivers").mkdir()
@@ -337,7 +337,7 @@ class TestMultiCollectionOutput:
         initialized_catalog: Path,
         valid_points_geojson: Path,
     ) -> None:
-        """add . with stray files at root level skips them with warning, doesn't crash."""
+        """add. with stray files at root level skips them with warning, doesn't crash."""
         # Set up: valid file in collection + stray file at root
         (initialized_catalog / "vectors").mkdir()
         shutil.copy(valid_points_geojson, initialized_catalog / "vectors" / "valid.geojson")
@@ -367,7 +367,7 @@ class TestMultiCollectionOutput:
         initialized_catalog: Path,
         valid_points_geojson: Path,
     ) -> None:
-        """add . --format json includes files from all collections in response."""
+        """add. --format json includes files from all collections in response."""
         import json
 
         # Set up: two collections
@@ -411,7 +411,7 @@ class TestSymlinkHandling:
         valid_points_geojson: Path,
         tmp_path: Path,
     ) -> None:
-        """add . works when running from a symlink pointing to catalog root."""
+        """add. works when running from a symlink pointing to catalog root."""
         # Set up: file in collection
         (initialized_catalog / "data").mkdir()
         shutil.copy(valid_points_geojson, initialized_catalog / "data" / "points.geojson")

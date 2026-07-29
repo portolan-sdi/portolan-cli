@@ -1,7 +1,7 @@
 """Integration tests for unified metadata scanner (#345 + #384).
 
 These tests pin the manifest-driven scanning contract introduced in
-ADR-0041:
+:
 
 - Issue #345: collection-level assets registered in collection.json (e.g.,
   items.parquet from `add --stac-geoparquet`) must NOT be reported as MISSING
@@ -55,7 +55,7 @@ def _write_catalog_json(catalog_dir: Path) -> None:
             indent=2,
         )
     )
-    # AGENTS.md required at catalog root (ADR-0052, RULE-0080)
+    # AGENTS.md required at catalog root (RULE-0080)
     (catalog_dir / "AGENTS.md").write_text("# AGENTS.md — Test Catalog\n")
 
 
@@ -84,7 +84,7 @@ def _write_collection_json(
         "assets": extra_assets or {},
     }
     (collection_dir / "collection.json").write_text(json.dumps(data, indent=2))
-    # AGENTS.md required at collection level (ADR-0052, RULE-0081)
+    # AGENTS.md required at collection level (RULE-0081)
     (collection_dir / "AGENTS.md").write_text(f"# AGENTS.md — {collection_id}\n")
 
 
@@ -375,13 +375,13 @@ class TestOrphanFiles:
 
 
 # =============================================================================
-# Vector single-file collection-level (ADR-0031): no false MISSING
+# Vector single-file collection-level: no false MISSING
 # =============================================================================
 
 
 @pytest.mark.integration
 class TestVectorCollectionLevelAsset:
-    """Vector single-file pattern from ADR-0031: no item.json expected."""
+    """Vector single-file pattern from: no item.json expected."""
 
     def test_collection_level_vector_asset_not_missing(
         self,
@@ -607,7 +607,7 @@ def _bump_mtime(path: Path, delta: float = 60.0) -> None:
 
 @pytest.mark.integration
 class TestCollectionLevelFreshness:
-    """ADR-0041 / #350: collection-level data assets must be freshness-checked.
+    """#350: collection-level data assets must be freshness-checked.
 
     Before this fix, the scanner registered collection-level assets but never
     called `check_file_metadata` on them, so STALE/BREAKING were silently
@@ -763,7 +763,7 @@ class TestCollectionLevelFreshness:
 
 @pytest.mark.integration
 class TestLegacyFlatLayoutIsOrphaned:
-    """ADR-0041: a single layout (hierarchical). Flat sibling JSON is no
+    """a single layout (hierarchical). Flat sibling JSON is no
     longer treated as a valid item by the scanner — the data file is
     reported as ORPHANED so users migrate via `portolan add`.
     """
@@ -819,13 +819,13 @@ class TestLegacyFlatLayoutIsOrphaned:
 
 
 # =============================================================================
-# F4: nested catalogs (ADR-0032 Pattern 1 + Pattern 2)
+# F4: nested catalogs (Pattern 1 + Pattern 2)
 # =============================================================================
 
 
 @pytest.mark.integration
 class TestNestedCatalogPatterns:
-    """ADR-0032 nested catalog shapes must be walked correctly.
+    """nested catalog shapes must be walked correctly.
 
     Pattern 1: catalog → sub-catalog → collection → item.
     Pattern 2: collection → year-subcatalog → item (collection still owns
@@ -1162,7 +1162,7 @@ class TestScannerRejectsMissingCatalog:
 
 
 # =============================================================================
-# Vector-format orphan detection (ADR-0014 accepts non-cloud-native formats).
+# Vector-format orphan detection (accepts non-cloud-native formats).
 # Stray .gpkg/.shp/.geojson at collection root must surface as ORPHANED so
 # users see them, mirroring the .pmtiles contract (orphan-checked but not
 # freshness-checked since no extractor exists for those formats).

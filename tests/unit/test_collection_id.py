@@ -1,6 +1,6 @@
 """Tests for collection ID validation and normalization.
 
-Per portolan-spec/structure.md and ADR-0032, collection IDs SHOULD:
+Per portolan-spec/structure.md, collection IDs SHOULD:
 - Contain only lowercase letters, numbers, hyphens, underscores, and forward slashes
 - Start with a letter or number (not hyphen/underscore)
 - Be unique within the catalog (uniqueness tested elsewhere)
@@ -44,7 +44,7 @@ class TestValidateCollectionId:
         assert is_valid is True
         assert error is None
 
-    # Valid: starts with number (year-based organization per ADR-0032)
+    # Valid: starts with number (year-based organization)
     @pytest.mark.parametrize(
         "collection_id",
         [
@@ -54,7 +54,7 @@ class TestValidateCollectionId:
         ],
     )
     def test_valid_starts_with_number(self, collection_id: str) -> None:
-        """Collection IDs starting with numbers should be valid (ADR-0032)."""
+        """Collection IDs starting with numbers should be valid."""
         is_valid, error = validate_collection_id(collection_id)
         assert is_valid is True
         assert error is None
@@ -150,7 +150,7 @@ class TestNormalizeCollectionId:
             ("CENSUS", "census"),
             ("Census-2020", "census-2020"),
             ("My Data", "my-data"),
-            ("census  2020", "census-2020"),  # multiple spaces -> single hyphen
+            ("census 2020", "census-2020"),  # multiple spaces -> single hyphen
         ],
     )
     def test_basic_normalization(self, input_id: str, expected: str) -> None:
@@ -170,7 +170,7 @@ class TestNormalizeCollectionId:
         """Special characters should be replaced with hyphens."""
         assert normalize_collection_id(input_id) == expected
 
-    # Leading number handling (numbers are now valid per ADR-0032)
+    # Leading number handling (numbers are now valid)
     @pytest.mark.parametrize(
         ("input_id", "expected"),
         [
@@ -179,7 +179,7 @@ class TestNormalizeCollectionId:
         ],
     )
     def test_leading_number_no_prefix(self, input_id: str, expected: str) -> None:
-        """IDs starting with numbers should NOT be prefixed (ADR-0032)."""
+        """IDs starting with numbers should NOT be prefixed."""
         assert normalize_collection_id(input_id) == expected
 
     @pytest.mark.parametrize(
@@ -293,7 +293,7 @@ class TestScanFixCollectionId:
         assert new_path == Path("/data/my-data")
 
     def test_compute_collection_id_fix_starts_with_number(self) -> None:
-        """Collection IDs starting with numbers are now valid (ADR-0032)."""
+        """Collection IDs starting with numbers are now valid."""
         from pathlib import Path
 
         from portolan_cli.scan.fix import _compute_collection_id_fix

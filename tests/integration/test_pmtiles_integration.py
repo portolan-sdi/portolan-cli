@@ -3,7 +3,7 @@
 Tests the complete PMTiles generation workflow with real tippecanoe execution.
 These tests require tippecanoe to be installed; they skip gracefully if not.
 
-Tests use collection-level asset structure per ADR-0031.
+Tests use collection-level asset structure.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ pytestmark = [
 def collection_with_geoparquet(tmp_path: Path, fixtures_dir: Path) -> Path:
     """Create a minimal collection with a GeoParquet asset.
 
-    Structure per ADR-0031:
+    Structure:
         collection/
             collection.json  (with assets section)
             roads.parquet

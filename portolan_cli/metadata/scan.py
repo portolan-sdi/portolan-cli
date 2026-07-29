@@ -1,4 +1,4 @@
-"""Manifest-driven metadata scanner (ADR-0041).
+"""Manifest-driven metadata scanner.
 
 This module is the single source of truth for "what assets does this catalog
 have, and is each asset's STAC metadata fresh?"
@@ -44,7 +44,7 @@ _DATA_EXTENSIONS = frozenset(
         ".tif",
         ".tiff",
         ".pmtiles",
-        # Vector source formats accepted per ADR-0014. Orphan-checked but
+        # Vector source formats accepted. Orphan-checked but
         # not freshness-checked (see _is_freshness_checkable) — there is
         # no extractor for these in detection.py, mirroring .pmtiles.
         ".gpkg",
@@ -68,7 +68,7 @@ _SYSTEM_FILES = frozenset(
 #
 # Trade-off: skipping means `check` no longer detects a genuinely missing
 # Iceberg warehouse — integrity of the table is owned by the Iceberg backend
-# (ADR-0046), not this scanner.
+# , not this scanner.
 _NON_LOCAL_MEDIA_TYPES = frozenset(
     {
         "application/x-iceberg",
@@ -107,7 +107,7 @@ def _scan_node(node_dir: Path, report: MetadataReport) -> None:
         _scan_collection(node_dir, report)
         return
     if (node_dir / "catalog.json").exists():
-        # ADR-0032 Pattern 1: catalog above collections. Each significant
+        # Pattern 1: catalog above collections. Each significant
         # child is either a sub-catalog or a collection — recurse via
         # _scan_node. Pattern 2 (sub-catalog *inside* a collection) is
         # handled by _scan_collection_child where the collection's own
@@ -254,7 +254,7 @@ def _scan_item(
         if not _is_freshness_checkable(asset_path):
             continue
         # versions.json + item.json lookup happen via `collection_dir` so
-        # the data-owning unit (per ADR-0032) is the truth, even when the
+        # the data-owning unit is the truth, even when the
         # item lives under a Pattern 2 sub-catalog.
         report.results.append(check_file_metadata(asset_path, collection_dir))
 
@@ -295,7 +295,7 @@ def _check_collection_level_asset(
     """Freshness check for a registered collection-level asset.
 
     Reads stored values from `versions.json` directly; collection-level
-    assets have no companion `item.json` by design (ADR-0031), so the
+    assets have no companion `item.json` by design, so the
     item-centric `check_file_metadata` path does not apply.
 
     Returns None if the asset is registered but untracked in versions.json
@@ -309,7 +309,7 @@ def _check_collection_level_asset(
 
     current = get_current_metadata(asset_path)
     # Freshness baseline is the asset's own mtime. `add` records it under the
-    # `mtime` field (ADR-0017 fast-path), while `--fix`'s
+    # `mtime` field (fast-path), while `--fix`'s
     # `update_versions_tracking` records it under `source_mtime`; a single asset
     # may carry either (or both). Prefer `source_mtime` but fall back to `mtime`
     # so a plain `add` (which never wrote `source_mtime` for collection-level

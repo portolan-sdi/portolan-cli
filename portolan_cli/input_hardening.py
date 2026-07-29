@@ -128,17 +128,17 @@ def validate_collection_id(collection_id: str) -> str:
             "URL-encoded characters not allowed in collection ID (provide raw ID, not encoded)"
         )
 
-    # Reject backslashes (forward slashes allowed for nested catalogs per ADR-0032)
+    # Reject backslashes (forward slashes allowed for nested catalogs)
     if "\\" in collection_id:
         raise InputValidationError("Backslashes not allowed in collection ID")
 
-    # STAC recommendation: lowercase with hyphens (ADR-0032 allows nested paths)
+    # STAC recommendation: lowercase with hyphens (allows nested paths)
     # Pattern: segments separated by /, each segment is alphanumeric with hyphens/underscores
     # Segments CAN start with numbers (e.g., "rivers/2020/q1" for year-based organization)
     if not re.match(r"^[a-z0-9][a-z0-9_-]*(?:/[a-z0-9][a-z0-9_-]*)*$", collection_id):
         raise InputValidationError(
             f"Collection ID '{collection_id}' invalid: use only lowercase letters, numbers, "
-            "hyphens, underscores, forward slashes (STAC best practice + ADR-0032)"
+            "hyphens, underscores, forward slashes (STAC best practice + )"
         )
 
     return collection_id

@@ -108,13 +108,13 @@ class TestAddDirectory:
 
     @pytest.fixture
     def initialized_catalog(self, tmp_path: Path) -> Path:
-        """Create an initialized Portolan catalog (per ADR-0023)."""
+        """Create an initialized Portolan catalog."""
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir(parents=True)
         # Create .portolan for internal state
         portolan_dir = catalog_root / ".portolan"
         portolan_dir.mkdir()
-        # catalog.json at root level (per ADR-0023)
+        # catalog.json at root level
         catalog_data = {
             "type": "Catalog",
             "stac_version": "1.0.0",

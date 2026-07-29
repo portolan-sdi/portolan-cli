@@ -1,7 +1,7 @@
 """Format detection for routing to appropriate conversion library.
 
 This module provides minimal format detection to route inputs to either
-geoparquet-io (vector) or rio-cogeo (raster). Per ADR-0010, actual
+geoparquet-io (vector) or rio-cogeo (raster). Actual
 validation and conversion are delegated to these upstream libraries.
 
 Additionally, it provides cloud-native status classification (see issue #10):
@@ -68,7 +68,7 @@ class FormatInfo:
 # =============================================================================
 
 # The extension vocabulary below is DERIVED from portolan_cli.extension_registry
-# (the single source, ADR-0055). Edit rows there, not these frozensets.
+# (the single source). Edit rows there, not these frozensets.
 
 # Cloud-native formats that pass through without conversion. Statically
 # cloud-native single-suffix files only: .parquet/.tif are content-inspected
@@ -158,7 +158,7 @@ def is_cloud_optimized_geotiff(path: Path, *, quiet: bool = True) -> bool:
     """Check if a TIFF file is a Cloud-Optimized GeoTIFF.
 
     Uses rio-cogeo's validation to determine if the file meets COG requirements.
-    Per ADR-0010, this delegates to upstream library rather than reimplementing.
+    This delegates to upstream library rather than reimplementing.
 
     Args:
         path: Path to the TIFF file.
@@ -443,7 +443,7 @@ class FormatType(Enum):
 
 
 # Extensions that route to geoparquet-io (vector) / rio-cogeo (raster). Derived
-# from the registry (ADR-0055). Cloud-native vectors like .fgb/.pmtiles are
+# from the registry. Cloud-native vectors like .fgb/.pmtiles are
 # included in VECTOR_EXTENSIONS so detect_format() returns VECTOR, letting
 # convert_vector() then check cloud-native status and skip. .gdb is a FileGDB
 # directory handled specially in detect_format().
@@ -457,7 +457,7 @@ def detect_format(path: Path) -> FormatType:
 
     This provides minimal detection to route files to the correct
     conversion library. It does NOT validate file contents—that is
-    delegated to geoparquet-io or rio-cogeo per ADR-0010.
+    delegated to geoparquet-io or rio-cogeo.
 
     Args:
         path: Path to the file or directory to detect.
@@ -497,7 +497,7 @@ def detect_format(path: Path) -> FormatType:
 # Multi-Layer Format Support (Issue #265)
 # =============================================================================
 
-# Formats that can contain multiple layers (derived from the registry, ADR-0055).
+# Formats that can contain multiple layers (derived from the registry).
 MULTILAYER_EXTENSIONS: frozenset[str] = _reg.extensions_where(is_multilayer=True)
 
 

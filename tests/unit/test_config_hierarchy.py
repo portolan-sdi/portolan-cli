@@ -1,4 +1,4 @@
-"""Tests for hierarchical .portolan/ folder support (ADR-0039).
+"""Tests for hierarchical .portolan/ folder support.
 
 Tests the directory tree walking and config/metadata merging:
 - find_portolan_files(): Find all .portolan/{filename} from start to root

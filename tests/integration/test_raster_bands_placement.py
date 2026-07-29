@@ -35,7 +35,7 @@ def raster_catalog(tmp_path: Path) -> Path:
                 "type": "Catalog",
                 "stac_version": "1.1.0",
                 "id": "test-catalog",
-                # A title is mandatory (ADR-0053) and `portolan init` always
+                # A title is mandatory and `portolan init` always
                 # writes one; without it the catalog fails the Portolan profile
                 # schema that `add` now declares (issue #654).
                 "title": "Test Catalog",
