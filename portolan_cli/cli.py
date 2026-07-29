@@ -7706,7 +7706,7 @@ def _discover_collections_with_items(catalog_root: Path) -> list[str]:
     Returns:
         Sorted list of collection IDs relative to catalog_root.
     """
-    import json
+    from portolan_cli.stac_parquet import count_items
 
     collections: list[str] = []
 
@@ -7716,13 +7716,10 @@ def _discover_collections_with_items(catalog_root: Path) -> list[str]:
         if ".portolan" in collection_file.parts:
             continue
 
-        # Check if collection has any items
+        # Check if collection owns any items, including those an organizing
+        # catalog groups beneath it (core.md:168-170)
         try:
-            data = json.loads(collection_file.read_text(encoding="utf-8"))
-            links = data.get("links", [])
-            has_items = any(link.get("rel") == "item" for link in links)
-
-            if has_items:
+            if count_items(collection_file.parent) > 0:
                 # Get relative path as collection ID
                 rel_path = collection_file.parent.relative_to(catalog_root)
                 collections.append(str(rel_path))

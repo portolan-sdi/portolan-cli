@@ -73,6 +73,46 @@ def _tiny_catalog(root: Path, *, collection: str = "roads") -> Path:
     return root / collection
 
 
+def _organizing_catalog(root: Path, *, collection: str = "roads") -> Path:
+    """A collection whose items sit under an organizing catalog (core.md:168-170).
+
+    ``roads/collection.json`` -> ``roads/US/catalog.json`` -> ``roads/US/US_AB.json``.
+    Returns the item's path. Links are written already correct, so any change the
+    fixer makes to the item's ``collection`` link is a regression.
+    """
+    collection_dir = _tiny_catalog(root, collection=collection)
+    _write_json(
+        collection_dir / "US" / "catalog.json",
+        {
+            "type": "Catalog",
+            "id": f"{collection}-US",
+            "stac_version": "1.1.0",
+            "description": "US",
+            "links": [],
+        },
+    )
+    item_json = collection_dir / "US" / "US_AB.json"
+    _write_json(
+        item_json,
+        {
+            "type": "Feature",
+            "id": "US_AB",
+            "stac_version": "1.1.0",
+            "geometry": None,
+            "bbox": [0.0, 0.0, 1.0, 1.0],
+            "properties": {"datetime": "2024-01-01T00:00:00Z"},
+            "assets": {},
+            "collection": collection,
+            "links": [
+                {"rel": "root", "href": "../../catalog.json", "type": "application/json"},
+                {"rel": "parent", "href": "./catalog.json", "type": "application/json"},
+                {"rel": "collection", "href": "../collection.json", "type": "application/json"},
+            ],
+        },
+    )
+    return item_json
+
+
 class TestRegistryCompleteness:
     """The registry and the remediation table must name the same fixers."""
 
@@ -402,6 +442,61 @@ class TestLinksFixer:
         assert by_rel["parent"]["href"] == "../collection.json"
         assert by_rel["collection"]["href"] == "../collection.json"
 
+    def test_item_under_an_organizing_catalog_keeps_its_collection_link(
+        self, tmp_path: Path
+    ) -> None:
+        """A catalog may organize a collection's items (core.md:168-170).
+
+        The item's parent is then that catalog while its collection link points
+        past it to the enclosing collection. The rebuild used to emit no
+        ``collection`` pair for such an item and then drop the existing link as
+        an unexpected structural rel, stripping a link PORTO-CORE-035 requires.
+        """
+        item_json = _organizing_catalog(tmp_path)
+
+        FIXERS["links"](tmp_path, False)
+
+        by_rel = {link["rel"]: link for link in _read_json(item_json)["links"]}
+        assert by_rel["parent"]["href"] == "./catalog.json"
+        assert by_rel["collection"]["href"] == "../collection.json"
+        assert by_rel["collection"]["type"] == "application/json"
+
+    def test_organizing_catalog_gets_no_collection_link(self, tmp_path: Path) -> None:
+        """Only items carry a collection link; the catalog between keeps parent."""
+        _organizing_catalog(tmp_path)
+
+        FIXERS["links"](tmp_path, False)
+
+        links = _read_json(tmp_path / "roads" / "US" / "catalog.json")["links"]
+        by_rel = {link["rel"]: link for link in links}
+        assert "collection" not in by_rel
+        assert by_rel["parent"]["href"] == "../collection.json"
+
+    def test_rebuild_survives_a_non_tuple_structural_rels(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``STRUCTURAL_RELS`` is rashid's to shape; we only need membership.
+
+        Concatenating it with a tuple raised ``TypeError`` the moment upstream
+        exported anything but a tuple.
+        """
+        monkeypatch.setattr(
+            fixers_module, "STRUCTURAL_RELS", frozenset(fixers_module.STRUCTURAL_RELS)
+        )
+        collection = _tiny_catalog(tmp_path)
+        data = _read_json(collection / "collection.json")
+        data["links"] = [
+            {"rel": "self", "href": "./collection.json", "type": "application/json"},
+            {"rel": "license", "href": "https://example.org/license", "type": "text/html"},
+        ]
+        _write_json(collection / "collection.json", data)
+
+        FIXERS["links"](tmp_path, False)
+
+        rels = [link["rel"] for link in _read_json(collection / "collection.json")["links"]]
+        assert "self" not in rels
+        assert "license" in rels
+
     def test_absolute_href_is_relativized(self, tmp_path: Path) -> None:
         collection = _tiny_catalog(tmp_path)
         data = _read_json(collection / "collection.json")
@@ -538,6 +633,24 @@ class TestBboxFixer:
 
         extent = _read_json(collection / "collection.json")["extent"]["spatial"]["bbox"]
         assert extent == [[0.0, -1.0, 3.0, 2.0]]
+
+    def test_extent_covers_items_under_an_organizing_catalog(self, tmp_path: Path) -> None:
+        """A broken extent must recompute from items held through a catalog.
+
+        Walking direct children only found the organizing catalog, which carries
+        no extent of its own, so the union came back empty and the repair was
+        reported as skipped instead of recomputed.
+        """
+        _organizing_catalog(tmp_path)
+        collection_json = tmp_path / "roads" / "collection.json"
+        data = _read_json(collection_json)
+        data["extent"]["spatial"]["bbox"] = [[0.0, 0.0, 200.0, 100.0]]
+        _write_json(collection_json, data)
+
+        results = FIXERS["bbox"](tmp_path, False)
+
+        assert _read_json(collection_json)["extent"]["spatial"]["bbox"] == [[0.0, 0.0, 1.0, 1.0]]
+        assert [r.action for r in results] == [FixAction.UPDATED]
 
     def test_valid_extent_is_left_alone(self, tmp_path: Path) -> None:
         self._collection_with_items(tmp_path, [0.0, -1.0, 3.0, 2.0])
@@ -1166,6 +1279,46 @@ class TestItemMirrorCogPredicate:
     def test_a_cog_profile_requests_a_mirror(self, tmp_path: Path) -> None:
         self._collection_with_raster_item(
             tmp_path, "image/tiff; application=geotiff; profile=cloud-optimized"
+        )
+
+        results = FIXERS["item_mirror"](tmp_path, True)
+
+        assert [r.action for r in results] == [FixAction.CREATED]
+
+    def test_a_cog_under_an_organizing_catalog_requests_a_mirror(self, tmp_path: Path) -> None:
+        """PTL-MIR-001 scopes by ownership, not by directory depth.
+
+        A scene collection that groups its items under year catalogs still owes
+        a mirror. Probing direct children only saw the catalog, never the COG.
+        """
+        collection = _tiny_catalog(tmp_path)
+        _write_json(
+            collection / "2024" / "catalog.json",
+            {
+                "type": "Catalog",
+                "stac_version": "1.1.0",
+                "id": "roads-2024",
+                "description": "2024",
+                "links": [],
+            },
+        )
+        _write_json(
+            collection / "2024" / "scene-a" / "scene-a.json",
+            {
+                "type": "Feature",
+                "stac_version": "1.1.0",
+                "id": "scene-a",
+                "geometry": None,
+                "bbox": [0.0, 0.0, 1.0, 1.0],
+                "properties": {"datetime": "2024-01-01T00:00:00Z"},
+                "assets": {
+                    "data": {
+                        "href": "./scene-a.tif",
+                        "type": "image/tiff; application=geotiff; profile=cloud-optimized",
+                    }
+                },
+                "links": [],
+            },
         )
 
         results = FIXERS["item_mirror"](tmp_path, True)

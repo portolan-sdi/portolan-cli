@@ -38,7 +38,7 @@ from __future__ import annotations
 import importlib
 import json
 import posixpath
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -153,6 +153,36 @@ def _relative_href(from_node: Node, to_path: PurePosixPath) -> str:
     return rel if rel.startswith("../") else f"./{rel}"
 
 
+def _owned_items(node: Node, graph: CatalogGraph) -> Iterator[Node]:
+    """Every item ``node`` owns, descending through organizing catalogs.
+
+    A catalog may group a collection's items (core.md:168-170), so ownership does
+    not stop one level down. Descent halts at a nested collection, whose items
+    are its own to mirror.
+    """
+    for child in graph.children_of(node):
+        if child.kind == "item":
+            yield child
+        elif child.kind == "catalog":
+            yield from _owned_items(child, graph)
+
+
+def _enclosing_collection(node: Node, graph: CatalogGraph) -> Node | None:
+    """The nearest collection above ``node``, which need not be its parent.
+
+    A catalog may sit below a collection to organize its items (core.md:168-170,
+    for example a raster collection grouping items by year). An item there has
+    that catalog as its parent while its ``collection`` link points past it to
+    the enclosing collection, and both are correct.
+    """
+    current = graph.parent_of(node)
+    while current is not None:
+        if current.kind == "collection":
+            return current
+        current = graph.parent_of(current)
+    return None
+
+
 def _expected_structural_links(node: Node, graph: CatalogGraph) -> list[tuple[str, Node]]:
     """The (rel, target) pairs the spec requires on ``node``, in link order."""
     expected: list[tuple[str, Node]] = []
@@ -162,8 +192,10 @@ def _expected_structural_links(node: Node, graph: CatalogGraph) -> list[tuple[st
         expected.append(("root", root))
     if parent is not None:
         expected.append(("parent", parent))
-        if node.kind == "item" and parent.kind == "collection":
-            expected.append(("collection", parent))
+    if node.kind == "item":
+        enclosing = _enclosing_collection(node, graph)
+        if enclosing is not None:
+            expected.append(("collection", enclosing))
     for child in graph.children_of(node):
         expected.append(("item" if child.kind == "item" else "child", child))
     return expected
@@ -191,6 +223,15 @@ def _reuse_link(
     return None
 
 
+def _rebuilt_rels() -> frozenset[str]:
+    """The rels the rebuild re-emits itself, so stale copies are dropped first.
+
+    Derived by membership rather than concatenation: ``STRUCTURAL_RELS`` belongs
+    to rashid, and exporting it as a set or list must not break link repair.
+    """
+    return frozenset(STRUCTURAL_RELS) | {"self"}
+
+
 def _rebuild_links(node: Node, graph: CatalogGraph) -> list[dict[str, Any]]:
     """The link block ``node`` should carry: structural first, everything else after."""
     existing = links_of(node)
@@ -206,7 +247,7 @@ def _rebuild_links(node: Node, graph: CatalogGraph) -> list[dict[str, Any]]:
             if isinstance(title, str) and title:
                 link["title"] = title
         rebuilt.append(link)
-    rebuilt.extend(link for link in existing if link.get("rel") not in STRUCTURAL_RELS + ("self",))
+    rebuilt.extend(link for link in existing if link.get("rel") not in _rebuilt_rels())
     return rebuilt
 
 
@@ -251,11 +292,18 @@ def _looks_valid(box: Any) -> bool:
 
 
 def _child_bboxes(node: Node, graph: CatalogGraph) -> list[list[float]]:
-    """Every bbox contained by ``node``, from items directly and collections' extents."""
+    """Every bbox contained by ``node``, from items directly and collections' extents.
+
+    Descends through an organizing catalog (core.md:168-170), which carries no
+    extent of its own and would otherwise hide the items beneath it.
+    """
     from portolan_cli.bbox import to_2d_bbox
 
     found: list[list[float]] = []
     for child in graph.children_of(node):
+        if child.kind == "catalog":
+            found.extend(_child_bboxes(child, graph))
+            continue
         candidates: list[Any] = (
             [child.data.get("bbox")] if child.kind == "item" else (_extent_bboxes(child) or [])
         )
@@ -537,7 +585,7 @@ def _has_cog_items(node: Node, graph: CatalogGraph) -> bool:
     rashid now exports the predicate it applies (rashid#57), so this reads the
     answer from ``has_cog`` instead of replicating the rule.
     """
-    return any(child.kind == "item" and has_cog(child) for child in graph.children_of(node))
+    return any(has_cog(item) for item in _owned_items(node, graph))
 
 
 def _generate_mirror(node: Node, *, dry_run: bool) -> FixResult:

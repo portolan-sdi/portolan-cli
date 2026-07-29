@@ -105,6 +105,123 @@ def collection_with_items(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def collection_with_organizing_catalogs(tmp_path: Path) -> Path:
+    """A collection whose items hang off organizing catalogs (core.md:168-170).
+
+    ``landsat/collection.json`` links two year catalogs by ``rel="child"``, and
+    each of those owns one item. The collection itself carries no ``rel="item"``
+    link, which is the shape that used to read as an empty collection.
+    """
+    catalog_root = tmp_path / "catalog"
+    collection_dir = catalog_root / "landsat"
+    collection_dir.mkdir(parents=True)
+
+    (catalog_root / "catalog.json").write_text(
+        json.dumps(
+            {
+                "type": "Catalog",
+                "stac_version": "1.1.0",
+                "id": "test-catalog",
+                "description": "Test catalog",
+                "links": [
+                    {"rel": "root", "href": "./catalog.json"},
+                    {"rel": "child", "href": "./landsat/collection.json"},
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    for index, year in enumerate(("2023", "2024")):
+        year_dir = collection_dir / year
+        item_id = f"scene-{year}"
+        item_dir = year_dir / item_id
+        item_dir.mkdir(parents=True)
+        (year_dir / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "stac_version": "1.1.0",
+                    "id": f"landsat-{year}",
+                    "description": f"Scenes from {year}",
+                    "links": [
+                        {"rel": "root", "href": "../../catalog.json"},
+                        {"rel": "parent", "href": "../collection.json"},
+                        {"rel": "item", "href": f"./{item_id}/{item_id}.json"},
+                    ],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        (item_dir / f"{item_id}.json").write_text(
+            json.dumps(
+                {
+                    "type": "Feature",
+                    "stac_version": "1.1.0",
+                    "id": item_id,
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [-122.5 + index, 37.7],
+                                [-122.4 + index, 37.7],
+                                [-122.4 + index, 37.8],
+                                [-122.5 + index, 37.8],
+                                [-122.5 + index, 37.7],
+                            ]
+                        ],
+                    },
+                    "bbox": [-122.5 + index, 37.7, -122.4 + index, 37.8],
+                    "properties": {"datetime": f"{year}-01-01T00:00:00Z"},
+                    "assets": {
+                        "data": {
+                            "href": f"./{item_id}.tif",
+                            "type": ("image/tiff; application=geotiff; profile=cloud-optimized"),
+                            "roles": ["data"],
+                        }
+                    },
+                    "links": [
+                        {"rel": "root", "href": "../../../catalog.json"},
+                        {"rel": "parent", "href": "../catalog.json"},
+                        {"rel": "collection", "href": "../../collection.json"},
+                    ],
+                    "collection": "landsat",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    (collection_dir / "collection.json").write_text(
+        json.dumps(
+            {
+                "type": "Collection",
+                "stac_version": "1.1.0",
+                "id": "landsat",
+                "description": "Landsat imagery grouped by year",
+                "license": "CC-BY-4.0",
+                "extent": {
+                    "spatial": {"bbox": [[-122.5, 37.7, -121.4, 37.8]]},
+                    "temporal": {"interval": [["2023-01-01T00:00:00Z", None]]},
+                },
+                "links": [
+                    {"rel": "root", "href": "../catalog.json"},
+                    {"rel": "parent", "href": "../catalog.json"},
+                    {"rel": "child", "href": "./2023/catalog.json"},
+                    {"rel": "child", "href": "./2024/catalog.json"},
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    return collection_dir
+
+
+@pytest.fixture
 def collection_with_many_items(tmp_path: Path) -> Path:
     """Create a collection with 150 items (above default threshold)."""
     catalog_root = tmp_path / "catalog"
@@ -231,6 +348,27 @@ class TestItemCountAndThreshold:
         result = should_suggest_parquet(collection_with_items, threshold=3)
         assert result is True
 
+    @pytest.mark.unit
+    def test_count_items_descends_organizing_catalogs(
+        self, collection_with_organizing_catalogs: Path
+    ) -> None:
+        """Items under an organizing catalog still belong to the collection.
+
+        Counting only the collection's own ``rel="item"`` links returned 0 here.
+        """
+        from portolan_cli.stac_parquet import count_items
+
+        assert count_items(collection_with_organizing_catalogs) == 2
+
+    @pytest.mark.unit
+    def test_should_suggest_parquet_counts_items_under_catalogs(
+        self, collection_with_organizing_catalogs: Path
+    ) -> None:
+        """The suggestion threshold reads the same descended count."""
+        from portolan_cli.stac_parquet import should_suggest_parquet
+
+        assert should_suggest_parquet(collection_with_organizing_catalogs, threshold=1) is True
+
 
 # =============================================================================
 # Test: Generate items.parquet
@@ -239,6 +377,23 @@ class TestItemCountAndThreshold:
 
 class TestGenerateItemsParquet:
     """Tests for generating items.parquet from STAC items."""
+
+    @pytest.mark.unit
+    def test_mirror_includes_items_under_organizing_catalogs(
+        self, collection_with_organizing_catalogs: Path
+    ) -> None:
+        """The mirror must carry every item the collection owns, however nested.
+
+        Reading only the collection's own item links raised "No items found".
+        """
+        import pyarrow.parquet as pq
+
+        from portolan_cli.stac_parquet import generate_items_parquet
+
+        parquet_path = generate_items_parquet(collection_with_organizing_catalogs)
+
+        ids = pq.read_table(parquet_path, columns=["id"]).column("id").to_pylist()
+        assert sorted(ids) == ["scene-2023", "scene-2024"]
 
     @pytest.mark.unit
     def test_generate_items_parquet_creates_file(self, collection_with_items: Path) -> None:
