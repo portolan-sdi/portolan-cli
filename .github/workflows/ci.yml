@@ -15,7 +15,9 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # No branch filter. A pull request aimed anywhere else still runs
+    # these checks; without that, a stacked pull request shows green
+    # having run none of them.
   workflow_dispatch:  # Allow manual triggering
 
 # Least-privilege default; no job here writes to the repo.
