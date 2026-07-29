@@ -34,7 +34,7 @@ Do not draft a README from a generic template or from memory of "what READMEs lo
 
 ## Org-wide facts
 
-- License is Apache-2.0 in every repo. Never introduce code under another license without a human decision recorded in `norms/repos.md`.
+- License is Apache-2.0 in every repo. Never introduce code under another license without a human decision recorded in [norms/repos.md](https://github.com/portolan-sdi/portolan-ops/blob/main/norms/repos.md).
 - The canonical homepage is https://www.portolan-sdi.org/. Canonical URLs live in [copy/urls.md](https://github.com/portolan-sdi/portolan-ops/blob/main/copy/urls.md). Do not hardcode variants.
 - Community discussion happens in the [Portolan Google Group](https://groups.google.com/g/portolan) and the [Portolan channel](https://cloudnativegeo.slack.com/archives/C0A1JBH9529) in the Cloud-Native Geo Slack. Planning lives in [org-level GitHub projects](https://github.com/orgs/portolan-sdi/projects/1).
 - The [portolan-spec](https://github.com/portolan-sdi/portolan-spec) repo is the ground truth for the Portolan standard. The CLI, the validator, the registry, and every other tool implement the spec and are downstream of it. Never describe the CLI as the source of truth for the spec. Propose spec changes in portolan-spec.
@@ -49,8 +49,8 @@ Do not draft a README from a generic template or from memory of "what READMEs lo
 ## Ground truth discipline
 
 - One canonical home per fact. Link, don't duplicate. If a value (a color, a URL, a policy line) exists in this repo, reference it rather than copying it.
-- Shared files reach downstream repos through `sync/manifest.yml` and the sync workflow, never by hand-copying. To change a synced file in a downstream repo, change it here.
-- Brand values come from `brand/brand.json`. Regenerate derived files (`brand/emit_css.py`) rather than editing them.
+- Shared files reach downstream repos through [sync/manifest.yml](https://github.com/portolan-sdi/portolan-ops/blob/main/sync/manifest.yml) and the sync workflow, never by hand-copying. To change a synced file in a downstream repo, change it here.
+- Brand values come from [brand/brand.json](https://github.com/portolan-sdi/portolan-ops/blob/main/brand/brand.json). Regenerate derived files ([brand/emit_css.py](https://github.com/portolan-sdi/portolan-ops/blob/main/brand/emit_css.py)) rather than editing them.
 <!-- ops-sync:end -->
 
 # Portolan CLI - Development Guide
