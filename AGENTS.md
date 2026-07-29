@@ -7,10 +7,9 @@ Claude Code does not read `AGENTS.md`. Each repo therefore carries a one-line `C
 
 ## Voice and prose
 
-- All collective public-facing copy (website, announcements, docs, presentations) follows [VOICE.md](https://github.com/portolan-sdi/portolan-ops/blob/main/VOICE.md). Read it before writing any of those.
-- How Portolan is described comes from [copy/messaging.md](https://github.com/portolan-sdi/portolan-ops/blob/main/copy/messaging.md) alone. That file is provisional but authoritative: it distills the working messaging document and wins over any older copy anywhere in the org. Never describe Portolan from memory or from copy that predates it.
-- All written artifacts (READMEs, PR and issue bodies, docs, commit message bodies, lasting code comments) follow [STYLE.md](https://github.com/portolan-sdi/portolan-ops/blob/main/STYLE.md). Apply it while drafting, not as a cleanup pass.
-- Both are mandatory. "Agents MUST abide" is the operative phrase in each.
+- Every written artifact follows [VOICE.md](https://github.com/portolan-sdi/portolan-ops/blob/main/VOICE.md). That covers collective public-facing copy (website, announcements, docs, presentations) and the writing around the work (READMEs, PR and issue bodies, commit message bodies, lasting code comments). Apply it while drafting, not as a cleanup pass.
+- How Portolan is described comes from [copy/messaging.md](https://github.com/portolan-sdi/portolan-ops/blob/main/copy/messaging.md) alone. It wins over any older copy anywhere in the org. Never describe Portolan from memory or from copy that predates it.
+- Both are mandatory. "Agents MUST abide" is the operative phrase in VOICE.md.
 
 ## Writing issues and pull requests
 

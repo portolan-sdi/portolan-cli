@@ -21,8 +21,8 @@
 
 <!--
 Budget: 200 words outside code blocks, no section longer than six lines. A
-reviewer should finish this in under a minute. Prose follows the org style
-guide: https://github.com/portolan-sdi/portolan-ops/blob/main/STYLE.md
+reviewer should finish this in under a minute. Prose follows the Portolan
+voice: https://github.com/portolan-sdi/portolan-ops/blob/main/VOICE.md
 
 CI checks the budget and the verification evidence on every push and edit.
 -->
