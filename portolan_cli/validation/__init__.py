@@ -1,4 +1,4 @@
-"""Adapter over rashid, the Portolan conformance validator (ADR-0057).
+"""Adapter over rashid, the Portolan conformance validator.
 
 `portolan check` does not implement validation rules. rashid owns the rule set
 (``PTL-*`` ids citing ``PORTO-*`` spec requirements) and the structural, schema,
@@ -18,7 +18,7 @@ Nothing here renders output: :mod:`report` returns plain dicts and ``cli.py``
 does the printing, so the dependency runs one way (import-linter contract
 ``validation-is-an-adapter``).
 
-Input hardening (ADR-0030) lives in the top-level
+Input hardening lives in the top-level
 :mod:`portolan_cli.input_hardening` leaf, not here: sanitizing agent-supplied
 arguments is not catalog validation. These names are re-exported for the
 existing ``from portolan_cli.validation import ...`` call sites:

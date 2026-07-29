@@ -28,7 +28,7 @@ Before you ask for review, a PR should clear this bar:
 - [ ] **CodeRabbit comments addressed.** The automated reviewer's findings are
       resolved or explicitly answered.
 - [ ] **Docs and ADRs updated.** User-facing behavior is documented; non-obvious
-      decisions have an ADR (`context/shared/adr/`); `menard` doc-freshness passes.
+      decisions are recorded where they apply.
 
 If you run `prek run --all-files` locally and it is green, you have cleared most of
 this bar before pushing.
@@ -104,12 +104,11 @@ job. That single job covers:
 
 - **ruff** — lint + format
 - **mypy** — type checking (strict)
-- **import-linter** — architecture contracts ([ADR-0025](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0025-architecture-as-code.md))
+- **import-linter** — architecture contracts
 - **codespell** — spelling
 - **vulture** / **xenon** / **pylint** — dead code, complexity, duplication
 - **bandit** — security scanning
 - **deptry** — dependency hygiene
-- **menard** — code↔doc freshness
 - **actionlint** / **zizmor** — GitHub Actions workflow linting + supply-chain audit
 
 Alongside `quality`, CI runs the **test matrix** (Python 3.10–3.13 × Linux/macOS/
@@ -194,7 +193,10 @@ GitHub Release.
 
 - All code requires type annotations (`mypy --strict`)
 - Use `portolan_cli/output.py` for all user-facing terminal messages
-- Non-obvious design decisions require an ADR in `context/shared/adr/`
+- Non-obvious design decisions are recorded next to what they govern: user-facing
+  behavior in `docs/`, maintainer rationale in `context/shared/documentation/`,
+  accepted limitations in `context/shared/known-issues/`, and call-site gotchas in
+  the relevant docstring
 
 ## Spec Changes
 

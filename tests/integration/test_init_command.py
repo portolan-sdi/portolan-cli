@@ -85,7 +85,7 @@ class TestInitCommandAutoMode:
     def test_init_creates_all_management_files(self, runner: CliRunner, tmp_path: Path) -> None:
         """portolan init --auto should create management files in correct locations.
 
-        Per ADR-0023: versions.json is consumer-visible metadata at catalog root.
+        Versions.json is consumer-visible metadata at catalog root.
         Per issue #290: config.yaml alone is sufficient (state.json removed).
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
@@ -96,7 +96,7 @@ class TestInitCommandAutoMode:
             assert Path(".portolan/config.yaml").exists()
             # state.json removed per issue #290
             assert not Path(".portolan/state.json").exists()
-            # Consumer-visible metadata: lives at catalog root (ADR-0023)
+            # Consumer-visible metadata: lives at catalog root
             assert Path("versions.json").exists()
             assert not Path(".portolan/versions.json").exists()
 

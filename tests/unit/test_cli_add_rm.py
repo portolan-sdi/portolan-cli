@@ -3,7 +3,7 @@
 Tests the CLI layer for `portolan add` and `portolan rm` commands.
 These commands replace the old `dataset add` and `dataset remove` subcommands.
 
-Per ADR-0022: Git-style implicit tracking
+Git-style implicit tracking
 - `add <path>` tracks files (infers collection from path)
 - `rm <path>` untracks AND deletes (no confirmation)
 - `rm --keep <path>` untracks but preserves file
@@ -30,15 +30,15 @@ def runner() -> CliRunner:
 
 
 def setup_catalog(path: Path) -> None:
-    """Create an initialized Portolan catalog (per ADR-0023 and ADR-0029).
+    """Create an initialized Portolan catalog ( and.
 
-    Creates both .portolan/config.yaml (the sentinel per ADR-0029) and catalog.json.
+    Creates both .portolan/config.yaml (the sentinel) and catalog.json.
     """
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir()
-    # Create config.yaml as sentinel (per ADR-0029)
+    # Create config.yaml as sentinel
     (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
-    # Create catalog.json at root (STAC standard per ADR-0023)
+    # Create catalog.json at root (STAC standard)
     catalog_data = {
         "type": "Catalog",
         "stac_version": "1.0.0",
@@ -215,7 +215,7 @@ class TestAdd:
             result = runner.invoke(cli, ["add", str(test_file)])
 
             assert result.exit_code == 1
-            # Per ADR-0029, error message references .portolan/config.yaml sentinel
+            # Error message references .portolan/config.yaml sentinel
             assert "no .portolan/config.yaml found" in result.output.lower()
 
     @pytest.mark.unit
@@ -241,7 +241,7 @@ class TestAdd:
             )
 
             # The file is skipped, but the message must point at the actual
-            # rule (per ADR-0031): raster needs collection/item/ structure.
+            # rule: raster needs collection/item/ structure.
             assert "Skipping" in result.output
             assert "scene.tif" in result.output
             # Specific reason from infer_nested_collection_id, not the old
@@ -476,7 +476,7 @@ class TestAdd:
                 )
 
                 assert result.exit_code == 0
-                # Per ADR-0040: summary-only output, shows file and collection count
+                # Summary-only output, shows file and collection count
                 # Collection name only shown with --verbose
                 assert "2 files" in result.output
                 assert "1 collection" in result.output
@@ -873,7 +873,7 @@ class TestAddSidecarDetection:
 class TestPathToCollectionResolution:
     """Tests for path -> collection ID resolution.
 
-    With the batched add_files approach (ADR-0007: CLI wraps API), the CLI now
+    With the batched add_files approach (CLI wraps API), the CLI now
     delegates collection inference entirely to add_files by passing collection_id=None.
     These tests verify that paths are correctly resolved and passed through.
     """

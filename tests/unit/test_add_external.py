@@ -40,7 +40,7 @@ def runner() -> CliRunner:
 
 
 def setup_catalog(path: Path) -> None:
-    """Create an initialized Portolan catalog (per ADR-0023 and ADR-0029)."""
+    """Create an initialized Portolan catalog ."""
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
@@ -121,7 +121,7 @@ class TestBboxValidation:
 
 
 class TestADR0030URLValidation:
-    """Tests for ADR-0030 input validation compliance (F1, F2)."""
+    """Tests for input validation compliance (F1, F2)."""
 
     def test_rejects_file_scheme(self, tmp_path: Path) -> None:
         """file:// URLs are local paths disguised as URIs — must reject."""
@@ -264,7 +264,7 @@ class TestAddExternal:
     def test_no_local_file_written(self, tmp_path: Path) -> None:
         """Nothing is downloaded: only metadata sidecars exist in the collection.
 
-        AGENTS.md is scaffolded alongside collection.json (ADR-0052) — it is
+        AGENTS.md is scaffolded alongside collection.json — it is
         metadata, not downloaded data, so the "no local data file" invariant holds.
         """
         setup_catalog(tmp_path)

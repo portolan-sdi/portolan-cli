@@ -2,7 +2,7 @@
 
 Portolan requires every catalog and collection to carry an ``AGENTS.md`` file
 (Markdown, minimal) referenced by a ``rel="agents"`` link in its STAC JSON
-(ADR-0052; rashid PTL-FIL-001/-002). ``AGENTS.md`` is a **link**, not an asset, and its
+(rashid PTL-FIL-001/-002). ``AGENTS.md`` is a **link**, not an asset, and its
 content is human-authored — Portolan only scaffolds an empty template when the
 file is absent and never overwrites an existing one.
 
@@ -311,7 +311,7 @@ def ensure_agents_md_tree(catalog_root: Path) -> bool:
 
     The per-object :func:`ensure_agents_md` covers what a single write path
     touches; this covers everything ``add`` walks past, so a catalog created
-    before ADR-0052 (or by hand) gains its guide the next time it is written to
+    before (or by hand) gains its guide the next time it is written to
     rather than only through ``check --fix`` (issue #654).
 
     Args:

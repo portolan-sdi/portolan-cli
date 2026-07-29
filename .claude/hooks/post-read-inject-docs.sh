@@ -1,5 +1,5 @@
 #!/bin/bash
-# Auto-fetch API docs for core dependencies (ADR-0013)
+# Auto-fetch API docs for core dependencies
 # Triggered by PostToolUse on Read tool
 #
 # Detects imports of geoparquet_io, rio_cogeo, or obstore in Python files

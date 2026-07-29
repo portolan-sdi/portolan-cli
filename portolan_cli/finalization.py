@@ -12,7 +12,7 @@ one write per collection instead of O(n) per item. A per-item preparation
 failure therefore leaves no partial version entry (see ``.claude/rules``:
 "add must be atomic").
 
-Per ADR-0007 the CLI stays a thin wrapper; ``add.py`` orchestrates on top of the
+the CLI stays a thin wrapper; ``add.py`` orchestrates on top of the
 routines here. This module deliberately imports nothing from ``add`` so the
 dependency edge is one-directional (add -> finalization). Imports of
 ``catalog`` / ``backends`` / ``version_ops`` are kept **function-local** on
@@ -172,14 +172,14 @@ def _fix_collection_links(
 def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
     """Ensure catalog has link to collection.
 
-    For nested collection IDs (ADR-0032), delegates to update_catalog_links_for_nested
+    For nested collection IDs, delegates to update_catalog_links_for_nested
     which properly links through the catalog hierarchy.
 
     Args:
         catalog_root: Root directory of the catalog.
         collection_id: Collection identifier (may be nested like "climate/hittekaart").
     """
-    # For nested collection IDs, use the nested catalog link updater (ADR-0032)
+    # For nested collection IDs, use the nested catalog link updater
     if "/" in collection_id:
         from portolan_cli.catalog import update_catalog_links_for_nested
 
@@ -239,7 +239,7 @@ def _save_collection_with_links(
     _fix_collection_links(collection_json_path, catalog_root, collection_dir)
     _update_catalog_links(catalog_root, collection_id)
 
-    # Scaffold AGENTS.md and add the rel="agents" link (ADR-0052; rashid PTL-FIL-002).
+    # Scaffold AGENTS.md and add the rel="agents" link (rashid PTL-FIL-002).
     # Idempotent and merge-safe: never overwrites an existing AGENTS.md, only
     # adds the link when absent, so re-running `add` preserves human edits.
     from portolan_cli.agents_md import ensure_agents_md
@@ -353,7 +353,7 @@ def _get_or_create_collection(
     Returns:
         pystac.Collection object.
     """
-    # STAC at root level (per ADR-0023), handle nested paths (per ADR-0032)
+    # STAC at root level, handle nested paths
     collection_path = catalog_root / Path(*collection_id.split("/")) / "collection.json"
 
     if collection_path.exists():
@@ -378,7 +378,7 @@ def _add_prepared_items_to_collection(
 ) -> None:
     """Add prepared items or collection-level assets to a collection.
 
-    Per ADR-0031: Collection-level vector assets go directly in collection.assets.
+    Collection-level vector assets go directly in collection.assets.
     Item-level assets get linked via add_item_to_collection.
 
     Args:
@@ -657,7 +657,7 @@ def _batch_update_versions(
 
     Returns:
         Tuple of (current_version, asset_count, total_size_bytes) for catalog-level
-        versioning updates (ADR-0005).
+        versioning updates.
     """
     versions_path = collection_dir / "versions.json"
 
@@ -681,7 +681,7 @@ def _batch_update_versions(
     all_assets: dict[str, Asset] = {}
     for p in items:
         for filename, (file_path, file_checksum, file_size) in p.asset_files.items():
-            # For collection-level assets (ADR-0031), omit item_id from path
+            # For collection-level assets, omit item_id from path
             # asset_key is collection-relative; href is catalog-relative
             if p.is_collection_level_asset:
                 href = f"{collection_id}/{filename}"
@@ -691,11 +691,11 @@ def _batch_update_versions(
                 asset_key = f"{p.item_id}/{filename}"
 
             stat = file_path.stat()
-            # Collection-level assets (ADR-0031) have no companion item.json, so
+            # Collection-level assets have no companion item.json, so
             # the freshness check reads their baseline straight from
             # versions.json. Persist source_mtime + heuristics here so a plain
             # `add` produces a FRESH asset instead of a perpetual STALE (#512),
-            # and so a touched-but-identical asset stays FRESH via the ADR-0017
+            # and so a touched-but-identical asset stays FRESH via the
             # heuristic fallback rather than flipping to STALE/BREAKING.
             source_mtime, feature_count, schema_fingerprint = _asset_freshness_fields(
                 file_path, is_collection_level=p.is_collection_level_asset
@@ -722,7 +722,7 @@ def _batch_update_versions(
     # Single write for all items
     write_versions(versions_path, updated)
 
-    # Return info for catalog-level versioning (ADR-0005)
+    # Return info for catalog-level versioning
     # Get latest version's asset info
     latest = updated.versions[-1] if updated.versions else None
     if latest:
@@ -816,7 +816,7 @@ def _finalize_with_file_backend(
 
     File backend fast path (O(1) write per collection). Updates the
     collection-level versions.json first, then mirrors the summary into the
-    catalog-level versions.json (ADR-0005). A catalog-level failure is logged
+    catalog-level versions.json. A catalog-level failure is logged
     but never fails the add: the collection version was already published.
     """
     from portolan_cli.catalog import update_catalog_versions
@@ -827,7 +827,7 @@ def _finalize_with_file_backend(
         items=items,
     )
 
-    # Update catalog-level versions.json (ADR-0005)
+    # Update catalog-level versions.json
     # This keeps the catalog-level view in sync with collection state.
     # Wrap in try/except to avoid failing the add if catalog update fails
     # (collection-level versions.json was already written successfully).
@@ -861,7 +861,7 @@ def _publish_collection_version(
 
     Plugin backends (e.g. Iceberg) publish + run post-add hooks; the default
     file backend uses the optimized batch write. Backend selection follows the
-    resolved ``backend`` setting (ADR-0046).
+    resolved ``backend`` setting.
     """
     from portolan_cli.config import get_setting
 
@@ -972,7 +972,7 @@ def _finalize_collection(
 
     Args:
         catalog_root: Root directory of the catalog.
-        collection_id: Collection identifier (may be nested per ADR-0032).
+        collection_id: Collection identifier (may be nested).
         items: Prepared items belonging to this collection.
         merge_strategy: How to merge auto-detected metadata with existing values.
 
@@ -1007,7 +1007,7 @@ def _finalize_collection(
     # Add partition extension if any items have partition metadata (Issue #232/#443)
     _emit_partition_warnings(collection, collection_dir, items)
 
-    # Compute collection summaries from items (per ADR-0036)
+    # Compute collection summaries from items
     # Moved here from push.py for separation of concerns - summaries are now
     # available immediately after add, not just after push.
     update_collection_summaries(collection)
@@ -1081,9 +1081,9 @@ def finalize_items(
 
     ensure_link_titles(catalog_root)
 
-    # ADR-0052 / issue #654: every catalog and collection declares the Portolan
+    # / issue #654: every catalog and collection declares the Portolan
     # profile schema URI and carries AGENTS.md and README.md behind their links.
-    # Swept once per batch so subcatalogs created along the way (ADR-0032
+    # Swept once per batch so subcatalogs created along the way (
     # nesting) and pre-existing objects are covered, not just what was written.
     from portolan_cli.agents_md import ensure_agents_md_tree
     from portolan_cli.readme import ensure_readmes

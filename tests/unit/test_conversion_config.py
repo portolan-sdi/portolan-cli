@@ -407,7 +407,7 @@ class TestCogSettingsDataclass:
 
     @pytest.mark.unit
     def test_default_values(self) -> None:
-        """CogSettings has sensible defaults matching ADR-0019."""
+        """CogSettings has sensible defaults matching ."""
         from portolan_cli.conversion_config import CogSettings
 
         settings = CogSettings()

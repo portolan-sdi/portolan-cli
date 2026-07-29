@@ -104,7 +104,7 @@ def test_auto_init_builds_catalog_with_via_link_and_metadata(tmp_path: Path) -> 
 
 
 def test_auto_init_tracks_non_geo_table_as_tabular_collection(tmp_path: Path) -> None:
-    """A non-geo extracted Parquet becomes a tabular collection (ADR-0047).
+    """A non-geo extracted Parquet becomes a tabular collection.
 
     Auto-init must enable ``tabular.enabled`` (otherwise add_files rejects a
     geometry-less file) and the resulting collection must carry

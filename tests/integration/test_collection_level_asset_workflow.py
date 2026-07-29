@@ -1,9 +1,8 @@
-"""Integration tests for collection-level asset workflow (Issue #250, ADR-0031, Issue #364).
+"""Integration tests for collection-level asset workflow (Issue #250, Issue #364).
 
 Tests the complete workflow of adding collection-level vector assets,
 verifying STAC metadata generation, and ensuring correct path structure.
 
-Per ADR-0031:
 - Single vector files (GeoParquet, Shapefile, GeoPackage) are collection-level assets
 - No item.json created - asset goes directly in collection.json
 - items.parquet is NOT generated (no items to index)
@@ -68,10 +67,10 @@ class TestCollectionLevelAssetWorkflow:
         4. Verifying collection.json has asset in "assets" field (Issue #364)
         5. Verifying NO item.json exists (Issue #364)
 
-        Per ADR-0031, collection-level assets should be organized as:
+        Collection-level assets should be organized as:
             demographics/
-                census.parquet          # Asset at collection level
-                collection.json         # Has assets.data pointing to census.parquet
+                census.parquet # Asset at collection level
+                collection.json # Has assets.data pointing to census.parquet
                 versions.json
         """
         # Setup: Create collection directory
@@ -186,7 +185,7 @@ class TestCollectionLevelAssetWorkflow:
         # Verify NO item.json and correct collection.json assets
         _assert_no_item_json(collection_dir)
         # The generated README.md (issue #654) is tracked like every other file
-        # in the collection directory (ADR-0028), keyed by its documentation role.
+        # in the collection directory, keyed by its documentation role.
         _assert_collection_assets(
             collection_dir,
             {

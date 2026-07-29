@@ -44,77 +44,15 @@ AI agents will write most of the code. Human review does not scale to match AI o
 |----------|----------|
 | **Roadmap** | [GitHub Issues](https://github.com/portolan-sdi/portolan-cli/issues?q=label%3Aroadmap%3Amvp%2Croadmap%3Anext%2Croadmap%3Afuture) |
 | Contributing guide | `docs/contributing.md` |
-| Architecture | `pyproject.toml` [tool.importlinter] + [ADR-0025](context/shared/adr/0025-architecture-as-code.md) |
+| Architecture | `pyproject.toml` [tool.importlinter] + `.claude/rules/architecture.md` |
 | CI/CD documentation | `context/shared/documentation/ci.md` |
 | **Real-world test fixtures** | `context/shared/documentation/test-fixtures.md` |
-| ADRs | `context/shared/adr/` |
+| Maintainer rationale | `context/shared/documentation/` |
 | Plans & research | `context/shared/` |
 
 **Target Python version:** 3.10+ (matches geoparquet-io dependency)
 
 **CLI entry point:** `portolan` → `portolan_cli:cli` (defined in pyproject.toml)
-
-### ADR Index
-
-| ADR | Decision |
-|-----|----------|
-| [0001](context/shared/adr/0001-agentic-first-development.md) | Agentic-first: automate all quality gates, TDD mandatory |
-| [0002](context/shared/adr/0002-click-for-cli.md) | Click for CLI framework |
-| [0003](context/shared/adr/0003-plugin-architecture.md) | Plugin architecture for formats (GeoParquet/COG core, others optional) |
-| [0004](context/shared/adr/0004-iceberg-as-plugin.md) | ~~Iceberg as plugin~~ Superseded by ADR-0046 |
-| [0005](context/shared/adr/0005-versions-json-source-of-truth.md) | versions.json as single source of truth |
-| [0006](context/shared/adr/0006-remote-ownership-model.md) | Portolan owns bucket contents (no external edits) |
-| [0007](context/shared/adr/0007-cli-wraps-api.md) | CLI wraps Python API (all logic in library layer) |
-| [0008](context/shared/adr/0008-pipx-for-installation.md) | pipx for global installation, uv for development |
-| [0009](context/shared/adr/0009-output-dry-run-and-verbose-modes.md) | Dry-run and verbose modes in output functions |
-| [0010](context/shared/adr/0010-delegate-conversion-validation.md) | Delegate conversion/validation to upstream libraries |
-| [0011](context/shared/adr/0011-mvp-validation-framework.md) | ~~MVP validation framework~~ Superseded by ADR-0057 |
-| [0012](context/shared/adr/0012-flat-catalog-hierarchy.md) | Flat catalog hierarchy (no nested collections) |
-| [0013](context/shared/adr/0013-gitingest-auto-fetch.md) | Auto-fetch dependency docs via gitingest |
-| [0014](context/shared/adr/0014-accept-non-cloud-native-formats.md) | Accept non-cloud-native formats with warnings |
-| [0015](context/shared/adr/0015-two-tier-versioning-architecture.md) | Two-tier versioning: simple MVP + `[iceberg]` extra for enterprise |
-| [0016](context/shared/adr/0016-scan-before-import.md) | Scan-before-import: separate validation from import (like ruff check/fix) |
-| [0017](context/shared/adr/0017-mtime-heuristics-change-detection.md) | MTIME + heuristics for change detection (fast gate, O(1) metadata check) |
-| [0018](context/shared/adr/0018-metadata-generation-tiers.md) | Metadata generation tiers: auto-extractable → derivable → defaults → human-enrichable |
-| [0019](context/shared/adr/0019-cog-optimization-defaults.md) | COG defaults: DEFLATE, predictor=2, 512×512 tiles, nearest resampling |
-| [0020](context/shared/adr/0020-conversion-output-location.md) | Conversion output: side-by-side for vectors, in-place for rasters |
-| [0021](context/shared/adr/0021-catalog-json-root-level.md) | catalog.json at root level (STAC standard) |
-| [0022](context/shared/adr/0022-git-style-implicit-tracking.md) | Git-style implicit tracking (subdir = collection, delete = untrack) |
-| [0023](context/shared/adr/0023-stac-structure-separation.md) | STAC at root, Portolan internals in .portolan/ (supersedes 0012, 0021) |
-| [0024](context/shared/adr/0024-hierarchical-config-system.md) | Hierarchical config system (YAML) |
-| [0025](context/shared/adr/0025-architecture-as-code.md) | Architecture as code with import-linter |
-| [0026](context/shared/adr/0026-conversion-config-design.md) | Conversion config: extension/path overrides, precedence rules |
-| [0027](context/shared/adr/0027-unified-config-yaml-sentinel.md) | Unified config.yaml as sentinel and user config (eliminates config.json) |
-| [0028](context/shared/adr/0028-all-files-as-assets.md) | Track ALL files in item directories as assets |
-| [0029](context/shared/adr/0029-unified-catalog-root-detection.md) | Unified catalog root detection via .portolan/config.yaml |
-| [0030](context/shared/adr/0030-agent-native-cli-design.md) | Agent-native CLI design with JSON output and input hardening |
-| [0031](context/shared/adr/0031-collection-level-assets-for-vector-data.md) | Collection-level assets for vector data (GeoParquet, Shapefile, GeoPackage) |
-| [0032](context/shared/adr/0032-nested-catalogs-with-flat-collections.md) | Nested catalogs with flat collections (supersedes ADR-0012) |
-| [0033](context/shared/adr/0033-esri-gdb-raster-gdal-requirement.md) | ESRI GDB rasters require external GDAL (no bundled support) |
-| [0034](context/shared/adr/0034-statistics-computation-defaults.md) | Stats: approx raster, PyArrow parquet, enabled by default, configurable |
-| [0035](context/shared/adr/0035-temporal-extent-handling.md) | Temporal: default null (open interval), mark provisional, flag in check |
-| [0036](context/shared/adr/0036-collection-summaries-strategy.md) | Summaries: hybrid field detection, categorical only, no numeric aggregation |
-| [0037](context/shared/adr/0037-experimental-extension-policy.md) | Use experimental extensions, accept migration cost, no fallback prefixes |
-| [0038](context/shared/adr/0038-metadata-yaml-enrichment.md) | metadata.yaml as human enrichment layer (supplements STAC, generates README) |
-| [0039](context/shared/adr/0039-hierarchical-portolan-folders.md) | Hierarchical .portolan/ at collection/subcatalog levels |
-| [0040](context/shared/adr/0040-unified-progress-output.md) | Progress + summary model: Rich progress bars, immediate errors, batched warnings |
-| [0041](context/shared/adr/0041-stac-manifest-as-canonical-scan-source.md) | STAC manifest as canonical scan source for metadata_fresh; unifies check/--fix; adds ORPHANED status |
-| [0042](context/shared/adr/0042-partition-stac-extension.md) | Standalone `partition:` STAC extension for Hive-style partitioned datasets |
-| [0043](context/shared/adr/0043-style-and-thumbnail-architecture.md) | Style/thumbnail: inline in STAC, Mapbox GL spec, basemaps for vectors only |
-| [0044](context/shared/adr/0044-consumption-guides-architecture.md) | Consumption guides: DuckDB + Python in README, skill for advanced cases |
-| [0045](context/shared/adr/0045-styles-as-stac-assets.md) | Styles as standalone STAC assets (supersedes ADR-0043 style storage) |
-| [0046](context/shared/adr/0046-iceberg-as-optional-extra.md) | Iceberg as optional `[iceberg]` extra, not separate package (supersedes 0004) |
-| [0047](context/shared/adr/0047-non-geo-tabular-data-support.md) | Non-geo tabular data: opt-in support, GPIO routing, AOI inheritance |
-| [0048](context/shared/adr/0048-cli-as-spec-source.md) | ~~CLI repo as spec source~~ Superseded by ADR-0057 (portolan-spec owns the spec) |
-| [0049](context/shared/adr/0049-stac-geoparquet-scalability.md) | STAC-GeoParquet required for collections >1000 items |
-| [0050](context/shared/adr/0050-pmtiles-visualization-requirement.md) | PMTiles required for vector datasets >100 MB |
-| [0051](context/shared/adr/0051-self-contained-catalog-type.md) | SELF_CONTAINED catalog type (relative links, portable) |
-| [0052](context/shared/adr/0052-llms-txt-requirement.md) | Require AGENTS.md for AI/LLM integration at catalog and collection levels (supersedes llms.txt); schema-required link + rashid PTL-FIL enforcement + generation |
-| [0053](context/shared/adr/0053-mandatory-human-readable-titles.md) | Mandatory human-readable titles/descriptions; auto-humanize slugs; title on child/item links |
-| [0054](context/shared/adr/0054-arcgis-folder-recursion-and-structure.md) | ArcGIS folder recursion (default-on), folder URLs, token auth pass-through, nested-folder subcatalogs |
-| [0055](context/shared/adr/0055-extension-registry-single-source.md) | Single-source the recognized-extension vocabulary via a typed in-package registry (derives the formats/constants/scan_classify/add maps; drops dead `.raquet`) |
-| [0056](context/shared/adr/0056-hermetic-shipped-schema-validation.md) | ~~Hermetic shipped-schema validation~~ Superseded by ADR-0057 (rashid ships the schemas) |
-| [0057](context/shared/adr/0057-rashid-as-conformance-validator.md) | rashid as the conformance validator: PTL-* ids verbatim, metadata+structural+data default passes, AUTO/INSTRUCT/EXTERNAL remediation buckets, spec owned by portolan-spec (supersedes 0011, 0048, 0056) |
 
 ## Common Commands
 
@@ -170,10 +108,9 @@ portolan-cli/
 ├── docs/                  # PUBLIC documentation (mkdocs) - tutorials, user guides
 ├── context/               # AI/INTERNAL development context
 │   └── shared/            # Plans, research, reports
-│       ├── adr/           # Architectural decisions
-│       ├── documentation/ # CI, tooling docs
+│       ├── documentation/ # CI, tooling, maintainer rationale
 │       ├── plans/         # Architecture plans and design docs
-│       └── known-issues/  # Tracked issues
+│       └── known-issues/  # Tracked issues and environment constraints
 └── .github/workflows/     # CI/CD pipelines
 ```
 
@@ -188,7 +125,8 @@ Always research before implementing:
 2. **Search for patterns** — Check if similar functionality exists
 3. **Check utilities** — Review `portolan_cli/` first
 4. **Review existing tests** — Look at tests for the area you're modifying
-5. **Check ADRs** — Read `context/shared/adr/` to understand past decisions
+5. **Check the rationale** — Read `context/shared/documentation/` and the
+   relevant `.claude/rules/*.md` to understand past decisions
 
 ## Testing
 
@@ -213,20 +151,20 @@ Always research before implementing:
 
 - **ALL** code must have type annotations (`mypy --strict`)
 - **ALL** new features require tests FIRST (TDD)
-- **ALL** non-obvious decisions require an ADR in `context/shared/adr/`
-- **NO** new dependencies without discussion (document in ADR)
+- **ALL** non-obvious decisions are recorded where they apply (see `.claude/rules/documentation.md`)
+- **NO** new dependencies without discussion
 
-<!-- freshness: last-verified: 2026-07-28 -->
+<!-- freshness: last-verified: 2026-07-29 -->
 ## Design Principles
 
-| Principle | Meaning | ADR |
-|-----------|---------|-----|
-| **Don't duplicate** | Orchestrate libraries (geoparquet-io, rio-cogeo), never reimplement | — |
-| **YAGNI** | No speculative features; complexity is expensive | — |
-| **Interactive + automatable** | Every prompt has `--auto` fallback | — |
-| **versions.json is truth** | Drives sync, validation, history | [ADR-0005](context/shared/adr/0005-versions-json-source-of-truth.md) |
-| **Plugin interface early** | Handlers follow consistent interface for future plugins | [ADR-0003](context/shared/adr/0003-plugin-architecture.md) |
-| **CLI wraps API** | All logic in library; CLI is thin Click layer | [ADR-0007](context/shared/adr/0007-cli-wraps-api.md) |
+| Principle | Meaning |
+|-----------|---------|
+| **Don't duplicate** | Orchestrate libraries (geoparquet-io, rio-cogeo), never reimplement |
+| **YAGNI** | No speculative features; complexity is expensive |
+| **Interactive + automatable** | Every prompt has `--auto` fallback |
+| **versions.json is truth** | Drives sync, validation, history |
+| **Plugin interface early** | Handlers follow consistent interface for future plugins |
+| **CLI wraps API** | All logic in library; CLI is thin Click layer |
 <!-- /freshness -->
 
 ## Known Issues
@@ -240,3 +178,4 @@ See `context/shared/known-issues/` for tracked issues. Key ones:
 | [geoparquet-io macOS abort](context/shared/known-issues/geoparquet-io-macos-abort.md) | Aborts on multilayer conversion; test skipped on macOS |
 | [PySTAC absolute paths](context/shared/known-issues/pystac-absolute-paths.md) | Leaks local paths in output; use manual JSON construction |
 | [DuckDB "Query interrupted" transient](context/shared/known-issues/duckdb-query-interrupted-transient.md) | Rare (~1/1000) transient interrupt during bulk conversion; bounded retry in `_convert_vector` |
+| [ESRI GDB rasters](context/shared/known-issues/esri-gdb-rasters.md) | Unreadable without GDAL and undetected; `.gdb` routes to the vector pipeline |

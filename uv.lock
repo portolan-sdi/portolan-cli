@@ -3083,22 +3083,6 @@ wheels = [
 ]
 
 [[package]]
-name = "menard"
-version = "0.3.0"
-source = { git = "https://github.com/nlebovits/menard.git?rev=main#6263c3786d083aa48428889fce8887a22e88538b" }
-dependencies = [
-    { name = "pathspec" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
-]
-
-[package.optional-dependencies]
-brevity = [
-    { name = "fastembed" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-
-[[package]]
 name = "mercantile"
 version = "1.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4673,7 +4657,6 @@ thumbnails = [
 [package.dev-dependencies]
 dev = [
     { name = "fastembed" },
-    { name = "menard", extra = ["brevity"] },
     { name = "moto", extra = ["s3", "server"] },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -4750,7 +4733,6 @@ provides-extras = ["iceberg", "e2e", "dev", "pmtiles", "thumbnails", "docs"]
 [package.metadata.requires-dev]
 dev = [
     { name = "fastembed", specifier = ">=0.8.0" },
-    { name = "menard", extras = ["brevity"], git = "https://github.com/nlebovits/menard.git?rev=main" },
     { name = "moto", extras = ["s3", "server"], specifier = ">=5.0.0" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "pylint", specifier = ">=4.0.5" },

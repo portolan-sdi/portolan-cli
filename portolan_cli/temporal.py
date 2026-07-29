@@ -1,6 +1,5 @@
 """Temporal extent handling for STAC items.
 
-Per ADR-0035:
 - Default to null (open temporal interval) when --datetime not provided
 - Mark null-datetime items as provisional (portolan:datetime_provisional)
 - Accept flexible datetime formats (ISO 8601, YYYY-MM-DD, space-separated)

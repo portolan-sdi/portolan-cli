@@ -1,6 +1,6 @@
 """Integration tests for `portolan init` command with new file structure.
 
-The new init command creates (per ADR-0023, updated by issue #290):
+The new init command creates (updated by issue #290):
 - catalog.json at ROOT level (valid STAC catalog via pystac)
 - versions.json at ROOT level (consumer-visible catalog-level versioning)
 - .portolan/config.yaml -- sentinel file and user config
@@ -43,7 +43,7 @@ class TestInitCreatesRequiredFiles:
 
     @pytest.mark.integration
     def test_init_creates_portolan_config(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Init should create .portolan/config.yaml (per ADR-0027, serves as sentinel and user config)."""
+        """Init should create .portolan/config.yaml (serves as sentinel and user config)."""
         import yaml
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
@@ -63,18 +63,18 @@ class TestInitCreatesRequiredFiles:
     def test_init_creates_portolan_versions(self, runner: CliRunner, tmp_path: Path) -> None:
         """Init should create versions.json at catalog ROOT with minimal versioning.
 
-        Per ADR-0023: versions.json is consumer-visible metadata and must live
+        Versions.json is consumer-visible metadata and must live
         at the catalog root alongside STAC files, not inside .portolan/.
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(cli, ["init", "--auto"])
 
             assert result.exit_code == 0
-            # Per ADR-0023: versions.json is at root, NOT inside .portolan/
+            # Versions.json is at root, NOT inside .portolan/
             versions_file = Path("versions.json")
-            assert versions_file.exists(), "versions.json must be at catalog root per ADR-0023"
+            assert versions_file.exists(), "versions.json must be at catalog root"
             assert not Path(".portolan/versions.json").exists(), (
-                "versions.json must NOT be inside .portolan/ per ADR-0023"
+                "versions.json must NOT be inside .portolan/"
             )
             data = json.loads(versions_file.read_text())
             # Should have at least a version field
@@ -82,7 +82,7 @@ class TestInitCreatesRequiredFiles:
 
     @pytest.mark.integration
     def test_init_creates_all_four_files(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Init should create all 4 required files in correct locations (ADR-0023).
+        """Init should create all 4 required files in correct locations.
 
         Root level (user-visible STAC + versioning):
           - catalog.json
@@ -104,7 +104,7 @@ class TestInitCreatesRequiredFiles:
             assert Path(".portolan/config.yaml").exists()
             # state.json removed per issue #290
             assert not Path(".portolan/state.json").exists()
-            # versions.json must NOT be inside .portolan/ (ADR-0023)
+            # versions.json must NOT be inside .portolan/
             assert not Path(".portolan/versions.json").exists()
 
     @pytest.mark.integration

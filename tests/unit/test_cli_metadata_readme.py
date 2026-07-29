@@ -895,7 +895,7 @@ class TestReadmeGenerate:
 
 
 class TestPathTraversalHardening:
-    """ADR-0030: user-supplied PATH args must not escape the catalog root."""
+    """user-supplied PATH args must not escape the catalog root."""
 
     @pytest.fixture
     def runner(self) -> CliRunner:

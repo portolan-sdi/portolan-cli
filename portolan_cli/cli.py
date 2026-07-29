@@ -180,7 +180,7 @@ def require_catalog_root(
 
 
 def _collection_path(catalog_path: Path | None, collection: str | None) -> Path | None:
-    """Compute collection folder path for hierarchical config (ADR-0039)."""
+    """Compute collection folder path for hierarchical config."""
     return catalog_path / collection if catalog_path and collection else None
 
 
@@ -421,7 +421,7 @@ def init(
 
 
 # =============================================================================
-# List command (top-level, ADR-0022)
+# List command (top-level)
 # =============================================================================
 
 
@@ -720,7 +720,7 @@ def list_cmd(
             info_output("No tracked items")
             info_output("")
             detail("To get started:")
-            detail("  portolan scan .      Discover files in this directory")
+            detail(" portolan scan. Discover files in this directory")
             detail("  portolan add <path>  Track a specific file or directory")
             return
 
@@ -869,7 +869,7 @@ def _output_status_human(statuses: list[CollectionStatus]) -> None:
 
 
 # =============================================================================
-# Info command (top-level, ADR-0022)
+# Info command (top-level)
 # =============================================================================
 
 
@@ -897,7 +897,7 @@ def info_cmd(
     - A collection directory (e.g., demographics/) - shows collection metadata
     - Omitted - shows catalog-level metadata
 
-    Per ADR-0022, the output format for files is:
+    The output format for files is:
         Format: GeoParquet
         CRS: EPSG:4326
         Bbox: [-122.5, 37.7, -122.3, 37.9]
@@ -931,7 +931,7 @@ def info_cmd(
         elif target.is_dir():
             # Check what type of directory this is based on its contents.
             # STAC structure is self-describing: catalog.json vs collection.json.
-            # Per ADR-0032 Pattern 2, a directory CAN have both (e.g., a collection
+            # Pattern 2, a directory CAN have both (e.g., a collection
             # with sub-catalogs organizing items). We prefer catalog.json since it
             # represents the organizational structure.
             if (target / "catalog.json").exists():
@@ -1728,14 +1728,14 @@ def _run_legacy_fix_workflow(
     """Run item-freshness and geo-asset conversion, and render their results.
 
     Delegates the orchestration to ``check.run_fix_workflow`` and only wires up
-    the progress callback and output rendering here (ADR-0007).
+    the progress callback and output rendering here.
 
     Returns:
         The fix reports as JSON data and whether a fix failed.
     """
     from portolan_cli.scan.check import run_fix_workflow
 
-    # Progress callback for conversion (skip for JSON mode, per ADR-0040: per-file only in verbose)
+    # Progress callback for conversion (skip for JSON mode: per-file only in verbose)
     def show_conversion_progress(result: ConversionResult) -> None:
         if not use_json and verbose and result.source:
             info_output(f"Converting: {result.source.name}")
@@ -2543,7 +2543,7 @@ def _print_next_steps(result: ScanResult) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Top-level add/rm commands (per ADR-0022)
+# Top-level add/rm commands
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -2588,7 +2588,7 @@ def _format_sidecar_note(ds: ItemInfo) -> str:
 def _output_added_single_collection(added: list[ItemInfo], *, verbose: bool = False) -> None:
     """Output added items for a single collection.
 
-    Per ADR-0040: Only show per-file output when verbose=True.
+    Only show per-file output when verbose=True.
     Default is summary only (progress bar + final count).
     """
     if verbose:
@@ -2602,7 +2602,7 @@ def _output_added_single_collection(added: list[ItemInfo], *, verbose: bool = Fa
 def _output_added_multi_collection(added: list[ItemInfo], *, verbose: bool = False) -> None:
     """Output added items grouped by collection.
 
-    Per ADR-0040: Only show per-file output when verbose=True.
+    Only show per-file output when verbose=True.
     Default is summary only (progress bar + final count).
     """
     if verbose:
@@ -2669,7 +2669,7 @@ def _output_add_unchanged(skipped: list[Path], verbose: bool) -> None:
 
 
 def _output_add_summary(added: list[ItemInfo]) -> None:
-    """Output final success summary after adding files (ADR-0040)."""
+    """Output final success summary after adding files."""
     total_added = len(added)
     unique_items = len({ds.item_id for ds in added})
     unique_collections = len({ds.collection_id for ds in added})
@@ -2706,7 +2706,7 @@ def _output_add_human(
         _output_add_unchanged(skipped, verbose)
         return
 
-    # Output successful adds (per-file details only in verbose mode per ADR-0040)
+    # Output successful adds (per-file details only in verbose mode)
     if added:
         unique_collections = {ds.collection_id for ds in added}
         if len(unique_collections) == 1:
@@ -2720,7 +2720,7 @@ def _output_add_human(
             detail(f"Skipping {p.name} (unchanged)")
 
     # Final success summary (always show if we added something, even with failures)
-    # Per ADR-0040: Summary is always shown, failures are shown separately
+    # Summary is always shown, failures are shown separately
     if added:
         _output_add_summary(added)
 
@@ -2766,7 +2766,7 @@ def _resolve_catalog_root_for_add(
     if catalog_path is not None:
         catalog_root = catalog_path.resolve()
         # Validate catalog exists (when explicitly specified)
-        # Per ADR-0029, use .portolan/config.yaml as the single sentinel
+        # Use .portolan/config.yaml as the single sentinel
         if not (catalog_root / ".portolan" / "config.yaml").exists():
             emit_error(
                 "add", "NotACatalogError", f"Not a catalog: {catalog_root}", use_json=use_json
@@ -2989,10 +2989,10 @@ def add_cmd(
         For example, adding 'census/2020/data.parquet' creates an item
         named '2020'. Use --item-id to override this automatic derivation.
         All other files in the item directory are tracked as companion
-        assets (per ADR-0028).
+        assets.
 
     \b
-    Datetime handling (per ADR-0035):
+    Datetime handling:
         --datetime applies to ALL items added in this command. For items
         with different acquisition dates, run separate add commands:
 
@@ -3007,7 +3007,7 @@ def add_cmd(
         portolan add demographics/census.parquet
         portolan add file1.geojson file2.geojson   # Add multiple files
         portolan add imagery/                      # Add all files in directory
-        portolan add .                             # Add all files in catalog
+        portolan add. # Add all files in catalog
         portolan add data.geojson --item-id my-id  # Override item ID (single file only)
         portolan add sat.tif --datetime 2024-06-15 # Explicit acquisition date
 
@@ -3015,7 +3015,7 @@ def add_cmd(
     - Unchanged files are silently skipped (use --verbose to see them)
     - Changed files are re-extracted with new metadata
     - Sidecar files (.dbf, .shx, .prj for shapefiles) are auto-detected
-    - All files in the item directory are tracked, not just geo files (ADR-0028)
+    - All files in the item directory are tracked, not just geo files
 
     \b
     Large file partitioning:
@@ -3064,14 +3064,14 @@ def add_cmd(
     # - `portolan add .` (catalog-root add, multiple collections)
     # - `portolan add file1 file2` (files from different collections)
     # - `portolan add file1 file2` (files from same collection)
-    # Per ADR-0028, add_files deduplicates paths internally.
+    # Add_files deduplicates paths internally.
     #
     # NOTE: We intentionally do NOT do per-path collection inference in the CLI.
     # add_files already does this correctly when collection_id=None, and batching
     # avoids duplicate item writes when the same item directory appears via
-    # multiple CLI arguments (e.g. `portolan add . foo/data.parquet`).
+    # multiple CLI arguments (e.g. `portolan add. foo/data.parquet`).
 
-    # Pre-count files for progress bar (ADR-0040: unified progress output)
+    # Pre-count files for progress bar (unified progress output)
     # Only count when progress will be displayed:
     # - Not JSON mode (agents get structured output)
     # - Not verbose mode (verbose gets per-file output instead)
@@ -3096,7 +3096,7 @@ def add_cmd(
         _check_partition_prompt(resolved_paths, catalog_root) if not use_json else False
     )
 
-    # item_datetime is parsed by Click via FLEXIBLE_DATETIME type (ADR-0035)
+    # item_datetime is parsed by Click via FLEXIBLE_DATETIME type
     try:
         with progress_reporter:
             all_added, all_skipped, all_failures = add_files(
@@ -4332,7 +4332,7 @@ def clone(
         portolan clone s3://mybucket/my-catalog
 
         # Clone to current directory (must be empty)
-        portolan clone s3://mybucket/my-catalog .
+        portolan clone s3://mybucket/my-catalog.
 
         # Clone specific collection
         portolan clone s3://mybucket/catalog -c demographics
@@ -4837,7 +4837,7 @@ def clean(ctx: click.Context, json_output: bool, dry_run: bool) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Metadata Commands (ADR-0038)
+# Metadata Commands
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -5073,7 +5073,7 @@ def metadata_validate(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# README Command (ADR-0038)
+# README Command
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -5193,7 +5193,7 @@ def _validate_path_within_catalog(
 
     Returns the target directory (``catalog_path / path``) when safe, or the
     catalog root when no path is given. Exits with an error envelope if the
-    path escapes the catalog root (ADR-0030 input hardening).
+    path escapes the catalog root (input hardening).
     """
     if not path:
         return catalog_path
@@ -5220,7 +5220,7 @@ def _validate_recursive_start_path(
     if not start_path:
         return catalog_path
 
-    # Reject paths that escape the catalog root (ADR-0030 input hardening).
+    # Reject paths that escape the catalog root (input hardening).
     try:
         validate_safe_path(Path(start_path), catalog_path)
     except InputValidationError as err:
@@ -5842,7 +5842,7 @@ def _validate_collection_name_cli(
     json_output: bool,
     url: str,
 ) -> None:
-    """Validate collection_name at CLI layer (fail fast, per ADR-0023).
+    """Validate collection_name at CLI layer (fail fast).
 
     Args:
         collection_name: User-provided collection name (may be None).
@@ -5932,7 +5932,7 @@ def _handle_imageserver_extraction(
             resampling=cog_settings.resampling,
         )
 
-    # Validate collection_name at CLI layer (fail fast, per ADR-0023 flat catalog rule)
+    # Validate collection_name at CLI layer (fail fast flat catalog rule)
     _validate_collection_name_cli(collection_name, json_output, url)
 
     # Confirmation prompt
@@ -6937,7 +6937,7 @@ def extract_carto_cmd(
     Downloads tables from a Carto account and creates a Portolan catalog with
     STAC metadata. Tables are discovered via CDB_UserTables(). Spatial tables
     become GeoParquet; non-spatial tables become plain Parquet in tabular
-    collections (ADR-0047).
+    collections.
 
     URL is the Carto SQL API endpoint or account domain
     (e.g. https://phl.carto.com or https://phl.carto.com/api/v2/sql).
@@ -7102,7 +7102,7 @@ def partition(
     geoparquet-io. Per OGC best practices, files over 2GB should be partitioned.
 
     \b
-    Output structure (Hive-style, per ADR-0031):
+    Output structure (Hive-style):
         output_dir/
         ├── kdtree_cell=001/
         │   └── data.parquet

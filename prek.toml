@@ -129,7 +129,7 @@ hooks = [
     name = "auto-update CLAUDE.md sections",
     entry = "uv run python scripts/generate_claude_md_sections.py --update",
     language = "system",
-    files = { glob = ["CLAUDE.md", "context/shared/adr/*.md", "context/shared/known-issues/*.md", "pyproject.toml", "portolan_cli/cli.py"] },
+    files = { glob = ["CLAUDE.md", "context/shared/known-issues/*.md", "pyproject.toml", "portolan_cli/cli.py"] },
     pass_filenames = false,
   },
   {
@@ -147,7 +147,7 @@ hooks = [
     name = "validate CLAUDE.md references",
     entry = "uv run python scripts/validate_claude_md.py",
     language = "system",
-    files = { glob = ["CLAUDE.md", "context/shared/adr/*.md", "context/shared/known-issues/*.md"] },
+    files = { glob = ["CLAUDE.md", "context/shared/known-issues/*.md"] },
     pass_filenames = false,
   },
   {
@@ -218,23 +218,4 @@ hooks = [
     pass_filenames = false,
   },
 
-  # === DOCUMENTATION SYNC HOOKS ===
-  # menard: detect when code changes require doc updates
-  {
-    id = "menard-check",
-    name = "check documentation freshness",
-    entry = "uv run menard check",
-    language = "system",
-    files = { glob = "portolan_cli/**/*.py" },
-    pass_filenames = false,
-  },
-  {
-    id = "menard-protected",
-    name = "check protected content",
-    entry = "uv run menard check-protected",
-    language = "system",
-    files = { glob = ["**/*.md", "**/*.py"] },
-    exclude = { glob = "**/*.gdb/**" },
-    pass_filenames = false,
-  },
 ]

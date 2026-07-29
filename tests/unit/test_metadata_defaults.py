@@ -3,7 +3,7 @@
 These tests verify that metadata.yaml can specify default values for
 data properties that couldn't be auto-extracted from source files.
 
-Per ADR-0038: metadata.yaml is the human enrichment layer. This extends
+Metadata.yaml is the human enrichment layer. This extends
 it to support "data defaults" for when auto-extraction fails.
 """
 

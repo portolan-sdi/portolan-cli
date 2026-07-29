@@ -625,7 +625,7 @@ def _upload_one_file(
 ) -> tuple[Path, Exception | None, int]:
     """Upload a single file and return result tuple for parallel processing.
 
-    Per ADR-0040: Per-file output only shown in verbose mode when used in
+    Per-file output only shown in verbose mode when used in
     batch operations. Errors are always shown.
 
     Args:
@@ -645,7 +645,7 @@ def _upload_one_file(
         size_mb = file_size / (1024 * 1024)
         start_time = time.time()
 
-        # Per ADR-0040: per-file output only in verbose mode
+        # Per-file output only in verbose mode
         if verbose:
             info(f"Uploading {file_path.name} ({size_mb:.2f} MB) -> {target_key}")
 
@@ -654,12 +654,12 @@ def _upload_one_file(
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
 
-        # Per ADR-0040: per-file output only in verbose mode
+        # Per-file output only in verbose mode
         if verbose:
             success(f"{file_path.name} ({speed_mbps:.2f} MB/s)")
         return file_path, None, file_size
     except Exception as e:
-        # Errors are always shown per ADR-0040
+        # Errors are always shown
         error(f"{file_path.name}: {e}")
         return file_path, e, 0
 
@@ -794,7 +794,7 @@ def _execute_parallel_uploads(
 ) -> list[tuple[Path, Exception | None, int]]:
     """Execute parallel uploads using ThreadPoolExecutor.
 
-    Per ADR-0040: Per-file output controlled by verbose parameter.
+    Per-file output controlled by verbose parameter.
 
     Args:
         store: Object store instance
@@ -884,7 +884,7 @@ def upload_directory(
 ) -> UploadResult:
     """Upload a directory to S3/GCS/Azure with parallel uploads.
 
-    Per ADR-0040: Per-file output controlled by verbose parameter.
+    Per-file output controlled by verbose parameter.
     Progress is shown via summary messages at start/end.
 
     Args:
@@ -899,7 +899,7 @@ def upload_directory(
         s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")
         s3_region: S3 region (default: auto-detected)
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
-        verbose: If True, show per-file upload messages (ADR-0040).
+        verbose: If True, show per-file upload messages.
 
     Returns:
         UploadResult with upload statistics

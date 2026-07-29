@@ -747,7 +747,7 @@ class TestCheckMetadataFixFlag:
             ["check", str(catalog_dir), "--metadata", "--fix", "--json"],
         )
 
-        # Structurally reports zero scanner results — per ADR-0041 the
+        # Structurally reports zero scanner results — the
         # manifest-driven scanner emits an empty MetadataReport for a catalog
         # with no collections, so the FixReport derived from it carries zero
         # results and zero skipped items. (The exit code reflects the post-fix

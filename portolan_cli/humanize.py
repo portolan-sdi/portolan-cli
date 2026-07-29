@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 
 # Separators that join words inside a slug. Forward slashes delimit nested
-# collection paths (ADR-0032) and are handled separately (leaf only).
+# collection paths and are handled separately (leaf only).
 _SLUG_SEPARATORS: re.Pattern[str] = re.compile(r"[_\-]+")
 
 
@@ -39,7 +39,7 @@ def humanize_slug(slug: str) -> str:
     if not slug:
         return ""
 
-    # Use the leaf segment of a nested path (ADR-0032).
+    # Use the leaf segment of a nested path.
     leaf = slug.split("/")[-1]
 
     # Underscores/hyphens become word boundaries.

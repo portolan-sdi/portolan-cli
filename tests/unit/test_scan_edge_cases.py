@@ -1,4 +1,4 @@
-"""Tests for scan edge case detection (nested catalogs per ADR-0032)."""
+"""Tests for scan edge case detection (nested catalogs)."""
 
 from pathlib import Path
 

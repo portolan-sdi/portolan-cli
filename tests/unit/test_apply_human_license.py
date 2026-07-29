@@ -1,6 +1,6 @@
 """Unit tests for propagating metadata.yaml's license onto a collection (issue #654).
 
-``license`` is a required metadata.yaml field (ADR-0038), but the collection it
+``license`` is a required metadata.yaml field, but the collection it
 enriches used to keep the ``other`` default — which rashid rejects unless a
 ``rel="license"`` link accompanies it (PTL-LIC-002).
 """

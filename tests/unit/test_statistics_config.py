@@ -1,6 +1,6 @@
 """Tests for statistics configuration.
 
-Per ADR-0034: Stats enabled by default, configurable via .portolan/config.yaml
+Stats enabled by default, configurable via .portolan/config.yaml
 """
 
 from __future__ import annotations

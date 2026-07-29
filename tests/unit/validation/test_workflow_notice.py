@@ -112,7 +112,7 @@ class TestNoticeContents:
         assert "2 data file(s) on disk are not registered" in notice.message
         assert "1 registered asset(s) are missing from disk" in notice.message
         # Neither case is auto-fixable, so the message must not point at --fix
-        # (ADR-0041: an orphan is reported, never guessed at).
+        # (an orphan is reported, never guessed at).
         assert "portolan add" in notice.message
         assert "--fix" not in notice.message
 

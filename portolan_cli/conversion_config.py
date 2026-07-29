@@ -20,7 +20,7 @@ Config is stored in .portolan/config.yaml under the 'conversion' key:
 See:
 - GitHub Issue #75: FlatGeobuf cloud-native status
 - GitHub Issue #103: Config for non-cloud-native file handling
-- ADR-0014: Accept non-cloud-native formats
+- Accept non-cloud-native formats
 """
 
 from __future__ import annotations
@@ -209,7 +209,7 @@ VALID_RESAMPLING_METHODS: frozenset[str] = frozenset(
 class CogSettings:
     """Configuration for Cloud-Optimized GeoTIFF conversion.
 
-    Defaults match ADR-0019: COG Optimization Defaults.
+    Defaults are the built-in COG settings.
 
     Attributes:
         compression: Compression algorithm (DEFLATE, JPEG, LZW, ZSTD, etc.).

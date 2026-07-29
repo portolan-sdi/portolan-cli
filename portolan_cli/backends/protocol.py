@@ -3,8 +3,6 @@
 This module defines the VersioningBackend Protocol that allows external backends
 (like portolake's Iceberg implementation) to integrate with portolan-cli.
 
-See ADR-0015 (Two-Tier Versioning Architecture) for architectural context.
-See ADR-0003 (Plugin Architecture) for plugin discovery patterns.
 
 Thread Safety:
     The MVP assumes single-writer access. Backends do NOT provide thread-safety
@@ -80,7 +78,7 @@ class PostAddContext(TypedDict):
 
     After add() completes local processing, portolan-cli checks
     ``hasattr(backend, "on_post_add")`` and, if present, calls it with this
-    context.  Backends that do not implement on_post_add() are silently
+    context. Backends that do not implement on_post_add() are silently
     skipped.
 
     Optional backend methods (checked via hasattr, NOT part of VersioningBackend):

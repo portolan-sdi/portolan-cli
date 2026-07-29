@@ -6,7 +6,7 @@ This module provides the check command functionality:
 - Dry-run mode for previewing changes
 - Removing legacy files after successful conversion (--remove-legacy)
 
-Per ADR-0007, this module contains the logic; CLI commands are thin wrappers.
+This module contains the logic; CLI commands are thin wrappers.
 
 See Also:
     - GitHub Issue #209: Add --remove-legacy flag to check --fix
@@ -527,7 +527,7 @@ def _get_relative_path(file_path: Path, root: Path) -> str:
         return file_path.as_posix()
 
 
-# --- Check / fix workflow orchestration (ADR-0007: logic lives here) ---
+# --- Check / fix workflow orchestration (logic lives here) ---
 
 
 def resolve_catalog_root_for_check(path: Path) -> Path | None:
@@ -582,7 +582,7 @@ def run_fix_workflow(
 ) -> FixWorkflowOutcome:
     """Run the metadata and/or geo-asset fix workflow and return the reports.
 
-    This owns the fix orchestration (ADR-0007): resolving the catalog root,
+    This owns the fix orchestration: resolving the catalog root,
     scanning metadata, applying fixes plus the title/tabular/PMTiles repairs, and
     converting geo-assets. It performs no output rendering or process exit — the
     caller renders the returned :class:`FixWorkflowOutcome` and decides exit codes.

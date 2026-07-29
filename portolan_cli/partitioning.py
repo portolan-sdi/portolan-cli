@@ -1,7 +1,7 @@
 """Partitioning support for large GeoParquet files.
 
 This module provides automatic spatial partitioning of large GeoParquet files
-using geoparquet-io's KD-tree partitioning. Per ADR-0031, partitioned collections
+using geoparquet-io's KD-tree partitioning. Partitioned collections
 use Hive-style directories where each partition becomes a STAC Item.
 
 Issue #443: Supports arbitrary Hive partition column names (not just kdtree/h3/s2/quadkey/a5),
@@ -97,7 +97,7 @@ class PartitionPromptDecision:
 
     The library computes *whether* there is anything to prompt about (config
     gating + which files exceed the threshold); the CLI owns the actual TTY
-    check and ``click.confirm`` prompt (ADR-0007).
+    check and ``click.confirm`` prompt.
     """
 
     enabled: bool
@@ -196,7 +196,7 @@ def partition_geoparquet(
     """Partition a GeoParquet file using spatial indexing.
 
     Uses geoparquet-io's partition_by_kdtree (or other strategies) to split
-    large files into manageable partitions. Per ADR-0031, uses Hive-style
+    large files into manageable partitions. Uses Hive-style
     partitioning so each partition can become a STAC Item.
 
     Args:
@@ -227,7 +227,7 @@ def partition_geoparquet(
 
     try:
         # Call geoparquet-io partition function
-        # Hive=True per ADR-0031 (each partition becomes a STAC Item with item.json)
+        # Hive=True (each partition becomes a STAC Item with item.json)
         partition_by_kdtree(
             input_parquet=str(input_path),
             output_folder=str(output_dir),

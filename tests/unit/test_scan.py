@@ -1779,11 +1779,11 @@ class TestCollectionIdValidation:
         assert "space" in collection_id_issues[0].message.lower()
 
     def test_scan_allows_collection_id_starting_with_number(self, tmp_path: Path) -> None:
-        """Scan should NOT flag collection IDs starting with numbers (ADR-0032)."""
+        """Scan should NOT flag collection IDs starting with numbers."""
         from portolan_cli.scan.core import IssueType, scan_directory
 
         # Create directory structure: 2020-census/data.geojson
-        # Per ADR-0032: numeric starts are valid for year-based organization
+        # Numeric starts are valid for year-based organization
         collection_dir = tmp_path / "2020-census"
         collection_dir.mkdir()
         (collection_dir / "data.geojson").write_text(

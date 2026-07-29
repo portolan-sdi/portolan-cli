@@ -26,30 +26,30 @@ classifiers = [
     "Topic :: Scientific/Engineering :: GIS",
 ]
 dependencies = [
-    "antimeridian>=0.3.11",  # RFC 7946 compliant antimeridian handling for STAC bbox
-    "click>=8.4,<8.5",  # PYSEC-2026-2132 fix; 8.4 makes ParamType generic (temporal.FlexibleDateTime subscripts it)
-    "defusedxml>=0.7.1",  # Safe XML parsing (XXE protection) for CSW/ISO 19139 metadata
-    "geoparquet-io>=1.3.0",  # WFS auto-tile + 100K page_size defaults (Issue #529); git main pinned via [tool.uv.sources]
-    "httpx>=0.27.0",  # HTTP client for ArcGIS REST API discovery
-    "obstore>=0.8.2",  # Cloud object storage (S3, GCS, Azure) via Rust bindings
-    "python-dotenv>=1.0.0",  # Load .env files for credentials (ADR-0024, Issue #356)
-    "numpy>=1.24.0",  # Array ops (transitive via rasterio, but we import directly for thumbnails)
-    "pyarrow>=12.0.0,<25.0.0",  # v22+ has ABI incompatibility with abseil on some systems
-    "pyproj>=3.0.0",  # CRS transformations (transitive via rasterio, but we import directly)
-    "pystac>=1.10.0",  # STAC catalog/collection/item creation
-    "stac-geoparquet>=0.6.0",  # Generate items.parquet for efficient STAC queries (optional)
-    "pyyaml>=6.0",  # YAML config file support
-    "rasterio>=1.3.0",  # Raster I/O (transitive via rio-cogeo, but we import directly)
-    "cryptography>=46.0.7",  # CVE-2026-39892 fix (transitive via httpx/certifi, pinned for security)
-    "lxml>=6.1.0",  # CVE-2026-41066 fix (transitive via owslib, pinned for security)
-    "pillow>=12.3.0",  # PYSEC-2026-2253..2257 fix (transitive via rasterio, pinned for security)
-    "pmtiles>=3.0.0",  # PMTiles metadata reading (header, bounds, zoom levels)
-    "pyogrio>=0.7.0",  # FlatGeobuf metadata reading (transitive via geoparquet-io, but we import directly)
-    "pygments>=2.20.0",  # CVE-2026-4539 fix (transitive via rich, pinned for security)
-    "requests>=2.33.0",  # CVE-2026-25645 fix (transitive, pinned for security)
-    "rich>=13.0.0",  # Terminal progress bars (transitive via geoparquet-io, but we import directly)
-    "rio-cogeo>=5.0.0",  # COG creation/validation (includes rasterio)
-    "rashid>=0.1.2,<0.2.0",  # Conformance validator behind `portolan check` (ADR-0057); ships its own STAC + Portolan profile schemas, so validation runs offline. 0.1.2 is the floor for `rashid.api`, the public surface this package imports (rashid#57)
+    "antimeridian>=0.3.11", # RFC 7946 compliant antimeridian handling for STAC bbox
+    "click>=8.4,<8.5", # PYSEC-2026-2132 fix; 8.4 makes ParamType generic (temporal.FlexibleDateTime subscripts it)
+    "defusedxml>=0.7.1", # Safe XML parsing (XXE protection) for CSW/ISO 19139 metadata
+    "geoparquet-io>=1.3.0", # WFS auto-tile + 100K page_size defaults (Issue #529); git main pinned via [tool.uv.sources]
+    "httpx>=0.27.0", # HTTP client for ArcGIS REST API discovery
+    "obstore>=0.8.2", # Cloud object storage (S3, GCS, Azure) via Rust bindings
+    "python-dotenv>=1.0.0", # Load .env files for credentials (Issue #356)
+    "numpy>=1.24.0", # Array ops (transitive via rasterio, but we import directly for thumbnails)
+    "pyarrow>=12.0.0,<25.0.0", # v22+ has ABI incompatibility with abseil on some systems
+    "pyproj>=3.0.0", # CRS transformations (transitive via rasterio, but we import directly)
+    "pystac>=1.10.0", # STAC catalog/collection/item creation
+    "stac-geoparquet>=0.6.0", # Generate items.parquet for efficient STAC queries (optional)
+    "pyyaml>=6.0", # YAML config file support
+    "rasterio>=1.3.0", # Raster I/O (transitive via rio-cogeo, but we import directly)
+    "cryptography>=46.0.7", # CVE-2026-39892 fix (transitive via httpx/certifi, pinned for security)
+    "lxml>=6.1.0", # CVE-2026-41066 fix (transitive via owslib, pinned for security)
+    "pillow>=12.3.0", # PYSEC-2026-2253..2257 fix (transitive via rasterio, pinned for security)
+    "pmtiles>=3.0.0", # PMTiles metadata reading (header, bounds, zoom levels)
+    "pyogrio>=0.7.0", # FlatGeobuf metadata reading (transitive via geoparquet-io, but we import directly)
+    "pygments>=2.20.0", # CVE-2026-4539 fix (transitive via rich, pinned for security)
+    "requests>=2.33.0", # CVE-2026-25645 fix (transitive, pinned for security)
+    "rich>=13.0.0", # Terminal progress bars (transitive via geoparquet-io, but we import directly)
+    "rio-cogeo>=5.0.0", # COG creation/validation (includes rasterio)
+    "rashid>=0.1.2,<0.2.0", # Conformance validator behind `portolan check`; ships its own STAC + Portolan profile schemas, so validation runs offline. 0.1.2 is the floor for `rashid.api`, the public surface this package imports (rashid#57)
     "typing_extensions>=4.0.0; python_version < '3.11'",
 ]
 
@@ -74,10 +74,9 @@ e2e = [
 dev = [
     "bandit>=1.9.3",
     "codespell>=2.4.1",
-    # menard: in [dependency-groups].dev only — git deps can't be published to PyPI
-    "deptry>=0.25.1",  # Dependency checker (unused, missing, transitive deps)
-    "gitingest>=0.1.0",  # Auto-fetch API docs for core dependencies
-    "import-linter>=2.0",  # Architecture enforcement via import contracts
+    "deptry>=0.25.1", # Dependency checker (unused, missing, transitive deps)
+    "gitingest>=0.1.0", # Auto-fetch API docs for core dependencies
+    "import-linter>=2.0", # Architecture enforcement via import contracts
     "commitizen>=4.13.4",
     "hypothesis>=6.151.5",
     "mutmut>=3.4.0",
@@ -89,30 +88,30 @@ dev = [
     "pytest-timeout>=2.3.1",
     "radon>=6.0.1",
     "ruff>=0.14.11",
-    "types-defusedxml>=0.7.0",  # Type stubs for defusedxml
-    "types-PyYAML>=6.0",  # Type stubs for PyYAML
+    "types-defusedxml>=0.7.0", # Type stubs for defusedxml
+    "types-PyYAML>=6.0", # Type stubs for PyYAML
     "vulture>=2.14",
     "xenon>=0.9.3",
 ]
 pmtiles = [
-    "gpio-pmtiles>=0.1.0",  # PMTiles generation from GeoParquet (requires tippecanoe)
+    "gpio-pmtiles>=0.1.0", # PMTiles generation from GeoParquet (requires tippecanoe)
 ]
 thumbnails = [
-    "contextily>=1.5.0",  # Basemap tiles for vector thumbnails
-    "geopandas>=0.14.0",  # GeoParquet reading for thumbnail generation
-    "mapbox-vector-tile>=2.0.0",  # MVT decoding for PMTiles thumbnail generation
-    "matplotlib>=3.8.0",  # Rendering geometries to JPEG
+    "contextily>=1.5.0", # Basemap tiles for vector thumbnails
+    "geopandas>=0.14.0", # GeoParquet reading for thumbnail generation
+    "mapbox-vector-tile>=2.0.0", # MVT decoding for PMTiles thumbnail generation
+    "matplotlib>=3.8.0", # Rendering geometries to JPEG
 ]
 docs = [
     "mkdocs>=1.6.1",
-    "mkdocs-click>=0.8.0",  # Auto-generate CLI reference from Click commands
+    "mkdocs-click>=0.8.0", # Auto-generate CLI reference from Click commands
     "mkdocs-material>=9.7.1",
     "mkdocstrings[python]>=1.0.0",
-    "pymdown-extensions>=10.21.2",  # Fix filename=None bug in highlight extension
+    "pymdown-extensions>=10.21.2", # Fix filename=None bug in highlight extension
 ]
 
 [tool.hatch.metadata]
-allow-direct-references = true  # Allow git dependencies (menard during development)
+allow-direct-references = true # Allow git dependencies (geoparquet-io during development)
 
 [tool.hatch.build.targets.wheel]
 packages = ["portolan_cli"]
@@ -174,18 +173,18 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "UP",  # pyupgrade
+    "E", # pycodestyle errors
+    "W", # pycodestyle warnings
+    "F", # pyflakes
+    "I", # isort
+    "B", # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
 ]
 ignore = [
-    "E501",  # line too long (handled by formatter)
-    "B008",  # do not perform function calls in argument defaults
-    "C901",  # too complex
+    "E501", # line too long (handled by formatter)
+    "B008", # do not perform function calls in argument defaults
+    "C901", # too complex
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -203,7 +202,7 @@ docstring-code-format = true
 
 [tool.mypy]
 python_version = "3.10"
-strict = true  # Enables all strict flags at once
+strict = true # Enables all strict flags at once
 # pyarrow >=24 ships py.typed but leaves pyarrow.parquet helpers untyped, so
 # strict's disallow_untyped_calls trips on every read_table/write_table/
 # ParquetFile/read_metadata/read_schema call. Scope the suppression to pyarrow
@@ -218,7 +217,7 @@ ignore_missing_imports = true
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]
-skips = []  # Add specific checks to skip if needed, e.g., ["B101"]
+skips = [] # Add specific checks to skip if needed, e.g., ["B101"]
 
 # ---------- spell check ----------
 
@@ -235,9 +234,9 @@ ignore-words-list = "nd,bu,ue,adresse,projet,environnement,copie,explicite,conne
 min_confidence = 80
 paths = ["portolan_cli", "tests", "vulture_whitelist.py"]
 exclude = [
-    "portolan_cli/backends/protocol.py",  # Protocol method params are intentionally unused
-    "portolan_cli/backends/json_file.py",  # Stub methods raise NotImplementedError
-    "portolan_cli/backends/iceberg/backend.py",  # Protocol methods + lifecycle hooks
+    "portolan_cli/backends/protocol.py", # Protocol method params are intentionally unused
+    "portolan_cli/backends/json_file.py", # Stub methods raise NotImplementedError
+    "portolan_cli/backends/iceberg/backend.py", # Protocol methods + lifecycle hooks
 ]
 sort_by_size = true
 verbose = false
@@ -265,11 +264,11 @@ pytest_add_cli_args_test_selection = ["tests/"]
 also_copy = ["scripts/", ".pip-audit-ignores", ".mutation-baseline", ".mutation-shards.json"]
 # The stats/baseline run must mirror the fast CI test job, not the whole suite:
 # - --no-cov: pyproject's addopts inject --cov, whose instrumentation conflicts
-#   with mutmut's; without this the stats phase is unreliable.
+# with mutmut's; without this the stats phase is unreliable.
 # - --tb=short: a stats-phase failure must show WHERE it broke.
 # - marker filter: exclude network/slow/benchmark/e2e (mutation of portolan_cli
-#   is validated by the fast, offline suite; e2e needs Docker, network needs a
-#   live server).
+# is validated by the fast, offline suite; e2e needs Docker, network needs a
+# live server).
 pytest_add_cli_args = [
     "--no-cov",
     "--tb=short",
@@ -277,7 +276,6 @@ pytest_add_cli_args = [
 ]
 
 # ---------- architecture enforcement ----------
-# See ADR-0025 for rationale. These contracts enforce critical architectural boundaries.
 # Stricter layered contracts are aspirational - the current architecture has some coupling
 # that would need refactoring to support full layered enforcement.
 
@@ -290,17 +288,17 @@ name = "CLI cannot import storage backends directly"
 type = "forbidden"
 source_modules = ["portolan_cli.cli"]
 forbidden_modules = ["portolan_cli.backends"]
-# Allow intermediate modules to access backends (ADR-0007: CLI wraps API).
+# Allow intermediate modules to access backends (CLI wraps API).
 # cli.py uses these modules as a clean interface; direct cli->backends is still forbidden.
 ignore_imports = [
     "portolan_cli.catalog -> portolan_cli.backends",
     # finalize_items routes version snapshots to the active backend (#624 moved
     # this edge out of add.py into finalization.py); cli reaches it only via the
-    # library layer, so the direct cli->backends ban still holds (ADR-0007).
+    # library layer, so the direct cli->backends ban still holds.
     "portolan_cli.finalization -> portolan_cli.backends",
     "portolan_cli.version_ops -> portolan_cli.backends",
     "portolan_cli.version_ops -> portolan_cli.backends.protocol",
-    "portolan_cli.cli -> portolan_cli.backends.protocol",  # TYPE_CHECKING only
+    "portolan_cli.cli -> portolan_cli.backends.protocol", # TYPE_CHECKING only
 ]
 
 [[tool.importlinter.contracts]]
@@ -315,7 +313,7 @@ id = "validation-is-an-adapter"
 name = "Validation is a rashid adapter and must not import the CLI"
 type = "forbidden"
 # The extraction seam is gone: rashid ships as a package and
-# portolan_cli.validation is the adapter in front of it (ADR-0057). What
+# portolan_cli.validation is the adapter in front of it. What
 # remains worth locking is direction. The adapter builds rashid's config,
 # calls it, and returns plain data (validation.report emits dicts, never
 # Click/Rich output), so cli.py depends on validation and never the reverse.
@@ -331,7 +329,7 @@ modules = [
     "portolan_cli.errors",
     "portolan_cli.constants",
     "portolan_cli.json_output",
-    # ADR-0030 input sanitization. A stdlib-only leaf (re, pathlib, urllib):
+    # input sanitization. A stdlib-only leaf (re, pathlib, urllib):
     # it hardens agent-supplied arguments, which is not catalog validation, so
     # it sits at the top level rather than inside validation/.
     "portolan_cli.input_hardening",
@@ -379,9 +377,9 @@ allow_indirect_imports = true
 optional_dependencies_dev_groups = ["dev", "docs"]
 # Extend default exclusions (venv, .venv, tests, .git already excluded)
 extend_exclude = [
-    "scripts",  # Standalone scripts may use external tools
-    "context",  # Documentation context, not runtime code
-    ".claude",  # Claude Code worktrees and temp files
+    "scripts", # Standalone scripts may use external tools
+    "context", # Documentation context, not runtime code
+    ".claude", # Claude Code worktrees and temp files
 ]
 
 [tool.deptry.per_rule_ignores]
@@ -396,7 +394,6 @@ DEP002 = ["cryptography", "lxml", "pillow", "pygments", "requests", "pyiceberg",
 [dependency-groups]
 dev = [
     "fastembed>=0.8.0",
-    "menard[brevity] @ git+https://github.com/nlebovits/menard.git@main",
     "moto[s3,server]>=5.0.0",
     "numpy>=2.2.6",
     "pylint>=4.0.5",
@@ -411,13 +408,3 @@ dev = [
 # dev-only source override pulls main so portolan picks up upstream WFS fixes
 # (auto-tile, 100K page_size) before they hit a PyPI release.
 geoparquet-io = { git = "https://github.com/geoparquet/geoparquet-io.git", branch = "main" }
-
-[tool.menard]
-mode = "block"
-transitive_depth = 1
-enforce_symmetry = true
-require_links = ["portolan_cli/**/*.py"]
-exempt = ["tests/**"]
-# Only track USER-FACING docs (not ADRs, plans, or internal context)
-# ADRs are historical records - they don't need updating when code changes
-doc_paths = ["docs/**/*.md", "README.md"]
