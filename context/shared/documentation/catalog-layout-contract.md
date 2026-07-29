@@ -38,7 +38,7 @@ Subdirectories holding loose data files without that anchor, a `scratch/` folder
 of exports for example, are reported as ORPHANED. Without the anchor rule,
 `--fix` would fabricate a `{dir_name}.json` naming an item that does not exist.
 
-## Registration is not a freshness claim
+## Unversioned collection-level assets stay silent
 
 When a collection-level asset has no matching `versions.json` entry, the scanner
 stays silent rather than emitting STALE. A freshly registered rollup index has

@@ -13,8 +13,8 @@ Iceberg also requires a catalog server, a REST API at minimum. Portolan's value
 is static files on object storage with no running services, which puts hosting
 around $5 a month. Adding a required server inverts that.
 
-STAC already provides the manifest Portolan needs: here are the files, here is
-what they contain, here is their spatial extent.
+STAC already provides the manifest Portolan needs. It lists the files, what
+they contain, and their spatial extent.
 
 ## Governance exposure
 
@@ -30,7 +30,7 @@ Neither DuckDB's Iceberg extension nor PyIceberg supported them at the time of
 the decision, and the specification deferred edge cases to V4.
 
 Revisit this if the tooling matures and a catalog-free mode appears. The extra
-can be promoted; the decision does not foreclose that.
+can be promoted later. Nothing here forecloses that.
 
 ## Interoperability does not require coupling
 

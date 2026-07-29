@@ -125,7 +125,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "*~",  # Editor backup files
     ],
     # Tabular data support (Issue #432)
-    "tabular.enabled": False,  # Disabled by default; opt-in per ADR scope
+    "tabular.enabled": False,  # Disabled by default, opt-in
     "tabular.convert": True,  # Convert CSV/TSV/Excel to Parquet by default
 }
 

@@ -193,7 +193,7 @@ class TestScanStrictJsonOutput:
     ) -> None:
         """Each fix_command should have command, args, and reason fields.
 
-        Structure per ADR:
+        Structure:
         {"command": "scan", "args": ["--fix"], "reason": "Invalid characters"}
         """
         result = runner.invoke(cli, ["scan", "--strict", "--json", str(dir_with_warnings)])

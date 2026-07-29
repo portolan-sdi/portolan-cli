@@ -128,11 +128,11 @@ who supplies the value and whether a default may overwrite it.
 
 Tiers 1 and 2 always win, because the file is the authority on its own contents.
 Tier 3 fills what tiers 1 and 2 could not supply, which is why a default never
-overwrites an extracted value. Tier 4 is the layer Portolan cannot generate; no
-field in it blocks `add`.
+overwrites an extracted value. Tier 4 is the layer Portolan cannot generate, and
+no field in it blocks `add`.
 
-This split is what keeps `portolan add` runnable with no human input. Anything a
-person must write is optional by construction.
+No tier-4 field is required, which is what keeps `portolan add` runnable with no
+human input.
 
 ## Behavior Rules
 

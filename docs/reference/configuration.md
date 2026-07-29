@@ -299,7 +299,7 @@ Portolan ships one opinionated default set rather than per-datatype tuning:
 |---------|---------|-----|
 | Compression | DEFLATE | Lossless, and every GeoTIFF reader supports it |
 | Predictor | 2 (horizontal differencing) | Improves the compression ratio across data types |
-| Tile size | 512×512 | Matches the rio-cogeo default; larger tiles mean fewer HTTP range requests |
+| Tile size | 512×512 | Matches the rio-cogeo default, and larger tiles mean fewer HTTP range requests |
 | Overview resampling | nearest | Safe for categorical data, elevation, and imagery alike |
 
 These favor batch conversion over per-file optimization. Reach for

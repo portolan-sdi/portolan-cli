@@ -25,8 +25,8 @@ Both paths were rejected, and this remains the standing decision:
 
 Adding GDAL as an optional dependency was also rejected. GDAL is difficult to
 package, and an optional dependency still generates support burden while
-muddying the installation story. Revisit if demand for GDB rasters materializes;
-a separate plugin remains possible.
+muddying the installation story. Revisit if demand for GDB rasters materializes.
+A separate plugin remains possible.
 
 ## Workaround
 

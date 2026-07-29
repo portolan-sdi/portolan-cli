@@ -978,5 +978,5 @@ class CatalogVersionsCorruptedError(Exception):
     pass
 
 
-# Re-export add_files for STAC-aligned imports (ADR terminology)
+# Re-export add_files for STAC-aligned imports
 from portolan_cli.add import add_files as add_files  # noqa: E402, F401, PLC0414

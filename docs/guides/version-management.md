@@ -194,7 +194,7 @@ These files are synced with `portolan push` but aren't versioned—they're deriv
 ## Portolan owns the bucket
 
 Everything under the configured remote prefix belongs to Portolan. You supply
-credentials, an endpoint, and a bucket path; Portolan manages every file and the
+credentials, an endpoint, and a bucket path. Portolan manages every file and the
 structure inside.
 
 Editing the bucket with another tool is unsupported. Local state is the single
@@ -207,9 +207,8 @@ letting Portolan rewrite its layout, so point it at a fresh prefix when the
 current contents matter. Two people pushing from different local states will
 overwrite each other, because the newer push wins rather than merging.
 
-The reasoning is consistency: a consumer reading the catalog gets files that
-match the manifest, and a CDN can cache them without worrying that they changed
-underneath it.
+This buys consistency. A consumer reading the catalog gets files that match the
+manifest, and a CDN can cache them safely.
 
 !!! warning "Drift is not detected yet"
     Portolan does not currently compare remote state against `versions.json`.

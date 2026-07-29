@@ -25,4 +25,4 @@ See [what a finished PR looks like](https://github.com/portolan-sdi/portolan-cli
 - [ ] Changed lines are covered (`codecov/patch`)
 - [ ] At least one adversarial review (actively tried to break it)
 - [ ] CodeRabbit comments addressed
-- [ ] Docs updated and, for non-obvious decisions, an ADR added
+- [ ] Docs updated, and non-obvious decisions recorded where they apply

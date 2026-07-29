@@ -5,7 +5,7 @@ humans, and `portolan_cli/input_hardening.py` is stricter than a human-only CLI
 would need. This note records why, because the validators themselves show what
 is rejected without showing what they defend against.
 
-The operating assumption: agents are not trusted operators. Inputs are
+The operating assumption is that agents are not trusted operators. Inputs stay
 adversarial until validated.
 
 ## Observed failure patterns
@@ -30,10 +30,10 @@ before any business logic:
 
 | Function | Guards against |
 |----------|----------------|
-| `validate_safe_path` | Traversal; canonicalizes against a base directory |
+| `validate_safe_path` | Traversal, and canonicalizes against a base directory |
 | `validate_collection_id` | Control characters, query parameters, encoding tricks |
 | `validate_item_id` | Same class, slightly more permissive |
-| `validate_remote_url` | Malformed S3, GCS, and Azure URLs; traversal in keys |
+| `validate_remote_url` | Malformed S3, GCS, and Azure URLs, and traversal in keys |
 | `validate_config_key` | Anything outside lowercase alphanumerics and underscores |
 | `validate_config_value` | Context-specific checks, such as URL shape for `remote` |
 
@@ -48,9 +48,9 @@ identifiers among them. That is the intended trade. Agents benefit more from
 rules they cannot bend than from permissive parsing that occasionally accepts a
 hallucination.
 
-Encoding a rule as a validator also outlasts documenting it. `validate_collection_id`
-enforces itself; a sentence telling agents to validate collection identifiers
-does not.
+Encoding a rule as a validator also outlasts documenting it. A sentence telling
+agents to validate collection identifiers can go stale. `validate_collection_id`
+cannot.
 
 ## Related
 

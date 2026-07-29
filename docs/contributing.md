@@ -27,7 +27,7 @@ Before you ask for review, a PR should clear this bar:
       break the change (edge cases, failure modes), not just skimmed it.
 - [ ] **CodeRabbit comments addressed.** The automated reviewer's findings are
       resolved or explicitly answered.
-- [ ] **Docs and ADRs updated.** User-facing behavior is documented; non-obvious
+- [ ] **Docs updated.** User-facing behavior is documented, and non-obvious
       decisions are recorded where they apply.
 
 If you run `prek run --all-files` locally and it is green, you have cleared most of

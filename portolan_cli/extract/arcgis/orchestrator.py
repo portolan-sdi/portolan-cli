@@ -225,7 +225,7 @@ def _service_output_dir(output_dir: Path, service_name: str) -> Path:
     Slugification can collide when two service names differ only in characters
     it strips, ``turkiye`` and ``turkiye-alt`` for example. The second extraction
     writes into the first one's directory. This is a known limitation and is not
-    mitigated; no uniquifying suffix is appended.
+    mitigated, and no uniquifying suffix is appended.
     """
     parts = [_slugify(p) for p in service_name.split("/") if p]
     result = output_dir

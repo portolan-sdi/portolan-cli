@@ -120,7 +120,7 @@ class TestBboxValidation:
             _validate_bbox([0, 10, 10, 5])  # min_y > max_y
 
 
-class TestADR0030URLValidation:
+class TestExternalURLValidation:
     """Tests for input validation compliance (F1, F2)."""
 
     def test_rejects_file_scheme(self, tmp_path: Path) -> None:
