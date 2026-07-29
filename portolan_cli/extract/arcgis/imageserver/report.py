@@ -428,7 +428,7 @@ def save_imageserver_report(report: ImageServerExtractionReport, path: Path) -> 
         path: Path to write the JSON file.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report.to_dict(), indent=2))
+    path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
 
 
 def load_imageserver_report(path: Path) -> ImageServerExtractionReport:
@@ -446,5 +446,5 @@ def load_imageserver_report(path: Path) -> ImageServerExtractionReport:
     if not path.exists():
         raise FileNotFoundError(f"Report not found: {path}")
 
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     return ImageServerExtractionReport.from_dict(data)

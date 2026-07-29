@@ -115,6 +115,78 @@ Settings are resolved in this order (highest to lowest):
 4. **Catalog config** (top-level in config.yaml)
 5. **Built-in default**
 
+## Validation Configuration
+
+`portolan check` validates against the Portolan spec using
+[rashid](https://github.com/portolan-sdi/rashid), which reports `PTL-*` rule ids.
+The `check:` block tunes the rule set per catalog:
+
+```yaml
+check:
+  # Rules to skip entirely. Use for rules a catalog cannot satisfy by policy.
+  disabled:
+    - PTL-VIZ-001   # this catalog ships no thumbnails
+  # Rules to re-rank. Values: error, warning, info.
+  severity:
+    PTL-TMP-001: error   # a temporal extent is mandatory here
+```
+
+Rule ids come from `portolan check` output — every finding names the rule that
+raised it. `portolan check --json` also reports, per finding, whether
+`portolan check --fix` can resolve it (`"remediation": "auto"`) or you have to
+act (`"instruct"`, `"external"`).
+
+### What `--fix` does, and when to stop calling it
+
+`portolan check --fix` is one pass, not a loop: it checks, applies a fixer for
+every `auto` finding, then re-checks **once**. The output splits into
+"Fixed automatically (N)" and "Action required (M)", where each remaining
+finding carries the imperative sentence describing what conformance demands.
+
+`--fix` never converges by repetition. A finding marked `auto` that is still
+present after the pass is annotated *the automatic fix did not resolve this* —
+running `--fix` again will not change it. In `--json` the same signal is the
+`fix.survivors` list:
+
+```json
+{
+  "fix": {
+    "applied": ["schema_uri", "links", "titles", "checksum"],
+    "auto_count": 7,
+    "fixed_count": 6,
+    "survivors": [
+      {"rule_id": "PTL-DAT-007", "path": "roads/collection.json", "json_pointer": null}
+    ],
+    "dry_run": false
+  }
+}
+```
+
+An empty `survivors` with a non-empty `findings` means everything left needs a
+decision: a license, a provider, a readable title, a thumbnail. Work those by
+hand. `--fix --dry-run` reports what would change, writes nothing, and skips the
+re-check.
+
+### Published catalog URL
+
+```yaml
+publish:
+  public_url: https://data.example.org/my-catalog/
+```
+
+Where the catalog is served. `portolan check --live` probes that host to verify
+it serves assets with HTTP Range support and CORS headers; when the key is set
+and `--live` is not passed, `check` prints a reminder. This is not a credential
+(it is the same URL your README prints), so unlike `remote` it belongs in
+config.yaml. Override per run with `portolan check --live --url <URL>`.
+
+!!! note "Replaces `stac_lint:`"
+
+    The old `stac_lint:` block configured Portolan's retired native validator.
+    Its `RULE-*` names have no equivalent among rashid's `PTL-*` ids, so nothing
+    migrates automatically — `check` warns when it sees the old block and
+    ignores it. Re-express the overrides you still want under `check:`.
+
 ## Conversion Configuration
 
 Control how Portolan handles different file formats during `check` and `convert` operations.
@@ -918,7 +990,7 @@ The `portolan readme` command generates `README.md` by combining:
   `[west, south, east, north]`, reduced from a 3D `[west, south, min_z, east,
   north, max_z]` extent when the STAC bbox has six elements
 - Schema columns (from `table:columns`)
-- Bands (from `eo:bands`, `raster:bands`)
+- Bands (from the core v1.1.0 `bands` array, or legacy `eo:bands`/`raster:bands`)
 - Files with checksums
 - Code examples based on format
 
@@ -951,6 +1023,20 @@ portolan readme
 - Aggregated spatial extent (envelope of all collections, invalid coordinates like inf/NaN are filtered)
 - Aggregated temporal extent (earliest to latest)
 - List of collections with links (collapsible when ≥10 collections)
+
+**Automatic scaffolding:** `init`, `add`, and `check --fix` scaffold a `README.md`
+next to every `catalog.json` and `collection.json` that lacks one, and add the
+`rel="describedby"` link the spec requires. An existing README is never
+overwritten — run `portolan readme` to refresh a stale one. Files under
+dot-directories (`.portolan/`, `.git/`) are skipped: they hold caches, not
+published STAC objects.
+
+Only the `describedby` link that points at the sibling `README.md` is managed.
+Other `describedby` links you author — a data dictionary, a methodology PDF, or
+another directory's `README.md` such as `./shared/README.md` — are left exactly
+as written, and the README link is added alongside them. The match is on the
+resolved path, not the filename, so a link merely *ending* in `README.md` is
+still yours.
 
 ### Data Defaults
 

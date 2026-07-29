@@ -16,7 +16,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, overload
 
+from portolan_cli.agents_md import visible_stac_files
 from portolan_cli.errors import CatalogAlreadyExistsError
+from portolan_cli.json_io import write_json_atomic, write_text_atomic
 from portolan_cli.models.catalog import CatalogModel
 
 if sys.version_info >= (3, 11):
@@ -429,7 +431,7 @@ def init_catalog(
             "collections": {},
         }
         try:
-            (path / "versions.json").write_text(json.dumps(versions_data, indent=2) + "\n")
+            write_json_atomic(path / "versions.json", versions_data)
         except OSError as e:
             raise CatalogInitError(f"Cannot write versions.json: {e}") from e
 
@@ -448,26 +450,14 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot write catalog.json: {e}") from e
 
-    # Step 4: Add self link (STAC best practice)
-    # pystac SELF_CONTAINED doesn't add self link, so we add it manually
-    try:
-        data = json.loads(catalog_file.read_text())
-        # Use setdefault for defensive coding (pystac should always create links)
-        data.setdefault("links", []).append(
-            {
-                "rel": "self",
-                "href": "./catalog.json",
-                "type": "application/json",
-            }
-        )
-        catalog_file.write_text(json.dumps(data, indent=2))
-    except json.JSONDecodeError as e:
-        raise CatalogInitError(f"Cannot parse catalog.json: {e}") from e
-    except OSError as e:
-        raise CatalogInitError(f"Cannot update catalog.json with self link: {e}") from e
+    # No self link: a SELF_CONTAINED catalog omits it (ADR-0051), which is also
+    # what pystac emits and what rashid's PTL-LNK-005 enforces. `init` used to
+    # append one by hand; `add` then stripped it, so only init-only catalogs
+    # carried the violation and the conformance gate (which runs init + add)
+    # never saw it.
 
     # Step 4b: AGENTS.md - scaffold the AI/agent guide and add its rel="agents"
-    # link (ADR-0052, RULE-0080). Emitting it here keeps freshly-created catalogs
+    # link (ADR-0052; rashid PTL-FIL-002). Emitting it here keeps freshly-created catalogs
     # schema-valid without a follow-up `check --fix`.
     from portolan_cli.agents_md import ensure_agents_md
 
@@ -475,6 +465,17 @@ def init_catalog(
         ensure_agents_md(catalog_file)
     except OSError as e:
         raise CatalogInitError(f"Cannot write AGENTS.md: {e}") from e
+
+    # Step 4c: declare the Portolan profile schema URI and scaffold README.md
+    # with its rel="describedby" link (issue #654), so a catalog conforms the
+    # moment it is created, before anything is added to it.
+    from portolan_cli.readme import ensure_readmes
+
+    try:
+        ensure_schema_uris(path)
+        ensure_readmes(path)
+    except OSError as e:
+        raise CatalogInitError(f"Cannot write catalog conformance files: {e}") from e
 
     # Step 5: config.yaml - sentinel file per issue #290 (sufficient for MANAGED state)
     # Written LAST for atomicity: if any previous step fails, directory stays FRESH
@@ -484,7 +485,7 @@ def init_catalog(
     if backend != "file":
         config_content = f"# Portolan configuration\nbackend: {backend}\n"
     try:
-        (portolan_dir / "config.yaml").write_text(config_content)
+        write_text_atomic(portolan_dir / "config.yaml", config_content)
     except OSError as e:
         raise CatalogInitError(f"Cannot write config.yaml: {e}") from e
 
@@ -619,14 +620,13 @@ def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None
             "links": [
                 {"rel": "root", "href": parent_href, "type": "application/json"},
                 {"rel": "parent", "href": parent_href, "type": "application/json"},
-                {"rel": "self", "href": "./catalog.json", "type": "application/json"},
             ],
         }
 
-        catalog_file.write_text(json.dumps(catalog_data, indent=2))
+        write_json_atomic(catalog_file, catalog_data)
 
         # Intermediate catalogs are catalogs too: scaffold AGENTS.md and add the
-        # rel="agents" link so every catalog.json satisfies RULE-0080.
+        # rel="agents" link so every catalog.json satisfies rashid PTL-FIL-002.
         from portolan_cli.agents_md import ensure_agents_md
 
         ensure_agents_md(catalog_file)
@@ -698,7 +698,7 @@ def _ensure_root_links_to_child(catalog_root: Path, child_href: str) -> None:
     # Add the child link
     links.append({"rel": "child", "href": child_href, "type": "application/json"})
     content["links"] = links
-    catalog_file.write_text(json.dumps(content, indent=2), encoding="utf-8")
+    write_json_atomic(catalog_file, content)
 
 
 def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
@@ -717,7 +717,7 @@ def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
     # Add the child link
     links.append({"rel": "child", "href": child_href, "type": "application/json"})
     content["links"] = links
-    catalog_file.write_text(json.dumps(content, indent=2), encoding="utf-8")
+    write_json_atomic(catalog_file, content)
 
 
 def _link_title_from_target(
@@ -785,9 +785,7 @@ def ensure_link_titles(catalog_root: Path) -> bool:
     """
     changed_any = False
 
-    stac_files = sorted(catalog_root.rglob("catalog.json")) + sorted(
-        catalog_root.rglob("collection.json")
-    )
+    stac_files = visible_stac_files(catalog_root)
 
     for stac_file in stac_files:
         try:
@@ -817,7 +815,43 @@ def ensure_link_titles(catalog_root: Path) -> bool:
                 file_changed = True
 
         if file_changed:
-            stac_file.write_text(json.dumps(content, indent=2), encoding="utf-8")
+            write_json_atomic(stac_file, content)
+            changed_any = True
+
+    return changed_any
+
+
+def ensure_schema_uris(catalog_root: Path) -> bool:
+    """Declare the Portolan profile schema URI across a catalog tree (issue #654).
+
+    Walks every ``catalog.json`` and ``collection.json`` under ``catalog_root``
+    and stamps the versioned profile URI into ``stac_extensions``. Items are left
+    alone: the conformance claim lives on catalogs and collections.
+
+    Idempotent — a tree that already declares the current URI is not rewritten.
+    Shared by ``init``, ``add``, and the ``check --fix`` repair path so all three
+    produce the same output.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+
+    Returns:
+        True if any file was modified.
+    """
+    from portolan_cli.stac import ensure_portolan_schema_uri
+
+    changed_any = False
+    stac_files = visible_stac_files(catalog_root)
+
+    for stac_file in stac_files:
+        try:
+            content = json.loads(stac_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(content, dict):
+            continue
+        if ensure_portolan_schema_uri(content):
+            write_json_atomic(stac_file, content)
             changed_any = True
 
     return changed_any
@@ -872,7 +906,7 @@ def update_catalog_versions(
         try:
             # Read existing catalog versions.json with error handling
             try:
-                content = json.loads(versions_path.read_text())
+                content = json.loads(versions_path.read_text(encoding="utf-8"))
             except json.JSONDecodeError as e:
                 # Clear error message for corrupted file
                 msg = (

@@ -104,7 +104,13 @@ class TestListStatusHypothesis:
     """Hypothesis-based property tests for list with status."""
 
     @pytest.mark.unit
-    @settings(max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(
+        max_examples=20,
+        suppress_health_check=[
+            HealthCheck.function_scoped_fixture,
+            HealthCheck.differing_executors,
+        ],
+    )
     @given(
         collection_name=collection_name_strategy,
         item_name=collection_name_strategy,
@@ -149,7 +155,13 @@ class TestListStatusHypothesis:
         assert filename in result.output or result.exit_code != 0
 
     @pytest.mark.unit
-    @settings(max_examples=10, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(
+        max_examples=10,
+        suppress_health_check=[
+            HealthCheck.function_scoped_fixture,
+            HealthCheck.differing_executors,
+        ],
+    )
     @given(num_files=st.integers(min_value=0, max_value=10))
     def test_list_counts_match_actual_files(
         self,
@@ -186,7 +198,13 @@ class TestListStatusHypothesis:
                 assert total >= num_files or data["summary"].get("total_untracked", 0) >= num_files
 
     @pytest.mark.unit
-    @settings(max_examples=10, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(
+        max_examples=10,
+        suppress_health_check=[
+            HealthCheck.function_scoped_fixture,
+            HealthCheck.differing_executors,
+        ],
+    )
     @given(
         tracked_count=st.integers(min_value=1, max_value=5),
         untracked_count=st.integers(min_value=0, max_value=5),
@@ -264,7 +282,13 @@ class TestListIgnoredFilesHypothesis:
     """Hypothesis tests for ignored files behavior."""
 
     @pytest.mark.unit
-    @settings(max_examples=10, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(
+        max_examples=10,
+        suppress_health_check=[
+            HealthCheck.function_scoped_fixture,
+            HealthCheck.differing_executors,
+        ],
+    )
     @given(ext=st.sampled_from([".tmp", ".temp", ".pyc"]))
     def test_ignored_extensions_never_appear(
         self,
@@ -294,7 +318,13 @@ class TestListIgnoredFilesHypothesis:
         assert "valid.parquet" in result.output
 
     @pytest.mark.unit
-    @settings(max_examples=5, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(
+        max_examples=5,
+        suppress_health_check=[
+            HealthCheck.function_scoped_fixture,
+            HealthCheck.differing_executors,
+        ],
+    )
     @given(
         hidden_name=st.text(
             alphabet=st.sampled_from("abcdefghijklmnopqrstuvwxyz"),

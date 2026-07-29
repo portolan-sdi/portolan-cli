@@ -202,7 +202,12 @@ class TestIssue345CollectionLevelAssetsNotMissing:
         tmp_path: Path,
         valid_singleband_cog: Path,
     ) -> None:
-        """End-to-end: portolan check exits 0 for valid catalog with rollup."""
+        """End-to-end: `check` reports no defect against the items.parquet rollup.
+
+        The catalog is hand-built and trips plenty of unrelated PTL-* rules, so
+        the guard is targeted: no finding may name items.parquet. Before #345,
+        the rollup was treated as a file needing its own item.json.
+        """
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
         # .portolan sentinel makes catalog discoverable
@@ -210,11 +215,11 @@ class TestIssue345CollectionLevelAssetsNotMissing:
         (catalog_dir / ".portolan" / "config.yaml").write_text("version: 1\n")
         _make_raster_collection_with_items_parquet(catalog_dir, valid_singleband_cog)
 
-        result = runner.invoke(cli, ["check", str(catalog_dir), "--metadata"])
+        result = runner.invoke(cli, ["check", str(catalog_dir), "--metadata", "--json"])
 
-        assert result.exit_code == 0, (
-            f"check failed for valid catalog with items.parquet rollup.\noutput:\n{result.output}"
-        )
+        findings = json.loads(result.output)["data"]["findings"]
+        offending = [f for f in findings if "items.parquet" in f["message"]]
+        assert offending == [], f"items.parquet flagged as a defect: {offending}"
 
 
 # =============================================================================
@@ -1103,9 +1108,11 @@ class TestCheckResolvesCatalogRoot:
             cli,
             ["check", str(collection_dir), "--metadata", "--fix", "--json"],
         )
-        assert result.exit_code == 0, result.output
+        # The catalog is hand-built and does not conform, so the post-fix
+        # re-check reports findings and the run exits 1. What this test is
+        # about is where the fix landed, which the `fix` section records.
         payload = json.loads(result.output)
-        metadata_fix = payload.get("data", {}).get("metadata_fix")
+        metadata_fix = payload.get("data", {}).get("fix", {}).get("metadata_fix")
         assert metadata_fix is not None and metadata_fix["total_count"] >= 1, (
             f"running --fix from a subdir must reach the catalog root and "
             f"act on its items. got: {payload}"

@@ -6,7 +6,38 @@ import hashlib
 import logging
 from pathlib import Path
 
+from rashid.api import SHA2_256, encode_multihash
+
 logger = logging.getLogger(__name__)
+
+
+def multihash_sha256(digest_hex: str) -> str:
+    """Encode a hex SHA-256 digest as a hex multihash for ``file:checksum``.
+
+    The STAC file extension types ``file:checksum`` as a multihash — the hash
+    function and digest length travel with the digest — so a bare hex digest (or
+    a ``sha256:``-prefixed one) is not a valid value (issue #654).
+
+    The encoding comes from rashid, which also decodes the value when
+    ``portolan check`` verifies it.
+
+    Args:
+        digest_hex: Hex-encoded SHA-256 digest, as returned by
+            :func:`compute_checksum`.
+
+    Returns:
+        The digest with the sha2-256 multihash prefix.
+
+    Raises:
+        ValueError: If ``digest_hex`` is not a 64-character hex string.
+    """
+    if len(digest_hex) != 64:
+        raise ValueError(f"Not a 64-character SHA-256 hex digest: {digest_hex!r}")
+    try:
+        digest = bytes.fromhex(digest_hex)
+    except ValueError as exc:
+        raise ValueError(f"Not a 64-character SHA-256 hex digest: {digest_hex!r}") from exc
+    return encode_multihash(SHA2_256, digest)
 
 
 def compute_checksum(path: Path) -> str:

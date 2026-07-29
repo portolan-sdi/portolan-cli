@@ -2,7 +2,6 @@
 paths:
   - "docs/**"
   - "context/**"
-  - "spec/**"
   - "**/*.md"
 ---
 

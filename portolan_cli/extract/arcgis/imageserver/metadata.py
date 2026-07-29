@@ -12,7 +12,6 @@ Key mappings:
 
 References:
 - STAC Spec: https://stacspec.org/
-- STAC Raster Extension: https://github.com/stac-extensions/raster
 - ADR-0035: Temporal extent handling (use null for unknown dates)
 """
 
@@ -49,7 +48,7 @@ def create_collection_metadata(
         - stac_version: from portolan_cli.models._stac_version
         - id: derived from service name (sanitized)
         - extent: spatial from fullExtent (WGS84), temporal open interval
-        - summaries: band count, pixel type
+        - summaries: core v1.1.0 bands array
         - links: source link to ImageServer, self link
         - license: "other" (STAC 1.1 default for unknown/non-SPDX sources)
     """
@@ -97,9 +96,8 @@ def create_collection_metadata(
     collection: dict[str, Any] = {
         "type": "Collection",
         "stac_version": get_stac_version(),
-        "stac_extensions": [
-            "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
-        ],
+        # No extension declaration: band metadata is core STAC v1.1.0 (issue #654).
+        "stac_extensions": [],
         "id": collection_id,
         "title": service_metadata.name,
         "description": description,
@@ -171,9 +169,8 @@ def create_item_metadata(
     item: dict[str, Any] = {
         "type": "Feature",
         "stac_version": get_stac_version(),
-        "stac_extensions": [
-            "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
-        ],
+        # No extension declaration: band metadata is core STAC v1.1.0 (issue #654).
+        "stac_extensions": [],
         "id": item_id,
         "geometry": geometry,
         "bbox": list(wgs84_bbox),
@@ -206,7 +203,7 @@ def create_item_metadata(
                 "type": COG_MEDIA_TYPE,
                 "title": "Cloud-Optimized GeoTIFF",
                 "roles": ["data"],
-                "raster:bands": _build_raster_bands(service_metadata),
+                "bands": _build_bands(service_metadata),
             },
         },
     }
@@ -269,23 +266,16 @@ def _build_summaries(metadata: ImageServerMetadata) -> dict[str, Any]:
         metadata: ImageServer metadata.
 
     Returns:
-        Summaries dict with band info and pixel type.
+        Summaries dict with the core ``bands`` array.
     """
-    summaries: dict[str, Any] = {}
-
-    # Band information using raster extension
-    raster_bands = _build_raster_bands(metadata)
-    if raster_bands:
-        summaries["raster:bands"] = raster_bands
-
-    # Add basic band count info
-    summaries["eo:bands"] = [{"name": f"band_{i + 1}"} for i in range(metadata.band_count)]
-
-    return summaries
+    return {"bands": _build_bands(metadata)}
 
 
-def _build_raster_bands(metadata: ImageServerMetadata) -> list[dict[str, Any]]:
-    """Build raster:bands array for STAC raster extension.
+def _build_bands(metadata: ImageServerMetadata) -> list[dict[str, Any]]:
+    """Build the core STAC v1.1.0 ``bands`` array.
+
+    v1.1.0 folded ``raster:bands`` and ``eo:bands`` into one core array, so band
+    metadata needs no extension declaration (issue #654).
 
     Args:
         metadata: ImageServer metadata.

@@ -198,18 +198,17 @@ GitHub Release.
 
 ## Spec Changes
 
-The Portolan specification lives in `spec/` within this repository. The CLI repo
-is the **source of truth** for the spec; the separate
-[portolan-spec](https://github.com/portolan-sdi/portolan-spec) repository is a
-read-only mirror synced via CI.
+The Portolan specification lives in the
+[portolan-spec](https://github.com/portolan-sdi/portolan-spec) repository, which
+is the source of truth. Propose spec changes there.
 
-To propose spec changes:
-
-1. Open a PR in this repository that modifies files in `spec/`
-2. The PR itself is the proposal — discuss in the PR comments
-3. On merge, CI automatically syncs changes to portolan-spec
-
-See [ADR-0048](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0048-cli-as-spec-source.md) for rationale.
+The CLI consumes the spec through
+[rashid](https://github.com/portolan-sdi/rashid), the validator behind
+`portolan check`: rashid implements each requirement as a `PTL-*` rule citing
+the `PORTO-*` requirement it enforces. A spec change therefore lands in three
+steps — the requirement in portolan-spec, the rule in rashid, then whatever
+generation change the CLI needs so freshly generated catalogs still pass
+`tests/integration/test_generated_catalog_conformance.py`.
 
 ## Questions?
 

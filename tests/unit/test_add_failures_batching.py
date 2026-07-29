@@ -263,7 +263,10 @@ class TestAddFailuresBatchingProperties:
     """Property-based tests for add failure batching."""
 
     @given(failures=st.lists(add_failure_strategy(), min_size=1, max_size=50))
-    @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow])
+    @settings(
+        max_examples=50,
+        suppress_health_check=[HealthCheck.too_slow, HealthCheck.differing_executors],
+    )
     def test_header_count_matches_total(self, failures: list[AddFailure]) -> None:
         """Header always shows correct total count."""
         output = capture_batched_output(failures)
@@ -272,7 +275,10 @@ class TestAddFailuresBatchingProperties:
         assert f"{n} {expected_word} failed:" in output
 
     @given(failures=st.lists(add_failure_strategy(), min_size=1, max_size=50))
-    @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow])
+    @settings(
+        max_examples=50,
+        suppress_health_check=[HealthCheck.too_slow, HealthCheck.differing_executors],
+    )
     def test_every_error_message_appears(self, failures: list[AddFailure]) -> None:
         """Every unique error message appears at least once in the output."""
         output = capture_batched_output(failures)
@@ -281,7 +287,10 @@ class TestAddFailuresBatchingProperties:
             assert err in output, f"Error message {err!r} not found in output"
 
     @given(failures=st.lists(add_failure_strategy(), min_size=0, max_size=50))
-    @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow])
+    @settings(
+        max_examples=50,
+        suppress_health_check=[HealthCheck.too_slow, HealthCheck.differing_executors],
+    )
     def test_no_crash_on_any_input(self, failures: list[AddFailure]) -> None:
         """Function never crashes regardless of input."""
         # Just verify no exception is raised

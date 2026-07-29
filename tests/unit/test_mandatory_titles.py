@@ -1,7 +1,8 @@
 """Unit tests for mandatory human-readable titles (Issue #502).
 
-Covers the MandatoryTitlesRule, the check --fix repair helper, creation-time
-defaults, and the metadata.yaml override.
+Covers the check --fix repair helper, creation-time defaults, and the
+metadata.yaml override. The rule itself (PTL-TTL-001/002/003) now lives in
+rashid, which owns its tests.
 """
 
 from __future__ import annotations
@@ -15,8 +16,6 @@ from portolan_cli.catalog import ensure_link_titles
 from portolan_cli.metadata.fix import repair_titles_and_links
 from portolan_cli.metadata_yaml import _validate_title_description
 from portolan_cli.stac import apply_human_titles, create_collection
-from portolan_cli.validation.results import Severity
-from portolan_cli.validation.stac_rules import MandatoryTitlesRule, _is_raw_slug_title
 
 
 def _write(path: Path, data: dict[str, object]) -> None:
@@ -62,42 +61,6 @@ def _slug_catalog(root: Path) -> None:
             "links": [],
         },
     )
-
-
-@pytest.mark.unit
-class TestIsRawSlugTitle:
-    def test_underscore_is_raw(self) -> None:
-        assert _is_raw_slug_title("publico_arbolado") is True
-
-    def test_namespace_prefix_is_raw(self) -> None:
-        assert _is_raw_slug_title("ns:LayerName") is True
-
-    def test_humanized_is_not_raw(self) -> None:
-        assert _is_raw_slug_title("Publico Arbolado") is False
-
-    def test_short_token_is_not_raw(self) -> None:
-        # Cannot be humanized further; must not loop check --fix.
-        assert _is_raw_slug_title("T502") is False
-
-
-@pytest.mark.unit
-class TestMandatoryTitlesRule:
-    def test_severity_is_error(self) -> None:
-        assert MandatoryTitlesRule().severity is Severity.ERROR
-
-    def test_fails_on_slug_catalog(self, tmp_path: Path) -> None:
-        _slug_catalog(tmp_path)
-        result = MandatoryTitlesRule().check(tmp_path)
-        assert result.passed is False
-        # Flags: catalog missing title, child link missing title,
-        # collection raw-slug title, collection missing description.
-        assert "title" in result.message.lower()
-
-    def test_passes_after_repair(self, tmp_path: Path) -> None:
-        _slug_catalog(tmp_path)
-        repair_titles_and_links(tmp_path)
-        result = MandatoryTitlesRule().check(tmp_path)
-        assert result.passed is True, result.message
 
 
 @pytest.mark.unit

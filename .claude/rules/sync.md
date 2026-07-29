@@ -130,7 +130,7 @@ The dry-run summary counts must match the files it lists, no "Would push N" then
   **all three** providers, or you get `prefix//collection/versions.json`.
 - Reject absolute paths and path traversal on remote keys and agent-supplied
   inputs (`pull.py` already rejects absolute paths). Validate through
-  `validation/input_hardening.py`.
+  `input_hardening.py`.
 - When comparing a filesystem path to a STAC href, normalize to POSIX
   (`PurePath(...).as_posix()`), never raw `str()` of a relative path, backslashes
   on Windows break href matching.
@@ -167,7 +167,7 @@ simplify it as "pull + push" in code, docstrings, or docs.
 - ADRs 0005 (versions.json source of truth), 0006 (remote ownership),
   0024 (hierarchical config), 0030 (agent-native input hardening),
   0032 (nested catalogs).
-- `spec/versions.md`, `spec/schema/rules.yaml` (RULE-0010..0015 for versions.json
-  shape, RULE-0050..0052 for required files).
+- The portolan-spec repo (versions.json shape, required files), enforced by
+  rashid's PTL-FIL-* rules.
 - Tests: `tests/network/`, the `TestDryRunNetworkIsolation` classes in
   `test_push`/`test_pull`/`test_sync`.

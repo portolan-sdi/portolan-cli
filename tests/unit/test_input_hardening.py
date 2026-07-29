@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.validation import (
+from portolan_cli.input_hardening import (
     InputValidationError,
     validate_collection_id,
     validate_config_key,
@@ -278,7 +278,7 @@ class TestValidateRemoteUrl:
                 raise ValueError("Invalid URL characters")
             return original_urlparse(url, *args, **kwargs)
 
-        monkeypatch.setattr("portolan_cli.validation.input_hardening.urlparse", mock_urlparse)
+        monkeypatch.setattr("portolan_cli.input_hardening.urlparse", mock_urlparse)
 
         with pytest.raises(InputValidationError, match="Malformed URL"):
             validate_remote_url("s3://trigger_value_error/path")

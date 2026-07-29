@@ -21,6 +21,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from portolan_cli.constants import PORTOLAN_SCHEMA_URI
 from portolan_cli.scan.classify import (
     FileCategory,
     classify_file,
@@ -334,6 +335,38 @@ class TestTabularEnabledCheck:
         collection_data = json_mod.loads(collection_json.read_text())
         assert "assets" in collection_data, "collection.json should have assets"
         assert len(collection_data["assets"]) > 0, "Should have at least one asset"
+
+    def test_tabular_add_repairs_agents_md_across_the_tree(self, tmp_path: Path) -> None:
+        """The tabular path owes the same tree-wide AGENTS.md repair as ``finalize_items``.
+
+        A tabular-only add never reaches ``finalize_items``, which calls
+        ``ensure_agents_md_tree``. Repairing only the collection it just wrote
+        left a pre-existing root catalog without its AGENTS.md and
+        ``rel="agents"`` link (ADR-0052, issue #654) — the same catalog a geo
+        add would have fixed.
+        """
+        import json as json_mod
+
+        from portolan_cli.add import add_files
+
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+        _setup_test_catalog(catalog_root)
+
+        collection_dir = catalog_root / "demographics"
+        collection_dir.mkdir()
+        parquet_file = collection_dir / "census.parquet"
+        pq.write_table(
+            pa.table({"tract_id": ["001", "002"], "population": [5000, 7500]}), parquet_file
+        )
+        (catalog_root / ".portolan" / "config.yaml").write_text("tabular:\n  enabled: true\n")
+
+        _, _, failures = add_files(paths=[parquet_file], catalog_root=catalog_root)
+        assert failures == []
+
+        assert (catalog_root / "AGENTS.md").exists()
+        catalog_links = json_mod.loads((catalog_root / "catalog.json").read_text())["links"]
+        assert any(link.get("rel") == "agents" for link in catalog_links)
 
     def test_tabular_companion_asset_works_regardless_of_config(self, tmp_path: Path) -> None:
         """Tabular files WITH a companion geo file work regardless of tabular.enabled.
@@ -1315,15 +1348,15 @@ extent:
 
 
 @pytest.mark.unit
-class TestPortolanGeospatialFlag:
-    """Tests for portolan:geospatial flag on tabular collections (RULE-0090).
+class TestTabularCollectionEmission:
+    """A tabular collection carries no portolan: fields (issue #654, ADR-0047).
 
-    Tabular collections MUST have portolan:geospatial set to false to distinguish
-    intentionally non-spatial from spatial-but-unmeasured collections.
+    Tabular status is derived from asset content, so the collection Portolan
+    writes declares the profile schema URI and nothing from a private namespace.
     """
 
-    def test_tabular_collection_has_geospatial_false(self, tmp_path: Path) -> None:
-        """Tabular collections should have portolan:geospatial: false set."""
+    def test_tabular_collection_omits_the_geospatial_flag(self, tmp_path: Path) -> None:
+        """Tabular collections are no longer flagged portolan:geospatial: false."""
         from portolan_cli.add import add_files
 
         # Create catalog structure
@@ -1359,9 +1392,5 @@ class TestPortolanGeospatialFlag:
         assert collection_json.exists(), "collection.json should be created"
 
         collection_data = json.loads(collection_json.read_text())
-        assert "portolan:geospatial" in collection_data, (
-            "Tabular collection should have portolan:geospatial property (RULE-0090)"
-        )
-        assert collection_data["portolan:geospatial"] is False, (
-            "Tabular collection should have portolan:geospatial: false"
-        )
+        assert "portolan:geospatial" not in collection_data
+        assert PORTOLAN_SCHEMA_URI in collection_data["stac_extensions"]

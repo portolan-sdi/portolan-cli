@@ -21,7 +21,7 @@ from unittest import mock
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 
 # =============================================================================
@@ -36,6 +36,38 @@ if TYPE_CHECKING:
 # that one bookkeeping var. Outside mutmut it is absent, so this is identical to
 # a full clear.
 _MUTMUT_ENV_KEY = "MUTANT_UNDER_TEST"
+
+# mutmut also re-invokes Hypothesis tests through its own runner, once per
+# mutant in the same process, so class-based property tests see more than one
+# executor instance and trip HealthCheck.differing_executors during the
+# mutation baseline (#612). Register a profile that relaxes exactly that check
+# when running under mutmut; a test's own @settings(suppress_health_check=...)
+# replaces this list, so explicit lists in test files carry the entry
+# themselves. Outside mutmut the default profile stays fully strict.
+if _MUTMUT_ENV_KEY in os.environ:
+    from hypothesis import HealthCheck as _HealthCheck
+    from hypothesis import settings as _hypothesis_settings
+
+    _hypothesis_settings.register_profile(
+        "mutmut",
+        suppress_health_check=[_HealthCheck.differing_executors],
+    )
+    _hypothesis_settings.load_profile("mutmut")
+
+    # Under mutmut the whole suite runs in one long-lived process that pytest
+    # did not start, so the root logger arrives carrying whatever handlers and
+    # level that process left on it. Library records (rasterio and GDAL are the
+    # loud ones) then reach the stream CliRunner captures, and every test that
+    # does json.loads(result.output) dies on "Extra data" past the envelope.
+    # That is how the mutation gate failed on #612. Reset the root logger to the
+    # state a plain pytest run starts from: no handlers, level WARNING. pytest
+    # adds its own capture handlers per test phase, so caplog is unaffected.
+    import logging as _logging
+
+    _root_logger = _logging.getLogger()
+    for _handler in list(_root_logger.handlers):
+        _root_logger.removeHandler(_handler)
+    _root_logger.setLevel(_logging.WARNING)
 
 
 @contextmanager
@@ -524,3 +556,56 @@ def catalog_with_multiple_versions(tmp_path: Path) -> Path:
     (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
 
     return catalog_dir
+
+
+# =============================================================================
+# Conformant catalogs (rashid, ADR-0057)
+# =============================================================================
+
+# `portolan check` validates against rashid's PTL-* rule set, so a hand-built
+# catalog.json is no longer a usable fixture: it trips PTL-CNF-001 (no schema
+# URI), PTL-FIL-001 (no README/AGENTS.md), PTL-TTL-001 (no title), and more,
+# and every test asserting on check output drowns in unrelated findings.
+#
+# `build_conformant_catalog` builds the catalog the way `portolan init` does:
+# through the real generator, so it stays conformant by construction as
+# generation changes (the same property the conformance gate in
+# tests/integration/test_generated_catalog_conformance.py locks down).
+
+
+def _init_catalog(
+    root: Path,
+    *,
+    title: str = "Test Catalog",
+    description: str = "A catalog built for the test suite.",
+) -> Path:
+    """Run `portolan init` into ``root`` and return it."""
+    from click.testing import CliRunner
+
+    from portolan_cli.cli import cli
+
+    root.mkdir(parents=True, exist_ok=True)
+    result = CliRunner().invoke(
+        cli,
+        ["init", str(root), "--auto", "--title", title, "--description", description],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    return root
+
+
+@pytest.fixture
+def build_conformant_catalog() -> Callable[..., Path]:
+    """Factory building a catalog that passes rashid's metadata pass.
+
+    Use this wherever a test needs a catalog to exist without being the subject
+    of the test. Findings the test asserts on should be ones it introduces
+    itself, by editing the generated tree.
+    """
+    return _init_catalog
+
+
+@pytest.fixture
+def conformant_catalog(tmp_path: Path) -> Path:
+    """A generated, conformant catalog at ``tmp_path/catalog``."""
+    return _init_catalog(tmp_path / "catalog")

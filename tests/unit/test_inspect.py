@@ -348,6 +348,53 @@ class TestCollectionInfo:
         assert result.total_size_bytes > 0
 
     @pytest.mark.unit
+    def test_item_count_includes_items_under_an_organizing_catalog(self, tmp_path: Path) -> None:
+        """A catalog may group a collection's items (core.md:168-170).
+
+        Counting the collection's own item links reported 0 for such a layout.
+        """
+        import json
+
+        from portolan_cli.inspect import inspect_collection
+
+        collection_path = tmp_path / "landsat"
+        (collection_path / "2024").mkdir(parents=True)
+        (collection_path / "collection.json").write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "stac_version": "1.1.0",
+                    "id": "landsat",
+                    "description": "Grouped by year",
+                    "license": "CC-BY-4.0",
+                    "extent": {
+                        "spatial": {"bbox": [[0.0, 0.0, 1.0, 1.0]]},
+                        "temporal": {"interval": [[None, None]]},
+                    },
+                    "links": [{"rel": "child", "href": "./2024/catalog.json"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (collection_path / "2024" / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "stac_version": "1.1.0",
+                    "id": "landsat-2024",
+                    "description": "2024",
+                    "links": [
+                        {"rel": "item", "href": "./scene-a.json"},
+                        {"rel": "item", "href": "./scene-b.json"},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert inspect_collection(collection_path).item_count == 2
+
+    @pytest.mark.unit
     def test_inspect_nonexistent_collection_raises(self, tmp_path: Path) -> None:
         """Test that inspect_collection raises for missing collection."""
         from portolan_cli.inspect import inspect_collection

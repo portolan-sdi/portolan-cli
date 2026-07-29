@@ -18,6 +18,7 @@ from typing import Any
 from portolan_cli.formats import FormatType, detect_format
 from portolan_cli.metadata.cog import extract_cog_metadata
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+from portolan_cli.stac_parquet import count_items
 from portolan_cli.versions import read_versions
 
 
@@ -382,11 +383,10 @@ def inspect_collection(collection_path: Path) -> CollectionInfo:
     if not collection_json_path.exists():
         raise FileNotFoundError(f"Collection not found: {collection_path}")
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
 
-    # Count items from links
-    item_links = [link for link in data.get("links", []) if link.get("rel") == "item"]
-    item_count = len(item_links)
+    # Count items the collection owns, descending organizing catalogs (core.md:168-170)
+    item_count = count_items(collection_path)
 
     # Calculate total size from versions.json
     total_size = 0
@@ -438,7 +438,7 @@ def inspect_catalog(catalog_root: Path) -> CatalogInfo:
     if not catalog_json_path.exists():
         raise FileNotFoundError(f"Catalog not found: {catalog_root}")
 
-    data = json.loads(catalog_json_path.read_text())
+    data = json.loads(catalog_json_path.read_text(encoding="utf-8"))
 
     # Count collections from child links
     child_links = [link for link in data.get("links", []) if link.get("rel") == "child"]

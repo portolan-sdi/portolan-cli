@@ -989,11 +989,12 @@ class TestRasterExtension:
     """
 
     @pytest.mark.unit
-    def test_build_stac_extensions_detects_bands_key(self) -> None:
-        """build_stac_extensions includes raster extension when 'bands' key present.
+    def test_build_stac_extensions_ignores_core_bands_key(self) -> None:
+        """A bare 'bands' array does not declare the raster extension (issue #654).
 
-        STAC v1.1.0 uses a unified 'bands' array instead of 'raster:bands'.
-        The raster extension should be declared when bands array exists.
+        STAC v1.1.0 promoted the unified `bands` array (and its `statistics`)
+        into the core schema, so declaring the raster extension for it claims
+        conformance the object does not need.
         """
         from portolan_cli.stac import EXTENSION_URLS, build_stac_extensions
 
@@ -1002,7 +1003,7 @@ class TestRasterExtension:
         }
         result = build_stac_extensions(properties)
 
-        assert EXTENSION_URLS["raster"] in result
+        assert EXTENSION_URLS["raster"] not in result
 
     @pytest.mark.unit
     def test_build_stac_extensions_detects_bands_with_raster_fields(self) -> None:

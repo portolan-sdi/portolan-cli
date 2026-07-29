@@ -130,34 +130,16 @@ mutation testing runs at two scopes that share one scorer:
   against a real full run; promote it to required by adding it to `ci-success`
   needs.
 - **Nightly sweep** (`mutation` in `nightly.yml`, hard gate): mutates a
-  deterministic `1/NUM_SHARDS` slice of the source files, picked by day-of-year,
-  so the whole tree is covered every `NUM_SHARDS` nights (currently 25). Lower
-  `NUM_SHARDS` to cover more per night, but only if a run still finishes within
-  `timeout-minutes` — and re-measure the per-shard rates, which a new count
-  invalidates.
+  deterministic `1/NUM_SHARDS` slice of the source files, round-robin by
+  day-of-year, so the whole tree is covered every `NUM_SHARDS` nights (currently
+  25). Lower `NUM_SHARDS` to cover more per night, but only if a run still
+  finishes within `timeout-minutes`.
 
-**Shard membership is a hash of each file's path** (`scripts/shard_select.py`),
-not its index in the sorted file list. Index assignment shifted every file's
-shard whenever one file was added, which would stale every recorded per-shard
-rate on any commit adding a module. Hashing moves only the added file.
-
-**Two floors.** `.mutation-baseline` holds one repo-wide integer: the
-catastrophe floor every run must clear. `.mutation-shards.json` holds each
-shard's own measured kill rate, and the nightly sweep requires the shard to hold
-that rate minus a small tolerance for timeout jitter. Both are needed because a
-shard's rate depends on which modules land in it — the first complete sweep
-(shard 8, 2026-07-27) measured 44.63% overall, spanning 18% for
-`sync.upload_progress` to 95% for `backends.iceberg.config`. One repo-wide
-number set high enough to catch a regression in the strong modules would red the
-nightly every time a weak shard came up; set low enough to stay green, it would
-gate nothing.
-
-A shard with no recorded rate is gated by the repo-wide floor alone, and the run
-prints the JSON line to paste into `.mutation-shards.json`. Recording it is what
-tightens the gate, so do it when a sweep surfaces one. The score counts
-`killed + timeout + suspicious` as killed over `killed_total + survived`
-testable (`no_tests` excluded). **Lowering either floor requires a justification
-in the PR that does so.**
+**Threshold:** the floor lives in `.mutation-baseline` (a single integer). Both
+scopes read it via `scripts/mutation_score.py` rather than hardcoding it, so it
+ratchets up in a one-line, reviewable diff. The score counts `killed + timeout +
+suspicious` as killed over `killed_total + survived` testable (`no_tests`
+excluded). **Lowering the floor requires a justification in the PR that does so.**
 
 **Mutant-free files are filtered out before mutmut sees them**
 (`scripts/mutant_globs.py`). About a fifth of `portolan_cli` generates no
@@ -175,7 +157,7 @@ mutation testing is broken, not passing — the scorer hard-fails (it used to
 `exit 0` and report a green nightly, hiding a broken setup). The one exception is
 a shard the filter empties, where the run and floor steps are skipped outright
 rather than scored against absent stats. `[tool.mutmut]` in
-`pyproject.toml` copies the `scripts/` package, `spec/` schemas, and data files
+`pyproject.toml` copies the `scripts/` package and the data files
 into the mutants sandbox and scopes the stats run to the fast, offline suite with
 `--no-cov`.
 
@@ -183,9 +165,8 @@ into the mutants sandbox and scopes the stats run to the fast, offline suite wit
 instruments code with a trampoline that reads `os.environ["MUTANT_UNDER_TEST"]`.
 Two consequences the tests must respect: a cleared environment must preserve that
 var (use `cleared_environ()` from `tests/conftest.py`, not
-`patch.dict(..., clear=True)`), and files read by repo-root path (e.g.
-`spec/schema/`, `.mutation-shards.json`) must be listed in
-`[tool.mutmut] also_copy`. Parallel conversion
+`patch.dict(..., clear=True)`), and files read by repo-root path must be
+listed in `[tool.mutmut] also_copy`. Parallel conversion
 falls back to serial when a process pool can't start in the sandbox
 (`convert.py`). (The geoparquet-io #565 CWD guard was evaluated and is **not**
 needed: `isolated_filesystem`/`chdir` tests do not crash the stats phase.)

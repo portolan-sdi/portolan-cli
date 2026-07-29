@@ -34,7 +34,7 @@ from portolan_cli.collection_id import (
     infer_nested_collection_id,
     resolve_collection_id,  # noqa: F401
 )
-from portolan_cli.config import get_setting
+from portolan_cli.config import get_setting, load_merged_metadata
 from portolan_cli.constants import (
     GEOSPATIAL_EXTENSIONS,
     TABULAR_EXTENSIONS,
@@ -63,6 +63,9 @@ from portolan_cli.finalization import (  # noqa: F401
 )
 from portolan_cli.finalization import (  # noqa: F401
     _finalize_with_backend as _finalize_with_backend,  # noqa: PLC0414
+)
+from portolan_cli.finalization import (  # noqa: F401
+    _fix_collection_links as _fix_collection_links,  # noqa: PLC0414
 )
 from portolan_cli.finalization import (  # noqa: F401
     _get_or_create_collection as _get_or_create_collection,  # noqa: PLC0414
@@ -147,10 +150,11 @@ from portolan_cli.query import ItemInfo, get_item_info, is_current, list_items  
 from portolan_cli.remove import remove_files  # noqa: F401
 from portolan_cli.stac import (
     MergeStrategy,
+    apply_human_license,
     create_collection,
     update_collection_file_statistics,
 )
-from portolan_cli.sync.checksums import compute_checksum
+from portolan_cli.sync.checksums import compute_checksum, multihash_sha256
 from portolan_cli.viz.style import enrich_cog_assets
 
 logger = logging.getLogger(__name__)
@@ -528,21 +532,37 @@ def _ensure_tabular_collection(
         bbox=final_bbox,
     )
 
-    # Mark as non-geospatial tabular collection (RULE-0090, ADR-0047)
-    collection.extra_fields["portolan:geospatial"] = False
+    # A tabular-only add never reaches finalize_items, so apply the same
+    # human-authored license metadata.yaml carries for geo collections.
+    apply_human_license(collection, load_merged_metadata(collection_dir, catalog_root))
 
     # Save collection.json
     collection_dir.mkdir(parents=True, exist_ok=True)
     collection.set_self_href(str(collection_json_path))
     collection.save_object()
 
+    # ...and the same root/parent link repair, which pystac's save_object skips.
+    _fix_collection_links(collection_json_path, catalog_root, collection_dir)
+
     # Update catalog links to include this collection
     _update_catalog_links(catalog_root, collection_id)
 
     # Issue #502: backfill the human-readable title onto the new child link.
-    from portolan_cli.catalog import ensure_link_titles
+    from portolan_cli.catalog import ensure_link_titles, ensure_schema_uris
 
     ensure_link_titles(catalog_root)
+
+    # ADR-0052 / issue #654: the same conformance artifacts finalize_items writes
+    # — AGENTS.md, the profile schema URI, README.md and its describedby link.
+    from portolan_cli.agents_md import ensure_agents_md_tree
+    from portolan_cli.readme import ensure_readmes
+
+    # Tree-wide, as `finalize_items` does: repairing only the collection just
+    # written left a pre-existing root or subcatalog without its guide, so the
+    # same catalog came out different depending on which path added to it.
+    ensure_agents_md_tree(catalog_root)
+    ensure_schema_uris(catalog_root)
+    ensure_readmes(catalog_root)
 
     # Log based on bbox source (ADR-0047 priority order)
     if bbox_source == "metadata.yaml":
@@ -1432,7 +1452,7 @@ def _update_item_with_asset(
         return
 
     # Load existing item
-    with open(item_json_path) as f:
+    with open(item_json_path, encoding="utf-8") as f:
         item_data = json.load(f)
 
     # Find the primary data file by checking existing assets first (Issue #190).
@@ -1497,7 +1517,7 @@ def _update_item_with_asset(
     }
 
     # Write updated item
-    with open(item_json_path, "w") as f:
+    with open(item_json_path, "w", encoding="utf-8") as f:
         json.dump(item_data, f, indent=2)
 
     # Detect if this is a collection-level asset
@@ -1534,7 +1554,7 @@ def _update_collection_with_asset(
         return
 
     # Load existing collection
-    with open(collection_json_path) as f:
+    with open(collection_json_path, encoding="utf-8") as f:
         collection_data = json.load(f)
 
     # Add asset to collection
@@ -1561,9 +1581,9 @@ def _update_collection_with_asset(
         "type": media_type,
         "roles": [role],
         "file:size": file_size,
-        "file:checksum": f"sha256:{file_checksum}",
+        "file:checksum": multihash_sha256(file_checksum),
     }
 
     # Write updated collection
-    with open(collection_json_path, "w") as f:
+    with open(collection_json_path, "w", encoding="utf-8") as f:
         json.dump(collection_data, f, indent=2)

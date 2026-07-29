@@ -29,7 +29,7 @@ def pmtiles_asset_hrefs(assets: dict[str, Any]) -> list[str]:
     """Return the hrefs of all PMTiles assets in a collection's asset dict.
 
     An asset is a PMTiles asset when its ``type`` is ``application/vnd.pmtiles``
-    or its ``href`` ends in ``.pmtiles``. Shared by the RULE-0061 check and its
+    or its ``href`` ends in ``.pmtiles``. Shared by the PMTiles-link check (rashid PTL-VIZ-003) and its
     ``--fix`` repair so both classify assets identically.
     """
     return [
