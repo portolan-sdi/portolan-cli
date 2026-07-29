@@ -20,7 +20,7 @@ A reviewer should finish a pull request body in under a minute and know what cha
 
 Issues carry the same budget. A bug report needs the reproduction that triggered it, a feature request needs the transcript showing where current behavior falls short, and a task needs the command that will prove it done. Every repo runs these forms, and blank issues are off.
 
-The check fails the pull request. On an issue it applies `needs-rewrite` and comments once.
+The check fails the pull request. On an issue it applies `needs-rewrite` and comments once. Dependabot is exempt, since its body is generated release notes that no person wrote and that it restates on every rebase.
 
 ## Documentation
 
