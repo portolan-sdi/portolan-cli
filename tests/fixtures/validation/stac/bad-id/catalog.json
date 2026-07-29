@@ -1,7 +1,0 @@
-{
-  "type": "Catalog",
-  "stac_version": "1.0.0",
-  "id": "test:catalog/with:special",
-  "description": "Catalog with special characters in ID (fails percent_encoded check)",
-  "links": []
-}

@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 import pystac
 
 from portolan_cli.finalization import _save_collection_with_links
+from portolan_cli.input_hardening import InputValidationError, validate_remote_url
 from portolan_cli.preparation import _validate_collection_id
 from portolan_cli.stac import (
     DEFAULT_LICENSE,
@@ -37,7 +38,6 @@ from portolan_cli.stac import (
     add_via_link,
     create_collection,
 )
-from portolan_cli.validation import InputValidationError, validate_remote_url
 
 # Marks an asset as referenced in place rather than managed (downloaded/
 # converted) by Portolan. Consumers can use this to distinguish in-place

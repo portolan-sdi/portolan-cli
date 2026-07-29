@@ -111,8 +111,7 @@ routes to rio-cogeo, `UNKNOWN`). The extension vocabulary (which set each
 extension belongs to, plus its media type / role / display name) is
 single-sourced in `extension_registry.py` and *derived* into `formats.py`,
 `constants.py`, `scan_classify.py`, and `add.py` (ADR-0055) — edit the
-registry rows, not the frozensets, and the parity test keeps `spec/extensions.md`
-in sync. `CLOUD_NATIVE_EXTENSIONS` is the derived source of truth for "already
+registry rows, not the frozensets. `CLOUD_NATIVE_EXTENSIONS` is the derived source of truth for "already
 cloud-native, skip conversion" (`.fgb`, `.pmtiles`; `.parquet`/`.tif` need
 content inspection; `.zarr`/`.copc.laz` are cloud-native via dedicated branches).
 `convert.py` orchestrates only

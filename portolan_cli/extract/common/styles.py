@@ -267,7 +267,7 @@ def _write_style_file(
     styles_dir.mkdir(parents=True, exist_ok=True)
 
     style_path = styles_dir / f"{name}.json"
-    style_path.write_text(json.dumps(style_dict, indent=2))
+    style_path.write_text(json.dumps(style_dict, indent=2), encoding="utf-8")
 
     return style_path
 

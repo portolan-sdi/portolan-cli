@@ -1,7 +1,7 @@
 # ADR-0056: Hermetic validation against the shipped STAC schemas
 
 ## Status
-Accepted
+Superseded by [ADR-0057](0057-rashid-as-conformance-validator.md): hermetic validation moved into rashid, which ships the STAC closure and profile schema in its own wheel; the CLI's vendored copy is deleted.
 
 ## Context
 

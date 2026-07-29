@@ -1,7 +1,7 @@
 # ADR-0011: MVP Validation Framework
 
 ## Status
-Accepted
+Superseded by [ADR-0057](0057-rashid-as-conformance-validator.md): validation is delegated to rashid; the CLI keeps no rule framework.
 
 ## Context
 

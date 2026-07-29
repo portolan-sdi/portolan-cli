@@ -180,7 +180,7 @@ def write_item_json(item: ItemModel, path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     output_path = path / f"{item.id}.json"
 
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(item.to_dict(), f, indent=2)
 
     return output_path
@@ -201,7 +201,7 @@ def read_item_json(path: Path) -> ItemModel:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     return ItemModel.from_dict(data)

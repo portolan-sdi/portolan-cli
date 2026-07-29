@@ -104,7 +104,7 @@ def load_thumbnail_style(style_path: Path) -> ThumbnailStyle | None:
         ThumbnailStyle if a fill layer was found and parsed, None otherwise.
     """
     try:
-        with open(style_path) as f:
+        with open(style_path, encoding="utf-8") as f:
             style = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         logger.debug("Failed to load style %s: %s", style_path, e)

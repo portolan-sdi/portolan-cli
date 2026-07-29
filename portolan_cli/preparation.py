@@ -56,7 +56,12 @@ from portolan_cli.stac import (
     add_vector_extension,
     create_item,
 )
-from portolan_cli.sync.checksums import compute_checksum, compute_dir_checksum, compute_dir_size
+from portolan_cli.sync.checksums import (
+    compute_checksum,
+    compute_dir_checksum,
+    compute_dir_size,
+    multihash_sha256,
+)
 from portolan_cli.viz.style import enrich_cog_assets
 
 logger = logging.getLogger(__name__)
@@ -264,7 +269,7 @@ def _scan_item_assets(
             # auto-detected values, so they shouldn't appear with OVERWRITE.
             extra_fields={
                 "file:size": file_size,
-                "file:checksum": f"sha256:{file_checksum}",
+                "file:checksum": multihash_sha256(file_checksum),
             },
         )
         asset_files[file_path.name] = (file_path, file_checksum, file_size)

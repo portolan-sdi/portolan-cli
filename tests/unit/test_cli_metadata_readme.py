@@ -651,6 +651,10 @@ class TestReadmeGenerate:
                 "contact:\n  name: N\n  email: a@b.c\nlicense: MIT\n"
             )
 
+            # `init` scaffolds a README (issue #654); remove it so the
+            # assertion below measures what --stdout writes, not what init did.
+            Path("README.md").unlink()
+
             result = runner.invoke(cli, ["readme", "--stdout", "--no-recursive"])
 
             assert result.exit_code == 0

@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from portolan_cli.sync.pull import PullResult
 
 import click
+from rashid.model import Severity as RashidSeverity
 
 from portolan_cli.add import AddFailure, add_files
 from portolan_cli.add_progress import AddProgressReporter, count_files
@@ -32,7 +33,6 @@ from portolan_cli.catalog_list import (
     list_catalog_contents,
 )
 from portolan_cli.collection_id import resolve_collection_id
-from portolan_cli.constants import PORTOLAN_SPEC_VERSION
 from portolan_cli.convert import ConversionResult
 from portolan_cli.discovery import get_sidecars
 from portolan_cli.emit import emit_error, emit_success
@@ -42,7 +42,6 @@ from portolan_cli.output import detail, error, success, warn
 from portolan_cli.output import info as info_output
 from portolan_cli.query import ItemInfo
 from portolan_cli.remove import remove_files
-from portolan_cli.scan.check import check_directory
 from portolan_cli.scan.core import (
     IssueType,
     ScanIssue,
@@ -70,10 +69,13 @@ from portolan_cli.status import CollectionStatus, get_collection_status
 from portolan_cli.temporal import FLEXIBLE_DATETIME
 from portolan_cli.validation import (
     InputValidationError,
-    Severity,
+    annotate_survivors,
+    build_check_payload,
+    build_fix_payload,
+    remediation_for,
+    run_check,
     validate_safe_path,
 )
-from portolan_cli.validation import check as validate_catalog
 
 
 def format_size(size_bytes: int) -> str:
@@ -375,7 +377,7 @@ def init(
         )
 
         # Read back catalog ID for display
-        catalog_data = json.loads(catalog_file.read_text())
+        catalog_data = json.loads(catalog_file.read_text(encoding="utf-8"))
         catalog_id = catalog_data.get("id", "unknown")
 
         if not emit_success(
@@ -976,62 +978,62 @@ def _output_catalog_info(result: Any, *, use_json: bool) -> None:
             info_output(line)
 
 
-def _output_check_json(report: Any, *, mode: str = "all") -> None:
-    """Output check results as JSON envelope.
-
-    Args:
-        report: ValidationReport from metadata validation.
-        mode: Check mode ("metadata", "format", or "all").
-    """
-    data = report.to_dict()
-    data["mode"] = mode
-    data["portolan_spec_version"] = PORTOLAN_SPEC_VERSION
-    data["summary"] = {
-        "total": len(report.results),
-        "passed": sum(1 for r in report.results if r.passed),
-        "errors": len(report.errors),
-        "warnings": len(report.warnings),
-    }
-
-    if report.passed:
-        envelope = success_envelope("check", data)
-    else:
-        errors = [ErrorDetail(type="ValidationError", message=r.message) for r in report.errors]
-        envelope = error_envelope("check", errors, data=data)
-
-    output_json_envelope(envelope)
+def _print_finding(finding: Any, requirement: str) -> None:
+    """Print one rashid finding: rule id, path, message, then how to resolve it."""
+    render = {
+        RashidSeverity.ERROR: error,
+        RashidSeverity.WARNING: warn,
+    }.get(finding.severity, info_output)
+    render(f"{finding.rule_id} {finding.path}: {finding.message}")
+    if finding.fix_hint:
+        detail(f"  Fix: {finding.fix_hint}")
+    elif requirement:
+        detail(f"  Requires: {requirement}")
 
 
-def _print_validation_result(result: Any) -> None:
-    """Print a single validation result with appropriate formatting."""
-    msg = f"{result.rule_name}: {result.message}"
-    if result.passed:
-        success(msg)
-    elif result.severity == Severity.ERROR:
-        error(msg)
-    elif result.severity == Severity.WARNING:
-        warn(msg)
-    else:
-        info_output(msg)
+def _print_findings(report: Any, *, verbose: bool) -> None:
+    """Print findings grouped by severity, worst first."""
+    groups = (
+        ("Errors", report.errors),
+        ("Warnings", report.warnings),
+        ("Suggestions", report.infos if verbose else []),
+    )
+    for heading, findings in groups:
+        if not findings:
+            continue
+        info_output(f"{heading} ({len(findings)}):")
+        for finding in findings:
+            _print_finding(finding, remediation_for(finding.rule_id).requirement)
 
-    if not result.passed and result.fix_hint:
-        detail(f"  Hint: {result.fix_hint}")
 
-
-def _print_check_summary(report: Any) -> None:
-    """Print check summary message."""
-    if report.passed:
-        success("All validation checks passed")
-        return
-
+def _print_check_summary(report: Any, *, strict: bool) -> None:
+    """Print the one-line verdict for a rashid report."""
     error_count = len(report.errors)
     warning_count = len(report.warnings)
+
+    if not error_count and not (strict and warning_count):
+        success(f"Catalog conforms ({report.files_checked} file(s) checked)")
+        return
+
     parts = []
     if error_count:
         parts.append(f"{error_count} error{'s' if error_count != 1 else ''}")
     if warning_count:
         parts.append(f"{warning_count} warning{'s' if warning_count != 1 else ''}")
-    error(f"Validation failed: {', '.join(parts)}")
+    error(f"Catalog does not conform: {', '.join(parts)}")
+
+
+def _print_remediation_split(payload: dict[str, Any]) -> None:
+    """Tell the user which findings `--fix` handles and which need them."""
+    counts = payload.get("counts_by_remediation")
+    if not counts or not any(counts.values()):
+        return
+    if counts["auto"]:
+        detail(f"  {counts['auto']} fixable by `portolan check --fix`")
+    if counts["instruct"]:
+        detail(f"  {counts['instruct']} need a decision (see Requires: lines)")
+    if counts["external"]:
+        detail(f"  {counts['external']} are hosting-server settings")
 
 
 def _print_format_check_results(report: Any, *, verbose: bool = False) -> None:
@@ -1069,50 +1071,24 @@ def _print_format_check_results(report: Any, *, verbose: bool = False) -> None:
             detail(f"  {f.relative_path} ({f.display_name})")
 
 
-def _output_combined_check_json(
-    metadata_report: Any | None,
-    format_report: Any | None,
-    *,
-    mode: str = "all",
-) -> None:
-    """Output combined check results as JSON envelope.
+def _output_check_json(payload: dict[str, Any], *, failed: bool) -> None:
+    """Wrap the validation payload in the standard output envelope.
 
-    Args:
-        metadata_report: Optional ValidationReport from metadata validation.
-        format_report: Optional CheckReport from format checking.
-        mode: Check mode ("metadata", "format", or "all").
+    The envelope's error list names the failing rule ids so an agent reading
+    only the envelope still learns what broke; the full findings, with fix hints
+    and remediation buckets, sit in ``data``.
     """
-    data: dict[str, Any] = {"mode": mode, "portolan_spec_version": PORTOLAN_SPEC_VERSION}
-    errors: list[ErrorDetail] = []
+    if not failed:
+        output_json_envelope(success_envelope("check", payload))
+        return
 
-    if metadata_report is not None:
-        data["metadata"] = metadata_report.to_dict()
-        data["metadata"]["summary"] = {
-            "total": len(metadata_report.results),
-            "passed": sum(1 for r in metadata_report.results if r.passed),
-            "errors": len(metadata_report.errors),
-            "warnings": len(metadata_report.warnings),
-        }
-        if metadata_report.errors:
-            errors.extend(
-                [
-                    ErrorDetail(type="ValidationError", message=r.message)
-                    for r in metadata_report.errors
-                ]
-            )
-
-    if format_report is not None:
-        data["format"] = format_report.to_dict()
-
-    # Determine overall success
-    has_errors = bool(errors)
-
-    if has_errors:
-        envelope = error_envelope("check", errors, data=data)
-    else:
-        envelope = success_envelope("check", data)
-
-    output_json_envelope(envelope)
+    findings = payload.get("findings", [])
+    errors = [
+        ErrorDetail(type=finding["rule_id"], message=finding["message"])
+        for finding in findings
+        if finding["severity"] == "error"
+    ] or [ErrorDetail(type="ValidationError", message="Catalog does not conform")]
+    output_json_envelope(error_envelope("check", errors, data=payload))
 
 
 @cli.command()
@@ -1162,7 +1138,36 @@ def _output_combined_check_json(
 @click.option(
     "--strict",
     is_flag=True,
-    help="Enable strict STAC validation (includes geometry checks)",
+    help="Fail on warnings as well as errors",
+)
+@click.option(
+    "--live",
+    is_flag=True,
+    help="Probe the published host over HTTP for Range support and CORS headers",
+)
+@click.option(
+    "--url",
+    "public_url",
+    default=None,
+    help="Base URL the catalog is published under (overrides publish.public_url)",
+)
+@click.option(
+    "--no-data",
+    "no_data",
+    is_flag=True,
+    help="Skip the data pass; validate metadata without reading asset bytes",
+)
+@click.option(
+    "--no-structural",
+    "no_structural",
+    is_flag=True,
+    help="Skip the STAC 1.1.0 structural pass",
+)
+@click.option(
+    "--schema",
+    is_flag=True,
+    help="Also validate against the Portolan profile JSON Schema (restates hand-rule "
+    "findings; useful on catalogs produced by other tooling)",
 )
 @click.pass_context
 def check(
@@ -1178,32 +1183,39 @@ def check(
     metadata: bool,
     geo_assets: bool,
     strict: bool,
+    live: bool,
+    public_url: str | None,
+    no_data: bool,
+    no_structural: bool,
+    schema: bool,
 ) -> None:
-    """Validate a Portolan catalog or check files for cloud-native status.
+    """Validate a Portolan catalog against the Portolan spec.
 
-    Runs validation rules against the catalog and reports any issues.
-    With --fix, applies fixes based on selected scope.
+    Validation runs on rashid, which reports PTL-* rule ids citing the spec
+    requirements they enforce. By default it checks metadata, STAC 1.1.0
+    structure, and the asset bytes themselves; every pass is offline.
+    With --fix, applies the mechanical repairs and re-checks.
 
     PATH is the directory to check (default: current directory).
 
     Use --metadata or --geo-assets to limit scope:
-    - --metadata: Only check/fix STAC metadata (staleness, missing items)
-    - --geo-assets: Only check/fix geospatial assets (cloud-native status)
-    - Neither: Check/fix both (default)
+    - --metadata: Only validate the catalog (its own metadata, structure, data)
+    - --geo-assets: Only check source files on disk for cloud-native status
+    - Neither: Both (default)
 
     Examples:
 
         portolan check                        # Validate all (metadata + geo-assets)
 
-        portolan check --metadata             # Validate metadata only
+        portolan check --metadata             # Validate the catalog only
 
-        portolan check --geo-assets           # Check geo-assets only
+        portolan check --geo-assets           # Check source files only
 
-        portolan check --fix                  # Fix both metadata and geo-assets
+        portolan check --no-data              # Skip reading asset bytes (faster)
 
-        portolan check --metadata --fix       # Fix only metadata (create/update items)
+        portolan check --live                 # Also probe the published host
 
-        portolan check --geo-assets --fix     # Fix only geo-assets (convert files)
+        portolan check --fix                  # Fix what can be fixed, then re-check
 
         portolan check --fix --dry-run        # Preview all fixes
     """
@@ -1246,25 +1258,29 @@ def check(
         use_json=use_json,
         verbose=verbose,
         strict=strict,
+        live=live,
+        public_url=public_url,
+        data=not no_data,
+        structural=not no_structural,
+        schema=schema,
     )
 
 
-def _output_fix_json(
+def _fix_json_section(
     *,
-    mode: str,
     metadata_fix_report: FixReport | None,
     format_fix_report: Any,
-    has_failures: bool,
-) -> None:
-    """Output combined fix results as JSON.
+) -> dict[str, Any]:
+    """Build the ``fix`` section of the check payload.
 
     Args:
-        mode: Check mode string.
         metadata_fix_report: Results from metadata fix (if run).
         format_fix_report: Results from geo-asset fix (if run).
-        has_failures: Whether any fix operation failed.
+
+    Returns:
+        The fix results, keyed by which repair produced them.
     """
-    data: dict[str, Any] = {"mode": mode, "portolan_spec_version": PORTOLAN_SPEC_VERSION}
+    data: dict[str, Any] = {}
 
     if metadata_fix_report is not None:
         if not isinstance(metadata_fix_report, FixReport):
@@ -1275,21 +1291,11 @@ def _output_fix_json(
         # Use "conversion" key for backward compatibility with existing tests
         data["conversion"] = format_fix_report.to_dict()
 
-    # Use error_envelope if there were failures
-    if has_failures:
-        envelope = error_envelope(
-            "check",
-            [ErrorDetail(type="FixError", message="Some fixes failed")],
-            data=data,
-        )
-    else:
-        envelope = success_envelope("check", data)
-    output_json_envelope(envelope)
+    return data
 
 
 def _output_fix_human(
     *,
-    mode: str,
     metadata_fix_report: FixReport | None,
     format_fix_report: Any,
     verbose: bool,
@@ -1298,7 +1304,6 @@ def _output_fix_human(
     """Output combined fix results in human-readable format.
 
     Args:
-        mode: Check mode string.
         metadata_fix_report: Results from metadata fix (if run).
         format_fix_report: Results from geo-asset fix (if run).
         verbose: Show detailed output.
@@ -1393,25 +1398,46 @@ def _execute_check_workflow(
     strict: bool = False,
     force: bool = False,
     workers: int | None = None,
+    live: bool = False,
+    public_url: str | None = None,
+    data: bool = True,
+    structural: bool = True,
+    schema: bool = False,
 ) -> None:
     """Execute the check workflow based on flags.
 
-    The workflow varies based on scope (--metadata, --geo-assets) and --fix:
-    - Without --fix: run validation and report issues
-    - With --fix: run validation AND apply fixes for the selected scope
+    Without --fix this validates once and renders the result.
+
+    With --fix the run is check → fix → re-check **exactly once**, never a
+    loop. The first check produces the findings; the AUTO ones dispatch the
+    fixer registry; the second check reports what is left. An AUTO finding that
+    survives the re-check is a fixer that did not resolve it, so it is listed
+    under "Action required" and annotated as such — an agent that kept calling
+    `--fix` on it would spin forever otherwise.
+
+    ``--dry-run`` reports what the fixers would change, writes nothing, and
+    skips the re-check: with no writes there is nothing new to find.
     """
-    from portolan_cli.scan.check import build_check_rules
+    validate_metadata = _should_validate(path, run_metadata=run_metadata, fix=fix)
+    check_kwargs: dict[str, Any] = {
+        "data": data,
+        "structural": structural,
+        "schema": schema,
+        "metadata": validate_metadata,
+        "public_url": public_url,
+        "workers": workers,
+    }
 
-    # Build rules (respects config severity overrides + strict flag)
-    rules = build_check_rules(path, strict=strict)
-
-    # Handle fix workflows (may exit early)
+    fix_data: dict[str, Any] | None = None
+    fix_failed = False
+    pre_outcome = None
     if fix:
-        _run_fix_workflow(
+        pre_outcome = run_check(path, live=False, geo_assets=False, **check_kwargs)
+        fix_data, fix_failed = _run_fix_and_repairs(
             path=path,
+            findings=list(pre_outcome.report.findings) if pre_outcome.report else [],
             run_metadata=run_metadata,
             run_geo_assets=run_geo_assets,
-            mode=mode,
             dry_run=dry_run,
             remove_legacy=remove_legacy,
             use_json=use_json,
@@ -1419,51 +1445,293 @@ def _execute_check_workflow(
             force=force,
             workers=workers,
         )
+
+    if fix and dry_run and pre_outcome is not None:
+        outcome = pre_outcome
+    else:
+        outcome = run_check(
+            path,
+            live=live,
+            # --fix already ran the geo-asset conversion; re-scanning would repeat it.
+            geo_assets=run_geo_assets and not fix,
+            **check_kwargs,
+        )
+    payload = build_check_payload(outcome, mode=mode, fix_failed=fix_failed)
+    if fix_data is not None:
+        if dry_run:
+            # A survivor is only knowable from a re-check, and a dry run wrote
+            # nothing to re-check. Annotating here compares the pre-fix findings
+            # against themselves, so every AUTO defect reads as having outlived
+            # a pass that never ran, and `fixed_count` lands on 0 next to the
+            # fixers the same catalog really does repair. Null reports what a
+            # preview knows: nothing was measured.
+            fix_data["survivors"] = None
+            fix_data["fixed_count"] = None
+        else:
+            annotate_survivors(
+                fix_data,
+                outcome,
+                pre_findings=list(pre_outcome.report.findings)
+                if pre_outcome is not None and pre_outcome.report is not None
+                else [],
+            )
+        payload["fix"] = fix_data
+    failed = fix_failed or _check_failed(payload, strict=strict)
+
+    if use_json:
+        _output_check_json(payload, failed=failed)
+    else:
+        post_fix = fix_data is not None and not dry_run
+        _render_check(outcome, payload, verbose=verbose, strict=strict, post_fix=post_fix)
+        if fix_data is not None:
+            _print_fix_split(payload, dry_run=dry_run)
+
+    if failed:
+        raise SystemExit(1)
+
+
+def _print_fix_skips(skipped: dict[str, list[str]]) -> None:
+    """List every fixer that ran and changed nothing, with its reason."""
+    if not skipped:
+        return
+    info_output(f"Skipped ({len(skipped)}):")
+    for fixer_key, reasons in skipped.items():
+        detail(f"  {fixer_key}: {reasons[0] if reasons else 'nothing to change'}")
+
+
+def _print_fix_split(payload: dict[str, Any], *, dry_run: bool = False) -> None:
+    """Render the post-fix verdict: what --fix handled, what still needs a person.
+
+    The "Action required" list is the agent's stopping condition — every entry
+    carries the imperative requirement for the defect, and a survivor of an AUTO
+    fixer says so, so nobody re-runs --fix hoping for a different answer.
+
+    "Applied" names only fixers that changed something, and every fixer that ran
+    without changing anything is listed with its reason at default verbosity: a
+    skip an operator cannot see reads as a silent success.
+
+    Under ``dry_run`` the report stops after the selection. No re-check ran, so
+    there is no survivor set to annotate and no repair count to give. What a
+    preview can honestly report is which fixers the findings selected and how
+    many AUTO defects they were selected against. A dry run keeps the findings
+    list above, which already carries the requirement for each one.
+    """
+    fix_data: dict[str, Any] = payload.get("fix", {})
+    applied = fix_data.get("applied", [])
+    skipped: dict[str, list[str]] = fix_data.get("skipped", {})
+
+    if dry_run:
+        success(f"Would fix automatically ({fix_data.get('auto_count', 0)})")
+        if applied:
+            detail(f"  Would apply: {', '.join(applied)}")
+        _print_fix_skips(skipped)
         return
 
-    # Check-only workflows (no --fix)
-    if run_metadata and not run_geo_assets:
-        # Metadata only
-        metadata_report = validate_catalog(path, rules=rules)
-        _output_metadata_only(metadata_report, mode, use_json, verbose)
-    elif run_geo_assets and not run_metadata:
-        # Geo-assets only
-        _output_format_only(path, mode, use_json, verbose)
-    else:
-        # Both (combined)
-        metadata_report = validate_catalog(path, rules=rules)
-        _output_combined(path, metadata_report, mode, use_json, verbose)
+    survivors = {
+        (item["rule_id"], item["path"], item.get("json_pointer"), item.get("index", 0))
+        for item in fix_data.get("survivors") or []
+    }
+    findings = payload.get("findings", [])
+
+    success(f"Fixed automatically ({fix_data.get('fixed_count', 0)})")
+    if applied:
+        detail(f"  Applied: {', '.join(applied)}")
+    _print_fix_skips(skipped)
+
+    if not findings:
+        return
+    info_output(f"Action required ({len(findings)}):")
+    seen: dict[tuple[str, str | None, str | None], int] = {}
+    for finding in findings:
+        requirement = (
+            finding.get("requirement") or finding.get("fix_hint") or finding.get("message", "")
+        )
+        line = f"{finding['rule_id']} {finding['path']}: {requirement}"
+        key = (finding["rule_id"], finding["path"], finding.get("json_pointer"))
+        index = seen.get(key, 0)
+        seen[key] = index + 1
+        if (*key, index) in survivors:
+            line += " [the automatic fix did not resolve this]"
+        detail(f"  {line}")
 
 
-def _run_fix_workflow(
+def _should_validate(path: Path, *, run_metadata: bool, fix: bool) -> bool:
+    """Decide whether to validate, given a path that may not be a catalog at all.
+
+    Mirrors the rule ``check.run_fix_workflow`` already applies to its metadata
+    repair: a mixed-scope ``--fix`` over a directory with no catalog.json still
+    converts the source files and skips metadata, rather than failing on a
+    catalog the user never claimed to have. The re-check has to make the same
+    allowance or ``--fix`` would report PTL-GEN-000 on work that succeeded.
+
+    Without ``--fix``, a missing catalog is reported: `check` on a
+    non-catalog directory has always exited non-zero.
+    """
+    if not run_metadata or not fix:
+        return run_metadata
+
+    from portolan_cli.scan.check import resolve_catalog_root_for_check
+
+    return resolve_catalog_root_for_check(path) is not None
+
+
+def _check_failed(payload: dict[str, Any], *, strict: bool) -> bool:
+    """Decide the exit code: errors always fail, warnings only under --strict.
+
+    The workflow notice (unregistered or vanished data files) is not a
+    conformance defect, so on its own it never flips a default run. Under
+    ``--strict``, where a catalog is asserted to be publishable, an unaccounted
+    file is a failure.
+    """
+    if payload.get("error_count"):
+        return True
+    if not strict:
+        return False
+    return bool(payload.get("warning_count")) or bool(payload.get("workflow"))
+
+
+def _render_check(
+    outcome: Any,
+    payload: dict[str, Any],
+    *,
+    verbose: bool,
+    strict: bool,
+    post_fix: bool = False,
+) -> None:
+    """Render the human-readable check result.
+
+    After ``--fix`` the per-finding list and the remediation split are dropped:
+    :func:`_print_fix_split` says the same things better, naming what was fixed
+    and giving every remaining finding its requirement. Printing both listed each
+    survivor twice. ``--verbose`` keeps the raw findings for the detail.
+    """
+    if outcome.legacy_note is not None:
+        warn(outcome.legacy_note)
+    if outcome.workflow_notice is not None:
+        warn(outcome.workflow_notice.message)
+
+    if outcome.report is not None:
+        if verbose or not post_fix:
+            _print_findings(outcome.report, verbose=verbose)
+        _print_check_summary(outcome.report, strict=strict)
+        if not post_fix:
+            _print_remediation_split(payload)
+
+    if outcome.format_report is not None:
+        info_output("Source files:")
+        _print_format_check_results(outcome.format_report, verbose=verbose)
+
+    if outcome.live_hint is not None:
+        info_output(outcome.live_hint.message)
+
+
+def _run_fix_and_repairs(
     *,
     path: Path,
+    findings: list[Any],
     run_metadata: bool,
     run_geo_assets: bool,
-    mode: str,
     dry_run: bool,
     remove_legacy: bool,
     use_json: bool,
     verbose: bool,
     force: bool = False,
     workers: int | None = None,
-) -> None:
-    """Run the check --fix workflow (library) and render its results.
+) -> tuple[dict[str, Any], bool]:
+    """Apply the fixer registry, then the metadata/geo-asset fix workflow.
 
-    Delegates the fix orchestration to ``check.run_fix_workflow`` and only wires
-    up the progress callback, output rendering, and exit codes here (ADR-0007).
+    Two halves that do not overlap. The registry
+    (:func:`portolan_cli.validation.fixers.apply_fixers`) owns everything a
+    rashid finding names — titles, links, schema URI, README/AGENTS.md,
+    checksums, extents. ``check.run_fix_workflow`` owns item freshness, which no
+    rule reports because it compares the catalog against files on disk rather
+    than against the spec. Conversion belongs to both, so the registry's
+    ``convert`` key is skipped whenever the geo-asset pass is in scope.
 
     Args:
         path: Directory to check/fix.
+        findings: Findings from the pre-fix check; the AUTO ones pick fixers.
         run_metadata: Whether to fix metadata issues.
         run_geo_assets: Whether to fix geo-asset format issues.
-        mode: Mode string for JSON output.
         dry_run: Preview changes without applying them.
         remove_legacy: Remove source files after successful conversion.
-        use_json: Output JSON envelope.
+        use_json: Suppress human rendering; return the data instead.
         verbose: Show detailed output.
         force: Re-optimize already-valid COGs (raster-scoped, issue #530).
         workers: Parallel worker processes for conversion.
+
+    Returns:
+        The JSON ``fix`` section and whether a fix failed.
+    """
+    from portolan_cli.scan.check import resolve_catalog_root_for_check
+    from portolan_cli.validation.fixers import apply_fixers
+
+    fixer_report = FixReport()
+    applied: list[str] = []
+    selected: list[str] = []
+    skip_reasons: dict[str, list[str]] = {}
+    if run_metadata and findings:
+        catalog_root = resolve_catalog_root_for_check(path) or path
+        skip = {"convert"} if run_geo_assets else set()
+        run = apply_fixers(catalog_root, findings, dry_run=dry_run, skip=skip)
+        fixer_report = run.report
+        # What the fixers *did*, not what the findings asked for: a fixer that
+        # ran and changed nothing is a skip with a reason, never an "Applied".
+        applied = run.applied
+        selected = run.selected
+        skip_reasons = run.skip_reasons
+
+    legacy_data, legacy_failed = _run_legacy_fix_workflow(
+        path=path,
+        run_metadata=run_metadata,
+        run_geo_assets=run_geo_assets,
+        dry_run=dry_run,
+        remove_legacy=remove_legacy,
+        use_json=use_json,
+        verbose=verbose,
+        force=force,
+        workers=workers,
+    )
+
+    if not use_json:
+        _output_fix_human(
+            metadata_fix_report=fixer_report,
+            format_fix_report=None,
+            verbose=verbose,
+            dry_run=dry_run,
+        )
+
+    fix_data = build_fix_payload(
+        legacy=legacy_data,
+        fixer_report=fixer_report,
+        applied=applied,
+        selected=selected,
+        skipped=skip_reasons,
+        pre_findings=findings,
+        dry_run=dry_run,
+    )
+    return fix_data, legacy_failed or fixer_report.failure_count > 0
+
+
+def _run_legacy_fix_workflow(
+    *,
+    path: Path,
+    run_metadata: bool,
+    run_geo_assets: bool,
+    dry_run: bool,
+    remove_legacy: bool,
+    use_json: bool,
+    verbose: bool,
+    force: bool = False,
+    workers: int | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """Run item-freshness and geo-asset conversion, and render their results.
+
+    Delegates the orchestration to ``check.run_fix_workflow`` and only wires up
+    the progress callback and output rendering here (ADR-0007).
+
+    Returns:
+        The fix reports as JSON data and whether a fix failed.
     """
     from portolan_cli.scan.check import run_fix_workflow
 
@@ -1491,95 +1759,28 @@ def _run_fix_workflow(
     metadata_fix_report = outcome.metadata_fix_report
     format_fix_report = outcome.format_fix_report
 
-    # Output results
-    if use_json:
-        _output_fix_json(
-            mode=mode,
-            metadata_fix_report=metadata_fix_report,
-            format_fix_report=format_fix_report,
-            has_failures=outcome.has_failures,
-        )
-    else:
+    conversion_failed = bool(
+        format_fix_report
+        and format_fix_report.conversion_report
+        and format_fix_report.conversion_report.failed > 0
+    )
+    failed = outcome.has_failures or conversion_failed
+
+    if not use_json:
         _output_fix_human(
-            mode=mode,
             metadata_fix_report=metadata_fix_report,
             format_fix_report=format_fix_report,
             verbose=verbose,
             dry_run=dry_run,
         )
 
-    # Exit with error if any failures
-    if outcome.has_failures:
-        raise SystemExit(1)
-    # Also exit with error if format conversion had failures
-    if (
-        format_fix_report
-        and format_fix_report.conversion_report
-        and format_fix_report.conversion_report.failed > 0
-    ):
-        raise SystemExit(1)
-
-
-def _output_metadata_only(report: Any, mode: str, use_json: bool, verbose: bool) -> None:
-    """Output metadata-only check results."""
-    if use_json:
-        _output_check_json(report, mode=mode)
-    else:
-        for result in report.results:
-            if verbose or not result.passed:
-                _print_validation_result(result)
-        _print_check_summary(report)
-    if report.errors:
-        raise SystemExit(1)
-
-
-def _output_format_only(path: Path, mode: str, use_json: bool, verbose: bool) -> None:
-    """Output format-only check results."""
-    format_report = check_directory(path, fix=False, dry_run=False, catalog_path=path)
-    if use_json:
-        data = format_report.to_dict()
-        data["mode"] = mode
-        data["portolan_spec_version"] = PORTOLAN_SPEC_VERSION
-        envelope = success_envelope("check", data)
-        output_json_envelope(envelope)
-    else:
-        _print_format_check_results(format_report, verbose=verbose)
-
-
-def _output_combined(
-    path: Path, metadata_report: Any, mode: str, use_json: bool, verbose: bool
-) -> None:
-    """Output combined metadata + format check results.
-
-    Args:
-        path: Directory that was checked.
-        metadata_report: ValidationReport from metadata validation.
-        mode: Check mode string for JSON output.
-        use_json: Whether to output JSON envelope.
-        verbose: Whether to show detailed output.
-
-    Raises:
-        SystemExit: If metadata validation has errors.
-    """
-    format_report = check_directory(path, fix=False, dry_run=False, catalog_path=path)
-    has_metadata_errors = metadata_report is not None and bool(metadata_report.errors)
-
-    if use_json:
-        _output_combined_check_json(metadata_report, format_report, mode=mode)
-    else:
-        if metadata_report:
-            info_output("Metadata validation:")
-            for result in metadata_report.results:
-                if verbose or not result.passed:
-                    _print_validation_result(result)
-            _print_check_summary(metadata_report)
-        if format_report:
-            info_output("\nFormat check:")
-            _print_format_check_results(format_report, verbose=verbose)
-
-    # Exit with error if metadata validation failed
-    if has_metadata_errors:
-        raise SystemExit(1)
+    return (
+        _fix_json_section(
+            metadata_fix_report=metadata_fix_report,
+            format_fix_report=format_fix_report,
+        ),
+        failed,
+    )
 
 
 def _print_check_fix_preview(report: Any) -> None:
@@ -4753,7 +4954,7 @@ def metadata_init(
 
     # Generate and write template
     template = generate_metadata_template()
-    metadata_file.write_text(template)
+    metadata_file.write_text(template, encoding="utf-8")
 
     if use_json:
         relative_path = str(metadata_file.relative_to(catalog_path))
@@ -4951,7 +5152,7 @@ def _generate_readme_content(
             _verbose_readme(
                 f"Reading {stac_file} from {dir_prefix or 'catalog root'}", verbose, use_json
             )
-            stac = json.loads(stac_path.read_text())
+            stac = json.loads(stac_path.read_text(encoding="utf-8"))
             break
 
     # Load merged metadata
@@ -5090,7 +5291,7 @@ def _metadata_init_recursive(
         if metadata_file.exists() and not force:
             return False
         portolan_dir.mkdir(parents=True, exist_ok=True)
-        metadata_file.write_text(generate_metadata_template())
+        metadata_file.write_text(generate_metadata_template(), encoding="utf-8")
         return True
 
     def _process_dir(dirpath: Path, rel_path: str) -> None:
@@ -5285,10 +5486,10 @@ def _process_readme_entry(
         stale: List to append stale paths.
     """
     if check:
-        is_fresh = readme_path.exists() and readme_path.read_text() == content
+        is_fresh = readme_path.exists() and readme_path.read_text(encoding="utf-8") == content
         (generated if is_fresh else stale).append(rel_path)
     else:
-        readme_path.write_text(content)
+        readme_path.write_text(content, encoding="utf-8")
         generated.append(rel_path)
 
 
@@ -5509,7 +5710,9 @@ def readme(
 
     if check:
         # Compare existing README against freshly generated content
-        is_fresh = readme_path.exists() and readme_path.read_text() == readme_content
+        is_fresh = (
+            readme_path.exists() and readme_path.read_text(encoding="utf-8") == readme_content
+        )
 
         if use_json:
             envelope = success_envelope(
@@ -5531,7 +5734,7 @@ def readme(
         click.echo(readme_content)
     else:
         # Write to file
-        readme_path.write_text(readme_content)
+        readme_path.write_text(readme_content, encoding="utf-8")
         if not emit_success(
             "readme",
             {"path": str(readme_path.relative_to(catalog_path)), "generated": True},
@@ -7503,7 +7706,7 @@ def _discover_collections_with_items(catalog_root: Path) -> list[str]:
     Returns:
         Sorted list of collection IDs relative to catalog_root.
     """
-    import json
+    from portolan_cli.stac_parquet import count_items
 
     collections: list[str] = []
 
@@ -7513,13 +7716,10 @@ def _discover_collections_with_items(catalog_root: Path) -> list[str]:
         if ".portolan" in collection_file.parts:
             continue
 
-        # Check if collection has any items
+        # Check if collection owns any items, including those an organizing
+        # catalog groups beneath it (core.md:168-170)
         try:
-            data = json.loads(collection_file.read_text())
-            links = data.get("links", [])
-            has_items = any(link.get("rel") == "item" for link in links)
-
-            if has_items:
+            if count_items(collection_file.parent) > 0:
                 # Get relative path as collection ID
                 rel_path = collection_file.parent.relative_to(catalog_root)
                 collections.append(str(rel_path))

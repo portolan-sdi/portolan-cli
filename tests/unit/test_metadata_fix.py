@@ -127,13 +127,71 @@ class TestFixReport:
                     message="Failed",
                 ),
             ],
-            skipped_count=2,
+            fresh_skipped=2,
         )
 
         assert report.total_count == 2
         assert report.success_count == 1
         assert report.failure_count == 1
         assert report.skipped_count == 2
+
+    @pytest.mark.unit
+    def test_skipped_results_do_not_count_as_fixes(self) -> None:
+        """A SKIPPED result is skipped, not a "fix" (honest accounting, C1)."""
+        from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
+
+        report = FixReport(
+            results=[
+                FixResult(
+                    file_path=Path("a.parquet"),
+                    action=FixAction.CREATED,
+                    success=True,
+                    message="Created item",
+                ),
+                FixResult(
+                    file_path=Path("b.parquet"),
+                    action=FixAction.UPDATED,
+                    success=False,
+                    message="Failed",
+                ),
+                FixResult(
+                    file_path=Path("c.parquet"),
+                    action=FixAction.SKIPPED,
+                    success=True,
+                    message="Cannot auto-fix orphan",
+                ),
+            ],
+            fresh_skipped=3,
+        )
+
+        assert report.total_count == 2
+        assert report.success_count == 1
+        assert report.failure_count == 1
+        assert report.skipped_count == 4
+
+    @pytest.mark.unit
+    def test_to_dict_reports_the_derived_counts(self) -> None:
+        from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
+
+        report = FixReport(
+            results=[
+                FixResult(
+                    file_path=Path("a.parquet"),
+                    action=FixAction.SKIPPED,
+                    success=True,
+                    message="Cannot auto-fix orphan",
+                ),
+            ],
+            fresh_skipped=1,
+        )
+
+        assert report.to_dict() == {
+            "total_count": 0,
+            "success_count": 0,
+            "failure_count": 0,
+            "skipped_count": 2,
+            "results": [report.results[0].to_dict()],
+        }
 
     @pytest.mark.unit
     def test_fix_report_to_dict(self) -> None:
@@ -149,7 +207,7 @@ class TestFixReport:
                     message="Created item",
                 ),
             ],
-            skipped_count=1,
+            fresh_skipped=1,
         )
 
         result = report.to_dict()
