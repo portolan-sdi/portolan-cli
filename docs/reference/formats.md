@@ -75,9 +75,14 @@ conversion:
   cog:
     compression: DEFLATE  # DEFLATE, LZW, ZSTD, JPEG, WEBP
     tile_size: 512        # 256, 512, 1024
-    predictor: 2          # 1=none, 2=horizontal, 3=floating-point
-    resampling: nearest   # nearest, bilinear, cubic, lanczos, average
+    predictor: auto       # auto, 1=none, 2=horizontal, 3=floating-point
+    resampling: auto      # auto, nearest, bilinear, cubic, lanczos, average
     quality: 75           # JPEG/WEBP quality (1-100)
 ```
+
+`auto` derives the setting from the source raster's dtype: floats get predictor 3
+and `average` overviews, integers get predictor 2 and `nearest`, and multi-band
+uint8 imagery gets no predictor. See
+[COG settings](configuration.md#cog-settings) for the full table.
 
 See `get_cog_settings()` and `CogSettings` for programmatic access.

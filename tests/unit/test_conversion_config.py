@@ -415,8 +415,8 @@ class TestCogSettingsDataclass:
         assert settings.compression == "DEFLATE"
         assert settings.quality is None  # Only applies to JPEG
         assert settings.tile_size == 512
-        assert settings.predictor == 2
-        assert settings.resampling == "nearest"
+        assert settings.predictor == "auto"  # Derived from the source raster
+        assert settings.resampling == "auto"  # Derived from the source raster
 
     @pytest.mark.unit
     def test_custom_jpeg_settings(self) -> None:
@@ -469,9 +469,9 @@ class TestGetCogSettings:
         settings = get_cog_settings(tmp_path)
 
         assert settings.compression == "DEFLATE"
-        assert settings.predictor == 2
+        assert settings.predictor == "auto"
         assert settings.tile_size == 512
-        assert settings.resampling == "nearest"
+        assert settings.resampling == "auto"
 
     @pytest.mark.unit
     def test_loads_compression_from_config(self, tmp_path: Path) -> None:
@@ -531,9 +531,9 @@ conversion:
         settings = get_cog_settings(tmp_path)
 
         assert settings.compression == "LZW"
-        assert settings.predictor == 2  # Default
+        assert settings.predictor == "auto"  # Default
         assert settings.tile_size == 512  # Default
-        assert settings.resampling == "nearest"  # Default
+        assert settings.resampling == "auto"  # Default
 
     @pytest.mark.unit
     def test_handles_missing_conversion_section(self, tmp_path: Path) -> None:
@@ -1268,3 +1268,201 @@ conversion:
         settings = get_vector_settings(tmp_path)
 
         assert settings.partition is False
+
+
+# =============================================================================
+# COG Defaults Derived From the Source Raster (Issue #690)
+# =============================================================================
+
+
+def _write_raster(path: Path, *, dtype: str, count: int = 1) -> Path:
+    """Write a tiny GeoTIFF used to exercise default derivation."""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    profile = {
+        "driver": "GTiff",
+        "height": 8,
+        "width": 8,
+        "count": count,
+        "dtype": dtype,
+        "crs": "EPSG:4326",
+        "transform": from_origin(0, 8, 1, 1),
+    }
+    with rasterio.open(path, "w", **profile) as dst:
+        for band in range(1, count + 1):
+            dst.write(np.zeros((8, 8), dtype=dtype), band)
+    return path
+
+
+class TestDeriveCogDefaults:
+    """Tests for derive_cog_defaults()."""
+
+    @pytest.mark.unit
+    def test_float_raster_gets_floating_point_predictor_and_average(self, tmp_path: Path) -> None:
+        """Continuous float data gets predictor 3 and average overviews."""
+        from portolan_cli.conversion_config import derive_cog_defaults
+
+        source = _write_raster(tmp_path / "elevation.tif", dtype="float32")
+
+        predictor, resampling = derive_cog_defaults(source)
+
+        assert predictor == 3
+        assert resampling == "average"
+
+    @pytest.mark.unit
+    def test_float64_raster_also_gets_floating_point_predictor(self, tmp_path: Path) -> None:
+        """float64 is treated the same as float32."""
+        from portolan_cli.conversion_config import derive_cog_defaults
+
+        source = _write_raster(tmp_path / "model.tif", dtype="float64")
+
+        assert derive_cog_defaults(source) == (3, "average")
+
+    @pytest.mark.unit
+    def test_integer_raster_keeps_horizontal_predictor_and_nearest(self, tmp_path: Path) -> None:
+        """Integer data may be categorical, so overviews stay class-preserving."""
+        from portolan_cli.conversion_config import derive_cog_defaults
+
+        source = _write_raster(tmp_path / "landcover.tif", dtype="int16")
+
+        assert derive_cog_defaults(source) == (2, "nearest")
+
+    @pytest.mark.unit
+    def test_byte_imagery_skips_the_predictor(self, tmp_path: Path) -> None:
+        """Multi-band uint8 imagery gains nothing from horizontal differencing."""
+        from portolan_cli.conversion_config import derive_cog_defaults
+
+        source = _write_raster(tmp_path / "rgb.tif", dtype="uint8", count=3)
+
+        assert derive_cog_defaults(source) == (1, "nearest")
+
+    @pytest.mark.unit
+    def test_single_band_uint8_keeps_horizontal_predictor(self, tmp_path: Path) -> None:
+        """One-band uint8 is usually a class raster, not imagery."""
+        from portolan_cli.conversion_config import derive_cog_defaults
+
+        source = _write_raster(tmp_path / "mask.tif", dtype="uint8")
+
+        assert derive_cog_defaults(source) == (2, "nearest")
+
+    @pytest.mark.unit
+    def test_unreadable_source_falls_back_to_conservative_defaults(self, tmp_path: Path) -> None:
+        """An unreadable raster yields the pre-#690 defaults rather than an error."""
+        from portolan_cli.conversion_config import derive_cog_defaults
+
+        broken = tmp_path / "broken.tif"
+        broken.write_text("not a raster")
+
+        assert derive_cog_defaults(broken) == (2, "nearest")
+
+
+class TestResolveCogSettings:
+    """Tests for resolve_cog_settings()."""
+
+    @pytest.mark.unit
+    def test_auto_fields_are_derived_from_source(self, tmp_path: Path) -> None:
+        """Both auto fields are filled in from the raster."""
+        from portolan_cli.conversion_config import CogSettings, resolve_cog_settings
+
+        source = _write_raster(tmp_path / "elevation.tif", dtype="float32")
+
+        resolved = resolve_cog_settings(CogSettings(), source)
+
+        assert resolved.predictor == 3
+        assert resolved.resampling == "average"
+
+    @pytest.mark.unit
+    def test_explicit_values_win_over_derivation(self, tmp_path: Path) -> None:
+        """A configured predictor or resampling method is never overridden."""
+        from portolan_cli.conversion_config import CogSettings, resolve_cog_settings
+
+        source = _write_raster(tmp_path / "elevation.tif", dtype="float32")
+
+        resolved = resolve_cog_settings(CogSettings(predictor=1, resampling="bilinear"), source)
+
+        assert resolved.predictor == 1
+        assert resolved.resampling == "bilinear"
+
+    @pytest.mark.unit
+    def test_one_auto_field_resolves_independently(self, tmp_path: Path) -> None:
+        """Auto and explicit fields can be mixed."""
+        from portolan_cli.conversion_config import CogSettings, resolve_cog_settings
+
+        source = _write_raster(tmp_path / "elevation.tif", dtype="float32")
+
+        resolved = resolve_cog_settings(CogSettings(predictor=2), source)
+
+        assert resolved.predictor == 2
+        assert resolved.resampling == "average"
+
+    @pytest.mark.unit
+    def test_other_settings_are_preserved(self, tmp_path: Path) -> None:
+        """Resolution touches only predictor and resampling."""
+        from portolan_cli.conversion_config import CogSettings, resolve_cog_settings
+
+        source = _write_raster(tmp_path / "elevation.tif", dtype="float32")
+
+        resolved = resolve_cog_settings(
+            CogSettings(compression="ZSTD", tile_size=256, generate_thumbnail=False), source
+        )
+
+        assert resolved.compression == "ZSTD"
+        assert resolved.tile_size == 256
+        assert resolved.generate_thumbnail is False
+
+
+class TestAutoSentinelConfig:
+    """Tests for the 'auto' sentinel in config parsing and validation."""
+
+    @pytest.mark.unit
+    def test_defaults_are_auto(self) -> None:
+        """CogSettings defers both raster-dependent settings to the source."""
+        from portolan_cli.conversion_config import CogSettings
+
+        settings = CogSettings()
+
+        assert settings.predictor == "auto"
+        assert settings.resampling == "auto"
+
+    @pytest.mark.unit
+    def test_auto_is_valid(self) -> None:
+        """validate_cog_settings() accepts the sentinel."""
+        from portolan_cli.conversion_config import CogSettings, validate_cog_settings
+
+        assert validate_cog_settings(CogSettings()) == []
+
+    @pytest.mark.unit
+    def test_explicit_auto_in_config(self, tmp_path: Path) -> None:
+        """'auto' can be written out in config.yaml."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("""
+conversion:
+  cog:
+    predictor: auto
+    resampling: auto
+""")
+        settings = get_cog_settings(tmp_path)
+
+        assert settings.predictor == "auto"
+        assert settings.resampling == "auto"
+
+    @pytest.mark.unit
+    def test_unparseable_predictor_falls_back_to_auto(self, tmp_path: Path) -> None:
+        """A non-integer, non-'auto' predictor reverts to derivation."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("""
+conversion:
+  cog:
+    predictor: [2]
+""")
+        settings = get_cog_settings(tmp_path)
+
+        assert settings.predictor == "auto"

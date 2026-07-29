@@ -1181,9 +1181,9 @@ def convert_raster(source: Path, dest_dir: Path) -> Path:
 
     Uses Portolan's opinionated COG defaults (see convert command design):
     - DEFLATE compression (universal compatibility, lossless)
-    - Predictor=2 (horizontal differencing, improves compression)
     - 512x512 tiles (matches rio-cogeo default, fewer HTTP requests)
-    - Nearest resampling (safe for all data types: categorical, imagery, elevation)
+    - Predictor and overview resampling derived from the source raster's dtype
+      (see derive_cog_defaults)
 
     For fine-tuned control, power users should use rio_cogeo.cog_translate() directly.
 
@@ -1196,6 +1196,8 @@ def convert_raster(source: Path, dest_dir: Path) -> Path:
     """
     from rio_cogeo.cogeo import cog_translate
     from rio_cogeo.profiles import cog_profiles
+
+    from portolan_cli.conversion_config import derive_cog_defaults
 
     output_path = dest_dir / f"{source.stem}.tif"
 
@@ -1211,16 +1213,17 @@ def convert_raster(source: Path, dest_dir: Path) -> Path:
     # Convert using rio-cogeo with Portolan's opinionated defaults
     profile = cog_profiles.get("deflate")  # type: ignore[no-untyped-call]
 
-    # Apply predictor=2 for better compression
+    # Derive predictor and overview resampling from the raster (Issue #690)
     # Note: profile is a copy of the deflate profile dict
-    profile["predictor"] = 2
+    predictor, resampling = derive_cog_defaults(source)
+    profile["predictor"] = predictor
 
     cog_translate(
         str(source),
         str(output_path),
         profile,
         quiet=True,
-        overview_resampling="nearest",  # Safe for all data types
+        overview_resampling=resampling,  # type: ignore[arg-type]
     )
 
     return output_path
