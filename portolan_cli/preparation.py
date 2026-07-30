@@ -1013,6 +1013,13 @@ def prepare_item(
         )
     bbox = _extract_bbox_wgs84(metadata)
 
+    # Step 4b: Generate the COG thumbnail sidecar so the scan below registers it
+    # (Issue #657). The add path converts via convert_raster(), which does not
+    # generate a thumbnail like convert_file() does, so without this rasters get
+    # no thumbnail asset. The raster check lives in the helper, not here, because
+    # prepare_item sits at the xenon complexity ceiling.
+    _generate_raster_thumbnail(output_path, catalog_root, format_type)
+
     # Step 5: Scan assets and compute statistics
     stac_assets, asset_files, _asset_paths = _scan_item_assets(
         item_dir=item_dir,
@@ -1227,3 +1234,42 @@ def convert_raster(source: Path, dest_dir: Path) -> Path:
     )
 
     return output_path
+
+
+def _generate_raster_thumbnail(cog_path: Path, catalog_root: Path, format_type: FormatType) -> None:
+    """Write a ``{stem}.thumb.jpg`` next to a COG so the asset scan registers it.
+
+    Mirrors the thumbnail step in ``convert.convert_file`` for the add path,
+    which converts through the bare ``convert_raster`` wrapper and would
+    otherwise leave rasters with no thumbnail asset (Issue #657). Gated on the
+    ``generate_thumbnail`` COG setting and best-effort: a thumbnail failure must
+    never fail the add. Skips generation when the sidecar already exists so a
+    hand-curated thumbnail or a re-add is left untouched.
+
+    Non-raster formats return immediately. The gate lives here rather than at the
+    call site to keep ``prepare_item`` inside the xenon complexity ceiling.
+
+    Args:
+        cog_path: Path to the converted file.
+        catalog_root: Catalog root, for loading COG settings.
+        format_type: Format of the converted file; only RASTER is handled.
+    """
+    from portolan_cli.conversion_config import get_cog_settings
+    from portolan_cli.convert import generate_cog_thumbnail
+
+    if format_type != FormatType.RASTER:
+        return
+
+    settings = get_cog_settings(catalog_root)
+    if not settings.generate_thumbnail:
+        return
+    if cog_path.with_name(f"{cog_path.stem}.thumb.jpg").exists():
+        return
+    try:
+        generate_cog_thumbnail(
+            cog_path,
+            max_size=settings.thumbnail_max_size,
+            quality=settings.thumbnail_quality,
+        )
+    except Exception as e:  # nosec B110 - thumbnail is optional, failure is non-fatal
+        logger.warning("Thumbnail generation failed for %s: %s", cog_path.name, e)
