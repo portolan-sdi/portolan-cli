@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -127,6 +128,24 @@ class TestWriteTextAtomic:
         assert [p.name for p in tmp_path.iterdir()] == ["config.yaml"]
 
 
+def _collection_dict(collection_id: str = "roads", title: str = "Roads") -> dict[str, object]:
+    return {
+        "type": "Collection",
+        "stac_version": "1.1.0",
+        "id": collection_id,
+        "title": title,
+        "description": f"{title} collection.",
+        "license": "CC-BY-4.0",
+        "extent": {
+            "spatial": {"bbox": [[-1.0, -1.0, 1.0, 1.0]]},
+            "temporal": {"interval": [[None, None]]},
+        },
+        "links": [],
+        "assets": {},
+        "stac_extensions": [],
+    }
+
+
 class TestAdoptedWriteSites:
     """Round-trip proof that adopting the helper keeps non-ASCII literal."""
 
@@ -157,3 +176,123 @@ class TestAdoptedWriteSites:
         assert '"title": "Córdoba"' in raw
         assert "\\u00f3" not in raw
         assert raw.endswith("\n")
+
+
+def _fail_replace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the rename half of every atomic write fail, as a full disk would."""
+
+    def _boom(src: str, dst: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("portolan_cli.json_io.os.replace", _boom)
+
+
+class TestSitesAdoptedInIssue687:
+    """The write sites converted in #687 cannot truncate what was already there.
+
+    Each test kills the write at ``os.replace`` — the last step, after the new
+    bytes are on disk — because that is the window an in-place writer cannot
+    survive: it has already truncated the destination by then.
+    """
+
+    def test_pmtiles_extension_write_preserves_the_prior_collection(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli.viz.pmtiles import ensure_web_map_links_extension
+
+        collection_dir = tmp_path / "roads"
+        collection_dir.mkdir()
+        target = collection_dir / "collection.json"
+        write_json_atomic(target, _collection_dict())
+        before = target.read_text(encoding="utf-8")
+
+        _fail_replace(monkeypatch)
+        with pytest.raises(OSError, match="disk full"):
+            ensure_web_map_links_extension(collection_dir)
+
+        assert target.read_text(encoding="utf-8") == before
+        assert _temp_siblings(collection_dir) == []
+
+    def test_style_file_write_preserves_the_prior_style(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli.viz.style import write_style_file
+
+        style_dir = tmp_path / "styles"
+        style_dir.mkdir()
+        target = style_dir / "default.json"
+        write_json_atomic(target, {"version": 8, "layers": []})
+        before = target.read_text(encoding="utf-8")
+
+        _fail_replace(monkeypatch)
+        with pytest.raises(OSError, match="disk full"):
+            write_style_file(style_dir, "default", {"version": 8, "layers": [{"id": "roads"}]})
+
+        assert target.read_text(encoding="utf-8") == before
+        assert _temp_siblings(style_dir) == []
+
+    def test_resume_state_write_preserves_the_prior_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The extractor kept its own temp-and-rename; it now shares the helper."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _save_resume_state
+        from portolan_cli.extract.arcgis.imageserver.resume import ImageServerResumeState
+
+        target = tmp_path / "resume.json"
+        started = datetime(2026, 7, 30, 9, 0, tzinfo=timezone.utc)
+        _save_resume_state(
+            ImageServerResumeState(
+                succeeded_tiles={(0, 0)},
+                failed_tiles=set(),
+                service_url="https://example.org/ImageServer",
+                started_at=started,
+            ),
+            target,
+        )
+        before = target.read_text(encoding="utf-8")
+
+        _fail_replace(monkeypatch)
+        with pytest.raises(OSError, match="disk full"):
+            _save_resume_state(
+                ImageServerResumeState(
+                    succeeded_tiles={(0, 0), (0, 1)},
+                    failed_tiles=set(),
+                    service_url="https://example.org/ImageServer",
+                    started_at=started,
+                ),
+                target,
+            )
+
+        assert json.loads(target.read_text(encoding="utf-8"))["tiles"]["succeeded"] == [[0, 0]]
+        assert target.read_text(encoding="utf-8") == before
+        assert _temp_siblings(tmp_path) == []
+
+    def test_collection_json_write_preserves_the_prior_collection(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli.collection import write_collection_json
+        from portolan_cli.models.collection import (
+            CollectionModel,
+            ExtentModel,
+            SpatialExtent,
+            TemporalExtent,
+        )
+
+        target = tmp_path / "collection.json"
+        write_json_atomic(target, _collection_dict())
+        before = target.read_text(encoding="utf-8")
+
+        replacement = CollectionModel(
+            id="roads",
+            description="Replacement.",
+            extent=ExtentModel(
+                spatial=SpatialExtent(bbox=[[-1.0, -1.0, 1.0, 1.0]]),
+                temporal=TemporalExtent(interval=[[None, None]]),
+            ),
+        )
+        _fail_replace(monkeypatch)
+        with pytest.raises(OSError, match="disk full"):
+            write_collection_json(replacement, tmp_path)
+
+        assert target.read_text(encoding="utf-8") == before
+        assert _temp_siblings(tmp_path) == []

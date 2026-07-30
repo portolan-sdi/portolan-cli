@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from portolan_cli.errors import PortolanError
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import error, info, success, warn
 
 # The PMTiles constants and pure asset/link classifiers now live in the
@@ -403,7 +404,7 @@ def add_pmtiles_asset_to_collection(
                     needs_update = True
 
         if needs_update:
-            collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            write_json_atomic(collection_json_path, data)
         return
 
     asset_dict: dict[str, Any] = {
@@ -420,7 +421,7 @@ def add_pmtiles_asset_to_collection(
     assets[pmtiles_key] = asset_dict
     data["assets"] = assets
 
-    collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    write_json_atomic(collection_json_path, data)
 
 
 def ensure_web_map_links_extension(collection_path: Path) -> bool:
@@ -448,7 +449,7 @@ def ensure_web_map_links_extension(collection_path: Path) -> bool:
 
     extensions.append(WEB_MAP_LINKS_EXTENSION)
     data["stac_extensions"] = extensions
-    collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    write_json_atomic(collection_json_path, data)
     return True
 
 
@@ -519,7 +520,7 @@ def add_pmtiles_link_to_collection(
             changed = True
 
     if changed:
-        collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        write_json_atomic(collection_json_path, data)
 
 
 def add_thumbnail_asset_to_collection(
@@ -556,7 +557,7 @@ def add_thumbnail_asset_to_collection(
     }
     data["assets"] = assets
 
-    collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    write_json_atomic(collection_json_path, data)
 
 
 def _compute_sha256(path: Path) -> str:

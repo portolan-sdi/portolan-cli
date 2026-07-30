@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from portolan_cli.json_io import write_json_atomic
+
 if TYPE_CHECKING:
     from portolan_cli.extract.arcgis.imageserver.discovery import ImageServerMetadata
     from portolan_cli.metadata_extraction import ExtractedMetadata
@@ -428,7 +430,7 @@ def save_imageserver_report(report: ImageServerExtractionReport, path: Path) -> 
         path: Path to write the JSON file.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+    write_json_atomic(path, report.to_dict())
 
 
 def load_imageserver_report(path: Path) -> ImageServerExtractionReport:

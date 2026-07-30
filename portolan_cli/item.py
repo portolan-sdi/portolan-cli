@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
 from portolan_cli.models.item import AssetModel, ItemModel
 
@@ -180,8 +181,7 @@ def write_item_json(item: ItemModel, path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     output_path = path / f"{item.id}.json"
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(item.to_dict(), f, indent=2)
+    write_json_atomic(output_path, item.to_dict())
 
     return output_path
 
