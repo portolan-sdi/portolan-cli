@@ -43,6 +43,7 @@ from portolan_cli.extract.common.converters.sld import (
     SLDConverterError,
     convert_sld,
 )
+from portolan_cli.json_io import write_json_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -267,7 +268,7 @@ def _write_style_file(
     styles_dir.mkdir(parents=True, exist_ok=True)
 
     style_path = styles_dir / f"{name}.json"
-    style_path.write_text(json.dumps(style_dict, indent=2), encoding="utf-8")
+    write_json_atomic(style_path, style_dict)
 
     return style_path
 

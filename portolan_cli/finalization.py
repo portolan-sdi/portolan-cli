@@ -34,6 +34,7 @@ from pystac.layout import AsIsLayoutStrategy
 from portolan_cli.config import load_merged_metadata
 from portolan_cli.formats import FormatType
 from portolan_cli.humanize import humanize_slug
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata import extract_geoparquet_metadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
 from portolan_cli.preparation import PreparedItem
@@ -166,7 +167,7 @@ def _fix_collection_links(
         deduped_links.append(link)
     collection_data["links"] = deduped_links
 
-    collection_json_path.write_text(json.dumps(collection_data, indent=2), encoding="utf-8")
+    write_json_atomic(collection_json_path, collection_data)
 
 
 def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:

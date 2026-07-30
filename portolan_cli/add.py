@@ -88,6 +88,7 @@ from portolan_cli.formats import (
     list_layers,
 )
 from portolan_cli.humanize import humanize_slug
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.preparation import (
     _MEDIA_TYPE_MAP as _MEDIA_TYPE_MAP,  # noqa: PLC0414
 )
@@ -1516,8 +1517,7 @@ def _update_item_with_asset(
     }
 
     # Write updated item
-    with open(item_json_path, "w", encoding="utf-8") as f:
-        json.dump(item_data, f, indent=2)
+    write_json_atomic(item_json_path, item_data)
 
     # Detect if this is a collection-level asset
     is_collection_level = item_dir.resolve() == collection_dir.resolve()
@@ -1584,5 +1584,4 @@ def _update_collection_with_asset(
     }
 
     # Write updated collection
-    with open(collection_json_path, "w", encoding="utf-8") as f:
-        json.dump(collection_data, f, indent=2)
+    write_json_atomic(collection_json_path, collection_data)

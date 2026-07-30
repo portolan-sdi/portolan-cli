@@ -887,7 +887,6 @@ def update_catalog_versions(
         CatalogVersionsCorruptedError: If catalog versions.json is invalid JSON
             or has invalid structure.
     """
-    import tempfile
 
     from portolan_cli.output import warn
 
@@ -952,22 +951,7 @@ def update_catalog_versions(
             # Update catalog-level updated timestamp
             content["updated"] = now
 
-            # Atomic write (same pattern as versions.py)
-            parent = versions_path.parent
-            parent.mkdir(parents=True, exist_ok=True)
-
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                dir=parent,
-                delete=False,
-                suffix=".tmp",
-            ) as tmp:
-                json.dump(content, tmp, indent=2)
-                tmp.write("\n")
-                tmp_path = tmp.name
-
-            # Atomic rename
-            Path(tmp_path).replace(versions_path)
+            write_json_atomic(versions_path, content)
         finally:
             _unlock_file(lock_file)
 

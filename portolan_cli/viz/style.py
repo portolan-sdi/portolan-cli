@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from portolan_cli.config import load_config
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.utils import get_dict, get_list
 
 logger = logging.getLogger(__name__)
@@ -267,7 +268,7 @@ def write_style_file(
         raise ValueError(msg)
     style_dir.mkdir(parents=True, exist_ok=True)
     style_path = style_dir / f"{name}.json"
-    style_path.write_text(json.dumps(style_dict, indent=2), encoding="utf-8")
+    write_json_atomic(style_path, style_dict)
     return style_path
 
 
@@ -502,7 +503,7 @@ def register_style_assets(
     else:
         data.pop("portolan:styles", None)
 
-    collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    write_json_atomic(collection_json_path, data)
 
 
 # =============================================================================
@@ -609,7 +610,7 @@ def register_legend_assets(
     else:
         data.pop("portolan:legends", None)
 
-    collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    write_json_atomic(collection_json_path, data)
 
 
 # =============================================================================
