@@ -49,10 +49,13 @@ from portolan_cli.stac import (
     add_table_extension,
     aggregate_table_metadata,
     apply_human_license,
+    apply_human_providers,
     apply_human_titles,
+    apply_provenance,
     create_collection,
     load_catalog,
     update_catalog_file_statistics,
+    update_catalog_provenance,
     update_collection_file_statistics,
     update_collection_summaries,
 )
@@ -996,6 +999,11 @@ def _finalize_collection(
     apply_human_titles(collection, merged_metadata)
     apply_human_license(collection, merged_metadata)
 
+    # Issue #684: providers name who produced the data and who hosts this copy,
+    # and their relationship is what makes this collection official or a mirror.
+    apply_human_providers(collection, merged_metadata)
+    apply_provenance(collection, merged_metadata)
+
     # Add items or collection-level assets to collection (in memory)
     _add_prepared_items_to_collection(collection, items, merge_strategy)
 
@@ -1103,5 +1111,9 @@ def finalize_items(
             "Catalog may have stale or missing aggregate size data.",
             exc_info=True,
         )
+
+    # Issue #684: a catalog whose every collection is a mirror carries the sync
+    # time itself. Needs the whole tree, so it runs after the last collection.
+    update_catalog_provenance(catalog_root)
 
     return results

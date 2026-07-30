@@ -152,7 +152,10 @@ from portolan_cli.remove import remove_files  # noqa: F401
 from portolan_cli.stac import (
     MergeStrategy,
     apply_human_license,
+    apply_human_providers,
+    apply_provenance,
     create_collection,
+    update_catalog_provenance,
     update_collection_file_statistics,
 )
 from portolan_cli.sync.checksums import compute_checksum, multihash_sha256
@@ -534,8 +537,12 @@ def _ensure_tabular_collection(
     )
 
     # A tabular-only add never reaches finalize_items, so apply the same
-    # human-authored license metadata.yaml carries for geo collections.
-    apply_human_license(collection, load_merged_metadata(collection_dir, catalog_root))
+    # human-authored license, providers, and derived provenance metadata.yaml
+    # carries for geo collections (issue #654 / issue #684).
+    merged_metadata = load_merged_metadata(collection_dir, catalog_root)
+    apply_human_license(collection, merged_metadata)
+    apply_human_providers(collection, merged_metadata)
+    apply_provenance(collection, merged_metadata)
 
     # Save collection.json
     collection_dir.mkdir(parents=True, exist_ok=True)
@@ -564,6 +571,9 @@ def _ensure_tabular_collection(
     ensure_agents_md_tree(catalog_root)
     ensure_schema_uris(catalog_root)
     ensure_readmes(catalog_root)
+
+    # Issue #684: and the root-catalog sync stamp, for an all-mirror tree.
+    update_catalog_provenance(catalog_root)
 
     # Log based on bbox source (priority order)
     if bbox_source == "metadata.yaml":
