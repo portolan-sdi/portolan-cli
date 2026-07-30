@@ -310,6 +310,23 @@ class InvalidBboxError(ValidationError):
         super().__init__(f"Invalid bounding box: {reason}", reason=reason)
 
 
+class InvalidProvidersError(ValidationError):
+    """Raised when metadata.yaml declares a providers array Portolan cannot use.
+
+    Generation tolerates a missing providers block — the host is seeded from
+    ``contact`` and PTL-PRV-001 tells the human to name a producer. It cannot
+    tolerate input where no conformant array exists, such as two entries both
+    claiming the ``host`` role: nothing can choose between them.
+
+    Error code: PRTLN-VAL003
+    """
+
+    code = "PRTLN-VAL003"
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"Invalid providers in metadata.yaml: {reason}", reason=reason)
+
+
 # Conversion Errors (PRTLN-CNV*)
 class ConversionError(PortolanError):
     """Base class for conversion-related errors."""

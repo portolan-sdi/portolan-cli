@@ -33,11 +33,11 @@ pytestmark = pytest.mark.integration
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "simple.parquet"
 
 # Errors a generated catalog still carries: thumbnail rendering lives behind an
-# optional extra, Portolan has no provider model, and geoparquet-io writes a
-# single row group with no per-row-group spatial statistics for a file this
-# small. Shared with tests/integration/test_generated_catalog_conformance.py,
-# which is the gate that keeps the list honest.
-GENERATION_GAPS = frozenset({"PTL-VIZ-001", "PTL-PRV-001", "PTL-DAT-007"})
+# optional extra, and geoparquet-io writes a single row group with no
+# per-row-group spatial statistics for a file this small. Shared with
+# tests/integration/test_generated_catalog_conformance.py, which is the gate that
+# keeps the list honest.
+GENERATION_GAPS = frozenset({"PTL-VIZ-001", "PTL-DAT-007"})
 
 # What the corruptions below must produce, and nothing else.
 EXPECTED_FROM_DAMAGE = frozenset(
@@ -65,6 +65,17 @@ def _build_catalog(root: Path) -> None:
                 "license": "CC-BY-4.0",
                 "contact": "data@example.org",
                 "source": "Example municipal open-data portal",
+                # Official: one organization both produced the roads and hosts
+                # them, so the collection is the data's canonical home and
+                # carries no upstream links (PTL-PRO-004). The mirror shape is
+                # covered by the conformance gate and test_provider_generation.
+                "providers": [
+                    {
+                        "name": "Example Municipal GIS",
+                        "roles": ["producer", "licensor", "host"],
+                        "url": "https://gis.example.org",
+                    }
+                ],
             }
         ),
         encoding="utf-8",

@@ -24,6 +24,7 @@ from pystac.summaries import Summarizer, SummaryStrategy
 from portolan_cli.constants import PARTITION_EXTENSION_URI, PORTOLAN_SCHEMA_URI
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
+from portolan_cli.providers import derive_provenance, resolve_providers
 
 # Any versioned Portolan profile URI, not just the current one: matching the
 # whole family is what lets a stale claim be rewritten rather than duplicated.
@@ -538,6 +539,116 @@ def apply_human_license(collection: pystac.Collection, metadata: object) -> None
         if link.rel == "license" and link.href == href:
             return
     collection.add_link(pystac.Link(rel="license", target=href, title="License"))
+
+
+def apply_human_providers(collection: pystac.Collection, metadata: object) -> None:
+    """Apply the human-authored providers array from metadata.yaml (issue #684).
+
+    Every collection must name a producer and exactly one host, listed last
+    (PTL-PRV-001, PTL-PRV-002). ``providers.resolve_providers`` does the ordering
+    and seeds the host from ``contact``; this writes the result onto the
+    collection. Metadata that declares nothing leaves any existing array alone,
+    so a re-add never wipes providers a human wrote straight into
+    ``collection.json``.
+
+    Args:
+        collection: The collection to update in place.
+        metadata: The merged metadata.yaml mapping (other types ignored).
+
+    Raises:
+        InvalidProvidersError: When metadata.yaml declares a providers array
+            Portolan cannot put in conformant shape.
+    """
+    resolved = resolve_providers(metadata)
+    if not resolved:
+        return
+
+    collection.providers = [
+        pystac.Provider(
+            name=str(provider["name"]),
+            description=provider.get("description"),
+            roles=provider.get("roles"),
+            url=provider.get("url"),
+            extra_fields={"email": provider["email"]} if "email" in provider else None,
+        )
+        for provider in resolved
+    ]
+
+
+def _collection_provenance(collection: pystac.Collection) -> str | None:
+    """Derive official vs mirror from the providers already on the collection."""
+    return derive_provenance([provider.to_dict() for provider in collection.providers or []])
+
+
+def apply_provenance(
+    collection: pystac.Collection,
+    metadata: object,
+    *,
+    synced_at: datetime | None = None,
+) -> None:
+    """Record how this collection relates to the data's original source (issue #684).
+
+    Source provenance is derived from the providers, never declared separately: a
+    collection is official when its producer also hosts it, and a mirror when
+    they differ. A mirror links back to the source with ``rel="via"``
+    (PTL-PRO-001) and records the sync in a top-level RFC 3339 ``updated`` field
+    (PTL-PRO-003). An official collection is the source, so it gets neither
+    (PTL-PRO-004).
+
+    The sync a mirror records is the sync *from its source*, which for Portolan
+    is the moment ``add`` copied or converted the data, not a later ``push`` to
+    object storage.
+
+    Args:
+        collection: The collection to update in place.
+        metadata: The merged metadata.yaml mapping (other types ignored).
+        synced_at: The sync time to record. Defaults to now, in UTC.
+    """
+    provenance = _collection_provenance(collection)
+    if provenance is None:
+        return
+
+    source_url = metadata.get("source_url") if isinstance(metadata, dict) else None
+    source_url = source_url.strip() if isinstance(source_url, str) and source_url.strip() else None
+
+    if provenance == "official":
+        if source_url is not None:
+            from portolan_cli.output import warn as warn_output
+
+            warn_output(
+                f"{collection.id}: producer and host are the same organization, so the "
+                f"collection is official and carries no via link to {source_url}"
+            )
+        return
+
+    collection.extra_fields["updated"] = to_rfc3339(synced_at or datetime.now(timezone.utc))
+
+    if source_url is None:
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "%s mirrors data it did not produce but metadata.yaml declares no source_url",
+            collection.id,
+        )
+        return
+    for link in collection.links:
+        if link.rel == "via" and link.href == source_url:
+            return
+    collection.add_link(
+        pystac.Link(
+            rel="via",
+            target=source_url,
+            media_type="text/html",
+            title="Original source",
+        )
+    )
+
+
+def to_rfc3339(moment: datetime) -> str:
+    """Format a datetime as the RFC 3339 date-time STAC's ``updated`` field wants."""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def add_partition_metadata_to_collection(
@@ -1539,6 +1650,52 @@ def update_catalog_file_statistics(catalog_root: Path) -> None:
         catalog_data["portolan:total_size_bytes"] = total_size
         catalog_data["portolan:asset_count"] = asset_count
         catalog_data["portolan:collection_count"] = collection_count
+        write_json_atomic(catalog_path, catalog_data)
+    except (json.JSONDecodeError, OSError):
+        pass
+
+
+def update_catalog_provenance(catalog_root: Path) -> None:
+    """Stamp the root catalog's sync time when the whole tree is a mirror (issue #684).
+
+    PTL-PRO-003 requires the top-level ``updated`` field on every mirror
+    collection, and on the root catalog too when every collection under it is a
+    mirror — at that point the catalog as a whole is a copy of data published
+    elsewhere. A tree that mixes official and mirrored collections leaves the
+    root alone, since the catalog is not wholly either one.
+
+    The value is the newest sync time among the collections, so the root reports
+    the freshness a consumer would compare against the source.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+    """
+    import json
+
+    catalog_path = catalog_root / "catalog.json"
+    if not catalog_path.exists():
+        return
+
+    stamps: list[str] = []
+    for collection_json in catalog_root.rglob("collection.json"):
+        try:
+            data = json.loads(collection_json.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if data.get("type") != "Collection":
+            continue
+        if derive_provenance(data.get("providers")) != "mirror":
+            return
+        updated = data.get("updated")
+        if isinstance(updated, str):
+            stamps.append(updated)
+
+    if not stamps:
+        return
+
+    try:
+        catalog_data = json.loads(catalog_path.read_text(encoding="utf-8"))
+        catalog_data["updated"] = max(stamps)
         write_json_atomic(catalog_path, catalog_data)
     except (json.JSONDecodeError, OSError):
         pass

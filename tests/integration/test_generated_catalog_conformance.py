@@ -33,11 +33,6 @@ KNOWN_GAPS = frozenset(
         # Thumbnail rendering lives behind the optional [thumbnails] extra and
         # is not part of the default add pipeline.
         "PTL-VIZ-001",
-        # PTL-PRV-001: every collection needs a provider with the producer role.
-        # Portolan has no provider model — metadata.yaml carries `contact` and
-        # `attribution`, neither of which maps onto STAC providers without a
-        # design decision about roles and ordering (PTL-PRV-002/003).
-        "PTL-PRV-001",
         # PTL-DAT-007: every row group needs spatial statistics. geoparquet-io
         # writes a single row group for a file this small and emits neither a
         # bbox covering column nor native GeospatialStatistics for it, so the
@@ -71,6 +66,24 @@ def _build_catalog(root: Path) -> None:
                 "license": "CC-BY-4.0",
                 "contact": "data@example.org",
                 "source": "Example municipal open-data portal",
+                # A mirror, the more demanding of the two provenance shapes: the
+                # producer differs from the host, so generation owes a rel:'via'
+                # link and an 'updated' stamp on both collections and, because
+                # every collection here is a mirror, on the root catalog too
+                # (PTL-PRV-001/002/003, PTL-PRO-001/003).
+                "providers": [
+                    {
+                        "name": "Example Statistics Agency",
+                        "roles": ["producer", "licensor"],
+                        "url": "https://stats.example.org",
+                    },
+                    {
+                        "name": "Example Municipal Open Data",
+                        "roles": ["host"],
+                        "url": "https://data.example.org/contact",
+                    },
+                ],
+                "source_url": "https://stats.example.org/downloads/roads",
             }
         ),
         encoding="utf-8",
