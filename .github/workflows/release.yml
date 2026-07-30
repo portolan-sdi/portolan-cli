@@ -37,7 +37,7 @@ jobs:
     steps:
       # This is the ONE checkout that must keep credentials: the job pushes the
       # release tag back to the repo (git push origin <tag>) using GITHUB_TOKEN.
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0  # zizmor: ignore[artipacked] deliberate: tag push needs the persisted token
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0  # zizmor: ignore[artipacked] deliberate: tag push needs the persisted token
         with:
           fetch-depth: 0  # Full history for tag creation
 
