@@ -6,9 +6,10 @@ Exports schema.json to JSON, CSV, or Parquet for editing in external tools.
 from __future__ import annotations
 
 import csv
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from portolan_cli.json_io import write_json_atomic
 
 if TYPE_CHECKING:
     from portolan_cli.models.schema import SchemaModel
@@ -24,8 +25,7 @@ def export_schema_json(schema: SchemaModel, path: Path) -> Path:
     Returns:
         Path to written file.
     """
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(schema.to_dict(), f, indent=2)
+    write_json_atomic(path, schema.to_dict())
     return path
 
 
@@ -42,8 +42,7 @@ def _write_sidecar_meta(schema: SchemaModel, path: Path) -> Path:
         "crs": schema.crs,
         "statistics": schema.statistics,
     }
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2)
+    write_json_atomic(meta_path, meta)
     return meta_path
 
 

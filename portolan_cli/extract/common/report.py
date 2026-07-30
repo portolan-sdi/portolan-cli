@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from portolan_cli.json_io import write_json_atomic
+
 
 @dataclass
 class LayerResult:
@@ -292,7 +294,7 @@ class ExtractionReport:
 def save_report(report: ExtractionReport, path: Path) -> None:
     """Save extraction report to JSON file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+    write_json_atomic(path, report.to_dict())
 
 
 def load_report(path: Path) -> ExtractionReport:

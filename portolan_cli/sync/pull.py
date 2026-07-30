@@ -37,6 +37,7 @@ from portolan_cli.async_utils import (
     CircuitBreakerError,
     get_default_concurrency,
 )
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import detail, error, info, output_section, success, warn
 from portolan_cli.sync.checksums import compute_checksum
 from portolan_cli.sync.download import download_file, get_remote_file_size_async
@@ -1003,7 +1004,7 @@ async def _process_stac_file_sizes(
                 detail(f"Fetched file:size for {stac_file.name}:{asset_key}")
 
     if modified:
-        stac_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        write_json_atomic(stac_file, data)
 
     return populated
 

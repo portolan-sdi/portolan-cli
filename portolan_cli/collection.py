@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from portolan_cli.bbox import to_2d_bbox
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.models.collection import (
     CollectionModel,
     ExtentModel,
@@ -136,8 +137,7 @@ def write_collection_json(collection: CollectionModel, path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     output_path = path / "collection.json"
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(collection.to_dict(), f, indent=2)
+    write_json_atomic(output_path, collection.to_dict())
 
     return output_path
 
@@ -155,8 +155,7 @@ def write_schema_json(schema: SchemaModel, path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     output_path = path / "schema.json"
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(schema.to_dict(), f, indent=2)
+    write_json_atomic(output_path, schema.to_dict())
 
     return output_path
 
