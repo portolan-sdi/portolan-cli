@@ -6,7 +6,8 @@ Portolan requires every catalog and collection to carry an ``AGENTS.md`` file
 content is human-authored — Portolan only scaffolds an empty template when the
 file is absent and never overwrites an existing one.
 
-This module is deliberately stdlib-only (plus the shared atomic JSON writer). It
+This module is deliberately dependency-light: the stdlib, the shared atomic JSON
+writer, and rashid's href helper, which is itself stdlib-only. It
 is imported by both the generation paths (``catalog.py``, ``add.py``,
 ``metadata/fix.py``) and the ``check --fix`` adapter
 (``validation/fixers.py``). Keeping it free of ``click``/``rich``/``config`` /
@@ -19,7 +20,8 @@ from __future__ import annotations
 import json
 from pathlib import Path, PurePath
 from typing import Any
-from urllib.parse import urlparse
+
+from rashid.catalog import is_absolute_href
 
 from portolan_cli.json_io import write_json_atomic
 
@@ -64,11 +66,6 @@ def visible_stac_files(catalog_root: Path) -> list[Path]:
     return found
 
 
-def _is_absolute_href(href: str) -> bool:
-    """True for hrefs with a URI scheme or a leading slash (rashid's ``is_absolute_href``)."""
-    return href.startswith("/") or bool(urlparse(href).scheme)
-
-
 def markdown_link_gap(stac_path: Path, data: dict[str, Any], *, rel: str, target: str) -> bool:
     """True when ``data`` fails rashid's sibling-markdown-link check for ``rel``.
 
@@ -79,8 +76,10 @@ def markdown_link_gap(stac_path: Path, data: dict[str, Any], *, rel: str, target
     ``target`` (or resolves to a file that is absent). Like rashid, *every*
     matching link is graded, not just the first.
 
-    Replicated rather than imported because rashid exposes no public predicate
-    yet — https://github.com/portolan-sdi/rashid/issues/57 tracks the export.
+    Replicated rather than imported because rashid keeps ``_check_markdown_link``
+    private. rashid#57 exported the COG predicate, the structural relations, and
+    the multihash helpers, so those now come from ``rashid.api``; this one still
+    has no public counterpart. A change to PTL-FIL-002/-003 must land here too.
 
     Args:
         stac_path: Path of the STAC JSON; its parent is the sibling directory.
@@ -105,7 +104,7 @@ def markdown_link_gap(stac_path: Path, data: dict[str, Any], *, rel: str, target
         if link.get("type") != AGENTS_MEDIA_TYPE:
             return True
         href = link.get("href")
-        if not isinstance(href, str) or not href or _is_absolute_href(href):
+        if not isinstance(href, str) or not href or is_absolute_href(href):
             return True
         if (directory / href).resolve() != expected or not expected.is_file():
             return True

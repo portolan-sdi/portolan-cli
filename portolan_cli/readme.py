@@ -1072,8 +1072,10 @@ def readme_link_gap(stac_path: Path, data: dict[str, Any]) -> bool:
     resolves to one that does not exist). Every case is repaired by
     :func:`ensure_readmes`, so ``check --fix`` can act on the answer.
 
-    Replicated rather than imported because rashid exposes no public predicate
-    yet — https://github.com/portolan-sdi/rashid/issues/57 tracks the export.
+    Replicated rather than imported because rashid keeps ``_check_markdown_link``
+    private. rashid#57 exported the COG predicate, the structural relations, and
+    the multihash helpers, so those now come from ``rashid.api``; this one still
+    has no public counterpart. A change to PTL-FIL-003 must land here too.
 
     Args:
         stac_path: Path of the ``catalog.json``/``collection.json`` (its parent
