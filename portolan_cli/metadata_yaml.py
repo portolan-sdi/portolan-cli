@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from portolan_cli.config import load_merged_metadata
+from portolan_cli.providers import HOST_ROLE, PROVIDER_ROLES
 
 logger = logging.getLogger(__name__)
 
@@ -358,6 +359,89 @@ def _validate_license(metadata: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _validate_provider_roles(roles: Any, index: int) -> list[str]:
+    """Validate one provider's roles against the four STAC defines."""
+    if not isinstance(roles, list):
+        return [f"Field 'providers[{index}].roles' must be a list"]
+
+    errors: list[str] = []
+    for role in roles:
+        if not isinstance(role, str) or role not in PROVIDER_ROLES:
+            errors.append(
+                f"Field 'providers[{index}].roles' has unknown role '{role}'. "
+                f"Use one of {', '.join(PROVIDER_ROLES)}"
+            )
+    return errors
+
+
+def _validate_host_contact(host: dict[str, Any], index: int) -> list[str]:
+    """The host provider must be reachable: a url or an email, per PORTO-CORE-051."""
+    url = host.get("url")
+    email = host.get("email")
+    has_url = isinstance(url, str) and url.strip()
+    has_email = isinstance(email, str) and email.strip()
+
+    if not has_url and not has_email:
+        return [
+            f"Field 'providers[{index}]' carries the host role, so it needs a 'url' or an 'email'"
+        ]
+    if has_email and not EMAIL_PATTERN.match(str(email)):
+        return [f"Invalid email format in 'providers[{index}].email': '{email}'"]
+    return []
+
+
+def _validate_providers(metadata: dict[str, Any]) -> list[str]:
+    """Validate the optional 'providers' array (issue #684).
+
+    The array is optional here because the host is seeded from ``contact`` when
+    it is absent, and because a producer is a human fact Portolan cannot invent —
+    a collection with no producer keeps reporting PTL-PRV-001 from
+    ``portolan check``. What this catches is an array that exists but cannot be
+    put in conformant shape.
+
+    Args:
+        metadata: The full metadata dictionary.
+
+    Returns:
+        List of validation error messages.
+    """
+    providers = metadata.get("providers")
+    if providers is None:
+        return []
+    if not isinstance(providers, list):
+        return ["Field 'providers' must be a list"]
+
+    errors: list[str] = []
+    hosts: list[int] = []
+
+    for index, provider in enumerate(providers):
+        if not isinstance(provider, dict):
+            errors.append(f"Field 'providers[{index}]' must be a mapping with a 'name'")
+            continue
+
+        name = provider.get("name")
+        if name is None:
+            errors.append(f"Field 'providers[{index}].name' is missing")
+        elif not str(name).strip():
+            errors.append(f"Field 'providers[{index}].name' cannot be empty")
+
+        roles = provider.get("roles")
+        if roles is not None:
+            errors.extend(_validate_provider_roles(roles, index))
+            if isinstance(roles, list) and HOST_ROLE in roles:
+                hosts.append(index)
+
+    if len(hosts) > 1:
+        listed = ", ".join(f"providers[{i}]" for i in hosts)
+        errors.append(
+            f"Exactly one provider may carry the host role, but {len(hosts)} do: {listed}"
+        )
+    for index in hosts:
+        errors.extend(_validate_host_contact(providers[index], index))
+
+    return errors
+
+
 def _validate_doi(metadata: dict[str, Any]) -> list[str]:
     """Validate the optional 'doi' field format.
 
@@ -427,6 +511,7 @@ def validate_metadata(metadata: dict[str, Any]) -> list[str]:
     errors.extend(_validate_license(metadata))
 
     # Optional fields with format validation
+    errors.extend(_validate_providers(metadata))
     errors.extend(_validate_doi(metadata))
     errors.extend(_validate_title_description(metadata))
 
@@ -629,6 +714,32 @@ contact:
   email: ""                         # Contact email
 
 license: ""                         # SPDX identifier (e.g., "CC-BY-4.0", "MIT")
+
+# -----------------------------------------------------------------------------
+# Providers: who made this data, and who maintains this copy of it
+#
+# Name the organization that originally created the data with the "producer"
+# role. Add "licensor" and "processor" where they apply. Roles may be combined,
+# so a self-published collection is one entry holding both producer and host.
+#
+# The "host" is whoever maintains this catalog, not the cloud vendor storing it:
+# a catalog on S3 run by a city GIS office lists the office, never AWS. Leave the
+# host out and it is taken from `contact` above. Order does not matter; Portolan
+# writes the host last, as the spec requires.
+#
+# Producer and host together decide what kind of catalog this is. Same
+# organization means official, this catalog being the data's canonical home.
+# Different organizations mean a mirror, and Portolan then links back to
+# `source_url` below and records each sync.
+# -----------------------------------------------------------------------------
+
+# providers:
+#   - name: "National Statistics Institute"
+#     roles: ["producer", "licensor"]
+#     url: "https://stats.example.org"
+#   - name: "City GIS Office"       # omit to derive this from `contact`
+#     roles: ["host"]
+#     url: "https://gis.example.org"   # a url or an email is required on the host
 
 # -----------------------------------------------------------------------------
 # OPTIONAL: Discovery and citation
