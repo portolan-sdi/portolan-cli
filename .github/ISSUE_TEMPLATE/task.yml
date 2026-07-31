@@ -1,0 +1,34 @@
+name: Task
+description: Chore, refactor, CI, or maintenance work
+labels: [task]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Keep this under 200 words outside code blocks. Prose follows the
+        [Portolan voice](https://github.com/portolan-sdi/portolan-ops/blob/main/VOICE.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What needs doing?
+      description: Two or three sentences. Name the files or systems involved.
+    validations:
+      required: true
+  - type: textarea
+    id: why-now
+    attributes:
+      label: Why now?
+      description: >-
+        What this unblocks, or what breaks if it waits. Link the issue or PR
+        that prompted it.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: How will we know it's done?
+      description: >-
+        The command a reviewer runs to confirm it, and what passing looks like.
+        If the work changes behavior, say which data it gets exercised against.
+    validations:
+      required: true
