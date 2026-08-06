@@ -432,10 +432,15 @@ jobs:
                    "changed files; refusing to report an untested PR as passing."
               exit 1
             fi
+            # Files mutmut generates no mutants for (re-export __init__.py,
+            # constant tables, protocol stubs) are dropped here: their globs are
+            # as unmatchable as a file path and fail the whole run. See #716.
             mapfile -t GLOBS < globs.txt
           fi
-          echo "Changed source files: ${#GLOBS[@]}"
-          printf '  %s\n' "${GLOBS[@]}"
+          echo "Changed source files: ${#FILES[@]}, with mutants: ${#GLOBS[@]}"
+          if [ "${#GLOBS[@]}" -gt 0 ]; then
+            printf '  %s\n' "${GLOBS[@]}"
+          fi
           {
             echo 'globs<<GLOBS_EOF'
             printf '%s\n' "${GLOBS[@]}"
@@ -450,7 +455,8 @@ jobs:
           GLOBS=()
           for g in "${RAW[@]}"; do [ -n "$g" ] && GLOBS+=("$g"); done
           if [ "${#GLOBS[@]}" -eq 0 ]; then
-            echo "No mutable source changes (only deletions?); nothing to run."
+            echo "No mutable source changes (deletions, or only mutant-free" \
+                 "modules); nothing to run."
             exit 0
           fi
           # Surviving mutants do NOT fail mutmut — `_run` returns normally after
@@ -487,8 +493,9 @@ jobs:
           # branch below would then wave the PR through untested (#612).
           uv run mutmut export-cicd-stats
           if [ ! -f mutants/mutmut-cicd-stats.json ]; then
-            # Reachable only after a successful run, so the filter did match —
-            # these files genuinely contain no mutable code (constants, imports).
+            # No stats means no run happened, which mutant_globs.py already
+            # explained: the changed files genuinely contain no mutable code
+            # (constants, imports, protocol stubs).
             echo "No mutants in changed files; nothing to score."
             exit 0
           fi

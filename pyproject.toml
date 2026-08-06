@@ -214,7 +214,7 @@ strict = true  # Enables all strict flags at once
 untyped_calls_exclude = ["pyarrow"]
 
 [[tool.mypy.overrides]]
-module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*", "pyiceberg.*", "shapely.*", "pygeohash.*"]
+module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*", "pyiceberg.*", "shapely.*", "pygeohash.*", "mutmut.*"]
 ignore_missing_imports = true
 
 # ---------- security ----------

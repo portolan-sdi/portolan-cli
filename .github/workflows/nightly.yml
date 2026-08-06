@@ -87,8 +87,20 @@ jobs:
             exit 1
           fi
           mapfile -t GLOBS < globs.txt
-          echo "Shard ${SHARD} of ${NUM_SHARDS}: ${#GLOBS[@]} file(s)"
-          printf '  %s\n' "${GLOBS[@]}"
+          echo "Shard ${SHARD} of ${NUM_SHARDS}: ${#SHARD_FILES[@]} file(s)," \
+               "${#GLOBS[@]} with mutants"
+          if [ "${#GLOBS[@]}" -gt 0 ]; then
+            printf '  %s\n' "${GLOBS[@]}"
+            echo "has_globs=true" >> "$GITHUB_OUTPUT"
+          else
+            # Every file in this shard is mutant-free (re-export __init__.py,
+            # constant tables, protocol stubs). mutant_globs.py listed them on
+            # stderr above. Handing mutmut their globs is what failed run
+            # 30735881276, so the run and floor steps sit this night out.
+            echo "::notice::Shard ${SHARD} of ${NUM_SHARDS} holds no mutable" \
+                 "code; skipping the sweep. See portolan-sdi/portolan-cli#716."
+            echo "has_globs=false" >> "$GITHUB_OUTPUT"
+          fi
           {
             echo 'globs<<GLOBS_EOF'
             printf '%s\n' "${GLOBS[@]}"
@@ -96,6 +108,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Run mutation testing (rotating shard)
+        if: steps.shard.outputs.has_globs == 'true'
         env:
           GLOBS_RAW: ${{ steps.shard.outputs.globs }}
         run: |
@@ -107,11 +120,12 @@ jobs:
           GLOBS=()
           for g in "${RAW[@]}"; do [ -n "$g" ] && GLOBS+=("$g"); done
           if [ "${#GLOBS[@]}" -eq 0 ]; then
-            # An empty shard means no source files — the floor check below (no
-            # --allow-empty) is the authoritative #612 silent-green guard, so let
-            # it fail on zero mutants rather than running mutmut with an empty glob.
-            echo "No files in this shard; nothing to run."
-            exit 0
+            # Unreachable: the step only runs when has_globs is true. Empty here
+            # means the globs output was lost between steps, and mutating nothing
+            # must never report as a passing sweep (#612).
+            echo "::error::has_globs was true but no globs arrived; refusing to" \
+                 "report an unmutated sweep as passing."
+            exit 1
           fi
           # pipefail keeps `tee` from reporting success on mutmut's behalf;
           # `|| STATUS=$?` keeps `set -e` from killing the step before the
@@ -131,6 +145,7 @@ jobs:
           fi
 
       - name: Enforce mutation floor
+        if: steps.shard.outputs.has_globs == 'true'
         env:
           SHARD: ${{ steps.shard.outputs.shard }}
           NUM_SHARDS: ${{ steps.shard.outputs.num_shards }}
@@ -152,7 +167,7 @@ jobs:
             --label "nightly shard ${SHARD}"
 
       - name: Generate mutation report
-        if: always()
+        if: always() && steps.shard.outputs.has_globs == 'true'
         run: |
           # Generate text report for artifact (mutmut 3.x has no HTML export)
           # Note: JSON stats only have aggregates, not individual mutations

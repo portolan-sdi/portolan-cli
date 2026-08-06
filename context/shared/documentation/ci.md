@@ -159,9 +159,22 @@ tightens the gate, so do it when a sweep surfaces one. The score counts
 testable (`no_tests` excluded). **Lowering either floor requires a justification
 in the PR that does so.**
 
+**Mutant-free files are filtered out before mutmut sees them**
+(`scripts/mutant_globs.py`). About a fifth of `portolan_cli` generates no
+mutants: re-export `__init__.py` files, constant tables, protocol stubs, model
+declarations. A glob for one of those is as unmatchable as a file path, so
+mutmut raises `Filtered for specific mutants, but nothing matches` and fails the
+whole run — which is what killed the 2026-08-02 nightly, whose shard held two
+re-export packages and nothing else. Emptiness comes from mutmut's own mutation
+pass, because nine of those files do define functions and a "has a `def`" test
+would still pass them through. Both scopes skip cleanly when the filter leaves
+nothing, and the skipped files are named in the log.
+
 **Fails loud, never silent.** On the nightly sweep, zero testable mutants means
 mutation testing is broken, not passing — the scorer hard-fails (it used to
-`exit 0` and report a green nightly, hiding a broken setup). `[tool.mutmut]` in
+`exit 0` and report a green nightly, hiding a broken setup). The one exception is
+a shard the filter empties, where the run and floor steps are skipped outright
+rather than scored against absent stats. `[tool.mutmut]` in
 `pyproject.toml` copies the `scripts/` package, `spec/` schemas, and data files
 into the mutants sandbox and scopes the stats run to the fast, offline suite with
 `--no-cov`.

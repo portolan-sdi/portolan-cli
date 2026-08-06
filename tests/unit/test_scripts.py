@@ -59,6 +59,30 @@ def real_mutant_name(path: str, mangled: str) -> str:
     return result.stdout.strip()
 
 
+def real_has_mutants(path: Path) -> bool:
+    """Return ``mutant_globs.has_mutants(path)`` computed in a fresh interpreter.
+
+    Same reason as ``real_mutant_name``: importing ``mutmut.__main__`` sets the
+    multiprocessing start method at module scope, so an in-process import fails
+    once any earlier test has started a pool.
+    """
+    scripts_dir = Path(__file__).parent.parent.parent / "scripts"
+    source = (
+        "import sys;"
+        f"sys.path.insert(0, {str(scripts_dir)!r});"
+        "from mutant_globs import has_mutants;"
+        f"print(has_mutants({str(path)!r}))"
+    )
+    result = subprocess.run(  # noqa: S603 - fixed argv, no shell, no user input
+        [sys.executable, "-c", source],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+    )
+    return result.stdout.strip() == "True"
+
+
 # Add scripts directory to path for imports
 @pytest.fixture(autouse=True)
 def _add_scripts_to_path() -> None:
@@ -292,7 +316,10 @@ class TestMutantGlobs:
         """The CLI shim emits one glob per argument for the workflow to consume."""
         from mutant_globs import main
 
-        code = main(["portolan_cli/readme.py", "portolan_cli/extract/__init__.py"])
+        code = main(
+            ["portolan_cli/readme.py", "portolan_cli/extract/__init__.py"],
+            probe=lambda _path: True,
+        )
         assert code == 0
         assert capsys.readouterr().out == "portolan_cli.readme.x*\nportolan_cli.extract.x*\n"
 
@@ -303,6 +330,98 @@ class TestMutantGlobs:
 
         assert main([]) == 1
         assert "no source paths" in capsys.readouterr().err
+
+    @pytest.mark.unit
+    def test_main_drops_paths_with_no_mutants(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """A mutant-free module must not reach the filter.
+
+        Emitting its glob is what broke the nightly sweep: mutmut asserts
+        ``Filtered for specific mutants, but nothing matches`` and exits
+        non-zero for the whole shard. See #612.
+        """
+        from mutant_globs import main
+
+        code = main(
+            ["portolan_cli/readme.py", "portolan_cli/extract/carto/__init__.py"],
+            probe=lambda path: "carto" not in path,
+        )
+        assert code == 0
+        captured = capsys.readouterr()
+        assert captured.out == "portolan_cli.readme.x*\n"
+        assert "portolan_cli/extract/carto/__init__.py" in captured.err
+
+    @pytest.mark.unit
+    def test_main_succeeds_when_every_path_is_mutant_free(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A shard of re-export packages has nothing to mutate, and that is not an error."""
+        from mutant_globs import main
+
+        code = main(
+            ["portolan_cli/extract/carto/__init__.py", "portolan_cli/constants.py"],
+            probe=lambda _path: False,
+        )
+        assert code == 0
+        assert capsys.readouterr().out == ""
+
+    @pytest.mark.integration  # Spawns an interpreter per call to import mutmut
+    @requires_mutmut_import
+    def test_has_mutants_rejects_a_function_mutmut_cannot_mutate(self, tmp_path: Path) -> None:
+        """Contract test: a ``def`` is not proof of a mutant.
+
+        Nine modules under ``portolan_cli`` define functions yet yield zero
+        mutants (protocol stubs, model declarations), so filtering on "has a
+        function definition" would still hand mutmut an unmatchable glob.
+        """
+        stub = tmp_path / "stub.py"
+        stub.write_text("def f() -> None:\n    pass\n", encoding="utf-8")
+        assert real_has_mutants(stub) is False
+
+    @pytest.mark.integration  # Spawns an interpreter per call to import mutmut
+    @requires_mutmut_import
+    def test_has_mutants_accepts_a_mutable_function(self, tmp_path: Path) -> None:
+        """The filter must keep files mutmut can actually mutate."""
+        mutable = tmp_path / "mutable.py"
+        mutable.write_text("def f(a: int, b: int) -> int:\n    return a + b\n", encoding="utf-8")
+        assert real_has_mutants(mutable) is True
+
+    @pytest.mark.integration  # Spawns an interpreter to import mutmut
+    @requires_mutmut_import
+    def test_reexport_package_is_filtered_out_end_to_end(self, tmp_path: Path) -> None:
+        """Regression for nightly run 30735881276.
+
+        Shard 14 held only ``extract/arcgis/__init__.py`` and
+        ``extract/carto/__init__.py``. Both re-export their submodules and
+        define nothing, so mutmut matched no mutants and the sweep failed.
+
+        Modelled on those files rather than reading them: mutmut runs the suite
+        from a copied ``mutants/`` tree whose ``__init__.py`` files carry its
+        injected trampoline, which is itself mutable, so the real ones are
+        mutant-free only outside the sandbox.
+        """
+        package = tmp_path / "pkg"
+        package.mkdir()
+        (package / "__init__.py").write_text(
+            'from pkg.thing import Thing\n\n__all__ = ["Thing"]\n', encoding="utf-8"
+        )
+        (package / "thing.py").write_text(
+            "def normalize(name: str) -> str:\n    return name.strip().lower()\n", encoding="utf-8"
+        )
+        result = subprocess.run(  # noqa: S603 - fixed argv, no shell, no user input
+            [
+                sys.executable,
+                str(Path(__file__).parent.parent.parent / "scripts" / "mutant_globs.py"),
+                "pkg/__init__.py",
+                "pkg/thing.py",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+            timeout=120,
+        )
+        assert result.returncode == 0
+        assert result.stdout == "pkg.thing.x*\n"
+        assert "skipping pkg/__init__.py" in result.stderr
 
 
 class TestMutationScore:
