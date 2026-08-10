@@ -52,6 +52,44 @@ def cleared_environ(**overrides: str) -> Iterator[None]:
         yield
 
 
+# mutmut drives pytest in-process and runs the suite several times per
+# invocation: a stats pass, a clean pass, a forced-fail pass, then one pass per
+# mutant. Hypothesis remembers the instance that ran a @given method and fails
+# HealthCheck.differing_executors the second time that method runs against a
+# fresh instance, so the clean pass dies on the first class-based property test
+# it reaches and takes the night's sweep with it (portolan-sdi/portolan-cli#612).
+# Those 100-odd tests are ordinary pytest methods, not the reused executors the
+# check is aimed at.
+#
+# Dropping the example database answers what the check actually warns about:
+# a failing example recorded while one mutant was live would replay against the
+# next, crediting a kill to the wrong mutant. Outside mutmut the var is absent
+# and the check stays on.
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Keep class-based Hypothesis tests alive across mutmut's repeated sessions."""
+    if _MUTMUT_ENV_KEY not in os.environ:
+        return
+
+    from hypothesis import HealthCheck, settings
+
+    for item in items:
+        obj = getattr(item, "obj", None)
+        func = getattr(obj, "__func__", obj)
+        if not hasattr(func, "hypothesis"):
+            continue
+        current = getattr(func, "_hypothesis_internal_use_settings", None) or settings.default
+        if HealthCheck.differing_executors in current.suppress_health_check:
+            continue
+        func._hypothesis_internal_use_settings = settings(
+            parent=current,
+            suppress_health_check=[
+                *current.suppress_health_check,
+                HealthCheck.differing_executors,
+            ],
+            database=None,
+        )
+
+
 # =============================================================================
 # Fixture Directory Access
 # =============================================================================
