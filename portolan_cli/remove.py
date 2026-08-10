@@ -28,8 +28,6 @@ def _gather_removable_files(path: Path) -> list[Path]:
         List of candidate file paths to untrack/delete.
     """
     if path.is_dir():
-        if not path.exists():
-            return []
         return [f for f in path.rglob("*") if f.is_file()]
 
     sidecars = get_sidecars(path) if path.exists() else []

@@ -40,6 +40,10 @@ def _catalog_with_assets(tmp_path: Path, asset_keys: list[str]) -> tuple[Path, P
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("{}\n", encoding="utf-8")
+    # find_catalog_root requires catalog.json alongside the sentinel; without it
+    # the root resolves to None and the caller silently falls back to the
+    # collection's grandparent.
+    (tmp_path / "catalog.json").write_text("{}\n", encoding="utf-8")
 
     coll_dir = tmp_path / "mycoll"
     coll_dir.mkdir()
@@ -154,3 +158,82 @@ def test_remove_source_drops_converted_parquet_asset(tmp_path: Path) -> None:
 
     latest = read_versions(versions_path).versions[-1]
     assert "roads.parquet" not in latest.assets
+
+
+@pytest.mark.unit
+def test_directly_tracked_source_is_matched_without_the_parquet_fallback(
+    tmp_path: Path,
+) -> None:
+    """A non-parquet asset tracked under its own href is dropped by href match.
+
+    The ``.parquet`` suffix swap is a *fallback* for the convert-on-add case. It
+    must not run when the href already matched, or the direct hit is discarded
+    and replaced by a parquet lookup that finds nothing.
+    """
+    coll_dir, versions_path = _catalog_with_assets(tmp_path, ["roads.shp"])
+    file_path = _touch(coll_dir, "roads.shp")
+
+    _remove_from_versions(file_path, versions_path)
+
+    latest = read_versions(versions_path).versions[-1]
+    assert "roads.shp" not in latest.assets
+
+
+@pytest.mark.unit
+def test_new_version_records_the_removed_filename(tmp_path: Path) -> None:
+    """The version published by a removal names the file in its message."""
+    coll_dir, versions_path = _catalog_with_assets(tmp_path, ["tunnels.parquet"])
+    file_path = _touch(coll_dir, "tunnels.parquet")
+
+    _remove_from_versions(file_path, versions_path)
+
+    assert read_versions(versions_path).versions[-1].message == "Removed tunnels.parquet"
+
+
+@pytest.mark.unit
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "#723: rm on a collection under a subcatalog (ADR-0032) leaves a "
+        "phantom versions.json entry. JsonFileBackend._versions_path flattens "
+        "a nested collection id through Path(collection).name, so publishing "
+        "'sub/coll' writes {catalog_root}/coll/versions.json. Drop this marker "
+        "with the fix; it is the acceptance criterion."
+    ),
+)
+def test_nested_collection_resolves_the_real_catalog_root(tmp_path: Path) -> None:
+    """Hrefs are resolved against the catalog root, not the collection's grandparent.
+
+    Under a subcatalog (ADR-0032) the collection sits two levels below the root,
+    so ``versions_path.parent.parent`` is the subcatalog rather than the catalog.
+    Computing hrefs against it yields ``coll/x.parquet`` where the tracked href
+    is ``sub/coll/x.parquet``, and nothing matches.
+    """
+    portolan_dir = tmp_path / ".portolan"
+    portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "catalog.json").write_text("{}\n", encoding="utf-8")
+
+    coll_dir = tmp_path / "sub" / "coll"
+    coll_dir.mkdir(parents=True)
+
+    key = "tunnels.parquet"
+    assets = {key: Asset(sha256="abc", size_bytes=1, href=f"sub/coll/{key}")}
+    version = Version(
+        version="1.0.0",
+        created=datetime.now(timezone.utc),
+        breaking=False,
+        assets=assets,
+        changes=[key],
+    )
+    versions_path = coll_dir / "versions.json"
+    write_versions(
+        versions_path,
+        VersionsFile(spec_version=SPEC_VERSION, current_version="1.0.0", versions=[version]),
+    )
+    file_path = _touch(coll_dir, key)
+
+    _remove_from_versions(file_path, versions_path)
+
+    latest = read_versions(versions_path).versions[-1]
+    assert key not in latest.assets
