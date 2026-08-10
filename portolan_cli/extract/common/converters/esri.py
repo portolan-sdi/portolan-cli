@@ -371,16 +371,9 @@ def parse_classbreaks_renderer(
             stroke_width=stroke_width,
         )
     else:
-        # Choropleth (color varies by class)
-        cases: list[tuple[float, str]] = []
-        for info in break_infos:
-            max_val = info.get("classMaxValue", 0)
-            symbol = info.get("symbol", {})
-            color = symbol.get("color", [128, 128, 128, 255])
-            cases.append((max_val, esri_color_to_hex(color)))
-
-        # Build step expression for colors
-        # For color, we need the breaks to work correctly
+        # Choropleth (color varies by class). Each class opens at the previous
+        # class's maximum, so the first entry carries minValue as its threshold
+        # and make_step_expression uses its color as the below-first-break value.
         color_breaks: list[tuple[Any, Any]] = []
         for i, info in enumerate(break_infos):
             symbol = info.get("symbol", {})
