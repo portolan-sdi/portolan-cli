@@ -12,6 +12,7 @@ correct answer:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -151,7 +152,7 @@ class TestExtractCOGMetadata:
     def test_raises_for_nonexistent_file(self, tmp_path: Path) -> None:
         """Should raise FileNotFoundError for missing file."""
         missing = tmp_path / "missing.tif"
-        with pytest.raises(FileNotFoundError, match=str(missing)):
+        with pytest.raises(FileNotFoundError, match=re.escape(str(missing))):
             extract_cog_metadata(missing)
 
     @pytest.mark.unit
@@ -426,7 +427,7 @@ class TestExtractSchemaFromCOG:
     def test_raises_for_nonexistent_file(self, tmp_path: Path) -> None:
         """A missing path fails before rasterio is reached."""
         missing = tmp_path / "missing.tif"
-        with pytest.raises(FileNotFoundError, match=str(missing)):
+        with pytest.raises(FileNotFoundError, match=re.escape(str(missing))):
             extract_schema_from_cog(missing)
 
 
