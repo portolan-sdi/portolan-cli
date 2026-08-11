@@ -456,7 +456,7 @@ def init(
         portolan init --backend iceberg --license CC0-1.0
     """
 
-    from portolan_cli.catalog import init_catalog
+    from portolan_cli.catalog import CatalogState, detect_state, init_catalog
     from portolan_cli.errors import CatalogAlreadyExistsError, UnmanagedStacCatalogError
 
     use_json = should_output_json(ctx, json_output)
@@ -483,7 +483,11 @@ def init(
         if license_id.strip() == OTHER_LICENSE and license_url is None:
             license_url = click.prompt("URL of the license text")
 
-    license_id = _validated_cli_license("init", license_id, license_url, use_json=use_json)
+    # Only gate the license on a directory that can actually become a catalog. An
+    # existing catalog is the more fundamental problem and --license cannot fix it,
+    # so let init_catalog report that instead of sending the user after a flag.
+    if detect_state(path) is CatalogState.FRESH:
+        license_id = _validated_cli_license("init", license_id, license_url, use_json=use_json)
 
     try:
         catalog_file, warnings = init_catalog(

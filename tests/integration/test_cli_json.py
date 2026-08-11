@@ -148,7 +148,9 @@ class TestInitJsonOutput:
         target = tmp_path / "new_catalog"
         target.mkdir()
 
-        result = runner.invoke(cli, ["--format=json", "init", str(target)])
+        result = runner.invoke(
+            cli, ["--format=json", "init", str(target), "--license", "CC-BY-4.0"]
+        )
 
         assert result.exit_code == 0
 

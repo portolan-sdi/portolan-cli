@@ -339,6 +339,8 @@ class TestInitFlags:
                     "Combined Test",
                     "--description",
                     "Testing all flags",
+                    "--license",
+                    "CC-BY-4.0",
                 ],
             )
 
@@ -360,7 +362,9 @@ class TestInitJsonOutput:
     def test_json_output_on_success(self, runner: CliRunner, tmp_path: Path) -> None:
         """JSON output should indicate success with envelope."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["--format", "json", "init", "--auto"])
+            result = runner.invoke(
+                cli, ["--format", "json", "init", "--auto", "--license", "CC-BY-4.0"]
+            )
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -375,7 +379,7 @@ class TestInitJsonOutput:
             portolan.mkdir()
             (portolan / "config.yaml").write_text("{}")
 
-            result = runner.invoke(cli, ["--format", "json", "init"])
+            result = runner.invoke(cli, ["--format", "json", "init", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 1
             data = json.loads(result.output)
@@ -395,7 +399,7 @@ class TestInitJsonOutput:
             }
             Path("catalog.json").write_text(json.dumps(catalog_data))
 
-            result = runner.invoke(cli, ["--format", "json", "init"])
+            result = runner.invoke(cli, ["--format", "json", "init", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 1
             data = json.loads(result.output)

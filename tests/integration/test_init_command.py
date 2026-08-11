@@ -149,7 +149,7 @@ class TestInitCommandErrors:
             portolan.mkdir()
             (portolan / "config.yaml").write_text("{}")
 
-            result = runner.invoke(cli, ["--format", "json", "init"])
+            result = runner.invoke(cli, ["--format", "json", "init", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 1
             data = json.loads(result.output)
@@ -170,7 +170,9 @@ class TestInitCommandJsonOutput:
     def test_init_json_output_success(self, runner: CliRunner, tmp_path: Path) -> None:
         """portolan --format json init should output JSON envelope."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["--format", "json", "init", "--auto"])
+            result = runner.invoke(
+                cli, ["--format", "json", "init", "--auto", "--license", "CC-BY-4.0"]
+            )
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -187,7 +189,7 @@ class TestInitCommandJsonOutput:
             portolan.mkdir()
             (portolan / "config.yaml").write_text("{}")
 
-            result = runner.invoke(cli, ["--format", "json", "init"])
+            result = runner.invoke(cli, ["--format", "json", "init", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 1
             data = json.loads(result.output)

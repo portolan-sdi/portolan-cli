@@ -72,6 +72,8 @@ def _build_catalog(root: Path, metadata: dict[str, Any], *, tabular: bool = Fals
             "Provider Catalog",
             "--description",
             "Roads published to exercise the provider model.",
+            "--license",
+            "CC-BY-4.0",
         ],
         catch_exceptions=False,
     )

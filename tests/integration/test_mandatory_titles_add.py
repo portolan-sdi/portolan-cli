@@ -40,6 +40,7 @@ def _init_catalog(root: Path) -> None:
     (portolan_dir / "config.yaml").write_text(
         yaml.dump({"version": 1, "statistics": {"enabled": False}})
     )
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
 
 def _add_slug_collection(root: Path, *, metadata_yaml: dict | None = None) -> Path:

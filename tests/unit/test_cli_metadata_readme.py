@@ -92,7 +92,15 @@ class TestMetadataInit:
             Path("demographics").mkdir()
 
             result = runner.invoke(
-                cli, ["--format", "json", "metadata", "init", "demographics", "--no-recursive"]
+                cli,
+                [
+                    "--format",
+                    "json",
+                    "metadata",
+                    "init",
+                    "demographics",
+                    "--no-recursive",
+                ],
             )
 
             assert result.exit_code == 0
@@ -239,7 +247,10 @@ class TestMetadataInit:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
-            result = runner.invoke(cli, ["--format", "json", "metadata", "init", "nonexistent"])
+            result = runner.invoke(
+                cli,
+                ["--format", "json", "metadata", "init", "nonexistent"],
+            )
 
             assert result.exit_code != 0
             output = json.loads(result.output)
