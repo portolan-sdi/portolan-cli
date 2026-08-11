@@ -5120,7 +5120,11 @@ def _generate_readme_content(
     """
     from portolan_cli.config import load_merged_metadata
     from portolan_cli.errors import ConfigInvalidStructureError
-    from portolan_cli.readme import generate_catalog_readme, generate_readme
+    from portolan_cli.readme import (
+        generate_catalog_readme,
+        generate_readme,
+        load_collection_stac,
+    )
 
     # Compute relative path for display
     try:
@@ -5144,7 +5148,7 @@ def _generate_readme_content(
         _verbose_readme("Generating README.md", verbose, use_json)
         return generate_catalog_readme(target_dir), True
 
-    # Load STAC (collection.json or catalog.json)
+    # Load STAC (collection.json, with its items, or catalog.json)
     stac: dict[str, Any] = {}
     for stac_file in ["collection.json", "catalog.json"]:
         stac_path = target_dir / stac_file
@@ -5152,7 +5156,13 @@ def _generate_readme_content(
             _verbose_readme(
                 f"Reading {stac_file} from {dir_prefix or 'catalog root'}", verbose, use_json
             )
-            stac = json.loads(stac_path.read_text(encoding="utf-8"))
+            # Collections load through load_collection_stac so their items come
+            # too; the README renders band and file metadata that lives only on
+            # item assets (issue #713).
+            if stac_file == "collection.json":
+                stac = load_collection_stac(target_dir)
+            else:
+                stac = json.loads(stac_path.read_text(encoding="utf-8"))
             break
 
     # Load merged metadata

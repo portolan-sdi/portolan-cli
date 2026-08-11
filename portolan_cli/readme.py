@@ -8,7 +8,7 @@ generated, never hand-edited.
 - Title, description (metadata.yaml override > catalog/collection STAC > id, #534)
 - Spatial/temporal coverage (from extent)
 - Schema/columns (from table:columns)
-- Bands (from eo:bands, raster:bands)
+- Bands (from the unified bands array on the data asset)
 - Files with checksums (from assets)
 - STAC links (from links)
 - Code examples (based on asset types)
@@ -41,6 +41,7 @@ from portolan_cli.agents_md import visible_stac_files as _visible_stac_files
 from portolan_cli.config import load_merged_metadata
 from portolan_cli.errors import ConfigInvalidStructureError
 from portolan_cli.json_io import write_json_atomic
+from portolan_cli.stac_parquet import owned_item_hrefs
 
 # Keyword-badge rendering limits (#515). A junk-dominated list is a machine dump
 # (e.g. WFS layer ids seeded into metadata.yaml at extraction) and is suppressed;
@@ -254,23 +255,86 @@ def _add_schema_section(sections: list[str], stac: dict[str, Any]) -> None:
     sections.append("")
 
 
-def _add_bands_section(sections: list[str], stac: dict[str, Any]) -> None:
-    """Add bands from eo:bands or raster:bands."""
-    summaries = stac.get("summaries", {})
-    bands = summaries.get("eo:bands", []) or summaries.get("raster:bands", [])
+# Statistic keys live inside a band's `statistics` object (STAC v1.1.0
+# Statistics Object), not on the band itself.
+_BAND_STAT_KEYS = frozenset({"minimum", "maximum", "mean", "stddev", "valid_percent"})
 
+# Bands table columns in render order, as (header, band key). A column is
+# dropped when no band carries a value for it, so a bands array without
+# statistics renders as a narrow identity table.
+_BAND_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("Name", "name"),
+    ("Common Name", "eo:common_name"),
+    ("Data Type", "data_type"),
+    ("Unit", "unit"),
+    ("Nodata", "nodata"),
+    ("Min", "minimum"),
+    ("Max", "maximum"),
+    ("Mean", "mean"),
+    ("Std Dev", "stddev"),
+    ("Valid %", "valid_percent"),
+    ("Description", "description"),
+)
+
+
+def _band_field(band: dict[str, Any], key: str) -> Any:
+    """Read one band field, reaching into ``statistics`` for statistic keys."""
+    if key in _BAND_STAT_KEYS:
+        statistics = band.get("statistics")
+        return statistics.get(key) if isinstance(statistics, dict) else None
+    if key == "eo:common_name":
+        # STAC v1.1.0 renamed eo:bands' common_name; read both.
+        return band.get("eo:common_name", band.get("common_name"))
+    return band.get(key)
+
+
+def _find_bands(assets: dict[str, Any], stac: dict[str, Any]) -> list[dict[str, Any]]:
+    """Find the unified bands array, preferring the primary data asset.
+
+    STAC v1.1.0 makes ``bands`` an asset-level field, and the CLI writes it
+    there (``stac._set_bands_on_data_assets``), item-level for rasters. The
+    ``eo:bands`` / ``raster:bands`` summaries are read only as a fallback, for
+    catalogs hand-authored before the v1.1.0 migration (issue #713).
+    """
+    banded = [
+        asset
+        for asset in assets.values()
+        if isinstance(asset, dict) and isinstance(asset.get("bands"), list) and asset["bands"]
+    ]
+    preferred = next((a for a in banded if "data" in (a.get("roles") or [])), None)
+    if preferred is None and banded:
+        preferred = banded[0]
+    if preferred is not None:
+        bands: list[Any] = preferred["bands"]
+    else:
+        summaries = stac.get("summaries", {})
+        bands = summaries.get("eo:bands", []) or summaries.get("raster:bands", [])
+    return [band for band in bands if isinstance(band, dict)]
+
+
+def _add_bands_section(sections: list[str], assets: dict[str, Any], stac: dict[str, Any]) -> None:
+    """Add the bands table from the unified bands array on the data asset."""
+    bands = _find_bands(assets, stac)
     if not bands:
         return
 
+    columns = [
+        (header, key)
+        for header, key in _BAND_COLUMNS
+        if any(_band_field(band, key) is not None for band in bands)
+    ]
+    headers = ["Band", *(header for header, _ in columns)]
+
     sections.append("## Bands")
     sections.append("")
-    sections.append("| Band | Name | Description |")
-    sections.append("|------|------|-------------|")
-    for i, band in enumerate(bands):
-        band_name = band.get("name", f"band_{i + 1}")
-        common_name = band.get("common_name", "")
-        desc = band.get("description", "")
-        sections.append(f"| {i + 1} | {band_name} ({common_name}) | {desc} |")
+    sections.append(f"| {' | '.join(headers)} |")
+    sections.append(f"|{'|'.join('-' * max(len(h) + 2, 6) for h in headers)}|")
+    for index, band in enumerate(bands, start=1):
+        values = [str(index)]
+        for _, key in columns:
+            value = _band_field(band, key)
+            values.append("-" if value is None else str(value))
+        sections.append(f"| {' | '.join(values)} |")
     sections.append("")
 
 
@@ -641,7 +705,7 @@ def generate_readme(
     _add_spatial_section(sections, stac)
     _add_temporal_section(sections, stac)
     _add_schema_section(sections, stac)
-    _add_bands_section(sections, stac)
+    _add_bands_section(sections, assets, stac)
     _add_files_section(sections, assets)
     _add_code_example_section(sections, assets)
     _add_stac_links_section(sections, stac)
@@ -689,6 +753,80 @@ def check_readme_freshness(
     return expected == actual
 
 
+def _collection_relative_href(href: str, item_dir: str) -> str:
+    """Rebase an item-relative asset href onto the collection directory.
+
+    Item assets are written relative to the item JSON (``./scene-a.tif``), but
+    the README sits at the collection root, so the item directory has to be
+    prepended (``scene-a/scene-a.tif``). URLs and absolute paths already
+    resolve on their own and pass through untouched.
+    """
+    if not href or "://" in href or href.startswith("/"):
+        return href
+    cleaned = href[2:] if href.startswith("./") else href
+    if not item_dir or item_dir == ".":
+        return cleaned
+    return f"{item_dir}/{cleaned}"
+
+
+def _read_item(item_path: Path) -> dict[str, Any] | None:
+    """Parse an item JSON, returning None when it is missing or unreadable.
+
+    A stale ``rel="item"`` link is reported by ``portolan check``, so README
+    generation skips the item rather than failing the whole catalog.
+    """
+    try:
+        data = json.loads(item_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _rebase_item_assets(item: dict[str, Any], item_dir: str) -> dict[str, Any]:
+    """Copy an item with its asset hrefs rewritten relative to the collection."""
+    assets = item.get("assets")
+    if not isinstance(assets, dict):
+        return item
+
+    rebased: dict[str, Any] = {}
+    for key, asset in assets.items():
+        if isinstance(asset, dict) and isinstance(asset.get("href"), str):
+            asset = {**asset, "href": _collection_relative_href(asset["href"], item_dir)}
+        rebased[key] = asset
+    return {**item, "assets": rebased}
+
+
+def load_collection_stac(collection_path: Path) -> dict[str, Any]:
+    """Load ``collection.json`` with the collection's items attached.
+
+    STAC keeps items in sibling files behind ``rel="item"`` links, but the
+    README renders asset-level metadata that exists only there: the unified
+    ``bands`` array (issue #713) plus each data file's size and checksum. The
+    items are attached under ``items`` so ``generate_readme`` walks one dict.
+
+    Args:
+        collection_path: Path to the collection directory.
+
+    Returns:
+        The collection dict, empty when there is no collection.json.
+    """
+    collection_json_path = collection_path / "collection.json"
+    if not collection_json_path.exists():
+        return {}
+
+    stac: dict[str, Any] = json.loads(collection_json_path.read_text(encoding="utf-8"))
+
+    items: list[dict[str, Any]] = []
+    for href, item_path in owned_item_hrefs(collection_json_path):
+        item = _read_item(item_path)
+        if item is not None:
+            items.append(_rebase_item_assets(item, str(PurePosixPath(href).parent)))
+    if items:
+        stac["items"] = items
+
+    return stac
+
+
 def generate_readme_for_collection(
     collection_path: Path,
     catalog_root: Path,
@@ -696,7 +834,7 @@ def generate_readme_for_collection(
     """Generate README for a collection by loading STAC and metadata from disk.
 
     High-level function that:
-    1. Loads collection.json (STAC) from collection_path
+    1. Loads collection.json (STAC) and its items from collection_path
     2. Loads merged metadata.yaml from hierarchy
     3. Generates README from both sources
 
@@ -707,11 +845,7 @@ def generate_readme_for_collection(
     Returns:
         README markdown string.
     """
-    # Load STAC collection.json if it exists
-    stac: dict[str, Any] = {}
-    collection_json_path = collection_path / "collection.json"
-    if collection_json_path.exists():
-        stac = json.loads(collection_json_path.read_text(encoding="utf-8"))
+    stac = load_collection_stac(collection_path)
 
     # Load merged metadata from hierarchy
     metadata = load_merged_metadata(collection_path, catalog_root)

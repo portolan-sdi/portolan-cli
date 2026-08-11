@@ -47,7 +47,7 @@ def _resolve_href(base_dir: Path, href: str) -> Path:
     return base_dir / href
 
 
-def _owned_item_hrefs(node_json_path: Path) -> list[tuple[str, Path]]:
+def owned_item_hrefs(node_json_path: Path) -> list[tuple[str, Path]]:
     """Every (href, path) pair for the items the object at ``node_json_path`` owns.
 
     A catalog may sit below a collection to organize its items (core.md:168-170),
@@ -75,7 +75,7 @@ def _owned_item_hrefs(node_json_path: Path) -> list[tuple[str, Path]]:
         elif rel == "child":
             child_path = _resolve_href(base_dir, href)
             if child_path.name == "catalog.json":
-                owned.extend(_owned_item_hrefs(child_path))
+                owned.extend(owned_item_hrefs(child_path))
 
     return owned
 
@@ -96,7 +96,7 @@ def count_items(collection_path: Path) -> int:
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found in {collection_path}")
 
-    return len(_owned_item_hrefs(collection_json_path))
+    return len(owned_item_hrefs(collection_json_path))
 
 
 def should_suggest_parquet(collection_path: Path, threshold: int = 100) -> bool:
@@ -160,7 +160,7 @@ def _load_item_dicts(collection_path: Path) -> list[dict[str, Any]]:
         ValueError: If no items found.
     """
     collection_json_path = collection_path / "collection.json"
-    owned = _owned_item_hrefs(collection_json_path)
+    owned = owned_item_hrefs(collection_json_path)
 
     if not owned:
         raise ValueError(f"No items found in collection at {collection_path}")
