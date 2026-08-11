@@ -12,11 +12,10 @@ cp env-data/*.parquet my-catalog/environment/
 
 # Initialize and add everything
 cd my-catalog
-portolan init --auto --title "My Regional Data"
+portolan init --auto --title "My Regional Data" --license CC-BY-4.0
 portolan add . --workers 4
 
-# Add metadata and generate documentation
-portolan metadata init
+# Fill in the contact fields init left blank
 # Edit .portolan/metadata.yaml with your info
 portolan readme
 ```
@@ -131,9 +130,9 @@ Created with:
 
 ```bash
 portolan init --auto --title "The Hague Open Data" \
-  --description "Municipal open data from Den Haag, Netherlands"
+  --description "Municipal open data from Den Haag, Netherlands" \
+  --license CC-BY-4.0
 portolan add . --workers 4
-portolan metadata init
 # Edit .portolan/metadata.yaml
 portolan readme
 portolan check
