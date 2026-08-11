@@ -48,6 +48,7 @@ class ExtractedMetadata:
         contact_name: Name of the data maintainer/author.
         contact_email: Email of the data maintainer (rarely available).
         license_raw: Raw license text (not SPDX identifier).
+        license_url: URL of the license text, read out of license_raw.
         processing_notes: Notes about data processing or updates.
         known_issues: Known limitations or caveats.
     """
@@ -74,6 +75,10 @@ class ExtractedMetadata:
     """Email of the data maintainer (rarely available from extraction)."""
 
     license_raw: str | None = None
+    # Sources publish a licence page but never an SPDX id. When license_raw holds a
+    # URL, seeding uses `other` plus this link, which is conformant without anyone
+    # guessing at an identifier (issue #686).
+    license_url: str | None = None
     """Raw license text (not SPDX identifier, for human review)."""
 
     processing_notes: str | None = None

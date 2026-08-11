@@ -6,7 +6,13 @@ STAC or other sources.
 
 **Required fields (human-only):**
 - contact.name, contact.email - Accountability
-- license - SPDX identifier
+- license - SPDX identifier, or "other" alongside license_url
+
+``license`` is the one required field generation actually enforces: ``portolan add``
+refuses to write a collection without a usable one, because a collection with no
+license fails PTL-LIC-001 or PTL-LIC-002 under ``portolan check`` (issue #686). The
+predicate lives in ``portolan_cli.licensing``; ``portolan init`` seeds the value so
+the requirement is already met before the first add.
 
 **Auto-filled from STAC (NOT in metadata.yaml):**
 - title, description - From catalog/collection init
@@ -676,7 +682,7 @@ def _validate_defaults(defaults: dict[str, Any]) -> list[str]:
     return errors
 
 
-def generate_metadata_template() -> str:
+def generate_metadata_template(*, license_id: str = "", license_url: str = "") -> str:
     """Generate a metadata.yaml template with comments.
 
     Returns a YAML string with required and optional fields,
@@ -685,10 +691,35 @@ def generate_metadata_template() -> str:
     Note: title and description are auto-derived from the collection id
     (humanized, per Issue #502); the optional keys below override them.
 
+    ``portolan init`` fills the license in, because ``portolan add`` refuses to
+    write a collection without one (issue #686). ``portolan metadata init`` leaves
+    both blank, since a bare template is what that command is for.
+
+    Args:
+        license_id: SPDX identifier, or "other", to write into the template.
+        license_url: URL of the license text, required alongside "other".
+
     Returns:
         YAML template string ready to write to file.
     """
-    return """# .portolan/metadata.yaml
+    # Comments line up at column 37 in this template; keep both license lines there.
+    comment_column = 36
+    license_line = f'license: "{license_id}"'.ljust(comment_column) + (
+        '# SPDX identifier (e.g., "CC-BY-4.0", "MIT")'
+    )
+    license_url_line = f'license_url: "{license_url}"'.ljust(comment_column) + (
+        "# optional - URL to full license text"
+    )
+
+    # Substituted rather than interpolated: an f-string over the whole template
+    # reads to bandit as string-built SQL (B608), and a nosec here would blunt a
+    # check that catches the real thing elsewhere in the tree.
+    return _TEMPLATE.replace("__LICENSE_LINE__", license_line).replace(
+        "__LICENSE_URL_LINE__", license_url_line
+    )
+
+
+_TEMPLATE = """# .portolan/metadata.yaml
 #
 # Human-enrichable metadata that supplements STAC.
 # Columns and bands are auto-extracted from data files.
@@ -713,7 +744,7 @@ contact:
   name: ""                          # Person or team name
   email: ""                         # Contact email
 
-license: ""                         # SPDX identifier (e.g., "CC-BY-4.0", "MIT")
+__LICENSE_LINE__
 
 # -----------------------------------------------------------------------------
 # Providers: who made this data, and who maintains this copy of it
@@ -745,7 +776,7 @@ license: ""                         # SPDX identifier (e.g., "CC-BY-4.0", "MIT")
 # OPTIONAL: Discovery and citation
 # -----------------------------------------------------------------------------
 
-license_url: ""                     # optional - URL to full license text
+__LICENSE_URL_LINE__
 citation: ""                        # optional - Academic citation text
 doi: ""                             # optional - Zenodo/DataCite DOI
 keywords: []                        # optional - Discovery tags

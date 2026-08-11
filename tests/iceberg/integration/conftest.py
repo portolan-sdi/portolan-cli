@@ -90,7 +90,7 @@ def initialized_iceberg_catalog(tmp_path: Path, runner: CliRunner) -> Path:
     with patch("portolan_cli.backends.iceberg.config._get_external_config", return_value=None):
         result = runner.invoke(
             cli,
-            ["init", str(tmp_path), "--auto", "--backend", "iceberg"],
+            ["init", str(tmp_path), "--auto", "--backend", "iceberg", "--license", "CC-BY-4.0"],
             catch_exceptions=False,
         )
     assert result.exit_code == 0, f"Init failed: {result.output}"

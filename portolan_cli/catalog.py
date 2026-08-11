@@ -323,12 +323,59 @@ class CatalogInitError(Exception):
         super().__init__(message)
 
 
+def _seed_root_metadata(
+    portolan_dir: Path,
+    license_id: str | None,
+    license_url: str | None,
+) -> list[str]:
+    """Write the catalog-level metadata.yaml carrying the license (issue #686).
+
+    Every collection inherits this license through the hierarchical merge, which is
+    what lets ``add`` require one without the human editing anything first.
+
+    Args:
+        portolan_dir: The catalog's ``.portolan`` directory.
+        license_id: SPDX identifier, or None to leave metadata.yaml to the caller.
+        license_url: URL of the license text, required alongside "other".
+
+    Returns:
+        Warnings to surface to the user.
+
+    Raises:
+        CatalogInitError: If the file cannot be written.
+    """
+    if license_id is None:
+        return []
+
+    metadata_file = portolan_dir / "metadata.yaml"
+    if metadata_file.exists():
+        # A human who wrote metadata.yaml before running init keeps it. Overwriting
+        # would drop their contact, providers, and source fields.
+        return [
+            f"Kept existing {metadata_file}; the --license value was not written. "
+            "Check that its 'license:' is set."
+        ]
+
+    from portolan_cli.metadata_yaml import generate_metadata_template
+
+    try:
+        write_text_atomic(
+            metadata_file,
+            generate_metadata_template(license_id=license_id, license_url=license_url or ""),
+        )
+    except OSError as e:
+        raise CatalogInitError(f"Cannot write metadata.yaml: {e}") from e
+    return []
+
+
 def init_catalog(
     path: Path,
     *,
     title: str | None = None,
     description: str | None = None,
     backend: str = "file",
+    license_id: str | None,
+    license_url: str | None = None,
 ) -> tuple[Path, list[str]]:
     """Initialize a new Portolan catalog with the v2 file structure.
 
@@ -337,7 +384,8 @@ def init_catalog(
     2. versions.json at ROOT level (file backend only, consumer-visible)
     3. catalog.json at ROOT level (valid STAC catalog via pystac)
     4. Self link in catalog.json
-    5. .portolan/config.yaml — sentinel file, written LAST (per issue #290)
+    5. .portolan/metadata.yaml — seeded with the license
+    6. .portolan/config.yaml — sentinel file, written LAST (per issue #290)
 
     Write order ensures failed runs stay in FRESH state (retry-safe).
     Versions.json is user-visible metadata and lives at the
@@ -347,10 +395,22 @@ def init_catalog(
     Note: state.json was removed per issue #290. config.yaml alone is now
     sufficient for MANAGED state detection.
 
+    ``license_id`` has no default, so every caller states its intent. Passing an
+    identifier seeds metadata.yaml with it, and the hierarchical merge then hands
+    that license to every collection, which is what lets ``add`` require one
+    (issue #686). Passing None writes no metadata.yaml, for callers that own the
+    file themselves: ``extract`` seeds it from harvested service metadata, and
+    ``clone`` copies collections that already carry their own licenses. Callers
+    validate the value with ``licensing.license_gap`` before getting here.
+
     Args:
         path: Directory path for the catalog. Will be created if doesn't exist.
         title: Optional catalog title.
         description: Optional catalog description.
+        backend: Versioning backend name.
+        license_id: SPDX identifier, or "other" alongside license_url. None leaves
+            metadata.yaml to the caller.
+        license_url: URL of the license text. Required when license_id is "other".
 
     Returns:
         Tuple of (catalog_file_path, warnings).
@@ -477,6 +537,13 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot write catalog conformance files: {e}") from e
 
+    # Step 4d: metadata.yaml - seed the license the human supplied. Every collection
+    # inherits it through the hierarchical merge, so the gate in add_files passes
+    # without the human editing anything first (issue #686). Skipped when the caller
+    # owns the file: extract seeds it from harvested metadata, and writing here first
+    # would make its O_EXCL create a no-op and silently drop everything harvested.
+    warnings.extend(_seed_root_metadata(portolan_dir, license_id, license_url))
+
     # Step 5: config.yaml - sentinel file per issue #290 (sufficient for MANAGED state)
     # Written LAST for atomicity: if any previous step fails, directory stays FRESH
     # and init can be safely retried. Also serves as user configuration file for
@@ -527,13 +594,16 @@ class Catalog:
         return self.root / self.CATALOG_FILE
 
     @classmethod
-    def init(cls, root: Path) -> Self:
+    def init(cls, root: Path, *, license_id: str | None = None) -> Self:
         """Initialize a new Portolan catalog.
 
         Creates the catalog using the v2 file structure via init_catalog().
 
         Args:
             root: The directory where the catalog should be created.
+            license_id: SPDX identifier to seed into metadata.yaml. Left None, the
+                catalog starts unlicensed and ``add`` will ask for a license before
+                it writes a collection (issue #686).
 
         Returns:
             A Catalog instance for the newly created catalog.
@@ -547,7 +617,7 @@ class Catalog:
             raise CatalogExistsError(portolan_path)
 
         # Use init_catalog for v2 file structure
-        init_catalog(root)
+        init_catalog(root, license_id=license_id)
 
         return cls(root)
 

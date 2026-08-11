@@ -410,7 +410,7 @@ def catalog_with_files(
 
     # Initialize the catalog (creates .portolan/ and catalog.json)
     # Use --auto for non-interactive mode
-    result = runner.invoke(cli, ["init", "--auto", str(tmp_path)])
+    result = runner.invoke(cli, ["init", "--auto", str(tmp_path), "--license", "CC-BY-4.0"])
     assert result.exit_code == 0, f"Init failed: {result.output}"
 
     return tmp_path
@@ -595,7 +595,7 @@ class TestCheckBothFlags:
         import shutil
 
         # Initialize a catalog (use --auto for non-interactive mode)
-        result = runner.invoke(cli, ["init", "--auto", str(tmp_path)])
+        result = runner.invoke(cli, ["init", "--auto", str(tmp_path), "--license", "CC-BY-4.0"])
         assert result.exit_code == 0
 
         # Add a convertible file

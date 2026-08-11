@@ -32,6 +32,7 @@ from portolan_cli.extract.wfs.orchestrator import (
     _auto_init_catalog,
     extract_wfs_catalog,
 )
+from portolan_cli.licensing import ResolvedLicense
 
 pytestmark = [pytest.mark.integration]
 
@@ -134,6 +135,11 @@ def make_report(
     )
 
 
+# Calling _auto_init_catalog directly skips the resolution the orchestrator does
+# before its download, so the license is passed in here (issue #686).
+TEST_LICENSE = ResolvedLicense(license_id="CC-BY-4.0", license_url=None)
+
+
 class TestWFSAutoInitCatalog:
     """Tests for automatic catalog initialization after WFS extraction."""
 
@@ -158,7 +164,7 @@ class TestWFSAutoInitCatalog:
             ],
         )
 
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(output_dir, report, None, TEST_LICENSE)
 
         assert (output_dir / "catalog.json").exists(), "catalog.json should be created"
 
@@ -183,7 +189,7 @@ class TestWFSAutoInitCatalog:
             ],
         )
 
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(output_dir, report, None, TEST_LICENSE)
 
         assert (output_dir / ".portolan" / "config.yaml").exists(), "config.yaml should exist"
 
@@ -212,7 +218,7 @@ class TestWFSAutoInitCatalog:
 
         report = make_report(layers=layers)
 
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(output_dir, report, None, TEST_LICENSE)
 
         assert (output_dir / "buildings" / "collection.json").exists()
         assert (output_dir / "roads" / "collection.json").exists()
@@ -232,7 +238,7 @@ class TestWFSAutoInitCatalog:
             ],
         )
 
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(output_dir, report, None, TEST_LICENSE)
 
         assert not (output_dir / "catalog.json").exists()
         assert not (output_dir / ".portolan").exists()
@@ -263,7 +269,7 @@ class TestWFSViaLinks:
             source_url="https://geoserver.example.com/wfs",
         )
 
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(output_dir, report, None, TEST_LICENSE)
 
         collection_path = output_dir / "parcels" / "collection.json"
         assert collection_path.exists()
@@ -369,7 +375,7 @@ class TestWFSExtractOrchestrator:
                 extract_wfs_catalog(
                     url="https://example.com/wfs",
                     output_dir=output_dir,
-                    options=ExtractionOptions(raw=False),
+                    options=ExtractionOptions(raw=False, license="CC-BY-4.0"),
                 )
 
         assert (output_dir / "catalog.json").exists(), "default extraction should create catalog"
@@ -628,7 +634,7 @@ class TestWFSMetadataPropagation:
             fees=None,
         )
 
-        _auto_init_catalog(output_dir, report, discovery)
+        _auto_init_catalog(output_dir, report, discovery, TEST_LICENSE)
 
         catalog_json = json.loads((output_dir / "catalog.json").read_text())
         assert catalog_json.get("title") == "INSPIRE Buildings Service", (
@@ -671,7 +677,7 @@ class TestWFSMetadataPropagation:
             fees=None,
         )
 
-        _auto_init_catalog(output_dir, report, discovery)
+        _auto_init_catalog(output_dir, report, discovery, TEST_LICENSE)
 
         catalog_json = json.loads((output_dir / "catalog.json").read_text())
         assert "road network" in catalog_json.get("description", "").lower()
@@ -720,7 +726,7 @@ class TestWFSMetadataPropagation:
             fees=None,
         )
 
-        _auto_init_catalog(output_dir, report, discovery)
+        _auto_init_catalog(output_dir, report, discovery, TEST_LICENSE)
 
         collection_json = json.loads((layer_dir / "collection.json").read_text())
         assert collection_json.get("title") == "Land Parcels", (
@@ -764,7 +770,7 @@ class TestWFSMetadataPropagation:
             fees=None,
         )
 
-        _auto_init_catalog(output_dir, report, discovery)
+        _auto_init_catalog(output_dir, report, discovery, TEST_LICENSE)
 
         catalog_json = json.loads((output_dir / "catalog.json").read_text())
         # Technical title should be filtered (Issue #369)

@@ -40,6 +40,7 @@ def initialized_catalog(tmp_path: Path) -> Path:
     """Create an initialized Portolan catalog structure."""
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
     # Create config.yaml as sentinel
     config_path = portolan_dir / "config.yaml"
@@ -524,6 +525,7 @@ class TestTabularParquetHypothesis:
             # Set up catalog
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir(exist_ok=True)
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             config_path = portolan_dir / "config.yaml"
             config_path.write_text("# Portolan config\n")
             catalog_data = {
@@ -577,6 +579,7 @@ class TestTabularParquetHypothesis:
             # Set up catalog
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir(exist_ok=True)
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             config_path = portolan_dir / "config.yaml"
             config_path.write_text("# Portolan config\n")
             catalog_data = {
@@ -653,6 +656,7 @@ class TestTabularParquetHypothesis:
             # Set up catalog
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir(exist_ok=True)
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             config_path = portolan_dir / "config.yaml"
             config_path.write_text("# Portolan config\n")
             catalog_data = {

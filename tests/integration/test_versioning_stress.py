@@ -47,7 +47,7 @@ def runner() -> CliRunner:
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
     """Create an initialized Portolan catalog using CLI."""
-    result = CliRunner().invoke(cli, ["init", str(tmp_path), "--auto"])
+    result = CliRunner().invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
     assert result.exit_code == 0, f"Init failed: {result.output}"
     return tmp_path
 
@@ -1196,7 +1196,9 @@ class TestScaleAt1000Files:
     def catalog_with_1000_files(self, tmp_path: Path) -> tuple[Path, Path]:
         """Catalog with 1000 files matching #339 scale."""
         catalog_root = tmp_path / "scale-1000"
-        result = CliRunner().invoke(cli, ["init", str(catalog_root), "--auto"])
+        result = CliRunner().invoke(
+            cli, ["init", str(catalog_root), "--auto", "--license", "CC-BY-4.0"]
+        )
         assert result.exit_code == 0
 
         collection_dir = catalog_root / "large-collection"

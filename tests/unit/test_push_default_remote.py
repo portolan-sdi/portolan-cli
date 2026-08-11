@@ -539,7 +539,7 @@ class TestPushDefaultRemoteIntegration:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize catalog
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0, f"Init failed: {result.output}"
 
             # Create a minimal collection for push

@@ -37,7 +37,7 @@ class TestCleanFullWorkflow:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Step 1: Initialize catalog
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0
 
             # Step 2: Create a collection structure with data
@@ -114,7 +114,7 @@ class TestCleanFullWorkflow:
         """Clean on freshly initialized catalog (just .portolan/ and catalog.json)."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0
 
             # Clean
@@ -131,7 +131,7 @@ class TestCleanFullWorkflow:
         """Clean should preserve all common data file formats."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0
 
             # Create data files of various formats
@@ -171,7 +171,7 @@ class TestCleanFromSubdirectory:
             catalog_root = Path(td)
 
             # Initialize
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0
 
             # Create collection structure
@@ -219,7 +219,7 @@ class TestCleanFromSubdirectory:
             catalog_root = Path(td)
 
             # Initialize
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0
 
             # Create deep directory structure using absolute path
@@ -255,7 +255,7 @@ class TestCleanDryRun:
         """--dry-run should list all files that would be removed."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0
 
             # Create collection with metadata
@@ -293,7 +293,7 @@ class TestCleanDryRun:
         """--dry-run should not modify any files."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0
 
             # Run dry-run
@@ -323,7 +323,7 @@ class TestCleanEmptyDirectories:
         """Clean should remove directories that become empty."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0
 
             # Create item directory with only metadata (no data)
@@ -374,7 +374,7 @@ class TestCleanEmptyDirectories:
         """Clean should preserve directories that contain data files."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0
 
             # Create collection with both metadata and data
@@ -424,7 +424,7 @@ class TestCleanFindCatalogRoot:
         """After clean, find_catalog_root() should return None."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0
 
             # Verify catalog exists
@@ -453,7 +453,7 @@ class TestCleanJsonOutput:
         """portolan --format json clean should output JSON envelope."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0
 
             # Clean with JSON output
@@ -483,7 +483,7 @@ class TestCleanJsonOutput:
         """portolan --format json clean --dry-run should show preview in JSON."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0
 
             # Clean with dry-run and JSON output
@@ -527,7 +527,7 @@ class TestCleanEdgeCases:
         """Clean should handle orphan item.json without collection.json."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0
 
             # Create orphan item (no parent collection.json)
@@ -559,7 +559,7 @@ class TestCleanEdgeCases:
         """Clean should handle STAC-like JSON that's actually user data."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0
 
             # Create a JSON file that looks like STAC but is user data

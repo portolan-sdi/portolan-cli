@@ -130,6 +130,7 @@ class ISOMetadata:
         Returns:
             ExtractedMetadata compatible with seed_metadata_yaml.
         """
+        from portolan_cli.licensing import license_url_from_text
         from portolan_cli.metadata_extraction import ExtractedMetadata
 
         # Build license info string
@@ -162,4 +163,5 @@ class ISOMetadata:
             processing_notes=processing_notes,
             known_issues=None,
             license_raw=license_raw,
+            license_url=license_url_from_text(license_raw),
         )

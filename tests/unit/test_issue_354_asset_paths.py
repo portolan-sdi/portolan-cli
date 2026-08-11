@@ -324,7 +324,7 @@ class TestAssetPathsInExtraction:
                 extract_arcgis_catalog(
                     url="https://example.com/arcgis/rest/services/Test/FeatureServer",
                     output_dir=output_dir,
-                    options=ExtractionOptions(dry_run=False, raw=False),
+                    options=ExtractionOptions(dry_run=False, raw=False, license="CC-BY-4.0"),
                 )
 
         # Check versions.json in extracted collection

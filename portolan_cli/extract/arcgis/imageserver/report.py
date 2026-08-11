@@ -275,6 +275,7 @@ class ImageServerMetadataExtracted:
         Returns:
             ExtractedMetadata with fields populated from this instance.
         """
+        from portolan_cli.licensing import license_url_from_text
         from portolan_cli.metadata_extraction import ExtractedMetadata
 
         # Build processing_notes with service description and technical specs
@@ -304,6 +305,7 @@ class ImageServerMetadataExtracted:
             processing_notes="\n".join(processing_notes_parts),
             known_issues=self.access_information,
             license_raw=self.license_info,
+            license_url=license_url_from_text(self.license_info),
         )
 
 

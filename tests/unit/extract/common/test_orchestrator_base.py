@@ -117,8 +117,17 @@ class TestInitExtractedCatalog:
 
         import portolan_cli.catalog as catalog_mod
 
-        def _fake_init(output_dir: Path, *, title: str | None, description: str | None) -> None:
+        def _fake_init(
+            output_dir: Path,
+            *,
+            title: str | None,
+            description: str | None,
+            license_id: str | None,
+        ) -> None:
             events.append("init")
+            # Issue #686: extract seeds metadata.yaml itself, in post_init, so
+            # init_catalog must not write a template over it.
+            assert license_id is None
 
         def _fake_add(*, paths: list[Path], catalog_root: Path) -> None:
             events.append("add")

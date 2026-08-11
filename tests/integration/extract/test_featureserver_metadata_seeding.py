@@ -18,6 +18,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from portolan_cli.constants import TODO_MARKER
 from portolan_cli.extract.arcgis.discovery import LayerInfo, ServiceDiscoveryResult
 
 # Valid test URL that passes URL parser validation
@@ -102,7 +103,7 @@ class TestFeatureServerMetadataSeeding:
             extract_arcgis_catalog(
                 url=TEST_FEATURE_SERVER_URL,
                 output_dir=output_dir,
-                options=ExtractionOptions(raw=False),
+                options=ExtractionOptions(raw=False, license="CC-BY-4.0"),
             )
 
         # Verify metadata.yaml was created
@@ -151,7 +152,7 @@ class TestFeatureServerMetadataSeeding:
             extract_arcgis_catalog(
                 url=TEST_FEATURE_SERVER_URL,
                 output_dir=output_dir,
-                options=ExtractionOptions(raw=False),
+                options=ExtractionOptions(raw=False, license="CC-BY-4.0"),
             )
 
         metadata_path = output_dir / ".portolan" / "metadata.yaml"
@@ -163,14 +164,12 @@ class TestFeatureServerMetadataSeeding:
         # Load structured content
         metadata = yaml.safe_load(content)
 
-        # contact.email should have a TODO placeholder
-        contact = metadata.get("contact", {})
-        email = contact.get("email", "")
-        assert "TODO" in str(email) or email == "", "contact.email should be TODO or empty"
+        # contact.email has a TODO placeholder: ArcGIS exposes no email.
+        assert metadata["contact"]["email"] == TODO_MARKER
 
-        # license should have a TODO placeholder (since licenseInfo isn't SPDX)
-        license_val = metadata.get("license", "")
-        assert "TODO" in str(license_val) or license_val == "", "license should be TODO or empty"
+        # The license does not, because it can no longer be left for later: the
+        # extraction resolved it from --license before downloading (issue #686).
+        assert metadata["license"] == "CC-BY-4.0"
 
     @pytest.mark.integration
     def test_seeded_metadata_preserves_extracted_fields(
@@ -206,7 +205,7 @@ class TestFeatureServerMetadataSeeding:
             extract_arcgis_catalog(
                 url=TEST_FEATURE_SERVER_URL,
                 output_dir=output_dir,
-                options=ExtractionOptions(raw=False),
+                options=ExtractionOptions(raw=False, license="CC-BY-4.0"),
             )
 
         metadata_path = output_dir / ".portolan" / "metadata.yaml"
@@ -268,7 +267,7 @@ class TestFeatureServerMetadataSeeding:
             extract_arcgis_catalog(
                 url=TEST_FEATURE_SERVER_URL,
                 output_dir=output_dir,
-                options=ExtractionOptions(raw=False),
+                options=ExtractionOptions(raw=False, license="CC-BY-4.0"),
             )
 
         # Verify original content was preserved

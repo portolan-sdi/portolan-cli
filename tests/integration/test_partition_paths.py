@@ -30,7 +30,7 @@ def runner() -> CliRunner:
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
     """Create an initialized Portolan catalog using CLI."""
-    result = CliRunner().invoke(cli, ["init", str(tmp_path), "--auto"])
+    result = CliRunner().invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
     assert result.exit_code == 0, f"Init failed: {result.output}"
     return tmp_path
 

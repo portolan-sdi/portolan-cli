@@ -549,7 +549,17 @@ def _init_catalog(
     root.mkdir(parents=True, exist_ok=True)
     result = CliRunner().invoke(
         cli,
-        ["init", str(root), "--auto", "--title", title, "--description", description],
+        [
+            "init",
+            str(root),
+            "--auto",
+            "--title",
+            title,
+            "--description",
+            description,
+            "--license",
+            "CC-BY-4.0",
+        ],
         catch_exceptions=False,
     )
     assert result.exit_code == 0, result.output
