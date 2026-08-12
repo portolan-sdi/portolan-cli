@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any
 
 from portolan_cli.config import load_merged_metadata
+from portolan_cli.licensing import OTHER_LICENSE, license_gap
 from portolan_cli.providers import HOST_ROLE, PROVIDER_ROLES
 
 logger = logging.getLogger(__name__)
@@ -57,46 +58,6 @@ REQUIRED_FIELDS = frozenset({"contact", "license"})
 REQUIRED_CONTACT_FIELDS = frozenset({"name", "email"})
 
 # =============================================================================
-# SPDX License identifiers (common subset)
-# Full list: https://spdx.org/licenses/
-# =============================================================================
-
-COMMON_SPDX_LICENSES = frozenset(
-    {
-        # Creative Commons
-        "CC0-1.0",
-        "CC-BY-4.0",
-        "CC-BY-SA-4.0",
-        "CC-BY-NC-4.0",
-        "CC-BY-NC-SA-4.0",
-        "CC-BY-ND-4.0",
-        "CC-BY-NC-ND-4.0",
-        # Open source
-        "MIT",
-        "Apache-2.0",
-        "BSD-2-Clause",
-        "BSD-3-Clause",
-        "GPL-2.0-only",
-        "GPL-2.0-or-later",
-        "GPL-3.0-only",
-        "GPL-3.0-or-later",
-        "LGPL-2.1-only",
-        "LGPL-2.1-or-later",
-        "LGPL-3.0-only",
-        "LGPL-3.0-or-later",
-        "MPL-2.0",
-        "ISC",
-        "Unlicense",
-        # Public domain / open data
-        "PDDL-1.0",
-        "ODbL-1.0",
-        "ODC-By-1.0",
-        # Government
-        "CC-PDDC",
-    }
-)
-
-# =============================================================================
 # Validation regex patterns
 # =============================================================================
 
@@ -107,11 +68,6 @@ EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # Suffix can contain any non-whitespace characters
 # See: https://www.doi.org/doi_handbook/2_Numbering.html
 DOI_PATTERN = re.compile(r"^10\.\d{4,}/\S+$")
-
-# LicenseRef pattern: LicenseRef-[idstring] per SPDX spec Section 6
-# idstring: alphanumeric plus dot, hyphen; must have at least one character
-# See: https://spdx.github.io/spdx-spec/v2.3/other-licensing-information-detected/
-LICENSEREF_PATTERN = re.compile(r"^LicenseRef-[A-Za-z0-9.\-]+$")
 
 # ISO date pattern: YYYY-MM-DD
 ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -328,10 +284,12 @@ def _validate_contact(metadata: dict[str, Any]) -> list[str]:
 def _validate_license(metadata: dict[str, Any]) -> list[str]:
     """Validate the required 'license' field.
 
-    License must be a valid SPDX identifier, a LicenseRef-* custom identifier,
-    or the STAC 1.1 keyword ``other`` (a license not covered by SPDX; a
-    rel="license" link is expected alongside it). STAC 1.1 no longer accepts
-    the deprecated ``proprietary`` value (issue #568).
+    The verdict comes from :func:`portolan_cli.licensing.license_gap`, so this
+    command, ``portolan add``, and ``portolan check`` all apply one policy to
+    one SPDX list (issue #727). A license must be an identifier in
+    ``rashid.api.SPDX_LICENSE_IDS``, or the STAC 1.1 keyword ``other`` with a
+    link to the license text. STAC 1.1 no longer accepts the deprecated
+    ``proprietary`` value (issue #568).
 
     Args:
         metadata: The full metadata dictionary.
@@ -349,18 +307,16 @@ def _validate_license(metadata: dict[str, Any]) -> list[str]:
         errors.append("Field 'license' cannot be empty")
         return errors
 
-    # Validate license is an SPDX identifier, the STAC 1.1 "other" keyword,
-    # or a valid LicenseRef-* custom identifier.
-    license_id = str(metadata.get("license"))
-    is_standard_license = license_id in COMMON_SPDX_LICENSES
-    is_other_license = license_id == "other"
-    is_custom_license = LICENSEREF_PATTERN.match(license_id) is not None
-    if not (is_standard_license or is_other_license or is_custom_license):
-        errors.append(
-            f"Invalid SPDX license identifier: '{license_id}'. "
-            f"Use a standard license (MIT, Apache-2.0, CC-BY-4.0, CC0-1.0), "
-            f"'other' for a non-SPDX license, or custom format LicenseRef-YourLicense"
-        )
+    license_id = str(metadata["license"])
+    gap = license_gap(license_id, has_license_link=bool(metadata.get("license_url")))
+    if gap is None:
+        return errors
+
+    # This function reads metadata.yaml alone, so it cannot see a rel="license"
+    # link already written to collection.json. Name that escape as well.
+    if license_id == OTHER_LICENSE:
+        gap += ', or a rel="license" link already on the collection'
+    errors.append(f"Invalid license: {gap}")
 
     return errors
 

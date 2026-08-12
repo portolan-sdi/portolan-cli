@@ -191,6 +191,12 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "Type the style asset application/vnd.mapbox.style+json; a PMTiles style is a "
         "MapLibre GL style file.",
     ),
+    # Which of several styles is the default is a judgment about presentation,
+    # so Portolan states the requirement rather than picking one.
+    "PTL-VIZ-006": _instruct(
+        "Add 'default' to the roles of exactly one style asset when a collection "
+        "registers more than one style."
+    ),
     # ---- partitions ----
     # fixer `partition` wraps partitioning.py's schema read
     "PTL-PRT-001": _auto(

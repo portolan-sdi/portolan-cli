@@ -205,7 +205,8 @@ contact:
   name: "Nissim Lebovits"
   email: "nlebovits@pm.me"
 
-license: "LicenseRef-CityOfPhiladelphia"
+license: "other"
+license_url: "https://www.phila.gov/terms-of-use/"
 attribution: "City of Philadelphia / PASDA"
 
 defaults:
@@ -217,5 +218,9 @@ defaults:
 ```
 
 This sets consistent metadata across all 947 items without requiring per-file flags.
+
+The city's terms are not an SPDX license, so the collection declares `other` and
+links the terms page. `license` must be an SPDX identifier or `other`; a
+`LicenseRef-` value is rejected.
 
 ## Related

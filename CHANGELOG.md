@@ -20,6 +20,16 @@ history, so this section is replaced by the generated entries at that point.
 
 ### Fix
 
+- **license**: `portolan metadata validate` and `portolan check` now judge
+  license identifiers against one list, `rashid.api.SPDX_LICENSE_IDS`. The CLI
+  previously kept a 26-identifier subset, so it rejected real licenses such as
+  `EUPL-1.2` and `CC-BY-3.0` that `check` accepted. Three behavior changes
+  follow. `add` and `init` refuse a misspelled identifier such as `cc-by-4.0`
+  before writing anything, and name the official spelling. `LicenseRef-*` is no
+  longer accepted, because rashid's list holds none and PORTO-CORE-059 allows
+  only an SPDX identifier or `other`; use `other` with a `license_url` instead.
+  `other` without a license link is now reported by `metadata validate`, which
+  matches what `check` has always reported as PTL-LIC-002.
 - **stac**: every STAC and `versions.json` write goes through
   `json_io.write_json_atomic`, so an interrupted write can no longer leave a
   half-written `collection.json`. Every file now gets identical bytes: UTF-8,

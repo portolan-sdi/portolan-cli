@@ -144,7 +144,56 @@ class TestAddRefusesAnUnlicensedCollection:
         assert payload["errors"][0]["code"] == "PRTLN-VAL004"
 
 
+class TestAddRefusesAMisspelledIdentifier:
+    def test_a_case_mismatch_is_refused_and_the_spelling_named(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Issue #727: this used to pass ``add`` and fail ``check`` as PTL-LIC-001."""
+        root = _catalog(tmp_path / "catalog")
+        _write_metadata(root, {"license": "cc-by-4.0"})
+
+        result = _add(runner, root, _source(root))
+
+        assert result.exit_code != 0
+        assert "CC-BY-4.0" in result.output
+        assert not (root / "roads" / "collection.json").exists()
+
+    def test_a_value_that_is_not_an_identifier_is_refused(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        root = _catalog(tmp_path / "catalog")
+        _write_metadata(root, {"license": "Apache 2.0"})
+
+        result = _add(runner, root, _source(root))
+
+        assert result.exit_code != 0
+        assert not (root / "roads" / "collection.json").exists()
+
+    def test_licenseref_is_refused(self, runner: CliRunner, tmp_path: Path) -> None:
+        """rashid's list holds no LicenseRef entries, so it never conformed."""
+        root = _catalog(tmp_path / "catalog")
+        _write_metadata(root, {"license": "LicenseRef-CityOfPhiladelphia"})
+
+        result = _add(runner, root, _source(root))
+
+        assert result.exit_code != 0
+        assert not (root / "roads" / "collection.json").exists()
+
+
 class TestAddAcceptsALicensedCollection:
+    def test_an_identifier_outside_the_popular_shortlist(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Issue #727: EUPL-1.2 is real SPDX and must reach collection.json."""
+        root = _catalog(tmp_path / "catalog")
+        _write_metadata(root, {"license": "EUPL-1.2"})
+
+        result = _add(runner, root, _source(root))
+
+        assert result.exit_code == 0, result.output
+        collection = json.loads((root / "roads" / "collection.json").read_text())
+        assert collection["license"] == "EUPL-1.2"
+
     def test_an_spdx_identifier(self, runner: CliRunner, tmp_path: Path) -> None:
         root = _catalog(tmp_path / "catalog")
         _write_metadata(root, {"license": "CC-BY-4.0"})
