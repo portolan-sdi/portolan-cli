@@ -7,7 +7,7 @@ claude plugin marketplace add portolan-sdi/portolan-skills
 claude plugin install portolan
 ```
 
-Skills become available as `portolan:portolan-cli`, `portolan:reading-portolan`, `portolan:portolan-bootstrap`, `portolan:portolan-consume`, and `portolan:sourcecoop`.
+Skills become available as `portolan:portolan-cli`, `portolan:reading-portolan`, `portolan:portolan-bootstrap`, `portolan:portolan-consume`, `portolan:sourcecoop`, and `portolan:register-catalog`.
 
 ### Claude Code (Web / Cowork)
 
@@ -29,6 +29,8 @@ gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
   --path skills/portolan-consume --consent
 gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
   --path skills/sourcecoop --consent
+gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
+  --path skills/register-catalog --consent
 
 # Or at workspace scope (shared via version control)
 gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
