@@ -35,14 +35,30 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def _suppresses_the_check(member: ast.FunctionDef, source: str) -> bool:
+    """True when the test's own ``@settings`` already relaxes the check.
+
+    ``tests/conftest.py`` leaves such a test alone, because an explicit
+    ``suppress_health_check`` list replaces the profile's rather than extending
+    it. The check is therefore off in both runs, so the test cannot show the
+    guard working or the default staying strict.
+    """
+    return any(
+        "differing_executors" in (ast.get_source_segment(source, decorator) or "")
+        for decorator in member.decorator_list
+    )
+
+
 def _first_class_based_property_test() -> str:
     """Return the node ID of a class-based ``@given`` test in this suite.
 
     Found by scanning rather than hardcoded so a rename cannot silently turn
-    this into a test of nothing.
+    this into a test of nothing. Tests carrying their own suppression are
+    skipped for that same reason: the check has to be live to be observable.
     """
     for path in sorted(TESTS_ROOT.rglob("test_*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
@@ -53,7 +69,7 @@ def _first_class_based_property_test() -> str:
                     getattr(d.func if isinstance(d, ast.Call) else d, "id", None)
                     for d in member.decorator_list
                 }
-                if "given" in names:
+                if "given" in names and not _suppresses_the_check(member, source):
                     rel = path.relative_to(REPO_ROOT).as_posix()
                     return f"{rel}::{node.name}::{member.name}"
     pytest.fail("no class-based @given test found; the guard now protects nothing")
@@ -96,7 +112,11 @@ def test_property_test_survives_a_second_session_under_mutmut() -> None:
     result = _run_two_sessions(under_mutmut=True)
 
     assert "first=0 second=0" in result.stdout, result.stdout + result.stderr
-    assert "differing_executors" not in result.stdout
+    # Match the raised error rather than the check's name. Under mutmut the
+    # loaded profile prints `suppress_health_check=(HealthCheck.differing_
+    # executors,)` in the session header, so the bare name is there whether or
+    # not the check ever fires.
+    assert "FailedHealthCheck" not in result.stdout
 
 
 @pytest.mark.integration
@@ -105,4 +125,5 @@ def test_health_check_still_fires_outside_mutmut() -> None:
     result = _run_two_sessions(under_mutmut=False)
 
     assert "first=0 second=1" in result.stdout, result.stdout + result.stderr
+    assert "FailedHealthCheck" in result.stdout
     assert "differing_executors" in result.stdout
