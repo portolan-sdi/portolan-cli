@@ -298,6 +298,41 @@ def collection_with_many_items(tmp_path: Path) -> Path:
 
 
 # =============================================================================
+# Test: Item Traversal
+# =============================================================================
+
+
+class TestOwnedItemHrefs:
+    """The item walker is public so README generation can reuse it (#713)."""
+
+    @pytest.mark.unit
+    def test_returns_href_and_resolved_path_pairs(self, collection_with_items: Path) -> None:
+        """Each pair carries the written href and the file it resolves to."""
+        from portolan_cli.stac_parquet import owned_item_hrefs
+
+        owned = owned_item_hrefs(collection_with_items / "collection.json")
+
+        assert [href for href, _ in owned] == [
+            f"./scene-{i:03d}/scene-{i:03d}.json" for i in range(5)
+        ]
+        assert all(path.exists() for _, path in owned)
+
+    @pytest.mark.unit
+    def test_descends_organizing_catalogs(self, collection_with_organizing_catalogs: Path) -> None:
+        """Items behind an organizing catalog still belong to the collection."""
+        from portolan_cli.stac_parquet import owned_item_hrefs
+
+        assert len(owned_item_hrefs(collection_with_organizing_catalogs / "collection.json")) == 2
+
+    @pytest.mark.unit
+    def test_missing_node_returns_empty(self, tmp_path: Path) -> None:
+        """A collection with no collection.json owns nothing."""
+        from portolan_cli.stac_parquet import owned_item_hrefs
+
+        assert owned_item_hrefs(tmp_path / "collection.json") == []
+
+
+# =============================================================================
 # Test: Item Count and Threshold
 # =============================================================================
 
