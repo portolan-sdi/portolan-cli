@@ -4714,7 +4714,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "radon", marker = "extra == 'dev'", specifier = ">=6.0.1" },
-    { name = "rashid", git = "https://github.com/portolan-sdi/rashid.git?branch=feat%2F111-export-spdx-list" },
+    { name = "rashid", specifier = ">=0.1.4,<0.2.0" },
     { name = "rasterio", specifier = ">=1.3.0" },
     { name = "requests", specifier = ">=2.33.0" },
     { name = "rich", specifier = ">=13.0.0" },
@@ -5942,8 +5942,8 @@ wheels = [
 
 [[package]]
 name = "rashid"
-version = "0.1.3"
-source = { git = "https://github.com/portolan-sdi/rashid.git?branch=feat%2F111-export-spdx-list#8e520df338562ad09f53c795bbf6f9d075faeb5b" }
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "jsonschema" },
@@ -5956,6 +5956,10 @@ dependencies = [
     { name = "rio-cogeo", version = "6.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "rio-cogeo", version = "7.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "shapely" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bb/f7/bfaf3b6b192a582b4ecddf53ce001da38e5ffbfe54fb0e2f4f663bb77ba2/rashid-0.1.4.tar.gz", hash = "sha256:e0a9272c9f5725d4a5dd28023fd1afcfb3c67bfcc6adff9f9a1d45e28a4f3f8b", size = 451351, upload-time = "2026-08-12T09:34:25.897Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/29/6f/625699ca9997f660e9716ffb7ffa0984a135c7ca80a4752bd3bc9eaf2c59/rashid-0.1.4-py3-none-any.whl", hash = "sha256:187eed535a226c996185fcc218f5b07a32214574cdeb50d2042d1a57c75f6402", size = 124785, upload-time = "2026-08-12T09:34:24.464Z" },
 ]
 
 [[package]]
