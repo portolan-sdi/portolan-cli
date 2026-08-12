@@ -20,6 +20,16 @@ from portolan_cli.utils import href_root
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2] / "portolan_cli"
 
+# mutmut copies the tree to mutants/ and rewrites every call site, so a test
+# that reads source text sees `normalize_hrefs(None)` there and fails the whole
+# run before it can collect stats (#612). Only the two source scans opt out.
+# href_root's own behavioral tests still run under mutation, which is where the
+# mutation signal belongs anyway.
+GENERATED_TREE = "mutants" in SOURCE_ROOT.parts
+skip_on_mutated_source = pytest.mark.skipif(
+    GENERATED_TREE, reason="source scan cannot run against mutmut's rewritten tree"
+)
+
 
 class TestHrefRoot:
     """The two properties pystac needs, on every input shape."""
@@ -68,6 +78,7 @@ class TestEveryCallSiteUsesTheHelper:
     """
 
     @pytest.mark.unit
+    @skip_on_mutated_source
     def test_no_normalize_hrefs_call_bypasses_href_root(self) -> None:
         offenders: list[str] = []
 
@@ -85,6 +96,7 @@ class TestEveryCallSiteUsesTheHelper:
         )
 
     @pytest.mark.unit
+    @skip_on_mutated_source
     def test_the_guard_sees_the_known_call_sites(self) -> None:
         """Guard against the scan silently matching nothing (issues #401, #731)."""
         call_sites = [
