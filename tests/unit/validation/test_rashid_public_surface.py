@@ -42,6 +42,7 @@ def _python_files() -> list[Path]:
 
 
 class TestRashidImportsArePublic:
+    @pytest.mark.source_scan
     def test_no_import_reaches_a_private_rashid_module(self) -> None:
         private: list[str] = []
         for path in _python_files():
@@ -57,6 +58,7 @@ class TestRashidImportsArePublic:
             + "\n".join(private)
         )
 
+    @pytest.mark.source_scan
     def test_the_sweep_sees_the_imports_it_is_meant_to_grade(self) -> None:
         """A sweep that silently matched nothing would pass forever."""
         found = [module for path in _python_files() for module in _rashid_modules(_parsed(path))]
