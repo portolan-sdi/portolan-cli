@@ -42,6 +42,10 @@ def raster_catalog(tmp_path: Path) -> Path:
     (portolan_dir / "config.yaml").write_text(
         yaml.dump({"version": 1, "statistics": {"enabled": True}}), encoding="utf-8"
     )
+    # `portolan add` refuses a collection with no license (PRTLN-VAL004), so the
+    # catalog needs one before the raster can land. Matches the fixture in
+    # tests/integration/test_raster_bands_placement.py.
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n', encoding="utf-8")
     (catalog_root / "imagery").mkdir()
     return catalog_root
 
