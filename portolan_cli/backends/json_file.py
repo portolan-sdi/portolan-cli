@@ -95,11 +95,14 @@ class JsonFileBackend:
         # form (`C:\Windows`, `\\server\share`, `climate\..\..\etc`) is a single
         # filename, so the guard passed those instead. A collection id is a
         # slash-separated spec string, not a host path, so it must satisfy both.
+        #
+        # `root or drive` is the whole test, and `is_absolute()` would add
+        # nothing: it is defined as root plus drive on Windows, so it misses the
+        # drive-relative `C:foo` and the rooted `\foo` that these two catch.
+        # `.` has no parts at all, which is what rejects it.
         candidate = Path(collection)
         flavors = (PurePosixPath(collection), PureWindowsPath(collection))
-        if not candidate.parts or any(
-            f.is_absolute() or f.root or f.drive or ".." in f.parts for f in flavors
-        ):
+        if not candidate.parts or any(f.root or f.drive or ".." in f.parts for f in flavors):
             raise ValueError(f"Invalid collection name: {collection!r}")
         # versions.json at collection root
         return self._catalog_root.joinpath(*candidate.parts) / "versions.json"
