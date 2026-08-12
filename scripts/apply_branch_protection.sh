@@ -41,7 +41,12 @@
 #                           Requiring this one context (not each matrix cell)
 #                           means adding a Python/OS never drops a required check.
 #     - "codecov/patch"   — changed-line coverage (target in codecov.yml).
-#     - "codecov/project" — overall coverage floor.
+#     - "codecov/project" — overall coverage floor, `target: auto` in
+#                           codecov.yml, so it fails on a regression rather than
+#                           against a fixed number the repo does not meet.
+#
+#   A required context that never reports blocks every merge on the branch it
+#   guards. Confirm a context appears on a PR before adding it here.
 #
 # REQUIREMENTS
 #   - `gh` authenticated as a user with ADMIN on the repo.
