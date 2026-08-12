@@ -49,7 +49,7 @@ dependencies = [
     "requests>=2.33.0", # CVE-2026-25645 fix (transitive, pinned for security)
     "rich>=13.0.0", # Terminal progress bars (transitive via geoparquet-io, but we import directly)
     "rio-cogeo>=5.0.0", # COG creation/validation (includes rasterio)
-    "rashid>=0.1.2,<0.2.0", # Conformance validator behind `portolan check`; ships its own STAC + Portolan profile schemas, so validation runs offline. 0.1.2 is the floor for `rashid.api`, the public surface this package imports (rashid#57)
+    "rashid>=0.1.4,<0.2.0", # Conformance validator behind `portolan check`; ships its own STAC + Portolan profile schemas, so validation runs offline. 0.1.4 is the floor for `SPDX_LICENSE_IDS` and `canonical_spdx_id` on `rashid.api`, which license validation gates on so it cannot disagree with PTL-LIC-001 (rashid#111)
     "typing_extensions>=4.0.0; python_version < '3.11'",
 ]
 
@@ -408,3 +408,8 @@ dev = [
 # dev-only source override pulls main so portolan picks up upstream WFS fixes
 # (auto-tile, 100K page_size) before they hit a PyPI release.
 geoparquet-io = { git = "https://github.com/geoparquet/geoparquet-io.git", branch = "main" }
+# TEMPORARY (issue #727). License validation imports `SPDX_LICENSE_IDS` and
+# `canonical_spdx_id` from `rashid.api`, which rashid#112 adds. The published
+# spec stays `rashid>=0.1.4` (PyPI-valid); this override supplies that surface
+# until 0.1.4 is released. Delete this line and re-lock once it is on PyPI.
+rashid = { git = "https://github.com/portolan-sdi/rashid.git", branch = "feat/111-export-spdx-list" }

@@ -76,17 +76,39 @@ class TestLicenseGap:
         ["CC-BY-4.0", "MIT", "CC0-1.0", "ODbL-1.0", "EUPL-1.2", "  CC-BY-4.0  "],
     )
     def test_an_identifier_passes_without_a_link(self, license_id: str) -> None:
-        """An SPDX identifier needs no link, and spelling is check's job, not ours."""
+        """An SPDX identifier needs no link."""
         assert license_gap(license_id, has_license_link=False) is None
 
-    def test_spelling_is_not_judged_here(self) -> None:
-        """rashid keeps SPDX_LICENSE_IDS private, so this module cannot and must not check it.
+    def test_spelling_is_judged_against_rashids_list(self) -> None:
+        """rashid 0.1.4 published SPDX_LICENSE_IDS, so the gate can check it (issue #727).
 
-        A misspelled identifier passes the gate and is caught later by
-        PTL-LIC-001 under ``portolan check``. The gate exists to stop the two
-        failures generation itself causes, not to re-implement the SPDX list.
+        Before this, a misspelled identifier passed the gate and reappeared as
+        PTL-LIC-001 under ``portolan check``, after ``add`` had already written
+        the collection. Naming the official spelling here is what rashid's hint
+        does, so the two commands say the same word.
         """
-        assert license_gap("cc-by-4.0", has_license_link=False) is None
+        gap = license_gap("cc-by-4.0", has_license_link=False)
+
+        assert gap is not None
+        assert "CC-BY-4.0" in gap
+
+    def test_a_value_that_is_not_an_identifier_at_all_is_a_gap(self) -> None:
+        """No near miss to suggest, so the reason names the two conformant shapes."""
+        gap = license_gap("Apache 2.0", has_license_link=False)
+
+        assert gap is not None
+        assert "other" in gap
+
+    def test_licenseref_is_a_gap(self) -> None:
+        """LicenseRef-* is an SPDX expression construct; rashid's list holds none."""
+        gap = license_gap("LicenseRef-CityOfPhiladelphia", has_license_link=False)
+
+        assert gap is not None
+        assert "other" in gap
+
+    def test_a_link_does_not_rescue_a_misspelled_identifier(self) -> None:
+        """A license link only rescues 'other'. PTL-LIC-001 still fires on a typo."""
+        assert license_gap("cc-by-4.0", has_license_link=True) is not None
 
 
 class TestResolveLicense:

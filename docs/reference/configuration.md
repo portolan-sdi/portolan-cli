@@ -992,7 +992,8 @@ upstream_version_url: https://data.census.gov/releases/2024.1
 Only two fields are required in `metadata.yaml`:
 
 - **`contact.name`** and **`contact.email`** - Who maintains this data
-- **`license`** - SPDX identifier (validated against common licenses)
+- **`license`** - SPDX identifier, validated against the full SPDX list that
+  `portolan check` uses. See [Licensing](../guides/licensing.md).
 
 Title and description come from STAC metadata (set during `portolan init`). You
 may optionally set `title` and `description` in `metadata.yaml` to override the
