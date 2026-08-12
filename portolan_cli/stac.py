@@ -25,6 +25,7 @@ from portolan_cli.constants import PARTITION_EXTENSION_URI, PORTOLAN_SCHEMA_URI
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.providers import derive_provenance, resolve_providers
+from portolan_cli.utils import href_root
 
 # Any versioned Portolan profile URI, not just the current one: matching the
 # whole family is what lets a stale claim be rewritten rather than duplicated.
@@ -275,8 +276,7 @@ def save_catalog(catalog: pystac.Catalog, dest_dir: Path) -> None:
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    # Trailing slash required: pystac treats dotted paths (e.g., tmp.xyz) as files
-    catalog.normalize_hrefs(f"{dest_dir}/")
+    catalog.normalize_hrefs(href_root(dest_dir))
 
     # Save as self-contained (relative links)
     catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)

@@ -350,14 +350,43 @@ class TestJsonFileBackend:
             backend._versions_path(collection)
 
     @pytest.mark.unit
-    def test_absolute_collection_path_rejected(self, tmp_path: Any) -> None:
-        """An absolute collection id raises instead of escaping the catalog root."""
+    @pytest.mark.parametrize(
+        "collection",
+        [
+            "/etc/passwd",
+            "C:\\Windows\\system32",
+            "C:/Windows/system32",
+            "//server/share",
+            "\\\\server\\share",
+            "climate\\..\\..\\etc",
+        ],
+    )
+    def test_absolute_collection_path_rejected(self, tmp_path: Any, collection: str) -> None:
+        """An absolute collection id raises instead of escaping the catalog root.
+
+        The guard must not depend on the host's path flavor. ``pathlib`` splits
+        by platform, so on Windows ``/etc/passwd`` is rooted but not absolute
+        (absolute needs a drive) and slipped through, while on POSIX every
+        backslash form is one filename and slipped through the other way. A
+        collection id is a slash-separated spec string, so both flavors judge it.
+        """
         from pathlib import Path
 
         backend = JsonFileBackend(catalog_root=Path(tmp_path))
 
         with pytest.raises(ValueError, match="Invalid collection name"):
-            backend._versions_path("/etc/passwd")
+            backend._versions_path(collection)
+
+    @pytest.mark.unit
+    def test_nested_collection_survives_the_flavor_guard(self, tmp_path: Any) -> None:
+        """The cross-flavor guard must not reject a legitimate nested id (#723)."""
+        from pathlib import Path
+
+        backend = JsonFileBackend(catalog_root=Path(tmp_path))
+
+        result = backend._versions_path("climate/hittekaart")
+
+        assert result == Path(tmp_path) / "climate" / "hittekaart" / "versions.json"
 
     @pytest.mark.unit
     def test_dot_collection_rejected(self, tmp_path: Any) -> None:

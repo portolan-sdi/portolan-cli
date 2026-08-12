@@ -24,6 +24,7 @@ from portolan_cli.backends.iceberg.versioning import (
     version_to_snapshot_properties,
 )
 from portolan_cli.backends.protocol import DriftReport, SchemaFingerprint
+from portolan_cli.utils import href_root
 from portolan_cli.versions import Asset, SchemaInfo, Version
 
 if TYPE_CHECKING:
@@ -375,7 +376,7 @@ class IcebergBackend:
                 ),
             )
 
-            collection.normalize_hrefs(str(collection_dir))
+            collection.normalize_hrefs(href_root(collection_dir))
             collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
         except Exception:
             logger.warning(

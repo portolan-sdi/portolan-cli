@@ -6,8 +6,34 @@ Small helpers used across multiple modules.
 from __future__ import annotations
 
 import posixpath
-from pathlib import PurePath
+from pathlib import Path, PurePath
 from typing import Any
+
+
+def href_root(path: Path) -> str:
+    """The root string to hand pystac's ``normalize_hrefs``.
+
+    ``normalize_hrefs`` tells a file from a directory by looking for a dot in
+    the final path component, so a directory named ``tmp.XXXXXX`` reads as a
+    file and the catalog lands in its parent (issue #401). A trailing slash is
+    what settles it.
+
+    The slash alone is not enough. pystac absolutizes a relative root against
+    the working directory and drops the trailing slash on the way, which put the
+    heuristic back in play for ``init``'s ``"."`` default (issue #731).
+    Resolving first keeps the slash meaningful.
+
+    This is the single writer for that string. Every ``normalize_hrefs`` call
+    takes its root from here, and ``tests/unit/test_href_root.py`` fails if one
+    builds it by hand instead.
+
+    Args:
+        path: Directory the catalog or collection is written to.
+
+    Returns:
+        The absolute directory path with exactly one trailing slash.
+    """
+    return f"{path.resolve()}/"
 
 
 def relative_href(from_dir: PurePath, to_file: PurePath) -> str:

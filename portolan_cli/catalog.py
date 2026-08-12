@@ -21,7 +21,7 @@ from portolan_cli.errors import CatalogAlreadyExistsError
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic, write_text_atomic
 from portolan_cli.models.catalog import CatalogModel
-from portolan_cli.utils import relative_href
+from portolan_cli.utils import href_root, relative_href
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -407,6 +407,8 @@ def init_catalog(
 
     Args:
         path: Directory path for the catalog. Will be created if doesn't exist.
+            Resolved before use, so a relative path such as the CLI's "." default
+            is interpreted against the working directory exactly once.
         title: Optional catalog title.
         description: Optional catalog description.
         backend: Versioning backend name.
@@ -415,7 +417,8 @@ def init_catalog(
         license_url: URL of the license text. Required when license_id is "other".
 
     Returns:
-        Tuple of (catalog_file_path, warnings).
+        Tuple of (catalog_file_path, warnings). The path is absolute, so callers
+        can read it back without matching the working directory init ran in.
 
     Raises:
         CatalogAlreadyExistsError: If directory is in MANAGED state.
@@ -426,8 +429,14 @@ def init_catalog(
 
     from portolan_cli.errors import UnmanagedStacCatalogError
 
-    # Ensure path exists
-    path = Path(path)
+    # Ensure path exists. Resolve first: the path argument defaults to "." and
+    # every downstream write, including pystac's, then depends on the working
+    # directory. pystac's normalize_hrefs drops the trailing slash when it
+    # absolutizes a relative root, so a dotted working directory name trips the
+    # file-versus-directory heuristic of issue #401 and catalog.json lands in the
+    # parent. Resolving here keeps the trailing slash meaningful and gives the
+    # caller an absolute path to read back (issue #731).
+    path = Path(path).resolve()
     try:
         path.mkdir(parents=True, exist_ok=True)
     except OSError as e:
@@ -451,8 +460,8 @@ def init_catalog(
 
     warnings: list[str] = []
 
-    # Auto-extract id from directory name
-    catalog_id = _sanitize_id(path.resolve().name)
+    # Auto-extract id from directory name (path is already resolved)
+    catalog_id = _sanitize_id(path.name)
 
     # Set defaults. Issue #502: title is mandatory and must be human-readable,
     # so derive one from the directory name instead of leaving it empty.
@@ -503,8 +512,7 @@ def init_catalog(
     )
 
     catalog_file = path / "catalog.json"
-    # Trailing slash required: pystac treats dotted paths (e.g., tmp.xyz) as files
-    catalog.normalize_hrefs(f"{path}/")
+    catalog.normalize_hrefs(href_root(path))
     try:
         catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
     except OSError as e:
