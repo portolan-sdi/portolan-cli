@@ -276,17 +276,7 @@ def test_new_version_records_the_removed_filename(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "#723: rm on a collection under a subcatalog (ADR-0032) leaves a "
-        "phantom versions.json entry. JsonFileBackend._versions_path flattens "
-        "a nested collection id through Path(collection).name, so publishing "
-        "'sub/coll' writes {catalog_root}/coll/versions.json. Drop this marker "
-        "with the fix; it is the acceptance criterion."
-    ),
-)
-def test_nested_collection_resolves_the_real_catalog_root(tmp_path: Path) -> None:
+def test_nested_collection_resolves_hrefs_against_the_catalog_root(tmp_path: Path) -> None:
     """Hrefs are resolved against the catalog root, not the collection's grandparent.
 
     Under a subcatalog (ADR-0032) the collection sits two levels below the root,
