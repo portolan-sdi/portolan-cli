@@ -21,6 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 import pystac
@@ -161,6 +162,9 @@ from portolan_cli.stac import (
 )
 from portolan_cli.sync.checksums import compute_checksum, multihash_sha256
 from portolan_cli.viz.style import enrich_cog_assets
+
+if TYPE_CHECKING:
+    from portolan_cli.versions import Version
 
 logger = logging.getLogger(__name__)
 
@@ -649,11 +653,59 @@ def _update_versions(
     else:
         raise ValueError("Either asset_files or (output_path, checksum) must be provided")
 
-    publish_version(
+    published = publish_version(
         collection_id,
         assets=assets,
         catalog_root=catalog_root,
     )
+
+    # Mirror the collection's new state into the catalog-level versions.json
+    # index, the "update versions.json then catalog versions.json" step of the
+    # add flow in .claude/rules/stac-assets.md. The deferred tabular and
+    # companion path reaches versions.json only through here, so without this
+    # the collection is missing from the catalog-level index (issue #650).
+    _mirror_into_catalog_index(catalog_root, collection_id, published)
+
+
+def _mirror_into_catalog_index(
+    catalog_root: Path,
+    collection_id: str,
+    published: Version,
+) -> None:
+    """Mirror a published collection version into the catalog-level versions.json.
+
+    Kept separate from :func:`_update_versions` so the error branch does not push
+    that function past the rank-C complexity ceiling CI enforces.
+    ``update_catalog_versions`` no-ops when the catalog has no catalog-level
+    versions.json, which is the case for non-file backends.
+
+    A catalog-level failure is logged and swallowed, never raised. The
+    collection-level version is already on disk at this point, so failing the
+    add here would report an error for work that succeeded. This mirrors
+    ``finalization._finalize_with_file_backend``.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection_id: Collection identifier, "climate/hittekaart" for nested.
+        published: The Version just written by ``publish_version``.
+    """
+    from portolan_cli.catalog import update_catalog_versions
+
+    try:
+        update_catalog_versions(
+            catalog_root=catalog_root,
+            collection_id=collection_id,
+            current_version=published.version,
+            asset_count=len(published.assets),
+            total_size_bytes=sum(a.size_bytes for a in published.assets.values()),
+        )
+    except Exception:
+        logger.warning(
+            "Failed to update catalog-level versions.json for collection '%s'. "
+            "Collection version was published but catalog-level view may be stale.",
+            collection_id,
+            exc_info=True,
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
