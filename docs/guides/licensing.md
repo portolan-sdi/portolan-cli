@@ -99,5 +99,6 @@ $ portolan add roads/roads.parquet
 
 Nothing was written. Set the license and run the command again.
 
-Identifier spelling is checked separately, by `portolan check`, against the full
-SPDX list. A typo like `cc-by-4.0` passes `add` and is reported as `PTL-LIC-001`.
+Spelling is checked here too, against the same SPDX list `portolan check` uses.
+A typo like `cc-by-4.0` is refused before anything is written, and the message
+names the official spelling.
