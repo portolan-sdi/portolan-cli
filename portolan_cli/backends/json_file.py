@@ -21,7 +21,7 @@ Deferred Features:
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
 from portolan_cli.backends.protocol import DriftReport, SchemaFingerprint
@@ -88,10 +88,18 @@ class JsonFileBackend:
         # than discarding its parts. Validation stays lexical (no `resolve()`) so the
         # returned path keeps the caller's catalog root verbatim, which matters where
         # the root is itself a symlink (macOS `/tmp`).
+        # Judge the id under both path flavors, never just the host's. `pathlib`
+        # splits by platform, and each flavor is blind to the other's escapes.
+        # On Windows `/etc/passwd` is rooted but not absolute, because absolute
+        # there needs a drive, so the guard passed it. On POSIX every backslash
+        # form (`C:\Windows`, `\\server\share`, `climate\..\..\etc`) is a single
+        # filename, so the guard passed those instead. A collection id is a
+        # slash-separated spec string, not a host path, so it must satisfy both.
         candidate = Path(collection)
-        if candidate.is_absolute() or candidate.drive or not candidate.parts:
-            raise ValueError(f"Invalid collection name: {collection!r}")
-        if any(part == ".." for part in candidate.parts):
+        flavors = (PurePosixPath(collection), PureWindowsPath(collection))
+        if not candidate.parts or any(
+            f.is_absolute() or f.root or f.drive or ".." in f.parts for f in flavors
+        ):
             raise ValueError(f"Invalid collection name: {collection!r}")
         # versions.json at collection root
         return self._catalog_root.joinpath(*candidate.parts) / "versions.json"
