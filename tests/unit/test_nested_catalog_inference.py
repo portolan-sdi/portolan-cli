@@ -297,6 +297,55 @@ class TestCreateIntermediateCatalogs:
         assert "parent" in links_by_rel
         assert links_by_rel["parent"]["href"] == "../catalog.json"
 
+    def test_deep_intermediate_parent_stops_one_level_up(self, tmp_path: Path) -> None:
+        """Issue #711: root and parent diverge below the first level.
+
+        At depth 1 the containing object *is* the root catalog, so one href
+        served both rels and the conflation stayed invisible. At depth 2 the
+        container is ``env/catalog.json`` while the root is two levels up.
+        """
+        import json
+
+        from portolan_cli.catalog import create_intermediate_catalogs
+
+        catalog_root = tmp_path
+        (catalog_root / "catalog.json").write_text(
+            '{"type": "Catalog", "id": "test", "stac_version": "1.1.0", "links": []}'
+        )
+
+        create_intermediate_catalogs("env/air/quality", catalog_root)
+
+        content = json.loads((catalog_root / "env" / "air" / "catalog.json").read_text())
+        links_by_rel = {link["rel"]: link for link in content.get("links", [])}
+
+        assert links_by_rel["root"]["href"] == "../../catalog.json"
+        # Pre-fix this was "../../catalog.json", the root rather than env/.
+        assert links_by_rel["parent"]["href"] == "../catalog.json"
+
+    def test_intermediate_catalogs_carry_a_human_readable_title(self, tmp_path: Path) -> None:
+        """Issue #502 titles apply to intermediate catalogs too (rashid PTL-TTL-001).
+
+        Without a title on the target, ``ensure_link_titles`` also has nothing to
+        copy onto the parent's child link, so PTL-TTL-003 fires alongside it.
+        """
+        import json
+
+        from portolan_cli.catalog import create_intermediate_catalogs
+
+        catalog_root = tmp_path
+        (catalog_root / "catalog.json").write_text(
+            '{"type": "Catalog", "id": "test", "stac_version": "1.1.0", "links": []}'
+        )
+
+        create_intermediate_catalogs("env/air-quality/pm25", catalog_root)
+
+        # Pre-fix neither file carried a title at all.
+        top = json.loads((catalog_root / "env" / "catalog.json").read_text())
+        nested = json.loads((catalog_root / "env" / "air-quality" / "catalog.json").read_text())
+        assert top["title"] == "Env"
+        # Titled after its own segment, not the full "env/air-quality" id.
+        assert nested["title"] == "Air Quality"
+
 
 class TestIntermediateCatalogIds:
     """Test intermediate_catalog_ids() pure path-walk helper (shared by add + push)."""
@@ -335,6 +384,76 @@ class TestIntermediateCatalogIds:
         }
         written = set((tmp_path).glob("*/catalog.json")) | set((tmp_path).glob("*/*/catalog.json"))
         assert written == expected_dirs
+
+
+def _collection_json(collection_id: str) -> str:
+    """A minimal valid collection body, enough for PySTAC to resolve a link."""
+    return (
+        f'{{"type": "Collection", "id": "{collection_id}", "stac_version": "1.1.0", '
+        '"description": "Test.", "license": "proprietary", '
+        '"extent": {"spatial": {"bbox": [[0, 0, 1, 1]]}, '
+        '"temporal": {"interval": [[null, null]]}}, "links": []}'
+    )
+
+
+class TestFlatAddLeavesNestedLinksAlone:
+    """Issue #711: adding a flat collection must not rewrite the nested tree.
+
+    Registering a flat collection used to load the root catalog with PySTAC and
+    call ``save(SELF_CONTAINED)``, which walks and re-serializes every
+    descendant. ``normalize_hrefs`` lays children out by ``id``, and an
+    intermediate catalog's id is its POSIX path, so ``env/air`` was relocated to
+    ``env/env/air/`` and its child href went with it.
+    """
+
+    def test_registering_a_flat_collection_preserves_intermediate_child_hrefs(
+        self, tmp_path: Path
+    ) -> None:
+        import json
+
+        from portolan_cli.catalog import (
+            create_intermediate_catalogs,
+            update_catalog_links_for_nested,
+        )
+        from portolan_cli.finalization import _update_catalog_links
+
+        catalog_root = tmp_path
+        (catalog_root / "catalog.json").write_text(
+            '{"type": "Catalog", "id": "test", "stac_version": "1.1.0", '
+            '"description": "Test", "links": []}'
+        )
+        create_intermediate_catalogs("env/air/quality", catalog_root)
+        leaf = catalog_root / "env" / "air" / "quality"
+        leaf.mkdir(parents=True, exist_ok=True)
+        (leaf / "collection.json").write_text(_collection_json("quality"))
+        update_catalog_links_for_nested(catalog_root, "env/air/quality")
+
+        # A flat collection added afterwards, as in any mixed catalog.
+        (catalog_root / "roads").mkdir()
+        (catalog_root / "roads" / "collection.json").write_text(_collection_json("roads"))
+        _update_catalog_links(catalog_root, "roads")
+
+        intermediate = json.loads((catalog_root / "env" / "catalog.json").read_text())
+        hrefs = [link["href"] for link in intermediate["links"] if link["rel"] == "child"]
+        # Pre-fix this was "./env/air/catalog.json", resolving to env/env/air/.
+        assert hrefs == ["./air/catalog.json"]
+
+    def test_the_flat_collection_still_gets_its_child_link(self, tmp_path: Path) -> None:
+        import json
+
+        from portolan_cli.finalization import _update_catalog_links
+
+        catalog_root = tmp_path
+        (catalog_root / "catalog.json").write_text(
+            '{"type": "Catalog", "id": "test", "stac_version": "1.1.0", '
+            '"description": "Test", "links": []}'
+        )
+
+        _update_catalog_links(catalog_root, "roads")
+
+        content = json.loads((catalog_root / "catalog.json").read_text())
+        hrefs = [link["href"] for link in content["links"] if link["rel"] == "child"]
+        assert hrefs == ["./roads/collection.json"]
 
 
 class TestUpdateCatalogLinksNested:

@@ -18,8 +18,10 @@ from typing import Any, Literal, overload
 
 from portolan_cli.agents_md import visible_stac_files
 from portolan_cli.errors import CatalogAlreadyExistsError
+from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic, write_text_atomic
 from portolan_cli.models.catalog import CatalogModel
+from portolan_cli.utils import relative_href
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -395,8 +397,6 @@ def init_catalog(
     # Set defaults. Issue #502: title is mandatory and must be human-readable,
     # so derive one from the directory name instead of leaving it empty.
     if not title:
-        from portolan_cli.humanize import humanize_slug
-
         title = humanize_slug(catalog_id)
         warnings.append(f"Derived catalog title '{title}' from directory name")
 
@@ -596,7 +596,7 @@ def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None
     # Create catalog.json at each intermediate level (all but the last).
     # intermediate_catalog_ids is the shared source of truth for this walk,
     # also used by push discovery (keeps add/push in lockstep).
-    for i, intermediate_path in enumerate(intermediate_catalog_ids(collection_id)):
+    for intermediate_path in intermediate_catalog_ids(collection_id):
         catalog_dir = catalog_root / intermediate_path
         catalog_file = catalog_dir / "catalog.json"
 
@@ -607,18 +607,28 @@ def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None
         # Create directory if needed
         catalog_dir.mkdir(parents=True, exist_ok=True)
 
-        # Calculate relative path depth for links
-        depth = i + 1  # How many levels deep from root
-        parent_href = "../" * depth + "catalog.json"
+        # Root and parent diverge below the first level: the root catalog is
+        # `depth` levels up, while the containing object is always the catalog
+        # one level up. Deriving both from the depth made every intermediate
+        # below the first point past its own parent (issue #711).
+        root_href = relative_href(catalog_dir, catalog_root / "catalog.json")
+        parent_href = relative_href(catalog_dir, catalog_dir.parent / "catalog.json")
+
+        # Titled after its own path segment, not the full id: the title is what
+        # a browser shows and what ensure_link_titles copies onto the parent's
+        # child link, so "Air Quality" reads better than "Env/Air Quality"
+        # (issue #502, rashid PTL-TTL-001 and PTL-TTL-003).
+        title = humanize_slug(catalog_dir.name)
 
         # Create intermediate catalog
         catalog_data = {
             "type": "Catalog",
             "id": intermediate_path,
             "stac_version": "1.1.0",
+            "title": title,
             "description": f"Catalog: {intermediate_path}",
             "links": [
-                {"rel": "root", "href": parent_href, "type": "application/json"},
+                {"rel": "root", "href": root_href, "type": "application/json"},
                 {"rel": "parent", "href": parent_href, "type": "application/json"},
             ],
         }

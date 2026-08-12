@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 import logging
-import posixpath
 from pathlib import Path, PurePath
 from typing import Any
 
@@ -53,12 +52,12 @@ from portolan_cli.stac import (
     apply_human_titles,
     apply_provenance,
     create_collection,
-    load_catalog,
     update_catalog_file_statistics,
     update_catalog_provenance,
     update_collection_file_statistics,
     update_collection_summaries,
 )
+from portolan_cli.utils import relative_href
 from portolan_cli.versions import (
     Asset,
     VersionsFile,
@@ -103,13 +102,6 @@ def _deduplicate_collection_item_links(collection: pystac.Collection) -> None:
 def relative_root_href(catalog_root: PurePath, collection_dir: PurePath) -> str:
     """The href from ``collection_dir`` to the root ``catalog.json``, in POSIX.
 
-    A STAC href is a relative URL reference, so the separator is ``/`` on every
-    platform. ``os.path.relpath`` returns the *native* one, which on Windows
-    shipped ``..\\catalog.json`` — not a Windows spelling of the parent link but
-    a filename containing backslashes, which resolves nowhere (rashid
-    PTL-LNK-006). Normalizing both sides to POSIX first keeps the computation
-    itself platform-independent.
-
     Args:
         catalog_root: Directory holding the root ``catalog.json``.
         collection_dir: Directory the link will live in.
@@ -117,10 +109,34 @@ def relative_root_href(catalog_root: PurePath, collection_dir: PurePath) -> str:
     Returns:
         A relative POSIX href, e.g. ``../catalog.json``.
     """
-    return posixpath.relpath(
-        posixpath.join(PurePath(catalog_root).as_posix(), "catalog.json"),
-        PurePath(collection_dir).as_posix(),
-    )
+    return relative_href(collection_dir, PurePath(catalog_root) / "catalog.json")
+
+
+def _set_structural_link(
+    links: list[dict[str, Any]],
+    rel: str,
+    href: str,
+    media_type: str = "application/json",
+) -> None:
+    """Point ``rel`` at ``href``, adding the link when it is absent.
+
+    Repointing matters as much as adding. PySTAC writes a ``parent`` link of its
+    own, so a generator that only fills in missing links leaves PySTAC's answer
+    standing, which is how the wrong parent survived to disk (issue #711).
+    """
+    for link in links:
+        if link.get("rel") == rel:
+            # PySTAC stamps the owning object's title on the links it writes, so
+            # a title that survived a repoint would now name the old target.
+            # Titles on child/item links are backfilled from the target by
+            # ensure_link_titles; these structural rels are not, so dropping is
+            # the honest option.
+            if link.get("href") != href:
+                link.pop("title", None)
+            link["href"] = href
+            link["type"] = media_type
+            return
+    links.append({"rel": rel, "href": href, "type": media_type})
 
 
 def _fix_collection_links(
@@ -130,7 +146,13 @@ def _fix_collection_links(
 ) -> None:
     """Fix root/parent links and deduplicate item links in collection JSON.
 
-    PySTAC sets root to self by default; we need to point to catalog root.
+    PySTAC sets root to self by default, so both structural links need
+    repointing: ``root`` at the catalog root, and ``parent`` at whatever catalog
+    contains this collection. Those two coincide only for a single-level id. For
+    a nested id the container is the intermediate ``catalog.json`` that
+    ``create_intermediate_catalogs`` writes one level up, and reusing the root
+    href walked straight past it (rashid PTL-LNK-006, issue #711).
+
     Also deduplicates item links that can occur when add is called
     multiple times on the same collection.
     """
@@ -138,25 +160,12 @@ def _fix_collection_links(
         return
 
     collection_data = json.loads(collection_json_path.read_text(encoding="utf-8"))
-    relative_root = relative_root_href(catalog_root, collection_dir)
+    links: list[dict[str, Any]] = collection_data.setdefault("links", [])
 
-    # Update root link to point to catalog
-    for link in collection_data.get("links", []):
-        if link.get("rel") == "root":
-            link["href"] = relative_root
-            break
-    else:
-        # No root link found, add one
-        collection_data.setdefault("links", []).append(
-            {"rel": "root", "href": relative_root, "type": "application/json"}
-        )
-
-    # Add parent link if missing
-    has_parent = any(link.get("rel") == "parent" for link in collection_data.get("links", []))
-    if not has_parent:
-        collection_data["links"].append(
-            {"rel": "parent", "href": relative_root, "type": "application/json"}
-        )
+    _set_structural_link(links, "root", relative_root_href(catalog_root, collection_dir))
+    _set_structural_link(
+        links, "parent", relative_href(collection_dir, collection_dir.parent / "catalog.json")
+    )
 
     # Deduplicate item links (can occur when add is called multiple times)
     seen_item_hrefs: set[str] = set()
@@ -173,50 +182,77 @@ def _fix_collection_links(
     write_json_atomic(collection_json_path, collection_data)
 
 
-def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
-    """Ensure catalog has link to collection.
+def _fix_item_links(
+    collection_json_path: Path,
+    catalog_root: Path,
+    collection_dir: Path,
+) -> None:
+    """Repoint the structural links of every item this collection owns.
 
-    For nested collection IDs, delegates to update_catalog_links_for_nested
-    which properly links through the catalog hierarchy.
+    ``Collection.save`` serializes its items, but the collection is loaded
+    standalone and never attached to a parent ``pystac.Catalog``, so PySTAC
+    resolves each item's root to the collection itself and writes
+    ``root -> collection.json``. The spec wants the catalog root there
+    (core.md:262-264, rashid PTL-LNK-006), and until now only ``check --fix``
+    repaired it — generation and repair disagreed.
+
+    ``parent`` and ``collection`` both point at the owning collection, which is
+    what PySTAC already writes; they are set here so a hand-edited or partially
+    written item ends up complete.
+
+    Args:
+        collection_json_path: The saved ``collection.json``, read for item links.
+        catalog_root: Directory holding the root ``catalog.json``.
+        collection_dir: Directory holding ``collection.json``.
+    """
+    if not collection_json_path.exists():
+        return
+
+    collection_data = json.loads(collection_json_path.read_text(encoding="utf-8"))
+    for link in collection_data.get("links", []):
+        if link.get("rel") != "item":
+            continue
+        href = link.get("href", "")
+        if not href:
+            continue
+        item_path = (collection_dir / href).resolve()
+        if not item_path.exists():
+            continue
+
+        item_data = json.loads(item_path.read_text(encoding="utf-8"))
+        item_dir = item_path.parent
+        item_links: list[dict[str, Any]] = item_data.setdefault("links", [])
+        collection_href = relative_href(item_dir, collection_dir / "collection.json")
+
+        _set_structural_link(
+            item_links, "root", relative_href(item_dir, catalog_root / "catalog.json")
+        )
+        _set_structural_link(item_links, "parent", collection_href)
+        _set_structural_link(item_links, "collection", collection_href)
+        write_json_atomic(item_path, item_data)
+
+
+def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
+    """Ensure the catalog tree has a child link down to this collection.
+
+    ``update_catalog_links_for_nested`` handles both shapes: a flat id gets one
+    child link on the root, a nested id gets one at every level. It edits only
+    the ``links`` arrays it must, which is why the flat case routes here too.
+
+    The flat case used to load the root with PySTAC and call
+    ``save(SELF_CONTAINED)``. That walks and re-serializes every descendant, and
+    ``normalize_hrefs`` lays children out by ``id`` — so an intermediate catalog,
+    whose id is its POSIX path, was relocated from ``env/air/`` to
+    ``env/env/air/`` and its child link followed. Adding a flat collection
+    corrupted the nested half of the catalog (issue #711).
 
     Args:
         catalog_root: Root directory of the catalog.
         collection_id: Collection identifier (may be nested like "climate/hittekaart").
     """
-    # For nested collection IDs, use the nested catalog link updater
-    if "/" in collection_id:
-        from portolan_cli.catalog import update_catalog_links_for_nested
+    from portolan_cli.catalog import update_catalog_links_for_nested
 
-        update_catalog_links_for_nested(catalog_root, collection_id)
-        return
-
-    # For single-level collections, add direct link from root
-    catalog_path = catalog_root / "catalog.json"
-    catalog = load_catalog(catalog_path)
-
-    # Trailing slash required: pystac treats paths with dots in final component as files
-    catalog.normalize_hrefs(f"{catalog_root}/")
-
-    # Extract collection IDs from existing child links
-    # Links are in format: "./{collection_id}/collection.json"
-    existing_collection_ids: set[str] = set()
-    for link in catalog.links:
-        if link.rel != "child":
-            continue
-        href = link.href or ""
-        # Extract collection ID from href pattern: ./{collection_id}/collection.json
-        if href.endswith("/collection.json"):
-            # Parse: ./{collection_id}/collection.json or {collection_id}/collection.json
-            parts = href.replace("./", "").split("/")
-            if len(parts) >= 2:
-                coll_id = parts[0]
-                existing_collection_ids.add(coll_id)
-
-    if collection_id not in existing_collection_ids:
-        collection_href = f"./{collection_id}/collection.json"
-        catalog.add_link(pystac.Link(rel="child", target=collection_href))
-        # Re-save catalog
-        catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
+    update_catalog_links_for_nested(catalog_root, collection_id)
 
 
 def _save_collection_with_links(
@@ -241,6 +277,7 @@ def _save_collection_with_links(
 
     collection_json_path = collection_dir / "collection.json"
     _fix_collection_links(collection_json_path, catalog_root, collection_dir)
+    _fix_item_links(collection_json_path, catalog_root, collection_dir)
     _update_catalog_links(catalog_root, collection_id)
 
     # Scaffold AGENTS.md and add the rel="agents" link (rashid PTL-FIL-002).
