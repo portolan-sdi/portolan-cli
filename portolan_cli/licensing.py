@@ -16,10 +16,11 @@ against ``rashid.rules.license``, so generation and validation never disagree.
 It also catches the seeded TODO placeholder, which reaches ``collection.license``
 verbatim, and the deprecated ``proprietary`` value (PTL-LIC-003).
 
-Spelling is not judged here. rashid keeps its 727-identifier SPDX list in the
-private ``rashid._spdx``, which this package may not import, so an identifier
-this module waves through can still be misspelled. ``portolan check`` owns that
-verdict, and duplicating a list that long would only let the two copies drift.
+Spelling is judged here too, against ``rashid.api.SPDX_LICENSE_IDS`` (issue
+#727). That is the same object PTL-LIC-001 validates against, published in
+rashid 0.1.4, so there is no second list to drift. Before it was public this
+module kept a 26-identifier subset, which rejected real licenses such as
+``EUPL-1.2`` that ``portolan check`` accepted.
 
 ``license_url_from_text`` reads a license link back out of raw upstream license
 text. ArcGIS ``licenseInfo`` and ISO access constraints usually carry one, and a
@@ -31,6 +32,8 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+
+from rashid.api import SPDX_LICENSE_IDS, canonical_spdx_id
 
 from portolan_cli.constants import TODO_MARKER
 from portolan_cli.errors import MissingLicenseError
@@ -108,7 +111,8 @@ def license_gap(license_id: str | None, *, has_license_link: bool) -> str | None
 
     Mirrors ``rashid.rules.license`` branch for branch, so a collection this
     function waves through is a collection ``portolan check`` accepts on the
-    license rules. Identifier spelling is out of scope, per the module docstring.
+    license rules. Spelling is checked against the list the rule itself uses,
+    so a typo is reported here rather than after generation (issue #727).
 
     Args:
         license_id: The value headed for ``collection.license``.
@@ -128,10 +132,22 @@ def license_gap(license_id: str | None, *, has_license_link: bool) -> str | None
     if declared == PROPRIETARY_LICENSE:
         return "'proprietary' is deprecated and must not be used"
 
-    if declared == OTHER_LICENSE and not has_license_link:
+    if declared == OTHER_LICENSE:
+        if has_license_link:
+            return None
         return "license 'other' needs a license_url pointing at the license text"
 
-    return None
+    if declared in SPDX_LICENSE_IDS:
+        return None
+
+    # A near miss earns the official spelling, the same hint PTL-LIC-001 gives.
+    canonical = canonical_spdx_id(declared)
+    if canonical is not None:
+        return (
+            f"license {declared!r} is misspelled; SPDX ids are case-sensitive, write {canonical!r}"
+        )
+
+    return f"license {declared!r} is not an SPDX identifier; use one, or 'other' with a license_url"
 
 
 def resolve_harvest_license(

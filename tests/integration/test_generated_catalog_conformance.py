@@ -232,3 +232,46 @@ class TestUnlicensedCatalogIsRefused:
         }
 
         assert fired == {"PTL-LIC-002"}
+
+
+class TestAnIdentifierOutsideThePopularShortlistSurvivesGeneration:
+    """Issue #727: the two commands disagreed on real SPDX identifiers.
+
+    ``metadata validate`` judged the license against a hand-written 26-entry
+    subset while ``check`` used rashid's full list, so ``EUPL-1.2`` was rejected
+    by one and accepted by the other. Proving agreement on a dict is not enough;
+    this runs the identifier through generation and validates the output.
+    """
+
+    def test_eupl_reaches_the_collection_and_conforms(self, tmp_path: Path) -> None:
+        root = tmp_path / "eupl-catalog"
+        collection_dir = root / "roads"
+        collection_dir.mkdir(parents=True)
+        shutil.copy(FIXTURE, collection_dir / "roads.parquet")
+
+        portolan_dir = root / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("# Portolan configuration\n", encoding="utf-8")
+        (portolan_dir / "metadata.yaml").write_text(
+            yaml.dump({"contact": "data@example.org", "license": "EUPL-1.2"}), encoding="utf-8"
+        )
+        (root / "catalog.json").write_text(
+            '{"type": "Catalog", "stac_version": "1.1.0", "id": "demo",'
+            ' "description": "Licensed under EUPL-1.2", "links": []}',
+            encoding="utf-8",
+        )
+
+        result = CliRunner().invoke(
+            cli, ["add", "--portolan-dir", str(root), str(collection_dir / "roads.parquet")]
+        )
+
+        assert result.exit_code == 0, result.output
+        collection = json.loads((collection_dir / "collection.json").read_text(encoding="utf-8"))
+        assert collection["license"] == "EUPL-1.2"
+
+        license_findings = [
+            f.rule_id
+            for f in _validate(root, config=RulesConfig(disabled=KNOWN_GAPS)).findings
+            if f.rule_id.startswith("PTL-LIC")
+        ]
+        assert license_findings == []
