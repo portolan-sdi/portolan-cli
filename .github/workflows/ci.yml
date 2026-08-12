@@ -417,7 +417,11 @@ jobs:
           FILES=()
           while IFS= read -r f; do
             [ -n "$f" ] && FILES+=("$f")
-          done < <(git diff --name-only --diff-filter=d "$BASE_SHA" HEAD -- 'portolan_cli/**/*.py')
+          # `:(glob)` gives `**` its documented zero-or-more-directories
+          # meaning. Without it Git's default pathspec skipped package-root
+          # modules such as portolan_cli/add.py and silently mutated nothing.
+          done < <(git diff --name-only --diff-filter=d "$BASE_SHA" HEAD -- \
+            ':(glob)portolan_cli/**/*.py')
           GLOBS=()
           if [ "${#FILES[@]}" -gt 0 ]; then
             # mutmut filters on mutant names (portolan_cli.foo.x_bar__mutmut_1),

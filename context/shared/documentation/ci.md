@@ -170,6 +170,15 @@ falls back to serial when a process pool can't start in the sandbox
 (`convert.py`). (The geoparquet-io #565 CWD guard was evaluated and is **not**
 needed: `isolated_filesystem`/`chdir` tests do not crash the stats phase.)
 
+Static tests that inspect the checked-out Python source use the `source_scan`
+marker. Mutmut instruments the whole source tree before selecting a mutant, so
+those tests otherwise inspect every dormant mutation alternative and fail the
+clean baseline. Ordinary unit CI still runs them; only mutmut excludes them.
+
+The PR changed-file filter uses Git's `:(glob)portolan_cli/**/*.py` pathspec.
+The explicit glob magic matters: default Git pathspec handling treats the same
+text as nested-only and skips package-root modules such as `portolan_cli/add.py`.
+
 Why this matters: AI-generated tests can be tautological — they may pass but not actually verify behavior. Mutation testing injects bugs and checks if tests catch them.
 
 #### `benchmark` — Performance Benchmarks

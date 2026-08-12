@@ -72,6 +72,7 @@ def _package_files() -> list[Path]:
 
 
 class TestNoInPlaceJsonWrites:
+    @pytest.mark.source_scan
     def test_every_json_write_goes_through_the_atomic_helper(self) -> None:
         offenders: list[str] = []
         for path in _package_files():
@@ -84,6 +85,7 @@ class TestNoInPlaceJsonWrites:
             "Use portolan_cli.json_io.write_json_atomic instead:\n" + "\n".join(offenders)
         )
 
+    @pytest.mark.source_scan
     def test_the_sweep_reads_the_package_it_grades(self) -> None:
         """A sweep over an empty file list would pass forever."""
         files = _package_files()

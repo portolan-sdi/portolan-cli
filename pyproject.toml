@@ -146,6 +146,7 @@ markers = [
     "slow: Takes > 5 seconds",
     "e2e: End-to-end tests requiring Docker (REST catalog + MinIO)",
     "e2e_slow: Extended E2E tests (concurrency stress, large datasets) - nightly only",
+    "source_scan: Static source-tree guard incompatible with mutmut instrumentation",
 ]
 
 [tool.coverage.run]
@@ -272,7 +273,7 @@ also_copy = ["scripts/", ".pip-audit-ignores", ".mutation-baseline", ".mutation-
 pytest_add_cli_args = [
     "--no-cov",
     "--tb=short",
-    "-m", "not network and not slow and not benchmark and not e2e and not e2e_slow",
+    "-m", "not network and not slow and not benchmark and not e2e and not e2e_slow and not source_scan",
 ]
 
 # ---------- architecture enforcement ----------
