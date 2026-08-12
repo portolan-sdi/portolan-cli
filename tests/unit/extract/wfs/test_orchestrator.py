@@ -825,7 +825,8 @@ class TestExtractionProgressError:
                 attempts=3,
             )
 
-            options = ExtractionOptions(workers=1, retries=1)
+            # A non-raw extraction builds a catalog, which needs a license (issue #686).
+            options = ExtractionOptions(workers=1, retries=1, license="CC-BY-4.0")
             extract_wfs_catalog(
                 url="https://example.com/wfs",
                 output_dir=tmp_path,

@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.crs import transform_bbox_to_wgs84
+from portolan_cli.licensing import LICENSE_REL, license_url_from_text
 from portolan_cli.models._stac_version import get_stac_version
 
 if TYPE_CHECKING:
@@ -49,8 +50,13 @@ def create_collection_metadata(
         - id: derived from service name (sanitized)
         - extent: spatial from fullExtent (WGS84), temporal open interval
         - summaries: core v1.1.0 bands array
-        - links: source link to ImageServer, self link
-        - license: "other" (STAC 1.1 default for unknown/non-SPDX sources)
+        - links: source link to ImageServer, self link, and a license link when the
+          service's licenseInfo carries a URL
+        - license: "other" (STAC 1.1 value for unknown/non-SPDX sources)
+
+    A service whose licenseInfo holds no URL yields "other" with no license link,
+    which ``portolan check`` reports as PTL-LIC-002 for a human to resolve. Nothing
+    honest can be written from license text that names no license (issue #686).
     """
     collection_id = _sanitize_id(service_metadata.name)
 
@@ -82,6 +88,19 @@ def create_collection_metadata(
             "title": "Source ImageServer",
         },
     ]
+
+    # PTL-LIC-002: "other" needs a rel="license" link, and the service's own
+    # licenseInfo is where the only honest one can come from (issue #686).
+    harvested_license_url = license_url_from_text(service_metadata.license_info)
+    if harvested_license_url:
+        links.append(
+            {
+                "rel": LICENSE_REL,
+                "href": harvested_license_url,
+                "type": "text/html",
+                "title": "License",
+            }
+        )
 
     # Build providers if copyright available
     providers = []

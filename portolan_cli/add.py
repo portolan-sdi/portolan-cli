@@ -42,7 +42,7 @@ from portolan_cli.constants import (
 from portolan_cli.conversion_config import get_vector_settings
 from portolan_cli.convert import convert_multilayer_file
 from portolan_cli.discovery import get_sidecars, iter_files_with_sidecars, iter_geospatial_files
-from portolan_cli.errors import NoGeometryError
+from portolan_cli.errors import MissingLicenseError, NoGeometryError
 
 # Batch finalization (STAC-write + backend coordination) was extracted to
 # finalization.py (issue #624). add.py orchestrates on top of it: add_files /
@@ -89,6 +89,7 @@ from portolan_cli.formats import (
 )
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
+from portolan_cli.licensing import LICENSE_REL, license_gap, resolve_license
 from portolan_cli.preparation import (
     _MEDIA_TYPE_MAP as _MEDIA_TYPE_MAP,  # noqa: PLC0414
 )
@@ -1103,6 +1104,74 @@ def _recompute_stats_for_collections(affected_collections: set[Path]) -> None:
             collection.save_object(include_self_link=False)
 
 
+def _collection_license_on_disk(collection_json_path: Path) -> tuple[str | None, bool]:
+    """Read the license and license-link state off a collection.json already on disk.
+
+    A re-add inherits both: ``apply_human_license`` leaves the license alone when
+    metadata.yaml declares none, and an existing ``rel="license"`` link survives
+    every link rewrite. So a collection a human already licensed by hand stays
+    licensed, and the gate must see that rather than demand metadata.yaml repeat it.
+
+    Args:
+        collection_json_path: Path to the collection.json, which need not exist.
+
+    Returns:
+        Tuple of (license id or None, whether a rel="license" link is present).
+    """
+    try:
+        data = json.loads(collection_json_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, False
+
+    if not isinstance(data, dict):
+        return None, False
+
+    license_id = data.get("license")
+    links = data.get("links")
+    has_link = isinstance(links, list) and any(
+        isinstance(link, dict) and link.get("rel") == LICENSE_REL for link in links
+    )
+    return (license_id if isinstance(license_id, str) else None), has_link
+
+
+def _require_licenses(catalog_root: Path, collection_ids: set[str]) -> None:
+    """Stop the add when a target collection would end up with no usable license.
+
+    Runs after phase 1, so it costs one metadata read per collection and fires
+    before any conversion work, and long before ``finalize_items`` writes a
+    collection.json. Raising here rather than at the write seam keeps a refused
+    add from leaving converted files behind. Nested catalog scaffolding from phase
+    1 may already exist, which carries no license and is written idempotently.
+
+    The license and the link are predicted exactly as ``apply_human_license``
+    would apply them: metadata.yaml wins over what is on disk, and either source
+    can supply the link.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection_ids: Collections this add will write.
+
+    Raises:
+        MissingLicenseError: When a collection would fail PTL-LIC-001, PTL-LIC-002,
+            or PTL-LIC-003.
+    """
+    for coll_id in sorted(collection_ids):
+        collection_dir = catalog_root / Path(*coll_id.split("/"))
+        on_disk_license, on_disk_link = _collection_license_on_disk(
+            collection_dir / "collection.json"
+        )
+        declared = resolve_license(load_merged_metadata(collection_dir, catalog_root))
+
+        license_id = declared.license_id if declared is not None else on_disk_license
+        has_license_link = on_disk_link or (
+            declared is not None and declared.license_url is not None
+        )
+
+        gap = license_gap(license_id, has_license_link=has_license_link)
+        if gap is not None:
+            raise MissingLicenseError(f"collection '{coll_id}'", gap)
+
+
 def add_files(
     *,
     paths: list[Path],
@@ -1177,6 +1246,10 @@ def add_files(
     )
     if not files_to_process:
         return [], skipped, []
+
+    # Phase 1.5: refuse the add before any GDAL work when a target collection would
+    # end up with no usable license (issue #686).
+    _require_licenses(catalog_root, {coll_id for _, coll_id in files_to_process})
 
     # Issue #465: filenames of every batch item (sources + converted outputs) so a
     # collection-level asset scan can skip siblings that are tracked as their own

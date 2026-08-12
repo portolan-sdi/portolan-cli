@@ -96,6 +96,7 @@ class TestBboxValidationIntegration:
             # Initialize catalog by creating .portolan/config.yaml
             Path(".portolan").mkdir()
             Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -132,6 +133,7 @@ class TestBboxValidationIntegration:
             # Initialize catalog
             Path(".portolan").mkdir()
             Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -197,6 +199,7 @@ class TestBboxValidationIntegration:
             # Initialize catalog
             Path(".portolan").mkdir()
             Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -246,6 +249,7 @@ class TestBboxValidationIntegration:
             # Initialize catalog
             Path(".portolan").mkdir()
             Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -291,6 +295,7 @@ class TestAntimeridianBboxIntegration:
             # Initialize catalog
             Path(".portolan").mkdir()
             Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             Path("catalog.json").write_text(
                 json.dumps(
                     {

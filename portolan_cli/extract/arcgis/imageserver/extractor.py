@@ -845,8 +845,9 @@ def _auto_init_catalog(
     if not cog_files:
         return False  # Nothing to add
 
-    # Initialize the catalog
-    init_catalog(output_dir, title=service_name)
+    # Initialize the catalog. license_id=None because the ImageServer path seeds
+    # metadata.yaml from the harvested service licenseInfo (issue #686).
+    init_catalog(output_dir, title=service_name, license_id=None)
 
     # Add all COG files - this creates items per raster
     add_files(

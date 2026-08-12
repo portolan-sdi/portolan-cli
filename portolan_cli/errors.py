@@ -327,6 +327,23 @@ class InvalidProvidersError(ValidationError):
         super().__init__(f"Invalid providers in metadata.yaml: {reason}", reason=reason)
 
 
+class MissingLicenseError(ValidationError):
+    """Raised when Portolan is about to write a collection with no usable license.
+
+    A license is a legal fact Portolan cannot invent, and a collection without
+    one fails PTL-LIC-001 or PTL-LIC-002 the moment ``portolan check`` reads it.
+    Rather than write a catalog it knows to be non-conformant, generation stops
+    and names what the human has to supply (issue #686).
+
+    Error code: PRTLN-VAL004
+    """
+
+    code = "PRTLN-VAL004"
+
+    def __init__(self, target: str, reason: str) -> None:
+        super().__init__(f"No usable license for {target}: {reason}", target=target, reason=reason)
+
+
 # Conversion Errors (PRTLN-CNV*)
 class ConversionError(PortolanError):
     """Base class for conversion-related errors."""

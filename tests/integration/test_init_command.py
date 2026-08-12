@@ -32,7 +32,7 @@ class TestInitCommandAutoMode:
     def test_init_auto_creates_catalog_json(self, runner: CliRunner, tmp_path: Path) -> None:
         """portolan init --auto should create catalog.json at ROOT with auto-extracted fields."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 0
             # New structure: catalog.json at root
@@ -51,7 +51,7 @@ class TestInitCommandAutoMode:
         catalog_dir = tmp_path / "my-cool-catalog"
         catalog_dir.mkdir()
 
-        result = runner.invoke(cli, ["init", "--auto", str(catalog_dir)])
+        result = runner.invoke(cli, ["init", "--auto", str(catalog_dir), "--license", "CC-BY-4.0"])
 
         assert result.exit_code == 0
         catalog_file = catalog_dir / "catalog.json"
@@ -64,7 +64,7 @@ class TestInitCommandAutoMode:
     def test_init_auto_emits_warnings(self, runner: CliRunner, tmp_path: Path) -> None:
         """portolan init --auto should emit warnings for missing best-practice fields."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 0
             # Should warn about missing title (best practice)
@@ -76,7 +76,9 @@ class TestInitCommandAutoMode:
         """portolan init --auto should complete without waiting for input."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Use a short timeout - if it prompts, it would hang
-            result = runner.invoke(cli, ["init", "--auto"], catch_exceptions=False)
+            result = runner.invoke(
+                cli, ["init", "--auto", "--license", "CC-BY-4.0"], catch_exceptions=False
+            )
 
             # If we get here without timeout, no prompt was issued
             assert result.exit_code == 0
@@ -89,7 +91,7 @@ class TestInitCommandAutoMode:
         Per issue #290: config.yaml alone is sufficient (state.json removed).
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 0
             # Internal tooling state: lives in .portolan/
@@ -119,7 +121,7 @@ class TestInitCommandErrors:
             (portolan / "config.yaml").write_text("{}")
 
             # Use --auto to skip interactive prompts and test error path
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 1
             assert "already" in result.output.lower()
@@ -132,7 +134,7 @@ class TestInitCommandErrors:
             Path("catalog.json").write_text('{"type": "Catalog"}')
 
             # Use --auto to skip interactive prompts and test error path
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 1
             output_lower = result.output.lower()
@@ -147,7 +149,7 @@ class TestInitCommandErrors:
             portolan.mkdir()
             (portolan / "config.yaml").write_text("{}")
 
-            result = runner.invoke(cli, ["--format", "json", "init"])
+            result = runner.invoke(cli, ["--format", "json", "init", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 1
             data = json.loads(result.output)
@@ -168,7 +170,9 @@ class TestInitCommandJsonOutput:
     def test_init_json_output_success(self, runner: CliRunner, tmp_path: Path) -> None:
         """portolan --format json init should output JSON envelope."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["--format", "json", "init", "--auto"])
+            result = runner.invoke(
+                cli, ["--format", "json", "init", "--auto", "--license", "CC-BY-4.0"]
+            )
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -185,7 +189,7 @@ class TestInitCommandJsonOutput:
             portolan.mkdir()
             (portolan / "config.yaml").write_text("{}")
 
-            result = runner.invoke(cli, ["--format", "json", "init"])
+            result = runner.invoke(cli, ["--format", "json", "init", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 1
             data = json.loads(result.output)

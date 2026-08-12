@@ -92,6 +92,8 @@ def _build_catalog(root: Path) -> None:
             "Roundtrip Catalog",
             "--description",
             "Roads published for the remediation roundtrip.",
+            "--license",
+            "CC-BY-4.0",
         ],
         catch_exceptions=False,
     )

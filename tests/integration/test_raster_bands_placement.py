@@ -49,6 +49,7 @@ def raster_catalog(tmp_path: Path) -> Path:
     (portolan_dir / "config.yaml").write_text(
         yaml.dump({"version": 1, "statistics": {"enabled": True}})
     )
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
     (catalog_root / "imagery").mkdir()
     return catalog_root
 

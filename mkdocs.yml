@@ -83,6 +83,7 @@ nav:
     - Extracting from ArcGIS: guides/extract-arcgis.md
     - Extracting from WFS: guides/extract-wfs.md
     - Iceberg Backend: guides/iceberg.md
+    - Licensing: guides/licensing.md
     - Metadata Defaults: guides/metadata-defaults.md
     - Nested Catalogs: guides/nested-catalogs.md
     - Partitioning: guides/partitioning.md

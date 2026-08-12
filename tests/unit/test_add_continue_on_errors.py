@@ -39,6 +39,7 @@ def setup_catalog(path: Path) -> None:
     """Create an initialized Portolan catalog ."""
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir()
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
     (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
     catalog_data = {
         "type": "Catalog",

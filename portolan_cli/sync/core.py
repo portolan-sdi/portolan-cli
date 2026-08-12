@@ -496,7 +496,9 @@ def _step_init(
     if state == CatalogState.FRESH:
         info("Initializing catalog...")
         try:
-            init_catalog(catalog_root)
+            # No license here: sync wraps a directory whose collections already
+            # exist, and it never writes a collection.json of its own (issue #686).
+            init_catalog(catalog_root, license_id=None)
             success("Initialized catalog")
             return True, None
         except Exception as e:
@@ -869,6 +871,9 @@ def clone(
             local_path,
             title=f"Clone of {remote_url}",
             description=f"Cloned from {remote_url}",
+            # No license here: each cloned collection.json arrives carrying the
+            # license the publisher set, and a local default would misstate it.
+            license_id=None,
         )
     except Exception as e:
         error_msg = f"Failed to initialize catalog: {e}"

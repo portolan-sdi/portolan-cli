@@ -67,11 +67,13 @@ from portolan_cli.extract.common.report import (
 from portolan_cli.extract.common.resume import ResumeState, get_resume_state, should_process_layer
 from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
 from portolan_cli.extract.common.styles import extract_esri_style
+from portolan_cli.licensing import license_url_from_text, resolve_harvest_license
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from portolan_cli.extract.arcgis.metadata import ArcGISMetadata
+    from portolan_cli.licensing import ResolvedLicense
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +251,10 @@ class ExtractionOptions:
         no_styles: If True, skip style extraction from ESRI drawingInfo
         token: Optional ArcGIS token for authenticated endpoints
         recurse: Whether to recurse into sub-folders during discovery (default True)
+        license: SPDX identifier for the harvested data, or "other" with
+            license_url. Overrides any license URL found in the source's own
+            license text (issue #686).
+        license_url: URL of the license text.
     """
 
     workers: int = 3
@@ -261,6 +267,8 @@ class ExtractionOptions:
     no_styles: bool = False
     token: str | None = None
     recurse: bool = True
+    license: str | None = None
+    license_url: str | None = None
 
 
 def _extract_single_layer(
@@ -571,6 +579,18 @@ def extract_arcgis_catalog(
     if options.dry_run:
         return _build_dry_run_report(url, discovery_result, layers)
 
+    # Resolve the license before downloading anything, so a harvest that cannot be
+    # licensed costs one command re-run rather than a whole download (issue #686).
+    resolved_license = (
+        None
+        if options.raw
+        else resolve_harvest_license(
+            cli_license=options.license,
+            cli_license_url=options.license_url,
+            harvested_license_url=license_url_from_text(discovery_result.license_info),
+        )
+    )
+
     # Create output directory structure
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / ".portolan").mkdir(exist_ok=True)
@@ -590,12 +610,14 @@ def extract_arcgis_catalog(
 
     # Auto-init catalog unless raw mode
     if not options.raw:
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(output_dir, report, resolved_license)
 
     return report
 
 
-def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
+def _auto_init_catalog(
+    output_dir: Path, report: ExtractionReport, resolved_license: ResolvedLicense | None = None
+) -> None:
     """Initialize a Portolan catalog and add extracted files.
 
     Called automatically after extraction unless raw=True.
@@ -619,6 +641,9 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
         # Per Issue #369: overwrite init_catalog defaults with the rich
         # (unfiltered) service metadata now that catalog.json exists.
         update_stac_metadata(out / "catalog.json", title=title, description=description)
+        # Seed metadata.yaml here, between init_catalog and add_files, so the
+        # harvested license is in place before add checks for one (issue #686).
+        _seed_metadata_from_extraction(out, report, resolved_license)
 
     added = init_extracted_catalog(
         output_dir,
@@ -632,9 +657,6 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
 
     # Register extracted styles as STAC assets (Issue #490)
     register_collection_styles(output_dir, report)
-
-    # Seed metadata.yaml from extracted service metadata
-    _seed_metadata_from_extraction(output_dir, report)
 
     # Add via links for provenance tracking (Issue #353)
     _add_via_links_to_collections(output_dir, report)
@@ -665,7 +687,11 @@ def _derive_catalog_titles(report: ExtractionReport) -> tuple[str | None, str | 
     return title, description
 
 
-def _seed_metadata_from_extraction(output_dir: Path, report: ExtractionReport) -> None:
+def _seed_metadata_from_extraction(
+    output_dir: Path,
+    report: ExtractionReport,
+    resolved_license: ResolvedLicense | None = None,
+) -> None:
     """Seed metadata.yaml from extracted service metadata.
 
     Called after catalog initialization to pre-populate metadata.yaml with
@@ -675,6 +701,8 @@ def _seed_metadata_from_extraction(output_dir: Path, report: ExtractionReport) -
     Args:
         output_dir: The catalog output directory.
         report: The extraction report containing metadata.
+        resolved_license: License resolved before the download, which wins over
+            anything the harvest found (issue #686).
     """
     if not report.metadata_extracted:
         return
@@ -682,7 +710,7 @@ def _seed_metadata_from_extraction(output_dir: Path, report: ExtractionReport) -
     # Reconstruct ArcGISMetadata from the report data, then serialize to the
     # source-agnostic ExtractedMetadata the shared seeder expects.
     arcgis_metadata = _report_metadata_to_arcgis_metadata(report.metadata_extracted)
-    seed_catalog_metadata(output_dir, arcgis_metadata.to_extracted())
+    seed_catalog_metadata(output_dir, arcgis_metadata.to_extracted(), resolved_license)
 
 
 def _report_metadata_to_arcgis_metadata(
@@ -1004,6 +1032,19 @@ def _extract_services_root(
         dry_report.folder_coverage = coverage
         return dry_report
 
+    # Resolve the license before downloading anything (issue #686). A services root
+    # spans many services with potentially different licenses, and the catalog carries
+    # one metadata.yaml, so nothing harvested can stand in for the human here.
+    resolved_license = (
+        None
+        if options.raw
+        else resolve_harvest_license(
+            cli_license=options.license,
+            cli_license_url=options.license_url,
+            harvested_license_url=None,
+        )
+    )
+
     # Create output directory structure
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / ".portolan").mkdir(exist_ok=True)
@@ -1130,7 +1171,7 @@ def _extract_services_root(
 
     # Auto-init catalog unless raw mode
     if not options.raw:
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(output_dir, report, resolved_license)
 
     return report
 

@@ -66,6 +66,12 @@ MTIME_TOLERANCE_SECONDS: float = 2.0
 # The .portolan directory name (Portolan internal metadata directory)
 PORTOLAN_DIR: str = ".portolan"
 
+# Placeholder metadata_seeding writes for a required field the harvest could not
+# fill. It lives here rather than in metadata_seeding because licensing.py has to
+# recognize it too: a seeded license reaches collection.license verbatim, where
+# rashid reports it as PTL-LIC-001 (issue #686).
+TODO_MARKER: str = "TODO: Add value"
+
 # Maximum depth for catalog root discovery (prevent traversing to filesystem root)
 MAX_CATALOG_SEARCH_DEPTH: int = 20
 

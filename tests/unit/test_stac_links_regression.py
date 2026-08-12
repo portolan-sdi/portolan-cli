@@ -55,7 +55,7 @@ def catalog_with_nested_item(tmp_path: Path, valid_parquet: Path) -> tuple[Path,
     catalog_root.mkdir()
 
     # Initialize catalog
-    init_catalog(catalog_root)
+    init_catalog(catalog_root, license_id="CC-BY-4.0")
 
     # Create nested collection structure: collection/item_dir/file.parquet
     collection_id = "test-collection"
@@ -195,7 +195,7 @@ class TestIsCurrentKeyLookup:
         # Arrange: catalog with 2 parquet files in same directory
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
-        init_catalog(catalog_root)
+        init_catalog(catalog_root, license_id="CC-BY-4.0")
 
         collection_id = "multi-file"
         item_dir = catalog_root / collection_id / "data"
@@ -292,7 +292,7 @@ class TestCollectionRootLinks:
         # Arrange: catalog with 2 parquet files in same directory
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
-        init_catalog(catalog_root)
+        init_catalog(catalog_root, license_id="CC-BY-4.0")
 
         collection_id = "multi-file"
         item_dir = catalog_root / collection_id / "data"

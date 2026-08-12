@@ -24,7 +24,7 @@ This CLI converts data to cloud-native formats (GeoParquet, COG), generates rich
 ## Quick Start
 
 ```bash
-# Initialize a catalog
+# Initialize a catalog (prompts for a license; --license sets it directly)
 portolan init
 
 # Add files (creates collections from directories)
@@ -47,7 +47,7 @@ portolan sync s3://my-bucket/catalog -c demographics
 ### All Commands
 
 ```bash
-portolan init                               # Initialize catalog
+portolan init                               # Initialize catalog (asks for a license)
 portolan scan <path>                        # Scan for issues (--fix for filenames)
 portolan add <path>                         # Track files
 portolan add-external <url>                 # Reference a remote dataset in place (no download/convert)
