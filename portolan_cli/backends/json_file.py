@@ -73,17 +73,28 @@ class JsonFileBackend:
             Path to the collection's versions.json file.
 
         Raises:
-            ValueError: If collection name is empty.
+            ValueError: If collection name is empty or escapes the catalog root.
         """
         if not collection or not collection.strip():
             raise ValueError("Collection name cannot be empty")
-        # Normalize path to prevent directory traversal (MAJOR #8)
-        safe_collection = Path(collection).name
-        # Explicitly reject traversal attempts that survive Path.name
-        if safe_collection in ("", ".", ".."):
+        # Nested collection ids are first-class: `add` creates collections under
+        # subcatalogs (`infer_nested_collection_id`, ADR-0032), and the spec allows
+        # a slash-separated id such as `climate/hittekaart`. Collapsing that to its
+        # last segment via `Path(collection).name` wrote every nested collection's
+        # versions.json to `{catalog_root}/hittekaart/`. The collection's own file
+        # went stale, which is the phantom entry in issue #723.
+        #
+        # Keep the traversal guard (MAJOR #8) by validating the id lexically rather
+        # than discarding its parts. Validation stays lexical (no `resolve()`) so the
+        # returned path keeps the caller's catalog root verbatim, which matters where
+        # the root is itself a symlink (macOS `/tmp`).
+        candidate = Path(collection)
+        if candidate.is_absolute() or candidate.drive or not candidate.parts:
+            raise ValueError(f"Invalid collection name: {collection!r}")
+        if any(part == ".." for part in candidate.parts):
             raise ValueError(f"Invalid collection name: {collection!r}")
         # versions.json at collection root
-        return self._catalog_root / safe_collection / "versions.json"
+        return self._catalog_root.joinpath(*candidate.parts) / "versions.json"
 
     def get_current_version(self, collection: str) -> Version:
         """Get the current (latest) version of a collection.

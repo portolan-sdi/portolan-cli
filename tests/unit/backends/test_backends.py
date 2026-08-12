@@ -308,6 +308,68 @@ class TestJsonFileBackend:
             backend._versions_path(" ")
 
     @pytest.mark.unit
+    def test_nested_collection_id_keeps_its_full_path(self, tmp_path: Any) -> None:
+        """A nested collection id resolves under every one of its segments (#723).
+
+        ``add`` creates collections under subcatalogs (``infer_nested_collection_id``,
+        ADR-0032), so ``climate/hittekaart`` is a real collection id. Flattening it
+        through ``Path(collection).name`` wrote ``{root}/hittekaart/versions.json``
+        and left the collection's own file untouched.
+        """
+        from pathlib import Path
+
+        backend = JsonFileBackend(catalog_root=Path(tmp_path))
+
+        result = backend._versions_path("climate/hittekaart")
+
+        assert result == Path(tmp_path) / "climate" / "hittekaart" / "versions.json"
+
+    @pytest.mark.unit
+    def test_deeply_nested_collection_id_keeps_its_full_path(self, tmp_path: Any) -> None:
+        """Nesting is not capped at two segments (``rivers/2020/q1``)."""
+        from pathlib import Path
+
+        backend = JsonFileBackend(catalog_root=Path(tmp_path))
+
+        result = backend._versions_path("rivers/2020/q1")
+
+        assert result == Path(tmp_path) / "rivers" / "2020" / "q1" / "versions.json"
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "collection",
+        ["../evil", "climate/../../evil", "climate/..", ".."],
+    )
+    def test_parent_traversal_rejected(self, tmp_path: Any, collection: str) -> None:
+        """A collection id escaping the catalog root raises, nesting notwithstanding."""
+        from pathlib import Path
+
+        backend = JsonFileBackend(catalog_root=Path(tmp_path))
+
+        with pytest.raises(ValueError, match="Invalid collection name"):
+            backend._versions_path(collection)
+
+    @pytest.mark.unit
+    def test_absolute_collection_path_rejected(self, tmp_path: Any) -> None:
+        """An absolute collection id raises instead of escaping the catalog root."""
+        from pathlib import Path
+
+        backend = JsonFileBackend(catalog_root=Path(tmp_path))
+
+        with pytest.raises(ValueError, match="Invalid collection name"):
+            backend._versions_path("/etc/passwd")
+
+    @pytest.mark.unit
+    def test_dot_collection_rejected(self, tmp_path: Any) -> None:
+        """``.`` resolves to the catalog root itself and is not a collection."""
+        from pathlib import Path
+
+        backend = JsonFileBackend(catalog_root=Path(tmp_path))
+
+        with pytest.raises(ValueError, match="Invalid collection name"):
+            backend._versions_path(".")
+
+    @pytest.mark.unit
     def test_rollback_raises_not_implemented_with_clear_message(self) -> None:
         """JsonFileBackend.rollback raises NotImplementedError with explanation."""
         backend = JsonFileBackend()
