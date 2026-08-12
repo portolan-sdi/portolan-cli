@@ -41,7 +41,7 @@ backend: iceberg
 Or initialize a new catalog with the Iceberg backend:
 
 ```bash
-portolan init --backend iceberg
+portolan init --backend iceberg --license CC-BY-4.0
 ```
 
 ### Version Management Commands

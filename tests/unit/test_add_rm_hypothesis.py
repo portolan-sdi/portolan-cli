@@ -373,6 +373,7 @@ class TestFindCatalogRootProperties:
             # Create managed catalog with .portolan/config.yaml + catalog.json (per issue #290)
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir()
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             (portolan_dir / "config.yaml").write_text("# Portolan config\n")
             (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file
 
@@ -397,6 +398,7 @@ class TestFindCatalogRootProperties:
             # Create managed catalog with .portolan/config.yaml + catalog.json (per issue #290)
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir()
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             (portolan_dir / "config.yaml").write_text("# Portolan config\n")
             (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file
             (tmp_path / collection).mkdir(exist_ok=True)
@@ -430,6 +432,7 @@ class TestFindCatalogRootProperties:
             tmp_path = Path(tmp_dir)
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir()
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             (portolan_dir / "config.yaml").write_text("# Portolan config\n")
             (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file
 
@@ -821,6 +824,7 @@ class TestAddFilesEdgeCases:
         catalog.mkdir()
         (catalog / "catalog.json").write_text('{"type": "Catalog"}')
         (catalog / ".portolan").mkdir()
+        (catalog / ".portolan" / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
         # Create real file and symlink
         collection = catalog / "data"
@@ -877,6 +881,7 @@ class TestAddFilesEdgeCases:
         catalog.mkdir()
         (catalog / "catalog.json").write_text('{"type": "Catalog"}')
         (catalog / ".portolan").mkdir()
+        (catalog / ".portolan" / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
         collection = catalog / "data"
         collection.mkdir()
@@ -1418,6 +1423,7 @@ def _setup_managed_catalog(catalog_root: Path) -> None:
     # .portolan sentinel
     portolan_dir = catalog_root / ".portolan"
     portolan_dir.mkdir(exist_ok=True)
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
     (portolan_dir / "config.yaml").write_text("# Portolan config\n")
 
 

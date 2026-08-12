@@ -36,7 +36,14 @@ from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.convert import ConversionResult
 from portolan_cli.discovery import get_sidecars
 from portolan_cli.emit import emit_error, emit_success
+from portolan_cli.errors import MissingLicenseError
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
+from portolan_cli.licensing import (
+    CLI_LICENSE_REMEDIATION,
+    METADATA_LICENSE_REMEDIATION,
+    OTHER_LICENSE,
+    license_gap,
+)
 from portolan_cli.metadata.fix import FixReport
 from portolan_cli.output import detail, error, success, warn
 from portolan_cli.output import info as info_output
@@ -117,6 +124,88 @@ def should_output_json(ctx: click.Context, json_flag: bool = False) -> bool:
 
     # Global format takes precedence, but per-command --json also works
     return global_format == "json" or json_flag
+
+
+def _fail_on_add_error(
+    err: Exception,
+    resolved_paths: list[Path],
+    *,
+    use_json: bool,
+) -> NoReturn:
+    """Report a failed add and exit 1, naming the path when there was only one.
+
+    Args:
+        err: The error raised by the library layer.
+        resolved_paths: Paths the add was asked to process.
+        use_json: Whether output goes out as a JSON envelope.
+
+    Raises:
+        SystemExit: Always, with status 1.
+    """
+    path_context = f"{resolved_paths[0]}: " if len(resolved_paths) == 1 else ""
+    emit_error("add", type(err).__name__, f"{path_context}{err}", use_json=use_json)
+    raise SystemExit(1) from err
+
+
+def _fail_on_missing_license(
+    command: str,
+    err: MissingLicenseError,
+    *,
+    use_json: bool,
+) -> NoReturn:
+    """Report an unlicensed collection and exit 1, naming the file to edit.
+
+    Args:
+        command: Command name, for the error envelope.
+        err: The error raised by the library layer.
+        use_json: Whether output goes out as a JSON envelope.
+
+    Raises:
+        SystemExit: Always, with status 1.
+    """
+    emit_error(command, type(err).__name__, str(err), use_json=use_json, code=err.code)
+    if not use_json:
+        info_output(METADATA_LICENSE_REMEDIATION)
+    raise SystemExit(1) from err
+
+
+def _validated_cli_license(
+    command: str,
+    license_id: str | None,
+    license_url: str | None,
+    *,
+    use_json: bool,
+) -> str:
+    """Validate a --license / --license-url pair, or exit 1 naming both flags.
+
+    Shared by ``init`` and ``add-external``, the two commands that take the license
+    as a flag rather than reading it out of metadata.yaml. Validating here means a
+    bad pair fails before either command touches the filesystem (issue #686).
+
+    Args:
+        command: Command name, for the error envelope.
+        license_id: Value of --license, or None when it was not passed.
+        license_url: Value of --license-url, or None.
+        use_json: Whether output goes out as a JSON envelope.
+
+    Returns:
+        The stripped license identifier.
+
+    Raises:
+        SystemExit: Always exits 1 when the pair cannot produce a conformant license.
+    """
+    declared = license_id.strip() if license_id else ""
+    has_link = bool(license_url and license_url.strip())
+
+    gap = license_gap(declared, has_license_link=has_link)
+    if gap is None:
+        return declared
+
+    err = MissingLicenseError(f"'portolan {command}'", gap)
+    emit_error(command, type(err).__name__, str(err), use_json=use_json, code=err.code)
+    if not use_json:
+        info_output(CLI_LICENSE_REMEDIATION)
+    raise SystemExit(1) from err
 
 
 def output_json_envelope(envelope: Any) -> None:
@@ -315,6 +404,19 @@ def cli(ctx: click.Context, output_format: str) -> None:
     default="file",
     help="Versioning backend to use (e.g., 'file', 'iceberg').",
 )
+@click.option(
+    "--license",
+    "license_id",
+    type=str,
+    default=None,
+    help="SPDX license identifier, or 'other' with --license-url. Required.",
+)
+@click.option(
+    "--license-url",
+    type=str,
+    default=None,
+    help="URL of the license text. Required when --license is 'other'.",
+)
 @click.pass_context
 def init(
     ctx: click.Context,
@@ -324,29 +426,37 @@ def init(
     title: str | None,
     description: str | None,
     backend: str,
+    license_id: str | None,
+    license_url: str | None,
 ) -> None:
     """Initialize a new Portolan catalog.
 
     Creates a catalog.json at the root level and a .portolan directory with
-    management files (config.yaml). Also creates versions.json at the root.
+    management files (config.yaml, metadata.yaml). Also creates versions.json at
+    the root.
 
     Auto-extracts the catalog ID from the directory name.
 
     PATH is the directory where the catalog should be created (default: current directory).
+
+    A license is required. Every collection inherits it from the catalog's
+    metadata.yaml, and 'portolan add' refuses to write a collection without one.
+    Pass an SPDX identifier, or 'other' with --license-url when the license has no
+    identifier. Without --auto or --json you are prompted for it.
 
     Use --auto to skip all prompts and use default values. Use --title and
     --description to set catalog metadata directly.
 
     \b
     Examples:
-        portolan init                       # Initialize in current directory
-        portolan init --auto                # Skip prompts, use defaults
-        portolan init --title "My Catalog"  # Set title
-        portolan init /path/to/data --auto  # Initialize in specific directory
-        portolan init --backend iceberg     # Use Iceberg backend
+        portolan init                            # Prompts for the license
+        portolan init --auto --license CC-BY-4.0 # Skip prompts
+        portolan init --title "My Catalog" --license MIT
+        portolan init --license other --license-url https://x.org/terms
+        portolan init --backend iceberg --license CC0-1.0
     """
 
-    from portolan_cli.catalog import init_catalog
+    from portolan_cli.catalog import CatalogState, detect_state, init_catalog
     from portolan_cli.errors import CatalogAlreadyExistsError, UnmanagedStacCatalogError
 
     use_json = should_output_json(ctx, json_output)
@@ -368,12 +478,25 @@ def init(
                 default="A Portolan-managed STAC catalog",
             )
 
+        if license_id is None:
+            license_id = click.prompt("License (SPDX identifier, or 'other')")
+        if license_id.strip() == OTHER_LICENSE and license_url is None:
+            license_url = click.prompt("URL of the license text")
+
+    # Only gate the license on a directory that can actually become a catalog. An
+    # existing catalog is the more fundamental problem and --license cannot fix it,
+    # so let init_catalog report that instead of sending the user after a flag.
+    if detect_state(path) is CatalogState.FRESH:
+        license_id = _validated_cli_license("init", license_id, license_url, use_json=use_json)
+
     try:
         catalog_file, warnings = init_catalog(
             path,
             title=title,
             description=description,
             backend=backend,
+            license_id=license_id,
+            license_url=license_url,
         )
 
         # Read back catalog ID for display
@@ -3114,12 +3237,12 @@ def add_cmd(
                 skip_partitioning=skip_partitioning,
                 merge_strategy=MergeStrategy(merge_strategy),
             )
+    except MissingLicenseError as err:
+        # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
+        # check reads it, so add refuses the write and names what to supply.
+        _fail_on_missing_license("add", err, use_json=use_json)
     except (ValueError, FileNotFoundError) as err:
-        err_type = type(err).__name__
-        # Include failed path context in error message when there's only one path
-        path_context = f"{resolved_paths[0]}: " if len(resolved_paths) == 1 else ""
-        emit_error("add", err_type, f"{path_context}{err}", use_json=use_json)
-        raise SystemExit(1) from err
+        _fail_on_add_error(err, resolved_paths, use_json=use_json)
 
     # Compute affected collections before any post-processing
     # Include both added AND skipped assets so --pmtiles works on already-tracked files
@@ -3189,8 +3312,13 @@ def add_cmd(
 @click.option(
     "--license",
     "license_id",
-    default="other",
-    help="SPDX license expression, or 'other' for a non-SPDX license (default: other).",
+    default=None,
+    help="SPDX license identifier, or 'other' with --license-url. Required.",
+)
+@click.option(
+    "--license-url",
+    default=None,
+    help="URL of the license text. Required when --license is 'other'.",
 )
 @click.option(
     "--via",
@@ -3226,7 +3354,8 @@ def add_external_cmd(
     title: str | None,
     description: str | None,
     media_type: str | None,
-    license_id: str,
+    license_id: str | None,
+    license_url: str | None,
     via_url: str | None,
     bbox: str | None,
     catalog_path: Path | None,
@@ -3243,6 +3372,11 @@ def add_external_cmd(
     The remote asset is never fetched, and 'portolan check' will not try to
     convert it (the metadata scanner skips scheme-qualified hrefs).
 
+    A license is required. Pass an SPDX identifier, or 'other' with --license-url
+    when the license has no identifier. Referencing someone else's data in place
+    does not make its license unknowable, and a collection without one is an error
+    under 'portolan check'.
+
     \b
     Examples:
         # Overture Maps places — planet-scale GeoParquet on Overture's S3
@@ -3250,9 +3384,11 @@ def add_external_cmd(
             "s3://overturemaps-us-west-2/release/2024-09-18.0/theme=places/type=place/*" \\
             --collection overture-places \\
             --title "Overture Maps — Places" \\
+            --license ODbL-1.0 \\
             --via "https://docs.overturemaps.org/guides/places/"
 
-        portolan add-external "https://example.org/data/buildings.parquet"
+        portolan add-external "https://example.org/data/buildings.parquet" \\
+            --license other --license-url "https://example.org/terms"
     """
     from portolan_cli.external import add_external
 
@@ -3275,6 +3411,10 @@ def add_external_cmd(
             )
             raise SystemExit(1)
 
+    resolved_license = _validated_cli_license(
+        "add-external", license_id, license_url, use_json=use_json
+    )
+
     try:
         result = add_external(
             catalog_root=catalog_root,
@@ -3283,7 +3423,8 @@ def add_external_cmd(
             title=title,
             description=description,
             media_type=media_type,
-            license=license_id,
+            license=resolved_license,
+            license_url=license_url,
             via_url=via_url,
             bbox=parsed_bbox,
             force=force,
@@ -6342,9 +6483,25 @@ def extract() -> None:
     default=None,
     help="[ImageServer] Name for the collection (default: 'tiles').",
 )
+@click.option(
+    "--license",
+    "license_id",
+    type=str,
+    default=None,
+    help="SPDX license identifier, or 'other' with --license-url. Required unless the "
+    "source publishes a license URL of its own.",
+)
+@click.option(
+    "--license-url",
+    type=str,
+    default=None,
+    help="URL of the license text. Required when --license is 'other'.",
+)
 @click.pass_context
 def extract_arcgis_cmd(
     ctx: click.Context,
+    license_id: str | None,
+    license_url: str | None,
     url: str,
     output_dir: Path | None,
     layers: str | None,
@@ -6516,6 +6673,8 @@ def extract_arcgis_cmd(
         raw=raw,
         token=resolved_token,
         recurse=not no_recurse,
+        license=license_id,
+        license_url=license_url,
     )
 
     # Progress callback for text output
@@ -6555,6 +6714,13 @@ def extract_arcgis_cmd(
             options=options,
             on_progress=None if use_json else on_progress,
         )
+    except MissingLicenseError as e:
+        # Raised before the download starts, so the user re-runs the command rather
+        # than the harvest (issue #686).
+        _output_extract_error(use_json, type(e).__name__, str(e), url)
+        if not use_json:
+            info_output(CLI_LICENSE_REMEDIATION)
+        raise SystemExit(1) from None
     except NotImplementedError as e:
         _output_extract_error(use_json, "NotImplementedError", str(e), url)
         raise SystemExit(1) from None
@@ -6662,9 +6828,25 @@ def extract_arcgis_cmd(
     is_flag=True,
     help="Skip auto-init: create only extraction files, no STAC catalog.",
 )
+@click.option(
+    "--license",
+    "license_id",
+    type=str,
+    default=None,
+    help="SPDX license identifier, or 'other' with --license-url. Required unless the "
+    "source publishes a license URL of its own.",
+)
+@click.option(
+    "--license-url",
+    type=str,
+    default=None,
+    help="URL of the license text. Required when --license is 'other'.",
+)
 @click.pass_context
 def extract_wfs_cmd(
     ctx: click.Context,
+    license_id: str | None,
+    license_url: str | None,
     url: str,
     output_dir: Path | None,
     layers: str | None,
@@ -6769,6 +6951,8 @@ def extract_wfs_cmd(
         limit=limit,
         page_size=page_size,
         auto_tile=auto_tile,
+        license=license_id,
+        license_url=license_url,
     )
 
     # Progress callback for text output
@@ -6806,6 +6990,13 @@ def extract_wfs_cmd(
             options=options,
             on_progress=None if use_json else on_progress,
         )
+    except MissingLicenseError as e:
+        # Raised before the download starts, so the user re-runs the command rather
+        # than the harvest (issue #686).
+        _output_extract_error(use_json, type(e).__name__, str(e), url, command="extract-wfs")
+        if not use_json:
+            info_output(CLI_LICENSE_REMEDIATION)
+        raise SystemExit(1) from None
     except Exception as e:
         _output_extract_error(
             use_json, type(e).__name__, f"Extraction failed: {e}", url, command="extract-wfs"
@@ -6910,9 +7101,25 @@ def extract_wfs_cmd(
     is_flag=True,
     help="Skip auto-init: create only extraction files, no STAC catalog.",
 )
+@click.option(
+    "--license",
+    "license_id",
+    type=str,
+    default=None,
+    help="SPDX license identifier, or 'other' with --license-url. Required unless the "
+    "source publishes a license URL of its own.",
+)
+@click.option(
+    "--license-url",
+    type=str,
+    default=None,
+    help="URL of the license text. Required when --license is 'other'.",
+)
 @click.pass_context
 def extract_carto_cmd(
     ctx: click.Context,
+    license_id: str | None,
+    license_url: str | None,
     url: str,
     output_dir: Path | None,
     tables: str | None,
@@ -7005,6 +7212,8 @@ def extract_carto_cmd(
         include_cols=include_cols,
         exclude_cols=exclude_cols,
         api_key=api_key,
+        license=license_id,
+        license_url=license_url,
     )
 
     def on_progress(progress: ExtractionProgress) -> None:
@@ -7039,6 +7248,13 @@ def extract_carto_cmd(
             options=options,
             on_progress=None if use_json else on_progress,
         )
+    except MissingLicenseError as e:
+        # Raised before the download starts, so the user re-runs the command rather
+        # than the harvest (issue #686).
+        _output_extract_error(use_json, type(e).__name__, str(e), url, command="extract-carto")
+        if not use_json:
+            info_output(CLI_LICENSE_REMEDIATION)
+        raise SystemExit(1) from None
     except Exception as e:
         _output_extract_error(
             use_json, type(e).__name__, f"Extraction failed: {e}", url, command="extract-carto"

@@ -52,12 +52,14 @@ from portolan_cli.extract.common.resume import ResumeState, get_resume_state, sh
 from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
 from portolan_cli.extract.common.styles import extract_wms_legend, extract_wms_style
 from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult, discover_layers
+from portolan_cli.licensing import license_url_from_text, resolve_harvest_license
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from portolan_cli.extract.csw.models import ISOMetadata
     from portolan_cli.extract.wfs.metadata import WFSMetadata
+    from portolan_cli.licensing import ResolvedLicense
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +92,10 @@ class ExtractionOptions:
         auto_tile: When True (default), gpio subdivides the bbox and retries when
             a server caps maxFeatures below the requested page, so capped layers
             extract completely instead of silently truncating (gpio 1.3+).
+        license: SPDX identifier for the harvested data, or "other" with
+            license_url. Overrides any license URL found in the service's own
+            license text (issue #686).
+        license_url: URL of the license text.
     """
 
     workers: int = 1
@@ -105,6 +111,8 @@ class ExtractionOptions:
     limit: int | None = None
     page_size: int = 100000
     auto_tile: bool = True
+    license: str | None = None
+    license_url: str | None = None
 
 
 def _slugify(name: str, disambiguate: bool = False, unique_id: int | None = None) -> str:
@@ -678,6 +686,25 @@ def extract_wfs_catalog(
     if options.dry_run:
         return _build_dry_run_report(url, layers, discovery_result)
 
+    # Resolve the license before downloading anything, so a harvest that cannot be
+    # licensed costs one command re-run rather than a whole download (issue #686).
+    # GetCapabilities carries the licence in Fees and AccessConstraints.
+    resolved_license = (
+        None
+        if options.raw
+        else resolve_harvest_license(
+            cli_license=options.license,
+            cli_license_url=options.license_url,
+            harvested_license_url=license_url_from_text(
+                "; ".join(
+                    part
+                    for part in (discovery_result.fees, discovery_result.access_constraints)
+                    if part
+                )
+            ),
+        )
+    )
+
     # Create output directory structure
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / ".portolan").mkdir(exist_ok=True)
@@ -760,7 +787,7 @@ def extract_wfs_catalog(
 
     # Auto-init catalog unless raw mode
     if not options.raw:
-        _auto_init_catalog(output_dir, report, discovery_result)
+        _auto_init_catalog(output_dir, report, discovery_result, resolved_license)
 
     return report
 
@@ -769,6 +796,7 @@ def _auto_init_catalog(
     output_dir: Path,
     report: ExtractionReport,
     discovery_result: WFSDiscoveryResult | None = None,
+    resolved_license: ResolvedLicense | None = None,
 ) -> None:
     """Initialize a Portolan catalog and add extracted files.
 
@@ -791,6 +819,9 @@ def _auto_init_catalog(
         update_stac_metadata(
             out / "catalog.json", title=filtered_title, description=filtered_description
         )
+        # Seed metadata.yaml here, between init_catalog and add_files, so the
+        # harvested license is in place before add checks for one (issue #686).
+        _seed_metadata_from_extraction(out, report, resolved_license)
 
     added = init_extracted_catalog(
         output_dir,
@@ -807,9 +838,6 @@ def _auto_init_catalog(
 
     # Add via links for provenance tracking
     _add_via_links_to_collections(output_dir, report)
-
-    # Seed catalog-level metadata.yaml from extracted service metadata
-    _seed_metadata_from_extraction(output_dir, report)
 
     # Seed collection-level metadata.yaml with layer-specific info
     # and update collection.json with rich metadata (Issue #369)
@@ -860,7 +888,11 @@ def _add_via_links_to_collections(output_dir: Path, report: ExtractionReport) ->
     )
 
 
-def _seed_metadata_from_extraction(output_dir: Path, report: ExtractionReport) -> None:
+def _seed_metadata_from_extraction(
+    output_dir: Path,
+    report: ExtractionReport,
+    resolved_license: ResolvedLicense | None = None,
+) -> None:
     """Seed catalog-level metadata.yaml from extracted WFS service metadata.
 
     Called after catalog initialization to pre-populate metadata.yaml with
@@ -870,12 +902,14 @@ def _seed_metadata_from_extraction(output_dir: Path, report: ExtractionReport) -
     Args:
         output_dir: The catalog output directory.
         report: The extraction report containing metadata.
+        resolved_license: License resolved before the download, which wins over
+            anything the harvest found (issue #686).
     """
     if not report.metadata_extracted:
         return
 
     wfs_metadata = _report_metadata_to_wfs_metadata(report.metadata_extracted)
-    seed_catalog_metadata(output_dir, wfs_metadata.to_extracted())
+    seed_catalog_metadata(output_dir, wfs_metadata.to_extracted(), resolved_license)
 
 
 def _report_metadata_to_wfs_metadata(
@@ -1046,7 +1080,10 @@ def _seed_collection_from_iso(
     )
 
     metadata_path = collection_dir / ".portolan" / "metadata.yaml"
-    seeded = seed_metadata_yaml(extracted, metadata_path)
+    # No placeholder: a child file inherits the catalog's license. An ISO record that
+    # names its own licence URL still writes it, since the layer's licence is the
+    # more specific fact (issue #686).
+    seeded = seed_metadata_yaml(extracted, metadata_path, license_placeholder=False)
 
     # Per Issue #369: Also update collection.json with title/description
     # ISO metadata has rich title and abstract that should appear in STAC

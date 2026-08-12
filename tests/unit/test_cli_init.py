@@ -28,7 +28,7 @@ class TestCliInit:
     ) -> None:
         """portolan init should create catalog.json at root and .portolan directory."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             # New structure: catalog.json at root
@@ -42,7 +42,7 @@ class TestCliInit:
     def test_init_prints_success_message(self, runner: CliRunner, tmp_path: Path) -> None:
         """portolan init should print a success message."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 0
             assert "Initialized" in result.output or "\u2713" in result.output
@@ -57,7 +57,7 @@ class TestCliInit:
             (portolan / "config.yaml").write_text("# Portolan config\n")
 
             # Use --auto to skip interactive prompts and test error path
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 1
             assert "already" in result.output.lower()
@@ -70,7 +70,7 @@ class TestCliInit:
             Path("catalog.json").write_text('{"type": "Catalog"}')
 
             # Use --auto to skip interactive prompts and test error path
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 1
             output_lower = result.output.lower()
@@ -83,7 +83,7 @@ class TestCliInit:
             target = Path("my-catalog")
             target.mkdir()
 
-            result = runner.invoke(cli, ["init", "--auto", str(target)])
+            result = runner.invoke(cli, ["init", "--auto", str(target), "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 0
             assert (target / "catalog.json").exists()
@@ -95,7 +95,9 @@ class TestCliInit:
         import json
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["init", "--auto", "--title", "My Test Catalog"])
+            result = runner.invoke(
+                cli, ["init", "--auto", "--title", "My Test Catalog", "--license", "CC-BY-4.0"]
+            )
 
             assert result.exit_code == 0
             data = json.loads(Path("catalog.json").read_text())
@@ -107,7 +109,10 @@ class TestCliInit:
         import json
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["init", "--auto", "--description", "Test description"])
+            result = runner.invoke(
+                cli,
+                ["init", "--auto", "--description", "Test description", "--license", "CC-BY-4.0"],
+            )
 
             assert result.exit_code == 0
             data = json.loads(Path("catalog.json").read_text())
@@ -134,7 +139,7 @@ class TestCliInitInteractive:
             result = runner.invoke(
                 cli,
                 ["init"],
-                input="Interactive Title\nInteractive Description\n",
+                input="Interactive Title\nInteractive Description\nCC-BY-4.0\n",
             )
 
             assert result.exit_code == 0, f"Failed: {result.output}"
@@ -158,7 +163,7 @@ class TestCliInitInteractive:
             result = runner.invoke(
                 cli,
                 ["init"],
-                input="\nCustom Description\n",
+                input="\nCustom Description\nCC-BY-4.0\n",
             )
 
             assert result.exit_code == 0, f"Failed: {result.output}"
@@ -179,7 +184,7 @@ class TestCliInitInteractive:
             result = runner.invoke(
                 cli,
                 ["init"],
-                input="\n\n",
+                input="\n\nCC-BY-4.0\n",
             )
 
             assert result.exit_code == 0, f"Failed: {result.output}"
@@ -193,7 +198,7 @@ class TestCliInitInteractive:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # JSON mode should not prompt
-            result = runner.invoke(cli, ["--format", "json", "init"])
+            result = runner.invoke(cli, ["--format", "json", "init", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             # Verify JSON output

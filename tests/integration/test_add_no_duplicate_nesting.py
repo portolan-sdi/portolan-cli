@@ -68,6 +68,7 @@ class TestNoDuplicateNestingIntegration:
             )
             Path(".portolan").mkdir()
             Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
             # Create collection/item structure
             # Simulating: 2025/26453e204934n/26453E204934N.tif
@@ -124,6 +125,7 @@ class TestNoDuplicateNestingIntegration:
             )
             Path(".portolan").mkdir()
             Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
             Path("data").mkdir()
             Path("data/myitem").mkdir()
@@ -174,6 +176,7 @@ class TestNoDuplicateNestingIntegration:
             )
             Path(".portolan").mkdir()
             Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
             # Mimic real-world structure: collection/tile_id/TILE_ID.tif
             Path("aerial").mkdir()
@@ -222,6 +225,7 @@ class TestNoDuplicateNestingIntegration:
             )
             Path(".portolan").mkdir()
             Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
             Path("collection").mkdir()
             Path("collection/item_dir").mkdir()

@@ -33,13 +33,13 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from portolan_cli.constants import TODO_MARKER
+from portolan_cli.licensing import OTHER_LICENSE, ResolvedLicense
+
 if TYPE_CHECKING:
     from portolan_cli.metadata_extraction import ExtractedMetadata
 
 logger = logging.getLogger(__name__)
-
-# TODO marker for fields that need human input
-TODO_MARKER = "TODO: Add value"
 
 
 def seed_metadata_yaml(
@@ -47,6 +47,8 @@ def seed_metadata_yaml(
     metadata_path: Path,
     *,
     overwrite: bool = False,
+    license_placeholder: bool = True,
+    license_override: ResolvedLicense | None = None,
 ) -> bool:
     """Seed a metadata.yaml file from extracted metadata.
 
@@ -60,6 +62,14 @@ def seed_metadata_yaml(
         extracted: Extracted metadata from a data source.
         metadata_path: Path to write metadata.yaml (usually .portolan/metadata.yaml).
         overwrite: If False (default), skip if file already exists.
+        license_placeholder: Whether a TODO placeholder may stand in for a license
+            the harvest did not find. False for a collection-level file, which
+            inherits the catalog's license through the hierarchical merge: the child
+            wins, so a placeholder there would override the real license the catalog
+            carries (issue #686). A license the harvest did find is written either
+            way, since a layer's own license beats an inherited one.
+        license_override: License to write instead of anything harvested, from a
+            command-line flag. An identifier a human named beats a guess.
 
     Returns:
         True if file was written, False if skipped (file exists and overwrite=False).
@@ -84,7 +94,11 @@ def seed_metadata_yaml(
             os.close(fd)
 
     # Build metadata structure
-    metadata = _build_metadata_dict(extracted)
+    metadata = _build_metadata_dict(
+        extracted,
+        license_placeholder=license_placeholder,
+        license_override=license_override,
+    )
 
     # Write with header comment using atomic write (temp + rename)
     content = _format_metadata_yaml(metadata, extracted.source_type)
@@ -111,7 +125,12 @@ def seed_metadata_yaml(
     return True
 
 
-def _build_metadata_dict(extracted: ExtractedMetadata) -> dict[str, Any]:
+def _build_metadata_dict(
+    extracted: ExtractedMetadata,
+    *,
+    license_placeholder: bool = True,
+    license_override: ResolvedLicense | None = None,
+) -> dict[str, Any]:
     """Build metadata.yaml dictionary from extracted metadata.
 
     Maps extracted fields to metadata.yaml structure, adding TODO markers
@@ -119,6 +138,9 @@ def _build_metadata_dict(extracted: ExtractedMetadata) -> dict[str, Any]:
 
     Args:
         extracted: Extracted metadata from a data source.
+        license_placeholder: Whether a TODO placeholder may stand in for a license
+            the harvest did not find. See ``seed_metadata_yaml``.
+        license_override: License to write instead of anything harvested.
 
     Returns:
         Dictionary ready for YAML serialization.
@@ -133,8 +155,22 @@ def _build_metadata_dict(extracted: ExtractedMetadata) -> dict[str, Any]:
     metadata: dict[str, Any] = {
         # Required fields
         "contact": contact,
-        "license": TODO_MARKER,  # Raw license isn't SPDX, always needs human review
     }
+
+    # A harvested licence is never an SPDX identifier, but when the source published
+    # a licence URL, "other" plus a rel="license" link to it is the second shape the
+    # spec accepts, and it states only what the source itself states. Without a URL
+    # there is nothing honest to write, so the marker stands and 'add' will ask
+    # (issue #686).
+    if license_override is not None:
+        metadata["license"] = license_override.license_id
+        if license_override.license_url:
+            metadata["license_url"] = license_override.license_url
+    elif extracted.license_url:
+        metadata["license"] = OTHER_LICENSE
+        metadata["license_url"] = extracted.license_url
+    elif license_placeholder:
+        metadata["license"] = TODO_MARKER
 
     # Optional fields - only include if we have data
     if extracted.source_url:

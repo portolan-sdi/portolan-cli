@@ -80,6 +80,7 @@ class TestDottedPathRegression:
         (portolan_dir / "config.yaml").write_text(
             yaml.dump({"version": 1, "statistics": {"enabled": False}})
         )
+        (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
         # Create collection directory with file directly in it
         # (portolan infers collection from directory structure)
@@ -152,6 +153,7 @@ class TestDottedPathRegression:
         (portolan_dir / "config.yaml").write_text(
             yaml.dump({"version": 1, "statistics": {"enabled": False}})
         )
+        (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
         # Create existing collection stub with item
         existing_coll = catalog_root / "existing"

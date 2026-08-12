@@ -38,6 +38,7 @@ def initialized_catalog(tmp_path: Path) -> Path:
     """Create an initialized Portolan catalog structure."""
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
     catalog_data = {
         "type": "Catalog",
@@ -445,6 +446,7 @@ class TestCsvSkipHypothesis:
             # Set up catalog
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir(exist_ok=True)
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             catalog_data = {
                 "type": "Catalog",
                 "stac_version": "1.0.0",
@@ -497,6 +499,7 @@ class TestCsvSkipHypothesis:
             # Set up catalog
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir(exist_ok=True)
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             catalog_data = {
                 "type": "Catalog",
                 "stac_version": "1.0.0",
@@ -575,6 +578,7 @@ class TestCsvSkipHypothesis:
             # Set up catalog
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir(exist_ok=True)
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             catalog_data = {
                 "type": "Catalog",
                 "stac_version": "1.0.0",
@@ -1578,6 +1582,7 @@ class TestMixedFormatIntegration:
             # Set up catalog
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir(exist_ok=True)
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             catalog_data = {
                 "type": "Catalog",
                 "stac_version": "1.0.0",

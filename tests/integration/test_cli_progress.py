@@ -24,6 +24,7 @@ def catalog_with_files(tmp_path: Path) -> Path:
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("version: 1\n")
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
     # Create collection with multiple GeoJSON files
     collection_dir = tmp_path / "test-collection"
@@ -98,6 +99,7 @@ class TestCheckFixProgress:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("version: 1\n")
+        (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
         # Create a simple catalog.json
         (tmp_path / "catalog.json").write_text(

@@ -40,7 +40,9 @@ def catalog_with_3857_geoparquet(tmp_path: Path) -> tuple[Path, Path, Path]:
     catalog_root.mkdir()
 
     # Initialize catalog via CLI
-    result = CliRunner().invoke(cli, ["init", str(catalog_root), "--auto"])
+    result = CliRunner().invoke(
+        cli, ["init", str(catalog_root), "--auto", "--license", "CC-BY-4.0"]
+    )
     assert result.exit_code == 0, f"Init failed: {result.output}"
 
     # Create collection directory (file goes directly here, no item subdir)

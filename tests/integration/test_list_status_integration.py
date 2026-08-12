@@ -25,7 +25,9 @@ def init_catalog(catalog_dir: Path) -> None:
     """Initialize a catalog using the CLI."""
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["init", "--title", "Test Catalog", "--auto"], catch_exceptions=False
+        cli,
+        ["init", "--title", "Test Catalog", "--auto", "--license", "CC-BY-4.0"],
+        catch_exceptions=False,
     )
     assert result.exit_code == 0, f"init failed: {result.output}"
 

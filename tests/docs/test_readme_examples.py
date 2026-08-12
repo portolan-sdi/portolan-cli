@@ -42,7 +42,7 @@ class TestReadmeQuickStart:
     @pytest.mark.integration
     def test_init_creates_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
         """'portolan init' creates a catalog structure."""
-        result = runner.invoke(cli, ["init", str(tmp_path), "--auto"])
+        result = runner.invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
         assert result.exit_code == 0, f"Init failed: {result.output}"
         # Verify catalog.json created
         assert (tmp_path / "catalog.json").exists()
@@ -83,7 +83,7 @@ class TestReadmeQuickStart:
         README quick start shows (minus the push which requires S3).
         """
         # Step 1: Initialize catalog
-        result = runner.invoke(cli, ["init", str(tmp_path), "--auto"])
+        result = runner.invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
         assert result.exit_code == 0, f"init failed: {result.output}"
 
         # Set up: Create demographics directory with data
@@ -260,7 +260,9 @@ class TestReadmeWorkflowEdgeCases:
         self, runner: CliRunner, catalog_with_minimal_data: Path
     ) -> None:
         """Re-running 'portolan init' on existing catalog fails gracefully."""
-        result = runner.invoke(cli, ["init", str(catalog_with_minimal_data), "--auto"])
+        result = runner.invoke(
+            cli, ["init", str(catalog_with_minimal_data), "--auto", "--license", "CC-BY-4.0"]
+        )
         # Should fail or warn - catalog already exists
         # Exit code 1 indicates the expected failure
         assert result.exit_code != 0 or "already" in result.output.lower()

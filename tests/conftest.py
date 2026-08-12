@@ -340,6 +340,7 @@ def catalog_with_versions_for_dry_run(tmp_path: Path) -> Path:
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("{}\n")
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
     # Versions.json at <catalog_root>/<collection>/versions.json
     collection_dir = catalog_dir / "test-collection"
@@ -396,6 +397,7 @@ def fresh_catalog_no_versions(tmp_path: Path) -> Path:
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("{}\n")
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
     # Collection directory exists but NO versions.json
     collection_dir = catalog_dir / "test-collection"
@@ -426,6 +428,7 @@ def catalog_with_multiple_versions(tmp_path: Path) -> Path:
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("catalog_id: test-catalog\n")
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
     # catalog.json
     catalog_data = {
@@ -549,7 +552,17 @@ def _init_catalog(
     root.mkdir(parents=True, exist_ok=True)
     result = CliRunner().invoke(
         cli,
-        ["init", str(root), "--auto", "--title", title, "--description", description],
+        [
+            "init",
+            str(root),
+            "--auto",
+            "--title",
+            title,
+            "--description",
+            description,
+            "--license",
+            "CC-BY-4.0",
+        ],
         catch_exceptions=False,
     )
     assert result.exit_code == 0, result.output

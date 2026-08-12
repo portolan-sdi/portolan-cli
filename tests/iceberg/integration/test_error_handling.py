@@ -55,7 +55,7 @@ def test_version_commands_without_iceberg_backend_error(tmp_path, runner):
     # Init with default file backend (not iceberg)
     result = runner.invoke(
         cli,
-        ["init", str(tmp_path), "--auto"],
+        ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"],
         catch_exceptions=False,
     )
     assert result.exit_code == 0
