@@ -3,25 +3,36 @@
 # apply_branch_protection.sh
 #
 # WHAT IT DOES
-#   Codifies portolan-cli's `main` branch protection as GitHub repository
-#   rulesets and enables repo-level auto-merge. This is the anchor that makes
-#   "green means green" enforceable and Dependabot auto-merge (see
+#   Codifies portolan-cli's branch protection as GitHub repository rulesets and
+#   enables repo-level auto-merge. This is the anchor that makes "green means
+#   green" enforceable and Dependabot auto-merge (see
 #   .github/workflows/dependabot-automerge.yml) safe.
 #
 #   Concretely:
 #     1. Enables repository auto-merge.
-#     2. Deletes the legacy classic branch-protection rule on `main` (if any).
-#     3. Creates-or-updates TWO rulesets on `main`:
-#        A. "main: PR + green checks" — every push goes through a PR and every
-#           required status check must pass. NO bypass actors: this applies to
-#           admins too, so nobody merges red.
-#        B. "main: review required" — 1 approving review, but repository admins
-#           may bypass (so an admin can land a green, bot-approved Dependabot PR,
-#           and admins are never hard-blocked on review).
-#     4. Prints a verification summary.
+#     2. Deletes any legacy classic branch-protection rule on a protected branch.
+#     3. Creates-or-updates TWO rulesets over PROTECTED_REF_PATTERNS:
+#        A. "protected: PR + green checks" — every push goes through a PR and
+#           every required status check must pass. NO bypass actors: this applies
+#           to admins too, so nobody merges red.
+#        B. "protected: review required" — 1 approving review, but repository
+#           admins may bypass (so an admin can land a green, bot-approved
+#           Dependabot PR, and admins are never hard-blocked on review).
+#     4. Deletes the superseded "main: ..." rulesets, so a re-run after the
+#        rename does not leave two overlapping copies bound to the same refs.
+#     5. Prints a verification summary.
 #
 #   Splitting into two rulesets is deliberate: the strict checks (A) bind
 #   everyone, while only the softer review rule (B) grants admin bypass.
+#
+# WHICH BRANCHES
+#   `main` plus `release/*`. Release branches are long-lived, take PRs directly,
+#   and merge back into main, so work lands on them that main never sees before
+#   release. Protecting only main left that work ungated.
+#
+#   ORDERING: a required check that has never reported blocks every PR on the
+#   branch it guards. Confirm "CI Success" reports on a PR targeting the branch
+#   pattern BEFORE adding that pattern here.
 #
 # REQUIRED STATUS CHECKS
 #   Just three contexts, on purpose:
@@ -52,7 +63,16 @@
 set -euo pipefail
 
 REPO="${1:-portolan-sdi/portolan-cli}"
-BRANCH="main"
+
+# Ref patterns both rulesets bind to (GitHub fnmatch syntax, `*` spans one path
+# segment). Read the ORDERING note in the header before adding a pattern.
+PROTECTED_REF_PATTERNS=("refs/heads/main" "refs/heads/release/*")
+
+# Ruleset names. Renamed from the earlier "main: ..." pair when the rulesets
+# outgrew main; the old names are deleted below so a re-run leaves one copy.
+CHECKS_RULESET_NAME="protected: PR + green checks"
+REVIEW_RULESET_NAME="protected: review required"
+LEGACY_RULESET_NAMES=("main: PR + green checks" "main: review required")
 
 # Repository role id 5 == "admin" (GitHub built-in role). Used as a bypass actor
 # for the review ruleset only.
@@ -70,14 +90,31 @@ gh api -X PATCH "repos/${REPO}" -F allow_auto_merge=true >/dev/null
 echo "   auto-merge enabled."
 
 # -----------------------------------------------------------------------------
-# 2. Delete classic branch protection on main (tolerate 404 = already gone).
+# 2. Delete classic branch protection on protected branches (404 = already gone).
+#    Rulesets and classic protection stack rather than replace, so a leftover
+#    classic rule would silently keep enforcing its own stale check list.
 # -----------------------------------------------------------------------------
-echo ">> Removing classic branch protection on ${BRANCH} (if present) ..."
-if gh api "repos/${REPO}/branches/${BRANCH}/protection" >/dev/null 2>&1; then
-  gh api -X DELETE "repos/${REPO}/branches/${BRANCH}/protection" >/dev/null
-  echo "   classic protection deleted."
-else
-  echo "   no classic protection found (nothing to delete)."
+echo ">> Removing classic branch protection (if present) ..."
+# Assigned on its own line: `local`/inline assignment would mask gh's exit
+# status, and an API failure here must abort rather than read as "no branches".
+PROTECTED_BRANCHES=$(gh api --paginate "repos/${REPO}/branches?protected=true" --jq '.[].name')
+CLASSIC_FOUND=0
+while IFS= read -r branch; do
+  [ -n "${branch}" ] || continue
+  case "${branch}" in
+    main|release/*) ;;
+    *) continue ;;
+  esac
+  # `protected=true` also reports ruleset-covered branches, so the GET may 404.
+  # That is the "nothing to do" case, not an error.
+  if gh api "repos/${REPO}/branches/${branch}/protection" >/dev/null 2>&1; then
+    gh api -X DELETE "repos/${REPO}/branches/${branch}/protection" >/dev/null
+    echo "   classic protection deleted on ${branch}."
+    CLASSIC_FOUND=1
+  fi
+done <<<"${PROTECTED_BRANCHES}"
+if [ "${CLASSIC_FOUND}" -eq 0 ]; then
+  echo "   none found (nothing to delete)."
 fi
 
 # -----------------------------------------------------------------------------
@@ -103,14 +140,33 @@ upsert_ruleset() {
 }
 
 # -----------------------------------------------------------------------------
+# Helper: delete a ruleset by name if it exists (used to retire the old names).
+# -----------------------------------------------------------------------------
+delete_ruleset() {
+  local name="$1" existing_id
+  existing_id=$(
+    gh api "repos/${REPO}/rulesets?includes_parents=false" \
+      --jq ".[] | select(.name == \"${name}\") | .id" 2>/dev/null | head -1
+  )
+  if [ -n "${existing_id}" ]; then
+    gh api -X DELETE "repos/${REPO}/rulesets/${existing_id}" >/dev/null
+    echo "   retired superseded ruleset '${name}'."
+  fi
+}
+
+# Ref-pattern include list, shared by both rulesets. Built from the bash array
+# via jq so a pattern containing a shell metacharacter cannot break the JSON.
+REF_INCLUDES=$(printf '%s\n' "${PROTECTED_REF_PATTERNS[@]}" | jq -R . | jq -sc .)
+
+# -----------------------------------------------------------------------------
 # 3A. Ruleset: PR required + required status checks (no bypass — binds admins).
 # -----------------------------------------------------------------------------
-CHECKS_RULESET=$(jq -n '
+CHECKS_RULESET=$(jq -n --arg name "${CHECKS_RULESET_NAME}" --argjson refs "${REF_INCLUDES}" '
 {
-  name: "main: PR + green checks",
+  name: $name,
   target: "branch",
   enforcement: "active",
-  conditions: { ref_name: { include: ["refs/heads/main"], exclude: [] } },
+  conditions: { ref_name: { include: $refs, exclude: [] } },
   bypass_actors: [],
   rules: [
     { type: "deletion" },
@@ -141,12 +197,13 @@ CHECKS_RULESET=$(jq -n '
 # -----------------------------------------------------------------------------
 # 3B. Ruleset: 1 approving review, bypassable by repository admins.
 # -----------------------------------------------------------------------------
-REVIEW_RULESET=$(jq -n --argjson admin "${ADMIN_ROLE_ID}" '
+REVIEW_RULESET=$(jq -n --argjson admin "${ADMIN_ROLE_ID}" \
+  --arg name "${REVIEW_RULESET_NAME}" --argjson refs "${REF_INCLUDES}" '
 {
-  name: "main: review required",
+  name: $name,
   target: "branch",
   enforcement: "active",
-  conditions: { ref_name: { include: ["refs/heads/main"], exclude: [] } },
+  conditions: { ref_name: { include: $refs, exclude: [] } },
   bypass_actors: [
     { actor_id: $admin, actor_type: "RepositoryRole", bypass_mode: "always" }
   ],
@@ -163,14 +220,23 @@ REVIEW_RULESET=$(jq -n --argjson admin "${ADMIN_ROLE_ID}" '
   ]
 }')
 
-upsert_ruleset "main: PR + green checks" "${CHECKS_RULESET}"
-upsert_ruleset "main: review required" "${REVIEW_RULESET}"
+upsert_ruleset "${CHECKS_RULESET_NAME}" "${CHECKS_RULESET}"
+upsert_ruleset "${REVIEW_RULESET_NAME}" "${REVIEW_RULESET}"
 
 # -----------------------------------------------------------------------------
-# 4. Verification summary.
+# 4. Retire the pre-rename rulesets. Runs last: if an upsert above failed, the
+#    old rules stay in force rather than leaving the branch unprotected.
+# -----------------------------------------------------------------------------
+for legacy in "${LEGACY_RULESET_NAMES[@]}"; do
+  delete_ruleset "${legacy}"
+done
+
+# -----------------------------------------------------------------------------
+# 5. Verification summary.
 # -----------------------------------------------------------------------------
 echo
 echo ">> Current rulesets on ${REPO}:"
 gh api "repos/${REPO}/rulesets?includes_parents=false" \
   --jq '.[] | "   - \(.name) [\(.enforcement)]"'
+echo ">> Protected refs: ${PROTECTED_REF_PATTERNS[*]}"
 echo ">> Done. Required checks: CI Success, codecov/patch, codecov/project."

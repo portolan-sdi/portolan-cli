@@ -14,8 +14,10 @@ name: CI
 on:
   push:
     branches: [main]
+  # No `branches:` filter. The full suite runs on every pull request whatever
+  # it targets, including release branches and long-lived feature branches.
+  # Restricting this to main silently gave release-branch PRs zero CI.
   pull_request:
-    branches: [main]
   workflow_dispatch:  # Allow manual triggering
 
 # Least-privilege default; no job here writes to the repo.
