@@ -189,8 +189,9 @@ Why this matters: AI-generated tests can be tautological — they may pass but n
 
 ## Branch Protection
 
-`main` protection is defined **as code** in `scripts/apply_branch_protection.sh`
-(idempotent, admin one-shot). It creates two rulesets:
+Branch protection is defined **as code** in `scripts/apply_branch_protection.sh`
+(idempotent, admin one-shot). It binds `refs/heads/main` and
+`refs/heads/release/*`, the two places PRs land. It creates two rulesets:
 
 - **PR + green checks** (no bypass — binds admins too): every push goes through a
   PR and the required status checks must pass.
