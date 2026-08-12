@@ -5,7 +5,37 @@ Small helpers used across multiple modules.
 
 from __future__ import annotations
 
+import posixpath
+from pathlib import PurePath
 from typing import Any
+
+
+def relative_href(from_dir: PurePath, to_file: PurePath) -> str:
+    """The POSIX href from a directory to a STAC file.
+
+    A STAC href is a relative URL reference, so its separator is ``/`` on every
+    platform. ``os.path.relpath`` returns the *native* one, and on Windows that
+    shipped ``..\\catalog.json`` — not a Windows spelling of a parent link but a
+    filename containing backslashes, which resolves nowhere (rashid
+    ``PTL-LNK-006``). Normalizing both sides to POSIX first keeps the
+    computation itself platform-independent.
+
+    Both link ends flow through here so that ``root`` and ``parent`` are derived
+    separately rather than sharing one href. Reusing the root href for ``parent``
+    is what made a nested collection point past its own intermediate catalog
+    (issue #711).
+
+    Args:
+        from_dir: Directory the link will live in.
+        to_file: File the link points at.
+
+    Returns:
+        A relative POSIX href, e.g. ``../catalog.json``.
+    """
+    return posixpath.relpath(
+        PurePath(to_file).as_posix(),
+        PurePath(from_dir).as_posix(),
+    )
 
 
 def get_dict(data: dict[str, Any], key: str) -> dict[str, Any]:

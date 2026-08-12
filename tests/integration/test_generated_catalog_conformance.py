@@ -49,6 +49,14 @@ def _build_catalog(root: Path) -> None:
     collection_dir.mkdir(parents=True)
     shutil.copy(FIXTURE, collection_dir / "roads.parquet")
 
+    # A three-level id, so generation has to write two intermediate catalogs and
+    # the deeper one's parent differs from its root. Flat ids alone let #711
+    # ship: root and parent coincide at the top level and the conflation between
+    # them stays invisible.
+    nested_dir = root / "env" / "air" / "quality"
+    nested_dir.mkdir(parents=True)
+    shutil.copy(FIXTURE, nested_dir / "quality.parquet")
+
     # A geometry-less Parquet exercises the tabular path, which writes its
     # collection.json outside finalize_items.
     tabular_dir = root / "demographics"
@@ -115,6 +123,7 @@ def _build_catalog(root: Path) -> None:
             "--portolan-dir",
             str(root),
             str(collection_dir / "roads.parquet"),
+            str(nested_dir / "quality.parquet"),
             str(tabular_dir / "census.parquet"),
         ],
         catch_exceptions=False,
