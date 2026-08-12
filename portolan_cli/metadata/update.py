@@ -25,15 +25,15 @@ from portolan_cli.item import (
     _extract_geometry_from_file,
     _get_media_type,
     create_item,
-    read_item_json,
     write_item_json,
 )
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.models.collection import (
     CollectionModel,
     ExtentModel,
     SpatialExtent,
 )
-from portolan_cli.models.item import AssetModel, ItemModel
+from portolan_cli.models.item import ItemModel
 from portolan_cli.versions import (
     Asset,
     Version,
@@ -48,16 +48,25 @@ logger = logging.getLogger(__name__)
 def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
     """Re-extract metadata from file and update existing STAC item.
 
-    Reads the existing item, extracts fresh metadata from the data file,
-    updates bbox, geometry, datetime, and assets while preserving
-    user-added fields (title, description).
+    Refreshes only the fields this metadata pass owns, the item's bbox,
+    geometry, datetime, and the data asset's href, and preserves everything
+    else on disk. That deliberately includes the item's ``stac_extensions``,
+    the data asset's ``bands`` / ``statistics``, every non-``data`` asset such
+    as the ``thumbnail`` that ``portolan add`` registers for COGs (#657), and
+    the data asset's media type, which the refresh backfills only when it is
+    missing.
+
+    The update edits the raw item JSON in place rather than round-tripping
+    through :class:`ItemModel`. The model only carries href/type/roles/title for
+    assets and drops ``stac_extensions`` entirely, so serializing through it
+    would silently destroy those fields (#659).
 
     Args:
         item_path: Path to existing item JSON file.
         file_path: Path to the data file (GeoParquet or COG).
 
     Returns:
-        Updated ItemModel.
+        Updated ItemModel (a lossy view, the on-disk JSON is the full record).
 
     Raises:
         FileNotFoundError: If item_path or file_path doesn't exist.
@@ -68,49 +77,53 @@ def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
     if not item_path.exists():
         raise FileNotFoundError(f"Item file not found: {item_path}")
 
-    # Read existing item
-    existing_item = read_item_json(item_path)
+    # Load the raw item as the source of truth so nothing outside the refresh's
+    # scope is dropped.
+    item_data: dict[str, Any] = json.loads(item_path.read_text(encoding="utf-8"))
 
     # Extract fresh metadata from file
     bbox, geometry = _extract_geometry_from_file(file_path)
+    item_data["bbox"] = bbox
+    item_data["geometry"] = geometry
 
-    # Create new datetime
-    new_datetime = datetime.now(timezone.utc).isoformat()
+    # Bump datetime, preserving every other property.
+    properties = item_data.setdefault("properties", {})
+    properties["datetime"] = datetime.now(timezone.utc).isoformat()
 
-    # Create updated properties (preserve existing, update datetime)
-    updated_properties: dict[str, Any] = dict(existing_item.properties)
-    updated_properties["datetime"] = new_datetime
+    # Refresh the data asset's href/type in place, leaving its bands/statistics
+    # (and any human-authored title) and all other assets untouched.
+    assets: dict[str, Any] = item_data.setdefault("assets", {})
+    data_key = _find_data_asset_key(assets)
+    data_asset = assets.setdefault(data_key, {})
+    data_asset["href"] = file_path.name
+    # Keep the media type `add` registered. `add` derives it from the extension
+    # registry, which gives a COG the `profile=cloud-optimized` suffix that
+    # PORTO-CORE-026 makes a MUST; the local extension map here does not, so
+    # overwriting would downgrade a valid COG asset to plain GeoTIFF. Only
+    # backfill when the field is absent or blank.
+    if not data_asset.get("type"):
+        data_asset["type"] = _get_media_type(file_path)
+    data_asset.setdefault("roles", ["data"])
 
-    # Determine media type
-    media_type = _get_media_type(file_path)
+    # Write the full record back to disk. Atomic, so a kill mid-write cannot
+    # leave a truncated item.json where a valid one used to be (issue #687).
+    write_json_atomic(item_path, item_data)
 
-    # Create updated assets
-    assets = {
-        "data": AssetModel(
-            href=str(file_path.name),
-            type=media_type,
-            roles=["data"],
-            title="Data file",
-        )
-    }
+    return ItemModel.from_dict(item_data)
 
-    # Create updated item, preserving user-added fields
-    updated_item = ItemModel(
-        id=existing_item.id,
-        geometry=geometry,
-        bbox=bbox,
-        properties=updated_properties,
-        assets=assets,
-        collection=existing_item.collection,
-        title=existing_item.title,  # Preserve user field
-        description=existing_item.description,  # Preserve user field
-        links=existing_item.links,  # Preserve links
-    )
 
-    # Write updated item back to disk
-    write_item_json(updated_item, item_path.parent)
+def _find_data_asset_key(assets: dict[str, Any]) -> str:
+    """Return the key of the item's data asset, defaulting to ``"data"``.
 
-    return updated_item
+    Prefers an asset whose ``roles`` include ``"data"``, then a literal
+    ``"data"`` key, so the href/type refresh lands on the real data asset
+    without disturbing sibling assets (thumbnail, metadata, ...).
+    """
+    for key, asset in assets.items():
+        roles = asset.get("roles") if isinstance(asset, dict) else None
+        if isinstance(roles, list) and "data" in roles:
+            return key
+    return "data"
 
 
 def create_missing_item(file_path: Path, collection_path: Path) -> Path:
