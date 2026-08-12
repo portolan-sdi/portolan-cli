@@ -127,6 +127,47 @@ class TestRmItemDirCleanup:
         assert (collection_dir / "collection.json").exists()
 
     @pytest.mark.integration
+    def test_rm_nested_collection_untracks_asset(
+        self, runner: CliRunner, initialized_catalog: Path
+    ) -> None:
+        """rm of an asset in a collection under a subcatalog untracks it (#723).
+
+        The transcript in the issue: ``rm`` reported success and deleted the file,
+        but ``climate/hittekaart/versions.json`` still listed the asset because
+        the removal never reached the collection's own versions.json.
+        """
+        import json
+
+        collection_dir = initialized_catalog / "climate" / "hittekaart"
+        _write_partition(collection_dir)  # writes collection_dir/data.parquet directly
+        asset = collection_dir / "data.parquet"
+
+        add_result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(initialized_catalog), str(asset)],
+            catch_exceptions=False,
+        )
+        assert add_result.exit_code == 0, add_result.output
+        versions_path = collection_dir / "versions.json"
+        assert versions_path.exists(), "precondition: add tracked the nested collection"
+        before = json.loads(versions_path.read_text())
+        assert "data.parquet" in before["versions"][-1]["assets"]
+
+        rm_result = runner.invoke(
+            cli,
+            ["rm", "--portolan-dir", str(initialized_catalog), "--force", str(asset)],
+            catch_exceptions=False,
+        )
+        assert rm_result.exit_code == 0, rm_result.output
+
+        assert not asset.exists()
+        after = json.loads(versions_path.read_text())
+        assert len(after["versions"]) == len(before["versions"]) + 1, "no version published"
+        assert "data.parquet" not in after["versions"][-1]["assets"], "phantom entry (#723)"
+        # The flattened path the backend used to write to must not appear.
+        assert not (initialized_catalog / "hittekaart").exists()
+
+    @pytest.mark.integration
     def test_rm_collection_level_asset_keeps_collection_dir(
         self, runner: CliRunner, initialized_catalog: Path
     ) -> None:

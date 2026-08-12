@@ -36,6 +36,40 @@ def _gather_removable_files(path: Path) -> list[Path]:
     return [path, *sidecars]
 
 
+def _resolve_collection_dir(file_path: Path, catalog_root: Path) -> Path | None:
+    """Find the collection directory that owns ``file_path``.
+
+    Walks up from the file to the catalog root and returns the nearest ancestor
+    carrying a ``collection.json`` or a ``versions.json``. That covers every
+    layout in one pass: a collection-level asset (the file's own parent), an
+    item or Hive-partition asset (one level further up), and a collection nested
+    under a subcatalog, where the id spans several path segments.
+
+    ``resolve_collection_id`` returns only the *first* component, so deriving the
+    directory from it pointed ``rm`` at ``{catalog_root}/climate/`` for a file in
+    ``climate/hittekaart/``. No versions.json sits there, so the removal silently
+    skipped untracking (issue #723).
+
+    Args:
+        file_path: File being removed.
+        catalog_root: Root directory of the catalog.
+
+    Returns:
+        The collection directory, or None if no marker is found below the root.
+    """
+    root = catalog_root.resolve()
+    current = file_path.resolve().parent
+    while current != root:
+        if (current / "collection.json").exists() or (current / "versions.json").exists():
+            return current
+        parent = current.parent
+        if parent == current:
+            # Reached the filesystem root without passing through catalog_root.
+            return None
+        current = parent
+    return None
+
+
 def _remove_one_file(
     file_path: Path,
     *,
@@ -63,7 +97,7 @@ def _remove_one_file(
     if file_path.is_symlink() and not keep:
         return False
 
-    # Determine collection ID (raises if the file is outside the catalog).
+    # Reject files outside the catalog before touching anything.
     try:
         coll_id = resolve_collection_id(file_path, catalog_root)
     except ValueError:
@@ -72,8 +106,13 @@ def _remove_one_file(
     if dry_run:
         return True
 
-    # Remove from versions.json
-    versions_path = catalog_root / coll_id / "versions.json"
+    # Remove from versions.json. The owning collection is found by walking up from
+    # the file, because a collection id can span several path segments and
+    # `resolve_collection_id` returns only the first (#723). Fall back to that
+    # first component when no marker is found; nothing is tracked there either
+    # way, so the file is still deleted below.
+    collection_dir = _resolve_collection_dir(file_path, catalog_root) or catalog_root / coll_id
+    versions_path = collection_dir / "versions.json"
     if versions_path.exists():
         _remove_from_versions(file_path, versions_path)
 
