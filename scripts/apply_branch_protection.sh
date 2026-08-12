@@ -41,12 +41,12 @@
 #                           Requiring this one context (not each matrix cell)
 #                           means adding a Python/OS never drops a required check.
 #     - "codecov/patch"   — changed-line coverage (target in codecov.yml).
+#     - "codecov/project" — overall coverage floor, `target: auto` in
+#                           codecov.yml, so it fails on a regression rather than
+#                           against a fixed number the repo does not meet.
 #
-#   NOT required: "codecov/project". It is configured in codecov.yml but has
-#   never posted a status here — 20 consecutive merged PRs show `codecov/patch`
-#   and no `codecov/project`. A required context that never reports blocks every
-#   merge, so it stays out until Codecov is fixed to emit it. Re-add it in the
-#   same PR that makes it report, never before.
+#   A required context that never reports blocks every merge on the branch it
+#   guards. Confirm a context appears on a PR before adding it here.
 #
 # REQUIREMENTS
 #   - `gh` authenticated as a user with ADMIN on the repo.
@@ -191,7 +191,8 @@ CHECKS_RULESET=$(jq -n --arg name "${CHECKS_RULESET_NAME}" --argjson refs "${REF
         do_not_enforce_on_create: false,
         required_status_checks: [
           { context: "CI Success" },
-          { context: "codecov/patch" }
+          { context: "codecov/patch" },
+          { context: "codecov/project" }
         ]
       }
     }
@@ -243,4 +244,4 @@ echo ">> Current rulesets on ${REPO}:"
 gh api "repos/${REPO}/rulesets?includes_parents=false" \
   --jq '.[] | "   - \(.name) [\(.enforcement)]"'
 echo ">> Protected refs: ${PROTECTED_REF_PATTERNS[*]}"
-echo ">> Done. Required checks: CI Success, codecov/patch."
+echo ">> Done. Required checks: CI Success, codecov/patch, codecov/project."

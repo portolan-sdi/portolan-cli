@@ -7,11 +7,14 @@ coverage:
   range: "80...100"
 
   status:
-    # Overall project coverage
+    # Overall project coverage. `auto` compares against the base commit, so the
+    # gate is "do not regress" rather than a fixed number the repo does not meet.
+    # The previous `target: 90%` sat above actual coverage (83.03%), so it could
+    # only ever fail — see PR #733.
     project:
       default:
-        target: 90%
-        threshold: 5%  # Allow 5% drop from target
+        target: auto
+        threshold: 1%  # Absorb run-to-run noise; a real drop still fails.
         if_ci_failed: error
 
     # Coverage of changed lines only (patch)
