@@ -57,7 +57,7 @@ from portolan_cli.stac import (
     update_collection_file_statistics,
     update_collection_summaries,
 )
-from portolan_cli.utils import relative_href
+from portolan_cli.utils import href_root, relative_href
 from portolan_cli.versions import (
     Asset,
     VersionsFile,
@@ -271,8 +271,7 @@ def _save_collection_with_links(
     """
     _deduplicate_collection_item_links(collection)
     collection.set_self_href(str(collection_dir / "collection.json"))
-    # Trailing slash required: pystac treats paths with dots in final component as files
-    collection.normalize_hrefs(f"{collection_dir}/", strategy=AsIsLayoutStrategy())
+    collection.normalize_hrefs(href_root(collection_dir), strategy=AsIsLayoutStrategy())
     collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
 
     collection_json_path = collection_dir / "collection.json"

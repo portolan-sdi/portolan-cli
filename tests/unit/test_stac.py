@@ -245,6 +245,30 @@ class TestCatalogOperations:
 
         assert (catalog_path / "catalog.json").exists()
 
+    @pytest.mark.unit
+    def test_save_catalog_with_relative_dotted_dest_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A relative dest_dir must not send catalog.json to the parent.
+
+        Same defect as issue #731, reached through this helper instead of init.
+        pystac discards the trailing slash while absolutizing a relative root,
+        so a dotted directory name trips the file-versus-directory heuristic of
+        issue #401. Before the fix this wrote catalog.json to tmp_path.
+        """
+        catalog = pystac.Catalog(id="relative-dest", description="test")
+        dest_dir = tmp_path / "my.catalog"
+        dest_dir.mkdir()
+        monkeypatch.chdir(tmp_path)
+
+        save_catalog(catalog, Path("my.catalog"))
+
+        assert (dest_dir / "catalog.json").exists(), "catalog.json belongs in dest_dir"
+        assert not (tmp_path / "catalog.json").exists(), (
+            "catalog.json must NOT leak to the parent directory"
+        )
+        assert json.loads((dest_dir / "catalog.json").read_text())["id"] == "relative-dest"
+
 
 class TestCollectionManagement:
     """Tests for adding collections to catalogs."""

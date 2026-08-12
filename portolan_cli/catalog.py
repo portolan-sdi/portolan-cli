@@ -21,7 +21,7 @@ from portolan_cli.errors import CatalogAlreadyExistsError
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic, write_text_atomic
 from portolan_cli.models.catalog import CatalogModel
-from portolan_cli.utils import relative_href
+from portolan_cli.utils import href_root, relative_href
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -512,10 +512,7 @@ def init_catalog(
     )
 
     catalog_file = path / "catalog.json"
-    # Absolute path and trailing slash both required: pystac treats a final
-    # component containing a dot (e.g., tmp.xyz) as a file, and it discards the
-    # trailing slash of a relative root while absolutizing it.
-    catalog.normalize_hrefs(f"{path}/")
+    catalog.normalize_hrefs(href_root(path))
     try:
         catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
     except OSError as e:
