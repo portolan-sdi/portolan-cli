@@ -30,6 +30,7 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 from portolan_cli.metadata.models import MetadataStatus
 from portolan_cli.metadata.scan import scan_catalog_metadata
+from portolan_cli.sync.checksums import file_fields
 
 
 @pytest.fixture
@@ -163,6 +164,7 @@ def _make_raster_collection_with_items_parquet(
                 "type": "application/vnd.apache.parquet",
                 "title": "STAC items as GeoParquet",
                 "roles": ["stac-items"],
+                **file_fields(items_parquet),
             }
         },
     )

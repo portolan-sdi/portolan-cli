@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from pathlib import Path
+from typing import Any
 
 from rashid.api import SHA2_256, encode_multihash
 
@@ -69,6 +70,46 @@ def compute_checksum(path: Path) -> str:
         for chunk in iter(lambda: f.read(8192), b""):
             sha256.update(chunk)
     return sha256.hexdigest()
+
+
+def file_fields_from(digest_hex: str, size: int) -> dict[str, Any]:
+    """Build the STAC file-extension fields for bytes that are already measured.
+
+    Takes the digest and the size rather than a path, because a FileGDB asset is
+    a directory: :func:`compute_dir_checksum` and :func:`compute_dir_size` measure
+    it, and :func:`compute_checksum` would reject it as a non-regular file.
+
+    Args:
+        digest_hex: Hex-encoded SHA-256 digest of the asset's bytes.
+        size: Byte count to publish as ``file:size``.
+
+    Returns:
+        The ``file:size`` and ``file:checksum`` pair, ready to merge into an asset.
+
+    Raises:
+        ValueError: If ``digest_hex`` is not a 64-character hex string.
+    """
+    return {"file:size": size, "file:checksum": multihash_sha256(digest_hex)}
+
+
+def file_fields(path: Path) -> dict[str, Any]:
+    """Build the STAC file-extension fields for a regular file, from its bytes.
+
+    PORTO-CORE-030 makes a published ``file:size``/``file:checksum`` a claim about
+    the bytes the asset's href resolves to, so always read them from the file as it
+    stands rather than carrying a value forward from an earlier write.
+
+    Args:
+        path: Path to the asset file.
+
+    Returns:
+        The ``file:size`` and ``file:checksum`` pair, ready to merge into an asset.
+
+    Raises:
+        ValueError: If ``path`` is not a regular file.
+        FileNotFoundError: If ``path`` does not exist.
+    """
+    return file_fields_from(compute_checksum(path), path.stat().st_size)
 
 
 def compute_dir_checksum(path: Path) -> str:
