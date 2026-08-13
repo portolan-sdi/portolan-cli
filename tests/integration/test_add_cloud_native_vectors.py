@@ -220,12 +220,13 @@ class TestAddFlatGeobuf:
         )
         assert result.exit_code == 0
 
-        # Check collection has proj:epsg
+        # CRS lands as proj:code on the data asset, never top-level (#654)
         collection_json = collection_dir / "collection.json"
         assert collection_json.exists()
 
         data = json.loads(collection_json.read_text())
-        assert data.get("proj:epsg") == 4326
+        assert "proj:epsg" not in data
+        assert data["assets"]["borders"]["proj:code"] == "EPSG:4326"
         assert data.get("flatgeobuf:geometry_type") == "Point"
         assert data.get("flatgeobuf:feature_count") == 3
 
@@ -277,16 +278,18 @@ class TestCollectionLevelAssetBehavior:
 
         data = json.loads((collection_dir / "collection.json").read_text())
 
-        # PMTiles are always Web Mercator (3857)
-        assert data.get("proj:epsg") == 3857
+        # The tile CRS is a visualization artifact and contributes no
+        # projection field (#488, #654)
+        assert "proj:epsg" not in data
+        assert "proj:code" not in data
 
         # PMTiles-specific properties
         assert data.get("pmtiles:min_zoom") == 4
         assert data.get("pmtiles:max_zoom") == 8
         assert data.get("pmtiles:tile_type") == "mvt"
 
-        # Projection extension should be declared
-        assert "https://stac-extensions.github.io/projection/v2.0.0/schema.json" in data.get(
+        # No projection field written, so no projection declaration
+        assert "https://stac-extensions.github.io/projection/v2.0.0/schema.json" not in data.get(
             "stac_extensions", []
         )
 

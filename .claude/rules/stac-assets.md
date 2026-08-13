@@ -156,7 +156,16 @@ pystac fights this in two ways.
   `models/_stac_version.py` / `stac.py` everywhere. **Never hardcode `"1.0.0"`**
   in serialization (this regressed in `models/catalog.py`).
 - Raster band metadata (`bands`, formerly `raster:bands`) goes on the **data
-  asset**, never on `item.properties`. Declare the raster extension.
+  asset**, never on `item.properties`. Declare the raster extension (v2.0.0)
+  only when a `raster:`-prefixed field was actually written — v2.0.0 requires
+  a declared item to carry at least one `raster:` field, and the unified
+  `bands` array holds only core fields.
+- Collection CRS is `proj:code` (e.g. `"EPSG:4269"`) on the **data asset**,
+  matching the portolan-spec reference catalog. Never write `proj:epsg`
+  (removed in projection v2.0.0) or a top-level collection projection field.
+  PMTiles metadata contributes no projection field at all.
+- `EXTENSION_URLS` versions are pinned by a unit test against the registry
+  table in portolan-spec `stac/README.md` — update both in lockstep.
 - A collection MUST declare every extension its items use. After building
   summaries, call `build_stac_extensions()` and merge the result into the
   collection's `stac_extensions` (it exists but has been forgotten for

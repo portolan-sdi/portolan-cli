@@ -437,9 +437,11 @@ def _add_prepared_items_to_collection(
                     update_extent_from_bbox=p.bbox,
                     merge_strategy=merge_strategy,
                 )
-            # Add format-specific properties (proj:epsg, pmtiles:*, flatgeobuf:*)
+            # Add format-specific properties (proj:code, pmtiles:*, flatgeobuf:*)
             if p.metadata is not None:
-                add_collection_properties_from_metadata(collection, p.metadata)
+                add_collection_properties_from_metadata(
+                    collection, p.metadata, asset_keys=p.stac_assets.keys()
+                )
         elif p.stac_item is not None:
             # Item-level: add item link to collection
             add_item_to_collection(

@@ -242,8 +242,8 @@ class TestUpdateItemMetadata:
         item_path = write_item_json(item, collection_dir)
 
         extensions = [
-            "https://stac-extensions.github.io/projection/v1.1.0/schema.json",
-            "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
+            "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
+            "https://stac-extensions.github.io/raster/v2.0.0/schema.json",
         ]
         item_json = json.loads(item_path.read_text())
         item_json["stac_extensions"] = extensions

@@ -12,7 +12,7 @@ Key conventions:
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -65,7 +65,7 @@ HUMAN_ENRICHABLE_ASSET_FIELDS = frozenset({"title", "description"})
 MACHINE_DERIVABLE_EXTRA_FIELD_PREFIXES = frozenset(
     {
         "file:",  # file:size, file:checksum
-        "proj:",  # proj:epsg, proj:wkt2
+        "proj:",  # proj:code, proj:wkt2
         "pmtiles:",  # pmtiles:min_zoom, pmtiles:max_zoom, etc.
         "flatgeobuf:",  # flatgeobuf:feature_count, etc.
         "raster:",  # raster:spatial_resolution, etc.
@@ -438,6 +438,7 @@ def add_asset_to_collection(
 def add_collection_properties_from_metadata(
     collection: pystac.Collection,
     metadata: object,
+    asset_keys: Iterable[str] | None = None,
 ) -> None:
     """Add STAC properties from metadata to a collection.
 
@@ -445,20 +446,24 @@ def add_collection_properties_from_metadata(
     should be applied directly to the collection instead of an item.
 
     Handles:
-    - PMTilesMetadata: pmtiles:* properties, and proj:epsg=3857 only as a
-      fallback (the 3857 describes the Web-Mercator tiles, not the source data)
-    - FlatGeobufMetadata: proj:epsg from CRS, flatgeobuf:* properties
-    - GeoParquetMetadata: proj:epsg from CRS (table extension handled separately)
+    - PMTilesMetadata: pmtiles:* properties (no projection contribution; the
+      hardcoded Web-Mercator tile CRS describes the tiles, not the source data)
+    - FlatGeobufMetadata: proj:code onto the data asset, flatgeobuf:* properties
+    - GeoParquetMetadata: proj:code onto the data asset (table extension
+      handled separately)
 
-    The collection-level ``proj:epsg`` must reflect the source *data* CRS. A
-    tracked ``.pmtiles`` companion (tracks all files) reports a
-    hardcoded ``proj:epsg: 3857`` for its tiles; that visualization artifact
-    must never overwrite a real source CRS contributed by the vector data asset,
-    regardless of the order assets are applied (issue #488).
+    Projection v2.0.0 removed ``proj:epsg``; the reference catalog in
+    portolan-spec carries ``proj:code`` (``"EPSG:4269"``) on the collection's
+    *data asset*, not on the collection top level (issue #654). A stale
+    top-level ``proj:epsg`` from an older catalog is stripped on re-add.
 
     Args:
         collection: The collection to add properties to.
         metadata: Metadata object with to_stac_properties() method.
+        asset_keys: Keys of the collection assets this metadata describes.
+            ``proj:code`` lands on those of them carrying the ``data`` role.
+            When omitted, every collection asset with the ``data`` role
+            receives it.
     """
     if not hasattr(metadata, "to_stac_properties"):
         return
@@ -467,19 +472,32 @@ def add_collection_properties_from_metadata(
     if not props:
         return
 
-    from portolan_cli.metadata.pmtiles import PMTilesMetadata
+    # proj:epsg is the extractors' internal CRS handoff; it never lands in
+    # published STAC. Translate to proj:code on the data asset below.
+    epsg = props.pop("proj:epsg", None)
 
-    is_pmtiles = isinstance(metadata, PMTilesMetadata)
-
-    # Add properties to collection.extra_fields (STAC collection properties)
     for key, value in props.items():
-        # PMTiles tile CRS is a fallback: never clobber a real source-data CRS.
-        if key == "proj:epsg" and is_pmtiles and "proj:epsg" in collection.extra_fields:
-            continue
         collection.extra_fields[key] = value
 
-    # Add projection extension declaration if proj:epsg is present
-    if "proj:epsg" in props:
+    # Migration: older catalogs carried proj:epsg on the collection top level.
+    collection.extra_fields.pop("proj:epsg", None)
+
+    if epsg is None:
+        return
+
+    if asset_keys is None:
+        targets = list(collection.assets.keys())
+    else:
+        targets = [key for key in asset_keys if key in collection.assets]
+
+    wrote_proj_code = False
+    for key in targets:
+        asset = collection.assets[key]
+        if "data" in (asset.roles or []):
+            asset.extra_fields["proj:code"] = f"EPSG:{epsg}"
+            wrote_proj_code = True
+
+    if wrote_proj_code:
         proj_ext_url = EXTENSION_URLS["projection"]
         if collection.stac_extensions is None:
             collection.stac_extensions = []
@@ -887,7 +905,7 @@ def update_collection_temporal_extent(
 EXTENSION_URLS = {
     "table": "https://stac-extensions.github.io/table/v1.2.0/schema.json",
     "projection": "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
-    "raster": "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
+    "raster": "https://stac-extensions.github.io/raster/v2.0.0/schema.json",
     # file:size / file:checksum, declared by update_collection_file_statistics
     # and by stac_parquet._sync_file_extension.
     "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",
@@ -1469,12 +1487,19 @@ def add_raster_extension(
     if bands:
         _set_bands_on_data_assets(item, bands)
 
-    # Update stac_extensions if not already present
-    ext_url = EXTENSION_URLS["raster"]
-    if ext_url not in (item.stac_extensions or []):
-        if item.stac_extensions is None:
-            item.stac_extensions = []
-        item.stac_extensions.append(ext_url)
+    # Declare the extension only when a raster:-prefixed field was actually
+    # written (issue #654). Raster v2.0.0 requires a declared item to carry at
+    # least one raster: field in properties, bands, or an asset; the unified
+    # `bands` array holds only core fields, so an empty declaration fails
+    # v2.0.0 validation. The spec registry condition is "When band-level
+    # detail is provided".
+    has_raster_field = any(key.startswith("raster:") for key in item.properties)
+    if has_raster_field:
+        ext_url = EXTENSION_URLS["raster"]
+        if ext_url not in (item.stac_extensions or []):
+            if item.stac_extensions is None:
+                item.stac_extensions = []
+            item.stac_extensions.append(ext_url)
 
 
 def add_collection_extensions_from_summaries(

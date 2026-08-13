@@ -19,7 +19,7 @@
   "properties": {
     "datetime": "2025-07-15T14:30:00Z",
     "gsd": 0.3,
-    "proj:epsg": 4326
+    "proj:code": "EPSG:4326"
   },
   "collection": "sf-imagery",
   "assets": {

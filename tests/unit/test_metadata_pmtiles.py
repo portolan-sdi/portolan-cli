@@ -57,8 +57,10 @@ class TestPMTilesMetadata:
         )
         props = meta.to_stac_properties()
 
-        # PMTiles are always 3857 (Web Mercator) internally
-        assert props["proj:epsg"] == 3857
+        # The internal 3857 tile CRS is a visualization artifact and never
+        # surfaces as a projection field (#488, #654)
+        assert "proj:epsg" not in props
+        assert "proj:code" not in props
         # Zoom levels should be included
         assert props["pmtiles:min_zoom"] == 4
         assert props["pmtiles:max_zoom"] == 8
