@@ -821,6 +821,253 @@ class TestCollectionLevelAsset:
 
 
 # =============================================================================
+# Test: file:size / file:checksum on the mirror asset (issue #710)
+# =============================================================================
+
+
+def _mirror_asset(collection_dir: Path) -> dict[str, object]:
+    """The geoparquet-items asset as it stands on disk."""
+    data = json.loads((collection_dir / "collection.json").read_text())
+    asset: dict[str, object] = data["assets"]["geoparquet-items"]
+    return asset
+
+
+def _append_item(collection_dir: Path, item_id: str) -> None:
+    """Add one more item so the next items.parquet differs from the last."""
+    item_dir = collection_dir / item_id
+    item_dir.mkdir()
+    item_json = {
+        "type": "Feature",
+        "stac_version": "1.0.0",
+        "id": item_id,
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+                [[-121.5, 37.7], [-121.4, 37.7], [-121.4, 37.8], [-121.5, 37.8], [-121.5, 37.7]]
+            ],
+        },
+        "bbox": [-121.5, 37.7, -121.4, 37.8],
+        "properties": {"datetime": "2024-02-01T00:00:00Z", "title": f"Landsat {item_id}"},
+        "assets": {
+            "data": {
+                "href": f"./{item_id}.tif",
+                "type": "image/tiff; application=geotiff; profile=cloud-optimized",
+                "roles": ["data"],
+            }
+        },
+        "links": [],
+        "collection": "landsat",
+    }
+    (item_dir / f"{item_id}.json").write_text(json.dumps(item_json, indent=2))
+
+    collection_path = collection_dir / "collection.json"
+    data = json.loads(collection_path.read_text())
+    data["links"].append({"rel": "item", "href": f"./{item_id}/{item_id}.json"})
+    collection_path.write_text(json.dumps(data, indent=2))
+
+
+class TestMirrorAssetFileFields:
+    """The mirror asset must publish file:size and file:checksum (issue #710).
+
+    PTL-AST-003 warns on their absence (PORTO-CORE-028 is a SHOULD), and
+    ``portolan check --strict`` escalates that warning to a non-zero exit.
+    PORTO-CORE-030 then makes a published value a claim about the bytes, and
+    rashid's data pass — on by default — reports a mismatch as an ERROR. So a
+    value left stale by a regeneration is worse than one that was never written.
+    """
+
+    @pytest.mark.unit
+    def test_asset_carries_file_size_and_checksum(self, collection_with_items: Path) -> None:
+        import hashlib
+
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+        add_parquet_link_to_collection(collection_with_items)
+
+        raw = (collection_with_items / "items.parquet").read_bytes()
+        asset = _mirror_asset(collection_with_items)
+        assert asset["file:size"] == len(raw)
+        assert asset["file:checksum"] == f"1220{hashlib.sha256(raw).hexdigest()}"
+
+    @pytest.mark.unit
+    def test_checksum_is_a_well_formed_multihash(self, collection_with_items: Path) -> None:
+        # PORTO-CORE-029 / PTL-AST-004. Assert with rashid's own predicate so the
+        # test cannot drift away from the rule that gates the catalog.
+        from rashid.api import is_well_formed_multihash
+
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+        add_parquet_link_to_collection(collection_with_items)
+
+        assert is_well_formed_multihash(_mirror_asset(collection_with_items)["file:checksum"])
+
+    @pytest.mark.unit
+    def test_regenerating_the_parquet_refreshes_the_checksum(
+        self, collection_with_items: Path
+    ) -> None:
+        """The PORTO-CORE-030 guard: registration is idempotent by presence.
+
+        Stamping only the creation branch leaves the first run's digest sitting
+        against bytes the second run overwrote, which turns a warning into an error.
+        """
+        import hashlib
+
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+        add_parquet_link_to_collection(collection_with_items)
+        first = dict(_mirror_asset(collection_with_items))
+
+        _append_item(collection_with_items, "scene-005")
+        generate_items_parquet(collection_with_items)
+        add_parquet_link_to_collection(collection_with_items)
+
+        raw = (collection_with_items / "items.parquet").read_bytes()
+        asset = _mirror_asset(collection_with_items)
+        assert asset["file:checksum"] != first["file:checksum"]
+        assert asset["file:checksum"] == f"1220{hashlib.sha256(raw).hexdigest()}"
+        assert asset["file:size"] == len(raw)
+
+    @pytest.mark.unit
+    def test_an_older_asset_without_the_fields_is_backfilled(
+        self, collection_with_items: Path
+    ) -> None:
+        """A catalog written before this fix must gain the fields on the next run."""
+        import hashlib
+
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+        collection_path = collection_with_items / "collection.json"
+        data = json.loads(collection_path.read_text())
+        data["assets"] = {
+            "geoparquet-items": {
+                "href": "./items.parquet",
+                "type": "application/vnd.apache.parquet",
+                "roles": ["stac-items"],
+            }
+        }
+        collection_path.write_text(json.dumps(data, indent=2))
+
+        add_parquet_link_to_collection(collection_with_items)
+
+        raw = (collection_with_items / "items.parquet").read_bytes()
+        asset = _mirror_asset(collection_with_items)
+        assert asset["file:size"] == len(raw)
+        assert asset["file:checksum"] == f"1220{hashlib.sha256(raw).hexdigest()}"
+
+    @pytest.mark.unit
+    def test_fields_are_absent_when_the_parquet_was_never_written(
+        self, collection_with_items: Path
+    ) -> None:
+        """Never fabricate. Registration still happens; the claim does not."""
+        from portolan_cli.stac_parquet import add_parquet_link_to_collection
+
+        add_parquet_link_to_collection(collection_with_items)
+
+        asset = _mirror_asset(collection_with_items)
+        assert "file:size" not in asset
+        assert "file:checksum" not in asset
+
+    @pytest.mark.unit
+    def test_stale_fields_are_stripped_when_the_parquet_disappears(
+        self, collection_with_items: Path
+    ) -> None:
+        """Absence is a PTL-AST-003 warning; a claim about missing bytes is an error."""
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+        add_parquet_link_to_collection(collection_with_items)
+        assert "file:size" in _mirror_asset(collection_with_items)
+
+        (collection_with_items / "items.parquet").unlink()
+        add_parquet_link_to_collection(collection_with_items)
+
+        asset = _mirror_asset(collection_with_items)
+        assert "file:size" not in asset
+        assert "file:checksum" not in asset
+
+    @pytest.mark.unit
+    def test_a_foreign_href_is_not_stamped_from_items_parquet(
+        self, collection_with_items: Path
+    ) -> None:
+        """The asset matches by key too, so stamp each asset from its own href."""
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+        collection_path = collection_with_items / "collection.json"
+        data = json.loads(collection_path.read_text())
+        data["assets"] = {
+            "geoparquet-items": {
+                "href": "./elsewhere.parquet",
+                "type": "application/vnd.apache.parquet",
+                "roles": ["stac-items"],
+            }
+        }
+        collection_path.write_text(json.dumps(data, indent=2))
+
+        add_parquet_link_to_collection(collection_with_items)
+
+        asset = _mirror_asset(collection_with_items)
+        assert "file:size" not in asset
+        assert "file:checksum" not in asset
+
+    @pytest.mark.unit
+    def test_the_file_extension_is_declared_once(self, collection_with_items: Path) -> None:
+        from portolan_cli.stac import EXTENSION_URLS
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+        add_parquet_link_to_collection(collection_with_items)
+        add_parquet_link_to_collection(collection_with_items)
+
+        data = json.loads((collection_with_items / "collection.json").read_text())
+        assert data["stac_extensions"].count(EXTENSION_URLS["file"]) == 1
+
+    @pytest.mark.unit
+    def test_a_second_call_without_regeneration_rewrites_nothing(
+        self, collection_with_items: Path
+    ) -> None:
+        """Refreshing must not mark the collection modified when nothing moved."""
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+        add_parquet_link_to_collection(collection_with_items)
+        collection_path = collection_with_items / "collection.json"
+        before = collection_path.read_text()
+
+        add_parquet_link_to_collection(collection_with_items)
+
+        assert collection_path.read_text() == before
+
+
+# =============================================================================
 # Test: generate_or_suggest_parquet (post-add orchestration, issue #620)
 # =============================================================================
 

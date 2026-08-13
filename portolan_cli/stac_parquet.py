@@ -32,6 +32,7 @@ from typing import Any
 
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import info, warn
+from portolan_cli.sync.checksums import file_fields
 
 # Constants
 PARQUET_FILENAME = "items.parquet"
@@ -231,6 +232,70 @@ def generate_items_parquet(collection_path: Path) -> Path:
     return output_path
 
 
+_FILE_FIELDS = ("file:size", "file:checksum")
+
+
+def _stamp_file_fields(asset: dict[str, Any], base_dir: Path) -> bool:
+    """Refresh ``file:size``/``file:checksum`` from the bytes the asset points at.
+
+    PORTO-CORE-028 makes the fields a SHOULD, so their absence is only a
+    PTL-AST-003 warning. PORTO-CORE-030 makes a *published* value a claim about
+    the bytes the href resolves to, and rashid's data pass reports a mismatch as
+    an error. A stale value is therefore worse than no value, which is why a
+    vanished file strips the fields instead of leaving them behind.
+
+    Reads each asset's own href rather than assuming ``items.parquet``: the caller
+    matches by asset key as well as by href, so an asset keyed ``geoparquet-items``
+    may legitimately point somewhere else, and must not inherit another file's digest.
+
+    Args:
+        asset: STAC asset dict, mutated in place.
+        base_dir: Directory holding the collection.json that owns the asset.
+
+    Returns:
+        Whether the asset changed, so the caller writes collection.json only when
+        there is something to write.
+    """
+    href = asset.get("href")
+    path = _resolve_href(base_dir, href) if isinstance(href, str) and href else None
+
+    if path is None or not path.is_file():
+        # Pop every field before returning; any() would short-circuit on the first.
+        return len([f for f in _FILE_FIELDS if asset.pop(f, None) is not None]) > 0
+
+    fields = file_fields(path)
+    if all(asset.get(name) == value for name, value in fields.items()):
+        return False
+    asset.update(fields)
+    return True
+
+
+def _declare_file_extension(data: dict[str, Any], assets: dict[str, Any]) -> bool:
+    """Declare the STAC file extension when any asset publishes ``file:size``.
+
+    ``update_collection_file_statistics`` does this for the add and finalize paths,
+    but it needs a ``pystac.Collection`` and this module works on raw JSON on
+    purpose (pystac leaks absolute paths, see known-issues/pystac-absolute-paths.md).
+
+    Args:
+        data: Parsed collection.json, mutated in place.
+        assets: The collection's asset dicts.
+
+    Returns:
+        Whether the extension list changed.
+    """
+    from portolan_cli.stac import EXTENSION_URLS
+
+    if not any("file:size" in asset for asset in assets.values()):
+        return False
+
+    extensions = data.setdefault("stac_extensions", [])
+    if EXTENSION_URLS["file"] in extensions:
+        return False
+    extensions.append(EXTENSION_URLS["file"])
+    return True
+
+
 def add_parquet_link_to_collection(collection_path: Path) -> None:
     """Add items.parquet link and asset to collection.json.
 
@@ -292,14 +357,24 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
             if "collection-mirror" not in roles:
                 roles.append("collection-mirror")
                 modified = True
+            # Refresh, do not skip: generate_items_parquet overwrote the bytes
+            # moments ago, so an asset carried over from an earlier run describes
+            # a file that no longer exists in that form.
+            if _stamp_file_fields(asset, collection_path):
+                modified = True
     else:
-        assets[asset_key] = {
+        asset = {
             "href": f"./{PARQUET_FILENAME}",
             "type": PARQUET_MEDIA_TYPE,
             "title": "STAC items as GeoParquet",
             "roles": ["stac-items", "collection-mirror"],
         }
+        _stamp_file_fields(asset, collection_path)
+        assets[asset_key] = asset
         data["assets"] = assets
+        modified = True
+
+    if _declare_file_extension(data, assets):
         modified = True
 
     # Write back only if changes were made

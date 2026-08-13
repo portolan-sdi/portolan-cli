@@ -160,7 +160,7 @@ from portolan_cli.stac import (
     update_catalog_provenance,
     update_collection_file_statistics,
 )
-from portolan_cli.sync.checksums import compute_checksum, multihash_sha256
+from portolan_cli.sync.checksums import compute_checksum, file_fields
 from portolan_cli.viz.style import enrich_cog_assets
 
 if TYPE_CHECKING:
@@ -1706,16 +1706,11 @@ def _update_collection_with_asset(
             # Different file with same stem - use full filename to avoid collision
             asset_key = asset_path.name
 
-    # Compute file size and checksum for file extension metadata
-    file_size = asset_path.stat().st_size
-    file_checksum = compute_checksum(asset_path)
-
     assets[asset_key] = {
         "href": f"./{asset_path.name}",
         "type": media_type,
         "roles": [role],
-        "file:size": file_size,
-        "file:checksum": multihash_sha256(file_checksum),
+        **file_fields(asset_path),
     }
 
     # Write updated collection
