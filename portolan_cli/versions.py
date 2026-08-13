@@ -34,9 +34,10 @@ Structure:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -508,3 +509,159 @@ def _compute_changes(versions_file: VersionsFile, new_assets: dict[str, Asset]) 
             changes.append(name)
 
     return changes
+
+
+def _compute_sha256(path: Path) -> str:
+    """Stream a file in 64KB chunks and return its SHA-256 hex digest.
+
+    Chunked to avoid loading large PMTiles/thumbnail files fully into memory.
+    """
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _asset_href(asset_path: Path, catalog_root: Path, collection_path: Path) -> str:
+    """The catalog-root-relative href recorded for a generated asset."""
+    try:
+        rel_path = asset_path.relative_to(catalog_root)
+    except ValueError:
+        # Fallback when the asset is not under the catalog root.
+        rel_path = asset_path.relative_to(collection_path.parent)
+    return rel_path.as_posix()
+
+
+def _is_tracked(
+    asset_path: Path,
+    tracked: dict[str, Asset],
+    catalog_root: Path,
+    collection_path: Path,
+) -> bool:
+    """True when the snapshot already records this exact file.
+
+    Compares the href, not the basename. Two item directories can each hold a
+    ``data.thumb.jpg``, and a basename match would treat the second as already
+    tracked and drop it from the snapshot.
+    """
+    existing = tracked.get(asset_path.name)
+    if existing is None:
+        return False
+    return existing.href == _asset_href(asset_path, catalog_root, collection_path)
+
+
+def track_generated_assets(
+    collection_path: Path,
+    asset_paths: list[Path],
+    catalog_root: Path,
+    *,
+    message: str,
+    only_if_missing: bool = False,
+    amend_latest: bool = False,
+) -> None:
+    """Track generated side-step assets (PMTiles, thumbnail) in versions.json.
+
+    Computes SHA-256, size, mtime and path records in a *single* new version
+    snapshot. A PMTiles and its thumbnail come from the same side-step on the
+    same source asset, so they belong in one version, not two (Issue #519).
+    ``add_version`` carries forward the previous version's assets, so the result
+    is a complete snapshot with the assets added or updated.
+
+    Lives here rather than beside either caller because both the PMTiles
+    side-step (``viz.pmtiles``) and the collection-thumbnail orchestrator
+    (``collection_thumbnail``) must record derived assets the same way. An
+    untracked derived asset breaks ``push`` (Issues #519, #735).
+
+    Args:
+        collection_path: Path to the collection directory.
+        asset_paths: Paths of the generated files to track.
+        catalog_root: Path to the catalog root (hrefs are catalog-root-relative).
+        message: Human-readable description of the change.
+        only_if_missing: If True, only track assets whose filename is not already
+            present in the latest version snapshot, and create no version at all
+            if every asset is already tracked. Used by the skip path to backfill
+            artifacts generated before tracking existed, without bumping a
+            version on every unchanged ``add`` (Issue #519).
+        amend_latest: If True, merge into the latest version rather than create a
+            new one. Pass this only when the caller wrote that version during the
+            same command, which is the case for the side-steps ``add`` runs after
+            its own snapshot. One ``add`` then stays one version. A repair pass
+            like ``check --fix`` leaves it False, since amending a snapshot that
+            may already be published would rewrite history.
+
+    Raises:
+        FileNotFoundError: If any asset path doesn't exist.
+    """
+    for asset_path in asset_paths:
+        if not asset_path.exists():
+            raise FileNotFoundError(f"File not found at {asset_path}")
+
+    versions_path = collection_path / "versions.json"
+
+    # If no versions.json, create a minimal one
+    if not versions_path.exists():
+        versions_file = VersionsFile(
+            spec_version="1.0.0",
+            current_version=None,
+            versions=[],
+        )
+    else:
+        versions_file = read_versions(versions_path)
+
+    # Backfill mode: skip assets already tracked, and create no version if none
+    # are missing (otherwise the message would force a no-op version bump).
+    #
+    # An asset is "already tracked" only when the recorded href points at the
+    # same file. Matching the basename alone made `item-a/data.thumb.jpg` and
+    # `item-b/data.thumb.jpg` indistinguishable, so the second one was silently
+    # dropped from the snapshot.
+    paths_to_track = asset_paths
+    if only_if_missing and versions_file.versions:
+        tracked = versions_file.versions[-1].assets
+        paths_to_track = [
+            p for p in asset_paths if not _is_tracked(p, tracked, catalog_root, collection_path)
+        ]
+    if not paths_to_track:
+        return
+
+    assets: dict[str, Asset] = {}
+    for asset_path in paths_to_track:
+        stat = asset_path.stat()
+        assets[asset_path.name] = Asset(
+            sha256=_compute_sha256(asset_path),
+            size_bytes=stat.st_size,
+            href=_asset_href(asset_path, catalog_root, collection_path),
+            mtime=stat.st_mtime,
+        )
+
+    if amend_latest and versions_file.versions:
+        # Fold into the snapshot the caller just wrote, rather than bumping.
+        # One `add` is one version. A thumbnail is derived from assets in that
+        # same snapshot, so a second version would record no new user intent and
+        # would double every collection's history (Issue #519).
+        latest = versions_file.versions[-1]
+        versions_file.versions[-1] = replace(
+            latest,
+            assets={**latest.assets, **assets},
+            changes=list(dict.fromkeys([*latest.changes, *assets])),
+        )
+        write_versions(versions_path, versions_file)
+        return
+
+    # Determine next version
+    if versions_file.current_version:
+        major, minor, patch = parse_version(versions_file.current_version)
+        new_version = f"{major}.{minor}.{patch + 1}"
+    else:
+        new_version = "1.0.0"
+
+    updated = add_version(
+        versions_file,
+        version=new_version,
+        assets=assets,
+        breaking=False,
+        message=message,
+    )
+
+    write_versions(versions_path, updated)

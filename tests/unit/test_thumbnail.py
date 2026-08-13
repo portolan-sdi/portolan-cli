@@ -1260,3 +1260,102 @@ class TestThumbnailRendersVisibleGeometry:
 
         assert result is not None and result.exists()
         assert result.stat().st_size > 0
+
+
+class TestGeoparquetSampling:
+    """A bounded render, since thumbnails are now generated on every add (#683)."""
+
+    @staticmethod
+    def _write_geoparquet(path: Path, rows: int, row_group_size: int) -> None:
+        """A real GeoParquet whose points march west to east across the extent.
+
+        Spatially ordered on purpose: geoparquet-io writes spatially sorted
+        output, so a leading-N sample would draw only the western corner. The
+        ordering is what makes the stride assertion meaningful.
+        """
+        import geopandas as gpd
+        import shapely
+
+        gdf = gpd.GeoDataFrame(
+            {"idx": list(range(rows))},
+            geometry=[shapely.Point(x / rows * 10.0, 0.5) for x in range(rows)],
+            crs="EPSG:4326",
+        )
+        gdf.to_parquet(path, row_group_size=row_group_size)
+
+    @pytest.mark.unit
+    def test_below_the_cap_reads_every_feature(self, tmp_path: Path) -> None:
+        """The guarantee from #423 still holds for ordinary files."""
+        from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
+
+        gpq = tmp_path / "small.parquet"
+        self._write_geoparquet(gpq, rows=500, row_group_size=100)
+
+        gdf, _bbox, _crs = _read_geoparquet_for_thumbnail(gpq, max_features=10_000)
+
+        assert len(gdf) == 500
+
+    @pytest.mark.unit
+    def test_above_the_cap_samples(self, tmp_path: Path) -> None:
+        from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
+
+        gpq = tmp_path / "big.parquet"
+        self._write_geoparquet(gpq, rows=1000, row_group_size=100)
+
+        gdf, _bbox, _crs = _read_geoparquet_for_thumbnail(gpq, max_features=200)
+
+        assert 0 < len(gdf) < 1000, "A file over the cap must not be read whole"
+
+    @pytest.mark.unit
+    def test_the_sample_spans_the_full_extent(self, tmp_path: Path) -> None:
+        """A leading-N sample would cover the western sliver only."""
+        from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
+
+        gpq = tmp_path / "big.parquet"
+        self._write_geoparquet(gpq, rows=1000, row_group_size=100)
+
+        gdf, bbox, _crs = _read_geoparquet_for_thumbnail(gpq, max_features=200)
+
+        # Points run x = 0 .. 9.99. A leading 200 would stop near x = 2.
+        assert gdf.total_bounds[2] > 8.0, "Sample must reach the eastern edge"
+        # And the frame still comes from file metadata, not from the sample.
+        assert bbox is not None
+        assert bbox[2] > 9.9
+
+    @pytest.mark.unit
+    def test_sampling_preserves_the_declared_crs(self, tmp_path: Path) -> None:
+        """The rebuilt frame must not silently lose its CRS."""
+        from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
+
+        gpq = tmp_path / "big.parquet"
+        self._write_geoparquet(gpq, rows=1000, row_group_size=100)
+
+        gdf, _bbox, source_crs = _read_geoparquet_for_thumbnail(gpq, max_features=200)
+
+        assert gdf.crs is not None
+        assert gdf.crs.to_epsg() == 4326
+        assert source_crs is not None
+
+    @pytest.mark.unit
+    def test_single_row_group_still_caps_the_feature_count(self, tmp_path: Path) -> None:
+        """geoparquet-io writes one row group for many files; the cap must hold."""
+        from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
+
+        gpq = tmp_path / "one_group.parquet"
+        self._write_geoparquet(gpq, rows=1000, row_group_size=100_000)
+
+        gdf, _bbox, _crs = _read_geoparquet_for_thumbnail(gpq, max_features=200)
+
+        assert len(gdf) == 200
+        assert gdf.total_bounds[2] > 8.0, "Even one group must be sampled across"
+
+    @pytest.mark.unit
+    def test_max_features_none_reads_everything(self, tmp_path: Path) -> None:
+        from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
+
+        gpq = tmp_path / "big.parquet"
+        self._write_geoparquet(gpq, rows=1000, row_group_size=100)
+
+        gdf, _bbox, _crs = _read_geoparquet_for_thumbnail(gpq, max_features=None)
+
+        assert len(gdf) == 1000

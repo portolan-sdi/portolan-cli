@@ -30,10 +30,6 @@ FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "simple.parquet"
 # exist in the CLI. Each is a tracked Phase-3 gap, not an accepted violation.
 KNOWN_GAPS = frozenset(
     {
-        # PTL-VIZ-001: every geospatial collection needs a thumbnail asset.
-        # Thumbnail rendering lives behind the optional [thumbnails] extra and
-        # is not part of the default add pipeline.
-        "PTL-VIZ-001",
         # PTL-DAT-007: every row group needs spatial statistics. geoparquet-io
         # writes a single row group for a file this small and emits neither a
         # bbox covering column nor native GeospatialStatistics for it, so the

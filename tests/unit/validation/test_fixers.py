@@ -1404,3 +1404,81 @@ class TestNodeWriting:
         raw = (collection / "collection.json").read_text(encoding="utf-8")
         assert "Córdoba" in raw
         assert "\\u00f3" not in raw
+
+
+class TestThumbnailFixer:
+    """PTL-VIZ-001 has two repairs: retype a mistyped thumbnail, or make one."""
+
+    def _collection_with_thumbnail(self, tmp_path: Path, media_type: str) -> Path:
+        collection_dir = _tiny_catalog(tmp_path)
+        (collection_dir / "roads.thumb.jpg").write_bytes(b"\xff\xd8\xff fake-jpeg")
+        data = _read_json(collection_dir / "collection.json")
+        data["assets"] = {
+            "thumbnail": {
+                "href": "./roads.thumb.jpg",
+                "type": media_type,
+                "roles": ["thumbnail"],
+            }
+        }
+        _write_json(collection_dir / "collection.json", data)
+        return collection_dir
+
+    def test_retypes_from_the_file_it_points_at(self, tmp_path: Path) -> None:
+        collection_dir = self._collection_with_thumbnail(tmp_path, "image/gif")
+
+        results = FIXERS["thumbnail"](tmp_path, False)
+
+        assert [r.action for r in results] == [FixAction.UPDATED]
+        asset = _read_json(collection_dir / "collection.json")["assets"]["thumbnail"]
+        assert asset["type"] == "image/jpeg"
+
+    def test_a_correctly_typed_thumbnail_is_left_alone(self, tmp_path: Path) -> None:
+        collection_dir = self._collection_with_thumbnail(tmp_path, "image/jpeg")
+        before = _snapshot(tmp_path)
+
+        assert FIXERS["thumbnail"](tmp_path, False) == []
+        assert _snapshot(tmp_path) == before
+        assert collection_dir.exists()
+
+    def test_an_href_that_is_not_an_image_is_not_retyped(self, tmp_path: Path) -> None:
+        """Retyping a thumbnail that points at a CSV would state a falsehood."""
+        collection_dir = _tiny_catalog(tmp_path)
+        (collection_dir / "notes.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+        data = _read_json(collection_dir / "collection.json")
+        data["assets"] = {
+            "thumbnail": {
+                "href": "./notes.csv",
+                "type": "text/csv",
+                "roles": ["thumbnail"],
+            }
+        }
+        _write_json(collection_dir / "collection.json", data)
+
+        assert FIXERS["thumbnail"](tmp_path, False) == []
+        asset = _read_json(collection_dir / "collection.json")["assets"]["thumbnail"]
+        assert asset["type"] == "text/csv"
+
+    def test_dry_run_reports_only_what_the_real_run_would_do(self, tmp_path: Path) -> None:
+        """A tabular collection offers no thumbnail source, so neither run acts.
+
+        The dry-run branch used to skip the orchestrator's gates and promise a
+        thumbnail for every collection that lacked one.
+        """
+        collection_dir = _tiny_catalog(tmp_path)
+        (collection_dir / "rates.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+        data = _read_json(collection_dir / "collection.json")
+        data["assets"] = {"rates": {"href": "./rates.csv", "roles": ["data"]}}
+        _write_json(collection_dir / "collection.json", data)
+
+        assert FIXERS["thumbnail"](tmp_path, True) == []
+        assert FIXERS["thumbnail"](tmp_path, False) == []
+
+    def test_dry_run_writes_nothing_for_a_collection_it_would_fix(self, tmp_path: Path) -> None:
+        collection_dir = self._collection_with_thumbnail(tmp_path, "image/gif")
+        before = _snapshot(tmp_path)
+
+        results = FIXERS["thumbnail"](tmp_path, True)
+
+        assert [r.action for r in results] == [FixAction.UPDATED]
+        assert _snapshot(tmp_path) == before
+        assert collection_dir.exists()

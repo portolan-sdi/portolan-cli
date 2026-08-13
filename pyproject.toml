@@ -29,8 +29,10 @@ dependencies = [
     "antimeridian>=0.3.11", # RFC 7946 compliant antimeridian handling for STAC bbox
     "click>=8.4,<8.5", # PYSEC-2026-2132 fix; 8.4 makes ParamType generic (temporal.FlexibleDateTime subscripts it)
     "defusedxml>=0.7.1", # Safe XML parsing (XXE protection) for CSW/ISO 19139 metadata
+    "geopandas>=0.14.0", # Reads GeoParquet for the thumbnail floor, which every collection needs (Issue #683)
     "geoparquet-io>=1.3.0", # WFS auto-tile + 100K page_size defaults (Issue #529); git main pinned via [tool.uv.sources]
     "httpx>=0.27.0", # HTTP client for ArcGIS REST API discovery
+    "matplotlib>=3.8.0", # Renders the deterministic thumbnail floor. Core, not optional: PTL-VIZ-001 is an ERROR, so a default install must be able to produce a conformant catalog (#518 Track 1, #683)
     "obstore>=0.8.2", # Cloud object storage (S3, GCS, Azure) via Rust bindings
     "python-dotenv>=1.0.0", # Load .env files for credentials (Issue #356)
     "numpy>=1.24.0", # Array ops (transitive via rasterio, but we import directly for thumbnails)
@@ -96,11 +98,13 @@ dev = [
 pmtiles = [
     "gpio-pmtiles>=0.1.0", # PMTiles generation from GeoParquet (requires tippecanoe)
 ]
+# Rendering itself is core (matplotlib, geopandas). What stays optional here is
+# the extra fidelity: basemap tiles under a vector thumbnail, and the MVT decode
+# that only the PMTiles render path uses. Both are lazily imported and guarded,
+# so a default install renders without them.
 thumbnails = [
     "contextily>=1.5.0", # Basemap tiles for vector thumbnails
-    "geopandas>=0.14.0", # GeoParquet reading for thumbnail generation
     "mapbox-vector-tile>=2.0.0", # MVT decoding for PMTiles thumbnail generation
-    "matplotlib>=3.8.0", # Rendering geometries to JPEG
 ]
 docs = [
     "mkdocs>=1.6.1",
@@ -211,7 +215,7 @@ strict = true # Enables all strict flags at once
 untyped_calls_exclude = ["pyarrow"]
 
 [[tool.mypy.overrides]]
-module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*", "pyiceberg.*", "shapely.*", "pygeohash.*", "mutmut.*"]
+module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*", "pyiceberg.*", "shapely.*", "pygeohash.*", "mutmut.*", "geopandas.*", "contextily.*"]
 ignore_missing_imports = true
 
 # ---------- security ----------

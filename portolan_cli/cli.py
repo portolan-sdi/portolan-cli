@@ -3058,6 +3058,27 @@ def _check_partition_prompt(
     help="Regenerate PMTiles even if they exist and are up-to-date.",
 )
 @click.option(
+    "--thumbnails/--no-thumbnails",
+    "generate_thumbnails",
+    default=None,
+    help=(
+        "Generate a thumbnail asset for each affected collection. "
+        "Defaults to the catalog's thumbnails.enabled setting. "
+        "Opting out leaves PTL-VIZ-001 firing, so pair --no-thumbnails with "
+        "check.disabled in config.yaml if the catalog never ships thumbnails."
+    ),
+)
+@click.option(
+    "--force-thumbnails",
+    "force_thumbnails",
+    is_flag=True,
+    help=(
+        "Redraw the thumbnail even if one is registered. Use after a collection "
+        "grows, since the extent it draws is otherwise fixed at first render. "
+        "A thumbnail.png or preview.png you supplied still wins."
+    ),
+)
+@click.option(
     "--force",
     is_flag=True,
     help="Re-process all files, ignoring change detection.",
@@ -3094,6 +3115,8 @@ def add_cmd(
     generate_parquet: bool,
     generate_pmtiles: bool,
     force_pmtiles: bool,
+    generate_thumbnails: bool | None,
+    force_thumbnails: bool,
     force: bool,
     reconvert: bool,
     merge_strategy: str,
@@ -3248,9 +3271,15 @@ def add_cmd(
     # Include both added AND skipped assets so --pmtiles works on already-tracked files
     # Note: all_added contains ItemInfo objects, all_skipped contains Path objects
     affected: set[str] = set()
+    # Collections this run actually wrote a version for. A side-step's derived
+    # asset folds into that snapshot instead of bumping a second version, so one
+    # `add` stays one version. A skipped collection is absent, so its backfill
+    # gets a version of its own rather than editing a published snapshot.
+    versioned: set[str] = set()
     for a in all_added:
         if hasattr(a, "collection_id") and a.collection_id:
             affected.add(a.collection_id)
+            versioned.add(a.collection_id)
     for p in all_skipped:
         # Extract collection_id from path relative to catalog_root
         try:
@@ -3284,6 +3313,20 @@ def add_cmd(
         force=force_pmtiles,
         verbose=verbose,
         use_json=use_json,
+    )
+
+    # Thumbnails last, so a higher-fidelity render from the PMTiles above is
+    # adopted rather than replaced. Every geospatial collection needs a
+    # thumbnail asset to satisfy PTL-VIZ-001 (Issue #683).
+    from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
+
+    ensure_collection_thumbnails(
+        catalog_root,
+        affected,
+        generate=generate_thumbnails,
+        force=force_thumbnails,
+        versioned_collections=versioned,
+        verbose=verbose,
     )
 
     # Output combined results (after all processing complete)

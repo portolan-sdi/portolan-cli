@@ -168,9 +168,9 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "then populate its version fields."
     ),
     # ---- visualization ----
-    "PTL-VIZ-001": _instruct(
-        "Render a thumbnail (png or jpeg) for the collection and register it as an asset; "
-        "`portolan add` does this when the [thumbnails] extra is installed."
+    "PTL-VIZ-001": _auto(
+        "thumbnail",
+        "Register a thumbnail (png, jpeg or webp) asset for the collection.",
     ),
     "PTL-VIZ-002": _instruct(
         "Author style assets for the visual derivative; a style encodes cartographic intent "

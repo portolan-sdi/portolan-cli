@@ -32,12 +32,14 @@ pytestmark = pytest.mark.integration
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "simple.parquet"
 
-# Errors a generated catalog still carries: thumbnail rendering lives behind an
-# optional extra, and geoparquet-io writes a single row group with no
-# per-row-group spatial statistics for a file this small. Shared with
-# tests/integration/test_generated_catalog_conformance.py, which is the gate that
-# keeps the list honest.
-GENERATION_GAPS = frozenset({"PTL-VIZ-001", "PTL-DAT-007"})
+# The one error a generated catalog still carries: geoparquet-io writes a single
+# row group with no per-row-group spatial statistics for a file this small.
+# Shared with tests/integration/test_generated_catalog_conformance.py, which is
+# the gate that keeps the list honest.
+#
+# PTL-VIZ-001 left this list in #683, when `add` started emitting a
+# collection-level thumbnail asset on a default install.
+GENERATION_GAPS = frozenset({"PTL-DAT-007"})
 
 # What the corruptions below must produce, and nothing else.
 EXPECTED_FROM_DAMAGE = frozenset(
@@ -48,6 +50,7 @@ EXPECTED_FROM_DAMAGE = frozenset(
         "PTL-DAT-001",  # mutated file:checksum
         "PTL-CNF-001",  # removed schema URI
         "PTL-LNK-005",  # added rel:'self' link
+        "PTL-VIZ-001",  # thumbnail typed image/gif
     }
 )
 
@@ -140,6 +143,13 @@ def _corrupt(root: Path) -> None:
     for asset in data["assets"].values():
         if isinstance(asset.get("file:checksum"), str):
             asset["file:checksum"] = "1220" + "0" * 64
+
+    # 6. thumbnail: a media type outside png/jpeg/webp. Generation now satisfies
+    #    the missing-thumbnail branch of PTL-VIZ-001 (#683), so damage the branch
+    #    it cannot satisfy away, and the rule stays exercised end to end.
+    for asset in data["assets"].values():
+        if "thumbnail" in asset.get("roles", []):
+            asset["type"] = "image/gif"
 
     _write(collection_json, data)
     (root / "roads" / "AGENTS.md").unlink()
@@ -239,8 +249,9 @@ class TestRashidRoundtrip:
         assert "Fixed automatically (" in result.output
         assert "Action required (" in result.output
         # Every surviving finding carries its requirement sentence, and the AUTO
-        # survivor says the automatic fix did not settle it.
-        assert "Render a thumbnail" in result.output
+        # survivor says the automatic fix did not settle it. PTL-DAT-007 is the
+        # survivor since #683 made PTL-VIZ-001 satisfiable by generation.
+        assert "Rewrite the GeoParquet so every row group carries statistics." in result.output
         assert "the automatic fix did not resolve this" in result.output
 
     def test_post_fix_output_lists_each_survivor_once(self, catalog: Path) -> None:
@@ -251,7 +262,7 @@ class TestRashidRoundtrip:
             cli, ["check", str(catalog), "--metadata", "--fix"], catch_exceptions=False
         )
 
-        assert result.output.count("PTL-VIZ-001") == 1
+        assert result.output.count("PTL-DAT-007") == 1
         # The pre-fix rendering's headings are gone: the split replaces them.
         assert "Errors (" not in result.output
         assert "fixable by `portolan check --fix`" not in result.output
