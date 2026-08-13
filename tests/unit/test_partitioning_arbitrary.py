@@ -387,7 +387,7 @@ class TestGlobTransformArbitraryColumns:
         expected_glob = "s3://bucket/catalog/sites/gms_feature_id=*/contours.parquet"
 
         assert asset["partition:glob"] == expected_glob
-        assert asset["portolan:glob"] == expected_glob
+        assert "portolan:glob" not in asset
 
     @pytest.mark.unit
     def test_transform_glob_assets_multilevel(self) -> None:

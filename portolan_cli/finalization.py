@@ -52,9 +52,8 @@ from portolan_cli.stac import (
     apply_human_titles,
     apply_provenance,
     create_collection,
-    update_catalog_file_statistics,
+    declare_file_extension,
     update_catalog_provenance,
-    update_collection_file_statistics,
     update_collection_summaries,
 )
 from portolan_cli.utils import href_root, relative_href
@@ -1057,8 +1056,8 @@ def _finalize_collection(
     # available immediately after add, not just after push.
     update_collection_summaries(collection)
 
-    # Compute aggregate file statistics (Issue #501)
-    update_collection_file_statistics(collection)
+    # Declare the file extension the assets use (Issue #501, narrowed by #654)
+    declare_file_extension(collection)
 
     # Add extension declarations based on summaries (Issue #336)
     # Collections should declare extensions used by their items
@@ -1136,17 +1135,6 @@ def finalize_items(
     ensure_schema_uris(catalog_root)
     ensure_agents_md_tree(catalog_root)
     ensure_readmes(catalog_root)
-
-    # Issue #501: update catalog-level aggregate file statistics
-    # Done after all collections are finalized so totals are accurate.
-    try:
-        update_catalog_file_statistics(catalog_root)
-    except Exception:
-        logger.warning(
-            "Failed to update catalog-level file statistics. "
-            "Catalog may have stale or missing aggregate size data.",
-            exc_info=True,
-        )
 
     # Issue #684: a catalog whose every collection is a mirror carries the sync
     # time itself. Needs the whole tree, so it runs after the last collection.

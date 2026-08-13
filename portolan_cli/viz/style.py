@@ -18,7 +18,6 @@ Public API:
 - select_default_style_key: Pick the style that carries the default role
 - register_style_assets: Register styles as STAC assets in collection.json
 - discover_legends: Discover legend PNG files in legends/ directory
-- build_legends_manifest: Build portolan:legends manifest array
 - register_legend_assets: Register legends as STAC assets in collection.json
 """
 
@@ -31,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from portolan_cli.config import load_config
-from portolan_cli.constants import LEGACY_STYLE_MANIFEST_FIELD
+from portolan_cli.constants import LEGACY_LEGEND_MANIFEST_FIELD, LEGACY_STYLE_MANIFEST_FIELD
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.utils import get_dict, get_list
 
@@ -591,36 +590,19 @@ def discover_legends(collection_path: Path) -> list[LegendInfo]:
     return legends
 
 
-def build_legends_manifest(legends: list[LegendInfo]) -> list[str]:
-    """Build the portolan:legends manifest array.
-
-    Returns ordered list of asset keys with legends/source first if present,
-    then remaining legends sorted alphabetically.
-
-    Args:
-        legends: List of LegendInfo objects (from discover_legends).
-
-    Returns:
-        List of legend asset keys.
-    """
-    keys = [lg.key for lg in legends]
-
-    if "legends/source" in keys:
-        # Put source first, sort the rest
-        remaining = [k for k in keys if k != "legends/source"]
-        return ["legends/source"] + sorted(remaining)
-
-    # No source, just sort all
-    return sorted(keys)
-
-
 def register_legend_assets(
     collection_path: Path,
     legends: list[LegendInfo],
 ) -> None:
-    """Register discovered legends as STAC assets and set portolan:legends manifest.
+    """Register discovered legends as STAC assets carrying the ``legend`` role.
 
     Updates collection.json to add/update legend assets and remove stale ones.
+
+    The ``portolan:legends`` manifest that used to list the same keys is gone
+    (issue #654): the spec defines no ``portolan:`` field, and a client finds a
+    collection's legends by filtering assets on the ``legend`` role. A rewrite
+    strips the property where an older Portolan left it, the same way the style
+    manifest is stripped above.
 
     Args:
         collection_path: Path to the collection directory.
@@ -650,12 +632,7 @@ def register_legend_assets(
         assets[legend_info.key] = asset_dict
 
     data["assets"] = assets
-
-    # Set or remove portolan:legends manifest
-    if legends:
-        data["portolan:legends"] = build_legends_manifest(legends)
-    else:
-        data.pop("portolan:legends", None)
+    data.pop(LEGACY_LEGEND_MANIFEST_FIELD, None)
 
     write_json_atomic(collection_json_path, data)
 

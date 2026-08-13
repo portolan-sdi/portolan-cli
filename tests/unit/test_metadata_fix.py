@@ -453,3 +453,175 @@ class TestFixStaleAndBreaking:
         actions = {r.file_path.name: r.action for r in fix_report.results}
         assert actions["missing.parquet"] == FixAction.CREATED
         assert actions["stale.parquet"] == FixAction.UPDATED
+
+
+class TestStripRemovedFields:
+    """`check --fix` deletes the portolan: fields the spec never defined (#654).
+
+    No rashid rule reports them — a rule fires on a requirement an object fails,
+    and no requirement names a field the spec does not have — so the sweep runs
+    from the fix workflow rather than from the fixer registry.
+    """
+
+    @staticmethod
+    def _catalog(root: Path, **extra: object) -> Path:
+        path = root / "catalog.json"
+        path.write_text(
+            json.dumps({"type": "Catalog", "id": "demo", "links": [], **extra}), encoding="utf-8"
+        )
+        return path
+
+    @staticmethod
+    def _collection(root: Path, name: str, **extra: object) -> Path:
+        path = root / name / "collection.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"type": "Collection", "id": name, "links": [], **extra}), encoding="utf-8"
+        )
+        return path
+
+    @pytest.mark.unit
+    def test_catalog_aggregates_are_deleted(self, tmp_path: Path) -> None:
+        from portolan_cli.metadata.fix import strip_removed_fields
+
+        path = self._catalog(
+            tmp_path,
+            **{
+                "portolan:total_size_bytes": 4096,
+                "portolan:asset_count": 2,
+                "portolan:collection_count": 1,
+                "title": "Demo",
+            },
+        )
+
+        results = strip_removed_fields(tmp_path, dry_run=False)
+
+        data = json.loads(path.read_text())
+        assert [key for key in data if key.startswith("portolan:")] == []
+        assert data["title"] == "Demo"
+        assert len(results) == 1
+
+    @pytest.mark.unit
+    def test_item_property_and_asset_fields_are_deleted(self, tmp_path: Path) -> None:
+        from portolan_cli.metadata.fix import strip_removed_fields
+
+        self._catalog(tmp_path)
+        self._collection(
+            tmp_path,
+            "roads",
+            **{
+                "portolan:legends": ["legends/source"],
+                "links": [{"rel": "item", "href": "./tile/tile.json"}],
+                "assets": {
+                    "data": {
+                        "href": "./roads/*/part.parquet",
+                        "partition:glob": "s3://bucket/roads/*/part.parquet",
+                        "portolan:glob": "s3://bucket/roads/*/part.parquet",
+                    }
+                },
+            },
+        )
+        item = tmp_path / "roads" / "tile" / "tile.json"
+        item.parent.mkdir(parents=True)
+        item.write_text(
+            json.dumps(
+                {
+                    "type": "Feature",
+                    "id": "tile",
+                    "properties": {
+                        "portolan:datetime_provisional": True,
+                        "start_datetime": "1900-01-01T00:00:00Z",
+                    },
+                    "assets": {},
+                    "links": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        strip_removed_fields(tmp_path, dry_run=False)
+
+        collection = json.loads((tmp_path / "roads" / "collection.json").read_text())
+        assert "portolan:legends" not in collection
+        asset = collection["assets"]["data"]
+        assert "portolan:glob" not in asset
+        assert asset["partition:glob"] == "s3://bucket/roads/*/part.parquet"
+        properties = json.loads(item.read_text())["properties"]
+        assert "portolan:datetime_provisional" not in properties
+        assert properties["start_datetime"] == "1900-01-01T00:00:00Z"
+
+    @pytest.mark.unit
+    def test_the_external_role_survives_the_managed_marker(self, tmp_path: Path) -> None:
+        """The marker's only job was recognition; the role carries it afterwards."""
+        from portolan_cli.metadata.fix import strip_removed_fields
+
+        self._catalog(tmp_path)
+        self._collection(
+            tmp_path,
+            "overture",
+            assets={
+                "data": {
+                    "href": "s3://overturemaps/places.parquet",
+                    "roles": ["data"],
+                    "portolan:managed": False,
+                }
+            },
+        )
+
+        strip_removed_fields(tmp_path, dry_run=False)
+
+        asset = json.loads((tmp_path / "overture" / "collection.json").read_text())["assets"][
+            "data"
+        ]
+        assert "portolan:managed" not in asset
+        assert asset["roles"] == ["data", "external"]
+
+    @pytest.mark.unit
+    def test_a_managed_asset_does_not_become_external(self, tmp_path: Path) -> None:
+        """portolan:managed true meant catalog-owned: stripping it adds no role."""
+        from portolan_cli.metadata.fix import strip_removed_fields
+
+        self._catalog(tmp_path)
+        self._collection(
+            tmp_path,
+            "roads",
+            assets={
+                "data": {"href": "./roads.parquet", "roles": ["data"], "portolan:managed": True}
+            },
+        )
+
+        strip_removed_fields(tmp_path, dry_run=False)
+
+        asset = json.loads((tmp_path / "roads" / "collection.json").read_text())["assets"]["data"]
+        assert "portolan:managed" not in asset
+        assert asset["roles"] == ["data"]
+
+    @pytest.mark.unit
+    def test_a_clean_catalog_is_not_rewritten(self, tmp_path: Path) -> None:
+        from portolan_cli.metadata.fix import strip_removed_fields
+
+        path = self._catalog(tmp_path, title="Demo")
+        before = path.read_text()
+
+        assert strip_removed_fields(tmp_path, dry_run=False) == []
+        assert path.read_text() == before
+
+    @pytest.mark.unit
+    def test_dry_run_reports_without_writing(self, tmp_path: Path) -> None:
+        from portolan_cli.metadata.fix import FixAction, strip_removed_fields
+
+        path = self._catalog(tmp_path, **{"portolan:asset_count": 2})
+        before = path.read_text()
+
+        results = strip_removed_fields(tmp_path, dry_run=True)
+
+        assert [result.action for result in results] == [FixAction.UPDATED]
+        assert path.read_text() == before
+
+    @pytest.mark.unit
+    def test_unparseable_object_is_left_alone(self, tmp_path: Path) -> None:
+        from portolan_cli.metadata.fix import strip_removed_fields
+
+        (tmp_path / "catalog.json").write_text("{ not json", encoding="utf-8")
+
+        assert strip_removed_fields(tmp_path, dry_run=False) == []

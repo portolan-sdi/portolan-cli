@@ -1196,8 +1196,36 @@ class TestFileExtensionDeclaration:
     def test_it_survives_while_item_assets_still_carry_the_fields(
         self, collection_with_items: Path
     ) -> None:
-        """portolan:asset_count covers items, and the statistics writer redeclares
-        from that wider scope. Removing the URI here would start a write war."""
+        """The withdrawal reads the items themselves, not a tally beside them.
+
+        ``declare_file_extension`` redeclares from the collection *and* its
+        items, so withdrawing the URI while an item asset still carries
+        ``file:size`` would make the two writers fight over collection.json.
+        """
+        from portolan_cli.stac import EXTENSION_URLS
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+        add_parquet_link_to_collection(collection_with_items)
+        collection_path = collection_with_items / "collection.json"
+
+        item_path = collection_with_items / "scene-000" / "scene-000.json"
+        item = json.loads(item_path.read_text())
+        item["assets"]["data"]["file:size"] = 1024
+        item_path.write_text(json.dumps(item, indent=2))
+
+        (collection_with_items / "items.parquet").unlink()
+        add_parquet_link_to_collection(collection_with_items)
+
+        data = json.loads(collection_path.read_text())
+        assert EXTENSION_URLS["file"] in data["stac_extensions"]
+
+    @pytest.mark.unit
+    def test_a_stale_asset_count_no_longer_keeps_the_uri(self, collection_with_items: Path) -> None:
+        """The removed tally is not evidence: only a live file: field is (issue #654)."""
         from portolan_cli.stac import EXTENSION_URLS
         from portolan_cli.stac_parquet import (
             add_parquet_link_to_collection,
@@ -1215,7 +1243,7 @@ class TestFileExtensionDeclaration:
         add_parquet_link_to_collection(collection_with_items)
 
         data = json.loads(collection_path.read_text())
-        assert EXTENSION_URLS["file"] in data["stac_extensions"]
+        assert EXTENSION_URLS["file"] not in data["stac_extensions"]
 
     @pytest.mark.unit
     def test_a_malformed_extension_list_does_not_crash(self, collection_with_items: Path) -> None:
