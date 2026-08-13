@@ -3292,15 +3292,14 @@ def add_cmd(
 
     # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state)
     # Always run parquet generation if --stac-geoparquet flag was passed, regardless of output mode
-    # Only show hints in non-JSON mode
-    from portolan_cli.stac_parquet import generate_or_suggest_parquet
+    from portolan_cli.stac_parquet import generate_parquet_mirrors
 
-    generate_or_suggest_parquet(
+    generate_parquet_mirrors(
         catalog_root,
         affected,
         generate_parquet=generate_parquet,
         verbose=verbose,
-        show_hints=not use_json,
+        versioned_collections=versioned,
     )
 
     # Handle PMTiles generation BEFORE output (so JSON reflects final state)
@@ -8030,9 +8029,9 @@ def _process_collection_for_parquet(
         or _ParquetResult with error field set on failure.
     """
     from portolan_cli.stac_parquet import (
-        add_parquet_link_to_collection,
         count_items,
         generate_items_parquet,
+        register_mirror_asset,
         track_parquet_in_versions,
     )
 
@@ -8080,8 +8079,8 @@ def _process_collection_for_parquet(
     # Generate parquet
     try:
         parquet_path = generate_items_parquet(collection_path)
-        add_parquet_link_to_collection(collection_path)
-        track_parquet_in_versions(collection_path)
+        register_mirror_asset(collection_path)
+        track_parquet_in_versions(collection_path, catalog_path)
         if not use_json and not is_bulk:
             success(f"Generated items.parquet for '{coll_id}'")
             detail(f"    Items: {item_count}")

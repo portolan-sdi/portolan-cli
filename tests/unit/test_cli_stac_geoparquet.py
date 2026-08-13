@@ -141,10 +141,14 @@ class TestStacGeoparquetCommand:
         assert (collection_path / "items.parquet").exists()
 
     @pytest.mark.unit
-    def test_generate_adds_link_to_collection(
+    def test_generate_registers_asset_without_link(
         self, runner: CliRunner, catalog_with_collection: Path
     ) -> None:
-        """Test that generate adds parquet link to collection.json."""
+        """Generation registers the collection-mirror asset and no link (#654).
+
+        Spec formats.md: the single asset registration is the whole
+        requirement; no rel="items" link is needed.
+        """
         result = runner.invoke(
             cli,
             [
@@ -158,7 +162,6 @@ class TestStacGeoparquetCommand:
 
         assert result.exit_code == 0
 
-        # Check collection.json has the link
         collection_json = json.loads(
             (catalog_with_collection / "imagery" / "collection.json").read_text()
         )
@@ -167,8 +170,10 @@ class TestStacGeoparquetCommand:
             for link in collection_json["links"]
             if link.get("type") == "application/vnd.apache.parquet"
         ]
-        assert len(parquet_links) == 1
-        assert parquet_links[0]["rel"] == "items"
+        assert parquet_links == []
+        asset = collection_json["assets"]["geoparquet-items"]
+        assert asset["type"] == "application/vnd.apache.parquet"
+        assert asset["roles"] == ["collection-mirror"]
 
     @pytest.mark.unit
     def test_generate_outputs_success_message(

@@ -473,6 +473,14 @@ def _collect_parquet_metadata_from_disk(
     # Build set of tracked asset hrefs (normalized without ./ prefix)
     tracked_hrefs: set[str] = set()
     for asset in collection.assets.values():
+        # The item mirror is derived metadata, not data: it carries no
+        # GeoParquet bbox, and folding it into table aggregation broke
+        # partitioned collections whose data is tracked by a glob href
+        # (#654). stac-items covers catalogs written before the role
+        # upgrade, mirroring the skip in viz/pmtiles.py.
+        roles = asset.roles or []
+        if "collection-mirror" in roles or "stac-items" in roles:
+            continue
         if asset.href:
             # Normalize to match relative_to(...).as_posix() below: drop only an
             # exact "./" prefix. lstrip("./") would also strip leading dots from
