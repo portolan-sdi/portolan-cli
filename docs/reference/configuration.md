@@ -431,9 +431,19 @@ Above `max_features`, the renderer samples rather than drawing every feature, so
 
 Raise `max_features` for denser output on large layers, at the cost of a slower `add`.
 
+### Refreshing a Thumbnail
+
+`add` leaves a registered thumbnail alone, so growing a collection does not silently redraw its preview. That also means the extent a thumbnail shows is fixed at first render. Pass `--force-thumbnails` to redraw one:
+
+```bash
+portolan add roads/ --force-thumbnails
+```
+
+A `thumbnail.png` or `preview.png` you supplied survives the force. Only the `*.thumb.jpg` that `add` rendered is replaced.
+
 ### Opting Out
 
-Set `enabled: false` to stop generating thumbnails, or pass `--no-thumbnails` to skip a single `add`.
+Set `enabled: false` to stop generating thumbnails, or pass `--no-thumbnails` to skip a single `add`. Both bind `check --fix` as well, so a repair pass cannot reinstate what you turned off.
 
 Neither silences `PTL-VIZ-001`, which rashid raises as an error. If your catalog ships thumbnails from elsewhere, or ships none by policy, disable the rule as well:
 

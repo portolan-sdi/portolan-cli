@@ -83,7 +83,7 @@ def register_collection_thumbnail(
     thumbnail_path: Path,
     *,
     title: str | None = None,
-) -> None:
+) -> bool:
     """Register ``thumbnail_path`` as the collection's thumbnail asset.
 
     The single writer of this asset. Emits ``file:size`` and ``file:checksum``
@@ -95,17 +95,25 @@ def register_collection_thumbnail(
         thumbnail_path: Path to the image, inside the collection directory or one
             of its item directories.
         title: Optional human-facing title.
+
+    Returns:
+        True when collection.json was rewritten, False when nothing was written.
     """
     collection_json = collection_path / "collection.json"
     data = _load_collection(collection_path)
     if data is None:
-        return
+        return False
 
+    # Resolve BOTH sides. `_item_paths` resolves its candidates, so comparing one
+    # resolved path against an unresolved collection directory raised ValueError
+    # for every catalog reached through a symlink — macOS `/var` -> `/private/var`
+    # among them — and silently dropped the raster branch. Resolving both keeps
+    # the containment check that rejects an href escaping the collection.
     try:
-        href = PurePath(thumbnail_path.relative_to(collection_path)).as_posix()
-    except ValueError:
+        href = PurePath(thumbnail_path.resolve().relative_to(collection_path.resolve())).as_posix()
+    except (OSError, ValueError):
         logger.debug("%s is outside %s; not registering", thumbnail_path, collection_path)
-        return
+        return False
 
     asset: dict[str, Any] = {
         "href": f"./{href}",
@@ -124,6 +132,7 @@ def register_collection_thumbnail(
 
     data.setdefault("assets", {})[THUMBNAIL_ASSET_KEY] = asset
     write_json_atomic(collection_json, data)
+    return True
 
 
 def _has_thumbnail_asset(data: dict[str, Any]) -> bool:
@@ -131,32 +140,57 @@ def _has_thumbnail_asset(data: dict[str, Any]) -> bool:
 
 
 def _claimed_hrefs(data: dict[str, Any]) -> set[str]:
-    """Every href already spoken for by an asset, normalized to a bare name."""
+    """Every href spoken for by a non-thumbnail asset, collection-relative.
+
+    A thumbnail-role asset is excluded on purpose. It points at the very file
+    this module is deciding about, so counting it as claimed would make a forced
+    refresh refuse to re-adopt the image the user chose and render over it.
+    """
     claimed: set[str] = set()
     for asset in data.get("assets", {}).values():
+        if "thumbnail" in asset.get("roles", []):
+            continue
         href = asset.get("href", "")
         if href:
             claimed.add(PurePath(href.removeprefix("./")).as_posix())
     return claimed
 
 
+def _is_generated(path: Path) -> bool:
+    """True for the ``{stem}.thumb.{ext}`` name ``thumbnail_path_for`` writes."""
+    return path.stem.lower().endswith(".thumb")
+
+
 def _is_adoptable(path: Path) -> bool:
     """True for the filenames the CLI, a human, or the MapLibre skill produce."""
     if path.suffix.lower() not in _THUMBNAIL_SUFFIXES:
         return False
-    stem = path.stem.lower()
-    # `data.thumb.jpg` — the convention `thumbnail_path_for` writes.
-    if stem.endswith(".thumb"):
+    if _is_generated(path):
         return True
-    return stem in _ADOPTABLE_STEMS
+    return path.stem.lower() in _ADOPTABLE_STEMS
 
 
-def _find_adoptable_image(collection_path: Path, data: dict[str, Any]) -> Path | None:
+def _find_adoptable_image(
+    collection_path: Path, data: dict[str, Any], *, skip_generated: bool = False
+) -> Path | None:
+    """The conventionally named image to adopt, if the collection holds one.
+
+    Args:
+        collection_path: Path to the collection directory.
+        data: Parsed collection.json.
+        skip_generated: Ignore our own ``*.thumb.*`` output. A forced refresh
+            passes True so it re-renders instead of re-adopting the stale render
+            it wrote last time. A human's ``thumbnail.png`` still wins, because
+            a force must not overwrite a picture somebody chose.
+    """
     claimed = _claimed_hrefs(data)
     candidates = sorted(
         p
         for p in collection_path.iterdir()
-        if p.is_file() and _is_adoptable(p) and p.name not in claimed
+        if p.is_file()
+        and _is_adoptable(p)
+        and not (skip_generated and _is_generated(p))
+        and PurePath(p.relative_to(collection_path)).as_posix() not in claimed
     )
     return candidates[0] if candidates else None
 
@@ -250,27 +284,50 @@ def _is_geospatial(collection_path: Path, data: dict[str, Any]) -> bool:
     return False
 
 
-def _resolve_for_collection(
-    collection_path: Path, catalog_root: Path, data: dict[str, Any]
-) -> tuple[Path, bool] | None:
-    """Return (thumbnail path, was_rendered), or None when there is nothing to do."""
-    adopted = _find_adoptable_image(collection_path, data)
+def _find_source(
+    collection_path: Path, data: dict[str, Any], *, force: bool = False
+) -> tuple[Path, str] | None:
+    """Pick the thumbnail source without drawing anything.
+
+    Split out of ``_resolve_for_collection`` so ``check --fix --dry-run`` can
+    answer "would this collection get a thumbnail?" using the same gates the
+    real run uses. Before the split, dry-run skipped straight to a "would
+    generate" line and promised work the real run then declined to do.
+
+    Returns:
+        (path, kind) where kind is ``adopt``, ``item``, or ``render``, or None
+        when the collection offers no source at all.
+    """
+    adopted = _find_adoptable_image(collection_path, data, skip_generated=force)
     if adopted is not None:
-        return adopted, False
+        return adopted, "adopt"
 
     item_thumb = _find_item_thumbnail(collection_path, data)
     if item_thumb is not None:
-        return item_thumb, False
+        return item_thumb, "item"
 
     geoparquet = _find_geoparquet(collection_path, data)
     if geoparquet is None:
         return None
+    return geoparquet, "render"
+
+
+def _resolve_for_collection(
+    collection_path: Path, catalog_root: Path, data: dict[str, Any], *, force: bool = False
+) -> tuple[Path, bool] | None:
+    """Return (thumbnail path, was_rendered), or None when there is nothing to do."""
+    source = _find_source(collection_path, data, force=force)
+    if source is None:
+        return None
+    path, kind = source
+    if kind != "render":
+        return path, False
 
     from portolan_cli.viz.pmtiles import _discover_style_for_thumbnail
 
     rendered = generate_vector_thumbnail(
         pmtiles_path=None,
-        geoparquet_path=geoparquet,
+        geoparquet_path=path,
         config=get_thumbnail_config(catalog_root),
         style_path=_discover_style_for_thumbnail(collection_path),
     )
@@ -279,10 +336,36 @@ def _resolve_for_collection(
     return rendered, True
 
 
+def _thumbnails_wanted(catalog_root: Path, generate: bool | None) -> bool:
+    """Resolve ``--thumbnails/--no-thumbnails`` against the catalog setting."""
+    if generate is not None:
+        return generate
+    return get_thumbnail_config(catalog_root).enabled
+
+
+def would_generate_thumbnail(
+    collection_path: Path, catalog_root: Path, *, generate: bool | None = None
+) -> bool:
+    """True when :func:`ensure_collection_thumbnail` would register something.
+
+    Runs every gate except the render itself, so a dry run and a real run agree.
+    """
+    if not _thumbnails_wanted(catalog_root, generate):
+        return False
+    data = _load_collection(collection_path)
+    if data is None or _has_thumbnail_asset(data):
+        return False
+    if not _is_geospatial(collection_path, data):
+        return False
+    return _find_source(collection_path, data) is not None
+
+
 def ensure_collection_thumbnail(
     collection_path: Path,
     catalog_root: Path,
     *,
+    generate: bool | None = None,
+    force: bool = False,
     verbose: bool = False,
 ) -> Path | None:
     """Give one collection a thumbnail asset, if it needs and can have one.
@@ -292,21 +375,29 @@ def ensure_collection_thumbnail(
     Args:
         collection_path: Path to the collection directory.
         catalog_root: Path to the catalog root.
+        generate: ``--thumbnails/--no-thumbnails``. None defers to the
+            ``thumbnails.enabled`` catalog setting. Checked here, not only in
+            the plural wrapper, so ``check --fix`` cannot generate a thumbnail
+            for a catalog that set ``enabled: false``.
+        force: Re-resolve and re-render even when a thumbnail asset is already
+            registered. Refreshes ``file:size`` and ``file:checksum`` too.
         verbose: Emit a line per collection touched.
 
     Returns:
         The registered thumbnail path, or None when nothing was registered.
     """
+    if not _thumbnails_wanted(catalog_root, generate):
+        return None
     data = _load_collection(collection_path)
     if data is None:
         return None
-    if _has_thumbnail_asset(data):
+    if _has_thumbnail_asset(data) and not force:
         return None
     if not _is_geospatial(collection_path, data):
         return None
 
     try:
-        resolved = _resolve_for_collection(collection_path, catalog_root, data)
+        resolved = _resolve_for_collection(collection_path, catalog_root, data, force=force)
     except Exception as exc:
         warn(f"Thumbnail generation failed for {collection_path.name}: {exc}")
         return None
@@ -314,21 +405,23 @@ def ensure_collection_thumbnail(
         return None
 
     thumbnail, was_rendered = resolved
-    register_collection_thumbnail(collection_path, thumbnail)
+    if not register_collection_thumbnail(collection_path, thumbnail):
+        return None
 
-    if was_rendered:
-        # Only track what we wrote. An adopted file is either already tracked or
-        # is the user's to manage.
-        try:
-            track_generated_assets(
-                collection_path,
-                [thumbnail],
-                catalog_root,
-                message=f"Generated thumbnail: {thumbnail.name}",
-                only_if_missing=True,
-            )
-        except Exception as exc:
-            warn(f"Failed to track {thumbnail.name} in versions.json: {exc}")
+    # Track every thumbnail we register, not only the ones we drew. An adopted
+    # image is a STAC asset the moment we point at it, and versions.json is the
+    # source of truth that push, drift, and integrity all read (ADR-0005). A
+    # forced refresh rewrites the record, so `only_if_missing` goes off.
+    try:
+        track_generated_assets(
+            collection_path,
+            [thumbnail],
+            catalog_root,
+            message=f"{'Generated' if was_rendered else 'Registered'} thumbnail: {thumbnail.name}",
+            only_if_missing=not force,
+        )
+    except Exception as exc:
+        warn(f"Failed to track {thumbnail.name} in versions.json: {exc}")
 
     if verbose:
         verb = "Rendered" if was_rendered else "Registered existing"
@@ -341,6 +434,7 @@ def ensure_collection_thumbnails(
     affected_collections: set[str],
     *,
     generate: bool | None = None,
+    force: bool = False,
     verbose: bool = False,
 ) -> None:
     """Ensure every affected collection carries a thumbnail asset.
@@ -353,20 +447,23 @@ def ensure_collection_thumbnails(
         affected_collections: Collection IDs touched by the command.
         generate: ``--thumbnails/--no-thumbnails``. None defers to the
             ``thumbnails.enabled`` catalog setting.
+        force: ``--force-thumbnails``. Redraw even when one is registered.
         verbose: Emit a line per collection touched.
     """
     if not affected_collections:
         return
-    if generate is False:
-        return
-    if generate is None and not get_thumbnail_config(catalog_root).enabled:
+    # Resolve the flag against config once, then hand the answer down, so the
+    # config read does not repeat per collection.
+    if not _thumbnails_wanted(catalog_root, generate):
         return
 
     for collection_id in sorted(affected_collections):
         collection_path = catalog_root / collection_id
         if not (collection_path / "collection.json").exists():
             continue
-        ensure_collection_thumbnail(collection_path, catalog_root, verbose=verbose)
+        ensure_collection_thumbnail(
+            collection_path, catalog_root, generate=True, force=force, verbose=verbose
+        )
 
 
 __all__ = [
@@ -374,4 +471,5 @@ __all__ = [
     "ensure_collection_thumbnail",
     "ensure_collection_thumbnails",
     "register_collection_thumbnail",
+    "would_generate_thumbnail",
 ]

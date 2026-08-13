@@ -356,14 +356,21 @@ class TestVectorRendering:
         assert "roads.thumb.jpg" in versions.versions[-1].assets
 
     @pytest.mark.unit
-    def test_adoption_creates_no_version(self, tmp_path: Path) -> None:
-        """Adopting a file we did not write must not bump a version."""
+    def test_adoption_records_one_version(self, tmp_path: Path) -> None:
+        """Adopting a file still records it: versions.json is the source of truth.
+
+        This asserted the opposite until the adopted image was found to reach the
+        remote through push's directory walk while staying invisible to every
+        check that reads ``current_version.assets``.
+        """
         collection_dir = _vector_collection(tmp_path)
         (collection_dir / "preview.png").write_bytes(PNG_BYTES)
 
         ensure_collection_thumbnails(tmp_path, {"roads"})
 
-        assert not (collection_dir / "versions.json").exists()
+        versions = json.loads((collection_dir / "versions.json").read_text(encoding="utf-8"))
+        assert len(versions["versions"]) == 1
+        assert sorted(versions["versions"][-1]["assets"]) == ["preview.png"]
 
     @pytest.mark.unit
     def test_render_failure_warns_and_does_not_raise(self, tmp_path: Path) -> None:
@@ -421,3 +428,165 @@ class TestNonGeospatialCollections:
     def test_missing_collection_is_skipped(self, tmp_path: Path) -> None:
         """A collection id with no collection.json on disk must not raise."""
         ensure_collection_thumbnails(tmp_path, {"ghost"})
+
+
+@pytest.mark.unit
+class TestSymlinkedCatalogRoot:
+    """A symlink anywhere in the path must not silently drop the registration.
+
+    ``_item_paths`` resolves its candidates. Comparing one resolved path against
+    an unresolved collection directory raised ValueError, so the raster branch
+    wrote nothing while still reporting a thumbnail. macOS hits this on every
+    temp directory, where ``/var`` is a symlink to ``/private/var``.
+    """
+
+    def test_item_sidecar_registers_through_a_symlink(self, tmp_path: Path) -> None:
+        real = tmp_path / "real"
+        collection_dir = real / "imagery"
+        item_dir = collection_dir / "dem-2020"
+        item_dir.mkdir(parents=True)
+        (item_dir / "dem.thumb.jpg").write_bytes(JPEG_BYTES)
+        (item_dir / "item.json").write_text(
+            json.dumps(
+                {
+                    "type": "Feature",
+                    "id": "dem-2020",
+                    "geometry": {"type": "Point", "coordinates": [0, 0]},
+                    "assets": {
+                        "thumbnail": {"href": "./dem.thumb.jpg", "roles": ["thumbnail"]},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        _write_collection(
+            collection_dir,
+            {"cog": {"href": "./dem-2020/dem.tif", "roles": ["data"]}},
+        )
+        (item_dir / "dem.tif").write_bytes(b"II*\x00 fake-tif")
+        data = json.loads((collection_dir / "collection.json").read_text(encoding="utf-8"))
+        data["links"] = [{"rel": "item", "href": "./dem-2020/item.json"}]
+        (collection_dir / "collection.json").write_text(json.dumps(data), encoding="utf-8")
+
+        link = tmp_path / "catalog"
+        link.symlink_to(real, target_is_directory=True)
+
+        ensure_collection_thumbnails(link, {"imagery"})
+
+        thumbnails = _thumbnail_assets(collection_dir)
+        assert thumbnails, "A symlinked catalog root must still register the sidecar"
+        assert thumbnails["thumbnail"]["href"] == "./dem-2020/dem.thumb.jpg"
+
+    def test_an_href_escaping_the_collection_is_still_rejected(self, tmp_path: Path) -> None:
+        """Resolving both sides must not weaken the containment check."""
+        outside = tmp_path / "outside.png"
+        outside.write_bytes(PNG_BYTES)
+        collection_dir = tmp_path / "roads"
+        _write_collection(collection_dir)
+
+        assert register_collection_thumbnail(collection_dir, outside) is False
+        assert _thumbnail_assets(collection_dir) == {}
+
+
+@pytest.mark.unit
+class TestConfigOptOutOnEveryEntryPoint:
+    """``thumbnails.enabled: false`` binds the fixer path too.
+
+    ``check --fix`` calls the singular entry point. Only the plural wrapper read
+    the setting, so a catalog that opted out got thumbnails anyway.
+    """
+
+    def test_disabled_config_blocks_the_singular_entry_point(self, tmp_path: Path) -> None:
+        """The adoption branch is the reachable hole.
+
+        ``generate_vector_thumbnail`` already refuses when the config is off, so
+        the render branch was covered by accident. Adoption never reaches the
+        renderer, so a disabled catalog still got a thumbnail asset from it.
+        """
+        from portolan_cli.collection_thumbnail import ensure_collection_thumbnail
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text(
+            "thumbnails:\n  enabled: false\n", encoding="utf-8"
+        )
+        collection_dir = _vector_collection(tmp_path)
+        (collection_dir / "thumbnail.png").write_bytes(PNG_BYTES)
+
+        assert ensure_collection_thumbnail(collection_dir, tmp_path) is None
+        assert _thumbnail_assets(collection_dir) == {}
+
+    def test_an_explicit_generate_overrides_a_disabled_config(self, tmp_path: Path) -> None:
+        from portolan_cli.collection_thumbnail import ensure_collection_thumbnail
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text(
+            "thumbnails:\n  enabled: false\n", encoding="utf-8"
+        )
+        collection_dir = _vector_collection(tmp_path)
+        (collection_dir / "thumbnail.png").write_bytes(PNG_BYTES)
+
+        assert ensure_collection_thumbnail(collection_dir, tmp_path, generate=True) is not None
+        assert _thumbnail_assets(collection_dir)
+
+
+@pytest.mark.unit
+class TestForceRefresh:
+    """Without a force, the first render is the catalog's thumbnail forever."""
+
+    def test_force_redraws_a_generated_thumbnail(self, tmp_path: Path) -> None:
+        collection_dir = _vector_collection(tmp_path)
+        ensure_collection_thumbnails(tmp_path, {"roads"})
+        rendered = collection_dir / "roads.thumb.jpg"
+        assert rendered.exists()
+        rendered.write_bytes(b"stale")
+
+        ensure_collection_thumbnails(tmp_path, {"roads"}, force=True)
+
+        assert rendered.read_bytes() != b"stale", "force must redraw, not re-adopt"
+        asset = _thumbnail_assets(collection_dir)["thumbnail"]
+        assert asset["file:size"] == rendered.stat().st_size
+
+    def test_without_force_a_registered_thumbnail_is_left_alone(self, tmp_path: Path) -> None:
+        collection_dir = _vector_collection(tmp_path)
+        ensure_collection_thumbnails(tmp_path, {"roads"})
+        rendered = collection_dir / "roads.thumb.jpg"
+        rendered.write_bytes(b"stale")
+
+        ensure_collection_thumbnails(tmp_path, {"roads"})
+
+        assert rendered.read_bytes() == b"stale"
+
+    def test_force_keeps_a_thumbnail_the_user_supplied(self, tmp_path: Path) -> None:
+        collection_dir = _vector_collection(tmp_path)
+        (collection_dir / "thumbnail.png").write_bytes(PNG_BYTES)
+        ensure_collection_thumbnails(tmp_path, {"roads"})
+
+        ensure_collection_thumbnails(tmp_path, {"roads"}, force=True)
+
+        assert (collection_dir / "thumbnail.png").read_bytes() == PNG_BYTES
+        assert _thumbnail_assets(collection_dir)["thumbnail"]["href"] == "./thumbnail.png"
+
+
+@pytest.mark.unit
+class TestEveryRegisteredThumbnailIsTracked:
+    """versions.json is the source of truth, so an adopted image belongs in it."""
+
+    def test_an_adopted_image_lands_in_versions_json(self, tmp_path: Path) -> None:
+        collection_dir = _vector_collection(tmp_path)
+        (collection_dir / "thumbnail.png").write_bytes(PNG_BYTES)
+
+        ensure_collection_thumbnails(tmp_path, {"roads"})
+
+        versions = json.loads((collection_dir / "versions.json").read_text(encoding="utf-8"))
+        assert "thumbnail.png" in versions["versions"][-1]["assets"]
+
+    def test_a_second_add_creates_no_further_version(self, tmp_path: Path) -> None:
+        collection_dir = _vector_collection(tmp_path)
+        (collection_dir / "thumbnail.png").write_bytes(PNG_BYTES)
+        ensure_collection_thumbnails(tmp_path, {"roads"})
+        first = json.loads((collection_dir / "versions.json").read_text(encoding="utf-8"))
+
+        ensure_collection_thumbnails(tmp_path, {"roads"})
+
+        second = json.loads((collection_dir / "versions.json").read_text(encoding="utf-8"))
+        assert first["current_version"] == second["current_version"]

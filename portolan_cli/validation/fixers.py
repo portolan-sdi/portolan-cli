@@ -590,7 +590,10 @@ def _fix_thumbnail(root: Path, dry_run: bool) -> list[FixResult]:
     so a catalog generated before Issue #683 can heal itself with
     ``portolan check --fix`` instead of being re-added.
     """
-    from portolan_cli.collection_thumbnail import ensure_collection_thumbnail
+    from portolan_cli.collection_thumbnail import (
+        ensure_collection_thumbnail,
+        would_generate_thumbnail,
+    )
 
     results: list[FixResult] = []
     for node in _graph(root).iter("collection"):
@@ -602,7 +605,12 @@ def _fix_thumbnail(root: Path, dry_run: bool) -> list[FixResult]:
             continue
         collection_dir = node.abs_path.parent
         if dry_run:
-            results.append(_skipped(node.abs_path, "Would generate a collection thumbnail"))
+            # Ask the orchestrator, rather than assuming every collection can
+            # have one. A tabular collection and a collection with no drawable
+            # source both decline, and a dry run that claimed otherwise promised
+            # work the real run would not do.
+            if would_generate_thumbnail(collection_dir, root):
+                results.append(_skipped(node.abs_path, "Would generate a collection thumbnail"))
             continue
         thumbnail = ensure_collection_thumbnail(collection_dir, root)
         if thumbnail is not None:

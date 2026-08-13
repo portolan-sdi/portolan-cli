@@ -523,6 +523,34 @@ def _compute_sha256(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def _asset_href(asset_path: Path, catalog_root: Path, collection_path: Path) -> str:
+    """The catalog-root-relative href recorded for a generated asset."""
+    try:
+        rel_path = asset_path.relative_to(catalog_root)
+    except ValueError:
+        # Fallback when the asset is not under the catalog root.
+        rel_path = asset_path.relative_to(collection_path.parent)
+    return rel_path.as_posix()
+
+
+def _is_tracked(
+    asset_path: Path,
+    tracked: dict[str, Asset],
+    catalog_root: Path,
+    collection_path: Path,
+) -> bool:
+    """True when the snapshot already records this exact file.
+
+    Compares the href, not the basename. Two item directories can each hold a
+    ``data.thumb.jpg``, and a basename match would treat the second as already
+    tracked and drop it from the snapshot.
+    """
+    existing = tracked.get(asset_path.name)
+    if existing is None:
+        return False
+    return existing.href == _asset_href(asset_path, catalog_root, collection_path)
+
+
 def track_generated_assets(
     collection_path: Path,
     asset_paths: list[Path],
@@ -576,26 +604,27 @@ def track_generated_assets(
 
     # Backfill mode: skip assets already tracked, and create no version if none
     # are missing (otherwise the message would force a no-op version bump).
+    #
+    # An asset is "already tracked" only when the recorded href points at the
+    # same file. Matching the basename alone made `item-a/data.thumb.jpg` and
+    # `item-b/data.thumb.jpg` indistinguishable, so the second one was silently
+    # dropped from the snapshot.
     paths_to_track = asset_paths
     if only_if_missing and versions_file.versions:
         tracked = versions_file.versions[-1].assets
-        paths_to_track = [p for p in asset_paths if p.name not in tracked]
+        paths_to_track = [
+            p for p in asset_paths if not _is_tracked(p, tracked, catalog_root, collection_path)
+        ]
     if not paths_to_track:
         return
 
     assets: dict[str, Asset] = {}
     for asset_path in paths_to_track:
         stat = asset_path.stat()
-        # Href is relative to catalog root
-        try:
-            rel_path = asset_path.relative_to(catalog_root)
-        except ValueError:
-            # Fallback if not relative
-            rel_path = asset_path.relative_to(collection_path.parent)
         assets[asset_path.name] = Asset(
             sha256=_compute_sha256(asset_path),
             size_bytes=stat.st_size,
-            href=rel_path.as_posix(),
+            href=_asset_href(asset_path, catalog_root, collection_path),
             mtime=stat.st_mtime,
         )
 

@@ -3069,6 +3069,16 @@ def _check_partition_prompt(
     ),
 )
 @click.option(
+    "--force-thumbnails",
+    "force_thumbnails",
+    is_flag=True,
+    help=(
+        "Redraw the thumbnail even if one is registered. Use after a collection "
+        "grows, since the extent it draws is otherwise fixed at first render. "
+        "A thumbnail.png or preview.png you supplied still wins."
+    ),
+)
+@click.option(
     "--force",
     is_flag=True,
     help="Re-process all files, ignoring change detection.",
@@ -3106,6 +3116,7 @@ def add_cmd(
     generate_pmtiles: bool,
     force_pmtiles: bool,
     generate_thumbnails: bool | None,
+    force_thumbnails: bool,
     force: bool,
     reconvert: bool,
     merge_strategy: str,
@@ -3307,6 +3318,7 @@ def add_cmd(
         catalog_root,
         affected,
         generate=generate_thumbnails,
+        force=force_thumbnails,
         verbose=verbose,
     )
 
