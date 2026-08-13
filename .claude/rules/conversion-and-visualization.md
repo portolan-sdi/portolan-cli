@@ -136,9 +136,15 @@ render paths.
 - The style JSON MUST have `version == 8`, `sources`, `layers` (Mapbox GL spec; rashid checks the media type via PTL-VIZ-005).
   `sources.data.url` is a **relative** path to the PMTiles (`../file.pmtiles`),
   `layers[].source` is always `"data"`.
-- `portolan:styles` is an ordered array of asset keys (first = default), and
-  every entry MUST reference an existing asset. Vary default colors
-  across a catalog so it is not monotone.
+- **Roles carry the whole manifest.** A client finds the styles by filtering
+  assets on `"style"` and the default by `"default"`, so exactly one style asset
+  carries `["style", "default"]` (rashid PTL-VIZ-006). The old
+  `portolan:styles` array is removed; `register_style_assets` strips it on
+  every run and `check` reports a collection that still has one (issue #739).
+- `select_default_style_key` picks the default: a mark a publisher already made
+  wins, then `styles/default`, then a lone style. Several unmarked styles get no
+  default, because choosing one is cartography, not bookkeeping.
+- Vary default colors across a catalog so it is not monotone.
 
 ## Partitioning: let geoparquet-io name things, detect Hive by pattern
 
