@@ -1331,7 +1331,7 @@ class TestItemMirrorCogPredicate:
         from portolan_cli import stac_parquet
 
         monkeypatch.setattr(stac_parquet, "generate_items_parquet", lambda directory: None)
-        monkeypatch.setattr(stac_parquet, "add_parquet_link_to_collection", lambda directory: None)
+        monkeypatch.setattr(stac_parquet, "register_mirror_asset", lambda directory: None)
         self._collection_with_raster_item(
             tmp_path, "image/tiff; application=geotiff; profile=cloud-optimized"
         )

@@ -152,7 +152,7 @@ def _make_raster_collection_with_items_parquet(
         )
 
     # Collection-level items.parquet (STAC-GeoParquet rollup) registered
-    # exactly as stac_parquet.add_parquet_link_to_collection writes it.
+    # exactly as stac_parquet.register_mirror_asset writes it.
     items_parquet = collection_dir / "items.parquet"
     items_parquet.write_bytes(b"PAR1")  # placeholder bytes — scanner only checks existence
     _write_collection_json(

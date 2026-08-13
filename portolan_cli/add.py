@@ -160,6 +160,7 @@ from portolan_cli.stac import (
     update_catalog_provenance,
     update_collection_file_statistics,
 )
+from portolan_cli.stac_parquet import PARQUET_FILENAME
 from portolan_cli.sync.checksums import compute_checksum, file_fields
 from portolan_cli.viz.style import enrich_cog_assets
 
@@ -878,6 +879,14 @@ def _collect_files_for_add(
 
             # Skip non-geospatial files
             if file_path.suffix.lower() not in GEOSPATIAL_EXTENSIONS:
+                continue
+
+            # Never re-ingest the item mirror the add flow itself publishes.
+            # The spec reserves items.parquet in the collection root for the
+            # STAC-GeoParquet mirror (PORTO-FMT-040), and with default-on
+            # generation every item-bearing collection carries one (#654).
+            if file_path.name == PARQUET_FILENAME:
+                skipped.append(file_path)
                 continue
 
             # Determine collection ID (use full nested path)
