@@ -37,7 +37,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -558,6 +558,7 @@ def track_generated_assets(
     *,
     message: str,
     only_if_missing: bool = False,
+    amend_latest: bool = False,
 ) -> None:
     """Track generated side-step assets (PMTiles, thumbnail) in versions.json.
 
@@ -582,6 +583,12 @@ def track_generated_assets(
             if every asset is already tracked. Used by the skip path to backfill
             artifacts generated before tracking existed, without bumping a
             version on every unchanged ``add`` (Issue #519).
+        amend_latest: If True, merge into the latest version rather than create a
+            new one. Pass this only when the caller wrote that version during the
+            same command, which is the case for the side-steps ``add`` runs after
+            its own snapshot. One ``add`` then stays one version. A repair pass
+            like ``check --fix`` leaves it False, since amending a snapshot that
+            may already be published would rewrite history.
 
     Raises:
         FileNotFoundError: If any asset path doesn't exist.
@@ -627,6 +634,20 @@ def track_generated_assets(
             href=_asset_href(asset_path, catalog_root, collection_path),
             mtime=stat.st_mtime,
         )
+
+    if amend_latest and versions_file.versions:
+        # Fold into the snapshot the caller just wrote, rather than bumping.
+        # One `add` is one version. A thumbnail is derived from assets in that
+        # same snapshot, so a second version would record no new user intent and
+        # would double every collection's history (Issue #519).
+        latest = versions_file.versions[-1]
+        versions_file.versions[-1] = replace(
+            latest,
+            assets={**latest.assets, **assets},
+            changes=list(dict.fromkeys([*latest.changes, *assets])),
+        )
+        write_versions(versions_path, versions_file)
+        return
 
     # Determine next version
     if versions_file.current_version:

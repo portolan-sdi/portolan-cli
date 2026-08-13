@@ -366,6 +366,7 @@ def ensure_collection_thumbnail(
     *,
     generate: bool | None = None,
     force: bool = False,
+    amend_latest: bool = False,
     verbose: bool = False,
 ) -> Path | None:
     """Give one collection a thumbnail asset, if it needs and can have one.
@@ -381,6 +382,9 @@ def ensure_collection_thumbnail(
             for a catalog that set ``enabled: false``.
         force: Re-resolve and re-render even when a thumbnail asset is already
             registered. Refreshes ``file:size`` and ``file:checksum`` too.
+        amend_latest: Fold the thumbnail into the version the caller just wrote
+            instead of bumping. ``add`` sets this for collections it versioned
+            this run, so one add stays one version.
         verbose: Emit a line per collection touched.
 
     Returns:
@@ -419,6 +423,7 @@ def ensure_collection_thumbnail(
             catalog_root,
             message=f"{'Generated' if was_rendered else 'Registered'} thumbnail: {thumbnail.name}",
             only_if_missing=not force,
+            amend_latest=amend_latest,
         )
     except Exception as exc:
         warn(f"Failed to track {thumbnail.name} in versions.json: {exc}")
@@ -435,6 +440,7 @@ def ensure_collection_thumbnails(
     *,
     generate: bool | None = None,
     force: bool = False,
+    versioned_collections: set[str] | None = None,
     verbose: bool = False,
 ) -> None:
     """Ensure every affected collection carries a thumbnail asset.
@@ -448,6 +454,11 @@ def ensure_collection_thumbnails(
         generate: ``--thumbnails/--no-thumbnails``. None defers to the
             ``thumbnails.enabled`` catalog setting.
         force: ``--force-thumbnails``. Redraw even when one is registered.
+        versioned_collections: Collections whose versions.json this ``add`` just
+            wrote. Their thumbnail is folded into that snapshot rather than
+            bumping a second version. A collection that was skipped is absent,
+            so its backfilled thumbnail gets its own version instead of editing
+            a snapshot that may already be published.
         verbose: Emit a line per collection touched.
     """
     if not affected_collections:
@@ -462,7 +473,12 @@ def ensure_collection_thumbnails(
         if not (collection_path / "collection.json").exists():
             continue
         ensure_collection_thumbnail(
-            collection_path, catalog_root, generate=True, force=force, verbose=verbose
+            collection_path,
+            catalog_root,
+            generate=True,
+            force=force,
+            amend_latest=collection_id in (versioned_collections or set()),
+            verbose=verbose,
         )
 
 

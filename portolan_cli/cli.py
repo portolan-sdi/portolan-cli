@@ -3271,9 +3271,15 @@ def add_cmd(
     # Include both added AND skipped assets so --pmtiles works on already-tracked files
     # Note: all_added contains ItemInfo objects, all_skipped contains Path objects
     affected: set[str] = set()
+    # Collections this run actually wrote a version for. A side-step's derived
+    # asset folds into that snapshot instead of bumping a second version, so one
+    # `add` stays one version. A skipped collection is absent, so its backfill
+    # gets a version of its own rather than editing a published snapshot.
+    versioned: set[str] = set()
     for a in all_added:
         if hasattr(a, "collection_id") and a.collection_id:
             affected.add(a.collection_id)
+            versioned.add(a.collection_id)
     for p in all_skipped:
         # Extract collection_id from path relative to catalog_root
         try:
@@ -3319,6 +3325,7 @@ def add_cmd(
         affected,
         generate=generate_thumbnails,
         force=force_thumbnails,
+        versioned_collections=versioned,
         verbose=verbose,
     )
 

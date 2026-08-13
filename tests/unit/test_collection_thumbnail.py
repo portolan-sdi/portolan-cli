@@ -590,3 +590,48 @@ class TestEveryRegisteredThumbnailIsTracked:
 
         second = json.loads((collection_dir / "versions.json").read_text(encoding="utf-8"))
         assert first["current_version"] == second["current_version"]
+
+
+@pytest.mark.unit
+class TestOneAddIsOneVersion:
+    """A side-step's derived asset folds into the snapshot ``add`` just wrote.
+
+    Thumbnails joined the default pipeline, so a second version per add would
+    double every collection's history. PMTiles never showed this because it is
+    gated on ``--pmtiles`` (Issue #519).
+    """
+
+    def _seed_version(self, collection_dir: Path, catalog_root: Path) -> None:
+        """Stand in for the snapshot ``add`` writes before the side-steps run."""
+        from portolan_cli.versions import track_generated_assets
+
+        track_generated_assets(
+            collection_dir,
+            [collection_dir / "roads.parquet"],
+            catalog_root,
+            message="Added roads.parquet",
+        )
+
+    def test_a_versioned_collection_gains_no_second_version(self, tmp_path: Path) -> None:
+        collection_dir = _vector_collection(tmp_path)
+        self._seed_version(collection_dir, tmp_path)
+
+        ensure_collection_thumbnails(tmp_path, {"roads"}, versioned_collections={"roads"})
+
+        versions = json.loads((collection_dir / "versions.json").read_text(encoding="utf-8"))
+        assert len(versions["versions"]) == 1
+        assert versions["current_version"] == "1.0.0"
+        latest = versions["versions"][-1]
+        assert sorted(latest["assets"]) == ["roads.parquet", "roads.thumb.jpg"]
+        assert "roads.thumb.jpg" in latest["changes"]
+
+    def test_a_skipped_collection_gets_its_own_version(self, tmp_path: Path) -> None:
+        """Backfill must not edit a snapshot that may already be published."""
+        collection_dir = _vector_collection(tmp_path)
+        self._seed_version(collection_dir, tmp_path)
+
+        ensure_collection_thumbnails(tmp_path, {"roads"}, versioned_collections=set())
+
+        versions = json.loads((collection_dir / "versions.json").read_text(encoding="utf-8"))
+        assert [v["version"] for v in versions["versions"]] == ["1.0.0", "1.0.1"]
+        assert sorted(versions["versions"][0]["assets"]) == ["roads.parquet"]
