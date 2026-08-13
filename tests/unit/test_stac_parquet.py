@@ -1067,6 +1067,178 @@ class TestMirrorAssetFileFields:
         assert collection_path.read_text() == before
 
 
+class TestUnverifiableHrefsAreLeftAlone:
+    """Only a missing local file proves a published claim is false.
+
+    A relative href that resolves to nothing is evidence. An absolute or remote
+    href is not: those bytes live somewhere this process cannot read, so the
+    values there may be correct and measured by whoever wrote them. Stripping
+    them would destroy true metadata. ``_local_asset_path`` in
+    ``validation.fixers`` skips the same hrefs.
+    """
+
+    @staticmethod
+    def _write_mirror(collection_dir: Path, asset: dict[str, object]) -> None:
+        collection_path = collection_dir / "collection.json"
+        data = json.loads(collection_path.read_text())
+        data["assets"] = {"geoparquet-items": asset}
+        collection_path.write_text(json.dumps(data, indent=2))
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "href",
+        [
+            "https://data.example.org/imagery/items.parquet",
+            "s3://example-bucket/imagery/items.parquet",
+            "/srv/catalog/imagery/items.parquet",
+        ],
+        ids=["https", "s3", "absolute-local"],
+    )
+    def test_an_unreadable_href_keeps_its_published_claim(
+        self, collection_with_items: Path, href: str
+    ) -> None:
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+        claim = f"1220{'ab' * 32}"
+        self._write_mirror(
+            collection_with_items,
+            {
+                "href": href,
+                "type": "application/vnd.apache.parquet",
+                "roles": ["stac-items"],
+                "file:size": 4096,
+                "file:checksum": claim,
+            },
+        )
+
+        add_parquet_link_to_collection(collection_with_items)
+
+        asset = _mirror_asset(collection_with_items)
+        assert asset["file:size"] == 4096
+        assert asset["file:checksum"] == claim
+
+    @pytest.mark.unit
+    def test_a_directory_href_keeps_its_published_claim(self, collection_with_items: Path) -> None:
+        """A FileGDB asset is a directory; compute_checksum rejects one outright."""
+        from portolan_cli.stac_parquet import add_parquet_link_to_collection
+
+        (collection_with_items / "layers.gdb").mkdir()
+        claim = f"1220{'cd' * 32}"
+        self._write_mirror(
+            collection_with_items,
+            {
+                "href": "./layers.gdb",
+                "type": "application/vnd.apache.parquet",
+                "roles": ["stac-items"],
+                "file:size": 8192,
+                "file:checksum": claim,
+            },
+        )
+
+        add_parquet_link_to_collection(collection_with_items)
+
+        asset = _mirror_asset(collection_with_items)
+        assert asset["file:size"] == 8192
+        assert asset["file:checksum"] == claim
+
+    @pytest.mark.unit
+    def test_a_null_valued_field_is_still_removed(self, collection_with_items: Path) -> None:
+        """Membership decides, not the popped value: null is a field, and it must go."""
+        from portolan_cli.stac_parquet import add_parquet_link_to_collection
+
+        self._write_mirror(
+            collection_with_items,
+            {
+                "href": "./items.parquet",
+                "type": "application/vnd.apache.parquet",
+                "roles": ["stac-items"],
+                "file:size": None,
+                "file:checksum": None,
+            },
+        )
+
+        add_parquet_link_to_collection(collection_with_items)
+
+        asset = _mirror_asset(collection_with_items)
+        assert "file:size" not in asset
+        assert "file:checksum" not in asset
+
+
+class TestFileExtensionDeclaration:
+    """The declaration follows the fields, in both directions."""
+
+    @pytest.mark.unit
+    def test_it_is_withdrawn_when_the_last_file_field_goes(
+        self, collection_with_items: Path
+    ) -> None:
+        from portolan_cli.stac import EXTENSION_URLS
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+        add_parquet_link_to_collection(collection_with_items)
+        collection_path = collection_with_items / "collection.json"
+        assert EXTENSION_URLS["file"] in json.loads(collection_path.read_text())["stac_extensions"]
+
+        (collection_with_items / "items.parquet").unlink()
+        add_parquet_link_to_collection(collection_with_items)
+
+        data = json.loads(collection_path.read_text())
+        assert EXTENSION_URLS["file"] not in data["stac_extensions"]
+
+    @pytest.mark.unit
+    def test_it_survives_while_item_assets_still_carry_the_fields(
+        self, collection_with_items: Path
+    ) -> None:
+        """portolan:asset_count covers items, and the statistics writer redeclares
+        from that wider scope. Removing the URI here would start a write war."""
+        from portolan_cli.stac import EXTENSION_URLS
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+        add_parquet_link_to_collection(collection_with_items)
+        collection_path = collection_with_items / "collection.json"
+        data = json.loads(collection_path.read_text())
+        data["portolan:asset_count"] = 3
+        collection_path.write_text(json.dumps(data, indent=2))
+
+        (collection_with_items / "items.parquet").unlink()
+        add_parquet_link_to_collection(collection_with_items)
+
+        data = json.loads(collection_path.read_text())
+        assert EXTENSION_URLS["file"] in data["stac_extensions"]
+
+    @pytest.mark.unit
+    def test_a_malformed_extension_list_does_not_crash(self, collection_with_items: Path) -> None:
+        """stac_extensions as a string is invalid STAC; report it, do not append to it."""
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+        collection_path = collection_with_items / "collection.json"
+        data = json.loads(collection_path.read_text())
+        data["stac_extensions"] = "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+        collection_path.write_text(json.dumps(data, indent=2))
+
+        add_parquet_link_to_collection(collection_with_items)
+
+        data = json.loads(collection_path.read_text())
+        assert data["stac_extensions"] == (
+            "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+        )
+
+
 # =============================================================================
 # Test: generate_or_suggest_parquet (post-add orchestration, issue #620)
 # =============================================================================

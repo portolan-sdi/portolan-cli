@@ -30,6 +30,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from rashid.catalog import is_absolute_href
+
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import info, warn
 from portolan_cli.sync.checksums import file_fields
@@ -235,6 +237,18 @@ def generate_items_parquet(collection_path: Path) -> Path:
 _FILE_FIELDS = ("file:size", "file:checksum")
 
 
+def _strip_file_fields(asset: dict[str, Any]) -> bool:
+    """Drop both file fields, reporting whether either was there to drop.
+
+    Tests membership rather than the popped value, so a field written as JSON
+    ``null`` still counts as a change and the caller still writes the file.
+    """
+    present = [name for name in _FILE_FIELDS if name in asset]
+    for name in present:
+        del asset[name]
+    return bool(present)
+
+
 def _stamp_file_fields(asset: dict[str, Any], base_dir: Path) -> bool:
     """Refresh ``file:size``/``file:checksum`` from the bytes the asset points at.
 
@@ -243,6 +257,14 @@ def _stamp_file_fields(asset: dict[str, Any], base_dir: Path) -> bool:
     the bytes the href resolves to, and rashid's data pass reports a mismatch as
     an error. A stale value is therefore worse than no value, which is why a
     vanished file strips the fields instead of leaving them behind.
+
+    Only a relative href that resolves to nothing is proof the claim is false.
+    Everything else is unverifiable rather than wrong, so it is left untouched:
+    an absolute or remote href points at bytes this process cannot read, and a
+    directory (a FileGDB asset) is measured by ``compute_dir_checksum`` elsewhere.
+    Deleting a value on that evidence would destroy metadata the operator
+    supplied. ``_local_asset_path`` in ``validation.fixers`` skips the same hrefs
+    for the same reason.
 
     Reads each asset's own href rather than assuming ``items.parquet``: the caller
     matches by asset key as well as by href, so an asset keyed ``geoparquet-items``
@@ -257,11 +279,14 @@ def _stamp_file_fields(asset: dict[str, Any], base_dir: Path) -> bool:
         there is something to write.
     """
     href = asset.get("href")
-    path = _resolve_href(base_dir, href) if isinstance(href, str) and href else None
+    if not isinstance(href, str) or not href or is_absolute_href(href):
+        return False
 
-    if path is None or not path.is_file():
-        # Pop every field before returning; any() would short-circuit on the first.
-        return len([f for f in _FILE_FIELDS if asset.pop(f, None) is not None]) > 0
+    path = _resolve_href(base_dir, href)
+    if not path.exists():
+        return _strip_file_fields(asset)
+    if not path.is_file():
+        return False
 
     fields = file_fields(path)
     if all(asset.get(name) == value for name, value in fields.items()):
@@ -270,12 +295,19 @@ def _stamp_file_fields(asset: dict[str, Any], base_dir: Path) -> bool:
     return True
 
 
-def _declare_file_extension(data: dict[str, Any], assets: dict[str, Any]) -> bool:
-    """Declare the STAC file extension when any asset publishes ``file:size``.
+def _sync_file_extension(data: dict[str, Any], assets: dict[str, Any]) -> bool:
+    """Declare the STAC file extension while an asset uses it, withdraw it after.
 
     ``update_collection_file_statistics`` does this for the add and finalize paths,
     but it needs a ``pystac.Collection`` and this module works on raw JSON on
     purpose (pystac leaks absolute paths, see known-issues/pystac-absolute-paths.md).
+
+    Withdrawal matters because :func:`_stamp_file_fields` strips the fields when
+    the mirror disappears, which can leave the collection declaring an extension
+    nothing uses. It reads ``portolan:asset_count`` first: that tally covers item
+    assets too, and ``update_collection_file_statistics`` redeclares from the same
+    wider scope, so removing the URI while items still carry ``file:`` fields would
+    make the two writers fight over collection.json on every run.
 
     Args:
         data: Parsed collection.json, mutated in place.
@@ -286,13 +318,32 @@ def _declare_file_extension(data: dict[str, Any], assets: dict[str, Any]) -> boo
     """
     from portolan_cli.stac import EXTENSION_URLS
 
-    if not any("file:size" in asset for asset in assets.values()):
+    extensions = data.get("stac_extensions")
+    if extensions is not None and not isinstance(extensions, list):
+        # Malformed. Schema validation reports it; do not crash on .append here.
         return False
 
-    extensions = data.setdefault("stac_extensions", [])
-    if EXTENSION_URLS["file"] in extensions:
+    url = EXTENSION_URLS["file"]
+    in_use = any(
+        isinstance(asset, dict) and any(key.startswith("file:") for key in asset)
+        for asset in assets.values()
+    )
+
+    if in_use:
+        if extensions is None:
+            extensions = []
+            data["stac_extensions"] = extensions
+        if url in extensions:
+            return False
+        extensions.append(url)
+        return True
+
+    if extensions is None or url not in extensions:
         return False
-    extensions.append(EXTENSION_URLS["file"])
+    count = data.get("portolan:asset_count")
+    if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+        return False
+    extensions.remove(url)
     return True
 
 
@@ -374,7 +425,7 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
         data["assets"] = assets
         modified = True
 
-    if _declare_file_extension(data, assets):
+    if _sync_file_extension(data, assets):
         modified = True
 
     # Write back only if changes were made
