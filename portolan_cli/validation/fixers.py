@@ -549,6 +549,72 @@ def _fix_styles(root: Path, dry_run: bool) -> list[FixResult]:
 
 
 # --------------------------------------------------------------------------
+# thumbnail — PTL-VIZ-001
+# --------------------------------------------------------------------------
+
+#: rashid's _THUMBNAIL_TYPES. A thumbnail asset typed anything else fails
+#: PTL-VIZ-001 just as surely as a missing one.
+_THUMBNAIL_MEDIA_TYPES = {"image/png", "image/jpeg", "image/webp"}
+_THUMBNAIL_TYPE_BY_SUFFIX = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+
+
+def _retype_thumbnails(node: Node, dry_run: bool) -> FixResult | None:
+    """Re-derive a mistyped thumbnail's media type from the file it points at."""
+    changed = False
+    for asset in _assets_of(node).values():
+        if "thumbnail" not in roles_of(asset):
+            continue
+        if asset.get("type") in _THUMBNAIL_MEDIA_TYPES:
+            continue
+        href = asset.get("href")
+        if not isinstance(href, str):
+            continue
+        correct = _THUMBNAIL_TYPE_BY_SUFFIX.get(Path(href).suffix.lower())
+        if correct is None:
+            # Points at something that is not an image; retyping would lie.
+            continue
+        asset["type"] = correct
+        changed = True
+    if not changed:
+        return None
+    _write_node(node, dry_run=dry_run)
+    return _updated(node, "Retyped the thumbnail asset from the file it points at")
+
+
+def _fix_thumbnail(root: Path, dry_run: bool) -> list[FixResult]:
+    """Give every geospatial collection a correctly typed thumbnail asset.
+
+    Two repairs behind one rule id. A mistyped thumbnail is retyped in place.
+    A missing one is adopted or rendered by the same orchestrator ``add`` uses,
+    so a catalog generated before Issue #683 can heal itself with
+    ``portolan check --fix`` instead of being re-added.
+    """
+    from portolan_cli.collection_thumbnail import ensure_collection_thumbnail
+
+    results: list[FixResult] = []
+    for node in _graph(root).iter("collection"):
+        retyped = _retype_thumbnails(node, dry_run)
+        if retyped is not None:
+            results.append(retyped)
+            continue
+        if any("thumbnail" in roles_of(asset) for asset in _assets_of(node).values()):
+            continue
+        collection_dir = node.abs_path.parent
+        if dry_run:
+            results.append(_skipped(node.abs_path, "Would generate a collection thumbnail"))
+            continue
+        thumbnail = ensure_collection_thumbnail(collection_dir, root)
+        if thumbnail is not None:
+            results.append(_updated(node, f"Generated the collection thumbnail {thumbnail.name}"))
+    return results
+
+
+# --------------------------------------------------------------------------
 # item_mirror — PTL-MIR-001/002
 # --------------------------------------------------------------------------
 
@@ -834,6 +900,7 @@ FIXERS: dict[str, Fixer] = {
     "partition": _fix_partition,
     "item_mirror": _fix_item_mirror,
     "styles": _fix_styles,
+    "thumbnail": _fix_thumbnail,
     "pmtiles": _fix_pmtiles,
     "checksum": _fix_checksums,
     "convert": _fix_convert,

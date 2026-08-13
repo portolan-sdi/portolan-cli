@@ -50,7 +50,7 @@ def _ensure_contextily() -> Any:
         if _ctx_loaded:
             return _ctx_module
         try:
-            import contextily as ctx  # type: ignore
+            import contextily as ctx
 
             _ctx_module = ctx
         except ImportError:
@@ -142,6 +142,10 @@ class ThumbnailConfig:
             Set to 'none' to disable basemap.
         basemap_opacity: Basemap opacity 0.0-1.0 (default 1.0).
         basemap_zoom_adjust: Zoom level adjustment for basemap (default 0).
+        max_features: Feature ceiling for a single render (default 100,000).
+            Beyond it the reader samples, so render cost stays bounded in file
+            size. Thumbnails became part of the default add pipeline in Issue
+            #683, which is what makes an unbounded read a problem.
     """
 
     enabled: bool = True
@@ -150,6 +154,7 @@ class ThumbnailConfig:
     basemap_provider: str = "CartoDB.Positron"
     basemap_opacity: float = 1.0
     basemap_zoom_adjust: int = 0
+    max_features: int = 100_000
 
 
 def get_thumbnail_config(catalog_path: Path) -> ThumbnailConfig:
@@ -182,6 +187,9 @@ def get_thumbnail_config(catalog_path: Path) -> ThumbnailConfig:
         ),
         basemap_zoom_adjust=_parse_int(
             basemap.get("zoom_adjust"), "thumbnails.basemap.zoom_adjust", 0
+        ),
+        max_features=_parse_positive_int(
+            thumbnails.get("max_features"), "thumbnails.max_features", 100_000
         ),
     )
 
@@ -889,7 +897,7 @@ def _read_geoparquet_bounds_from_data(gpq_path: Path) -> tuple[float, float, flo
     Validates bounds for inf/nan values (issue #516). CRS may not be WGS84.
     """
     try:
-        import geopandas as gpd  # type: ignore[import-untyped]
+        import geopandas as gpd
     except ImportError:
         return None
 
@@ -910,21 +918,81 @@ def _read_geoparquet_bounds_from_data(gpq_path: Path) -> tuple[float, float, flo
         return None
 
 
+def _sample_geoparquet(gpq_path: Path, max_features: int) -> Any:
+    """Read a spread-out sample of a GeoParquet too large to render whole.
+
+    Selects row groups with a **stride across the file** rather than the leading
+    N. geoparquet-io writes spatially sorted output, so the first row groups
+    cover one corner of the extent and a leading sample would draw a fragment of
+    the data. Returns None when sampling is not possible, so the caller can fall
+    back to the full read.
+
+    The frame is unaffected: ``_read_geoparquet_bounds`` takes the full extent
+    from file metadata in O(1), so a sampled render still spans the whole bbox.
+    Only feature density drops.
+    """
+    try:
+        import geopandas as gpd
+        import numpy as np
+        import pyarrow.parquet as pq
+        from pyproj import CRS
+    except ImportError:
+        return None
+
+    parquet_file = pq.ParquetFile(str(gpq_path))
+    metadata = parquet_file.metadata
+    num_rows, num_groups = metadata.num_rows, metadata.num_row_groups
+
+    if num_groups > 1:
+        keep = max(2, round(num_groups * max_features / num_rows))
+        # linspace, not a fixed stride: it includes both endpoints, so the sample
+        # reaches the far edge of the extent. A stride from 0 skips the tail
+        # groups and draws only the leading corner of spatially sorted data.
+        groups = sorted({int(i) for i in np.linspace(0, num_groups - 1, min(keep, num_groups))})
+        table = parquet_file.read_row_groups(groups)
+    else:
+        # One row group: the decode already happened, but capping what matplotlib
+        # draws is still the dominant saving. Spread the picks across the file.
+        table = parquet_file.read().take(
+            np.linspace(0, num_rows - 1, max_features).astype(np.int64)
+        )
+
+    # A GeoParquet table is a WKB column plus `geo` file metadata, not GeoArrow
+    # extension types, so GeoDataFrame.from_arrow cannot read it. Rebuild the
+    # frame from the WKB and the CRS the metadata declares.
+    geo_meta = json.loads((table.schema.metadata or {})[b"geo"].decode("utf-8"))
+    primary = geo_meta["primary_column"]
+    projjson = geo_meta.get("columns", {}).get(primary, {}).get("crs")
+    # A null crs means OGC:CRS84 per the GeoParquet spec.
+    crs = CRS.from_json_dict(projjson) if projjson else "OGC:CRS84"
+
+    frame = table.to_pandas()
+    return gpd.GeoDataFrame(
+        frame.drop(columns=[primary]),
+        geometry=gpd.GeoSeries.from_wkb(frame[primary]),
+        crs=crs,
+    )
+
+
 def _read_geoparquet_for_thumbnail(
     gpq_path: Path,
+    max_features: int | None = None,
 ) -> tuple[Any, tuple[float, float, float, float] | None, Any]:
     """Read GeoParquet for thumbnail rendering.
 
-    Gets bbox from metadata (O(1)) for accurate extent, then reads the full file.
-    We render ALL features without sampling — contextily handles CRS reprojection
-    of basemap tiles, which is far more efficient than reprojecting geometry data.
+    Gets bbox from metadata (O(1)) for an accurate extent, then reads features.
+    Below ``max_features`` every feature is read and drawn — contextily handles
+    CRS reprojection of basemap tiles, which is far cheaper than reprojecting
+    geometry data. Above it the read is sampled, so a default ``add`` cannot
+    spend unbounded time on one collection (Issue #683).
 
     Args:
         gpq_path: Path to GeoParquet file.
+        max_features: Feature ceiling. None reads every feature.
 
     Returns:
         Tuple of (gdf, full_bbox, source_crs) where:
-        - gdf: GeoDataFrame with all features (or None if failed)
+        - gdf: GeoDataFrame of features to draw (or None if failed)
         - full_bbox: (minx, miny, maxx, maxy) from metadata or computed
         - source_crs: Original CRS of the data
     """
@@ -938,8 +1006,18 @@ def _read_geoparquet_for_thumbnail(
         # Get bbox from metadata first (O(1), no geometry parsing)
         full_bbox = _read_geoparquet_bounds(gpq_path)
 
-        # Read full file — no sampling, render all features
-        gdf = gpd.read_parquet(gpq_path)
+        gdf = None
+        if max_features is not None:
+            try:
+                import pyarrow.parquet as pq
+
+                if pq.ParquetFile(str(gpq_path)).metadata.num_rows > max_features:
+                    gdf = _sample_geoparquet(gpq_path, max_features)
+            except Exception as exc:
+                # Sampling is an optimization; a full read is always correct.
+                logger.debug("Falling back to a full read of %s: %s", gpq_path, exc)
+        if gdf is None:
+            gdf = gpd.read_parquet(gpq_path)
         if gdf.empty:
             return None, None, None
 
@@ -993,8 +1071,10 @@ def _render_geoparquet(
         return False
 
     try:
-        # Read full file + bbox from metadata
-        gdf, full_bounds, source_crs = _read_geoparquet_for_thumbnail(gpq_path)
+        # Read features + bbox from metadata, capped by config.max_features
+        gdf, full_bounds, source_crs = _read_geoparquet_for_thumbnail(
+            gpq_path, max_features=config.max_features
+        )
         if gdf is None or full_bounds is None:
             return False
 

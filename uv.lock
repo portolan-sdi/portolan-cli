@@ -4579,9 +4579,11 @@ dependencies = [
     { name = "click" },
     { name = "cryptography" },
     { name = "defusedxml" },
+    { name = "geopandas" },
     { name = "geoparquet-io" },
     { name = "httpx" },
     { name = "lxml" },
+    { name = "matplotlib" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "obstore" },
@@ -4649,9 +4651,7 @@ pmtiles = [
 ]
 thumbnails = [
     { name = "contextily" },
-    { name = "geopandas" },
     { name = "mapbox-vector-tile" },
-    { name = "matplotlib" },
 ]
 
 [package.dev-dependencies]
@@ -4678,7 +4678,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "deptry", marker = "extra == 'dev'", specifier = ">=0.25.1" },
-    { name = "geopandas", marker = "extra == 'thumbnails'", specifier = ">=0.14.0" },
+    { name = "geopandas", specifier = ">=0.14.0" },
     { name = "geoparquet-io", git = "https://github.com/geoparquet/geoparquet-io.git?branch=main" },
     { name = "gitingest", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "gpio-pmtiles", marker = "extra == 'pmtiles'", specifier = ">=0.1.0" },
@@ -4687,7 +4687,7 @@ requires-dist = [
     { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "lxml", specifier = ">=6.1.0" },
     { name = "mapbox-vector-tile", marker = "extra == 'thumbnails'", specifier = ">=2.0.0" },
-    { name = "matplotlib", marker = "extra == 'thumbnails'", specifier = ">=3.8.0" },
+    { name = "matplotlib", specifier = ">=3.8.0" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.1" },
     { name = "mkdocs-click", marker = "extra == 'docs'", specifier = ">=0.8.0" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.7.1" },

@@ -405,16 +405,44 @@ These are complementary. Use `conversion.vector` for consistent spatial optimiza
 
 Configure automatic thumbnail generation for preview images. Thumbnails are registered as STAC assets with `roles: ["thumbnail"]`.
 
+Every `portolan add` gives each affected geospatial collection a thumbnail asset, because `PTL-VIZ-001` makes one mandatory. `add` takes the first of these it finds, so it never overwrites a picture you chose:
+
+1. A `thumbnail`-role asset already in `collection.json`.
+2. A conventionally named image in the collection directory: `*.thumb.jpg`, `thumbnail.*`, or `preview.*`, in PNG, JPEG, or WebP. Drop one in to use your own.
+3. For rasters, the sidecar `add` generated beside a converted COG.
+4. Otherwise, a rendered thumbnail.
+
 ```yaml
 # .portolan/config.yaml
 thumbnails:
   enabled: true # Auto-generate thumbnails (default: true)
   max_size: 512 # Max dimension in pixels (default: 512)
   quality: 75 # JPEG quality 1-100 (default: 75)
+  max_features: 100000 # Feature ceiling per render (default: 100000)
   basemap:
     provider: CartoDB.Positron # Basemap tile provider (default)
     opacity: 1.0 # Basemap opacity 0-1 (default: 1.0)
     zoom_adjust: 0 # Zoom level adjustment (default: 0)
+```
+
+### Bounding Render Cost
+
+Above `max_features`, the renderer samples rather than drawing every feature, so one collection cannot spend unbounded time. Samples are spread across the file rather than taken from the front, because GeoParquet output is spatially sorted and a leading sample would draw one corner of the extent. The frame is unaffected: it comes from the file's bbox metadata, so a sampled thumbnail still spans the whole extent at lower feature density.
+
+Raise `max_features` for denser output on large layers, at the cost of a slower `add`.
+
+### Opting Out
+
+Set `enabled: false` to stop generating thumbnails, or pass `--no-thumbnails` to skip a single `add`.
+
+Neither silences `PTL-VIZ-001`, which rashid raises as an error. If your catalog ships thumbnails from elsewhere, or ships none by policy, disable the rule as well:
+
+```yaml
+thumbnails:
+  enabled: false
+check:
+  disabled:
+    - PTL-VIZ-001 # thumbnails are generated out of band
 ```
 
 ### Vector vs Raster Thumbnails

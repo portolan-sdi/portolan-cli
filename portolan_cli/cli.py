@@ -3058,6 +3058,17 @@ def _check_partition_prompt(
     help="Regenerate PMTiles even if they exist and are up-to-date.",
 )
 @click.option(
+    "--thumbnails/--no-thumbnails",
+    "generate_thumbnails",
+    default=None,
+    help=(
+        "Generate a thumbnail asset for each affected collection. "
+        "Defaults to the catalog's thumbnails.enabled setting. "
+        "Opting out leaves PTL-VIZ-001 firing, so pair --no-thumbnails with "
+        "check.disabled in config.yaml if the catalog never ships thumbnails."
+    ),
+)
+@click.option(
     "--force",
     is_flag=True,
     help="Re-process all files, ignoring change detection.",
@@ -3094,6 +3105,7 @@ def add_cmd(
     generate_parquet: bool,
     generate_pmtiles: bool,
     force_pmtiles: bool,
+    generate_thumbnails: bool | None,
     force: bool,
     reconvert: bool,
     merge_strategy: str,
@@ -3284,6 +3296,18 @@ def add_cmd(
         force=force_pmtiles,
         verbose=verbose,
         use_json=use_json,
+    )
+
+    # Thumbnails last, so a higher-fidelity render from the PMTiles above is
+    # adopted rather than replaced. Every geospatial collection needs a
+    # thumbnail asset to satisfy PTL-VIZ-001 (Issue #683).
+    from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
+
+    ensure_collection_thumbnails(
+        catalog_root,
+        affected,
+        generate=generate_thumbnails,
+        verbose=verbose,
     )
 
     # Output combined results (after all processing complete)

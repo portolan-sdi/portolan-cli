@@ -34,6 +34,7 @@ Structure:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -508,3 +509,109 @@ def _compute_changes(versions_file: VersionsFile, new_assets: dict[str, Asset]) 
             changes.append(name)
 
     return changes
+
+
+def _compute_sha256(path: Path) -> str:
+    """Stream a file in 64KB chunks and return its SHA-256 hex digest.
+
+    Chunked to avoid loading large PMTiles/thumbnail files fully into memory.
+    """
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def track_generated_assets(
+    collection_path: Path,
+    asset_paths: list[Path],
+    catalog_root: Path,
+    *,
+    message: str,
+    only_if_missing: bool = False,
+) -> None:
+    """Track generated side-step assets (PMTiles, thumbnail) in versions.json.
+
+    Computes SHA-256, size, mtime and path records in a *single* new version
+    snapshot. A PMTiles and its thumbnail come from the same side-step on the
+    same source asset, so they belong in one version, not two (Issue #519).
+    ``add_version`` carries forward the previous version's assets, so the result
+    is a complete snapshot with the assets added or updated.
+
+    Lives here rather than beside either caller because both the PMTiles
+    side-step (``viz.pmtiles``) and the collection-thumbnail orchestrator
+    (``collection_thumbnail``) must record derived assets the same way. An
+    untracked derived asset breaks ``push`` (Issues #519, #735).
+
+    Args:
+        collection_path: Path to the collection directory.
+        asset_paths: Paths of the generated files to track.
+        catalog_root: Path to the catalog root (hrefs are catalog-root-relative).
+        message: Human-readable description of the change.
+        only_if_missing: If True, only track assets whose filename is not already
+            present in the latest version snapshot, and create no version at all
+            if every asset is already tracked. Used by the skip path to backfill
+            artifacts generated before tracking existed, without bumping a
+            version on every unchanged ``add`` (Issue #519).
+
+    Raises:
+        FileNotFoundError: If any asset path doesn't exist.
+    """
+    for asset_path in asset_paths:
+        if not asset_path.exists():
+            raise FileNotFoundError(f"File not found at {asset_path}")
+
+    versions_path = collection_path / "versions.json"
+
+    # If no versions.json, create a minimal one
+    if not versions_path.exists():
+        versions_file = VersionsFile(
+            spec_version="1.0.0",
+            current_version=None,
+            versions=[],
+        )
+    else:
+        versions_file = read_versions(versions_path)
+
+    # Backfill mode: skip assets already tracked, and create no version if none
+    # are missing (otherwise the message would force a no-op version bump).
+    paths_to_track = asset_paths
+    if only_if_missing and versions_file.versions:
+        tracked = versions_file.versions[-1].assets
+        paths_to_track = [p for p in asset_paths if p.name not in tracked]
+    if not paths_to_track:
+        return
+
+    assets: dict[str, Asset] = {}
+    for asset_path in paths_to_track:
+        stat = asset_path.stat()
+        # Href is relative to catalog root
+        try:
+            rel_path = asset_path.relative_to(catalog_root)
+        except ValueError:
+            # Fallback if not relative
+            rel_path = asset_path.relative_to(collection_path.parent)
+        assets[asset_path.name] = Asset(
+            sha256=_compute_sha256(asset_path),
+            size_bytes=stat.st_size,
+            href=rel_path.as_posix(),
+            mtime=stat.st_mtime,
+        )
+
+    # Determine next version
+    if versions_file.current_version:
+        major, minor, patch = parse_version(versions_file.current_version)
+        new_version = f"{major}.{minor}.{patch + 1}"
+    else:
+        new_version = "1.0.0"
+
+    updated = add_version(
+        versions_file,
+        version=new_version,
+        assets=assets,
+        breaking=False,
+        message=message,
+    )
+
+    write_versions(versions_path, updated)
