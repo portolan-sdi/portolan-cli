@@ -493,7 +493,7 @@ def _fix_checksums(root: Path, dry_run: bool) -> list[FixResult]:
     asset whole: a COG is routinely gigabytes, and the whole point of this fixer
     is that it runs over every asset in the catalog.
     """
-    from portolan_cli.sync.checksums import compute_checksum, multihash_sha256
+    from portolan_cli.sync.checksums import file_fields
 
     results: list[FixResult] = []
     for node in _graph(root).iter("collection", "item"):
@@ -502,14 +502,10 @@ def _fix_checksums(root: Path, dry_run: bool) -> list[FixResult]:
             path = _local_asset_path(node, asset)
             if path is None:
                 continue
-            size = path.stat().st_size
-            checksum = multihash_sha256(compute_checksum(path))
-            if asset.get("file:size") != size:
-                asset["file:size"] = size
-                changed = True
-            if asset.get("file:checksum") != checksum:
-                asset["file:checksum"] = checksum
-                changed = True
+            for name, value in file_fields(path).items():
+                if asset.get(name) != value:
+                    asset[name] = value
+                    changed = True
         if changed:
             _write_node(node, dry_run=dry_run)
             results.append(_updated(node, "Recomputed file:size and file:checksum from the bytes"))

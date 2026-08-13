@@ -60,7 +60,7 @@ from portolan_cli.sync.checksums import (
     compute_checksum,
     compute_dir_checksum,
     compute_dir_size,
-    multihash_sha256,
+    file_fields_from,
 )
 from portolan_cli.viz.style import enrich_cog_assets
 
@@ -267,10 +267,9 @@ def _scan_item_assets(
             # Titles should come from metadata.yaml or be preserved from existing
             # metadata via merge strategy. Role-based default titles are NOT
             # auto-detected values, so they shouldn't appear with OVERWRITE.
-            extra_fields={
-                "file:size": file_size,
-                "file:checksum": multihash_sha256(file_checksum),
-            },
+            # file_fields_from, not file_fields: a FileGDB asset is a directory,
+            # already measured above by compute_dir_checksum/compute_dir_size.
+            extra_fields=file_fields_from(file_checksum, file_size),
         )
         asset_files[file_path.name] = (file_path, file_checksum, file_size)
         asset_paths.append(str(file_path))

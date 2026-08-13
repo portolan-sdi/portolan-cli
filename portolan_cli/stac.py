@@ -882,13 +882,15 @@ def update_collection_temporal_extent(
 
 
 # STAC Extension schema URLs (v1.1.0 compatible)
-# Note: "file" extension is reserved for future use (checksums, sizes)
-# Currently only table, projection, and raster are actively used
+# "vector" is the only entry still unused; the rest are declared by the writers
+# named beside them.
 EXTENSION_URLS = {
     "table": "https://stac-extensions.github.io/table/v1.2.0/schema.json",
     "projection": "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
     "raster": "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
-    "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",  # Reserved for future
+    # file:size / file:checksum, declared by update_collection_file_statistics
+    # and by stac_parquet._sync_file_extension.
+    "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",
     "vector": "https://stac-extensions.github.io/vector/v0.1.0/schema.json",  # Proposal maturity
     "partition": PARTITION_EXTENSION_URI,
 }
