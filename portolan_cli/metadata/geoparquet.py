@@ -77,10 +77,9 @@ class GeoParquetMetadata:
         """Convert to STAC Item properties format."""
         props: dict[str, Any] = {}
 
-        # Derive proj:epsg from the file's real CRS (issue #488). Without this
-        # a GeoParquet collection-level asset contributes no CRS, so a tracked
-        # .pmtiles companion's hardcoded 3857 (the Web-Mercator tiles) becomes
-        # the collection's proj:epsg.
+        # Derive the EPSG code from the file's real CRS (issue #488). The
+        # proj:epsg key is the internal handoff to the STAC layer, which
+        # publishes it as proj:code on the data asset (issue #654).
         epsg = self._crs_to_epsg()
         if epsg is not None:
             props["proj:epsg"] = epsg

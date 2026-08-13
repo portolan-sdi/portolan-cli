@@ -182,9 +182,11 @@ def _find_geoparquet_assets(collection_path: Path) -> list[tuple[str, Path]]:
             or href.endswith(".parquet")
         )
 
-        # Skip stac-items parquet (that's metadata, not geodata)
+        # Skip the item mirror (that's metadata, not geodata). The spec role
+        # is collection-mirror; stac-items covers catalogs written before
+        # #654 upgraded the roles.
         roles = asset.get("roles", [])
-        if "stac-items" in roles:
+        if "collection-mirror" in roles or "stac-items" in roles:
             continue
 
         if is_geoparquet:

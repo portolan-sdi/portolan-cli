@@ -39,6 +39,49 @@ PORTOLAN_SCHEMA_URI: str = (
 # (validation.legacy) still name it — one to strip it, the other to report it.
 LEGACY_STYLE_MANIFEST_FIELD: str = "portolan:styles"
 
+# The collection property that once listed legend asset keys in display order.
+# Removed for the same reason as the style manifest (issue #654): the ``legend``
+# asset role already identifies them, so the array was a second copy. viz.style
+# strips it on rewrite.
+LEGACY_LEGEND_MANIFEST_FIELD: str = "portolan:legends"
+
+# The asset field that once said whether Portolan owned the bytes an asset
+# points at. The ``external`` role carries that now (issue #654). Never written;
+# read only so `check --fix` can give an old catalog's external assets the role
+# before it deletes the field.
+LEGACY_MANAGED_FIELD: str = "portolan:managed"
+
+# The asset field that once mirrored ``partition:glob`` while the Partition
+# Extension was landing. The transition ended with issue #654: push writes the
+# extension's field alone and drops this one from any asset that still has it.
+LEGACY_GLOB_FIELD: str = "portolan:glob"
+
+# Fields Portolan wrote under the ``portolan:`` prefix that no spec version
+# defines. The spec reserves the prefix and declares nothing in it, so a catalog
+# carrying any of these is describing itself in a vocabulary no client reads
+# (issue #654). Generation emits none of them; `check` reports the survivors
+# (validation.legacy) and `check --fix` deletes them (metadata.fix).
+#
+# What replaced each one, in order: the profile schema URI says which Portolan
+# generation wrote the catalog; a geometry-less Parquet is tabular by
+# derivation; the ``style``/``default`` and ``legend`` asset roles carry the
+# style and legend lists; a consumer sums ``file:size`` itself; the sentinel
+# start/end range says the temporal extent is unknown; the ``external`` role
+# marks data referenced in place; ``partition:glob`` is the Partition
+# Extension's own field.
+REMOVED_PORTOLAN_FIELDS: tuple[str, ...] = (
+    "portolan:version",
+    "portolan:geospatial",
+    LEGACY_STYLE_MANIFEST_FIELD,
+    LEGACY_LEGEND_MANIFEST_FIELD,
+    "portolan:total_size_bytes",
+    "portolan:asset_count",
+    "portolan:collection_count",
+    "portolan:datetime_provisional",
+    LEGACY_MANAGED_FIELD,
+    LEGACY_GLOB_FIELD,
+)
+
 # The partition extension a Hive-partitioned collection declares.
 # rashid's PTL-PRT-001 recognizes the incubating URI namespace, so generation
 # and `check --fix` both emit this one; the older github.io URL it replaced was

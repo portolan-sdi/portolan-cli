@@ -7,7 +7,7 @@ catalog as an external collection that points at the remote URL — rather than
 downloaded and re-converted.
 
 This module creates a STAC ``collection.json`` whose collection-level ``data``
-asset ``href`` is the remote URL, marked as external / not-managed, plus a
+asset ``href`` is the remote URL, carrying the ``external`` role, plus a
 ``rel:"via"`` provenance link to the source. No bytes are downloaded and no
 conversion runs.
 
@@ -39,12 +39,11 @@ from portolan_cli.stac import (
     create_collection,
 )
 
-# Marks an asset as referenced in place rather than managed (downloaded/
-# converted) by Portolan. Consumers can use this to distinguish in-place
-# remote data from catalog-owned data.
-MANAGED_FIELD = "portolan:managed"
-
-# Role applied to external assets in addition to "data".
+# Role applied to external assets in addition to "data". This is what marks an
+# asset as referenced in place rather than downloaded and converted: a role is
+# spec-defined and every STAC client already reads them. The field that used to
+# carry the same fact is ``constants.LEGACY_MANAGED_FIELD``, which issue #654
+# stopped writing; `check --fix` reads it once to backfill this role.
 EXTERNAL_ROLE = "external"
 
 # URI scheme matcher for is_external_href (used by scanner/check to skip
@@ -182,7 +181,7 @@ def add_external(
 
     Creates ``<catalog_root>/<collection_id>/collection.json`` with a
     collection-level ``data`` asset whose ``href`` is ``url`` (kept as-is,
-    not downloaded), marked external / not-managed, plus a ``rel:"via"``
+    not downloaded), carrying the ``external`` role, plus a ``rel:"via"``
     provenance link. The collection is linked into the root catalog.
 
     Args:
@@ -260,7 +259,6 @@ def add_external(
         media_type=resolved_media_type,
         roles=["data", EXTERNAL_ROLE],
         title=title or "External data",
-        extra_fields={MANAGED_FIELD: False},
     )
     add_asset_to_collection(collection, asset_key, asset)
 

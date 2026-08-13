@@ -156,7 +156,16 @@ pystac fights this in two ways.
   `models/_stac_version.py` / `stac.py` everywhere. **Never hardcode `"1.0.0"`**
   in serialization (this regressed in `models/catalog.py`).
 - Raster band metadata (`bands`, formerly `raster:bands`) goes on the **data
-  asset**, never on `item.properties`. Declare the raster extension.
+  asset**, never on `item.properties`. Declare the raster extension (v2.0.0)
+  only when a `raster:`-prefixed field was actually written — v2.0.0 requires
+  a declared item to carry at least one `raster:` field, and the unified
+  `bands` array holds only core fields.
+- Collection CRS is `proj:code` (e.g. `"EPSG:4269"`) on the **data asset**,
+  matching the portolan-spec reference catalog. Never write `proj:epsg`
+  (removed in projection v2.0.0) or a top-level collection projection field.
+  PMTiles metadata contributes no projection field at all.
+- `EXTENSION_URLS` versions are pinned by a unit test against the registry
+  table in portolan-spec `stac/README.md` — update both in lockstep.
 - A collection MUST declare every extension its items use. After building
   summaries, call `build_stac_extensions()` and merge the result into the
   collection's `stac_extensions` (it exists but has been forgotten for
@@ -175,6 +184,14 @@ pystac fights this in two ways.
   behind `rel="agents"`. `catalog.ensure_schema_uris` / `readme.ensure_readmes`
   / `agents_md.ensure_agents_md` are the single writers, shared by `init`,
   `add`, and `check --fix`.
+- The catalog **logo** is a `rel="icon"` link on the ROOT `catalog.json` only,
+  never a collection, with the image copied to `_assets/` and a relative href
+  (PORTO-CORE-074..077). `logo.set_catalog_logo` is the single writer, shared by
+  `init --logo` and `portolan logo`. Its `type` must be one of the seven
+  permitted image media types; anything else is rejected rather than guessed,
+  because a client drops an icon whose media type it does not recognize. It is a
+  MAY, so nothing scaffolds one by default and `check --fix` does not add one.
+  `_assets/` is the one root directory push uploads outside a collection.
 - `file:checksum` is a hex **multihash** (`sync.checksums.multihash_sha256`),
   not a bare or `sha256:`-prefixed digest.
 - The core v1.1.0 `bands` array (including `bands[].statistics`) does NOT imply

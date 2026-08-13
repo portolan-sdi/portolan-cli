@@ -50,8 +50,7 @@ KNOWN_SETTINGS: frozenset[str] = frozenset(
         "backend",
         "statistics.enabled",
         "statistics.raster_mode",
-        "parquet.enabled",  # Generate items.parquet for large collections
-        "parquet.threshold",  # Item count threshold to suggest parquet generation
+        "parquet.enabled",  # Generate the items.parquet item mirror (opt-out)
         "partitioning.enabled",  # Auto-partition large GeoParquet files (Issue #352)
         "partitioning.prompt",  # Prompt before partitioning in interactive mode (default: true)
         "partitioning.threshold_gb",  # Size threshold in GB (default: 2.0)
@@ -85,8 +84,9 @@ SETTING_ALIASES: dict[str, list[str]] = {
 DEFAULT_SETTINGS: dict[str, Any] = {
     "statistics.enabled": True,
     "statistics.raster_mode": "approx",
-    "parquet.enabled": False,  # Disabled by default (100% optional per issue #319)
-    "parquet.threshold": 100,  # Suggest parquet generation when items > threshold
+    # Enabled by default: the spec says the item mirror SHOULD be published
+    # and applies no item-count threshold (PORTO-FMT-040, issue #654).
+    "parquet.enabled": True,
     "partitioning.enabled": True,  # Auto-partition large GeoParquet files (>2GB)
     "partitioning.prompt": True,  # Prompt before partitioning in interactive mode
     "partitioning.threshold_gb": 2.0,  # 2GB per OGC best practices
