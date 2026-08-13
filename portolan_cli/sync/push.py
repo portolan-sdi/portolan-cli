@@ -35,6 +35,7 @@ from portolan_cli.async_utils import (
     get_default_concurrency,
 )
 from portolan_cli.catalog import intermediate_catalog_ids
+from portolan_cli.logo import LOGO_ASSETS_DIRNAME
 from portolan_cli.output import detail, error, info, output_section, success, warn
 from portolan_cli.sync.upload import ObjectStore, setup_store
 from portolan_cli.sync.upload_progress import UploadProgressReporter
@@ -955,6 +956,18 @@ def _discover_catalog_files(
                 continue
             if item.is_file() and not should_exclude(item, catalog_root):
                 discovered.append(item)
+
+        # `_assets/` is the one root directory that is not a collection: it holds
+        # the catalog logo the `rel="icon"` link points at (PORTO-CORE-077).
+        # Skipping every root directory left that image behind, so the published
+        # link resolved to nothing.
+        assets_dir = catalog_root / LOGO_ASSETS_DIRNAME
+        if assets_dir.is_dir() and not assets_dir.is_symlink():
+            for item in sorted(assets_dir.rglob("*")):
+                if item.is_symlink():
+                    continue
+                if item.is_file() and not should_exclude(item, catalog_root):
+                    discovered.append(item)
 
     return discovered
 
@@ -2380,7 +2393,7 @@ def _push_all_upload_root_files(
         if root_metadata:
             info(f"[DRY RUN] Would sync {len(root_metadata)} root metadata file(s)")
             for f in root_metadata:
-                detail(f" {f.name}")
+                detail(f" {f.relative_to(catalog_root).as_posix()}")
         info("[DRY RUN] Would upload catalog.json")
         if intermediate_files:
             info(f"[DRY RUN] Would upload {len(intermediate_files)} intermediate catalog file(s)")
@@ -2400,11 +2413,15 @@ def _push_all_upload_root_files(
             success("Uploaded README.md")
             stats["total_files"] += 1
 
-        # Upload root metadata files (Issue #426)
+        # Upload root metadata files (Issue #426). The key is the catalog-relative
+        # path, not the basename: `_assets/brand.png` must land under `_assets/`
+        # for the catalog's rel="icon" href to resolve. Top-level files are
+        # unaffected, their relative path is their name.
         for meta_file in root_metadata:
-            meta_key = f"{prefix}/{meta_file.name}".lstrip("/")
+            meta_rel = meta_file.relative_to(catalog_root).as_posix()
+            meta_key = f"{prefix}/{meta_rel}".lstrip("/")
             obs.put(store, meta_key, meta_file.read_bytes())
-            detail(f" Synced {meta_file.name}")
+            detail(f" Synced {meta_rel}")
             stats["total_files"] += 1
 
         if root_metadata:

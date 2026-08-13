@@ -417,6 +417,18 @@ def cli(ctx: click.Context, output_format: str) -> None:
     default=None,
     help="URL of the license text. Required when --license is 'other'.",
 )
+@click.option(
+    "--logo",
+    type=str,
+    default=None,
+    help="Local image published as the catalog logo (PNG, WebP, JPEG, GIF, AVIF, APNG, SVG).",
+)
+@click.option(
+    "--logo-title",
+    type=str,
+    default=None,
+    help="Accessible label for the logo link. Defaults to the catalog title.",
+)
 @click.pass_context
 def init(
     ctx: click.Context,
@@ -428,6 +440,8 @@ def init(
     backend: str,
     license_id: str | None,
     license_url: str | None,
+    logo: str | None,
+    logo_title: str | None,
 ) -> None:
     """Initialize a new Portolan catalog.
 
@@ -447,6 +461,9 @@ def init(
     Use --auto to skip all prompts and use default values. Use --title and
     --description to set catalog metadata directly.
 
+    A logo is optional. Pass --logo with a local image to copy it into _assets/
+    and publish it as a rel="icon" link, or add one later with 'portolan logo'.
+
     \b
     Examples:
         portolan init                            # Prompts for the license
@@ -454,10 +471,16 @@ def init(
         portolan init --title "My Catalog" --license MIT
         portolan init --license other --license-url https://x.org/terms
         portolan init --backend iceberg --license CC0-1.0
+        portolan init --auto --license CC-BY-4.0 --logo brand.png
     """
 
     from portolan_cli.catalog import CatalogState, detect_state, init_catalog
-    from portolan_cli.errors import CatalogAlreadyExistsError, UnmanagedStacCatalogError
+    from portolan_cli.errors import (
+        CatalogAlreadyExistsError,
+        LogoError,
+        UnmanagedStacCatalogError,
+    )
+    from portolan_cli.logo import find_logo_link
 
     use_json = should_output_json(ctx, json_output)
 
@@ -497,11 +520,14 @@ def init(
             backend=backend,
             license_id=license_id,
             license_url=license_url,
+            logo=logo,
+            logo_title=logo_title,
         )
 
         # Read back catalog ID for display
         catalog_data = json.loads(catalog_file.read_text(encoding="utf-8"))
         catalog_id = catalog_data.get("id", "unknown")
+        logo_link = find_logo_link(catalog_data.get("links", []))
 
         if not emit_success(
             "init",
@@ -509,15 +535,21 @@ def init(
                 "path": str(path.resolve()),
                 "catalog_file": "catalog.json",
                 "catalog_id": catalog_id,
+                "logo": logo_link["href"] if logo_link else None,
                 "warnings": warnings,
             },
             use_json=use_json,
         ):
             success(f"Initialized Portolan catalog in {path.resolve()}")
             info_output(f"Catalog ID: {catalog_id}")
+            if logo_link:
+                info_output(f"Logo: {logo_link['href']}")
             for w in warnings:
                 warn(w)
 
+    except LogoError as err:
+        emit_error("init", type(err).__name__, str(err), use_json=use_json, code=err.code)
+        raise SystemExit(1) from err
     except CatalogAlreadyExistsError as err:
         if use_json:
             envelope = error_envelope(
@@ -5935,6 +5967,72 @@ def readme(
             use_json=use_json,
         ):
             success(f"Generated {readme_path.relative_to(catalog_path)}")
+
+
+@cli.command("logo")
+@click.argument("source", type=str)
+@click.option(
+    "--title",
+    type=str,
+    default=None,
+    help="Accessible label for the logo. Defaults to the catalog title.",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def logo_cmd(
+    ctx: click.Context,
+    source: str,
+    title: str | None,
+    json_output: bool,
+) -> None:
+    """Publish SOURCE as the catalog logo.
+
+    Copies the image to _assets/ beside the root catalog.json and writes a
+    rel="icon" link pointing at it. A registry lists many catalogs side by side,
+    and the logo is what makes yours recognizable.
+
+    SOURCE must be a local file in one of the seven permitted formats: APNG,
+    AVIF, GIF, JPEG, PNG, SVG, or WebP. A URL is rejected — download the image
+    first. SVG conforms but STAC Browser will not render it.
+
+    Re-run to replace the logo: the previous link and image are removed, so the
+    catalog always carries exactly one.
+
+    \b
+    Examples:
+      portolan logo brand.png                     # Title from the catalog
+      portolan logo brand.png --title "Acme GIS"  # Explicit title
+    """
+    from portolan_cli.errors import LogoError
+    from portolan_cli.logo import set_catalog_logo
+
+    use_json = should_output_json(ctx, json_output)
+    catalog_root = require_catalog_root(use_json, "logo")
+
+    try:
+        result = set_catalog_logo(catalog_root, source, title=title)
+    except LogoError as err:
+        emit_error("logo", type(err).__name__, str(err), use_json=use_json, code=err.code)
+        raise SystemExit(1) from err
+    except OSError as err:
+        emit_error("logo", "OSError", f"Cannot write catalog logo: {err}", use_json=use_json)
+        raise SystemExit(1) from err
+
+    if not emit_success(
+        "logo",
+        {
+            "href": result.href,
+            "type": result.media_type,
+            "title": result.title,
+            "path": result.path.relative_to(catalog_root).as_posix(),
+            "warnings": result.warnings,
+        },
+        use_json=use_json,
+    ):
+        success(f"Logo published at {result.path.relative_to(catalog_root).as_posix()}")
+        info_output(f'Linked as rel="icon" ({result.media_type}), titled "{result.title}"')
+        for message in result.warnings:
+            warn(message)
 
 
 # =============================================================================

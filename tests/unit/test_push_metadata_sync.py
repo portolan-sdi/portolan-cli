@@ -538,6 +538,61 @@ class TestPushAllMetadataSync:
         assert "root-style.json" in captured.out or "metadata" in captured.out.lower()
 
 
+class TestPushCatalogLogo:
+    """The `_assets/` logo directory must reach the remote (PORTO-CORE-077).
+
+    Root discovery skips directories, so before this the image the `rel="icon"`
+    link points at was never uploaded and the published link 404'd.
+    """
+
+    @pytest.mark.unit
+    def test_root_discovery_includes_assets_directory(self, catalog_with_metadata: Path) -> None:
+        from portolan_cli.sync.push import _discover_root_metadata_files
+
+        assets = catalog_with_metadata / "_assets"
+        assets.mkdir()
+        logo = assets / "brand.png"
+        logo.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+        files = _discover_root_metadata_files(catalog_with_metadata)
+
+        assert logo in files
+
+    @pytest.mark.unit
+    def test_uploaded_under_its_relative_key(self, catalog_with_metadata: Path) -> None:
+        """The remote key keeps the `_assets/` prefix, matching the link href."""
+        from portolan_cli.sync.push import _push_all_upload_root_files
+
+        assets = catalog_with_metadata / "_assets"
+        assets.mkdir()
+        (assets / "brand.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+        stats: dict[str, Any] = {
+            "failed": 0,
+            "successful": 1,
+            "total_files": 0,
+            "total_versions": 0,
+            "errors": {},
+        }
+        store = MagicMock()
+        with (
+            patch("portolan_cli.sync.push.setup_store", return_value=(store, "prefix")),
+            patch("portolan_cli.sync.push.obs.put") as put,
+        ):
+            result = _push_all_upload_root_files(
+                catalog_root=catalog_with_metadata,
+                destination="s3://test-bucket/catalog",
+                profile=None,
+                region=None,
+                dry_run=False,
+                stats=stats,
+            )
+
+        assert result is True
+        keys = [call.args[1] for call in put.call_args_list]
+        assert "prefix/_assets/brand.png" in keys
+
+
 # =============================================================================
 # Tests for security patterns
 # =============================================================================
