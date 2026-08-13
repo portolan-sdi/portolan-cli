@@ -258,7 +258,7 @@ class TestPartitionPathConsistency:
 
 @pytest.mark.integration
 class TestPushGlobTransformation:
-    """Tests for portolan:glob field transformation during push."""
+    """Tests for partition:glob field transformation during push."""
 
     def test_push_dryrun_shows_correct_glob_url(
         self, runner: CliRunner, initialized_catalog: Path, large_geoparquet: Path
@@ -289,11 +289,12 @@ class TestPushGlobTransformation:
         transformed = _transform_collection_glob_assets(content, "s3://bucket/catalog", "points")
         transformed_data = json.loads(transformed)
 
-        # Find glob asset and verify portolan:glob structure (not exact match)
+        # Find glob asset and verify partition:glob structure (not exact match)
         for asset in transformed_data.get("assets", {}).values():
             if "*" in asset.get("href", ""):
-                assert "portolan:glob" in asset, "portolan:glob not added"
-                glob_url = asset["portolan:glob"]
+                assert "partition:glob" in asset, "partition:glob not added"
+                assert "portolan:glob" not in asset, "the removed legacy field is back"
+                glob_url = asset["partition:glob"]
                 # Verify URL structure without hardcoding exact pattern
                 assert glob_url.startswith("s3://bucket/catalog/points/"), (
                     f"Wrong base URL: {glob_url}"

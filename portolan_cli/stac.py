@@ -69,7 +69,7 @@ MACHINE_DERIVABLE_EXTRA_FIELD_PREFIXES = frozenset(
         "pmtiles:",  # pmtiles:min_zoom, pmtiles:max_zoom, etc.
         "flatgeobuf:",  # flatgeobuf:feature_count, etc.
         "raster:",  # raster:spatial_resolution, etc.
-        "portolan:",  # portolan:glob (auto-generated on push)
+        "partition:",  # partition:glob (auto-generated on push)
     }
 )
 
@@ -92,7 +92,8 @@ DEFAULT_LICENSE = "other"
 # Sentinel datetime values for provisional items (STAC 1.1.0 compliance)
 # STAC 1.1.0 and pystac require start_datetime/end_datetime to be valid ISO 8601 strings
 # when datetime is null. These sentinel values indicate "unknown temporal extent" while
-# remaining parseable. The portolan:datetime_provisional marker flags these for review.
+# remaining parseable. The range is the marker: an item carrying it has no real
+# temporal extent yet, which is readable without a custom field (issue #654).
 PROVISIONAL_START_DATETIME = "1900-01-01T00:00:00Z"
 PROVISIONAL_END_DATETIME = "9999-12-31T23:59:59Z"
 
@@ -171,8 +172,9 @@ def create_item(
     Args:
         item_id: Unique identifier for the item.
         bbox: Bounding box as [min_x, min_y, max_x, max_y] in WGS84.
-        datetime: Acquisition/creation datetime. If None, creates an open temporal
-            interval (start/end both null) and marks as provisional.
+        datetime: Acquisition/creation datetime. If None, the item carries a null
+            datetime and the sentinel start/end range that stands for an unknown
+            temporal extent.
         properties: Additional properties to include.
         assets: Asset dictionary to attach to the item.
 
@@ -191,16 +193,14 @@ def create_item(
     if not item_properties.get("title") or is_technical_name(str(item_properties.get("title"))):
         item_properties["title"] = humanize_slug(item_id)
 
-    # If datetime not provided, mark as provisional so
-    # portolan check can flag incomplete items.
+    # If datetime not provided, publish the sentinel range instead.
     # STAC 1.1.0 and pystac require start_datetime/end_datetime to be valid
     # ISO 8601 strings when datetime is null. We use an open-ended range
-    # to indicate unknown temporal extent.
-    datetime_provisional = datetime is None
-    if datetime_provisional:
+    # to indicate unknown temporal extent. The range says so on its own, so no
+    # marker field travels with it (issue #654).
+    if datetime is None:
         item_properties["start_datetime"] = PROVISIONAL_START_DATETIME
         item_properties["end_datetime"] = PROVISIONAL_END_DATETIME
-        item_properties["portolan:datetime_provisional"] = True
 
     item = pystac.Item(
         id=item_id,
@@ -906,7 +906,7 @@ EXTENSION_URLS = {
     "table": "https://stac-extensions.github.io/table/v1.2.0/schema.json",
     "projection": "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
     "raster": "https://stac-extensions.github.io/raster/v2.0.0/schema.json",
-    # file:size / file:checksum, declared by update_collection_file_statistics
+    # file:size / file:checksum, declared by declare_file_extension
     # and by stac_parquet.sync_file_extension.
     "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",
     "vector": "https://stac-extensions.github.io/vector/v0.1.0/schema.json",  # Proposal maturity
@@ -1569,117 +1569,58 @@ def update_collection_summaries(collection: pystac.Collection) -> None:
     collection.summaries = summarizer.summarize(items)
 
 
-def update_collection_file_statistics(collection: pystac.Collection) -> None:
-    """Compute and set aggregate file statistics on a collection.
+def declare_file_extension(collection: pystac.Collection) -> None:
+    """Declare the STAC file extension when an asset under the collection uses it.
 
-    Aggregates file:size from all assets (collection-level and item-level)
-    and stores the totals in portolan: extension fields.
+    Scope is the collection *and* its items: the extension a collection declares
+    covers everything it contains, and ``stac_parquet.sync_file_extension``
+    withdraws the URI on the same scope, so the two writers agree instead of
+    trading edits on every run.
 
-    Also declares the file extension when any asset has file:size.
-
-    Sets:
-        portolan:total_size_bytes: Sum of all asset file:size values
-        portolan:asset_count: Number of assets with file:size
-
-    Args:
-        collection: The collection to update statistics for.
-    """
-    total_size = 0
-    asset_count = 0
-    has_file_extension = False
-
-    def _validate_file_size(size: object) -> int | None:
-        """Validate and coerce file:size to int, rejecting invalid types."""
-        if size is None:
-            return None
-        if isinstance(size, bool):
-            return None
-        if isinstance(size, int):
-            return size
-        if isinstance(size, str):
-            try:
-                return int(size)
-            except ValueError:
-                return None
-        return None
-
-    # Count collection-level assets
-    for asset in collection.assets.values():
-        raw_size = asset.extra_fields.get("file:size") if asset.extra_fields else None
-        size = _validate_file_size(raw_size)
-        if size is not None:
-            total_size += size
-            asset_count += 1
-            has_file_extension = True
-
-    # Count item-level assets
-    for item in collection.get_items(recursive=True):
-        for asset in item.assets.values():
-            raw_size = asset.extra_fields.get("file:size") if asset.extra_fields else None
-            size = _validate_file_size(raw_size)
-            if size is not None:
-                total_size += size
-                asset_count += 1
-                has_file_extension = True
-
-    collection.extra_fields["portolan:total_size_bytes"] = total_size
-    collection.extra_fields["portolan:asset_count"] = asset_count
-
-    # Declare file extension if any asset has file:size
-    if has_file_extension:
-        file_ext_url = EXTENSION_URLS["file"]
-        if collection.stac_extensions is None:
-            collection.stac_extensions = []
-        if file_ext_url not in collection.stac_extensions:
-            collection.stac_extensions.append(file_ext_url)
-
-
-def update_catalog_file_statistics(catalog_root: Path) -> None:
-    """Compute and set aggregate file statistics on a catalog.
-
-    Reads all collection.json files under the catalog root and aggregates
-    their portolan:total_size_bytes and portolan:asset_count fields.
-
-    Sets on catalog.json:
-        portolan:total_size_bytes: Sum across all collections
-        portolan:asset_count: Sum across all collections
-        portolan:collection_count: Number of collections
+    This once also wrote ``portolan:total_size_bytes`` and
+    ``portolan:asset_count``. Issue #654 removed both: the spec defines no
+    ``portolan:`` field, and the per-asset ``file:size`` values the totals were
+    summed from are published on the assets themselves.
 
     Args:
-        catalog_root: Root directory of the catalog.
+        collection: The collection to declare the extension on.
     """
-    import json
-
-    catalog_path = catalog_root / "catalog.json"
-    if not catalog_path.exists():
+    if not _any_asset_declares_file_fields(collection):
         return
 
-    total_size = 0
-    asset_count = 0
-    collection_count = 0
+    file_ext_url = EXTENSION_URLS["file"]
+    if collection.stac_extensions is None:
+        collection.stac_extensions = []
+    if file_ext_url not in collection.stac_extensions:
+        collection.stac_extensions.append(file_ext_url)
 
-    # Walk catalog looking for collection.json files
-    for collection_json in catalog_root.rglob("collection.json"):
-        # Skip if it's not a direct child pattern (avoid nested catalogs confusion)
-        try:
-            data = json.loads(collection_json.read_text(encoding="utf-8"))
-            if data.get("type") != "Collection":
-                continue
-            collection_count += 1
-            total_size += data.get("portolan:total_size_bytes", 0)
-            asset_count += data.get("portolan:asset_count", 0)
-        except (json.JSONDecodeError, OSError):
-            continue
 
-    # Update catalog.json
-    try:
-        catalog_data = json.loads(catalog_path.read_text(encoding="utf-8"))
-        catalog_data["portolan:total_size_bytes"] = total_size
-        catalog_data["portolan:asset_count"] = asset_count
-        catalog_data["portolan:collection_count"] = collection_count
-        write_json_atomic(catalog_path, catalog_data)
-    except (json.JSONDecodeError, OSError):
-        pass
+def _any_asset_declares_file_fields(collection: pystac.Collection) -> bool:
+    """Whether any asset on the collection or its items carries ``file:size``."""
+    if any(_has_file_size(asset) for asset in collection.assets.values()):
+        return True
+    return any(
+        _has_file_size(asset)
+        for item in collection.get_items(recursive=True)
+        for asset in item.assets.values()
+    )
+
+
+def _has_file_size(asset: pystac.Asset) -> bool:
+    """Whether an asset declares a usable ``file:size``.
+
+    A boolean is not a size even though ``bool`` is an ``int``, and a string is
+    only one when it parses; anything else is a malformed value that must not
+    make the collection claim an extension it does not use.
+    """
+    size = asset.extra_fields.get("file:size") if asset.extra_fields else None
+    if isinstance(size, bool):
+        return False
+    if isinstance(size, int):
+        return True
+    if isinstance(size, str):
+        return size.strip().lstrip("+-").isdigit()
+    return False
 
 
 def update_catalog_provenance(catalog_root: Path) -> None:

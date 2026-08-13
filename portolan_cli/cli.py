@@ -3058,8 +3058,8 @@ def _check_partition_prompt(
     help=(
         "Acquisition/creation datetime (ISO 8601, YYYY-MM-DD, or 'YYYY-MM-DD HH:MM:SS'). "
         "Applied to ALL items in this command. For different datetimes per item, "
-        "run separate add commands. If omitted, items are marked as provisional "
-        "(portolan check will flag them)."
+        "run separate add commands. If omitted, items carry a null datetime and the "
+        "sentinel start/end range (portolan check will flag them)."
     ),
 )
 @click.option(
@@ -3177,8 +3177,9 @@ def add_cmd(
             portolan add census/2020/ --datetime 2020-04-01
             portolan add census/2023/ --datetime 2023-04-01
 
-        If --datetime is omitted, items have null temporal extent and are
-        marked as provisional. Run 'portolan check' to find items needing dates.
+        If --datetime is omitted, items have a null temporal extent and carry
+        the sentinel start/end range. Run 'portolan check' to find items
+        needing dates.
 
     \b
     Examples:
@@ -3441,7 +3442,7 @@ def add_external_cmd(
     already published cloud-natively at a remote location and should be
     *referenced in place* rather than copied. This creates a collection.json
     whose collection-level 'data' asset href is the remote URL (kept as-is,
-    marked external / not-managed) plus a rel:via provenance link.
+    carrying the 'external' role) plus a rel:via provenance link.
 
     The remote asset is never fetched, and 'portolan check' will not try to
     convert it (the metadata scanner skips scheme-qualified hrefs).

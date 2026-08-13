@@ -135,10 +135,10 @@ def register_collection_thumbnail(
     assets[THUMBNAIL_ASSET_KEY] = asset
     # Declaring the file extension is a conditional MUST once an asset carries
     # `file:` fields. The other two writers that sync it — stac.py's
-    # `update_collection_file_statistics` and stac_parquet's mirror path — both
-    # run before this side-step, so a collection whose only `file:`-bearing asset
+    # `declare_file_extension` and stac_parquet's mirror path — both run
+    # before this side-step, so a collection whose only `file:`-bearing asset
     # is the thumbnail would otherwise ship the fields undeclared (Issue #654).
-    sync_file_extension(data, assets)
+    sync_file_extension(data, assets, collection_json)
     write_json_atomic(collection_json, data)
     return True
 

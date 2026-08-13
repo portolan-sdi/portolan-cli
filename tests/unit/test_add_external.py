@@ -275,11 +275,12 @@ class TestAddExternal:
 
         data = json.loads(collection_path.read_text())
 
-        # data asset points at the remote URL, kept as-is, marked external.
+        # data asset points at the remote URL, kept as-is, marked external by
+        # the role alone: the spec defines no portolan: field (issue #654).
         asset = data["assets"]["data"]
         assert asset["href"] == OVERTURE_URL
         assert asset["type"] == "application/vnd.apache.parquet"
-        assert asset["portolan:managed"] is False
+        assert "portolan:managed" not in asset
         assert "external" in asset["roles"]
         assert "data" in asset["roles"]
 

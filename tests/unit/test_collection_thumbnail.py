@@ -598,7 +598,7 @@ class TestFileExtensionDeclaration:
 
     The spec extension registry makes the declaration a conditional MUST once an
     asset carries ``file:size`` or ``file:checksum`` (Issue #654). The two writers
-    that already sync it — ``update_collection_file_statistics`` and
+    that already sync it — ``declare_file_extension`` and
     ``stac_parquet.sync_file_extension`` — both run before the thumbnail
     side-step, so a collection whose only ``file:``-bearing asset is the
     thumbnail used to end up with the fields and no declaration.

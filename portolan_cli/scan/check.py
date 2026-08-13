@@ -626,13 +626,20 @@ def run_fix_workflow(
                 )
                 return outcome
         else:
-            # Item freshness only. The title, schema-URI, README, AGENTS.md and
-            # PMTiles-link repairs that used to run here now belong to the fixer
-            # registry (portolan_cli.validation.fixers), which `check --fix`
-            # dispatches from the rashid findings that actually name each defect.
-            # Running them here as well would repeat every repair.
+            # Item freshness, plus the removed-field sweep. The title, schema-URI,
+            # README, AGENTS.md and PMTiles-link repairs that used to run here now
+            # belong to the fixer registry (portolan_cli.validation.fixers), which
+            # `check --fix` dispatches from the rashid findings that actually name
+            # each defect. Running them here as well would repeat every repair.
+            #
+            # These two stay because no rule reports them: a rule fires on a spec
+            # requirement an object fails, and neither a stale item nor a field the
+            # spec does not define is something a requirement can name (issue #654).
+            from portolan_cli.metadata.fix import strip_removed_fields
+
             metadata_check_report = scan_catalog_metadata(catalog_root)
             metadata_fix_report = fix_metadata(catalog_root, metadata_check_report, dry_run=dry_run)
+            metadata_fix_report.results.extend(strip_removed_fields(catalog_root, dry_run=dry_run))
 
             outcome.metadata_fix_report = metadata_fix_report
             if metadata_fix_report.failure_count > 0:

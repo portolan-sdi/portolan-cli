@@ -35,6 +35,7 @@ from portolan_cli.async_utils import (
     get_default_concurrency,
 )
 from portolan_cli.catalog import intermediate_catalog_ids
+from portolan_cli.constants import LEGACY_GLOB_FIELD
 from portolan_cli.logo import LOGO_ASSETS_DIRNAME
 from portolan_cli.output import detail, error, info, output_section, success, warn
 from portolan_cli.sync.upload import ObjectStore, setup_store
@@ -277,15 +278,15 @@ def _transform_collection_glob_assets(
     prefix: str,
     collection_path: str,
 ) -> bytes:
-    """Transform collection.json to populate glob fields for partitioned assets.
+    """Transform collection.json to populate the glob field for partitioned assets.
 
     Per Issue #351: Partitioned GeoParquet collections expose a glob pattern in
-    collection-level assets. On push, we populate glob fields with the full
-    remote URL.
+    collection-level assets. On push, we populate ``partition:glob`` with the
+    full remote URL.
 
-    Emits both fields during transition period:
-    - partition:glob (new, per STAC Partition Extension)
-    - portolan:glob (legacy, for backwards compatibility)
+    The transition that emitted ``portolan:glob`` alongside it is over (issue
+    #654): the STAC Partition Extension's field is the only one written, and a
+    legacy copy found on an asset is dropped as the collection is pushed.
 
     Args:
         content: Original collection.json bytes.
@@ -293,7 +294,7 @@ def _transform_collection_glob_assets(
         collection_path: Relative path to collection (e.g., "buildings").
 
     Returns:
-        Transformed collection.json bytes with glob fields populated.
+        Transformed collection.json bytes with the glob field populated.
     """
     try:
         data = json.loads(content)
@@ -315,13 +316,12 @@ def _transform_collection_glob_assets(
             base = prefix.rstrip("/")
             remote_glob = f"{base}/{collection_path}/{glob_pattern}"
 
-            # Emit both fields during transition
-            # Always overwrite to keep both fields in sync with current remote
+            # Always overwrite to keep the field in sync with the current remote
             if asset_data.get("partition:glob") != remote_glob:
                 asset_data["partition:glob"] = remote_glob
                 modified = True
-            if asset_data.get("portolan:glob") != remote_glob:
-                asset_data["portolan:glob"] = remote_glob
+            if LEGACY_GLOB_FIELD in asset_data:
+                del asset_data[LEGACY_GLOB_FIELD]
                 modified = True
 
     if modified:
@@ -1079,7 +1079,7 @@ def _upload_stac_files(
                         detail(f"Uploading STAC: {rel_path}")
                     content = file_path.read_bytes()
 
-                    # Transform collection.json to populate portolan:glob (Issue #351)
+                    # Transform collection.json to populate partition:glob (Issue #351)
                     if file_path.name == "collection.json":
                         collection_path = rel_path.parent.as_posix()
                         content = _transform_collection_glob_assets(
@@ -1607,7 +1607,7 @@ async def _upload_stac_files_async(
 
                 content = file_path.read_bytes()
 
-                # Transform collection.json to populate portolan:glob (Issue #351)
+                # Transform collection.json to populate partition:glob (Issue #351)
                 if file_path.name == "collection.json":
                     # Extract collection path (e.g., "buildings" from "buildings/collection.json")
                     collection_path = rel_path.parent.as_posix()

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from portolan_cli.viz.style import LegendInfo, StyleInfo
+    from portolan_cli.viz.style import StyleInfo
 
 # =============================================================================
 # Phase 1: VectorStyleConfig Tests
@@ -1374,71 +1374,6 @@ class TestDiscoverLegends:
         assert legends[0].media_type == "image/png"
 
 
-class TestBuildLegendsManifest:
-    """Tests for build_legends_manifest function."""
-
-    @staticmethod
-    def _legend_info(key: str) -> LegendInfo:
-        from portolan_cli.viz.style import LegendInfo
-
-        return LegendInfo(key=key, href="", title="", media_type="image/png", path=Path())
-
-    @pytest.mark.unit
-    def test_source_first(self) -> None:
-        """Source legend always first regardless of input order."""
-        from portolan_cli.viz.style import build_legends_manifest
-
-        legends = [
-            self._legend_info("legends/zebra"),
-            self._legend_info("legends/source"),
-            self._legend_info("legends/alpha"),
-        ]
-
-        manifest = build_legends_manifest(legends)
-
-        assert manifest[0] == "legends/source"
-        assert len(manifest) == 3
-
-    @pytest.mark.unit
-    def test_alphabetical_after_source(self) -> None:
-        """Non-source legends sorted alphabetically."""
-        from portolan_cli.viz.style import build_legends_manifest
-
-        legends = [
-            self._legend_info("legends/zebra"),
-            self._legend_info("legends/source"),
-            self._legend_info("legends/alpha"),
-            self._legend_info("legends/beta"),
-        ]
-
-        manifest = build_legends_manifest(legends)
-
-        assert manifest == ["legends/source", "legends/alpha", "legends/beta", "legends/zebra"]
-
-    @pytest.mark.unit
-    def test_no_source(self) -> None:
-        """Works without a legend named 'source'."""
-        from portolan_cli.viz.style import build_legends_manifest
-
-        legends = [
-            self._legend_info("legends/zebra"),
-            self._legend_info("legends/alpha"),
-        ]
-
-        manifest = build_legends_manifest(legends)
-
-        assert manifest == ["legends/alpha", "legends/zebra"]
-
-    @pytest.mark.unit
-    def test_empty_list(self) -> None:
-        """Empty input returns empty output."""
-        from portolan_cli.viz.style import build_legends_manifest
-
-        manifest = build_legends_manifest([])
-
-        assert manifest == []
-
-
 class TestRegisterLegendAssets:
     """Tests for registering discovered legends as STAC assets."""
 
@@ -1478,7 +1413,9 @@ class TestRegisterLegendAssets:
         assert source_asset["title"] == "source Legend"
         assert source_asset["href"] == "./legends/source.png"
 
-        assert updated["portolan:legends"] == ["legends/source", "legends/alternate"]
+        # The manifest array is gone (issue #654): a client filters assets on
+        # the 'legend' role instead.
+        assert "portolan:legends" not in updated
 
     @pytest.mark.unit
     def test_no_legends_no_manifest(self, tmp_path: Path) -> None:
@@ -1552,4 +1489,6 @@ class TestRegisterLegendAssets:
 
         updated = json.loads((tmp_path / "collection.json").read_text())
         assert "legends/old" not in updated["assets"]
-        assert updated["portolan:legends"] == ["legends/source"]
+        # A rewrite strips the removed manifest the old catalog carried.
+        assert "portolan:legends" not in updated
+        assert updated["assets"]["legends/source"]["roles"] == ["legend"]

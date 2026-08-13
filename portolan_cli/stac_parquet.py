@@ -288,16 +288,49 @@ def stamp_file_fields(asset: dict[str, Any], base_dir: Path) -> bool:
     return True
 
 
-def sync_file_extension(data: dict[str, Any], assets: dict[str, Any]) -> bool:
+def _declares_file_fields(assets: Any) -> bool:
+    """Whether any asset in an assets mapping carries a ``file:`` field."""
+    if not isinstance(assets, dict):
+        return False
+    return any(
+        isinstance(asset, dict) and any(key.startswith("file:") for key in asset)
+        for asset in assets.values()
+    )
+
+
+def _items_declare_file_fields(collection_json_path: Path) -> bool:
+    """Whether any item the collection owns carries a ``file:`` field on an asset.
+
+    Read from the items themselves rather than from a count beside them: the
+    ``portolan:asset_count`` tally this used to consult is gone (issue #654),
+    and a tally can be stale in a way the items cannot.
+
+    The caller checks the collection's own assets first, so this walk only runs
+    for a collection that has already lost every ``file:`` field of its own —
+    the rare case, not the routine one.
+    """
+    for _href, item_path in owned_item_hrefs(collection_json_path):
+        try:
+            item = json.loads(item_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if isinstance(item, dict) and _declares_file_fields(item.get("assets")):
+            return True
+    return False
+
+
+def sync_file_extension(
+    data: dict[str, Any], assets: dict[str, Any], collection_json_path: Path
+) -> bool:
     """Declare the STAC file extension while an asset uses it, withdraw it after.
 
-    Public alongside :func:`stamp_file_fields`, and called by ``viz.style`` for the
-    same reason: an asset that carries ``file:`` fields obliges the collection to
-    declare the extension, whichever writer stamped it.
+    Public alongside :func:`stamp_file_fields`, and called by ``viz.style`` for
+    the same reason: an asset that carries ``file:`` fields obliges the
+    collection to declare the extension, whichever writer stamped it.
 
-    ``update_collection_file_statistics`` does this for the add and finalize paths,
-    but it needs a ``pystac.Collection`` and this module works on raw JSON on
-    purpose (pystac leaks absolute paths, see known-issues/pystac-absolute-paths.md).
+    ``stac.declare_file_extension`` does this for the add and finalize paths, but
+    it needs a ``pystac.Collection`` and this module works on raw JSON on purpose
+    (pystac leaks absolute paths, see known-issues/pystac-absolute-paths.md).
 
     ``collection_thumbnail.register_collection_thumbnail`` needs the same logic
     too: it writes ``file:size`` and ``file:checksum`` on the thumbnail after
@@ -306,14 +339,15 @@ def sync_file_extension(data: dict[str, Any], assets: dict[str, Any]) -> bool:
 
     Withdrawal matters because :func:`stamp_file_fields` strips the fields when
     the mirror disappears, which can leave the collection declaring an extension
-    nothing uses. It reads ``portolan:asset_count`` first: that tally covers item
-    assets too, and ``update_collection_file_statistics`` redeclares from the same
-    wider scope, so removing the URI while items still carry ``file:`` fields would
-    make the two writers fight over collection.json on every run.
+    nothing uses. Both writers scope the question the same way — the collection's
+    own assets *and* its items' — so neither withdraws a URI the other is about
+    to redeclare, and they stop trading edits on collection.json.
 
     Args:
         data: Parsed collection.json, mutated in place.
         assets: The collection's asset dicts.
+        collection_json_path: Path to the collection.json ``data`` came from,
+            used to reach the items it owns.
 
     Returns:
         Whether the extension list changed.
@@ -326,10 +360,7 @@ def sync_file_extension(data: dict[str, Any], assets: dict[str, Any]) -> bool:
         return False
 
     url = EXTENSION_URLS["file"]
-    in_use = any(
-        isinstance(asset, dict) and any(key.startswith("file:") for key in asset)
-        for asset in assets.values()
-    )
+    in_use = _declares_file_fields(assets) or _items_declare_file_fields(collection_json_path)
 
     if in_use:
         if extensions is None:
@@ -341,9 +372,6 @@ def sync_file_extension(data: dict[str, Any], assets: dict[str, Any]) -> bool:
         return True
 
     if extensions is None or url not in extensions:
-        return False
-    count = data.get("portolan:asset_count")
-    if isinstance(count, int) and not isinstance(count, bool) and count > 0:
         return False
     extensions.remove(url)
     return True
@@ -424,7 +452,7 @@ def register_mirror_asset(collection_path: Path) -> None:
         data["assets"] = assets
         modified = True
 
-    if sync_file_extension(data, assets):
+    if sync_file_extension(data, assets, collection_json_path):
         modified = True
 
     # Write back only if changes were made
