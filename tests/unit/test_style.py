@@ -372,10 +372,10 @@ class TestSelectDefaultStyleKey:
         """Only a style still on disk can hold the role."""
         from portolan_cli.viz.style import select_default_style_key
 
-        styles = [self._style_info("styles/alpha"), self._style_info("styles/zebra")]
+        styles = [self._style_info("styles/zebra"), self._style_info("styles/alpha")]
         assets = {"styles/gone": {"roles": ["style", "default"]}}
 
-        assert select_default_style_key(styles, assets) is None
+        assert select_default_style_key(styles, assets) == "styles/alpha"
 
     @pytest.mark.unit
     def test_lone_style_is_the_default(self) -> None:
@@ -385,13 +385,25 @@ class TestSelectDefaultStyleKey:
         assert select_default_style_key([self._style_info("styles/custom")], {}) == "styles/custom"
 
     @pytest.mark.unit
-    def test_several_unmarked_styles_have_no_default(self) -> None:
-        """Portolan will not invent a cartographic decision (PTL-VIZ-006)."""
+    def test_several_unmarked_styles_pick_the_first_key(self) -> None:
+        """A tie is broken lexicographically so the output stays conformant."""
         from portolan_cli.viz.style import select_default_style_key
 
         styles = [self._style_info("styles/zebra"), self._style_info("styles/alpha")]
 
-        assert select_default_style_key(styles, {}) is None
+        assert select_default_style_key(styles, {}) == "styles/alpha"
+
+    @pytest.mark.unit
+    def test_the_pick_ignores_discovery_order(self) -> None:
+        """The same styles select the same default whatever order they arrive in."""
+        from portolan_cli.viz.style import select_default_style_key
+
+        keys = ["styles/zebra", "styles/muted", "styles/alpha"]
+        forward = [self._style_info(key) for key in keys]
+        backward = [self._style_info(key) for key in reversed(keys)]
+
+        assert select_default_style_key(forward, {}) == "styles/alpha"
+        assert select_default_style_key(backward, {}) == "styles/alpha"
 
     @pytest.mark.unit
     def test_no_styles_have_no_default(self) -> None:
@@ -406,9 +418,10 @@ class TestSelectDefaultStyleKey:
         from portolan_cli.viz.style import select_default_style_key
 
         styles = [self._style_info("styles/alpha"), self._style_info("styles/zebra")]
-        assets = {"styles/alpha": {"roles": "default"}, "styles/zebra": ["not", "an", "asset"]}
+        assets = {"styles/zebra": {"roles": "default"}, "styles/alpha": ["not", "an", "asset"]}
 
-        assert select_default_style_key(styles, assets) is None
+        # Neither entry marks anything, so the lexicographic tie-break decides.
+        assert select_default_style_key(styles, assets) == "styles/alpha"
 
 
 # =============================================================================
@@ -954,8 +967,8 @@ class TestRegisterStyleAssets:
         assert updated["assets"]["styles/default"]["roles"] == ["style"]
 
     @pytest.mark.unit
-    def test_ambiguous_styles_get_no_default(self, tmp_path: Path) -> None:
-        """Several unmarked styles and no styles/default: PTL-VIZ-006 asks a human."""
+    def test_ambiguous_styles_still_get_exactly_one_default(self, tmp_path: Path) -> None:
+        """Several unmarked styles get a deterministic default (PORTO-CORE-070)."""
         import json
 
         from portolan_cli.viz.style import discover_styles, register_style_assets
@@ -971,8 +984,175 @@ class TestRegisterStyleAssets:
         register_style_assets(tmp_path, discover_styles(tmp_path))
 
         updated = json.loads((tmp_path / "collection.json").read_text())
-        roles = [asset["roles"] for asset in updated["assets"].values()]
-        assert roles == [["style"], ["style"]]
+        assert updated["assets"]["styles/muted"]["roles"] == ["style", "default"]
+        assert updated["assets"]["styles/vivid"]["roles"] == ["style"]
+
+    @pytest.mark.unit
+    def test_an_automatic_pick_tells_the_publisher(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Portolan names the default it chose and how to change it."""
+        import json
+
+        from portolan_cli.viz.style import discover_styles, register_style_assets
+
+        (tmp_path / "collection.json").write_text(
+            json.dumps({"type": "Collection", "id": "test", "assets": {}})
+        )
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+        (styles_dir / "muted.json").write_text('{"version":8,"name":"Muted","layers":[]}')
+        (styles_dir / "vivid.json").write_text('{"version":8,"name":"Vivid","layers":[]}')
+
+        register_style_assets(tmp_path, discover_styles(tmp_path))
+
+        captured = capsys.readouterr()
+        message = captured.out + captured.err
+        assert "styles/muted" in message
+        assert "default" in message
+
+    @pytest.mark.unit
+    def test_a_publisher_choice_prints_no_notice(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A default the publisher already marked needs no advice."""
+        import json
+
+        from portolan_cli.viz.style import discover_styles, register_style_assets
+
+        (tmp_path / "collection.json").write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "id": "test",
+                    "assets": {"styles/vivid": {"roles": ["style", "default"]}},
+                }
+            )
+        )
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+        (styles_dir / "muted.json").write_text('{"version":8,"name":"Muted","layers":[]}')
+        (styles_dir / "vivid.json").write_text('{"version":8,"name":"Vivid","layers":[]}')
+
+        register_style_assets(tmp_path, discover_styles(tmp_path))
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
+
+    @pytest.mark.unit
+    def test_merge_preserves_human_authored_fields(self, tmp_path: Path) -> None:
+        """A re-run keeps the title, description and extras a human wrote."""
+        import json
+
+        from portolan_cli.viz.style import discover_styles, register_style_assets
+
+        (tmp_path / "collection.json").write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "id": "test",
+                    "assets": {
+                        "styles/default": {
+                            "href": "./styles/default.json",
+                            "type": "application/json",
+                            "title": "House style",
+                            "description": "Approved by the cartography team.",
+                            "roles": ["style"],
+                            "created": "2026-01-02T00:00:00Z",
+                        }
+                    },
+                }
+            )
+        )
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+        (styles_dir / "default.json").write_text(
+            '{"version":8,"name":"Default","description":"Generated","layers":[]}'
+        )
+
+        register_style_assets(tmp_path, discover_styles(tmp_path))
+
+        asset = json.loads((tmp_path / "collection.json").read_text())["assets"]["styles/default"]
+        assert asset["title"] == "House style"
+        assert asset["description"] == "Approved by the cartography team."
+        assert asset["created"] == "2026-01-02T00:00:00Z"
+        # Machine-derivable fields are refreshed even so.
+        assert asset["type"] == "application/vnd.mapbox.style+json"
+        assert asset["roles"] == ["style", "default"]
+
+    @pytest.mark.unit
+    def test_stamps_file_size_and_checksum(self, tmp_path: Path) -> None:
+        """Style assets publish the bytes they resolve to (PORTO-CORE-069)."""
+        import json
+
+        from portolan_cli.viz.style import discover_styles, register_style_assets
+
+        (tmp_path / "collection.json").write_text(
+            json.dumps({"type": "Collection", "id": "test", "assets": {}})
+        )
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+        style_path = styles_dir / "default.json"
+        style_path.write_text('{"version":8,"name":"Default","layers":[]}')
+
+        register_style_assets(tmp_path, discover_styles(tmp_path))
+
+        updated = json.loads((tmp_path / "collection.json").read_text())
+        asset = updated["assets"]["styles/default"]
+        assert asset["file:size"] == style_path.stat().st_size
+        # Hex multihash: sha2-256 (0x12) with a 32-byte digest (0x20).
+        assert asset["file:checksum"].startswith("1220")
+        assert len(asset["file:checksum"]) == 68
+        assert (
+            "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+            in updated["stac_extensions"]
+        )
+
+    @pytest.mark.unit
+    def test_restamps_after_the_style_file_changes(self, tmp_path: Path) -> None:
+        """A rewritten style file gets a fresh checksum, never a stale claim."""
+        import json
+
+        from portolan_cli.viz.style import discover_styles, register_style_assets
+
+        (tmp_path / "collection.json").write_text(
+            json.dumps({"type": "Collection", "id": "test", "assets": {}})
+        )
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+        style_path = styles_dir / "default.json"
+        style_path.write_text('{"version":8,"name":"Default","layers":[]}')
+        register_style_assets(tmp_path, discover_styles(tmp_path))
+        first = json.loads((tmp_path / "collection.json").read_text())["assets"]["styles/default"]
+
+        style_path.write_text('{"version":8,"name":"Default","layers":[],"sources":{}}')
+        register_style_assets(tmp_path, discover_styles(tmp_path))
+        second = json.loads((tmp_path / "collection.json").read_text())["assets"]["styles/default"]
+
+        assert second["file:checksum"] != first["file:checksum"]
+        assert second["file:size"] == style_path.stat().st_size
+
+    @pytest.mark.unit
+    def test_declares_the_file_extension_once(self, tmp_path: Path) -> None:
+        """Re-running does not append a duplicate extension URI."""
+        import json
+
+        from portolan_cli.viz.style import discover_styles, register_style_assets
+
+        (tmp_path / "collection.json").write_text(
+            json.dumps({"type": "Collection", "id": "test", "stac_extensions": [], "assets": {}})
+        )
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+        (styles_dir / "default.json").write_text('{"version":8,"name":"Default","layers":[]}')
+
+        styles = discover_styles(tmp_path)
+        register_style_assets(tmp_path, styles)
+        register_style_assets(tmp_path, styles)
+
+        extensions = json.loads((tmp_path / "collection.json").read_text())["stac_extensions"]
+        assert extensions.count("https://stac-extensions.github.io/file/v2.1.0/schema.json") == 1
 
     @pytest.mark.unit
     def test_no_styles_no_manifest(self, tmp_path: Path) -> None:
