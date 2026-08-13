@@ -295,12 +295,17 @@ def _stamp_file_fields(asset: dict[str, Any], base_dir: Path) -> bool:
     return True
 
 
-def _sync_file_extension(data: dict[str, Any], assets: dict[str, Any]) -> bool:
+def sync_file_extension(data: dict[str, Any], assets: dict[str, Any]) -> bool:
     """Declare the STAC file extension while an asset uses it, withdraw it after.
 
     ``update_collection_file_statistics`` does this for the add and finalize paths,
     but it needs a ``pystac.Collection`` and this module works on raw JSON on
     purpose (pystac leaks absolute paths, see known-issues/pystac-absolute-paths.md).
+
+    Public because ``collection_thumbnail.register_collection_thumbnail`` needs the
+    same logic: it writes ``file:size`` and ``file:checksum`` on the thumbnail after
+    both other writers have run, so a collection whose only ``file:``-bearing asset
+    is the thumbnail carried the fields without the declaration (Issue #654).
 
     Withdrawal matters because :func:`_stamp_file_fields` strips the fields when
     the mirror disappears, which can leave the collection declaring an extension
@@ -425,7 +430,7 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
         data["assets"] = assets
         modified = True
 
-    if _sync_file_extension(data, assets):
+    if sync_file_extension(data, assets):
         modified = True
 
     # Write back only if changes were made
