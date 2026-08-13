@@ -355,6 +355,15 @@ type = "forbidden"
 # styles, PMTiles). It is a leaf: it depends on neither scanning nor sync.
 source_modules = ["portolan_cli.viz"]
 forbidden_modules = ["portolan_cli.scan", "portolan_cli.sync"]
+ignore_imports = [
+    # PORTO-CORE-069 makes `file:size`/`file:checksum` on a style asset a claim
+    # about the style file's bytes, so `viz.style` must stamp them. It reuses
+    # `stac_parquet.stamp_file_fields`/`sync_file_extension` rather than hashing
+    # on its own terms, and those reach `sync.checksums` — a stdlib+rashid leaf,
+    # not the sync orchestration this contract exists to keep out of viz. The
+    # same reasoning is written into the scan contract below.
+    "portolan_cli.viz.style -> portolan_cli.stac_parquet",
+]
 
 [[tool.importlinter.contracts]]
 id = "scan-below-sync"

@@ -33,6 +33,8 @@ from typing import Any
 from portolan_cli.config import load_config
 from portolan_cli.constants import LEGACY_STYLE_MANIFEST_FIELD
 from portolan_cli.json_io import write_json_atomic
+from portolan_cli.output import info
+from portolan_cli.stac_parquet import stamp_file_fields, sync_file_extension
 from portolan_cli.utils import get_dict, get_list
 
 logger = logging.getLogger(__name__)
@@ -403,6 +405,10 @@ DEFAULT_ROLE = "default"
 #: into a key, so this only breaks the tie when no style is marked yet.
 GENERATED_DEFAULT_STYLE_KEY = "styles/default"
 
+#: Media type every style asset declares. A style is a MapLibre GL style file
+#: (formats.md), and rashid PTL-VIZ-005 checks the asset says so.
+STYLE_MEDIA_TYPE = "application/vnd.mapbox.style+json"
+
 
 def discover_styles(collection_path: Path) -> list[StyleInfo]:
     """Discover style JSON files in {collection_path}/styles/ directory.
@@ -460,23 +466,49 @@ def _marks_default(asset: Any) -> bool:
     return isinstance(roles, list) and DEFAULT_ROLE in roles
 
 
+def _choose_default(
+    styles: list[StyleInfo],
+    existing_assets: dict[str, Any],
+) -> tuple[str | None, bool]:
+    """Pick the default style key and say whether Portolan picked it unaided.
+
+    Returns:
+        The winning asset key (None only when there are no styles), and whether
+        the pick came from the tie-break rather than from a publisher's mark.
+    """
+    keys = {style.key for style in styles}
+    marked = [key for key in keys if _marks_default(existing_assets.get(key))]
+    if len(marked) == 1:
+        return marked[0], False
+    if GENERATED_DEFAULT_STYLE_KEY in keys:
+        return GENERATED_DEFAULT_STYLE_KEY, True
+    if not keys:
+        return None, False
+    return min(keys), True
+
+
 def select_default_style_key(
     styles: list[StyleInfo],
     existing_assets: dict[str, Any],
 ) -> str | None:
     """Choose the style asset key that carries the ``default`` role.
 
-    core.md, Visualization Styles: a client reads the default off a second role,
-    never off a key or a position, and exactly one style asset carries it when a
-    collection registers more than one. Precedence runs from most deliberate to
-    least:
+    PORTO-CORE-070: a client reads the default off a second role, never off a key
+    or a position, and exactly one style asset MUST carry it when a collection
+    registers more than one. So a collection with styles always names a default;
+    leaving the question open would ship a nonconformant collection. Precedence
+    runs from most deliberate to least:
 
     1. the style a previous run already marked ``default``, because which style
        leads is cartographic judgment and a human's choice must survive a
        regeneration;
     2. ``styles/default``, the key :func:`write_default_style` generates;
-    3. the only style there is, which is the default implicitly and gets the
-       role anyway so a client finds the default the same way everywhere.
+    3. the lexicographically first key, which decides a tie between styles no one
+       has ranked. The order styles are discovered in must not change the answer,
+       so this reads the keys, not the list.
+
+    Rules 2 and 3 are bookkeeping, not cartography, and
+    :func:`register_style_assets` says so on the terminal when it applies them.
 
     Args:
         styles: Styles discovered on disk (from :func:`discover_styles`).
@@ -484,19 +516,56 @@ def select_default_style_key(
             the role a previous run wrote.
 
     Returns:
-        The winning asset key, or None when several unmarked styles compete.
-        Portolan does not invent that answer; PTL-VIZ-006 asks the publisher
-        for it.
+        The winning asset key, or None when there are no styles to choose from.
     """
-    keys = {style.key for style in styles}
-    marked = [key for key in keys if _marks_default(existing_assets.get(key))]
-    if len(marked) == 1:
-        return marked[0]
-    if GENERATED_DEFAULT_STYLE_KEY in keys:
-        return GENERATED_DEFAULT_STYLE_KEY
-    if len(styles) == 1:
-        return styles[0].key
-    return None
+    return _choose_default(styles, existing_assets)[0]
+
+
+def _merge_style_asset(
+    existing: Any,
+    style_info: StyleInfo,
+    roles: list[str],
+) -> dict[str, Any]:
+    """Update one style asset in place-ish, keeping whatever a human put there.
+
+    ``add`` merges, it never regenerates (.claude/rules/stac-assets.md). Only the
+    machine-derivable fields are rewritten: ``href``, ``type`` and ``roles`` come
+    from disk and from :func:`select_default_style_key`, so a stale value there is
+    wrong rather than personal. Everything else survives, including ``title`` and
+    ``description`` an editor sharpened by hand and any field this code has never
+    heard of.
+
+    Args:
+        existing: The asset the collection already carries under this key, if any.
+        style_info: The style as discovered on disk.
+        roles: The roles this run computed for the asset.
+
+    Returns:
+        The merged asset dict.
+    """
+    asset: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
+
+    asset["href"] = style_info.href
+    asset["type"] = STYLE_MEDIA_TYPE
+    asset["roles"] = roles
+
+    # Seed from the style file only where the collection says nothing. The style's
+    # own "name" is a fallback title, not an authority over one a publisher wrote.
+    if not asset.get("title"):
+        asset["title"] = style_info.title
+    if not asset.get("description") and style_info.description:
+        asset["description"] = style_info.description
+
+    return asset
+
+
+def _announce_default(default_key: str, style_count: int) -> None:
+    """Tell the publisher which style Portolan made the default, and how to move it."""
+    info(
+        f"Default style: {default_key} (chosen from {style_count} styles). "
+        f'To pick another, move the "{DEFAULT_ROLE}" role to that style asset '
+        "in collection.json."
+    )
 
 
 def register_style_assets(
@@ -506,10 +575,16 @@ def register_style_assets(
     """Register discovered styles as STAC assets on the collection.
 
     Updates collection.json to add or update style assets and to drop stale
-    ones. Every style asset gets the ``style`` role and the default one also
-    gets ``default`` (see :func:`select_default_style_key`). The removed
-    ``portolan:styles`` manifest is stripped whenever it survives from an older
-    generation, so a re-run migrates the collection.
+    ones. Every style asset gets the ``style`` role and exactly one also gets
+    ``default`` (PORTO-CORE-070, see :func:`select_default_style_key`). Existing
+    assets are merged rather than rebuilt, so a re-run never costs a publisher
+    the ``title`` or ``description`` they wrote. The removed ``portolan:styles``
+    manifest is stripped whenever it survives from an older generation, so a
+    re-run migrates the collection.
+
+    Each asset also publishes ``file:size`` and ``file:checksum`` for the style
+    file it points at (PORTO-CORE-069), which obliges the collection to declare
+    the STAC file extension.
 
     Args:
         collection_path: Path to the collection directory.
@@ -528,29 +603,26 @@ def register_style_assets(
     for key in stale_keys:
         del assets[key]
 
-    # Read the default off the assets as they stand, before the rewrite below
+    # Read the default off the assets as they stand, before the merge below
     # overwrites the roles a previous run wrote.
-    default_key = select_default_style_key(styles, assets)
+    default_key, chosen_by_portolan = _choose_default(styles, assets)
 
-    # Add/update style assets
     for style_info in styles:
         roles = [STYLE_ROLE]
         if style_info.key == default_key:
             roles.append(DEFAULT_ROLE)
-        asset_dict: dict[str, Any] = {
-            "href": style_info.href,
-            "type": "application/vnd.mapbox.style+json",
-            "title": style_info.title,
-            "roles": roles,
-        }
-        if style_info.description:
-            asset_dict["description"] = style_info.description
-        assets[style_info.key] = asset_dict
+        asset = _merge_style_asset(assets.get(style_info.key), style_info, roles)
+        stamp_file_fields(asset, collection_path)
+        assets[style_info.key] = asset
 
     data["assets"] = assets
     data.pop(LEGACY_STYLE_MANIFEST_FIELD, None)
+    sync_file_extension(data, assets)
 
     write_json_atomic(collection_json_path, data)
+
+    if default_key is not None and chosen_by_portolan and len(styles) > 1:
+        _announce_default(default_key, len(styles))
 
 
 # =============================================================================

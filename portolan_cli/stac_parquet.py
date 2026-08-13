@@ -238,8 +238,12 @@ def _strip_file_fields(asset: dict[str, Any]) -> bool:
     return bool(present)
 
 
-def _stamp_file_fields(asset: dict[str, Any], base_dir: Path) -> bool:
+def stamp_file_fields(asset: dict[str, Any], base_dir: Path) -> bool:
     """Refresh ``file:size``/``file:checksum`` from the bytes the asset points at.
+
+    Public because ``viz.style`` stamps style assets the same way. The rule is one
+    canonical home for the claim, so both writers share this function rather than
+    each hashing on its own terms.
 
     PORTO-CORE-028 makes the fields a SHOULD, so their absence is only a
     PTL-AST-003 warning. PORTO-CORE-030 makes a *published* value a claim about
@@ -287,16 +291,20 @@ def _stamp_file_fields(asset: dict[str, Any], base_dir: Path) -> bool:
 def sync_file_extension(data: dict[str, Any], assets: dict[str, Any]) -> bool:
     """Declare the STAC file extension while an asset uses it, withdraw it after.
 
+    Public alongside :func:`stamp_file_fields`, and called by ``viz.style`` for the
+    same reason: an asset that carries ``file:`` fields obliges the collection to
+    declare the extension, whichever writer stamped it.
+
     ``update_collection_file_statistics`` does this for the add and finalize paths,
     but it needs a ``pystac.Collection`` and this module works on raw JSON on
     purpose (pystac leaks absolute paths, see known-issues/pystac-absolute-paths.md).
 
-    Public because ``collection_thumbnail.register_collection_thumbnail`` needs the
-    same logic: it writes ``file:size`` and ``file:checksum`` on the thumbnail after
-    both other writers have run, so a collection whose only ``file:``-bearing asset
-    is the thumbnail carried the fields without the declaration (Issue #654).
+    ``collection_thumbnail.register_collection_thumbnail`` needs the same logic
+    too: it writes ``file:size`` and ``file:checksum`` on the thumbnail after
+    both other writers have run, so a collection whose only ``file:``-bearing
+    asset is the thumbnail carried the fields without the declaration (#654).
 
-    Withdrawal matters because :func:`_stamp_file_fields` strips the fields when
+    Withdrawal matters because :func:`stamp_file_fields` strips the fields when
     the mirror disappears, which can leave the collection declaring an extension
     nothing uses. It reads ``portolan:asset_count`` first: that tally covers item
     assets too, and ``update_collection_file_statistics`` redeclares from the same
@@ -402,7 +410,7 @@ def register_mirror_asset(collection_path: Path) -> None:
             # Refresh, do not skip: generate_items_parquet overwrote the bytes
             # moments ago, so an asset carried over from an earlier run describes
             # a file that no longer exists in that form.
-            if _stamp_file_fields(asset, collection_path):
+            if stamp_file_fields(asset, collection_path):
                 modified = True
     else:
         asset = {
@@ -411,7 +419,7 @@ def register_mirror_asset(collection_path: Path) -> None:
             "title": "STAC items as GeoParquet",
             "roles": ["collection-mirror"],
         }
-        _stamp_file_fields(asset, collection_path)
+        stamp_file_fields(asset, collection_path)
         assets[asset_key] = asset
         data["assets"] = assets
         modified = True
