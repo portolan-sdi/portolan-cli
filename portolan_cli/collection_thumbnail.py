@@ -34,6 +34,7 @@ from portolan_cli import extension_registry as _reg
 from portolan_cli.formats import is_geoparquet
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import detail, warn
+from portolan_cli.stac_parquet import sync_file_extension
 from portolan_cli.sync.checksums import compute_checksum, multihash_sha256
 from portolan_cli.versions import track_generated_assets
 from portolan_cli.viz.thumbnail import generate_vector_thumbnail, get_thumbnail_config
@@ -130,7 +131,14 @@ def register_collection_thumbnail(
         # the asset without them beats registering nothing.
         logger.debug("Cannot stat or checksum %s: %s", thumbnail_path, exc)
 
-    data.setdefault("assets", {})[THUMBNAIL_ASSET_KEY] = asset
+    assets = data.setdefault("assets", {})
+    assets[THUMBNAIL_ASSET_KEY] = asset
+    # Declaring the file extension is a conditional MUST once an asset carries
+    # `file:` fields. The other two writers that sync it — stac.py's
+    # `update_collection_file_statistics` and stac_parquet's mirror path — both
+    # run before this side-step, so a collection whose only `file:`-bearing asset
+    # is the thumbnail would otherwise ship the fields undeclared (Issue #654).
+    sync_file_extension(data, assets)
     write_json_atomic(collection_json, data)
     return True
 

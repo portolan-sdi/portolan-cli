@@ -907,7 +907,7 @@ EXTENSION_URLS = {
     "projection": "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
     "raster": "https://stac-extensions.github.io/raster/v2.0.0/schema.json",
     # file:size / file:checksum, declared by update_collection_file_statistics
-    # and by stac_parquet._sync_file_extension.
+    # and by stac_parquet.sync_file_extension.
     "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",
     "vector": "https://stac-extensions.github.io/vector/v0.1.0/schema.json",  # Proposal maturity
     "partition": PARTITION_EXTENSION_URI,
