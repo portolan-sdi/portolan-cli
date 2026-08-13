@@ -131,7 +131,8 @@ render paths.
 ## Styles are standalone STAC assets (supersedes 0043)
 
 - A style is a complete **Mapbox GL v8** JSON file in `{collection}/styles/`,
-  not inline in the STAC. Asset key `styles/{stem}`, `type: "application/json"`,
+  not inline in the STAC. Asset key `styles/{stem}`,
+  `type: "application/vnd.mapbox.style+json"` (`STYLE_MEDIA_TYPE` in `style.py`),
   `roles` containing `"style"` (rashid PTL-VIZ-002).
 - The style JSON MUST have `version == 8`, `sources`, `layers` (Mapbox GL spec; rashid checks the media type via PTL-VIZ-005).
   `sources.data.url` is a **relative** path to the PMTiles (`../file.pmtiles`),
@@ -141,9 +142,19 @@ render paths.
   carries `["style", "default"]` (rashid PTL-VIZ-006). The old
   `portolan:styles` array is removed; `register_style_assets` strips it on
   every run and `check` reports a collection that still has one (issue #739).
-- `select_default_style_key` picks the default: a mark a publisher already made
-  wins, then `styles/default`, then a lone style. Several unmarked styles get no
-  default, because choosing one is cartography, not bookkeeping.
+- `select_default_style_key` always names a default when styles exist, because
+  PORTO-CORE-070 makes a collection with two styles and no `default` role
+  nonconformant. Precedence: a mark a publisher already made wins, then
+  `styles/default`, then the lexicographically first key. The tie-break reads the
+  keys, not the discovered order, so the answer does not move between runs. When
+  Portolan picks rather than reads the pick, `register_style_assets` prints which
+  style it chose and how to move the role.
+- `register_style_assets` **merges**, it does not rebuild. Only `href`, `type` and
+  `roles` are rewritten from disk; an existing `title`, `description` or any
+  unknown field a publisher added survives a re-run. It also stamps `file:size`
+  and `file:checksum` on each style asset (PORTO-CORE-069) and declares the file
+  extension, reusing `stac_parquet.stamp_file_fields`/`sync_file_extension`
+  (which is why the `viz-is-a-leaf` contract carries one scoped `ignore_imports`).
 - Vary default colors across a catalog so it is not monotone.
 
 ## Partitioning: let geoparquet-io name things, detect Hive by pattern

@@ -593,6 +593,81 @@ class TestEveryRegisteredThumbnailIsTracked:
 
 
 @pytest.mark.unit
+class TestFileExtensionDeclaration:
+    """``file:`` fields oblige the collection to declare the file extension.
+
+    The spec extension registry makes the declaration a conditional MUST once an
+    asset carries ``file:size`` or ``file:checksum`` (Issue #654). The two writers
+    that already sync it — ``declare_file_extension`` and
+    ``stac_parquet.sync_file_extension`` — both run before the thumbnail
+    side-step, so a collection whose only ``file:``-bearing asset is the
+    thumbnail used to end up with the fields and no declaration.
+    """
+
+    FILE_EXT = "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+
+    def _extensions(self, collection_dir: Path) -> list[str]:
+        data = json.loads((collection_dir / "collection.json").read_text(encoding="utf-8"))
+        declared: list[str] = data.get("stac_extensions", [])
+        return declared
+
+    def test_a_thumbnail_only_collection_declares_the_extension(self, tmp_path: Path) -> None:
+        collection_dir = tmp_path / "roads"
+        _write_collection(collection_dir)
+        thumb = collection_dir / "roads.thumb.jpg"
+        thumb.write_bytes(JPEG_BYTES)
+
+        register_collection_thumbnail(collection_dir, thumb)
+
+        assert self._extensions(collection_dir).count(self.FILE_EXT) == 1
+
+    def test_registering_twice_declares_it_once(self, tmp_path: Path) -> None:
+        collection_dir = tmp_path / "roads"
+        _write_collection(collection_dir)
+        thumb = collection_dir / "roads.thumb.jpg"
+        thumb.write_bytes(JPEG_BYTES)
+
+        register_collection_thumbnail(collection_dir, thumb)
+        register_collection_thumbnail(collection_dir, thumb)
+
+        assert self._extensions(collection_dir).count(self.FILE_EXT) == 1
+
+    def test_an_existing_declaration_is_not_duplicated(self, tmp_path: Path) -> None:
+        """The mirror asset already declared it; the thumbnail must not re-add it."""
+        collection_dir = tmp_path / "roads"
+        _write_collection(
+            collection_dir,
+            {
+                "items-parquet": {
+                    "href": "./items.parquet",
+                    "type": "application/vnd.apache.parquet",
+                    "roles": ["stac-items", "collection-mirror"],
+                    "file:size": 12,
+                    "file:checksum": "1220" + "ab" * 32,
+                }
+            },
+        )
+        data = json.loads((collection_dir / "collection.json").read_text(encoding="utf-8"))
+        data["stac_extensions"] = [self.FILE_EXT]
+        (collection_dir / "collection.json").write_text(json.dumps(data), encoding="utf-8")
+        thumb = collection_dir / "roads.thumb.jpg"
+        thumb.write_bytes(JPEG_BYTES)
+
+        register_collection_thumbnail(collection_dir, thumb)
+
+        assert self._extensions(collection_dir) == [self.FILE_EXT]
+
+    def test_the_full_ladder_leaves_the_declaration_in_place(self, tmp_path: Path) -> None:
+        """The wired entry point, not just the writer, produces a valid collection."""
+        collection_dir = _vector_collection(tmp_path)
+
+        ensure_collection_thumbnails(tmp_path, {"roads"})
+
+        assert "file:size" in _thumbnail_assets(collection_dir)["thumbnail"]
+        assert self._extensions(collection_dir).count(self.FILE_EXT) == 1
+
+
+@pytest.mark.unit
 class TestOneAddIsOneVersion:
     """A side-step's derived asset folds into the snapshot ``add`` just wrote.
 

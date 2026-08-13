@@ -97,11 +97,16 @@ class TestCreateItemDatetime:
             datetime=dt,
         )
         assert item.datetime == dt
-        # Explicit datetime should NOT have provisional marker
-        assert "portolan:datetime_provisional" not in item.properties
+        # An explicit datetime carries no sentinel range
+        assert "start_datetime" not in item.properties
 
-    def test_create_item_with_none_datetime_marks_provisional(self) -> None:
-        """Should use open interval and mark as provisional when datetime is None."""
+    def test_create_item_with_none_datetime_uses_the_sentinel_range(self) -> None:
+        """Should use the open interval when datetime is None, with no marker field.
+
+        The provisional handling stayed; ``portolan:datetime_provisional`` did
+        not (issue #654). The sentinel range is what says "temporal extent
+        unknown", and it is spec-defined.
+        """
         from portolan_cli.stac import create_item
 
         item = create_item(
@@ -113,10 +118,10 @@ class TestCreateItemDatetime:
         assert item.datetime is None  # Null datetime (open interval)
         assert item.properties.get("start_datetime") == "1900-01-01T00:00:00Z"
         assert item.properties.get("end_datetime") == "9999-12-31T23:59:59Z"
-        assert item.properties.get("portolan:datetime_provisional") is True
+        assert "portolan:datetime_provisional" not in item.properties
 
-    def test_create_item_explicit_datetime_clears_provisional(self) -> None:
-        """Explicit datetime should NOT have provisional marker."""
+    def test_create_item_explicit_datetime_writes_no_marker(self) -> None:
+        """An explicit datetime leaves no portolan: field behind either."""
         from portolan_cli.stac import create_item
 
         dt = datetime(2020, 1, 1, tzinfo=timezone.utc)
@@ -126,4 +131,4 @@ class TestCreateItemDatetime:
             datetime=dt,
         )
         assert item.datetime == dt
-        assert "portolan:datetime_provisional" not in item.properties
+        assert [key for key in item.properties if key.startswith("portolan:")] == []

@@ -1,9 +1,10 @@
 """Temporal extent handling for STAC items.
 
 - Default to null (open temporal interval) when --datetime not provided
-- Mark null-datetime items as provisional (portolan:datetime_provisional)
+- Publish the sentinel start/end range for a null datetime, which is what says
+  the temporal extent is unknown (no marker field travels with it: the spec
+  defines no portolan: property, issue #654)
 - Accept flexible datetime formats (ISO 8601, YYYY-MM-DD, space-separated)
-- Flag provisional items in portolan check
 """
 
 from __future__ import annotations
