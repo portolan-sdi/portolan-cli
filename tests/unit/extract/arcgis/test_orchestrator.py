@@ -446,6 +446,40 @@ class TestOrchestratorIntegration:
             assert failed_events
             assert all(e.error == "Connection timeout" for e in failed_events)
 
+    def test_style_extraction_exception_does_not_fail_layer(
+        self, mock_discovery_result: ServiceDiscoveryResult, tmp_path: Path
+    ) -> None:
+        """Unexpected exceptions from extract_esri_style are caught; layer still succeeds."""
+        from portolan_cli.extract.arcgis.retry import RetryResult
+
+        with (
+            patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
+            patch("portolan_cli.extract.arcgis.orchestrator.retry_with_backoff") as mock_retry,
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.extract_esri_style"
+            ) as mock_style,
+        ):
+            mock_discover.return_value = mock_discovery_result
+            mock_retry.return_value = RetryResult(
+                success=True,
+                value=(50, 512, 0.5),
+                attempts=1,
+                error=None,
+            )
+            mock_style.side_effect = RuntimeError("Unexpected style error")
+
+            options = ExtractionOptions(raw=True, no_styles=False)
+            result = extract_arcgis_catalog(
+                url=TEST_FEATURE_SERVER_URL,
+                output_dir=tmp_path,
+                options=options,
+            )
+
+        # Layers should still succeed despite style extraction failure
+        assert result.summary.succeeded == 3
+        assert result.summary.failed == 0
+        assert all(r.status == "success" for r in result.layers)
+
 
 # =============================================================================
 # Services root support tests

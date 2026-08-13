@@ -255,6 +255,89 @@ class TestWarningsAndPartialConversion:
         assert len(warnings) > 0
 
 
+class TestNullColorHandling:
+    """Regression tests for ESRI API returning null colors (Arcade expression renderers).
+
+    Some ArcGIS layers use Arcade expressions (e.g., ``"valueExpression":"$view.scale"``)
+    for scale-based rendering. Their symbol JSON may contain ``"color": null``.
+    The converter must handle these gracefully without raising TypeError.
+    """
+
+    def test_simple_renderer_null_color_does_not_crash(self) -> None:
+        """Simple renderer with null symbol color falls back to grey without error."""
+        renderer = {
+            "type": "simple",
+            "symbol": {
+                "type": "esriSFS",
+                "color": None,  # JSON null from Arcade expression renderer
+                "outline": {"color": None, "width": 1},
+            },
+        }
+        style = convert_esri_renderer(renderer, source_layer="data")
+        assert style["version"] == 8
+        fill_layer = style["layers"][0]
+        assert fill_layer["type"] == "fill"
+        assert fill_layer["paint"]["fill-color"] == "#888888"
+
+    def test_simple_renderer_null_symbol_does_not_crash(self) -> None:
+        """Simple renderer with null symbol falls back to default fill without error."""
+        renderer = {
+            "type": "simple",
+            "symbol": None,  # JSON null
+        }
+        style = convert_esri_renderer(renderer, source_layer="data")
+        assert style["version"] == 8
+
+    def test_uniquevalue_renderer_null_colors_does_not_crash(self) -> None:
+        """UniqueValue renderer with null colors in infos falls back gracefully."""
+        renderer = {
+            "type": "uniqueValue",
+            "field1": "category",
+            "uniqueValueInfos": [
+                {"value": "A", "symbol": {"type": "esriSFS", "color": None}},
+                {"value": "B", "symbol": {"type": "esriSFS", "color": [0, 255, 0, 255]}},
+            ],
+        }
+        style = convert_esri_renderer(renderer, source_layer="data")
+        assert style["version"] == 8
+        fill_color = style["layers"][0]["paint"]["fill-color"]
+        # Should be a match expression with fallback grey for null color
+        assert fill_color[0] == "match"
+
+    def test_uniquevalue_renderer_null_symbol_does_not_crash(self) -> None:
+        """UniqueValue renderer with null symbol entry falls back gracefully."""
+        renderer = {
+            "type": "uniqueValue",
+            "field1": "category",
+            "uniqueValueInfos": [
+                {"value": "A", "symbol": None},  # JSON null
+                {"value": "B", "symbol": {"type": "esriSFS", "color": [0, 255, 0, 255]}},
+            ],
+        }
+        style = convert_esri_renderer(renderer, source_layer="data")
+        assert style["version"] == 8
+
+    def test_classbreaks_renderer_null_colors_does_not_crash(self) -> None:
+        """ClassBreaks renderer with null colors falls back gracefully."""
+        renderer = {
+            "type": "classBreaks",
+            "field": "value",
+            "minValue": 0,
+            "classBreakInfos": [
+                {"classMaxValue": 10, "symbol": {"type": "esriSFS", "color": None}},
+                {"classMaxValue": 20, "symbol": {"type": "esriSFS", "color": [255, 0, 0, 255]}},
+            ],
+        }
+        style = convert_esri_renderer(renderer, source_layer="data")
+        assert style["version"] == 8
+
+    def test_symbol_to_layer_type_none_returns_fill(self) -> None:
+        """_symbol_to_layer_type(None) returns 'fill' as the default."""
+        from portolan_cli.extract.common.converters.esri import _symbol_to_layer_type
+
+        assert _symbol_to_layer_type(None) == "fill"
+
+
 # ESRI's default symbol color when a symbol omits "color", and the values it
 # converts to. Several parsers share this literal, so pin it once.
 DEFAULT_ESRI_COLOR = [128, 128, 128, 255]

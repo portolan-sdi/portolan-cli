@@ -231,6 +231,29 @@ class TestExtractESRIStyle:
         style = json.loads(result.path.read_text())
         assert style["layers"][0]["source-layer"] == "TestLayer"
 
+    def test_returns_none_on_unexpected_converter_error(
+        self, tmp_path: Path, sample_layer_json: dict[str, Any]
+    ) -> None:
+        """Returns None when the renderer converter raises an unexpected exception."""
+        collection_path = tmp_path / "test-collection"
+        collection_path.mkdir()
+
+        with (
+            patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch,
+            patch(
+                "portolan_cli.extract.common.styles.convert_esri_renderer"
+            ) as mock_convert,
+        ):
+            mock_fetch.return_value = sample_layer_json
+            mock_convert.side_effect = ValueError("Unexpected internal error")
+
+            result = extract_esri_style(
+                layer_url="https://example.com/FeatureServer/0",
+                collection_path=collection_path,
+            )
+
+        assert result is None
+
 
 class TestStyleFileOutput:
     """Tests for style file writing."""

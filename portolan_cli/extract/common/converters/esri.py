@@ -43,8 +43,10 @@ class ESRIConverterError(Exception):
     pass
 
 
-def _symbol_to_layer_type(symbol: dict[str, Any]) -> str:
+def _symbol_to_layer_type(symbol: dict[str, Any] | None) -> str:
     """Determine Mapbox GL layer type from ESRI symbol type."""
+    if symbol is None:
+        return "fill"
     symbol_type = symbol.get("type", "")
     if symbol_type == "esriSFS":
         return "fill"
@@ -202,7 +204,7 @@ def parse_simple_renderer(
     Returns:
         Complete Mapbox GL style dict.
     """
-    symbol = renderer.get("symbol", {})
+    symbol = renderer.get("symbol") or {}
     layer = _parse_symbol(symbol, "layer-0", source_layer, warnings)
 
     return make_mapbox_style(
@@ -243,21 +245,21 @@ def parse_uniquevalue_renderer(
         )
 
     # Determine layer type from first symbol
-    first_symbol = infos[0].get("symbol", {})
+    first_symbol = infos[0].get("symbol") or {}
     layer_type = _symbol_to_layer_type(first_symbol)
 
     # Build match expression cases
     cases: list[tuple[Any, str]] = []
     for info in infos:
         value = info.get("value")
-        symbol = info.get("symbol", {})
-        color = symbol.get("color", [128, 128, 128, 255])
+        symbol = info.get("symbol") or {}
+        color = symbol.get("color") or [128, 128, 128, 255]
         cases.append((value, esri_color_to_hex(color)))
 
     color_expr = make_match_expression(field, cases, default="#cccccc")
 
     # Get opacity from first symbol
-    first_color = first_symbol.get("color", [128, 128, 128, 255])
+    first_color = first_symbol.get("color") or [128, 128, 128, 255]
     opacity = esri_color_to_opacity(first_color)
 
     # Build appropriate layer type
@@ -322,12 +324,12 @@ def parse_classbreaks_renderer(
         )
 
     # Determine layer type and property to graduate from first symbol
-    first_symbol = break_infos[0].get("symbol", {})
+    first_symbol = break_infos[0].get("symbol") or {}
     layer_type = _symbol_to_layer_type(first_symbol)
 
     # For graduated symbols, we typically vary size (circles) or color
     # Check if sizes vary (graduated symbol) or colors vary (choropleth)
-    sizes = [info.get("symbol", {}).get("size") for info in break_infos]
+    sizes = [(info.get("symbol") or {}).get("size") for info in break_infos]
     sizes_vary = len({s for s in sizes if s is not None}) > 1
 
     if layer_type == "circle" and sizes_vary:
@@ -338,24 +340,24 @@ def parse_classbreaks_renderer(
         for i, info in enumerate(break_infos):
             if i == 0:
                 # Initial value for the range [minValue, classMaxValue]
-                symbol = info.get("symbol", {})
+                symbol = info.get("symbol") or {}
                 size = symbol.get("size", 10)
                 breaks.append((min_value, size / 2))
             else:
                 # Break at previous classMaxValue
                 prev_max = break_infos[i - 1].get("classMaxValue", 0)
-                symbol = info.get("symbol", {})
+                symbol = info.get("symbol") or {}
                 size = symbol.get("size", 10)
                 breaks.append((prev_max, size / 2))
 
         radius_expr = make_step_expression(field, breaks)
 
         # Get color from first symbol (usually same for all in graduated size)
-        color = first_symbol.get("color", [128, 128, 128, 255])
+        color = first_symbol.get("color") or [128, 128, 128, 255]
         circle_color = esri_color_to_hex(color)
 
         # Get stroke if present
-        outline = first_symbol.get("outline", {})
+        outline = first_symbol.get("outline") or {}
         stroke_color = None
         stroke_width = None
         if outline and outline.get("color"):
@@ -376,8 +378,8 @@ def parse_classbreaks_renderer(
         # and make_step_expression uses its color as the below-first-break value.
         color_breaks: list[tuple[Any, Any]] = []
         for i, info in enumerate(break_infos):
-            symbol = info.get("symbol", {})
-            color = esri_color_to_hex(symbol.get("color", [128, 128, 128, 255]))
+            symbol = info.get("symbol") or {}
+            color = esri_color_to_hex(symbol.get("color") or [128, 128, 128, 255])
             if i == 0:
                 color_breaks.append((min_value, color))
             else:
