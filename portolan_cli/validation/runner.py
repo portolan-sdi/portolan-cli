@@ -35,7 +35,7 @@ from rashid import validate
 from rashid.model import Report
 
 from portolan_cli.validation.config import load_public_url, load_rules_config
-from portolan_cli.validation.legacy import detect_legacy_generation
+from portolan_cli.validation.legacy import detect_legacy_notes
 
 #: A structural/schema validator maps one object's raw JSON to schema errors.
 #: Injected by tests to keep them offline and independent of schema churn.
@@ -84,7 +84,10 @@ class CheckOutcome:
         format_report: Source-file convertibility (``scan.check.CheckReport``),
             or None when ``geo_assets=False``. This covers files on disk that
             are not yet catalog assets, which rashid by construction cannot see.
-        legacy_note: Set when the catalog predates the profile schema URI.
+        legacy_note: Set when the catalog carries a marker of an older Portolan
+            generation — no profile schema URI, or a removed property such as
+            ``portolan:styles``. Several markers arrive as one note, blank-line
+            separated (see :mod:`portolan_cli.validation.legacy`).
         live_hint: Set when the catalog is published and ``--live`` was skipped.
         workflow_notice: Unregistered or vanished data files, when there are any.
             A workflow channel, never conformance — see :class:`WorkflowNotice`.
@@ -250,7 +253,7 @@ def run_check(
     return CheckOutcome(
         report=report,
         format_report=format_report,
-        legacy_note=detect_legacy_generation(root),
+        legacy_note=detect_legacy_notes(root),
         live_hint=_live_hint(root, public_url, live=live),
         workflow_notice=notice,
     )

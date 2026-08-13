@@ -15,7 +15,11 @@ from typing import Any
 import pytest
 
 from portolan_cli.constants import PORTOLAN_SCHEMA_URI
-from portolan_cli.validation.legacy import detect_legacy_generation
+from portolan_cli.validation.legacy import (
+    detect_legacy_generation,
+    detect_legacy_notes,
+    detect_style_manifest,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -84,3 +88,91 @@ class TestDetectLegacyGeneration:
         """A plain STAC catalog Portolan never generated is not a legacy catalog."""
         _write(tmp_path / "catalog.json", _catalog())
         assert detect_legacy_generation(tmp_path) is None
+
+
+def _collection(**extra: Any) -> dict[str, Any]:
+    return {
+        "type": "Collection",
+        "stac_version": "1.1.0",
+        "id": "roads",
+        "description": "Roads.",
+        "license": "CC-BY-4.0",
+        "extent": {},
+        "links": [],
+        **extra,
+    }
+
+
+class TestDetectStyleManifest:
+    """The removed portolan:styles property (issue #739).
+
+    No rashid rule can report this: a rule fires on a spec requirement an
+    object fails, and the spec no longer names the property at all.
+    """
+
+    def test_collection_with_the_manifest_is_flagged(self, tmp_path: Path) -> None:
+        _write(tmp_path / "catalog.json", _catalog(stac_extensions=[PORTOLAN_SCHEMA_URI]))
+        _write(
+            tmp_path / "roads" / "collection.json",
+            _collection(**{"portolan:styles": ["styles/default"]}),
+        )
+        note = detect_style_manifest(tmp_path)
+        assert note is not None
+        assert "portolan:styles" in note
+
+    def test_nested_collection_is_found(self, tmp_path: Path) -> None:
+        """Collections nest under intermediate catalogs at any depth."""
+        _write(tmp_path / "catalog.json", _catalog())
+        _write(
+            tmp_path / "transport" / "roads" / "collection.json",
+            _collection(**{"portolan:styles": []}),
+        )
+        assert detect_style_manifest(tmp_path) is not None
+
+    def test_current_collection_is_not_flagged(self, tmp_path: Path) -> None:
+        _write(tmp_path / "catalog.json", _catalog())
+        _write(
+            tmp_path / "roads" / "collection.json",
+            _collection(assets={"styles/default": {"roles": ["style", "default"]}}),
+        )
+        assert detect_style_manifest(tmp_path) is None
+
+    def test_empty_catalog_is_not_flagged(self, tmp_path: Path) -> None:
+        assert detect_style_manifest(tmp_path) is None
+
+    def test_unparseable_collection_is_not_flagged(self, tmp_path: Path) -> None:
+        (tmp_path / "roads").mkdir()
+        (tmp_path / "roads" / "collection.json").write_text("{ not json", encoding="utf-8")
+        assert detect_style_manifest(tmp_path) is None
+
+
+class TestDetectLegacyNotes:
+    """The detectors are independent, and `check` reports them as one note."""
+
+    def test_current_catalog_has_no_note(self, tmp_path: Path) -> None:
+        _write(tmp_path / "catalog.json", _catalog(stac_extensions=[PORTOLAN_SCHEMA_URI]))
+        _write(tmp_path / "roads" / "collection.json", _collection())
+        assert detect_legacy_notes(tmp_path) is None
+
+    def test_style_manifest_alone_is_reported(self, tmp_path: Path) -> None:
+        """A catalog can be current in every other respect and still carry it."""
+        _write(tmp_path / "catalog.json", _catalog(stac_extensions=[PORTOLAN_SCHEMA_URI]))
+        _write(
+            tmp_path / "roads" / "collection.json",
+            _collection(**{"portolan:styles": ["styles/default"]}),
+        )
+        note = detect_legacy_notes(tmp_path)
+        assert note is not None
+        assert "portolan:styles" in note
+        assert "predates" not in note
+
+    def test_both_markers_are_joined(self, tmp_path: Path) -> None:
+        _write(tmp_path / "catalog.json", _catalog(**{"portolan:version": "0.0.9"}))
+        _write(
+            tmp_path / "roads" / "collection.json",
+            _collection(**{"portolan:styles": ["styles/default"]}),
+        )
+        note = detect_legacy_notes(tmp_path)
+        assert note is not None
+        assert "portolan check --fix" in note
+        assert "portolan:styles" in note

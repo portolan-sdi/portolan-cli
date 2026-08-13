@@ -31,6 +31,14 @@ PORTOLAN_SCHEMA_URI: str = (
     f"https://schemas.portolan-sdi.org/portolan/v{PORTOLAN_SPEC_VERSION}/schema.json"
 )
 
+# The collection property that once listed style asset keys in display order.
+# The spec removed it (issue #739): a client filters assets on the ``style``
+# role to find the styles and on ``default`` to find the one to draw first, so
+# a manifest would be a second copy of the same fact. Portolan wrote it through
+# 1.0.0b0, which is why both the generator (viz.style) and `check`
+# (validation.legacy) still name it — one to strip it, the other to report it.
+LEGACY_STYLE_MANIFEST_FIELD: str = "portolan:styles"
+
 # The partition extension a Hive-partitioned collection declares.
 # rashid's PTL-PRT-001 recognizes the incubating URI namespace, so generation
 # and `check --fix` both emit this one; the older github.io URL it replaced was

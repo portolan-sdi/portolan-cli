@@ -165,7 +165,7 @@ styles:
 
     @pytest.mark.integration
     def test_style_registered_as_stac_asset(self, tmp_path: Path) -> None:
-        """Style files are registered as STAC assets with portolan:styles manifest."""
+        """Style files are registered as STAC assets carrying the style role."""
         from portolan_cli.viz.style import (
             VectorStyleConfig,
             discover_styles,
@@ -213,8 +213,8 @@ styles:
         collection = json.loads((collection_path / "collection.json").read_text())
 
         assert "styles/default" in collection["assets"]
-        assert collection["assets"]["styles/default"]["roles"] == ["style"]
-        assert collection["portolan:styles"] == ["styles/default"]
+        assert collection["assets"]["styles/default"]["roles"] == ["style", "default"]
+        assert "portolan:styles" not in collection
 
 
 # =============================================================================

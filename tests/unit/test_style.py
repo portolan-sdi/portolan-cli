@@ -322,8 +322,8 @@ class TestDiscoverStyles:
         assert styles[0].title == "custom-theme"
 
 
-class TestBuildStylesManifest:
-    """Tests for build_styles_manifest function."""
+class TestSelectDefaultStyleKey:
+    """Which style asset carries the `default` role (issue #739)."""
 
     @staticmethod
     def _style_info(key: str) -> StyleInfo:
@@ -332,9 +332,9 @@ class TestBuildStylesManifest:
         return StyleInfo(key=key, href="", title="", description="", path=Path())
 
     @pytest.mark.unit
-    def test_default_first(self) -> None:
-        """Default style always first regardless of input order."""
-        from portolan_cli.viz.style import build_styles_manifest
+    def test_generated_default_wins_when_nothing_is_marked(self) -> None:
+        """styles/default is the default until a publisher says otherwise."""
+        from portolan_cli.viz.style import select_default_style_key
 
         styles = [
             self._style_info("styles/zebra"),
@@ -342,60 +342,73 @@ class TestBuildStylesManifest:
             self._style_info("styles/alpha"),
         ]
 
-        manifest = build_styles_manifest(styles)
-
-        assert manifest[0] == "styles/default"
-        assert len(manifest) == 3
+        assert select_default_style_key(styles, {}) == "styles/default"
 
     @pytest.mark.unit
-    def test_alphabetical_after_default(self) -> None:
-        """Non-default styles sorted alphabetically."""
-        from portolan_cli.viz.style import build_styles_manifest
+    def test_existing_mark_beats_the_generated_key(self) -> None:
+        """A publisher's choice outranks the key Portolan generates."""
+        from portolan_cli.viz.style import select_default_style_key
 
-        styles = [
-            self._style_info("styles/zebra"),
-            self._style_info("styles/default"),
-            self._style_info("styles/alpha"),
-            self._style_info("styles/beta"),
-        ]
+        styles = [self._style_info("styles/default"), self._style_info("styles/alpha")]
+        assets = {"styles/alpha": {"roles": ["style", "default"]}}
 
-        manifest = build_styles_manifest(styles)
-
-        assert manifest == ["styles/default", "styles/alpha", "styles/beta", "styles/zebra"]
+        assert select_default_style_key(styles, assets) == "styles/alpha"
 
     @pytest.mark.unit
-    def test_no_default(self) -> None:
-        """Works without a style named 'default'."""
-        from portolan_cli.viz.style import build_styles_manifest
+    def test_two_marked_styles_fall_back_to_the_generated_key(self) -> None:
+        """A catalog marking two defaults is broken; regeneration repairs it."""
+        from portolan_cli.viz.style import select_default_style_key
 
-        styles = [
-            self._style_info("styles/zebra"),
-            self._style_info("styles/alpha"),
-        ]
+        styles = [self._style_info("styles/default"), self._style_info("styles/alpha")]
+        assets = {
+            "styles/alpha": {"roles": ["style", "default"]},
+            "styles/default": {"roles": ["style", "default"]},
+        }
 
-        manifest = build_styles_manifest(styles)
-
-        assert manifest == ["styles/alpha", "styles/zebra"]
-
-    @pytest.mark.unit
-    def test_empty_list(self) -> None:
-        """Empty input returns empty output."""
-        from portolan_cli.viz.style import build_styles_manifest
-
-        manifest = build_styles_manifest([])
-
-        assert manifest == []
+        assert select_default_style_key(styles, assets) == "styles/default"
 
     @pytest.mark.unit
-    def test_single_style(self) -> None:
-        """Single style returns single-element list."""
-        from portolan_cli.viz.style import build_styles_manifest
+    def test_a_mark_on_a_deleted_style_does_not_count(self) -> None:
+        """Only a style still on disk can hold the role."""
+        from portolan_cli.viz.style import select_default_style_key
 
-        styles = [self._style_info("styles/custom")]
+        styles = [self._style_info("styles/alpha"), self._style_info("styles/zebra")]
+        assets = {"styles/gone": {"roles": ["style", "default"]}}
 
-        manifest = build_styles_manifest(styles)
+        assert select_default_style_key(styles, assets) is None
 
-        assert manifest == ["styles/custom"]
+    @pytest.mark.unit
+    def test_lone_style_is_the_default(self) -> None:
+        """One style is the default implicitly, and gets the role anyway."""
+        from portolan_cli.viz.style import select_default_style_key
+
+        assert select_default_style_key([self._style_info("styles/custom")], {}) == "styles/custom"
+
+    @pytest.mark.unit
+    def test_several_unmarked_styles_have_no_default(self) -> None:
+        """Portolan will not invent a cartographic decision (PTL-VIZ-006)."""
+        from portolan_cli.viz.style import select_default_style_key
+
+        styles = [self._style_info("styles/zebra"), self._style_info("styles/alpha")]
+
+        assert select_default_style_key(styles, {}) is None
+
+    @pytest.mark.unit
+    def test_no_styles_have_no_default(self) -> None:
+        """Empty input selects nothing."""
+        from portolan_cli.viz.style import select_default_style_key
+
+        assert select_default_style_key([], {}) is None
+
+    @pytest.mark.unit
+    def test_malformed_roles_are_ignored(self) -> None:
+        """A roles value that is not a list of strings cannot mark a default."""
+        from portolan_cli.viz.style import select_default_style_key
+
+        styles = [self._style_info("styles/alpha"), self._style_info("styles/zebra")]
+        assets = {"styles/alpha": {"roles": "default"}, "styles/zebra": ["not", "an", "asset"]}
+
+        assert select_default_style_key(styles, assets) is None
 
 
 # =============================================================================
@@ -875,14 +888,91 @@ class TestRegisterStyleAssets:
 
         default_asset = updated["assets"]["styles/default"]
         assert default_asset["type"] == "application/vnd.mapbox.style+json"
-        assert default_asset["roles"] == ["style"]
+        assert default_asset["roles"] == ["style", "default"]
         assert default_asset["title"] == "Default"
 
         by_age_asset = updated["assets"]["styles/by-age"]
+        assert by_age_asset["roles"] == ["style"]
         assert by_age_asset["title"] == "By Age"
         assert by_age_asset["description"] == "Buildings colored by construction year"
 
-        assert updated["portolan:styles"] == ["styles/default", "styles/by-age"]
+        assert "portolan:styles" not in updated
+
+    @pytest.mark.unit
+    def test_lone_style_is_the_default(self, tmp_path: Path) -> None:
+        """A collection's only style carries the default role too (issue #739)."""
+        import json
+
+        from portolan_cli.viz.style import discover_styles, register_style_assets
+
+        (tmp_path / "collection.json").write_text(
+            json.dumps({"type": "Collection", "id": "test", "assets": {}})
+        )
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+        (styles_dir / "muted.json").write_text('{"version":8,"name":"Muted","layers":[]}')
+
+        register_style_assets(tmp_path, discover_styles(tmp_path))
+
+        updated = json.loads((tmp_path / "collection.json").read_text())
+        assert updated["assets"]["styles/muted"]["roles"] == ["style", "default"]
+
+    @pytest.mark.unit
+    def test_marked_default_survives_regeneration(self, tmp_path: Path) -> None:
+        """A publisher's default choice outlives a re-run (issue #739)."""
+        import json
+
+        from portolan_cli.viz.style import discover_styles, register_style_assets
+
+        (tmp_path / "collection.json").write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "id": "test",
+                    "assets": {
+                        "styles/by-age": {
+                            "href": "./styles/by-age.json",
+                            "roles": ["style", "default"],
+                        },
+                        "styles/default": {
+                            "href": "./styles/default.json",
+                            "roles": ["style"],
+                        },
+                    },
+                }
+            )
+        )
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+        (styles_dir / "default.json").write_text('{"version":8,"name":"Default","layers":[]}')
+        (styles_dir / "by-age.json").write_text('{"version":8,"name":"By Age","layers":[]}')
+
+        register_style_assets(tmp_path, discover_styles(tmp_path))
+
+        updated = json.loads((tmp_path / "collection.json").read_text())
+        assert updated["assets"]["styles/by-age"]["roles"] == ["style", "default"]
+        assert updated["assets"]["styles/default"]["roles"] == ["style"]
+
+    @pytest.mark.unit
+    def test_ambiguous_styles_get_no_default(self, tmp_path: Path) -> None:
+        """Several unmarked styles and no styles/default: PTL-VIZ-006 asks a human."""
+        import json
+
+        from portolan_cli.viz.style import discover_styles, register_style_assets
+
+        (tmp_path / "collection.json").write_text(
+            json.dumps({"type": "Collection", "id": "test", "assets": {}})
+        )
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+        (styles_dir / "muted.json").write_text('{"version":8,"name":"Muted","layers":[]}')
+        (styles_dir / "vivid.json").write_text('{"version":8,"name":"Vivid","layers":[]}')
+
+        register_style_assets(tmp_path, discover_styles(tmp_path))
+
+        updated = json.loads((tmp_path / "collection.json").read_text())
+        roles = [asset["roles"] for asset in updated["assets"].values()]
+        assert roles == [["style"], ["style"]]
 
     @pytest.mark.unit
     def test_no_styles_no_manifest(self, tmp_path: Path) -> None:
@@ -958,7 +1048,39 @@ class TestRegisterStyleAssets:
 
         updated = json.loads((tmp_path / "collection.json").read_text())
         assert "styles/old" not in updated["assets"]
-        assert updated["portolan:styles"] == ["styles/default"]
+        assert "portolan:styles" not in updated
+
+    @pytest.mark.unit
+    def test_strips_the_removed_manifest(self, tmp_path: Path) -> None:
+        """Registering styles migrates a collection off portolan:styles (issue #739)."""
+        import json
+
+        from portolan_cli.viz.style import discover_styles, register_style_assets
+
+        (tmp_path / "collection.json").write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "id": "test",
+                    "portolan:styles": ["styles/default"],
+                    "assets": {
+                        "styles/default": {
+                            "href": "./styles/default.json",
+                            "roles": ["style"],
+                        }
+                    },
+                }
+            )
+        )
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+        (styles_dir / "default.json").write_text('{"version":8,"name":"Default","layers":[]}')
+
+        register_style_assets(tmp_path, discover_styles(tmp_path))
+
+        updated = json.loads((tmp_path / "collection.json").read_text())
+        assert "portolan:styles" not in updated
+        assert updated["assets"]["styles/default"]["roles"] == ["style", "default"]
 
 
 # =============================================================================
