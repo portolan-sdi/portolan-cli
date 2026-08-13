@@ -118,7 +118,7 @@ or double-count machine metadata. This caused repeated data-loss bugs.
 
 - **Preserve human-enrichable fields**: `asset.title`, `asset.description`,
   `table:columns[].description`, collection `description`, `providers`,
-  `license`, `links`, `portolan:styles`.
+  `license`, `links`.
 - **Only update machine-derivable fields**: `href`, `type` (media type),
   `roles`, `table:row_count`, column `name`/`type`, `proj:epsg`,
   `extent.bbox`, summaries. These travel under known prefixes
