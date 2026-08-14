@@ -87,10 +87,11 @@ EXPECTED_ADVISORIES: dict[str, int] = {
     # `_apply_table_extension` in finalization.py gates on FormatType.VECTOR, so
     # the tabular writer never reaches it.
     "PTL-DAT-015": 1,
-    # PTL-VIZ-001, on the tabular collection: rashid cannot decide from metadata
-    # alone whether a geometry-less Parquet collection is geospatial, so it
-    # softens the thumbnail MUST to a warning rather than skipping it. Filed
-    # upstream as rashid#118; Portolan is right not to render a thumbnail here.
+    # PTL-VIZ-001, on that same tabular collection, and downstream of the line
+    # above rather than separate from it. `table:columns` is how rashid decides
+    # whether a collection is geospatial; without it the question is undecidable,
+    # so it softens the thumbnail MUST to a warning instead of skipping the check.
+    # Documenting the columns would answer it and retire both entries at once.
     "PTL-VIZ-001": 1,
     # PTL-PRO-002, once per collection: every collection is a mirror, because
     # metadata.yaml names a producer distinct from the host. Advisory — a
