@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import shutil
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -90,17 +91,6 @@ EXPECTED_ADVISORIES: dict[str, int] = {
     # PTL-DAT-010, twice, one per raster item: the valid-percent half of the
     # PTL-DAT-009 sidecar problem above. Same root cause, same issue #748.
     "PTL-DAT-010": 2,
-    # PTL-DAT-015 (issue #749): the tabular collection documents no
-    # `table:columns`. `_apply_table_extension` in finalization.py gates on
-    # FormatType.VECTOR, so the tabular writer never reaches it.
-    "PTL-DAT-015": 1,
-    # PTL-VIZ-001, on that same tabular collection, and downstream of the line
-    # above rather than separate from it. `table:columns` is how rashid decides
-    # whether a collection is geospatial. Without it the question is undecidable,
-    # so rashid softens the thumbnail MUST to a warning instead of skipping the
-    # check. Documenting the columns answers it and retires both entries, which
-    # is why #749 covers this line too.
-    "PTL-VIZ-001": 1,
     # PTL-PRO-002, once per collection: every collection is a mirror, because
     # metadata.yaml names a producer distinct from the host. Advisory — a
     # rel:'canonical' link is only meaningful when the upstream publishes STAC.
@@ -158,11 +148,23 @@ def _build_catalog(root: Path) -> None:
     shutil.copy(FIXTURE, nested_dir / "quality.parquet")
 
     # A geometry-less Parquet exercises the tabular path, which writes its
-    # collection.json outside finalize_items.
+    # collection.json outside finalize_items. The timestamp column is load-bearing
+    # (issue #749): PTL-DAT-015 asks a tabular collection for `table:columns` and,
+    # only when the data has a time dimension, for `extent.temporal`. Without a
+    # temporal column the gate would cover half the rule and call it done.
     tabular_dir = root / "demographics"
     tabular_dir.mkdir(parents=True)
     pq.write_table(
-        pa.table({"tract_id": ["001", "002"], "population": [5000, 7500]}),
+        pa.table(
+            {
+                "tract_id": ["001", "002"],
+                "population": [5000, 7500],
+                "surveyed_at": pa.array(
+                    [datetime(2020, 4, 1), datetime(2020, 9, 30)],
+                    pa.timestamp("us"),
+                ),
+            }
+        ),
         tabular_dir / "census.parquet",
     )
 
@@ -688,6 +690,70 @@ class TestThumbnailsSurviveARealPass:
         collection = _load(generated_catalog / "demographics" / "collection.json")
 
         assert "thumbnail" not in collection["assets"]
+
+
+class TestTheTabularCollectionDocumentsItsTable:
+    """#749: a tabular collection answers both Tabular Data SHOULDs.
+
+    The advisory counts above prove PTL-DAT-015 stopped firing. These read the
+    emitted bytes instead, because a rule can go quiet for the wrong reason —
+    an unreadable Parquet makes rashid skip the check entirely. Asserting the
+    column names and the derived interval pins the values, not just the silence.
+    """
+
+    def test_columns_land_on_the_collection(self, generated_catalog: Path) -> None:
+        """The collection is the table, so its schema belongs at collection level.
+
+        ``readme`` and ``metadata`` read ``table:columns`` from here, not from
+        the asset, so a schema parked on the asset would be invisible to both.
+        """
+        collection = _load(generated_catalog / "demographics" / "collection.json")
+
+        assert [column["name"] for column in collection["table:columns"]] == [
+            "tract_id",
+            "population",
+            "surveyed_at",
+        ]
+        assert [column["type"] for column in collection["table:columns"]] == [
+            "string",
+            "int64",
+            "timestamp[us]",
+        ]
+        assert collection["table:row_count"] == 2
+        assert "table:primary_geometry" not in collection
+
+    def test_the_table_extension_is_declared(self, generated_catalog: Path) -> None:
+        collection = _load(generated_catalog / "demographics" / "collection.json")
+
+        assert (
+            "https://stac-extensions.github.io/table/v1.2.0/schema.json"
+            in collection["stac_extensions"]
+        )
+
+    def test_the_temporal_extent_comes_from_the_timestamp_column(
+        self, generated_catalog: Path
+    ) -> None:
+        """Read from Parquet column statistics, not from the clock.
+
+        The bounds are the fixture's own values, so a fallback to "now" or to
+        the sentinel ``[[null, null]]`` fails here rather than passing quietly.
+        """
+        collection = _load(generated_catalog / "demographics" / "collection.json")
+
+        assert collection["extent"]["temporal"]["interval"] == [
+            ["2020-04-01T00:00:00Z", "2020-09-30T00:00:00Z"]
+        ]
+
+    def test_the_geo_collections_keep_their_own_schema(self, generated_catalog: Path) -> None:
+        """The tabular writer must not reach a collection it does not own.
+
+        Both writers stamp ``table:columns`` at collection level, so a geo
+        collection is where a mistargeted tabular stamp would surface.
+        """
+        collection = _load(generated_catalog / "roads" / "collection.json")
+
+        assert "geometry" in {column["name"] for column in collection["table:columns"]}
+        assert "tract_id" not in {column["name"] for column in collection["table:columns"]}
 
 
 class TestNoUndefinedPortolanFieldsAreEmitted:
