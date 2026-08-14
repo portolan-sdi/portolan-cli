@@ -45,7 +45,13 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 FIXTURE = FIXTURES / "simple.parquet"
 RGB_COG = FIXTURES / "raster" / "valid" / "rgb.tif"
 SINGLEBAND_COG = FIXTURES / "raster" / "valid" / "singleband.tif"
-POINTS = FIXTURES / "vector" / "valid" / "points.geojson"
+# Ten points in CRS84, GeoParquet 1.1. An earlier draft fed the GeoJSON these
+# were converted from and let `add` convert it, which tiled on Linux and
+# silently produced nothing on macOS. Handing the converted file over directly
+# drops that hop and the platform split with it. The older realdata Parquet
+# fixtures cannot stand in: they declare GeoParquet 1.0.0, which PTL-DAT-012
+# rejects outright.
+POINTS = FIXTURES / "vector" / "valid" / "points.parquet"
 RASTER_SCHEMA = FIXTURES / "schemas" / "raster-v2.0.0.schema.json"
 
 # A real 1x1 transparent PNG. rashid reads logo bytes, so magic bytes alone
@@ -245,11 +251,11 @@ def _build_visual_catalog(root: Path) -> None:
     """
     collection_dir = root / "places"
     (collection_dir / "styles").mkdir(parents=True)
-    # points.geojson, not simple.parquet: tippecanoe needs two distinct feature
-    # locations to guess a maxzoom, and simple.parquet holds one point. It is
-    # also EPSG:4326, which matters because the thumbnail renderer returns None
-    # on a projected CRS and the collection would then fail PTL-VIZ-001.
-    shutil.copy(POINTS, collection_dir / "places.geojson")
+    # Not simple.parquet: tippecanoe needs two distinct feature locations to
+    # guess a maxzoom, and simple.parquet holds one point. Not the UTM buildings
+    # fixture either, because the thumbnail renderer returns None on a projected
+    # CRS and the collection would then fail PTL-VIZ-001.
+    shutil.copy(POINTS, collection_dir / "places.parquet")
     for name, title in (("aqua", "Aqua"), ("zebra", "Zebra")):
         (collection_dir / "styles" / f"{name}.json").write_text(
             json.dumps({"version": 8, "name": title, "sources": {}, "layers": []}),
@@ -283,11 +289,22 @@ def _build_visual_catalog(root: Path) -> None:
             "--portolan-dir",
             str(root),
             "--pmtiles",
-            str(collection_dir / "places.geojson"),
+            str(collection_dir / "places.parquet"),
         ],
         catch_exceptions=False,
     )
     assert result.exit_code == 0, result.output
+
+    # Fail here, loudly, rather than three assertion errors down the file.
+    # `register_style_assets` runs at the end of PMTiles generation, outside the
+    # per-asset try block, so a collection can come back with its hand-written
+    # styles registered and no tiles at all. That shape reads as "the default
+    # style is missing" and "there is no tiles asset" instead of "tiling did not
+    # run", which is what actually happened.
+    assert (collection_dir / "places.pmtiles").is_file(), (
+        f"tippecanoe produced no tiles, so the styles and PMTiles assertions "
+        f"below would report the wrong defect. add output:\n{result.output}"
+    )
 
 
 @pytest.fixture(scope="module")

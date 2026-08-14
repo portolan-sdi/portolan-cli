@@ -131,6 +131,24 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "links",
         "Repoint the structural link at the object it claims to reference.",
     ),
+    # The three logo rules arrived with rashid 0.1.5. `portolan logo` and
+    # `init --logo` write a conformant link, so a defect here means the link was
+    # hand-edited or predates the command. Repairing it needs the image, which
+    # `--fix` has no way to choose, so all three instruct.
+    "PTL-LNK-007": _instruct(
+        "Give the rel:'icon' link a browser-displayable image type: apng, avif, "
+        "gif, jpeg, png, svg+xml, or webp. Re-run `portolan logo <file>` to have "
+        "the type set from the file."
+    ),
+    "PTL-LNK-008": _instruct(
+        "Title the rel:'icon' link so it has an accessible label; "
+        "`portolan logo <file> --title` writes one."
+    ),
+    "PTL-LNK-009": _instruct(
+        "Make the rel:'icon' href relative, so the catalog stays portable. "
+        "`portolan logo <file>` publishes the image under _assets/ and links it "
+        "relatively."
+    ),
     # ---- bbox: derivable from the assets it summarizes ----
     # fixer `bbox` wraps bbox.py's extent computation
     "PTL-BBX-001": _auto(
@@ -153,6 +171,15 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     "PTL-AST-005": _instruct(
         "Move the asset onto a collection or an item; a catalog organizes, it does not carry data."
     ),
+    # Not AUTO despite looking mechanical. The `assets` fixer backfills a media
+    # type only when one is missing, and never overwrites a type already there.
+    # A wrong type here is a claim about the bytes, and correcting it without
+    # reading them would be a guess.
+    "PTL-AST-006": _instruct(
+        "Set the raster data asset's type to "
+        "'image/tiff; application=geotiff; profile=cloud-optimized', or convert "
+        "the file to a COG if it is not one, with `portolan check --fix --geo-assets`."
+    ),
     # ---- conformance ----
     # fixer `schema_uri` wraps catalog.ensure_schema_uris
     "PTL-CNF-001": _auto(
@@ -166,6 +193,15 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     "PTL-CNF-003": _instruct(
         "Declare the STAC version extension on the versioned collection, "
         "then populate its version fields."
+    ),
+    # The rule that would have caught the raster v1.1.0 drift in #654. It is a
+    # warning upstream and it instructs here, for the same reason: a catalog
+    # published before the registry moved is behind, not broken. Rewriting the
+    # URI also changes which schema the object must satisfy, which is a decision
+    # a sweep should not make on the operator's behalf.
+    "PTL-CNF-004": _instruct(
+        "Move the declared extension URI to the version the Portolan registry "
+        "pins, then re-run generation so the fields match that version's schema."
     ),
     # ---- visualization ----
     "PTL-VIZ-001": _auto(
