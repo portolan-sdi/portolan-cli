@@ -442,15 +442,23 @@ def generate_vector_fixtures() -> None:
 
 
 def convert_to_geoparquet() -> None:
-    """Convert GeoJSON fixtures to GeoParquet using geoparquet-io.
+    """Convert points.geojson to GeoParquet using geoparquet-io.
 
-    NOTE: As of issue #57, the primary GeoParquet test fixture is now
-    tests/fixtures/realdata/open-buildings.parquet (real-world data).
-    This function is kept for testing GPIO conversion paths but no longer
-    generates the main parquet fixture.
+    The realdata Parquet fixtures stay the primary real-world inputs (issue
+    #57), but they declare GeoParquet 1.0.0, which PTL-DAT-012 rejects. The
+    conformance gate needs an input a conformant catalog can be built from, so
+    this writes one: ten points in CRS84, GeoParquet 1.1, about 1.5 KB.
+
+    Running the conversion through geoparquet-io rather than writing the file by
+    hand keeps the fixture identical to what ``portolan add`` would emit from the
+    same GeoJSON.
     """
-    # No longer generating points.parquet - using realdata/open-buildings.parquet instead
-    print("Skipping GeoParquet generation (using real-world fixtures)")
+    import geoparquet_io as gpio
+
+    source = FIXTURES_DIR / "vector" / "valid" / "points.geojson"
+    output = source.with_suffix(".parquet")
+    gpio.convert(str(source)).write(str(output))
+    print(f"Generated {output.relative_to(FIXTURES_DIR)}")
 
 
 def generate_raster_fixtures() -> None:

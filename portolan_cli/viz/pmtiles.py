@@ -32,6 +32,7 @@ from typing import Any
 from portolan_cli.errors import PortolanError
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import error, info, success, warn
+from portolan_cli.stac_parquet import stamp_file_fields, sync_file_extension
 from portolan_cli.versions import track_generated_assets
 
 # The PMTiles constants and pure asset/link classifiers now live in the
@@ -405,6 +406,12 @@ def add_pmtiles_asset_to_collection(
                     existing[key] = value
                     needs_update = True
 
+        # Regeneration rewrites the tiles, so a stale digest is worse than none.
+        if stamp_file_fields(existing, collection_path):
+            needs_update = True
+        if sync_file_extension(data, assets, collection_json_path):
+            needs_update = True
+
         if needs_update:
             write_json_atomic(collection_json_path, data)
         return
@@ -422,6 +429,13 @@ def add_pmtiles_asset_to_collection(
 
     assets[pmtiles_key] = asset_dict
     data["assets"] = assets
+
+    # PORTO-CORE-028 asks every asset for file:size and file:checksum. The style
+    # and thumbnail writers stamp theirs; PMTiles was the one visual artifact
+    # that shipped without them, drawing a PTL-AST-003 warning nothing caught
+    # until the gate started reading warnings (issue #746).
+    stamp_file_fields(asset_dict, collection_path)
+    sync_file_extension(data, assets, collection_json_path)
 
     write_json_atomic(collection_json_path, data)
 

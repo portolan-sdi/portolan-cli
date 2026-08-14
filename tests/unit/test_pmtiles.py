@@ -291,6 +291,98 @@ class TestAddPMTilesAssetToCollection:
         # Should still have exactly 2 assets
         assert len(updated["assets"]) == 2
 
+    @pytest.mark.unit
+    def test_stamps_file_fields_on_a_new_asset(self, tmp_path: Path) -> None:
+        """PORTO-CORE-028: the tiles asset claims its own size and checksum.
+
+        The style and thumbnail writers already did this. PMTiles was the one
+        visual artifact shipping without it, which cost two PTL-AST-003 warnings
+        nobody saw until the conformance gate started reading warnings (#746).
+        """
+        from portolan_cli.viz.pmtiles import add_pmtiles_asset_to_collection
+
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+        (collection_dir / "data.pmtiles").write_bytes(b"tile bytes")
+        (collection_dir / "collection.json").write_text(
+            json.dumps({"type": "Collection", "assets": {"data": {"href": "./data.parquet"}}})
+        )
+
+        add_pmtiles_asset_to_collection(collection_dir, "data", "./data.pmtiles")
+
+        updated = json.loads((collection_dir / "collection.json").read_text())
+        tiles = updated["assets"]["data-tiles"]
+
+        assert tiles["file:size"] == len(b"tile bytes")
+        # Multihash, not a bare digest: 0x12 sha2-256, 0x20 32 bytes.
+        assert tiles["file:checksum"].startswith("1220")
+        assert (
+            "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+            in updated["stac_extensions"]
+        )
+
+    @pytest.mark.unit
+    def test_regenerating_tiles_restamps_the_existing_asset(self, tmp_path: Path) -> None:
+        """A stale digest is a false claim about bytes, worse than no claim.
+
+        PORTO-CORE-030 makes a published ``file:checksum`` a statement about what
+        the href resolves to, and rashid's data pass reports a mismatch as an
+        error. Regeneration rewrites the tiles, so the asset already on disk has
+        to be restamped rather than left alone.
+        """
+        from portolan_cli.viz.pmtiles import add_pmtiles_asset_to_collection
+
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+        (collection_dir / "data.pmtiles").write_bytes(b"first")
+        (collection_dir / "collection.json").write_text(
+            json.dumps({"type": "Collection", "assets": {"data": {"href": "./data.parquet"}}})
+        )
+
+        add_pmtiles_asset_to_collection(collection_dir, "data", "./data.pmtiles")
+        stale = json.loads((collection_dir / "collection.json").read_text())
+        stale_asset = stale["assets"]["data-tiles"]
+
+        (collection_dir / "data.pmtiles").write_bytes(b"second, and longer")
+        add_pmtiles_asset_to_collection(collection_dir, "data", "./data.pmtiles")
+
+        fresh = json.loads((collection_dir / "collection.json").read_text())["assets"]["data-tiles"]
+
+        assert fresh["file:size"] == len(b"second, and longer")
+        assert fresh["file:size"] != stale_asset["file:size"]
+        assert fresh["file:checksum"] != stale_asset["file:checksum"]
+
+    @pytest.mark.unit
+    def test_a_dropped_file_extension_is_declared_again(self, tmp_path: Path) -> None:
+        """Declaring the extension is a conditional MUST, so it has to self-heal.
+
+        An asset carrying ``file:`` fields obliges its collection to declare
+        file/v2.1.0. Hand-editing or an older writer can leave the fields without
+        the declaration, and the next run has to put it back rather than assume
+        the first run got there.
+        """
+        from portolan_cli.viz.pmtiles import add_pmtiles_asset_to_collection
+
+        file_ext = "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+        (collection_dir / "data.pmtiles").write_bytes(b"tile bytes")
+        collection_json = collection_dir / "collection.json"
+        collection_json.write_text(
+            json.dumps({"type": "Collection", "assets": {"data": {"href": "./data.parquet"}}})
+        )
+
+        add_pmtiles_asset_to_collection(collection_dir, "data", "./data.pmtiles")
+
+        stripped = json.loads(collection_json.read_text())
+        stripped["stac_extensions"] = [e for e in stripped["stac_extensions"] if e != file_ext]
+        collection_json.write_text(json.dumps(stripped))
+        assert file_ext not in json.loads(collection_json.read_text())["stac_extensions"]
+
+        add_pmtiles_asset_to_collection(collection_dir, "data", "./data.pmtiles")
+
+        assert file_ext in json.loads(collection_json.read_text())["stac_extensions"]
+
 
 class TestAddPMTilesLinkToCollection:
     """Tests for add_pmtiles_link_to_collection (Issue #569)."""
