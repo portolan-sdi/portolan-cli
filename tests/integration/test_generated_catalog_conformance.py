@@ -68,10 +68,11 @@ KNOWN_GAPS = frozenset(
         # rule cannot see per-row-group extents. Surfaced when rashid 0.1.1
         # promoted the data pass to default-on.
         "PTL-DAT-007",
-        # PTL-DAT-009: COGs ship without embedded band statistics. Portolan does
-        # compute them and does write them into the item, but GDAL puts them in a
-        # `.aux.xml` PAM sidecar. rashid reads with GDAL_PAM_ENABLED=NO, as
-        # PORTO-FMT-026..030 require, and sees none. Found by adding raster here.
+        # PTL-DAT-009 (issue #748): COGs ship without embedded band statistics.
+        # Portolan does compute them and does write them into the item, but GDAL
+        # puts them in a `.aux.xml` PAM sidecar. rashid reads with
+        # GDAL_PAM_ENABLED=NO, as PORTO-FMT-026..030 require, and sees none.
+        # Found by adding raster to this gate.
         "PTL-DAT-009",
     }
 )
@@ -81,17 +82,18 @@ KNOWN_GAPS = frozenset(
 # reports rather than absorbs.
 EXPECTED_ADVISORIES: dict[str, int] = {
     # PTL-DAT-010, twice, one per raster item: the valid-percent half of the
-    # PTL-DAT-009 sidecar problem above. Same root cause, same issue.
+    # PTL-DAT-009 sidecar problem above. Same root cause, same issue #748.
     "PTL-DAT-010": 2,
-    # PTL-DAT-015: the tabular collection documents no `table:columns`.
-    # `_apply_table_extension` in finalization.py gates on FormatType.VECTOR, so
-    # the tabular writer never reaches it.
+    # PTL-DAT-015 (issue #749): the tabular collection documents no
+    # `table:columns`. `_apply_table_extension` in finalization.py gates on
+    # FormatType.VECTOR, so the tabular writer never reaches it.
     "PTL-DAT-015": 1,
     # PTL-VIZ-001, on that same tabular collection, and downstream of the line
     # above rather than separate from it. `table:columns` is how rashid decides
-    # whether a collection is geospatial; without it the question is undecidable,
-    # so it softens the thumbnail MUST to a warning instead of skipping the check.
-    # Documenting the columns would answer it and retire both entries at once.
+    # whether a collection is geospatial. Without it the question is undecidable,
+    # so rashid softens the thumbnail MUST to a warning instead of skipping the
+    # check. Documenting the columns answers it and retires both entries, which
+    # is why #749 covers this line too.
     "PTL-VIZ-001": 1,
     # PTL-PRO-002, once per collection: every collection is a mirror, because
     # metadata.yaml names a producer distinct from the host. Advisory — a
