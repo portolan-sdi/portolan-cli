@@ -21,7 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import click
 import pystac
@@ -91,6 +91,7 @@ from portolan_cli.formats import (
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.licensing import LICENSE_REL, license_gap, resolve_license
+from portolan_cli.metadata.tabular import extract_tabular_metadata
 from portolan_cli.preparation import (
     _MEDIA_TYPE_MAP as _MEDIA_TYPE_MAP,  # noqa: PLC0414
 )
@@ -158,6 +159,8 @@ from portolan_cli.stac import (
     apply_provenance,
     create_collection,
     declare_file_extension,
+    document_tabular_table,
+    set_temporal_extent,
     update_catalog_provenance,
 )
 from portolan_cli.stac_parquet import PARQUET_FILENAME
@@ -1722,5 +1725,37 @@ def _update_collection_with_asset(
         **file_fields(asset_path),
     }
 
+    _document_tabular_asset(collection_data, asset_key, asset_path)
+
     # Write updated collection
     write_json_atomic(collection_json_path, collection_data)
+
+
+def _document_tabular_asset(
+    collection_data: dict[str, Any],
+    asset_key: str,
+    asset_path: Path,
+) -> None:
+    """Answer the Tabular Data SHOULDs for a plain-Parquet asset (issue #749).
+
+    The spec asks a tabular collection to document its columns with the table
+    extension, and to populate ``extent.temporal`` when the data carries a time
+    dimension. Both are read from the Parquet footer here, because this function
+    is the only writer a collection-level non-geo asset passes through — the
+    tabular path never reaches ``finalize_items``, where geo collections get
+    their table metadata.
+
+    Non-Parquet and GeoParquet assets are left alone:
+    :func:`extract_tabular_metadata` returns None for both.
+
+    Args:
+        collection_data: Parsed ``collection.json``, mutated in place.
+        asset_key: Key the asset was just written under.
+        asset_path: Path to the asset file on disk.
+    """
+    metadata = extract_tabular_metadata(asset_path)
+    if metadata is None:
+        return
+    document_tabular_table(collection_data, asset_key, metadata)
+    if metadata.temporal_interval is not None:
+        set_temporal_extent(collection_data, metadata.temporal_interval)

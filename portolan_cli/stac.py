@@ -16,7 +16,7 @@ from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pystac
 from pystac.summaries import Summarizer, SummaryStrategy
@@ -26,6 +26,9 @@ from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.providers import derive_provenance, resolve_providers
 from portolan_cli.utils import href_root
+
+if TYPE_CHECKING:
+    from portolan_cli.metadata.tabular import TabularMetadata
 
 # Any versioned Portolan profile URI, not just the current one: matching the
 # whole family is what lets a stale claim be rewritten rather than duplicated.
@@ -1093,6 +1096,87 @@ def add_table_extension(
         if collection.stac_extensions is None:
             collection.stac_extensions = []
         collection.stac_extensions.append(ext_url)
+
+
+def document_tabular_table(
+    collection_data: dict[str, Any],
+    asset_key: str,
+    metadata: TabularMetadata,
+) -> None:
+    """Document a plain-Parquet asset's columns with the table extension (issue #749).
+
+    The tabular writer builds ``collection.json`` as raw JSON outside
+    ``finalize_items``, so it cannot reach :func:`add_table_extension`, which
+    takes a pystac Collection. This is the dict-level counterpart, and it is the
+    only writer of ``table:*`` on that path.
+
+    Where the columns land depends on what else the collection holds. When this
+    is its only Parquet data asset, the collection *is* the table — the
+    single-file collection pattern the spec's Tabular Data section describes —
+    so the fields go on the collection, where ``readme`` and ``metadata.yaml``
+    already read them. When another Parquet data asset is present, that one owns
+    the collection-level schema, so these columns go on the asset instead of
+    overwriting it. The table extension permits both placements and rashid
+    (PTL-DAT-015) accepts either.
+
+    Descriptions a human wrote on existing columns survive, matching
+    :data:`MergeStrategy.SMART`; only names and types are refreshed.
+
+    Args:
+        collection_data: Parsed ``collection.json``, mutated in place.
+        asset_key: Key of the Parquet asset under ``assets``.
+        metadata: Schema and row count read from that asset.
+    """
+    assets = collection_data.get("assets", {})
+    others_hold_the_collection = any(
+        key != asset_key
+        and "data" in (asset.get("roles") or [])
+        and str(asset.get("href", "")).lower().endswith(".parquet")
+        for key, asset in assets.items()
+    )
+    target: dict[str, Any] = assets[asset_key] if others_hold_the_collection else collection_data
+
+    existing = target.get("table:columns")
+    target["table:columns"] = _merge_table_columns(
+        existing if isinstance(existing, list) else [],
+        metadata.schema,
+        MergeStrategy.SMART,
+    )
+    target["table:row_count"] = metadata.row_count
+
+    declared = collection_data.setdefault("stac_extensions", [])
+    if EXTENSION_URLS["table"] not in declared:
+        declared.append(EXTENSION_URLS["table"])
+
+
+def set_temporal_extent(
+    collection_data: dict[str, Any],
+    interval: tuple[datetime, datetime],
+) -> None:
+    """Populate a collection's temporal extent from a derived interval (issue #749).
+
+    Only fills an extent that is still open at both ends, the sentinel
+    ``[[null, null]]`` a tabular collection is created with. A bound already
+    present came from a human or from the collection's items, and machine-read
+    column statistics do not outrank either.
+
+    Args:
+        collection_data: Parsed ``collection.json``, mutated in place.
+        interval: Start and end datetimes, each serialized to RFC 3339.
+    """
+    extent = collection_data.setdefault("extent", {})
+    temporal = extent.setdefault("temporal", {})
+    bounds = temporal.get("interval")
+    if isinstance(bounds, list) and any(
+        isinstance(pair, list) and any(bound is not None for bound in pair) for pair in bounds
+    ):
+        return
+    temporal["interval"] = [[_rfc3339(interval[0]), _rfc3339(interval[1])]]
+
+
+def _rfc3339(moment: datetime) -> str:
+    """Serialize a UTC datetime the way STAC spells it, with a trailing ``Z``."""
+    return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def get_existing_table_metadata(collection: pystac.Collection) -> object | None:
