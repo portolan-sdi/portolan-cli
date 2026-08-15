@@ -11,22 +11,19 @@ on:
     branches: [main]
   pull_request:
     types: [opened, edited, reopened, synchronize]
-  issues:
-    types: [opened, edited]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   checks:
-    # v1 is a moving major tag. Changes to the budget, the evidence rule,
-    # or the file layout reach this repo when the tag moves, not when ops
-    # merges.
+    # v1 is a moving major tag. Changes to the required sections, the
+    # evidence rule, or the file layout reach this repo when the tag moves,
+    # not when ops merges.
     uses: portolan-sdi/portolan-ops/.github/workflows/reusable-repo-checks.yml@v1
     permissions:
       contents: read
-      issues: write

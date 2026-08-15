@@ -19,19 +19,26 @@ Write commits in conventional form. Squash-merge makes the pull request title be
 
 ## Pull Requests and Issues
 
-A reviewer should finish a pull request body in under a minute. They should know what changed, why, and that it works. CI lints every body on each push and edit. The contract requires:
+Write every issue and pull request in two layers. The human layer comes first: what is wrong or missing, why it matters, and what should happen instead. Someone who did not follow your investigation should understand it in about a minute. The agent layer comes after: evidence, implementation detail, constraints, edge cases, and verification.
 
-- The sections `## What this changes`, `## Why`, and `## Verification` exist and are not empty.
-- 200 words outside code blocks. No section longer than six lines. Fenced blocks are unlimited, so evidence never competes with the budget.
+There is no word limit. A 700-word issue is good when its first 150 words make the outcome obvious. A 150-word issue is bad when it compresses the meaning into prose the reader has to unpack. Optimize for fast comprehension, not for short tickets.
+
+Write them in Simplified Technical English (ASD-STE100). The rules are an output style, `.claude/output-styles/simplified-technical-english.md`, which every repo carries. A hook prints it at session start. Sentences stay under 20 words and hold one idea. Use the active voice and simple verb forms only, so no gerund, no present participle, and no perfect tense. Use a verb rather than a noun made from a verb. Keep the technical content exactly as precise as it was, and simplify only the language around it. Describe the design as it stands now rather than the approaches you discarded.
+
+The structural contract CI enforces on a pull request:
+
+- The sections `## What changed`, `## Why`, and `## Verification` exist and are not empty.
 - The prose references the issue the change resolves, as `#N` or its URL.
 - Verification pastes the command you ran and its output in a fenced block under `## Verification`. It names the data it read, as a URL or catalog path.
 - A change that alters no behavior ticks the waiver checkbox instead. Keep its wording intact because the check matches the phrase "does not alter behavior".
 
-Good evidence shows the fix works against real data. Just proving a command exits zero is not enough. Take the failing command from the issue, run it against the same catalog, and show it now succeeds. A wall of pytest output does not count.
+Good evidence shows the fix works against real data. Proving a command exits zero is not enough. Take the failing command from the issue, run it against the same catalog, and show it now succeeds. A wall of pytest output does not count.
 
-Issues follow the same rules. A bug report must include the exact reproduction steps. A feature request must show where the current tool falls short. A task must include the command that proves it is done.
+Issues follow the same shape. A bug report shows the failure and names the data. A feature request shows where the current tool falls short, or what the workaround costs. A task states the outcome and the command that proves it is done.
 
-Every repo uses the org issue template. The CI check rejects blank issues. On pull requests, it fails the check. On issues, it adds the `needs-rewrite` label and leaves a comment once. Dependabot is exempt.
+Every repo uses the org issue template. The language itself is checked before a body is ever filed: `.claude/hooks/writing_check.py` runs on `gh issue create` and `gh pr create`, and reports the specific problems it found. Run `writing_check.py --print-rules` to read the rules. When it is wrong about a line, say so in the body with `<!-- ste-ok: RULE_ID why this is correct -->`. Dependabot is exempt from the CI check.
+
+That check matches words and punctuation. It cannot see tone, padding, or prose that spends its length arguing for the work it describes, so passing it proves nothing about how the body reads. Read what you wrote before you file it, and cut the sentences that exist to make the change sound good.
 
 ## Documentation
 

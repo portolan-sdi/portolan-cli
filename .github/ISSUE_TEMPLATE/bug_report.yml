@@ -5,32 +5,55 @@ body:
   - type: markdown
     attributes:
       value: >-
-        Keep this under 200 words outside code blocks. Paste evidence rather
-        than describing it. Prose follows the
-        [Portolan voice](https://github.com/portolan-sdi/portolan-ops/blob/main/VOICE.md).
+        Write the top for a human. Someone who has not followed your
+        investigation should understand the first two answers in about a
+        minute. Put files, causes, and edge cases lower down. Length is fine.
+        Paste evidence rather than describing it.
   - type: textarea
     id: what-happened
     attributes:
       label: What happened?
-      description: The command or steps you ran, and the output you got.
-      render: shell
-    validations:
-      required: true
-  - type: textarea
-    id: expected
-    attributes:
-      label: What did you expect?
-      description: One or two sentences.
-    validations:
-      required: true
-  - type: textarea
-    id: repro
-    attributes:
-      label: Minimal reproduction
       description: >-
-        The smallest input that triggers the problem, run against real data.
-        Give the command, its output, and the dataset it read: a URL or a
-        catalog path. Strip anything private.
+        The user-visible failure, in plain words. What you ran, and what it
+        did instead of what you wanted.
+    validations:
+      required: true
+  - type: textarea
+    id: why-it-matters
+    attributes:
+      label: Why it matters
+      description: >-
+        What this blocks or breaks. Who hits it, and how often. One or two
+        sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: >-
+        Show the failure. Paste the command and its output, and name the data
+        it read: a URL or a catalog path. A real dataset, a migration, or a
+        failing run all count. A smaller case is welcome when you have one,
+        but do not spend hours reducing it. Strip anything private.
+    validations:
+      required: true
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation details
+      description: >-
+        Optional. The files involved, what you think the cause is, related
+        code paths, and edge cases a fix must handle.
+    validations:
+      required: false
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: >-
+        The command a reviewer runs to confirm the fix, and what passing looks
+        like.
     validations:
       required: true
   - type: input
