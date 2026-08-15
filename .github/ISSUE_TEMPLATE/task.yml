@@ -5,13 +5,15 @@ body:
   - type: markdown
     attributes:
       value: >-
-        Keep this under 200 words outside code blocks. Prose follows the
-        [Portolan voice](https://github.com/portolan-sdi/portolan-ops/blob/main/VOICE.md).
+        State the outcome, not a list of instructions. Someone picking this up
+        should know what "done" looks like without reading the whole issue.
   - type: textarea
     id: what
     attributes:
       label: What needs doing?
-      description: Two or three sentences. Name the files or systems involved.
+      description: >-
+        The outcome you want. Name the files or systems involved. Two or three
+        sentences.
     validations:
       required: true
   - type: textarea
@@ -19,16 +21,26 @@ body:
     attributes:
       label: Why now?
       description: >-
-        What this unblocks, or what breaks if it waits. Link the issue or PR
-        that prompted it.
+        What this unblocks, or what breaks if it waits. Link the issue or pull
+        request that prompted it.
     validations:
       required: true
   - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation details
+      description: >-
+        Optional. Constraints, the order steps have to run in, and anything
+        that will surprise whoever picks this up.
+    validations:
+      required: false
+  - type: textarea
     id: done
     attributes:
-      label: How will we know it's done?
+      label: Done when
       description: >-
-        The command a reviewer runs to confirm it, and what passing looks like.
-        If the work changes behavior, say which data it gets exercised against.
+        The command a reviewer runs to confirm it, and what passing looks
+        like. If the work changes behavior, say which data it gets exercised
+        against.
     validations:
       required: true
