@@ -480,6 +480,77 @@ class TestOrchestratorIntegration:
         assert result.summary.failed == 0
         assert all(r.status == "success" for r in result.layers)
 
+    def test_style_extraction_success_is_logged(
+        self, mock_discovery_result: ServiceDiscoveryResult, tmp_path: Path
+    ) -> None:
+        """A successful style extraction result is logged and does not affect the layer."""
+        from portolan_cli.extract.arcgis.retry import RetryResult
+        from portolan_cli.extract.common.styles import ExtractedStyle
+
+        with (
+            patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
+            patch("portolan_cli.extract.arcgis.orchestrator.retry_with_backoff") as mock_retry,
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.extract_esri_style"
+            ) as mock_style,
+        ):
+            mock_discover.return_value = mock_discovery_result
+            mock_retry.return_value = RetryResult(
+                success=True,
+                value=(50, 512, 0.5),
+                attempts=1,
+                error=None,
+            )
+            mock_style.return_value = ExtractedStyle(
+                path=tmp_path / "styles" / "layer.json",
+                name="layer",
+                source_format="esri",
+                warnings=[],
+            )
+
+            options = ExtractionOptions(raw=True, no_styles=False)
+            result = extract_arcgis_catalog(
+                url=TEST_FEATURE_SERVER_URL,
+                output_dir=tmp_path,
+                options=options,
+            )
+
+        assert result.summary.succeeded == 3
+        assert result.summary.failed == 0
+        assert all(r.status == "success" for r in result.layers)
+
+    def test_no_styles_option_skips_style_extraction(
+        self, mock_discovery_result: ServiceDiscoveryResult, tmp_path: Path
+    ) -> None:
+        """When no_styles is set, style extraction is skipped entirely."""
+        from portolan_cli.extract.arcgis.retry import RetryResult
+
+        with (
+            patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
+            patch("portolan_cli.extract.arcgis.orchestrator.retry_with_backoff") as mock_retry,
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.extract_esri_style"
+            ) as mock_style,
+        ):
+            mock_discover.return_value = mock_discovery_result
+            mock_retry.return_value = RetryResult(
+                success=True,
+                value=(50, 512, 0.5),
+                attempts=1,
+                error=None,
+            )
+
+            options = ExtractionOptions(raw=True, no_styles=True)
+            result = extract_arcgis_catalog(
+                url=TEST_FEATURE_SERVER_URL,
+                output_dir=tmp_path,
+                options=options,
+            )
+
+        mock_style.assert_not_called()
+        assert result.summary.succeeded == 3
+        assert result.summary.failed == 0
+
 
 # =============================================================================
 # Services root support tests
