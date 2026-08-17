@@ -11,9 +11,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from portolan_cli import extension_registry as _reg
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
 from portolan_cli.models.item import AssetModel, ItemModel
+
+# Sourced from the registry so this cannot drift from what `add` writes. A COG
+# missing "profile=cloud-optimized" is invisible to rashid's COG detection gate.
+_MEDIA_TYPE_MAP: dict[str, str] = _reg.field_map("media_type")
+
+# The registry keys only ".parquet", but this module's own geometry path treats
+# ".geoparquet" as a parquet variant (see _extract_geometry_from_file). Alias it
+# to the registry's value so the two stay consistent without a second literal.
+_MEDIA_TYPE_MAP.setdefault(".geoparquet", _MEDIA_TYPE_MAP[".parquet"])
 
 
 def create_item(
@@ -154,18 +164,7 @@ def _get_media_type(path: Path) -> str:
     Returns:
         Media type string.
     """
-    suffix = path.suffix.lower()
-
-    media_types = {
-        ".parquet": "application/vnd.apache.parquet",
-        ".geoparquet": "application/vnd.apache.parquet",
-        ".tif": "image/tiff; application=geotiff",
-        ".tiff": "image/tiff; application=geotiff",
-        ".json": "application/json",
-        ".geojson": "application/geo+json",
-    }
-
-    return media_types.get(suffix, "application/octet-stream")
+    return _MEDIA_TYPE_MAP.get(path.suffix.lower(), "application/octet-stream")
 
 
 def write_item_json(item: ItemModel, path: Path) -> Path:
