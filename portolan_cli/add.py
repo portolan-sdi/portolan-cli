@@ -157,9 +157,10 @@ from portolan_cli.stac import (
     apply_human_providers,
     apply_provenance,
     create_collection,
+    declare_file_extension,
     update_catalog_provenance,
-    update_collection_file_statistics,
 )
+from portolan_cli.stac_parquet import PARQUET_FILENAME
 from portolan_cli.sync.checksums import compute_checksum, file_fields
 from portolan_cli.viz.style import enrich_cog_assets
 
@@ -398,7 +399,7 @@ def _maybe_partition_large_file(
         roles=["data"],
         title="Partitioned GeoParquet",
         description=f"Glob pattern for {len(partition_files)} spatial partitions",
-        # portolan:glob will be populated on push with remote URL
+        # partition:glob will be populated on push with the remote URL
     )
 
     # Extract partition metadata for STAC partition extension (Issue #232)
@@ -880,6 +881,14 @@ def _collect_files_for_add(
             if file_path.suffix.lower() not in GEOSPATIAL_EXTENSIONS:
                 continue
 
+            # Never re-ingest the item mirror the add flow itself publishes.
+            # The spec reserves items.parquet in the collection root for the
+            # STAC-GeoParquet mirror (PORTO-FMT-040), and with default-on
+            # generation every item-bearing collection carries one (#654).
+            if file_path.name == PARQUET_FILENAME:
+                skipped.append(file_path)
+                continue
+
             # Determine collection ID (use full nested path)
             coll_id = collection_id
             if coll_id is None:
@@ -1142,17 +1151,17 @@ def _phase_process(
     return result
 
 
-def _recompute_stats_for_collections(affected_collections: set[Path]) -> None:
-    """Phase 3.5: refresh file statistics for collections that got deferred assets.
+def _declare_file_extension_for_collections(affected_collections: set[Path]) -> None:
+    """Phase 3.5: re-check the file extension on collections that got deferred assets.
 
-    Deferred non-geo assets are added after ``finalize_items``, so their
-    collection file statistics must be recomputed to include them (Issue #501).
+    Deferred non-geo assets are added after ``finalize_items``, so a collection
+    can gain its first ``file:size`` after the declaration ran (Issue #501).
     """
     for collection_dir in affected_collections:
         collection_json_path = collection_dir / "collection.json"
         if collection_json_path.exists():
             collection = pystac.Collection.from_file(str(collection_json_path))
-            update_collection_file_statistics(collection)
+            declare_file_extension(collection)
             collection.save_object(include_self_link=False)
 
 
@@ -1343,8 +1352,8 @@ def add_files(
         failures=failures,
     )
 
-    # Phase 3.5: Recompute file statistics for collections with deferred assets (Issue #501).
-    _recompute_stats_for_collections(affected_collections)
+    # Phase 3.5: re-check the file extension on collections with deferred assets (#501).
+    _declare_file_extension_for_collections(affected_collections)
 
     return added, skipped, failures
 

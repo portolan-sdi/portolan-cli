@@ -660,7 +660,7 @@ def _has_cog_items(node: Node, graph: CatalogGraph) -> bool:
 
 def _generate_mirror(node: Node, *, dry_run: bool) -> FixResult:
     """Write items.parquet for a scene collection and register it."""
-    from portolan_cli.stac_parquet import add_parquet_link_to_collection, generate_items_parquet
+    from portolan_cli.stac_parquet import generate_items_parquet, register_mirror_asset
 
     collection_dir = node.abs_path.parent
     if dry_run:
@@ -674,7 +674,7 @@ def _generate_mirror(node: Node, *, dry_run: bool) -> FixResult:
         )
     try:
         generate_items_parquet(collection_dir)
-        add_parquet_link_to_collection(collection_dir)
+        register_mirror_asset(collection_dir)
     except (ImportError, ValueError, OSError) as exc:
         return FixResult(
             node.abs_path, FixAction.SKIPPED, True, f"Cannot generate the mirror: {exc}"

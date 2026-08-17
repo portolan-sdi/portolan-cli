@@ -5,17 +5,22 @@ fixes for all issues in a MetadataReport:
 - Creates missing STAC items
 - Updates stale items with fresh metadata
 - Handles breaking schema changes
+
+Plus the catalog-wide repairs `check --fix` runs that no rashid rule reports,
+including :func:`strip_removed_fields`.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from portolan_cli.agents_md import visible_stac_files
+from portolan_cli.constants import LEGACY_MANAGED_FIELD, REMOVED_PORTOLAN_FIELDS
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata.models import (
     MetadataCheckResult,
@@ -225,6 +230,133 @@ def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> lis
         ensure_link_titles(catalog_root)
 
     return results
+
+
+def _every_stac_object(catalog_root: Path) -> Iterator[Path]:
+    """Every published object in the tree: containers, then the items they own.
+
+    Items are reached through each collection's ``rel="item"`` links rather than
+    by globbing, because Portolan names an item file after the item
+    (``scene-001/scene-001.json``), so no filename pattern finds them all.
+    Yielded once each: a collection and an organizing catalog beneath it can
+    both link the same item. A collection that will not parse yields no items;
+    the sweep reports nothing about it rather than raising over a file some
+    other check already flags.
+    """
+    from portolan_cli.stac_parquet import owned_item_hrefs
+
+    seen: set[Path] = set()
+    for path in visible_stac_files(catalog_root):
+        if path not in seen:
+            seen.add(path)
+            yield path
+        if path.name != "collection.json":
+            continue
+        try:
+            owned = owned_item_hrefs(path)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        for _href, item_path in owned:
+            if item_path not in seen:
+                seen.add(item_path)
+                yield item_path
+
+
+def _strip_from_mapping(container: Any) -> bool:
+    """Delete every removed field from one JSON object, reporting whether any went."""
+    if not isinstance(container, dict):
+        return False
+    present = [field for field in REMOVED_PORTOLAN_FIELDS if field in container]
+    for field_name in present:
+        del container[field_name]
+    return bool(present)
+
+
+def _migrate_managed_marker(asset: dict[str, Any]) -> None:
+    """Carry ``portolan:managed: false`` over to the ``external`` role before it goes.
+
+    The marker's whole job was telling a reader that Portolan does not own the
+    bytes behind the href. The ``external`` role says the same thing in
+    spec-defined terms, and ``add-external`` has always written both, so this
+    only fires for an asset some other path produced. Read once, never written
+    back (issue #654).
+    """
+    from portolan_cli.external import EXTERNAL_ROLE
+
+    if asset.get(LEGACY_MANAGED_FIELD) is not False:
+        return
+    roles = asset.get("roles")
+    if not isinstance(roles, list):
+        asset["roles"] = [EXTERNAL_ROLE]
+    elif EXTERNAL_ROLE not in roles:
+        roles.append(EXTERNAL_ROLE)
+
+
+def _strip_removed_fields_from_object(path: Path, *, dry_run: bool) -> FixResult | None:
+    """Strip every removed field from one STAC object, or return None if it had none."""
+    data = _read_json_object(path)
+    if data is None:
+        return None
+
+    assets = data.get("assets")
+    if isinstance(assets, dict):
+        for asset in assets.values():
+            if isinstance(asset, dict):
+                _migrate_managed_marker(asset)
+
+    changed = _strip_from_mapping(data)
+    changed |= _strip_from_mapping(data.get("properties"))
+    if isinstance(assets, dict):
+        for asset in assets.values():
+            changed |= _strip_from_mapping(asset)
+
+    if not changed:
+        return None
+    if not dry_run:
+        write_json_atomic(path, data)
+    return FixResult(
+        file_path=path,
+        action=FixAction.UPDATED,
+        success=True,
+        message="Removed the portolan: fields the spec does not define",
+    )
+
+
+def _read_json_object(path: Path) -> dict[str, Any] | None:
+    """Parse a STAC file, or None when it is unreadable or not an object."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def strip_removed_fields(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
+    """Delete the ``portolan:`` fields no spec version defines (issue #654).
+
+    Runs from the fix workflow rather than from the fixer registry, for the same
+    reason item freshness does: no rashid rule reports these. A rule fires on a
+    requirement an object fails, and no requirement names a field the spec does
+    not have, so there is no finding to dispatch on and the sweep has to run on
+    its own.
+
+    Sweeps catalogs, collections, and items, and strips each field from all
+    three places one was ever written: the object, an item's ``properties``, and
+    an asset. ``portolan:managed`` is read before it is deleted, so an external
+    asset keeps the recognition the marker used to provide.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        dry_run: If True, report what would change without writing.
+
+    Returns:
+        One FixResult per object that carried at least one removed field.
+    """
+    return [
+        result
+        for path in _every_stac_object(catalog_root)
+        if (result := _strip_removed_fields_from_object(path, dry_run=dry_run)) is not None
+    ]
 
 
 def repair_pmtiles_links(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:

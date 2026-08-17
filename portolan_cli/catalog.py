@@ -378,6 +378,8 @@ def init_catalog(
     backend: str = "file",
     license_id: str | None,
     license_url: str | None = None,
+    logo: str | Path | None = None,
+    logo_title: str | None = None,
 ) -> tuple[Path, list[str]]:
     """Initialize a new Portolan catalog with the v2 file structure.
 
@@ -415,6 +417,11 @@ def init_catalog(
         license_id: SPDX identifier, or "other" alongside license_url. None leaves
             metadata.yaml to the caller.
         license_url: URL of the license text. Required when license_id is "other".
+        logo: Local path to a catalog logo. Copied to ``_assets/`` and published
+            as a ``rel="icon"`` link on the root catalog (PORTO-CORE-074). A
+            logo is optional, so None writes no link.
+        logo_title: Accessible label for the logo link. Defaults to the catalog
+            title.
 
     Returns:
         Tuple of (catalog_file_path, warnings). The path is absolute, so callers
@@ -424,6 +431,9 @@ def init_catalog(
         CatalogAlreadyExistsError: If directory is in MANAGED state.
         UnmanagedStacCatalogError: If directory is in UNMANAGED_STAC state.
         CatalogInitError: If filesystem operations fail.
+        LogoError: If ``logo`` is a URL, missing, or of an unpermitted media
+            type. Raised before anything is written, so the directory stays in
+            FRESH state and init can be retried with a valid image.
     """
     import pystac
 
@@ -448,6 +458,14 @@ def init_catalog(
         raise CatalogAlreadyExistsError(str(path))
     if state == CatalogState.UNMANAGED_STAC:
         raise UnmanagedStacCatalogError(str(path))
+
+    # Validate the logo before creating any files, for the same reason the
+    # backend is checked here: a rejected image must not leave a half-built
+    # catalog behind. The copy itself happens once catalog.json exists.
+    if logo is not None:
+        from portolan_cli.logo import validate_logo_source
+
+        validate_logo_source(logo)
 
     # Validate non-file backends are available before creating any files
     if backend != "file":
@@ -544,6 +562,17 @@ def init_catalog(
         ensure_readmes(path)
     except OSError as e:
         raise CatalogInitError(f"Cannot write catalog conformance files: {e}") from e
+
+    # Step 4c-bis: catalog logo. Optional (PORTO-CORE-074), so it runs only when
+    # the caller supplied one. Validated above, so the only failure left here is
+    # the filesystem itself.
+    if logo is not None:
+        from portolan_cli.logo import set_catalog_logo
+
+        try:
+            warnings.extend(set_catalog_logo(path, logo, title=logo_title).warnings)
+        except OSError as e:
+            raise CatalogInitError(f"Cannot write catalog logo: {e}") from e
 
     # Step 4d: metadata.yaml - seed the license the human supplied. Every collection
     # inherits it through the hierarchical merge, so the gate in add_files passes
