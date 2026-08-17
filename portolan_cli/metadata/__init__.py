@@ -5,6 +5,7 @@ This module provides:
 Extraction functions:
 - extract_geoparquet_metadata(): Extract from GeoParquet
 - extract_cog_metadata(): Extract from COG
+- extract_tabular_metadata(): Extract from plain (geometry-less) Parquet
 
 Detection functions:
 - get_stored_metadata(): Read existing STAC item + versions.json
@@ -81,6 +82,10 @@ from portolan_cli.metadata.statistics import (
     extract_band_statistics,
     extract_parquet_statistics,
 )
+from portolan_cli.metadata.tabular import (
+    TabularMetadata,
+    extract_tabular_metadata,
+)
 from portolan_cli.metadata.update import (
     create_missing_item,
     update_collection_extent,
@@ -101,10 +106,12 @@ __all__ = [
     "FlatGeobufMetadata",
     "GeoParquetMetadata",
     "PMTilesMetadata",
+    "TabularMetadata",
     "extract_cog_metadata",
     "extract_flatgeobuf_metadata",
     "extract_geoparquet_metadata",
     "extract_pmtiles_metadata",
+    "extract_tabular_metadata",
     # Statistics
     "BandStatistics",
     "ColumnStatistics",

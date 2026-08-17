@@ -51,7 +51,7 @@ dependencies = [
     "requests>=2.33.0", # CVE-2026-25645 fix (transitive, pinned for security)
     "rich>=13.0.0", # Terminal progress bars (transitive via geoparquet-io, but we import directly)
     "rio-cogeo>=5.0.0", # COG creation/validation (includes rasterio)
-    "rashid>=0.1.4,<0.2.0", # Conformance validator behind `portolan check`; ships its own STAC + Portolan profile schemas, so validation runs offline. 0.1.4 is the floor for `SPDX_LICENSE_IDS` and `canonical_spdx_id` on `rashid.api`, which license validation gates on so it cannot disagree with PTL-LIC-001 (rashid#111)
+    "rashid>=0.1.5,<0.2.0", # Conformance validator behind `portolan check`; ships its own STAC + Portolan profile schemas, so validation runs offline. 0.1.5 is the floor for the catalog-logo rules PTL-LNK-007/008/009 (PORTO-CORE-074..077) and for PTL-AST-006, whose absence in 0.1.4 let a wrong COG media type mask PTL-COL-004 and PTL-MIR-001. The conformance gate asserts all four, so this is a hard floor, not a preference
     "typing_extensions>=4.0.0; python_version < '3.11'",
 ]
 
@@ -363,6 +363,9 @@ ignore_imports = [
     # not the sync orchestration this contract exists to keep out of viz. The
     # same reasoning is written into the scan contract below.
     "portolan_cli.viz.style -> portolan_cli.stac_parquet",
+    # Same reasoning for the PMTiles writer, which was the one visual artifact
+    # shipping without file:size/file:checksum until issue #746.
+    "portolan_cli.viz.pmtiles -> portolan_cli.stac_parquet",
 ]
 
 [[tool.importlinter.contracts]]
@@ -408,6 +411,10 @@ DEP002 = ["cryptography", "lxml", "pillow", "pygments", "requests", "pyiceberg",
 [dependency-groups]
 dev = [
     "fastembed>=0.8.0",
+    # The conformance gate validates emitted raster items against the vendored
+    # raster v2.0.0 schema. jsonschema arrives transitively through rashid, but
+    # the gate would break silently if rashid ever dropped it, so declare it.
+    "jsonschema>=4.0.0",
     "moto[s3,server]>=5.0.0",
     "numpy>=2.2.6",
     "pylint>=4.0.5",
