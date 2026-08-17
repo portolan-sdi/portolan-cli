@@ -3,7 +3,7 @@
   "$id": "https://portolan.dev/schema/versions.schema.json",
   "$comment": "CLI-owned versions.json manifest schema (ADR-0005); see docs/reference/versions-manifest.md.",
   "title": "Portolan Versions Manifest",
-  "description": "Schema for versions.json - tracks version history, asset checksums, and sync state per collection. See https://github.com/portolan-sdi/portolan-spec/blob/main/versions.md",
+  "description": "Schema for versions.json - tracks version history, asset checksums, and sync state per collection. Documented in docs/reference/versions-manifest.md",
   "type": "object",
   "required": ["spec_version", "current_version", "versions"],
   "additionalProperties": false,

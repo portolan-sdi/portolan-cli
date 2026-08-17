@@ -92,9 +92,9 @@ The collection directory name **MUST NOT** appear in the asset key. The asset ke
 | `href` | string | **MUST** | Catalog-root-relative path to the asset (e.g., `"boundaries/districts/districts.parquet"`) |
 | `source_path` | string | *MAY* | Relative path to the original source file (e.g., the GeoJSON converted to this GeoParquet) |
 | `source_mtime` | number | *MAY* | Unix timestamp of the source file when conversion occurred; used to detect when the source has changed |
-| `mtime` | number | *MAY* | Unix timestamp of the asset file itself; fast-path change detection (ADR-0017) |
-| `feature_count` | integer | *MAY* | Feature/row count (pixel count for rasters) when tracked; freshness heuristic (ADR-0017) |
-| `schema_fingerprint` | string | *MAY* | Hash of the asset schema when tracked; a change indicates a breaking schema change (ADR-0017) |
+| `mtime` | number | *MAY* | Unix timestamp of the asset file itself; fast-path change detection |
+| `feature_count` | integer | *MAY* | Feature/row count (pixel count for rasters) when tracked; freshness heuristic |
+| `schema_fingerprint` | string | *MAY* | Hash of the asset schema when tracked; a change indicates a breaking schema change |
 
 ## Versioning Rules
 
