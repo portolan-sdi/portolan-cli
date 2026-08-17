@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://portolan.dev/schema/catalog-versions.schema.json",
-  "$comment": "CLI-owned versions.json manifest schema (ADR-0005); see docs/reference/versions-manifest.md.",
+  "$comment": "CLI-owned versions.json manifest schema; see docs/reference/versions-manifest.md.",
   "title": "Portolan Catalog Versions Index",
   "description": "Schema for the root-level versions.json that indexes collection sync state. Different from collection-level versions.json.",
   "type": "object",

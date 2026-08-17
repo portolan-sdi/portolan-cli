@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://portolan.dev/schema/versions.schema.json",
-  "$comment": "CLI-owned versions.json manifest schema (ADR-0005); see docs/reference/versions-manifest.md.",
+  "$comment": "CLI-owned versions.json manifest schema; see docs/reference/versions-manifest.md.",
   "title": "Portolan Versions Manifest",
   "description": "Schema for versions.json - tracks version history, asset checksums, and sync state per collection. Documented in docs/reference/versions-manifest.md",
   "type": "object",
@@ -73,7 +73,7 @@
         },
         "schema": {
           "$ref": "#/$defs/SchemaInfo",
-          "description": "Optional schema fingerprint for breaking change detection (ADR-0005)"
+          "description": "Optional schema fingerprint for breaking change detection"
         },
         "message": {
           "type": "string",
@@ -114,23 +114,23 @@
         "mtime": {
           "type": "number",
           "minimum": 0,
-          "description": "Optional Unix timestamp of the asset file itself. Used for fast-path change detection (ADR-0017). NOTE: Accepts number (not just integer) because Python's os.stat().st_mtime returns floats. This relaxation should be upstreamed to portolan-spec."
+          "description": "Optional Unix timestamp of the asset file itself. Used for fast-path change detection. Accepts number (not just integer) because Python's os.stat().st_mtime returns floats."
         },
         "feature_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "Optional feature/row count (pixel count for rasters) captured when the asset was tracked. Freshness heuristic (ADR-0017): lets a touched-but-identical asset read fresh instead of stale."
+          "description": "Optional feature/row count (pixel count for rasters) captured when the asset was tracked. Freshness heuristic: lets a touched-but-identical asset read fresh instead of stale."
         },
         "schema_fingerprint": {
           "type": "string",
           "minLength": 1,
-          "description": "Optional hash of the asset schema captured when the asset was tracked. Freshness heuristic (ADR-0017): a change indicates a breaking schema change."
+          "description": "Optional hash of the asset schema captured when the asset was tracked. Freshness heuristic: a change indicates a breaking schema change."
         }
       }
     },
     "SchemaInfo": {
       "type": "object",
-      "description": "Schema information for breaking change detection (ADR-0005)",
+      "description": "Schema information for breaking change detection",
       "required": ["type", "fingerprint"],
       "additionalProperties": false,
       "properties": {

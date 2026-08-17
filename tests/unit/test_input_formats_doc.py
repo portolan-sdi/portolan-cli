@@ -2,7 +2,7 @@
 
 ``docs/reference/input-formats.md`` is generated from
 ``portolan_cli.extension_registry`` (the single source of the extension
-vocabulary, ADR-0055) by ``scripts/gen_input_formats_doc.py``. This test fails
+vocabulary) by ``scripts/gen_input_formats_doc.py``. This test fails
 whenever the registry changes without regenerating the page, replacing the
 hand-written extensions doc that lived in the removed vendored spec folder and
 its parity test (#751): a generated doc cannot drift, provided it is
