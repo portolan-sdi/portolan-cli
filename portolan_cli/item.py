@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from portolan_cli import extension_registry as _reg
+from portolan_cli.crs import transform_bbox_to_wgs84
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
 from portolan_cli.models.item import AssetModel, ItemModel
@@ -115,7 +116,10 @@ def _extract_geometry_from_file(
         from portolan_cli.metadata.cog import extract_cog_metadata
 
         cog_metadata = extract_cog_metadata(path)
-        bbox = list(cog_metadata.bbox)
+        # STAC requires bbox in WGS84 whatever the raster's own CRS (#708).
+        # Returns the bbox unchanged when the CRS is already 4326 or unknown,
+        # so an already-WGS84 source is never transformed twice.
+        bbox = list(transform_bbox_to_wgs84(cog_metadata.bbox, cog_metadata.crs))
     else:
         # Default to global extent
         bbox = [-180.0, -90.0, 180.0, 90.0]
