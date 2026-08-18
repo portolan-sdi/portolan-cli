@@ -293,6 +293,7 @@ class TestCollectionLevelNonGeoCompanions:
         deferred_non_geo: list = []
         source_to_item_dir: dict = {}
         source_to_collection_dir: dict = {}  # NEW parameter
+        added: list = []
         skipped: list = []
         failures: list = []
 
@@ -302,6 +303,7 @@ class TestCollectionLevelNonGeoCompanions:
             source_to_item_dir=source_to_item_dir,
             source_to_collection_dir=source_to_collection_dir,
             catalog_root=initialized_catalog,
+            added=added,
             skipped=skipped,
             failures=failures,
         )
@@ -363,6 +365,7 @@ class TestCollectionLevelNonGeoCompanions:
         source_to_item_dir: dict = {}
         source_to_collection_dir = {collection_dir: (collection_dir, "my-collection")}
         deferred_non_geo = [(non_geo_file, collection_dir, "my-collection")]
+        added: list = []
         skipped: list = []
         failures: list = []
 
@@ -371,6 +374,7 @@ class TestCollectionLevelNonGeoCompanions:
             source_to_item_dir=source_to_item_dir,
             source_to_collection_dir=source_to_collection_dir,
             catalog_root=initialized_catalog,
+            added=added,
             skipped=skipped,
             failures=failures,
         )
@@ -378,6 +382,11 @@ class TestCollectionLevelNonGeoCompanions:
         # Verify: non-geo file was tracked (not failed)
         assert non_geo_file in skipped
         assert len(failures) == 0
+
+        # A companion asset attaches to a collection that is already reported,
+        # so it stays in `skipped`; only standalone tabular files report as
+        # added (issue #712).
+        assert added == []
 
         # Verify: asset added to collection.json
         updated = json.loads(collection_json.read_text())
@@ -408,6 +417,7 @@ class TestCollectionLevelNonGeoCompanions:
         source_to_item_dir: dict = {}
         source_to_collection_dir: dict = {}
         deferred_non_geo = [(non_geo_file, orphan_dir, "orphan")]
+        added: list = []
         skipped: list = []
         failures: list = []
 
@@ -416,6 +426,7 @@ class TestCollectionLevelNonGeoCompanions:
             source_to_item_dir=source_to_item_dir,
             source_to_collection_dir=source_to_collection_dir,
             catalog_root=initialized_catalog,
+            added=added,
             skipped=skipped,
             failures=failures,
         )

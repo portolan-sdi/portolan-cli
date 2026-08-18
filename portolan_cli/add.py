@@ -1351,6 +1351,7 @@ def add_files(
         source_to_item_dir=proc.source_to_item_dir,
         source_to_collection_dir=proc.source_to_collection_dir,
         catalog_root=catalog_root,
+        added=added,
         skipped=skipped,
         failures=failures,
     )
@@ -1361,12 +1362,37 @@ def add_files(
     return added, skipped, failures
 
 
+def _collection_aoi_bbox(collection_dir: Path) -> list[float]:
+    """Read a tabular collection's area-of-interest bbox from collection.json.
+
+    The spec requires every collection to carry ``extent.spatial.bbox``. For a
+    tabular collection it is the area the data pertains to, not a geometry
+    footprint, and validators treat it as informational (portolan-spec
+    ``specs/portolan/formats.md``, Tabular). ``_ensure_tabular_collection``
+    inherits it from siblings, so it is already on disk by the time we report.
+
+    Args:
+        collection_dir: Directory holding the collection.json.
+
+    Returns:
+        The collection's spatial bbox, or the global extent if it is absent.
+    """
+    collection_json = collection_dir / "collection.json"
+    if collection_json.exists():
+        with open(collection_json, encoding="utf-8") as f:
+            bboxes = json.load(f).get("extent", {}).get("spatial", {}).get("bbox", [])
+        if bboxes and isinstance(bboxes[0], list):
+            return [float(v) for v in bboxes[0]]
+    return [-180.0, -90.0, 180.0, 90.0]
+
+
 def _process_deferred_non_geo_files(
     *,
     deferred_non_geo: list[tuple[Path, Path, str]],
     source_to_item_dir: dict[Path, tuple[Path, str, str]],
     source_to_collection_dir: dict[Path, tuple[Path, str]],
     catalog_root: Path,
+    added: list[ItemInfo],
     skipped: list[Path],
     failures: list[AddFailure],
 ) -> set[Path]:
@@ -1381,6 +1407,9 @@ def _process_deferred_non_geo_files(
         source_to_collection_dir: Mapping from source dirs to (collection_dir, coll_id)
             for collection-level assets (Issue #383).
         catalog_root: Root directory of the catalog.
+        added: List to append newly tracked standalone tabular assets to
+            (modified in place). Companion assets stay in ``skipped``, since
+            they attach to an item or collection that is already reported.
         skipped: List to append skipped files to (modified in place).
         failures: List to append failures to (modified in place).
 
@@ -1564,8 +1593,22 @@ def _process_deferred_non_geo_files(
                     # Track for statistics recomputation
                     affected_collections.add(collection_dir)
 
-                    # Add to skipped (tracked, possibly converted)
-                    skipped.append(file_path)
+                    # Report as added, not skipped (#712). A standalone tabular
+                    # file is its own collection-level data asset on the
+                    # single-file collection pattern, so it reports like the
+                    # equivalent geo asset rather than as a no-op.
+                    asset_names = [asset_path.name]
+                    if source_tracked:
+                        asset_names.append(file_path.name)
+                    added.append(
+                        ItemInfo(
+                            item_id=asset_path.stem,
+                            collection_id=coll_id,
+                            format_type=FormatType.UNKNOWN,
+                            bbox=_collection_aoi_bbox(collection_dir),
+                            asset_paths=asset_names,
+                        )
+                    )
         except Exception as err:
             # Record failure and continue (Issue #175).
             failures.append(AddFailure(path=file_path, error=str(err)))

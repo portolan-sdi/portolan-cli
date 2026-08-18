@@ -322,10 +322,11 @@ class TestTabularEnabledCheck:
         # Should have no failures
         assert len(failures) == 0
 
-        # File should be in skipped (tracked as collection-level tabular asset)
-        # When tabular.enabled=true, standalone tabular files go to skipped
-        # (like other tracked-but-not-converted files)
-        assert parquet_file in skipped
+        # A standalone tabular file is its own collection-level data asset on
+        # the single-file collection pattern, so it reports as added rather
+        # than as a no-op (issue #712).
+        assert parquet_file not in skipped
+        assert [i.item_id for i in added] == ["census"]
 
         # collection.json should exist and have the asset
         collection_json = collection_dir / "collection.json"
@@ -944,8 +945,11 @@ class TestTabularConversionIntegration:
 
         assert len(failures) == 0, f"Expected no failures, got {failures}"
 
-        # The CSV should be in skipped (processed)
-        assert csv_file in skipped
+        # The converted Parquet is the primary asset and reports as added, with
+        # the CSV retained alongside it as the source (issue #712).
+        assert csv_file not in skipped
+        assert [i.item_id for i in added] == ["records"]
+        assert "records.csv" in added[0].asset_paths
 
         # A Parquet file should now exist in the collection
         parquet_file = collection_dir / "records.parquet"
@@ -1469,9 +1473,10 @@ class TestTabularCollectionEmission:
             catalog_root=catalog_root,
         )
 
-        # Tabular files go to skipped (tracked as collection-level assets)
+        # Standalone tabular files report as added, not skipped (issue #712)
         assert len(failures) == 0
-        assert parquet_file in skipped, "Tabular file should be in skipped list"
+        assert parquet_file not in skipped
+        assert [i.item_id for i in added] == ["census"]
 
         # Check collection.json has portolan:geospatial: false
         collection_json = tabular_dir / "collection.json"
