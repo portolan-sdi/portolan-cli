@@ -104,9 +104,7 @@ def extract_pmtiles_metadata(path: Path) -> PMTilesMetadata:
         from pmtiles.reader import MmapSource, Reader
         from pmtiles.tile import MagicNumberNotFound
     except ImportError as e:
-        raise ImportError(
-            "pmtiles package not installed. Install with: pip install portolan-cli[pmtiles]"
-        ) from e
+        raise ImportError("pmtiles package not installed. Install with: pip install pmtiles") from e
 
     if not path.exists():
         raise FileNotFoundError(f"PMTiles file not found: {path}")

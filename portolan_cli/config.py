@@ -102,7 +102,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "pmtiles.where": None,  # None = no SQL filter
     "pmtiles.include_cols": None,  # None = include all columns
     "pmtiles.precision": 6,  # Coordinate decimal precision
-    "pmtiles.attribution": None,  # None = gpio-pmtiles default
+    "pmtiles.attribution": None,  # None = geoparquet-io default
     "pmtiles.src_crs": None,  # None = use metadata CRS
     # Push exclusion patterns for metadata sync (Issue #426)
     # These files/directories are never synced to remote storage.

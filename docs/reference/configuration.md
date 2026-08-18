@@ -558,7 +558,8 @@ pmtiles.attribution: "© OpenStreetMap contributors"
     - **macOS**: `brew install tippecanoe`
     - **Ubuntu**: `apt install tippecanoe`
 
-    Also requires the optional `pmtiles` extra: `pip install portolan-cli[pmtiles]`
+    No Python extra is needed. The tiling code ships in `geoparquet-io`, which a
+    default install already carries.
 
 ### Commands
 
@@ -566,8 +567,8 @@ pmtiles.attribution: "© OpenStreetMap contributors"
 # Generate PMTiles during add
 portolan add boundaries/ --pmtiles
 
-# Force regeneration even if up-to-date
-portolan add boundaries/ --pmtiles --force-pmtiles
+# Force regeneration even if up-to-date (--force-pmtiles implies --pmtiles)
+portolan add boundaries/ --force-pmtiles
 
 # Check for missing PMTiles (produces warning, not error)
 portolan check
@@ -575,7 +576,7 @@ portolan check
 
 ### How It Works
 
-- Uses [gpio-pmtiles](https://github.com/geoparquet-io/gpio-pmtiles) wrapper around tippecanoe
+- Uses [geoparquet-io](https://github.com/geoparquet/geoparquet-io) `create_pmtiles`, a wrapper around tippecanoe
 - PMTiles stored alongside source GeoParquet (e.g., `data.parquet` → `data.pmtiles`)
 - Registered as collection-level asset with role `["overview"]`
 - Tracked in `versions.json` for push

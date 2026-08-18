@@ -121,8 +121,12 @@ render paths.
 - PMTiles is required for vector datasets > 100 MB and recommended > 10 MB. Generate alongside the GeoParquet.
 - `pmtiles.src_crs` from `.portolan/config.yaml` must be threaded
   `get_pmtiles_settings()` (in `pmtiles.py`) -> `generate_pmtiles_for_collection()`
-  -> `gpio-pmtiles`, which reprojects to WGS84 before tippecanoe. Dropping it
-  breaks PMTiles for any projected source.
+  -> `geoparquet_io.api.ops.create_pmtiles`, which reprojects to WGS84 before
+  tippecanoe. Dropping it breaks PMTiles for any projected source. The
+  deprecated `gpio-pmtiles` package is gone (#754); do not import it again.
+- `--force-pmtiles` implies `--pmtiles`. `generate_or_suggest_pmtiles` ORs the
+  two into `requested`, which gates generation and decides whether a failure
+  exits non-zero (#760).
 - A generated `.pmtiles` MUST be a **collection-level** asset AND have a
   `rel: "pmtiles"` link (web-map-links extension). Item-level-only is
   non-conformant (rashid PTL-VIZ-003, an error). PMTiles discovery
