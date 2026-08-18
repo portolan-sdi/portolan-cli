@@ -13,14 +13,18 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import rasterio
 
 from portolan_cli.collection import (
     read_collection_json,
     write_collection_json,
 )
+from portolan_cli.formats import RASTER_EXTENSIONS, FormatType
 from portolan_cli.item import (
     _extract_geometry_from_file,
     _get_media_type,
@@ -28,6 +32,7 @@ from portolan_cli.item import (
     write_item_json,
 )
 from portolan_cli.json_io import write_json_atomic
+from portolan_cli.metadata.cog import extract_cog_metadata
 from portolan_cli.models.collection import (
     CollectionModel,
     ExtentModel,
@@ -44,17 +49,31 @@ from portolan_cli.versions import (
 
 logger = logging.getLogger(__name__)
 
+#: The band name ``extract_cog_metadata`` generates. A band called anything else
+#: was named by a human, so the band refresh below keeps that name rather than
+#: writing the placeholder back over it.
+_GENERATED_BAND_NAME = re.compile(r"^band_\d+$")
+
 
 def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
     """Re-extract metadata from file and update existing STAC item.
 
     Refreshes only the fields this metadata pass owns, the item's bbox,
-    geometry, datetime, and the data asset's href, and preserves everything
-    else on disk. That deliberately includes the item's ``stac_extensions``,
-    the data asset's ``bands`` / ``statistics``, every non-``data`` asset such
-    as the ``thumbnail`` that ``portolan add`` registers for COGs (#657), and
-    the data asset's media type, which the refresh backfills only when it is
-    missing.
+    geometry, datetime, the data asset's href, and, for a raster, the data
+    asset's ``bands`` array. Everything else on disk is preserved. That
+    deliberately includes the item's ``stac_extensions``, every non-``data``
+    asset such as the ``thumbnail`` that ``portolan add`` registers for COGs
+    (#657), a non-raster asset's ``bands`` (#659), and the data asset's media
+    type, which the refresh backfills only when it is missing.
+
+    A raster's ``bands`` array is the exception, because it describes the shape
+    of the file and formats.md makes the file authoritative for band statistics.
+    Re-shape a 4-band COG into a 1-band COG and a preserved array documents
+    bands that no longer exist (#737), on a command whose job is freshness. So
+    the refresh re-reads the array from the bytes with the extractors
+    ``portolan add`` uses. A failed or empty extraction keeps what is on disk,
+    because a refresh that cannot read the file must not destroy the record
+    (#659).
 
     The update edits the raw item JSON in place rather than round-tripping
     through :class:`ItemModel`. The model only carries href/type/roles/title for
@@ -90,8 +109,8 @@ def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
     properties = item_data.setdefault("properties", {})
     properties["datetime"] = datetime.now(timezone.utc).isoformat()
 
-    # Refresh the data asset's href/type in place, leaving its bands/statistics
-    # (and any human-authored title) and all other assets untouched.
+    # Refresh the data asset's href/type in place, leaving any human-authored
+    # title and all other assets untouched.
     assets: dict[str, Any] = item_data.setdefault("assets", {})
     data_key = _find_data_asset_key(assets)
     data_asset = assets.setdefault(data_key, {})
@@ -104,12 +123,144 @@ def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
     if not data_asset.get("type"):
         data_asset["type"] = _get_media_type(file_path)
     data_asset.setdefault("roles", ["data"])
+    _refresh_raster_bands(data_asset, file_path)
 
     # Write the full record back to disk. Atomic, so a kill mid-write cannot
     # leave a truncated item.json where a valid one used to be (issue #687).
     write_json_atomic(item_path, item_data)
 
     return ItemModel.from_dict(item_data)
+
+
+def _refresh_raster_bands(data_asset: dict[str, Any], file_path: Path) -> None:
+    """Re-extract a raster data asset's ``bands`` array in place (#737).
+
+    A non-raster asset is untouched, so a GeoParquet asset's array still survives
+    the refresh verbatim (#659). So does a raster's array when the extraction
+    fails or reads no bands, because a refresh that cannot see the file has
+    nothing better to write than what is already recorded.
+
+    When the band count is unchanged the fresh values are merged over the
+    existing band, keeping the descriptive fields extraction cannot derive. When
+    the count changes the file has been re-shaped, so a label written for one of
+    four bands cannot be assumed to describe the one band that is left, and the
+    fresh array replaces the old one outright.
+    """
+    if file_path.suffix.lower() not in RASTER_EXTENSIONS:
+        return
+
+    fresh = _extract_raster_bands(file_path)
+    if not fresh:
+        logger.warning(
+            "Could not re-extract bands from '%s'; keeping the recorded array",
+            file_path.name,
+        )
+        return
+
+    existing = data_asset.get("bands")
+    if isinstance(existing, list) and len(existing) == len(fresh):
+        fresh = [
+            _merge_band(new, old) if isinstance(old, dict) else new
+            for new, old in zip(fresh, existing, strict=True)
+        ]
+
+    data_asset["bands"] = fresh
+
+
+def _extract_raster_bands(file_path: Path) -> list[dict[str, Any]]:
+    """The ``bands`` array ``portolan add`` would write for this raster.
+
+    Orchestrates the extractors the add path uses, ``extract_cog_metadata`` for
+    the per-band shape and ``preparation``'s statistics helpers for the
+    ``statistics`` sub-object, so a refreshed array and a freshly added one are
+    built by the same code and carry the same STAC field names. Returns an empty
+    list when the raster cannot be read, which the caller treats as "keep what is
+    on disk".
+
+    Reads with ``GDAL_PAM_ENABLED=NO`` so a ``.aux.xml`` sidecar cannot answer
+    for the file. formats.md is explicit that statistics MUST be embedded in the
+    file and that a PAM sidecar does not satisfy that, and GDAL never invalidates
+    a sidecar when the raster underneath is replaced. `add` leaves one next to
+    every raster it computes statistics for, so a refresh that trusted it would
+    copy the old raster's numbers onto the new bands. It is also how rashid reads
+    a COG for PTL-DAT-009.
+    """
+    # Imported inside the function on purpose: `preparation` imports the
+    # `metadata` package this module belongs to, so a module-level import would
+    # close an import cycle.
+    from portolan_cli.preparation import (
+        _add_statistics_to_properties,
+        _extract_statistics_best_effort,
+    )
+
+    with rasterio.Env(GDAL_PAM_ENABLED="NO"):
+        try:
+            stac_properties = extract_cog_metadata(file_path).to_stac_properties()
+        except Exception:
+            logger.warning("Raster metadata extraction failed for '%s'", file_path, exc_info=True)
+            return []
+
+        # Statistics are a configured enrichment, so they need the catalog whose
+        # settings gate them. A raster outside any catalog gets the band shape only.
+        catalog_root, collection_dir = _statistics_scope(file_path)
+        if catalog_root is not None:
+            band_stats, parquet_stats = _extract_statistics_best_effort(
+                file_path, FormatType.RASTER, catalog_root, collection_path=collection_dir
+            )
+            # `_extract_statistics_best_effort` already applied the
+            # `statistics.enabled` gate, returning nothing when the setting is
+            # off, so the flag here is always True.
+            _add_statistics_to_properties(
+                stac_properties, FormatType.RASTER, band_stats, parquet_stats, stats_enabled=True
+            )
+
+    bands = stac_properties.get("bands")
+    if not isinstance(bands, list):
+        return []
+    return [band for band in bands if isinstance(band, dict)]
+
+
+def _statistics_scope(file_path: Path) -> tuple[Path | None, Path | None]:
+    """The (catalog root, collection dir) a statistics setting resolves against.
+
+    The refresh is handed one file, so the scope `add` receives as arguments has
+    to be recovered from the path. The catalog root comes from the usual sentinel
+    walk, the collection from the nearest ancestor holding a ``collection.json``.
+    Either may be None, and `get_setting` then falls back a level.
+    """
+    from portolan_cli.catalog import find_catalog_root
+
+    catalog_root = find_catalog_root(file_path.parent)
+    if catalog_root is None:
+        return None, None
+
+    for parent in file_path.parents:
+        if (parent / "collection.json").exists():
+            return catalog_root, parent
+        if parent == catalog_root:
+            break
+    return catalog_root, None
+
+
+def _merge_band(fresh: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
+    """Fresh band values over the recorded ones, keeping what pixels cannot say.
+
+    The split follows what is derivable. ``data_type``, ``nodata`` and
+    ``statistics`` come from the file, which formats.md makes the authority for
+    them. A ``name`` or ``description`` a human wrote is descriptive, not
+    derivable, so it survives. A name is kept unless it is the generated
+    ``band_N`` placeholder, and any other recorded key the extractor does not
+    produce carries over. That also means a value extraction failed to read,
+    including a ``nodata`` that came from ``metadata.yaml`` defaults the refresh
+    never sees, is preserved rather than dropped.
+    """
+    merged = {**existing, **fresh}
+
+    name = existing.get("name")
+    if isinstance(name, str) and name and not _GENERATED_BAND_NAME.match(name):
+        merged["name"] = name
+
+    return merged
 
 
 def _find_data_asset_key(assets: dict[str, Any]) -> str:
