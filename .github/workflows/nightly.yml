@@ -54,6 +54,10 @@ jobs:
 
   mutation:
     name: Mutation Testing
+    # The only place mutation runs. ci.yml used to mutate the files a pull
+    # request changed, on a 30 minute timeout, which is too slow to sit in
+    # front of every merge. This sweep covers the tree a shard at a time
+    # instead, and the shard rotates nightly.
     runs-on: ubuntu-latest
     # Hash-assigned shards hold 2-12 files rather than a uniform 6, so the
     # largest night runs roughly twice the mutants of the 6-file shard that took
@@ -87,8 +91,8 @@ jobs:
           # nights. Lower NUM_SHARDS to cover more per night — but only if a run
           # still finishes within timeout-minutes, and re-measure the per-shard
           # rates in .mutation-shards.json, which a new count invalidates.
-          # (PR-scoped mutation of changed files is the fast, per-change gate; this
-          # sweep is the slow, whole-codebase trend. See #612.)
+          # Mutation runs nightly only. Pull requests carry no mutation gate,
+          # so this sweep is the sole mutation signal. See #612 and #779.
           NUM_SHARDS=25
           DAY=$(( 10#$(date -u +%j) ))
           SHARD=$(( DAY % NUM_SHARDS ))

@@ -1,9 +1,9 @@
-"""Regression tests for the PR-scoped mutation-test configuration."""
+"""Regression tests for the nightly mutation-test configuration."""
 
 from __future__ import annotations
 
 import re
-import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,31 +12,51 @@ import tomllib
 pytestmark = [pytest.mark.unit, pytest.mark.source_scan]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+NIGHTLY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "nightly.yml"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
-MUTATION_PATHSPEC = ":(glob)portolan_cli/**/*.py"
+SCRIPTS_DIR = REPO_ROOT / "scripts"
+
+# The sweep mutates whatever scripts/shard_select.py walks. Read the root and the
+# shard count out of the workflow rather than repeating them here, so a change to
+# either one is measured instead of silently passing an outdated expectation.
+SELECTOR_INVOCATION = re.compile(
+    r"scripts/shard_select\.py \\\n\s*--root (?P<root>\S+) "
+    r'--num-shards "\$NUM_SHARDS" --shard "\$SHARD"'
+)
+NUM_SHARDS_ASSIGNMENT = re.compile(r"^\s*NUM_SHARDS=(?P<count>\d+)\s*$", re.MULTILINE)
 
 
-def test_pr_mutation_pathspec_includes_top_level_and_nested_modules() -> None:
-    """The changed-file filter must reach both package-root and nested modules."""
-    workflow = CI_WORKFLOW.read_text(encoding="utf-8")
-    command_pattern = re.compile(
-        r'git diff --name-only --diff-filter=d "\$BASE_SHA" HEAD -- \\\n\s*'
-        + re.escape(f"'{MUTATION_PATHSPEC}'")
-    )
-    assert command_pattern.search(workflow)
+def _selector_config() -> tuple[str, int]:
+    """Return the package root and shard count the nightly sweep runs with."""
+    workflow = NIGHTLY_WORKFLOW.read_text(encoding="utf-8")
 
-    result = subprocess.run(
-        ["git", "ls-files", MUTATION_PATHSPEC],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    matched = set(result.stdout.splitlines())
+    invocation = SELECTOR_INVOCATION.search(workflow)
+    assert invocation, "nightly.yml no longer runs scripts/shard_select.py"
 
-    assert "portolan_cli/add.py" in matched
-    assert "portolan_cli/metadata/update.py" in matched
+    count = NUM_SHARDS_ASSIGNMENT.search(workflow)
+    assert count, "nightly.yml no longer sets NUM_SHARDS"
+
+    return invocation.group("root"), int(count.group("count"))
+
+
+def test_nightly_sweep_covers_top_level_and_nested_modules() -> None:
+    """Every shard together must mutate package-root and nested modules.
+
+    A selector that walks one directory level, or a root pointed at a
+    subpackage, drops whole regions of the tree. The sweep still exits zero,
+    so the gap shows up only as mutants that no night ever tests (#612).
+    """
+    root_name, num_shards = _selector_config()
+    if str(SCRIPTS_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS_DIR))
+    from shard_select import select, shard_key
+
+    root = REPO_ROOT / root_name
+    keys = [shard_key(root, path) for path in sorted(root.rglob("*.py"))]
+    swept = {key for shard in range(num_shards) for key in select(keys, num_shards, shard)}
+
+    assert "portolan_cli/add.py" in swept
+    assert "portolan_cli/metadata/update.py" in swept
 
 
 def test_mutmut_excludes_static_source_scans() -> None:

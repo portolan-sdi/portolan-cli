@@ -115,27 +115,20 @@ Runs at 4 AM UTC daily. Can be triggered manually.
 
 ### Jobs
 
-#### Mutation Testing (two scopes)
+#### Mutation Testing
 
 Uses `mutmut` to verify tests actually catch bugs. The full codebase generates
-~45k mutants — far more than any single run can test in a nightly window — so
-mutation testing runs at two scopes that share one scorer:
+~45k mutants, far more than any single run can test in a nightly window. One
+scope runs it. Pull requests carry no mutation gate (#779).
 
-- **PR-scoped** (`mutation-pr` in `ci.yml`, PR-only, advisory): mutates only the
-  `portolan_cli` files the PR changed, so feedback lands on new code when the
-  author can act on it. Skipped when a PR touches no source. A PR that changes
-  only comments/docstrings produces no mutants and passes (`--allow-empty`).
-  Advisory today — not in the `ci-success` gate — until the floor is validated
-  against a real full run; promote it to required by adding it to `ci-success`
-  needs.
 - **Nightly sweep** (`mutation` in `nightly.yml`, hard gate): mutates a
   deterministic `1/NUM_SHARDS` slice of the source files, round-robin by
   day-of-year, so the whole tree is covered every `NUM_SHARDS` nights (currently
   25). Lower `NUM_SHARDS` to cover more per night, but only if a run still
   finishes within `timeout-minutes`.
 
-**Threshold:** the floor lives in `.mutation-baseline` (a single integer). Both
-scopes read it via `scripts/mutation_score.py` rather than hardcoding it, so it
+**Threshold:** the floor lives in `.mutation-baseline` (a single integer). The
+sweep reads it via `scripts/mutation_score.py` rather than hardcoding it, so it
 ratchets up in a one-line, reviewable diff. The score counts `killed + timeout +
 suspicious` as killed over `killed_total + survived` testable (`no_tests`
 excluded). **Lowering the floor requires a justification in the PR that does so.**
@@ -148,7 +141,7 @@ mutmut raises `Filtered for specific mutants, but nothing matches` and fails the
 whole run — which is what killed the 2026-08-02 nightly, whose shard held two
 re-export packages and nothing else. Emptiness comes from mutmut's own mutation
 pass, because nine of those files do define functions and a "has a `def`" test
-would still pass them through. Both scopes skip cleanly when the filter leaves
+would still pass them through. The sweep skips cleanly when the filter leaves
 nothing, and the skipped files are named in the log.
 
 **Fails loud, never silent.** On the nightly sweep, zero testable mutants means

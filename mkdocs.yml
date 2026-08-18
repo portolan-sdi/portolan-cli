@@ -91,6 +91,8 @@ nav:
     - CLI: reference/cli.md
     - Configuration: reference/configuration.md
     - Format Support: reference/formats.md
+    - Input Formats: reference/input-formats.md
+    - Versions Manifest: reference/versions-manifest.md
     - Iceberg API: reference/iceberg-api.md
   - Contributing: contributing.md
   - Changelog: changelog.md

@@ -8,12 +8,9 @@ and asset-role maps).
 
 This module is the one place that vocabulary lives now. Every frozenset/dict in
 those modules is *derived* from :data:`EXTENSION_REGISTRY` (see the derivation
-helpers below). See.
-
-The registry used to also gate ``spec/extensions.md`` through a parity test.
-Both are gone: the spec moved to the portolan-spec repo and validation moved to
-rashid, so nothing re-homes that vocabulary doc yet — issue #563
-tracks publishing it from this registry.
+helpers below), and the human doc ``docs/reference/input-formats.md`` is
+generated from it by ``scripts/gen_input_formats_doc.py`` (freshness guarded by
+``tests/unit/test_input_formats_doc.py``, so the page cannot drift).
 
 It is deliberately a stdlib-only leaf that imports nothing from ``portolan_cli``,
 so a consumer that needs the vocabulary can vendor it whole.
