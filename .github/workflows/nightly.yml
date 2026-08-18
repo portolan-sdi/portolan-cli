@@ -91,8 +91,8 @@ jobs:
           # nights. Lower NUM_SHARDS to cover more per night — but only if a run
           # still finishes within timeout-minutes, and re-measure the per-shard
           # rates in .mutation-shards.json, which a new count invalidates.
-          # (PR-scoped mutation of changed files is the fast, per-change gate; this
-          # sweep is the slow, whole-codebase trend. See #612.)
+          # Mutation runs nightly only. Pull requests carry no mutation gate,
+          # so this sweep is the sole mutation signal. See #612 and #779.
           NUM_SHARDS=25
           DAY=$(( 10#$(date -u +%j) ))
           SHARD=$(( DAY % NUM_SHARDS ))
