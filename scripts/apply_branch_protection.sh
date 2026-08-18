@@ -11,19 +11,32 @@
 #   Concretely:
 #     1. Enables repository auto-merge.
 #     2. Deletes any legacy classic branch-protection rule on a protected branch.
-#     3. Creates-or-updates TWO rulesets over PROTECTED_REF_PATTERNS:
-#        A. "protected: PR + green checks" — every push goes through a PR and
-#           every required status check must pass. NO bypass actors: this applies
-#           to admins too, so nobody merges red.
-#        B. "protected: review required" — 1 approving review, but repository
-#           admins may bypass (so an admin can land a green, bot-approved
-#           Dependabot PR, and admins are never hard-blocked on review).
-#     4. Deletes the superseded "main: ..." rulesets, so a re-run after the
-#        rename does not leave two overlapping copies bound to the same refs.
+#     3. Creates-or-updates TWO rulesets:
+#        A. "protected: PR + green checks" over refs/heads/main — every push
+#           goes through a PR, and every required status check must pass.
+#        B. "protected: release branches" over refs/heads/release/* — the same
+#           rules, minus the two org checks.
+#     4. Deletes the superseded rulesets, including the review rule, so a
+#        re-run does not leave overlapping copies bound to the same refs.
 #     5. Prints a verification summary.
 #
-#   Splitting into two rulesets is deliberate: the strict checks (A) bind
-#   everyone, while only the softer review rule (B) grants admin bypass.
+#   The split is deliberate. A release branch cannot require "checks / layout"
+#   until it carries .claude/hooks/writing_check.py, so that check would block
+#   every merge into it. See portolan-sdi/portolan-cli#773.
+#
+# NO REVIEW REQUIREMENT
+#   This script used to create a "protected: review required" ruleset asking
+#   for 1 approving review. It no longer does, and it deletes that ruleset.
+#   GitHub auto-merge ignores the admin bypass, so every ops-sync PR sat
+#   unmerged until a person approved it, and a solo author could not approve
+#   their own work. The checks are the gate. See portolan-sdi/portolan-ops,
+#   norms/ci.md, "Branch Protection".
+#
+# THE RECORD LIVES IN portolan-ops
+#   sync/protection.yml in portolan-sdi/portolan-ops records the contexts and
+#   the review count this repo should hold, and protection-audit.yml compares
+#   the live setting against it every Monday. Change that file in the same
+#   pull request that changes this script, or the audit reports the difference.
 #
 # WHICH BRANCHES
 #   `main` plus `release/*`. Release branches are long-lived, take PRs directly,
@@ -35,15 +48,20 @@
 #   pattern BEFORE adding that pattern here.
 #
 # REQUIRED STATUS CHECKS
-#   Just three contexts, on purpose:
-#     - "CI Success"      — the ci.yml aggregation job that gates on quality,
-#                           security, the test matrix, iceberg, docs, and build.
-#                           Requiring this one context (not each matrix cell)
-#                           means adding a Python/OS never drops a required check.
-#     - "codecov/patch"   — changed-line coverage (target in codecov.yml).
-#     - "codecov/project" — overall coverage floor, `target: auto` in
-#                           codecov.yml, so it fails on a regression rather than
-#                           against a fixed number the repo does not meet.
+#   On main, four contexts:
+#     - "CI Success"           — the ci.yml aggregation job that gates on
+#                                quality, security, the test matrix, iceberg,
+#                                docs, and build. Requiring this one context
+#                                (not each matrix cell) means adding a Python
+#                                version or an OS never drops a required check.
+#     - "codecov/patch"        — changed-line coverage (target in codecov.yml).
+#     - "checks / layout"      — the org layout check, from repo-checks.yml.
+#     - "checks / pull-request" — the org body check, from repo-checks.yml.
+#
+#   On release/*, the first two only.
+#
+#   "codecov/project" is absent on purpose. It reported nothing, so requiring
+#   it blocked every merge. See #733.
 #
 #   A required context that never reports blocks every merge on the branch it
 #   guards. Confirm a context appears on a PR before adding it here.
@@ -69,19 +87,21 @@ set -euo pipefail
 
 REPO="${1:-portolan-sdi/portolan-cli}"
 
-# Ref patterns both rulesets bind to (GitHub fnmatch syntax, `*` spans one path
+# Ref patterns, one set per ruleset (GitHub fnmatch syntax, `*` spans one path
 # segment). Read the ORDERING note in the header before adding a pattern.
-PROTECTED_REF_PATTERNS=("refs/heads/main" "refs/heads/release/*")
+MAIN_REF_PATTERNS=("refs/heads/main")
+RELEASE_REF_PATTERNS=("refs/heads/release/*")
 
-# Ruleset names. Renamed from the earlier "main: ..." pair when the rulesets
-# outgrew main; the old names are deleted below so a re-run leaves one copy.
+# Ruleset names. The names below match what the repo holds today. Anything in
+# LEGACY_RULESET_NAMES is deleted, so a re-run leaves one copy of each and
+# removes the review rule this script used to create.
 CHECKS_RULESET_NAME="protected: PR + green checks"
-REVIEW_RULESET_NAME="protected: review required"
-LEGACY_RULESET_NAMES=("main: PR + green checks" "main: review required")
-
-# Repository role id 5 == "admin" (GitHub built-in role). Used as a bypass actor
-# for the review ruleset only.
-ADMIN_ROLE_ID=5
+RELEASE_RULESET_NAME="protected: release branches"
+LEGACY_RULESET_NAMES=(
+  "main: PR + green checks"
+  "main: review required"
+  "protected: review required"
+)
 
 command -v jq >/dev/null || { echo "error: jq is required" >&2; exit 1; }
 
@@ -159,14 +179,16 @@ delete_ruleset() {
   fi
 }
 
-# Ref-pattern include list, shared by both rulesets. Built from the bash array
-# via jq so a pattern containing a shell metacharacter cannot break the JSON.
-REF_INCLUDES=$(printf '%s\n' "${PROTECTED_REF_PATTERNS[@]}" | jq -R . | jq -sc .)
+# Ref-pattern include lists, one per ruleset. Built from the bash arrays via
+# jq so a pattern containing a shell metacharacter cannot break the JSON.
+MAIN_REF_INCLUDES=$(printf '%s\n' "${MAIN_REF_PATTERNS[@]}" | jq -R . | jq -sc .)
+RELEASE_REF_INCLUDES=$(printf '%s\n' "${RELEASE_REF_PATTERNS[@]}" | jq -R . | jq -sc .)
 
 # -----------------------------------------------------------------------------
-# 3A. Ruleset: PR required + required status checks (no bypass — binds admins).
+# 3A. main: PR required + the four required status checks.
 # -----------------------------------------------------------------------------
-CHECKS_RULESET=$(jq -n --arg name "${CHECKS_RULESET_NAME}" --argjson refs "${REF_INCLUDES}" '
+CHECKS_RULESET=$(jq -n --arg name "${CHECKS_RULESET_NAME}" \
+  --argjson refs "${MAIN_REF_INCLUDES}" '
 {
   name: $name,
   target: "branch",
@@ -192,7 +214,8 @@ CHECKS_RULESET=$(jq -n --arg name "${CHECKS_RULESET_NAME}" --argjson refs "${REF
         required_status_checks: [
           { context: "CI Success" },
           { context: "codecov/patch" },
-          { context: "codecov/project" }
+          { context: "checks / layout" },
+          { context: "checks / pull-request" }
         ]
       }
     }
@@ -200,37 +223,50 @@ CHECKS_RULESET=$(jq -n --arg name "${CHECKS_RULESET_NAME}" --argjson refs "${REF
 }')
 
 # -----------------------------------------------------------------------------
-# 3B. Ruleset: 1 approving review, bypassable by repository admins.
+# 3B. release/*: the same rules, minus the two org checks. checks / layout
+#     fails on that branch until it carries the writing hook (#773), so
+#     requiring it would block every merge into the release branch.
 # -----------------------------------------------------------------------------
-REVIEW_RULESET=$(jq -n --argjson admin "${ADMIN_ROLE_ID}" \
-  --arg name "${REVIEW_RULESET_NAME}" --argjson refs "${REF_INCLUDES}" '
+RELEASE_RULESET=$(jq -n --arg name "${RELEASE_RULESET_NAME}" \
+  --argjson refs "${RELEASE_REF_INCLUDES}" '
 {
   name: $name,
   target: "branch",
   enforcement: "active",
   conditions: { ref_name: { include: $refs, exclude: [] } },
-  bypass_actors: [
-    { actor_id: $admin, actor_type: "RepositoryRole", bypass_mode: "always" }
-  ],
+  bypass_actors: [],
   rules: [
+    { type: "deletion" },
+    { type: "non_fast_forward" },
     { type: "pull_request",
       parameters: {
-        required_approving_review_count: 1,
+        required_approving_review_count: 0,
         dismiss_stale_reviews_on_push: false,
         require_code_owner_review: false,
         require_last_push_approval: false,
         required_review_thread_resolution: false
+      }
+    },
+    { type: "required_status_checks",
+      parameters: {
+        strict_required_status_checks_policy: true,
+        do_not_enforce_on_create: false,
+        required_status_checks: [
+          { context: "CI Success" },
+          { context: "codecov/patch" }
+        ]
       }
     }
   ]
 }')
 
 upsert_ruleset "${CHECKS_RULESET_NAME}" "${CHECKS_RULESET}"
-upsert_ruleset "${REVIEW_RULESET_NAME}" "${REVIEW_RULESET}"
+upsert_ruleset "${RELEASE_RULESET_NAME}" "${RELEASE_RULESET}"
 
 # -----------------------------------------------------------------------------
-# 4. Retire the pre-rename rulesets. Runs last: if an upsert above failed, the
-#    old rules stay in force rather than leaving the branch unprotected.
+# 4. Retire the superseded rulesets, the review rule among them. Runs last:
+#    if an upsert above failed, the old rules stay in force rather than
+#    leaving the branch unprotected.
 # -----------------------------------------------------------------------------
 for legacy in "${LEGACY_RULESET_NAMES[@]}"; do
   delete_ruleset "${legacy}"
@@ -243,5 +279,8 @@ echo
 echo ">> Current rulesets on ${REPO}:"
 gh api "repos/${REPO}/rulesets?includes_parents=false" \
   --jq '.[] | "   - \(.name) [\(.enforcement)]"'
-echo ">> Protected refs: ${PROTECTED_REF_PATTERNS[*]}"
-echo ">> Done. Required checks: CI Success, codecov/patch, codecov/project."
+echo ">> Protected refs: ${MAIN_REF_PATTERNS[*]} ${RELEASE_REF_PATTERNS[*]}"
+echo ">> main requires: CI Success, codecov/patch, checks / layout," \
+     "checks / pull-request."
+echo ">> release/* requires: CI Success, codecov/patch."
+echo ">> No branch requires an approving review."
