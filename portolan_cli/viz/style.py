@@ -30,7 +30,12 @@ from pathlib import Path
 from typing import Any
 
 from portolan_cli.config import load_config
-from portolan_cli.constants import LEGACY_LEGEND_MANIFEST_FIELD, LEGACY_STYLE_MANIFEST_FIELD
+from portolan_cli.constants import (
+    LEGACY_LEGEND_MANIFEST_FIELD,
+    LEGACY_STYLE_MANIFEST_FIELD,
+    ROLE_DEFAULT,
+    ROLE_STYLE,
+)
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import info
 from portolan_cli.stac_parquet import stamp_file_fields, sync_file_extension
@@ -394,11 +399,12 @@ def enrich_cog_assets(
 
 #: Role every style asset carries. A client discovers a collection's styles by
 #: filtering assets on it, which is why the spec defines no manifest property.
-STYLE_ROLE = "style"
+#: The name comes from ``constants``, the one home for the role vocabulary.
+STYLE_ROLE = ROLE_STYLE
 
 #: Second role marking the style a client should draw first (core.md,
 #: Visualization Styles).
-DEFAULT_ROLE = "default"
+DEFAULT_ROLE = ROLE_DEFAULT
 
 #: Asset key :func:`write_default_style` writes. Nothing in STAC reads meaning
 #: into a key, so this only breaks the tie when no style is marked yet.

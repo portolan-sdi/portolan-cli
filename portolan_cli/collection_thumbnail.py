@@ -31,20 +31,25 @@ from pathlib import Path, PurePath
 from typing import Any
 
 from portolan_cli import extension_registry as _reg
+from portolan_cli.constants import ROLE_THUMBNAIL
 from portolan_cli.formats import is_geoparquet
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import detail, warn
 from portolan_cli.stac_parquet import sync_file_extension
 from portolan_cli.sync.checksums import compute_checksum, multihash_sha256
 from portolan_cli.versions import track_generated_assets
-from portolan_cli.viz.thumbnail import generate_vector_thumbnail, get_thumbnail_config
+from portolan_cli.viz.thumbnail import (
+    generate_vector_thumbnail,
+    get_thumbnail_config,
+    is_generated_thumbnail,
+)
 
 logger = logging.getLogger(__name__)
 
 #: The canonical asset key. STAC consumers find a thumbnail by role, but a
 #: well-known key keeps collection.json readable and matches the item-level
 #: convention in ``preparation._ROLE_KEYS``.
-THUMBNAIL_ASSET_KEY = "thumbnail"
+THUMBNAIL_ASSET_KEY = ROLE_THUMBNAIL
 
 #: Extensions that may serve as a thumbnail, per rashid's ``_THUMBNAIL_TYPES``.
 #: Sourced from the extension registry so media types stay single-sourced.
@@ -119,7 +124,7 @@ def register_collection_thumbnail(
     asset: dict[str, Any] = {
         "href": f"./{href}",
         "type": _media_type_for(thumbnail_path),
-        "roles": ["thumbnail"],
+        "roles": [ROLE_THUMBNAIL],
     }
     if title:
         asset["title"] = title
@@ -144,7 +149,9 @@ def register_collection_thumbnail(
 
 
 def _has_thumbnail_asset(data: dict[str, Any]) -> bool:
-    return any("thumbnail" in asset.get("roles", []) for asset in data.get("assets", {}).values())
+    return any(
+        ROLE_THUMBNAIL in asset.get("roles", []) for asset in data.get("assets", {}).values()
+    )
 
 
 def _claimed_hrefs(data: dict[str, Any]) -> set[str]:
@@ -156,7 +163,7 @@ def _claimed_hrefs(data: dict[str, Any]) -> set[str]:
     """
     claimed: set[str] = set()
     for asset in data.get("assets", {}).values():
-        if "thumbnail" in asset.get("roles", []):
+        if ROLE_THUMBNAIL in asset.get("roles", []):
             continue
         href = asset.get("href", "")
         if href:
@@ -166,7 +173,7 @@ def _claimed_hrefs(data: dict[str, Any]) -> set[str]:
 
 def _is_generated(path: Path) -> bool:
     """True for the ``{stem}.thumb.{ext}`` name ``thumbnail_path_for`` writes."""
-    return path.stem.lower().endswith(".thumb")
+    return is_generated_thumbnail(path.name)
 
 
 def _is_adoptable(path: Path) -> bool:
@@ -226,7 +233,7 @@ def _find_item_thumbnail(collection_path: Path, data: dict[str, Any]) -> Path | 
         except (OSError, json.JSONDecodeError):
             continue
         for asset in item.get("assets", {}).values():
-            if "thumbnail" not in asset.get("roles", []):
+            if ROLE_THUMBNAIL not in asset.get("roles", []):
                 continue
             href = str(asset.get("href", "")).removeprefix("./")
             candidate = item_json.parent / href

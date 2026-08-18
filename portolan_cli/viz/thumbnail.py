@@ -20,7 +20,7 @@ import logging
 import math
 import threading
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.config import load_config
@@ -194,6 +194,14 @@ def get_thumbnail_config(catalog_path: Path) -> ThumbnailConfig:
     )
 
 
+#: Infix that marks an image Portolan drew, as in ``scene1.thumb.jpg``. It keeps
+#: a render off a hand-curated sibling such as ``scene1.jpg``. That also makes it
+#: the one reliable mark of our own output. ``convert.py``,
+#: ``collection_thumbnail.py`` and ``derived_assets.py`` all read the name from
+#: here, so no module repeats it.
+THUMBNAIL_STEM_SUFFIX = ".thumb"
+
+
 def thumbnail_path_for(data_path: Path) -> Path:
     """Return the thumbnail path for a data file (single source of the convention).
 
@@ -207,7 +215,18 @@ def thumbnail_path_for(data_path: Path) -> Path:
     Returns:
         Path to the sibling thumbnail file.
     """
-    return data_path.with_name(f"{data_path.stem}.thumb.jpg")
+    return data_path.with_name(f"{data_path.stem}{THUMBNAIL_STEM_SUFFIX}.jpg")
+
+
+def is_generated_thumbnail(filename: str) -> bool:
+    """True when ``filename`` carries the ``{stem}.thumb.{ext}`` name we write.
+
+    The test reads the basename alone. It answers for a versions.json href and
+    for a path on disk. An adopted ``thumbnail.png`` returns False, because that
+    image belongs to the user. Only a file Portolan drew is safe to redraw
+    (Issue #735).
+    """
+    return PurePosixPath(filename.lower()).stem.endswith(THUMBNAIL_STEM_SUFFIX)
 
 
 # =============================================================================

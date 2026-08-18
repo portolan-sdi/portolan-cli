@@ -36,6 +36,7 @@ from portolan_cli.async_utils import (
 )
 from portolan_cli.catalog import intermediate_catalog_ids
 from portolan_cli.constants import LEGACY_GLOB_FIELD
+from portolan_cli.derived_assets import is_optional_derivative
 from portolan_cli.logo import LOGO_ASSETS_DIRNAME
 from portolan_cli.output import detail, error, info, output_section, success, warn
 from portolan_cli.sync.upload import ObjectStore, setup_store
@@ -492,6 +493,11 @@ def _get_assets_to_upload(
     new or changed (different sha256) are included. This prevents re-uploading
     unchanged assets when adding a single file to a large catalog (Issue #329).
 
+    A recorded asset that is absent from disk raises. One exception applies. An
+    optional derivative only warns, and this function skips it (Issue #735). The
+    asset role in the STAC metadata decides which is which. See
+    ``derived_assets.is_optional_derivative``.
+
     Args:
         catalog_root: Path to catalog root.
         versions_data: Local versions.json data.
@@ -503,7 +509,8 @@ def _get_assets_to_upload(
         List of absolute paths to asset files that need to be uploaded.
 
     Raises:
-        FileNotFoundError: If a referenced asset file doesn't exist.
+        FileNotFoundError: If a referenced ``data`` or ``source`` asset file
+            doesn't exist.
     """
     # Build set of (href, sha256) pairs from all remote versions
     remote_assets = _build_remote_asset_set(remote_versions_data)
@@ -537,6 +544,17 @@ def _get_assets_to_upload(
             # Resolve path relative to catalog root
             asset_path = catalog_root / href
             if not asset_path.exists():
+                # The spec calls four roles optional derivatives, namely
+                # `visual`, `thumbnail`, `style` and `collection-mirror`. See
+                # portolan-spec specs/portolan/core.md, sections Assets and
+                # Single-File Collections. Portolan rebuilds each one from data
+                # the catalog still holds. An absent one must not fail a sound
+                # push (Issue #735). Conformance gaps belong to `portolan check`.
+                # Roles `data` and `source` stay a hard error, because nothing
+                # can reconstruct them.
+                if is_optional_derivative(catalog_root, href):
+                    warn(f"Optional asset not found, skipped: {href} (version {version_str})")
+                    continue
                 raise FileNotFoundError(
                     f"Asset referenced in version {version_str} not found: {href}"
                 )
