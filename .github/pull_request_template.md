@@ -19,9 +19,13 @@
      path. Show the reported behavior changed. Green tests are not
      verification. -->
 
-<!-- Keep the checkbox wording intact: CI matches its exact phrase. -->
+<!-- Keep the checkbox wording intact: CI matches its exact phrase. Tick at
+     most one. -->
 
 - [ ] This change does not alter behavior (docs, chore, or CI only).
+- [ ] This pull request integrates changes already verified in their own pull
+      requests (a release or integration branch). List them under "What
+      changed".
 
 ## Implementation notes
 
