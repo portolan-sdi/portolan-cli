@@ -240,9 +240,7 @@ class TestExtractESRIStyle:
 
         with (
             patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch,
-            patch(
-                "portolan_cli.extract.common.styles.convert_esri_renderer"
-            ) as mock_convert,
+            patch("portolan_cli.extract.common.styles.convert_esri_renderer") as mock_convert,
         ):
             mock_fetch.return_value = sample_layer_json
             mock_convert.side_effect = ValueError("Unexpected internal error")

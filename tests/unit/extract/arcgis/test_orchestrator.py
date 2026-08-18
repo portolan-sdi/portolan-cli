@@ -455,9 +455,7 @@ class TestOrchestratorIntegration:
         with (
             patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
             patch("portolan_cli.extract.arcgis.orchestrator.retry_with_backoff") as mock_retry,
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator.extract_esri_style"
-            ) as mock_style,
+            patch("portolan_cli.extract.arcgis.orchestrator.extract_esri_style") as mock_style,
         ):
             mock_discover.return_value = mock_discovery_result
             mock_retry.return_value = RetryResult(
@@ -490,9 +488,7 @@ class TestOrchestratorIntegration:
         with (
             patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
             patch("portolan_cli.extract.arcgis.orchestrator.retry_with_backoff") as mock_retry,
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator.extract_esri_style"
-            ) as mock_style,
+            patch("portolan_cli.extract.arcgis.orchestrator.extract_esri_style") as mock_style,
         ):
             mock_discover.return_value = mock_discovery_result
             mock_retry.return_value = RetryResult(
@@ -528,9 +524,7 @@ class TestOrchestratorIntegration:
         with (
             patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
             patch("portolan_cli.extract.arcgis.orchestrator.retry_with_backoff") as mock_retry,
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator.extract_esri_style"
-            ) as mock_style,
+            patch("portolan_cli.extract.arcgis.orchestrator.extract_esri_style") as mock_style,
         ):
             mock_discover.return_value = mock_discovery_result
             mock_retry.return_value = RetryResult(

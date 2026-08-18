@@ -292,6 +292,85 @@ def parse_uniquevalue_renderer(
     )
 
 
+def _break_symbol(info: dict[str, Any]) -> dict[str, Any]:
+    """Return the symbol dict of a break info, treating null as empty."""
+    return info.get("symbol") or {}
+
+
+def _graduated_circle_layer(
+    break_infos: list[dict[str, Any]],
+    first_symbol: dict[str, Any],
+    field: str,
+    min_value: Any,
+    source_layer: str,
+) -> dict[str, Any]:
+    """Build a circle layer whose radius steps with the class breaks."""
+    # step returns the initial value for inputs < first stop
+    # We need: [(min, size1), (break1, size2), (break2, size3), ...]
+    breaks: list[tuple[Any, Any]] = []
+    for i, info in enumerate(break_infos):
+        threshold = min_value if i == 0 else break_infos[i - 1].get("classMaxValue", 0)
+        size = _break_symbol(info).get("size", 10)
+        breaks.append((threshold, size / 2))
+
+    radius_expr = make_step_expression(field, breaks)
+
+    # Get color from first symbol (usually same for all in graduated size)
+    circle_color = esri_color_to_hex(first_symbol.get("color") or [128, 128, 128, 255])
+
+    # Get stroke if present
+    outline = first_symbol.get("outline") or {}
+    stroke_color = None
+    stroke_width = None
+    if outline and outline.get("color"):
+        stroke_color = esri_color_to_hex(outline["color"])
+        stroke_width = outline.get("width")
+
+    return make_circle_layer(
+        layer_id="graduated-circle",
+        source_layer=source_layer,
+        circle_color=circle_color,
+        circle_radius=radius_expr,
+        stroke_color=stroke_color,
+        stroke_width=stroke_width,
+    )
+
+
+def _choropleth_layer(
+    break_infos: list[dict[str, Any]],
+    layer_type: str,
+    field: str,
+    min_value: Any,
+    source_layer: str,
+) -> dict[str, Any]:
+    """Build a fill or line layer whose color steps with the class breaks.
+
+    Each class opens at the previous class's maximum, so the first entry
+    carries minValue as its threshold and make_step_expression uses its
+    color as the below-first-break value.
+    """
+    color_breaks: list[tuple[Any, Any]] = []
+    for i, info in enumerate(break_infos):
+        color = esri_color_to_hex(_break_symbol(info).get("color") or [128, 128, 128, 255])
+        threshold = min_value if i == 0 else break_infos[i - 1].get("classMaxValue", 0)
+        color_breaks.append((threshold, color))
+
+    color_expr = make_step_expression(field, color_breaks)
+
+    if layer_type == "fill":
+        return make_fill_layer(
+            layer_id="choropleth-fill",
+            source_layer=source_layer,
+            fill_color=color_expr,
+            fill_opacity=0.7,
+        )
+    return make_line_layer(
+        layer_id="graduated-line",
+        source_layer=source_layer,
+        line_color=color_expr,
+    )
+
+
 def parse_classbreaks_renderer(
     renderer: dict[str, Any],
     source_layer: str,
@@ -324,83 +403,18 @@ def parse_classbreaks_renderer(
         )
 
     # Determine layer type and property to graduate from first symbol
-    first_symbol = break_infos[0].get("symbol") or {}
+    first_symbol = _break_symbol(break_infos[0])
     layer_type = _symbol_to_layer_type(first_symbol)
 
     # For graduated symbols, we typically vary size (circles) or color
     # Check if sizes vary (graduated symbol) or colors vary (choropleth)
-    sizes = [(info.get("symbol") or {}).get("size") for info in break_infos]
+    sizes = [_break_symbol(info).get("size") for info in break_infos]
     sizes_vary = len({s for s in sizes if s is not None}) > 1
 
     if layer_type == "circle" and sizes_vary:
-        # Graduated symbol sizes
-        # step returns initial value for inputs < first stop
-        # We need: [(min, size1), (break1, size2), (break2, size3), ...]
-        breaks: list[tuple[Any, Any]] = []
-        for i, info in enumerate(break_infos):
-            if i == 0:
-                # Initial value for the range [minValue, classMaxValue]
-                symbol = info.get("symbol") or {}
-                size = symbol.get("size", 10)
-                breaks.append((min_value, size / 2))
-            else:
-                # Break at previous classMaxValue
-                prev_max = break_infos[i - 1].get("classMaxValue", 0)
-                symbol = info.get("symbol") or {}
-                size = symbol.get("size", 10)
-                breaks.append((prev_max, size / 2))
-
-        radius_expr = make_step_expression(field, breaks)
-
-        # Get color from first symbol (usually same for all in graduated size)
-        color = first_symbol.get("color") or [128, 128, 128, 255]
-        circle_color = esri_color_to_hex(color)
-
-        # Get stroke if present
-        outline = first_symbol.get("outline") or {}
-        stroke_color = None
-        stroke_width = None
-        if outline and outline.get("color"):
-            stroke_color = esri_color_to_hex(outline["color"])
-            stroke_width = outline.get("width")
-
-        layer = make_circle_layer(
-            layer_id="graduated-circle",
-            source_layer=source_layer,
-            circle_color=circle_color,
-            circle_radius=radius_expr,
-            stroke_color=stroke_color,
-            stroke_width=stroke_width,
-        )
+        layer = _graduated_circle_layer(break_infos, first_symbol, field, min_value, source_layer)
     else:
-        # Choropleth (color varies by class). Each class opens at the previous
-        # class's maximum, so the first entry carries minValue as its threshold
-        # and make_step_expression uses its color as the below-first-break value.
-        color_breaks: list[tuple[Any, Any]] = []
-        for i, info in enumerate(break_infos):
-            symbol = info.get("symbol") or {}
-            color = esri_color_to_hex(symbol.get("color") or [128, 128, 128, 255])
-            if i == 0:
-                color_breaks.append((min_value, color))
-            else:
-                prev_max = break_infos[i - 1].get("classMaxValue", 0)
-                color_breaks.append((prev_max, color))
-
-        color_expr = make_step_expression(field, color_breaks)
-
-        if layer_type == "fill":
-            layer = make_fill_layer(
-                layer_id="choropleth-fill",
-                source_layer=source_layer,
-                fill_color=color_expr,
-                fill_opacity=0.7,
-            )
-        else:
-            layer = make_line_layer(
-                layer_id="graduated-line",
-                source_layer=source_layer,
-                line_color=color_expr,
-            )
+        layer = _choropleth_layer(break_infos, layer_type, field, min_value, source_layer)
 
     return make_mapbox_style(
         name="Graduated Style",
