@@ -15,6 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
+from portolan_cli.constants import PORTOLAN_SCHEMA_URI
 
 
 @pytest.fixture
@@ -311,8 +312,8 @@ class TestCheckFixUnsupportedFiles:
         envelope = json.loads(result.output)
         data = envelope["data"]
 
-        # With --fix, format data is nested under "conversion" key
-        conversion_data = data.get("conversion", data)
+        # With --fix, the geo-asset report is nested under the "fix" section.
+        conversion_data = data["fix"]["conversion"]
 
         # Only the GeoJSON should be in the report - .nc is ignored
         assert conversion_data["summary"]["total"] == 1
@@ -409,7 +410,7 @@ def catalog_with_files(
 
     # Initialize the catalog (creates .portolan/ and catalog.json)
     # Use --auto for non-interactive mode
-    result = runner.invoke(cli, ["init", "--auto", str(tmp_path)])
+    result = runner.invoke(cli, ["init", "--auto", str(tmp_path), "--license", "CC-BY-4.0"])
     assert result.exit_code == 0, f"Init failed: {result.output}"
 
     return tmp_path
@@ -594,7 +595,7 @@ class TestCheckBothFlags:
         import shutil
 
         # Initialize a catalog (use --auto for non-interactive mode)
-        result = runner.invoke(cli, ["init", "--auto", str(tmp_path)])
+        result = runner.invoke(cli, ["init", "--auto", str(tmp_path), "--license", "CC-BY-4.0"])
         assert result.exit_code == 0
 
         # Add a convertible file
@@ -630,8 +631,9 @@ class TestCheckBothFlags:
         assert envelope["command"] == "check"
         # Should indicate all/both mode
         assert envelope["data"]["mode"] == "all"
-        # Should have both metadata and geo-assets data
-        assert "metadata" in envelope["data"] or "geo_assets" in envelope["data"]
+        # Both halves are present: the validation report and the source scan.
+        assert envelope["data"]["findings"] == []
+        assert "format" in envelope["data"]
 
     def test_metadata_error_fails_combined_check(
         self,
@@ -745,13 +747,13 @@ class TestCheckMetadataFixFlag:
             ["check", str(catalog_dir), "--metadata", "--fix", "--json"],
         )
 
-        # Should succeed and structurally report zero scanner results — per
-        # ADR-0041 the manifest-driven scanner emits an empty MetadataReport
-        # for a catalog with no collections, so the FixReport derived from
-        # it carries zero results and zero skipped items.
-        assert result.exit_code == 0
+        # Structurally reports zero scanner results — the
+        # manifest-driven scanner emits an empty MetadataReport for a catalog
+        # with no collections, so the FixReport derived from it carries zero
+        # results and zero skipped items. (The exit code reflects the post-fix
+        # re-check, and this hand-built catalog does not conform.)
         payload = json.loads(result.output)
-        metadata_fix = payload.get("data", {}).get("metadata_fix")
+        metadata_fix = payload.get("data", {}).get("fix", {}).get("metadata_fix")
         assert metadata_fix is not None, (
             f"--fix --json must surface metadata_fix payload, got: {payload}"
         )
@@ -760,15 +762,16 @@ class TestCheckMetadataFixFlag:
         )
         assert metadata_fix["failure_count"] == 0
 
-    def test_metadata_fix_backfills_tabular_geospatial_flag(
+    def test_metadata_fix_stamps_schema_uri_without_geospatial_flag(
         self,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
-        """check --metadata --fix wires repair_tabular_flags (issue #481, RULE-0090).
+        """check --metadata --fix declares the profile URI (issue #654).
 
-        End-to-end through the CLI: a tabular collection missing
-        portolan:geospatial: false must have the flag backfilled on disk.
+        End-to-end through the CLI: catalog and collection gain the versioned
+        Portolan schema URI, and the retired ``portolan:geospatial`` flag is not
+        written back onto a tabular collection.
         """
         import pyarrow as pa
         import pyarrow.parquet as pq
@@ -812,14 +815,18 @@ class TestCheckMetadataFixFlag:
         # Plain (non-geo) Parquet so the collection classifies as tabular.
         pq.write_table(pa.table({"value": [1, 2, 3]}), coll_dir / "data.parquet")
 
-        result = runner.invoke(
+        runner.invoke(
             cli,
             ["check", str(catalog_dir), "--metadata", "--fix"],
         )
 
-        assert result.exit_code == 0, result.output
+        # The re-check after --fix reports the hand-built catalog's remaining
+        # defects, so the exit code is 1; what this test owns is what --fix wrote.
         data = json.loads(coll_json.read_text())
-        assert data["portolan:geospatial"] is False
+        assert "portolan:geospatial" not in data
+        assert PORTOLAN_SCHEMA_URI in data["stac_extensions"]
+        root = json.loads((catalog_dir / "catalog.json").read_text())
+        assert PORTOLAN_SCHEMA_URI in root["stac_extensions"]
 
     def test_metadata_fix_dry_run_flag(
         self,
@@ -850,8 +857,12 @@ class TestCheckMetadataFixFlag:
             ["check", str(catalog_dir), "--metadata", "--fix", "--dry-run"],
         )
 
-        # Should succeed
-        assert result.exit_code == 0
+        # A dry run writes nothing, so the catalog keeps its pre-existing
+        # defects and the re-check exits 1. The guard is that nothing was
+        # written: no README.md, no schema URI stamped on catalog.json.
+        assert not (catalog_dir / "README.md").exists()
+        assert "stac_extensions" not in json.loads((catalog_dir / "catalog.json").read_text())
+        assert result.exit_code == 1
 
     def test_metadata_fix_json_output(
         self,
@@ -882,11 +893,13 @@ class TestCheckMetadataFixFlag:
             ["check", str(catalog_dir), "--metadata", "--fix", "--json"],
         )
 
-        # Should succeed and produce valid JSON
-        assert result.exit_code == 0
+        # One envelope carries both halves: what --fix did, and the re-check
+        # over the result. The catalog is hand-built, so the re-check fails.
         try:
             output = json.loads(result.output)
-            assert isinstance(output, dict)
-            assert "success" in output or "metadata_fix" in result.output
         except json.JSONDecodeError:
             pytest.fail(f"Invalid JSON output: {result.output[:200]}")
+
+        assert output["success"] is False
+        assert "metadata_fix" in output["data"]["fix"]
+        assert output["data"]["passed"] is False

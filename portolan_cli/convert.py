@@ -7,8 +7,8 @@ This module provides the core conversion functionality for Portolan CLI:
 - convert_file(): Convert a single file to cloud-native format
 - convert_directory(): Convert all files in a directory
 
-Per ADR-0007, this module contains the logic; CLI commands are thin wrappers.
-Per ADR-0010, actual conversion is delegated to geoparquet-io and rio-cogeo.
+This module contains the logic; CLI commands are thin wrappers.
+Actual conversion is delegated to geoparquet-io and rio-cogeo.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from portolan_cli.conversion_config import (
     VectorSettings,
     get_cog_settings,
     get_vector_settings,
+    resolve_cog_settings,
 )
 from portolan_cli.errors import (
     ConversionFailedError,
@@ -43,6 +44,7 @@ from portolan_cli.viz.thumbnail import (
     ThumbnailConfig,
     generate_vector_thumbnail,
     get_thumbnail_config,
+    thumbnail_path_for,
 )
 
 logger = logging.getLogger(__name__)
@@ -200,17 +202,17 @@ def generate_cog_thumbnail(
         basemap_provider: Unused. Raster thumbnails don't need basemaps because
             the raster data fills the entire extent — a basemap underneath would
             be invisible. Vector data needs basemaps because points/lines are
-            sparse and benefit from geographic context. See ADR-0042.
+            sparse and benefit from geographic context. See.
 
     Returns:
         Path to the written JPEG thumbnail, or None if the source could not be
         read as a raster (e.g., corrupt file).
     """
-    # Basemaps intentionally not supported for rasters (ADR-0042):
+    # Basemaps intentionally not supported for rasters:
     # Raster data fills the extent, so a basemap would be hidden underneath.
     # Vector thumbnails need basemaps because points/lines are sparse.
     if basemap_provider != "none":
-        logger.debug("Basemap ignored for raster thumbnail (not needed, see ADR-0042)")
+        logger.debug("Basemap ignored for raster thumbnail (not needed)")
     try:
         import numpy as np
         import rasterio
@@ -219,10 +221,12 @@ def generate_cog_thumbnail(
         logger.debug("rasterio/numpy not available, skipping thumbnail generation")
         return None
 
-    # Use ".thumb.jpg" rather than ".jpg" so we don't clobber a user-supplied
-    # sibling thumbnail (e.g. hand-curated data.jpg next to data.tif). The
-    # extension is still .jpg, so _scan_item_assets assigns role "thumbnail".
-    thumb_path = cog_path.with_name(f"{cog_path.stem}.thumb.jpg")
+    # `thumbnail_path_for` names it ".thumb.jpg" rather than ".jpg", so we leave
+    # a user-supplied sibling alone (e.g. hand-curated data.jpg next to
+    # data.tif). The extension stays .jpg, so _scan_item_assets assigns role
+    # "thumbnail". The vector render calls the same helper. One convention then
+    # names every thumbnail we write, and push recognizes it (Issue #735).
+    thumb_path = thumbnail_path_for(cog_path)
 
     try:
         with rasterio.open(cog_path) as src:
@@ -333,7 +337,7 @@ def _early_exit_result(
     Cloud-native files are skipped, EXCEPT when ``force`` is set and the file is a
     RASTER (a valid COG) — that case re-optimizes in place (issue #530), so this
     returns None to let conversion proceed. Vectors are never force-re-processed.
-    Unsupported formats are accepted with no error (ADR-0014).
+    Unsupported formats are accepted with no error.
     """
     if format_info.status == CloudNativeStatus.CLOUD_NATIVE:
         force_raster = force and detect_format(source) == FormatType.RASTER
@@ -388,10 +392,10 @@ def convert_file(
         output_dir: Directory for the output file. If None, uses the same
             directory as the source file.
         catalog_path: Path to the catalog root for loading conversion config.
-            If None, uses ADR-0019 defaults.
+            If None, uses the built-in defaults.
         cog_settings: Explicit COG settings override. Takes precedence over
             ``catalog_path``-loaded settings. If None, loads from
-            ``catalog_path`` or falls back to ADR-0019 defaults.
+            ``catalog_path`` or falls back to defaults.
         vector_settings: Explicit vector settings override. Takes precedence over
             ``catalog_path``-loaded settings. If None, loads from
             ``catalog_path`` or falls back to no spatial optimization.
@@ -779,16 +783,16 @@ def _write_partitioned(table: Any, output_dir: Path, settings: VectorSettings) -
 def _convert_raster(source: Path, output_dir: Path, settings: CogSettings | None = None) -> Path:
     """Convert a raster file to COG.
 
-    Uses COG settings from config if provided, otherwise ADR-0019 defaults:
+    Uses COG settings from config if provided, otherwise the built-in defaults:
     - DEFLATE compression
-    - Predictor=2 (horizontal differencing)
     - 512x512 tiles
-    - Nearest resampling
+    - Predictor and overview resampling derived from the source raster's dtype
+      (see derive_cog_defaults)
 
     Args:
         source: Source raster file.
         output_dir: Directory for output file.
-        settings: COG conversion settings. If None, uses ADR-0019 defaults.
+        settings: COG conversion settings. If None, uses the built-in defaults.
 
     Returns:
         Path to the output COG file.
@@ -805,6 +809,9 @@ def _convert_raster(source: Path, output_dir: Path, settings: CogSettings | None
     # Use defaults if no settings provided
     if settings is None:
         settings = CogSettings()
+
+    # Fill in any "auto" field from the raster itself (Issue #690)
+    settings = resolve_cog_settings(settings, source)
 
     output_path = output_dir / f"{source.stem}.tif"
 
@@ -969,7 +976,7 @@ def convert_directory(
             skips directory scanning and converts only these files. Useful
             when the caller has already scanned and filtered the files.
         catalog_path: Path to the catalog root for loading conversion config.
-            If None, uses ADR-0019 defaults for COG conversion.
+            If None, uses the built-in defaults for COG conversion.
         workers: Number of parallel worker processes. ``None`` or ``1`` runs
             serially (the default, so existing callers are unchanged). A value
             > 1 uses a ``ProcessPoolExecutor`` for CPU-bound raster re-encoding
@@ -1091,7 +1098,7 @@ def _convert_files_parallel(
     Conversion is CPU/GDAL-bound, so true parallelism needs separate processes,
     not threads. The ``on_progress`` callback is invoked in the PARENT process as
     each future completes (it is never pickled into a worker), preserving the
-    streaming-progress contract (ADR-0040). A worker that dies or raises is
+    streaming-progress contract. A worker that dies or raises is
     captured into a FAILED result so one bad file does not abort the batch.
 
     If the pool itself cannot run (``BrokenProcessPool`` -- e.g. a restricted

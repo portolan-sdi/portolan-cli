@@ -13,8 +13,6 @@ Design Principles:
 - Optimistic locking: Use etag to detect concurrent modifications
 - Explicit conflict handling: Fail on conflicts unless --force
 
-See ADR-0005 for versions.json as single source of truth.
-See ADR-0007 for CLI wraps Python API (all logic in library layer).
 """
 
 from __future__ import annotations
@@ -37,6 +35,9 @@ from portolan_cli.async_utils import (
     get_default_concurrency,
 )
 from portolan_cli.catalog import intermediate_catalog_ids
+from portolan_cli.constants import LEGACY_GLOB_FIELD
+from portolan_cli.derived_assets import is_optional_derivative
+from portolan_cli.logo import LOGO_ASSETS_DIRNAME
 from portolan_cli.output import detail, error, info, output_section, success, warn
 from portolan_cli.sync.upload import ObjectStore, setup_store
 from portolan_cli.sync.upload_progress import UploadProgressReporter
@@ -278,15 +279,15 @@ def _transform_collection_glob_assets(
     prefix: str,
     collection_path: str,
 ) -> bytes:
-    """Transform collection.json to populate glob fields for partitioned assets.
+    """Transform collection.json to populate the glob field for partitioned assets.
 
     Per Issue #351: Partitioned GeoParquet collections expose a glob pattern in
-    collection-level assets. On push, we populate glob fields with the full
-    remote URL.
+    collection-level assets. On push, we populate ``partition:glob`` with the
+    full remote URL.
 
-    Emits both fields during transition period (per ADR-0042):
-    - partition:glob (new, per STAC Partition Extension)
-    - portolan:glob (legacy, for backwards compatibility)
+    The transition that emitted ``portolan:glob`` alongside it is over (issue
+    #654): the STAC Partition Extension's field is the only one written, and a
+    legacy copy found on an asset is dropped as the collection is pushed.
 
     Args:
         content: Original collection.json bytes.
@@ -294,7 +295,7 @@ def _transform_collection_glob_assets(
         collection_path: Relative path to collection (e.g., "buildings").
 
     Returns:
-        Transformed collection.json bytes with glob fields populated.
+        Transformed collection.json bytes with the glob field populated.
     """
     try:
         data = json.loads(content)
@@ -316,13 +317,12 @@ def _transform_collection_glob_assets(
             base = prefix.rstrip("/")
             remote_glob = f"{base}/{collection_path}/{glob_pattern}"
 
-            # Emit both fields during transition (ADR-0042)
-            # Always overwrite to keep both fields in sync with current remote
+            # Always overwrite to keep the field in sync with the current remote
             if asset_data.get("partition:glob") != remote_glob:
                 asset_data["partition:glob"] = remote_glob
                 modified = True
-            if asset_data.get("portolan:glob") != remote_glob:
-                asset_data["portolan:glob"] = remote_glob
+            if LEGACY_GLOB_FIELD in asset_data:
+                del asset_data[LEGACY_GLOB_FIELD]
                 modified = True
 
     if modified:
@@ -385,7 +385,7 @@ def _read_local_versions(catalog_root: Path, collection: str) -> dict[str, Any]:
         FileNotFoundError: If versions.json doesn't exist.
         ValueError: If versions.json is invalid JSON.
     """
-    # versions.json at collection root (per ADR-0023)
+    # versions.json at collection root
     versions_path = catalog_root / collection / "versions.json"
 
     if not versions_path.exists():
@@ -421,7 +421,7 @@ def _fetch_remote_versions(
     Returns:
         Tuple of (versions_data, etag). Both are None if file doesn't exist.
     """
-    # versions.json at collection root (per ADR-0023)
+    # versions.json at collection root
     key = f"{prefix}/{collection}/versions.json".lstrip("/")
 
     try:
@@ -493,6 +493,11 @@ def _get_assets_to_upload(
     new or changed (different sha256) are included. This prevents re-uploading
     unchanged assets when adding a single file to a large catalog (Issue #329).
 
+    A recorded asset that is absent from disk raises. One exception applies. An
+    optional derivative only warns, and this function skips it (Issue #735). The
+    asset role in the STAC metadata decides which is which. See
+    ``derived_assets.is_optional_derivative``.
+
     Args:
         catalog_root: Path to catalog root.
         versions_data: Local versions.json data.
@@ -504,7 +509,8 @@ def _get_assets_to_upload(
         List of absolute paths to asset files that need to be uploaded.
 
     Raises:
-        FileNotFoundError: If a referenced asset file doesn't exist.
+        FileNotFoundError: If a referenced ``data`` or ``source`` asset file
+            doesn't exist.
     """
     # Build set of (href, sha256) pairs from all remote versions
     remote_assets = _build_remote_asset_set(remote_versions_data)
@@ -538,6 +544,17 @@ def _get_assets_to_upload(
             # Resolve path relative to catalog root
             asset_path = catalog_root / href
             if not asset_path.exists():
+                # The spec calls four roles optional derivatives, namely
+                # `visual`, `thumbnail`, `style` and `collection-mirror`. See
+                # portolan-spec specs/portolan/core.md, sections Assets and
+                # Single-File Collections. Portolan rebuilds each one from data
+                # the catalog still holds. An absent one must not fail a sound
+                # push (Issue #735). Conformance gaps belong to `portolan check`.
+                # Roles `data` and `source` stay a hard error, because nothing
+                # can reconstruct them.
+                if is_optional_derivative(catalog_root, href):
+                    warn(f"Optional asset not found, skipped: {href} (version {version_str})")
+                    continue
                 raise FileNotFoundError(
                     f"Asset referenced in version {version_str} not found: {href}"
                 )
@@ -817,7 +834,7 @@ def _load_versioned_asset_paths(catalog_root: Path, collection: str) -> set[str]
         return set()
 
     try:
-        data = json.loads(versions_file.read_text())
+        data = json.loads(versions_file.read_text(encoding="utf-8"))
         versioned_paths: set[str] = set()
 
         # Extract asset paths from all versions
@@ -958,6 +975,18 @@ def _discover_catalog_files(
             if item.is_file() and not should_exclude(item, catalog_root):
                 discovered.append(item)
 
+        # `_assets/` is the one root directory that is not a collection: it holds
+        # the catalog logo the `rel="icon"` link points at (PORTO-CORE-077).
+        # Skipping every root directory left that image behind, so the published
+        # link resolved to nothing.
+        assets_dir = catalog_root / LOGO_ASSETS_DIRNAME
+        if assets_dir.is_dir() and not assets_dir.is_symlink():
+            for item in sorted(assets_dir.rglob("*")):
+                if item.is_symlink():
+                    continue
+                if item.is_file() and not should_exclude(item, catalog_root):
+                    discovered.append(item)
+
     return discovered
 
 
@@ -1044,7 +1073,7 @@ def _upload_stac_files(
     if total == 0:
         return 0, errors, []
 
-    # Use progress bar for STAC uploads (ADR-0040: unified progress output)
+    # Use progress bar for STAC uploads (unified progress output)
     # Suppress in json_mode or when verbose (verbose shows per-file output)
     suppress_progress = json_mode or verbose or not sys.stderr.isatty()
 
@@ -1068,7 +1097,7 @@ def _upload_stac_files(
                         detail(f"Uploading STAC: {rel_path}")
                     content = file_path.read_bytes()
 
-                    # Transform collection.json to populate portolan:glob (Issue #351)
+                    # Transform collection.json to populate partition:glob (Issue #351)
                     if file_path.name == "collection.json":
                         collection_path = rel_path.parent.as_posix()
                         content = _transform_collection_glob_assets(
@@ -1164,7 +1193,7 @@ def _upload_versions_json(
     Raises:
         PushConflictError: If etag mismatch (remote changed during push).
     """
-    # versions.json at collection root (per ADR-0023)
+    # versions.json at collection root
     key = f"{prefix}/{collection}/versions.json".lstrip("/")
     content = json.dumps(versions_data, indent=2).encode("utf-8")
 
@@ -1222,7 +1251,7 @@ def _handle_push_dry_run(
     info(f"[DRY RUN] Would push up to {len(local_versions)} version(s): {local_versions}")
     info(f"[DRY RUN] Would upload up to {asset_count} asset file(s)")
     for rel_path in asset_paths:
-        detail(f"  {rel_path}")
+        detail(f" {rel_path}")
 
     # Show metadata files that would be synced (Issue #426)
     metadata_files = _discover_catalog_files(
@@ -1234,14 +1263,14 @@ def _handle_push_dry_run(
         info(f"[DRY RUN] Would sync {len(metadata_files)} metadata file(s)")
         for f in metadata_files:
             rel_path = f.relative_to(catalog_root)
-            detail(f"  {rel_path}")
+            detail(f" {rel_path}")
 
     # Show intermediate catalog.json / README.md for nested collections (Issue #547, #552)
     intermediate_files = _discover_intermediate_catalog_files(catalog_root, [collection])
     if intermediate_files:
         info(f"[DRY RUN] Would upload {len(intermediate_files)} intermediate catalog file(s)")
         for f in intermediate_files:
-            detail(f"  {f.relative_to(catalog_root).as_posix()}")
+            detail(f" {f.relative_to(catalog_root).as_posix()}")
 
     warn("[DRY RUN] Remote conflict detection skipped (requires network)")
     warn("[DRY RUN] Actual versions pushed may be fewer if remote already has some")
@@ -1290,7 +1319,7 @@ def push(
         profile: AWS profile name (for S3 only).
         region: AWS region (for S3 only). Overrides profile/env config.
         workers: Number of parallel upload workers (maps to concurrency).
-        verbose: If True, show per-file upload details (ADR-0040).
+        verbose: If True, show per-file upload details.
         json_mode: If True, suppress progress bar (for --json output).
         suppress_progress: If True, suppress progress bar (for nested calls).
 
@@ -1401,7 +1430,7 @@ async def _upload_assets_async(
             Only applies to files >5MB using multipart upload.
         json_mode: If True, suppress progress bar.
         suppress_progress: If True, suppress progress bar.
-        verbose: If True, print per-file upload details (ADR-0040).
+        verbose: If True, print per-file upload details.
 
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys, metrics).
@@ -1468,7 +1497,7 @@ async def _upload_assets_async(
 
     asset_strs = [str(p) for p in assets]
 
-    # Suppress progress bar when verbose (verbose replaces progress bar per ADR-0040)
+    # Suppress progress bar when verbose (verbose replaces progress bar)
     async with AsyncProgressReporter(
         total_files=total,
         total_bytes=total_bytes,
@@ -1492,7 +1521,7 @@ async def _upload_assets_async(
                 uploaded_keys.append(target_key)
                 metrics.record(size_bytes, duration)
                 reporter.advance(bytes_uploaded=size_bytes)
-                # Verbose mode: print per-file details (ADR-0040)
+                # Verbose mode: print per-file details
                 if verbose:
                     speed = size_bytes / duration if duration > 0 else 0
                     detail(
@@ -1554,7 +1583,7 @@ async def _upload_stac_files_async(
         stac_files: Dict of STAC files from _discover_stac_files().
         concurrency: Maximum concurrent uploads.
         json_mode: If True, suppress progress bar.
-        verbose: If True, print per-file upload details (ADR-0040).
+        verbose: If True, print per-file upload details.
 
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys).
@@ -1596,7 +1625,7 @@ async def _upload_stac_files_async(
 
                 content = file_path.read_bytes()
 
-                # Transform collection.json to populate portolan:glob (Issue #351)
+                # Transform collection.json to populate partition:glob (Issue #351)
                 if file_path.name == "collection.json":
                     # Extract collection path (e.g., "buildings" from "buildings/collection.json")
                     collection_path = rel_path.parent.as_posix()
@@ -1610,7 +1639,7 @@ async def _upload_stac_files_async(
                 error(error_msg)
                 return None
 
-    # Suppress progress bar when verbose (verbose replaces progress bar per ADR-0040)
+    # Suppress progress bar when verbose (verbose replaces progress bar)
     async with AsyncProgressReporter(
         total_files=len(uploadable_files),
         total_bytes=total_bytes,
@@ -1810,7 +1839,7 @@ async def _upload_metadata_files_async(
                 content = file_path.read_bytes()
                 await obs.put_async(store, target_key, content)
                 if verbose:
-                    detail(f"  Uploaded {rel_path} ({len(content)} bytes)")
+                    detail(f" Uploaded {rel_path} ({len(content)} bytes)")
                 return True
             except Exception as e:
                 error_msg = f"Failed to upload metadata file {file_path.name}: {e}"
@@ -1858,7 +1887,7 @@ async def _execute_push_uploads_async(
         chunk_concurrency: Maximum concurrent chunks per file upload.
             For files >5MB, this limits per-file multipart parallelism.
         include_catalog: If True, upload catalog.json and root README.md.
-        verbose: If True, print per-file upload details (ADR-0040).
+        verbose: If True, print per-file upload details.
         remote_data: Remote versions.json for sha256 diffing (Issue #329).
 
     Returns:
@@ -1998,7 +2027,7 @@ async def _execute_push_uploads_async(
     if all_metadata_errors:
         warn(f"{len(all_metadata_errors)} metadata file(s) failed to upload:")
         for err in all_metadata_errors:
-            warn(f"  {err}")
+            warn(f" {err}")
 
     return PushResult(
         success=True,
@@ -2047,7 +2076,7 @@ async def push_async(
         adaptive: If True, use slow-start ramp-up for network-safe uploads (default: True).
         json_mode: If True, suppress progress bar.
         suppress_progress: If True, suppress progress bar.
-        verbose: If True, print per-file upload details (ADR-0040).
+        verbose: If True, print per-file upload details.
         include_catalog: If True, upload catalog.json and root README.md.
             Set to False when called from push_all_collections (uploads them once at end).
 
@@ -2164,7 +2193,7 @@ class PushAllResult:
 def discover_collections(catalog_root: Path) -> list[str]:
     """Recursively discover all collections by finding directories with versions.json.
 
-    Per ADR-0032 (Nested Catalogs with Flat Collections), collections can exist at any
+    Collections can exist at any
     depth within the catalog structure. This function recursively searches for
     versions.json files and returns the relative paths to their parent directories.
 
@@ -2181,7 +2210,7 @@ def discover_collections(catalog_root: Path) -> list[str]:
     if not catalog_root.exists():
         raise ValueError(f"Catalog root does not exist: {catalog_root}")
 
-    # Validate this is actually a catalog (has sentinel file per ADR-0029)
+    # Validate this is actually a catalog (has sentinel file)
     portolan_dir = catalog_root / ".portolan"
     config_yaml = portolan_dir / "config.yaml"
     if not config_yaml.exists():
@@ -2289,7 +2318,7 @@ def _discover_root_metadata_files(catalog_root: Path) -> list[Path]:
 def _discover_intermediate_catalog_files(catalog_root: Path, collections: list[str]) -> list[Path]:
     """Discover intermediate catalog.json / README.md files for nested collections.
 
-    Per ADR-0032, a nested collection ``a/b/c`` has a ``catalog.json`` at each
+    A nested collection ``a/b/c`` has a ``catalog.json`` at each
     intermediate level (``a/``, ``a/b/``) created by ``create_intermediate_catalogs``
     during ``add``. These are neither leaf ``collection.json`` files nor the root
     ``catalog.json``, so every other push discovery path misses them (Issue #547,
@@ -2382,12 +2411,12 @@ def _push_all_upload_root_files(
         if root_metadata:
             info(f"[DRY RUN] Would sync {len(root_metadata)} root metadata file(s)")
             for f in root_metadata:
-                detail(f"  {f.name}")
+                detail(f" {f.relative_to(catalog_root).as_posix()}")
         info("[DRY RUN] Would upload catalog.json")
         if intermediate_files:
             info(f"[DRY RUN] Would upload {len(intermediate_files)} intermediate catalog file(s)")
             for f in intermediate_files:
-                detail(f"  {f.relative_to(catalog_root).as_posix()}")
+                detail(f" {f.relative_to(catalog_root).as_posix()}")
         if root_versions.exists():
             info("[DRY RUN] Would upload versions.json")
         return True
@@ -2402,11 +2431,15 @@ def _push_all_upload_root_files(
             success("Uploaded README.md")
             stats["total_files"] += 1
 
-        # Upload root metadata files (Issue #426)
+        # Upload root metadata files (Issue #426). The key is the catalog-relative
+        # path, not the basename: `_assets/brand.png` must land under `_assets/`
+        # for the catalog's rel="icon" href to resolve. Top-level files are
+        # unaffected, their relative path is their name.
         for meta_file in root_metadata:
-            meta_key = f"{prefix}/{meta_file.name}".lstrip("/")
+            meta_rel = meta_file.relative_to(catalog_root).as_posix()
+            meta_key = f"{prefix}/{meta_rel}".lstrip("/")
             obs.put(store, meta_key, meta_file.read_bytes())
-            detail(f"  Synced {meta_file.name}")
+            detail(f" Synced {meta_rel}")
             stats["total_files"] += 1
 
         if root_metadata:
@@ -2423,12 +2456,12 @@ def _push_all_upload_root_files(
         for inter_file in intermediate_files:
             inter_key = f"{prefix}/{inter_file.relative_to(catalog_root).as_posix()}".lstrip("/")
             obs.put(store, inter_key, inter_file.read_bytes())
-            detail(f"  Uploaded {inter_file.relative_to(catalog_root).as_posix()}")
+            detail(f" Uploaded {inter_file.relative_to(catalog_root).as_posix()}")
             stats["total_files"] += 1
         if intermediate_files:
             info(f"Uploaded {len(intermediate_files)} intermediate catalog file(s)")
 
-        # Upload versions.json LAST (manifest-last atomicity per ADR-0005)
+        # Upload versions.json LAST (manifest-last atomicity)
         if root_versions.exists():
             versions_key = f"{prefix}/versions.json".lstrip("/")
             obs.put(store, versions_key, root_versions.read_bytes())
@@ -2580,7 +2613,7 @@ async def push_all_collections_async(
                 f"Completed with errors: {stats['successful']} succeeded, {stats['failed']} failed"
             )
             for coll_name, errs in stats["errors"].items():
-                warn(f"  {coll_name}: {', '.join(errs)}")
+                warn(f" {coll_name}: {', '.join(errs)}")
 
     return PushAllResult(
         success=overall_success,

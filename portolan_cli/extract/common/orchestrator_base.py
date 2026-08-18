@@ -13,7 +13,7 @@ Only three things actually differ between the sources: the per-source title used
 for a ``via`` link, the source-URL that link points at, and the metadata
 serializer that produces the catalog-level ``ExtractedMetadata``. This module
 provides the shared skeleton and parametrizes those pieces via small callables,
-so each orchestrator keeps only its source-specific glue (see ADR-0007: all logic
+so each orchestrator keeps only its source-specific glue (: all logic
 lives in the library layer).
 
 All library imports are function-local, matching the orchestrators' existing
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from portolan_cli.extract.common.report import ExtractionReport, LayerResult
+    from portolan_cli.licensing import ResolvedLicense
     from portolan_cli.metadata_extraction import ExtractedMetadata
 
 logger = logging.getLogger(__name__)
@@ -94,7 +95,10 @@ def init_extracted_catalog(
     if not parquet_files:
         return None
 
-    init_catalog(output_dir, title=title, description=description)
+    # license_id=None: extract owns metadata.yaml, seeding it from harvested service
+    # metadata in post_init below. Writing a template here first would make that
+    # seeder's O_EXCL create a no-op and drop everything harvested (issue #686).
+    init_catalog(output_dir, title=title, description=description, license_id=None)
 
     if post_init is not None:
         post_init(output_dir, parquet_files)
@@ -187,6 +191,7 @@ def add_source_links(
 def seed_catalog_metadata(
     output_dir: Path,
     extracted: ExtractedMetadata | None,
+    license_override: ResolvedLicense | None = None,
 ) -> None:
     """Seed the catalog-level ``metadata.yaml`` from harvested service metadata.
 
@@ -197,6 +202,8 @@ def seed_catalog_metadata(
     Args:
         output_dir: The catalog output directory.
         extracted: Source-agnostic metadata to seed, or ``None`` to skip.
+        license_override: License resolved from the command line, which wins over
+            anything harvested (issue #686).
     """
     from portolan_cli.metadata_seeding import seed_metadata_yaml
     from portolan_cli.output import info
@@ -205,5 +212,5 @@ def seed_catalog_metadata(
         return
 
     metadata_path = output_dir / ".portolan" / "metadata.yaml"
-    if seed_metadata_yaml(extracted, metadata_path):
+    if seed_metadata_yaml(extracted, metadata_path, license_override=license_override):
         info(f"Seeded metadata.yaml from {extracted.source_type}")

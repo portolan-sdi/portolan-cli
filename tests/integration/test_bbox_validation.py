@@ -96,6 +96,7 @@ class TestBboxValidationIntegration:
             # Initialize catalog by creating .portolan/config.yaml
             Path(".portolan").mkdir()
             Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -132,6 +133,7 @@ class TestBboxValidationIntegration:
             # Initialize catalog
             Path(".portolan").mkdir()
             Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -197,6 +199,7 @@ class TestBboxValidationIntegration:
             # Initialize catalog
             Path(".portolan").mkdir()
             Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -230,14 +233,13 @@ class TestBboxValidationIntegration:
             with open(collection_json, "w") as f:
                 json.dump(data, f)
 
-            # Run check - should detect the invalid bbox
-            result = runner.invoke(cli, ["check", "."])
+            # Run check - PTL-BBX-001 must name the poisoned extent.
+            result = runner.invoke(cli, ["check", ".", "--metadata", "--json"])
 
-            # Check should fail or warn about invalid bbox
-            # The BboxValidRule should catch this
-            assert "bbox_valid" in result.output or "invalid" in result.output.lower(), (
-                f"Check should detect invalid bbox: {result.output}"
-            )
+            findings = json.loads(result.output)["data"]["findings"]
+            bbox_findings = [f for f in findings if f["rule_id"] == "PTL-BBX-001"]
+            assert bbox_findings, f"Check should detect invalid bbox: {result.output}"
+            assert bbox_findings[0]["path"] == "test-collection/collection.json"
 
     def test_check_passes_with_valid_bboxes(self) -> None:
         """Check command should pass when all bboxes are valid."""
@@ -247,6 +249,7 @@ class TestBboxValidationIntegration:
             # Initialize catalog
             Path(".portolan").mkdir()
             Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -292,6 +295,7 @@ class TestAntimeridianBboxIntegration:
             # Initialize catalog
             Path(".portolan").mkdir()
             Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             Path("catalog.json").write_text(
                 json.dumps(
                     {

@@ -33,12 +33,12 @@ if TYPE_CHECKING:
 def catalog_with_versions(tmp_path: Path) -> Path:
     """Create a catalog with a versions.json file.
 
-    Per ADR-0023: Collections and versions.json live at root level.
+    Collections and versions.json live at root level.
     """
     catalog_root = tmp_path / "catalog"
     catalog_root.mkdir()
 
-    # Create catalog.json at root (per ADR-0023)
+    # Create catalog.json at root
     catalog_data = {
         "type": "Catalog",
         "id": "test-catalog",
@@ -52,11 +52,11 @@ def catalog_with_versions(tmp_path: Path) -> Path:
     portolan_dir = catalog_root / ".portolan"
     portolan_dir.mkdir(parents=True)
 
-    # Create collection directory at root (per ADR-0023)
+    # Create collection directory at root
     collection_dir = catalog_root / "test-collection"
     collection_dir.mkdir(parents=True)
 
-    # Create versions.json in collection directory (per ADR-0023)
+    # Create versions.json in collection directory
     # Note: href is relative to catalog_root, not collection_dir
     versions_data = {
         "spec_version": "1.0.0",
@@ -320,7 +320,7 @@ class TestUncommittedChangeDetection:
 
     @pytest.mark.unit
     def test_mtime_fast_path_skips_checksum(self, tmp_path: Path) -> None:
-        """Should skip checksum when mtime and size match (ADR-0017 fast path)."""
+        """Should skip checksum when mtime and size match (fast path)."""
         from portolan_cli.sync.pull import detect_uncommitted_changes
 
         catalog_root = tmp_path / "catalog"
@@ -901,7 +901,7 @@ class TestPullOperation:
 
         assert result.success is True
 
-        # Verify local versions.json was updated (per ADR-0023: at collection root)
+        # Verify local versions.json was updated (: at collection root)
         versions_path = catalog_with_versions / "test-collection" / "versions.json"
         updated_versions = json.loads(versions_path.read_text())
         assert updated_versions["current_version"] == "1.1.0"

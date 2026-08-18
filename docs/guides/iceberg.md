@@ -23,9 +23,9 @@ pipx install portolan-cli[iceberg]
 
 ```bash
 # Initialize a catalog with the Iceberg backend
-portolan init my-catalog --backend iceberg
+portolan init my-catalog --backend iceberg --license CC-BY-4.0
 
-# Add data (collection is inferred from the parent directory per ADR-0022;
+# Add data (collection is inferred from the parent directory;
 # there is no --collection flag — place files under the collection dir first)
 portolan add boundaries/data.parquet
 
@@ -56,7 +56,7 @@ portolan version prune boundaries --keep 5
 
 ```bash
 # Set during init (persists in config)
-portolan init my-catalog --backend iceberg
+portolan init my-catalog --backend iceberg --license CC-BY-4.0
 
 # Or set in existing catalog
 portolan config set backend iceberg

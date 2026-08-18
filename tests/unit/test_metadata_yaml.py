@@ -1,4 +1,4 @@
-"""Tests for metadata.yaml schema and validation (ADR-0038).
+"""Tests for metadata.yaml schema and validation.
 
 Tests metadata validation including:
 - Required field detection (contact, license only - title/description come from STAC)
@@ -167,8 +167,24 @@ class TestMetadataValidation:
             assert license_errors == [], f"License {license_id} should be valid"
 
     @pytest.mark.unit
-    def test_stac_other_license_passes(self) -> None:
-        """validate_metadata accepts the STAC 1.1 'other' license keyword (issue #568)."""
+    def test_stac_other_license_passes_with_a_license_url(self) -> None:
+        """'other' is conformant alongside a link to the license text (issue #568)."""
+        from portolan_cli.metadata_yaml import validate_metadata
+
+        metadata = {
+            "contact": {"name": "Data Team", "email": "data@example.org"},
+            "license": "other",
+            "license_url": "https://example.org/terms.html",
+        }
+
+        errors = validate_metadata(metadata)
+
+        license_errors = [e for e in errors if "license" in e.lower()]
+        assert license_errors == [], "STAC 1.1 'other' license should be valid"
+
+    @pytest.mark.unit
+    def test_stac_other_license_without_a_url_is_rejected(self) -> None:
+        """rashid fires PTL-LIC-002 on 'other' with no license link (issue #727)."""
         from portolan_cli.metadata_yaml import validate_metadata
 
         metadata = {
@@ -178,49 +194,97 @@ class TestMetadataValidation:
 
         errors = validate_metadata(metadata)
 
-        license_errors = [e for e in errors if "license" in e.lower()]
-        assert license_errors == [], "STAC 1.1 'other' license should be valid"
+        assert any("license_url" in e for e in errors), errors
 
     @pytest.mark.unit
-    def test_licenseref_custom_identifiers_pass(self) -> None:
-        """validate_metadata accepts LicenseRef-* custom license identifiers (SPDX spec).
-
-        Per SPDX spec Section 6, custom licenses use LicenseRef-[idstring] format.
-        This is common for government/proprietary data.
-        """
-        from portolan_cli.metadata_yaml import validate_metadata
-
-        valid_custom_licenses = [
+    @pytest.mark.parametrize(
+        "license_id",
+        [
             "LicenseRef-CityOfPhiladelphia",
             "LicenseRef-Proprietary-1.0",
             "LicenseRef-Internal.Use.Only",
             "LicenseRef-Custom-123",
-        ]
+        ],
+    )
+    def test_licenseref_is_rejected_and_names_the_migration(self, license_id: str) -> None:
+        """LicenseRef-* is an SPDX expression construct, not an identifier (issue #727).
 
-        for license_id in valid_custom_licenses:
-            metadata = {
-                "contact": {"name": "Data Team", "email": "data@example.org"},
-                "license": license_id,
-            }
-
-            errors = validate_metadata(metadata)
-
-            license_errors = [e for e in errors if "license" in e.lower()]
-            assert license_errors == [], f"LicenseRef {license_id} should be valid"
-
-    @pytest.mark.unit
-    def test_licenseref_requires_idstring(self) -> None:
-        """validate_metadata rejects bare 'LicenseRef-' without an idstring."""
+        PORTO-CORE-059 allows an SPDX identifier or the STAC value 'other'.
+        rashid's list holds zero LicenseRef entries, so every one of these was
+        accepted here and then rejected by ``portolan check`` as PTL-LIC-001.
+        """
         from portolan_cli.metadata_yaml import validate_metadata
 
         metadata = {
             "contact": {"name": "Data Team", "email": "data@example.org"},
-            "license": "LicenseRef-",  # Missing idstring
+            "license": license_id,
         }
 
         errors = validate_metadata(metadata)
 
-        assert any("license" in e.lower() for e in errors)
+        license_errors = [e for e in errors if license_id in e]
+        assert len(license_errors) == 1, errors
+        assert "other" in license_errors[0]
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("license_id", ["EUPL-1.2", "CC-BY-3.0", "OGL-UK-3.0", "ODbL-1.0"])
+    def test_a_real_identifier_outside_the_old_subset_passes(self, license_id: str) -> None:
+        """The 26-entry subset rejected real identifiers ``check`` accepts (issue #727)."""
+        from portolan_cli.metadata_yaml import validate_metadata
+
+        metadata = {
+            "contact": {"name": "Data Team", "email": "data@example.org"},
+            "license": license_id,
+        }
+
+        errors = validate_metadata(metadata)
+
+        license_errors = [e for e in errors if "license" in e.lower()]
+        assert license_errors == [], f"{license_id} is a real SPDX identifier"
+
+    @pytest.mark.unit
+    def test_case_mismatch_names_the_official_spelling(self) -> None:
+        """The message must print what rashid's PTL-LIC-001 hint prints."""
+        from portolan_cli.metadata_yaml import validate_metadata
+
+        metadata = {
+            "contact": {"name": "Data Team", "email": "data@example.org"},
+            "license": "cc-by-4.0",
+        }
+
+        errors = validate_metadata(metadata)
+
+        license_errors = [e for e in errors if "cc-by-4.0" in e]
+        assert len(license_errors) == 1, errors
+        assert "CC-BY-4.0" in license_errors[0]
+
+    @pytest.mark.unit
+    def test_proprietary_is_named_as_deprecated(self) -> None:
+        """'proprietary' was rejected as an unknown identifier, which misled."""
+        from portolan_cli.metadata_yaml import validate_metadata
+
+        metadata = {
+            "contact": {"name": "Data Team", "email": "data@example.org"},
+            "license": "proprietary",
+        }
+
+        errors = validate_metadata(metadata)
+
+        assert any("deprecated" in e for e in errors), errors
+
+    @pytest.mark.unit
+    def test_the_seeded_placeholder_is_named_as_a_placeholder(self) -> None:
+        """The seeded TODO reaches collection.license verbatim, so say so."""
+        from portolan_cli.metadata_yaml import validate_metadata
+
+        metadata = {
+            "contact": {"name": "Data Team", "email": "data@example.org"},
+            "license": "TODO: Add value",
+        }
+
+        errors = validate_metadata(metadata)
+
+        assert any("placeholder" in e for e in errors), errors
 
     @pytest.mark.unit
     def test_invalid_doi_format_returns_error(self) -> None:

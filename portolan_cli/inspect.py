@@ -4,8 +4,8 @@ Provides file-focused inspection that delegates to upstream libraries
 (geoparquet-io, rio-cogeo) for metadata extraction, adding version info
 from versions.json when files are tracked.
 
-Per ADR-0007, all logic lives here; the CLI is a thin wrapper.
-Per ADR-0022, the output format follows the specified structure.
+All logic lives here; the CLI is a thin wrapper.
+The output format follows the specified structure.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from typing import Any
 from portolan_cli.formats import FormatType, detect_format
 from portolan_cli.metadata.cog import extract_cog_metadata
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+from portolan_cli.stac_parquet import count_items
 from portolan_cli.versions import read_versions
 
 
@@ -77,7 +78,7 @@ class FileInfo:
         return data
 
     def format_human(self) -> list[str]:
-        """Format for human-readable output per ADR-0022.
+        """Format for human-readable output.
 
         Returns:
             List of output lines in the format:
@@ -326,7 +327,7 @@ def _lookup_version(path: Path, catalog_root: Path) -> str | None:
     if len(parts) < 2:
         return None
 
-    # First part is collection ID (per ADR-0022 subdirectory = collection)
+    # First part is collection ID ( subdirectory = collection)
     collection_id = parts[0]
     versions_path = catalog_root / collection_id / "versions.json"
 
@@ -356,7 +357,7 @@ def _lookup_version(path: Path, catalog_root: Path) -> str | None:
     item_id = path.parent.name if path.parent != catalog_root else ""
 
     for asset_name, _asset in current_version_obj.assets.items():
-        # Check item-scoped key format (new format per ADR-0028)
+        # Check item-scoped key format (new format)
         if item_id and asset_name == f"{item_id}/{filename}":
             return f"v{versions_file.current_version}"
         # Check legacy format (just filename)
@@ -382,11 +383,10 @@ def inspect_collection(collection_path: Path) -> CollectionInfo:
     if not collection_json_path.exists():
         raise FileNotFoundError(f"Collection not found: {collection_path}")
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
 
-    # Count items from links
-    item_links = [link for link in data.get("links", []) if link.get("rel") == "item"]
-    item_count = len(item_links)
+    # Count items the collection owns, descending organizing catalogs (core.md:168-170)
+    item_count = count_items(collection_path)
 
     # Calculate total size from versions.json
     total_size = 0
@@ -438,7 +438,7 @@ def inspect_catalog(catalog_root: Path) -> CatalogInfo:
     if not catalog_json_path.exists():
         raise FileNotFoundError(f"Catalog not found: {catalog_root}")
 
-    data = json.loads(catalog_json_path.read_text())
+    data = json.loads(catalog_json_path.read_text(encoding="utf-8"))
 
     # Count collections from child links
     child_links = [link for link in data.get("links", []) if link.get("rel") == "child"]

@@ -1,7 +1,7 @@
 """Integration tests for unified metadata scanner (#345 + #384).
 
 These tests pin the manifest-driven scanning contract introduced in
-ADR-0041:
+:
 
 - Issue #345: collection-level assets registered in collection.json (e.g.,
   items.parquet from `add --stac-geoparquet`) must NOT be reported as MISSING
@@ -30,6 +30,7 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 from portolan_cli.metadata.models import MetadataStatus
 from portolan_cli.metadata.scan import scan_catalog_metadata
+from portolan_cli.sync.checksums import file_fields
 
 
 @pytest.fixture
@@ -55,7 +56,7 @@ def _write_catalog_json(catalog_dir: Path) -> None:
             indent=2,
         )
     )
-    # AGENTS.md required at catalog root (ADR-0052, RULE-0080)
+    # AGENTS.md required at catalog root (RULE-0080)
     (catalog_dir / "AGENTS.md").write_text("# AGENTS.md — Test Catalog\n")
 
 
@@ -84,7 +85,7 @@ def _write_collection_json(
         "assets": extra_assets or {},
     }
     (collection_dir / "collection.json").write_text(json.dumps(data, indent=2))
-    # AGENTS.md required at collection level (ADR-0052, RULE-0081)
+    # AGENTS.md required at collection level (RULE-0081)
     (collection_dir / "AGENTS.md").write_text(f"# AGENTS.md — {collection_id}\n")
 
 
@@ -151,7 +152,7 @@ def _make_raster_collection_with_items_parquet(
         )
 
     # Collection-level items.parquet (STAC-GeoParquet rollup) registered
-    # exactly as stac_parquet.add_parquet_link_to_collection writes it.
+    # exactly as stac_parquet.register_mirror_asset writes it.
     items_parquet = collection_dir / "items.parquet"
     items_parquet.write_bytes(b"PAR1")  # placeholder bytes — scanner only checks existence
     _write_collection_json(
@@ -163,6 +164,7 @@ def _make_raster_collection_with_items_parquet(
                 "type": "application/vnd.apache.parquet",
                 "title": "STAC items as GeoParquet",
                 "roles": ["stac-items"],
+                **file_fields(items_parquet),
             }
         },
     )
@@ -202,7 +204,12 @@ class TestIssue345CollectionLevelAssetsNotMissing:
         tmp_path: Path,
         valid_singleband_cog: Path,
     ) -> None:
-        """End-to-end: portolan check exits 0 for valid catalog with rollup."""
+        """End-to-end: `check` reports no defect against the items.parquet rollup.
+
+        The catalog is hand-built and trips plenty of unrelated PTL-* rules, so
+        the guard is targeted: no finding may name items.parquet. Before #345,
+        the rollup was treated as a file needing its own item.json.
+        """
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
         # .portolan sentinel makes catalog discoverable
@@ -210,11 +217,11 @@ class TestIssue345CollectionLevelAssetsNotMissing:
         (catalog_dir / ".portolan" / "config.yaml").write_text("version: 1\n")
         _make_raster_collection_with_items_parquet(catalog_dir, valid_singleband_cog)
 
-        result = runner.invoke(cli, ["check", str(catalog_dir), "--metadata"])
+        result = runner.invoke(cli, ["check", str(catalog_dir), "--metadata", "--json"])
 
-        assert result.exit_code == 0, (
-            f"check failed for valid catalog with items.parquet rollup.\noutput:\n{result.output}"
-        )
+        findings = json.loads(result.output)["data"]["findings"]
+        offending = [f for f in findings if "items.parquet" in f["message"]]
+        assert offending == [], f"items.parquet flagged as a defect: {offending}"
 
 
 # =============================================================================
@@ -370,13 +377,13 @@ class TestOrphanFiles:
 
 
 # =============================================================================
-# Vector single-file collection-level (ADR-0031): no false MISSING
+# Vector single-file collection-level: no false MISSING
 # =============================================================================
 
 
 @pytest.mark.integration
 class TestVectorCollectionLevelAsset:
-    """Vector single-file pattern from ADR-0031: no item.json expected."""
+    """Vector single-file pattern from: no item.json expected."""
 
     def test_collection_level_vector_asset_not_missing(
         self,
@@ -602,7 +609,7 @@ def _bump_mtime(path: Path, delta: float = 60.0) -> None:
 
 @pytest.mark.integration
 class TestCollectionLevelFreshness:
-    """ADR-0041 / #350: collection-level data assets must be freshness-checked.
+    """#350: collection-level data assets must be freshness-checked.
 
     Before this fix, the scanner registered collection-level assets but never
     called `check_file_metadata` on them, so STALE/BREAKING were silently
@@ -758,7 +765,7 @@ class TestCollectionLevelFreshness:
 
 @pytest.mark.integration
 class TestLegacyFlatLayoutIsOrphaned:
-    """ADR-0041: a single layout (hierarchical). Flat sibling JSON is no
+    """a single layout (hierarchical). Flat sibling JSON is no
     longer treated as a valid item by the scanner — the data file is
     reported as ORPHANED so users migrate via `portolan add`.
     """
@@ -814,13 +821,13 @@ class TestLegacyFlatLayoutIsOrphaned:
 
 
 # =============================================================================
-# F4: nested catalogs (ADR-0032 Pattern 1 + Pattern 2)
+# F4: nested catalogs (Pattern 1 + Pattern 2)
 # =============================================================================
 
 
 @pytest.mark.integration
 class TestNestedCatalogPatterns:
-    """ADR-0032 nested catalog shapes must be walked correctly.
+    """nested catalog shapes must be walked correctly.
 
     Pattern 1: catalog → sub-catalog → collection → item.
     Pattern 2: collection → year-subcatalog → item (collection still owns
@@ -1103,9 +1110,11 @@ class TestCheckResolvesCatalogRoot:
             cli,
             ["check", str(collection_dir), "--metadata", "--fix", "--json"],
         )
-        assert result.exit_code == 0, result.output
+        # The catalog is hand-built and does not conform, so the post-fix
+        # re-check reports findings and the run exits 1. What this test is
+        # about is where the fix landed, which the `fix` section records.
         payload = json.loads(result.output)
-        metadata_fix = payload.get("data", {}).get("metadata_fix")
+        metadata_fix = payload.get("data", {}).get("fix", {}).get("metadata_fix")
         assert metadata_fix is not None and metadata_fix["total_count"] >= 1, (
             f"running --fix from a subdir must reach the catalog root and "
             f"act on its items. got: {payload}"
@@ -1155,7 +1164,7 @@ class TestScannerRejectsMissingCatalog:
 
 
 # =============================================================================
-# Vector-format orphan detection (ADR-0014 accepts non-cloud-native formats).
+# Vector-format orphan detection (accepts non-cloud-native formats).
 # Stray .gpkg/.shp/.geojson at collection root must surface as ORPHANED so
 # users see them, mirroring the .pmtiles contract (orphan-checked but not
 # freshness-checked since no extractor exists for those formats).

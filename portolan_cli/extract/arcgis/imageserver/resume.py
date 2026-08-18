@@ -25,6 +25,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from portolan_cli.json_io import write_json_atomic
+
 logger = logging.getLogger(__name__)
 
 
@@ -98,7 +100,7 @@ def load_resume_state(
         return None
 
     try:
-        content = report_path.read_text()
+        content = report_path.read_text(encoding="utf-8")
         if not content.strip():
             return None
 
@@ -222,4 +224,4 @@ def save_resume_state(state: ImageServerResumeState, report_path: Path) -> None:
         },
     }
 
-    report_path.write_text(json.dumps(data, indent=2))
+    write_json_atomic(report_path, data)

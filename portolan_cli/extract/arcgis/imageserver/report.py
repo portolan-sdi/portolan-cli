@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from portolan_cli.json_io import write_json_atomic
+
 if TYPE_CHECKING:
     from portolan_cli.extract.arcgis.imageserver.discovery import ImageServerMetadata
     from portolan_cli.metadata_extraction import ExtractedMetadata
@@ -143,7 +145,7 @@ class ImageServerMetadataExtracted:
         pixel_size_y: Pixel size in Y direction (native units).
         extent_bbox: Full extent as [minx, miny, maxx, maxy].
 
-        # FeatureServer-parity fields (for metadata.yaml population per ADR-0038):
+        # FeatureServer-parity fields (for metadata.yaml population):
         service_description: Extended service description (maps to processing_notes).
         author: Author from documentInfo (maps to contact.name).
         keywords: Keywords from documentInfo (list of strings).
@@ -273,6 +275,7 @@ class ImageServerMetadataExtracted:
         Returns:
             ExtractedMetadata with fields populated from this instance.
         """
+        from portolan_cli.licensing import license_url_from_text
         from portolan_cli.metadata_extraction import ExtractedMetadata
 
         # Build processing_notes with service description and technical specs
@@ -302,6 +305,7 @@ class ImageServerMetadataExtracted:
             processing_notes="\n".join(processing_notes_parts),
             known_issues=self.access_information,
             license_raw=self.license_info,
+            license_url=license_url_from_text(self.license_info),
         )
 
 
@@ -428,7 +432,7 @@ def save_imageserver_report(report: ImageServerExtractionReport, path: Path) -> 
         path: Path to write the JSON file.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report.to_dict(), indent=2))
+    write_json_atomic(path, report.to_dict())
 
 
 def load_imageserver_report(path: Path) -> ImageServerExtractionReport:
@@ -446,5 +450,5 @@ def load_imageserver_report(path: Path) -> ImageServerExtractionReport:
     if not path.exists():
         raise FileNotFoundError(f"Report not found: {path}")
 
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     return ImageServerExtractionReport.from_dict(data)

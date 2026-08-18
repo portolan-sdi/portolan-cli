@@ -5,7 +5,7 @@ populated correctly at the collection level (not catalog level).
 
 See:
 - tests/specs/versioning_stress.md for human test specification
-- ADR-0005 for versions.json as single source of truth
+- for versions.json as single source of truth
 - Issue #339 for the original bug report
 
 Note: remote is a sensitive setting and must be set via env var (Issue #356).
@@ -47,7 +47,7 @@ def runner() -> CliRunner:
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
     """Create an initialized Portolan catalog using CLI."""
-    result = CliRunner().invoke(cli, ["init", str(tmp_path), "--auto"])
+    result = CliRunner().invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
     assert result.exit_code == 0, f"Init failed: {result.output}"
     return tmp_path
 
@@ -273,7 +273,7 @@ class TestAddPopulatesVersions:
 
 
 class TestCatalogLevelVersioning:
-    """Verify catalog-level versions.json IS updated by add (per ADR-0005).
+    """Verify catalog-level versions.json IS updated by add.
 
     Issue #339 reported that catalog-level versions.json showed empty collections
     after add. This was a real bug, not user confusion. These tests verify the fix.
@@ -516,7 +516,7 @@ class TestAddThenPushSeesFiles:
 
 
 class TestSnapshotModelAccumulation:
-    """Verify each version is a complete snapshot (ADR-0005)."""
+    """Verify each version is a complete snapshot."""
 
     @pytest.mark.integration
     def test_second_add_preserves_first_assets(
@@ -1196,7 +1196,9 @@ class TestScaleAt1000Files:
     def catalog_with_1000_files(self, tmp_path: Path) -> tuple[Path, Path]:
         """Catalog with 1000 files matching #339 scale."""
         catalog_root = tmp_path / "scale-1000"
-        result = CliRunner().invoke(cli, ["init", str(catalog_root), "--auto"])
+        result = CliRunner().invoke(
+            cli, ["init", str(catalog_root), "--auto", "--license", "CC-BY-4.0"]
+        )
         assert result.exit_code == 0
 
         collection_dir = catalog_root / "large-collection"

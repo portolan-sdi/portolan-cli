@@ -11,15 +11,30 @@ Key conventions:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import re
+from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pystac
 from pystac.summaries import Summarizer, SummaryStrategy
 
+from portolan_cli.constants import PARTITION_EXTENSION_URI, PORTOLAN_SCHEMA_URI
 from portolan_cli.humanize import humanize_slug
+from portolan_cli.json_io import write_json_atomic
+from portolan_cli.providers import derive_provenance, resolve_providers
+from portolan_cli.utils import href_root
+
+if TYPE_CHECKING:
+    from portolan_cli.metadata.tabular import TabularMetadata
+
+# Any versioned Portolan profile URI, not just the current one: matching the
+# whole family is what lets a stale claim be rewritten rather than duplicated.
+PORTOLAN_SCHEMA_URI_PATTERN = re.compile(
+    r"^https://schemas\.portolan-sdi\.org/portolan/v\d+\.\d+\.\d+/schema\.json$"
+)
 
 
 class MergeStrategy(Enum):
@@ -53,11 +68,11 @@ HUMAN_ENRICHABLE_ASSET_FIELDS = frozenset({"title", "description"})
 MACHINE_DERIVABLE_EXTRA_FIELD_PREFIXES = frozenset(
     {
         "file:",  # file:size, file:checksum
-        "proj:",  # proj:epsg, proj:wkt2
+        "proj:",  # proj:code, proj:wkt2
         "pmtiles:",  # pmtiles:min_zoom, pmtiles:max_zoom, etc.
         "flatgeobuf:",  # flatgeobuf:feature_count, etc.
         "raster:",  # raster:spatial_resolution, etc.
-        "portolan:",  # portolan:glob (auto-generated on push)
+        "partition:",  # partition:glob (auto-generated on push)
     }
 )
 
@@ -77,10 +92,11 @@ STAC_VERSION = "1.1.0"
 # link SHOULD be added by the user once the concrete license is known (issue #568).
 DEFAULT_LICENSE = "other"
 
-# Sentinel datetime values for provisional items (ADR-0035, STAC 1.1.0 compliance)
+# Sentinel datetime values for provisional items (STAC 1.1.0 compliance)
 # STAC 1.1.0 and pystac require start_datetime/end_datetime to be valid ISO 8601 strings
 # when datetime is null. These sentinel values indicate "unknown temporal extent" while
-# remaining parseable. The portolan:datetime_provisional marker flags these for review.
+# remaining parseable. The range is the marker: an item carrying it has no real
+# temporal extent yet, which is readable without a custom field (issue #654).
 PROVISIONAL_START_DATETIME = "1900-01-01T00:00:00Z"
 PROVISIONAL_END_DATETIME = "9999-12-31T23:59:59Z"
 
@@ -159,8 +175,9 @@ def create_item(
     Args:
         item_id: Unique identifier for the item.
         bbox: Bounding box as [min_x, min_y, max_x, max_y] in WGS84.
-        datetime: Acquisition/creation datetime. If None, creates an open temporal
-            interval (start/end both null) and marks as provisional (per ADR-0035).
+        datetime: Acquisition/creation datetime. If None, the item carries a null
+            datetime and the sentinel start/end range that stands for an unknown
+            temporal extent.
         properties: Additional properties to include.
         assets: Asset dictionary to attach to the item.
 
@@ -179,16 +196,14 @@ def create_item(
     if not item_properties.get("title") or is_technical_name(str(item_properties.get("title"))):
         item_properties["title"] = humanize_slug(item_id)
 
-    # Per ADR-0035: If datetime not provided, mark as provisional so
-    # portolan check can flag incomplete items.
+    # If datetime not provided, publish the sentinel range instead.
     # STAC 1.1.0 and pystac require start_datetime/end_datetime to be valid
     # ISO 8601 strings when datetime is null. We use an open-ended range
-    # to indicate unknown temporal extent.
-    datetime_provisional = datetime is None
-    if datetime_provisional:
+    # to indicate unknown temporal extent. The range says so on its own, so no
+    # marker field travels with it (issue #654).
+    if datetime is None:
         item_properties["start_datetime"] = PROVISIONAL_START_DATETIME
         item_properties["end_datetime"] = PROVISIONAL_END_DATETIME
-        item_properties["portolan:datetime_provisional"] = True
 
     item = pystac.Item(
         id=item_id,
@@ -264,8 +279,7 @@ def save_catalog(catalog: pystac.Catalog, dest_dir: Path) -> None:
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    # Trailing slash required: pystac treats dotted paths (e.g., tmp.xyz) as files
-    catalog.normalize_hrefs(f"{dest_dir}/")
+    catalog.normalize_hrefs(href_root(dest_dir))
 
     # Save as self-contained (relative links)
     catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
@@ -379,7 +393,7 @@ def add_asset_to_collection(
 ) -> None:
     """Add an asset directly to a collection (collection-level asset).
 
-    Per ADR-0031: Single vector files (GeoParquet, Shapefile, GeoPackage) are
+    Single vector files (GeoParquet, Shapefile, GeoPackage) are
     collection-level assets—no item.json, asset directly in collection.json.
 
     Issue #447 FIX: Before adding, check if ANY existing asset points to the same
@@ -427,27 +441,32 @@ def add_asset_to_collection(
 def add_collection_properties_from_metadata(
     collection: pystac.Collection,
     metadata: object,
+    asset_keys: Iterable[str] | None = None,
 ) -> None:
     """Add STAC properties from metadata to a collection.
 
-    Used for collection-level assets (ADR-0031) where metadata properties
+    Used for collection-level assets where metadata properties
     should be applied directly to the collection instead of an item.
 
     Handles:
-    - PMTilesMetadata: pmtiles:* properties, and proj:epsg=3857 only as a
-      fallback (the 3857 describes the Web-Mercator tiles, not the source data)
-    - FlatGeobufMetadata: proj:epsg from CRS, flatgeobuf:* properties
-    - GeoParquetMetadata: proj:epsg from CRS (table extension handled separately)
+    - PMTilesMetadata: pmtiles:* properties (no projection contribution; the
+      hardcoded Web-Mercator tile CRS describes the tiles, not the source data)
+    - FlatGeobufMetadata: proj:code onto the data asset, flatgeobuf:* properties
+    - GeoParquetMetadata: proj:code onto the data asset (table extension
+      handled separately)
 
-    The collection-level ``proj:epsg`` must reflect the source *data* CRS. A
-    tracked ``.pmtiles`` companion (ADR-0028 tracks all files) reports a
-    hardcoded ``proj:epsg: 3857`` for its tiles; that visualization artifact
-    must never overwrite a real source CRS contributed by the vector data asset,
-    regardless of the order assets are applied (issue #488).
+    Projection v2.0.0 removed ``proj:epsg``; the reference catalog in
+    portolan-spec carries ``proj:code`` (``"EPSG:4269"``) on the collection's
+    *data asset*, not on the collection top level (issue #654). A stale
+    top-level ``proj:epsg`` from an older catalog is stripped on re-add.
 
     Args:
         collection: The collection to add properties to.
         metadata: Metadata object with to_stac_properties() method.
+        asset_keys: Keys of the collection assets this metadata describes.
+            ``proj:code`` lands on those of them carrying the ``data`` role.
+            When omitted, every collection asset with the ``data`` role
+            receives it.
     """
     if not hasattr(metadata, "to_stac_properties"):
         return
@@ -456,19 +475,32 @@ def add_collection_properties_from_metadata(
     if not props:
         return
 
-    from portolan_cli.metadata.pmtiles import PMTilesMetadata
+    # proj:epsg is the extractors' internal CRS handoff; it never lands in
+    # published STAC. Translate to proj:code on the data asset below.
+    epsg = props.pop("proj:epsg", None)
 
-    is_pmtiles = isinstance(metadata, PMTilesMetadata)
-
-    # Add properties to collection.extra_fields (STAC collection properties)
     for key, value in props.items():
-        # PMTiles tile CRS is a fallback: never clobber a real source-data CRS.
-        if key == "proj:epsg" and is_pmtiles and "proj:epsg" in collection.extra_fields:
-            continue
         collection.extra_fields[key] = value
 
-    # Add projection extension declaration if proj:epsg is present
-    if "proj:epsg" in props:
+    # Migration: older catalogs carried proj:epsg on the collection top level.
+    collection.extra_fields.pop("proj:epsg", None)
+
+    if epsg is None:
+        return
+
+    if asset_keys is None:
+        targets = list(collection.assets.keys())
+    else:
+        targets = [key for key in asset_keys if key in collection.assets]
+
+    wrote_proj_code = False
+    for key in targets:
+        asset = collection.assets[key]
+        if "data" in (asset.roles or []):
+            asset.extra_fields["proj:code"] = f"EPSG:{epsg}"
+            wrote_proj_code = True
+
+    if wrote_proj_code:
         proj_ext_url = EXTENSION_URLS["projection"]
         if collection.stac_extensions is None:
             collection.stac_extensions = []
@@ -479,7 +511,7 @@ def add_collection_properties_from_metadata(
 def apply_human_titles(collection: pystac.Collection, metadata: object) -> None:
     """Apply human-authored title/description from metadata.yaml (Issue #502).
 
-    Per ADR-0038 (revised), ``metadata.yaml`` may carry optional ``title`` and
+    ``metadata.yaml`` may carry optional ``title`` and
     ``description`` keys as the human override for the auto-derived values.
     These are the highest-precedence source: a human-authored title always wins
     over the slug-humanized default. Missing/blank values leave the existing
@@ -499,6 +531,145 @@ def apply_human_titles(collection: pystac.Collection, metadata: object) -> None:
     description = metadata.get("description")
     if isinstance(description, str) and description.strip():
         collection.description = description.strip()
+
+
+def apply_human_license(collection: pystac.Collection, metadata: object) -> None:
+    """Apply the human-authored license from metadata.yaml (issue #654).
+
+    ``license`` is a required metadata.yaml field; without this the
+    collection kept the ``other`` placeholder even when the human had declared an
+    SPDX identifier. ``license_url``, when present, becomes the ``rel="license"``
+    link that a non-SPDX license needs to be resolvable.
+
+    Args:
+        collection: The collection to update in place.
+        metadata: The merged metadata.yaml mapping (other types are ignored).
+    """
+    if not isinstance(metadata, dict):
+        return
+
+    license_id = metadata.get("license")
+    if isinstance(license_id, str) and license_id.strip():
+        collection.license = license_id.strip()
+
+    license_url = metadata.get("license_url")
+    if not isinstance(license_url, str) or not license_url.strip():
+        return
+    href = license_url.strip()
+    for link in collection.links:
+        if link.rel == "license" and link.href == href:
+            return
+    collection.add_link(pystac.Link(rel="license", target=href, title="License"))
+
+
+def apply_human_providers(collection: pystac.Collection, metadata: object) -> None:
+    """Apply the human-authored providers array from metadata.yaml (issue #684).
+
+    Every collection must name a producer and exactly one host, listed last
+    (PTL-PRV-001, PTL-PRV-002). ``providers.resolve_providers`` does the ordering
+    and seeds the host from ``contact``; this writes the result onto the
+    collection. Metadata that declares nothing leaves any existing array alone,
+    so a re-add never wipes providers a human wrote straight into
+    ``collection.json``.
+
+    Args:
+        collection: The collection to update in place.
+        metadata: The merged metadata.yaml mapping (other types ignored).
+
+    Raises:
+        InvalidProvidersError: When metadata.yaml declares a providers array
+            Portolan cannot put in conformant shape.
+    """
+    resolved = resolve_providers(metadata)
+    if not resolved:
+        return
+
+    collection.providers = [
+        pystac.Provider(
+            name=str(provider["name"]),
+            description=provider.get("description"),
+            roles=provider.get("roles"),
+            url=provider.get("url"),
+            extra_fields={"email": provider["email"]} if "email" in provider else None,
+        )
+        for provider in resolved
+    ]
+
+
+def _collection_provenance(collection: pystac.Collection) -> str | None:
+    """Derive official vs mirror from the providers already on the collection."""
+    return derive_provenance([provider.to_dict() for provider in collection.providers or []])
+
+
+def apply_provenance(
+    collection: pystac.Collection,
+    metadata: object,
+    *,
+    synced_at: datetime | None = None,
+) -> None:
+    """Record how this collection relates to the data's original source (issue #684).
+
+    Source provenance is derived from the providers, never declared separately: a
+    collection is official when its producer also hosts it, and a mirror when
+    they differ. A mirror links back to the source with ``rel="via"``
+    (PTL-PRO-001) and records the sync in a top-level RFC 3339 ``updated`` field
+    (PTL-PRO-003). An official collection is the source, so it gets neither
+    (PTL-PRO-004).
+
+    The sync a mirror records is the sync *from its source*, which for Portolan
+    is the moment ``add`` copied or converted the data, not a later ``push`` to
+    object storage.
+
+    Args:
+        collection: The collection to update in place.
+        metadata: The merged metadata.yaml mapping (other types ignored).
+        synced_at: The sync time to record. Defaults to now, in UTC.
+    """
+    provenance = _collection_provenance(collection)
+    if provenance is None:
+        return
+
+    source_url = metadata.get("source_url") if isinstance(metadata, dict) else None
+    source_url = source_url.strip() if isinstance(source_url, str) and source_url.strip() else None
+
+    if provenance == "official":
+        if source_url is not None:
+            from portolan_cli.output import warn as warn_output
+
+            warn_output(
+                f"{collection.id}: producer and host are the same organization, so the "
+                f"collection is official and carries no via link to {source_url}"
+            )
+        return
+
+    collection.extra_fields["updated"] = to_rfc3339(synced_at or datetime.now(timezone.utc))
+
+    if source_url is None:
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "%s mirrors data it did not produce but metadata.yaml declares no source_url",
+            collection.id,
+        )
+        return
+    for link in collection.links:
+        if link.rel == "via" and link.href == source_url:
+            return
+    collection.add_link(
+        pystac.Link(
+            rel="via",
+            target=source_url,
+            media_type="text/html",
+            title="Original source",
+        )
+    )
+
+
+def to_rfc3339(moment: datetime) -> str:
+    """Format a datetime as the RFC 3339 date-time STAC's ``updated`` field wants."""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def add_partition_metadata_to_collection(
@@ -699,7 +870,7 @@ def update_collection_temporal_extent(
     """Update a collection's temporal extent to include an item's datetime.
 
     Widens the collection's temporal interval to encompass the item's datetime.
-    Per ADR-0035, items without datetime have null interval and are not included.
+    Items without datetime have null interval and are not included.
 
     Args:
         collection: The collection to update.
@@ -732,16 +903,56 @@ def update_collection_temporal_extent(
 
 
 # STAC Extension schema URLs (v1.1.0 compatible)
-# Note: "file" extension is reserved for future use (checksums, sizes)
-# Currently only table, projection, and raster are actively used
+# "vector" is the only entry still unused; the rest are declared by the writers
+# named beside them.
 EXTENSION_URLS = {
     "table": "https://stac-extensions.github.io/table/v1.2.0/schema.json",
     "projection": "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
-    "raster": "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
-    "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",  # Reserved for future
+    "raster": "https://stac-extensions.github.io/raster/v2.0.0/schema.json",
+    # file:size / file:checksum, declared by declare_file_extension
+    # and by stac_parquet.sync_file_extension.
+    "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",
     "vector": "https://stac-extensions.github.io/vector/v0.1.0/schema.json",  # Proposal maturity
-    "partition": "https://portolan-sdi.github.io/stac-partition-extension/v1.0.0/schema.json",
+    "partition": PARTITION_EXTENSION_URI,
 }
+
+
+def ensure_portolan_schema_uri(document: dict[str, Any]) -> bool:
+    """Declare the versioned Portolan profile schema URI on a catalog or collection.
+
+    The profile URI is the machine-readable conformance claim: every catalog and
+    collection MUST carry exactly one (issue #654). This appends
+    :data:`~portolan_cli.constants.PORTOLAN_SCHEMA_URI` when absent, and rewrites
+    a URI left over from an older spec version in place, so re-stamping a catalog
+    upgrades it instead of accumulating claims. Other extension declarations keep
+    their relative order.
+
+    Args:
+        document: Parsed ``catalog.json`` or ``collection.json``, mutated in place.
+
+    Returns:
+        True when ``stac_extensions`` changed, False when it already conformed.
+    """
+    existing = document.get("stac_extensions")
+    declared: list[str] = list(existing) if isinstance(existing, list) else []
+
+    kept: list[str] = []
+    stamped = False
+    for uri in declared:
+        if isinstance(uri, str) and PORTOLAN_SCHEMA_URI_PATTERN.match(uri):
+            # Collapse every profile claim (stale or duplicate) onto the first.
+            if not stamped:
+                kept.append(PORTOLAN_SCHEMA_URI)
+                stamped = True
+            continue
+        kept.append(uri)
+    if not stamped:
+        kept.append(PORTOLAN_SCHEMA_URI)
+
+    if kept == declared and isinstance(existing, list):
+        return False
+    document["stac_extensions"] = kept
+    return True
 
 
 def build_stac_extensions(properties: dict[str, object]) -> list[str]:
@@ -766,9 +977,11 @@ def build_stac_extensions(properties: dict[str, object]) -> list[str]:
     if any(k.startswith("proj:") for k in properties):
         extensions.append(EXTENSION_URLS["projection"])
 
-    # Check for raster extension fields
-    # STAC v1.1.0 uses unified 'bands' array at top level (not raster:bands)
-    if any(k.startswith("raster:") for k in properties) or "bands" in properties:
+    # Check for raster extension fields.
+    # The unified `bands` array (with its `statistics`) is core STAC v1.1.0, so
+    # it does not imply the raster extension — only genuinely `raster:`-prefixed
+    # fields such as raster:spatial_resolution do (issue #654).
+    if any(k.startswith("raster:") for k in properties):
         extensions.append(EXTENSION_URLS["raster"])
 
     # Check for file extension fields
@@ -883,6 +1096,87 @@ def add_table_extension(
         if collection.stac_extensions is None:
             collection.stac_extensions = []
         collection.stac_extensions.append(ext_url)
+
+
+def document_tabular_table(
+    collection_data: dict[str, Any],
+    asset_key: str,
+    metadata: TabularMetadata,
+) -> None:
+    """Document a plain-Parquet asset's columns with the table extension (issue #749).
+
+    The tabular writer builds ``collection.json`` as raw JSON outside
+    ``finalize_items``, so it cannot reach :func:`add_table_extension`, which
+    takes a pystac Collection. This is the dict-level counterpart, and it is the
+    only writer of ``table:*`` on that path.
+
+    Where the columns land depends on what else the collection holds. When this
+    is its only Parquet data asset, the collection *is* the table — the
+    single-file collection pattern the spec's Tabular Data section describes —
+    so the fields go on the collection, where ``readme`` and ``metadata.yaml``
+    already read them. When another Parquet data asset is present, that one owns
+    the collection-level schema, so these columns go on the asset instead of
+    overwriting it. The table extension permits both placements and rashid
+    (PTL-DAT-015) accepts either.
+
+    Descriptions a human wrote on existing columns survive, matching
+    :data:`MergeStrategy.SMART`; only names and types are refreshed.
+
+    Args:
+        collection_data: Parsed ``collection.json``, mutated in place.
+        asset_key: Key of the Parquet asset under ``assets``.
+        metadata: Schema and row count read from that asset.
+    """
+    assets = collection_data.get("assets", {})
+    others_hold_the_collection = any(
+        key != asset_key
+        and "data" in (asset.get("roles") or [])
+        and str(asset.get("href", "")).lower().endswith(".parquet")
+        for key, asset in assets.items()
+    )
+    target: dict[str, Any] = assets[asset_key] if others_hold_the_collection else collection_data
+
+    existing = target.get("table:columns")
+    target["table:columns"] = _merge_table_columns(
+        existing if isinstance(existing, list) else [],
+        metadata.schema,
+        MergeStrategy.SMART,
+    )
+    target["table:row_count"] = metadata.row_count
+
+    declared = collection_data.setdefault("stac_extensions", [])
+    if EXTENSION_URLS["table"] not in declared:
+        declared.append(EXTENSION_URLS["table"])
+
+
+def set_temporal_extent(
+    collection_data: dict[str, Any],
+    interval: tuple[datetime, datetime],
+) -> None:
+    """Populate a collection's temporal extent from a derived interval (issue #749).
+
+    Only fills an extent that is still open at both ends, the sentinel
+    ``[[null, null]]`` a tabular collection is created with. A bound already
+    present came from a human or from the collection's items, and machine-read
+    column statistics do not outrank either.
+
+    Args:
+        collection_data: Parsed ``collection.json``, mutated in place.
+        interval: Start and end datetimes, each serialized to RFC 3339.
+    """
+    extent = collection_data.setdefault("extent", {})
+    temporal = extent.setdefault("temporal", {})
+    bounds = temporal.get("interval")
+    if isinstance(bounds, list) and any(
+        isinstance(pair, list) and any(bound is not None for bound in pair) for pair in bounds
+    ):
+        return
+    temporal["interval"] = [[_rfc3339(interval[0]), _rfc3339(interval[1])]]
+
+
+def _rfc3339(moment: datetime) -> str:
+    """Serialize a UTC datetime the way STAC spells it, with a trailing ``Z``."""
+    return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def get_existing_table_metadata(collection: pystac.Collection) -> object | None:
@@ -1142,7 +1436,7 @@ def add_vector_extension(
     """Add Vector extension fields to an item from GeoParquet metadata.
 
     Sets vector:geometry_types based on the geometry type(s) in the metadata.
-    Per ADR-0037: Use experimental extensions (Vector v0.1.0 is Proposal maturity).
+    Use experimental extensions (Vector v0.1.0 is Proposal maturity).
 
     Args:
         item: The STAC item to add extension fields to.
@@ -1277,12 +1571,19 @@ def add_raster_extension(
     if bands:
         _set_bands_on_data_assets(item, bands)
 
-    # Update stac_extensions if not already present
-    ext_url = EXTENSION_URLS["raster"]
-    if ext_url not in (item.stac_extensions or []):
-        if item.stac_extensions is None:
-            item.stac_extensions = []
-        item.stac_extensions.append(ext_url)
+    # Declare the extension only when a raster:-prefixed field was actually
+    # written (issue #654). Raster v2.0.0 requires a declared item to carry at
+    # least one raster: field in properties, bands, or an asset; the unified
+    # `bands` array holds only core fields, so an empty declaration fails
+    # v2.0.0 validation. The spec registry condition is "When band-level
+    # detail is provided".
+    has_raster_field = any(key.startswith("raster:") for key in item.properties)
+    if has_raster_field:
+        ext_url = EXTENSION_URLS["raster"]
+        if ext_url not in (item.stac_extensions or []):
+            if item.stac_extensions is None:
+                item.stac_extensions = []
+            item.stac_extensions.append(ext_url)
 
 
 def add_collection_extensions_from_summaries(
@@ -1313,7 +1614,7 @@ def add_collection_extensions_from_summaries(
             collection.stac_extensions.append(ext_url)
 
 
-# Per ADR-0036: Hybrid field detection for collection summaries
+# Hybrid field detection for collection summaries
 # Explicit fields with known strategies; auto-detect extension-prefixed fields
 SUMMARIZED_FIELDS: dict[str, SummaryStrategy] = {
     "proj:code": SummaryStrategy.ARRAY,  # Distinct CRS codes
@@ -1329,7 +1630,7 @@ def update_collection_summaries(collection: pystac.Collection) -> None:
     - Explicit strategies for core fields (proj:code, vector:geometry_types, gsd)
     - Auto-detect extension-prefixed fields (custom:*, etc.)
 
-    Per ADR-0036: Categorical fields only, no numeric aggregation across items.
+    Categorical fields only, no numeric aggregation across items.
 
     Args:
         collection: The collection to update summaries for.
@@ -1352,81 +1653,71 @@ def update_collection_summaries(collection: pystac.Collection) -> None:
     collection.summaries = summarizer.summarize(items)
 
 
-def update_collection_file_statistics(collection: pystac.Collection) -> None:
-    """Compute and set aggregate file statistics on a collection.
+def declare_file_extension(collection: pystac.Collection) -> None:
+    """Declare the STAC file extension when an asset under the collection uses it.
 
-    Aggregates file:size from all assets (collection-level and item-level)
-    and stores the totals in portolan: extension fields.
+    Scope is the collection *and* its items: the extension a collection declares
+    covers everything it contains, and ``stac_parquet.sync_file_extension``
+    withdraws the URI on the same scope, so the two writers agree instead of
+    trading edits on every run.
 
-    Also declares the file extension when any asset has file:size.
-
-    Sets:
-        portolan:total_size_bytes: Sum of all asset file:size values
-        portolan:asset_count: Number of assets with file:size
+    This once also wrote ``portolan:total_size_bytes`` and
+    ``portolan:asset_count``. Issue #654 removed both: the spec defines no
+    ``portolan:`` field, and the per-asset ``file:size`` values the totals were
+    summed from are published on the assets themselves.
 
     Args:
-        collection: The collection to update statistics for.
+        collection: The collection to declare the extension on.
     """
-    total_size = 0
-    asset_count = 0
-    has_file_extension = False
+    if not _any_asset_declares_file_fields(collection):
+        return
 
-    def _validate_file_size(size: object) -> int | None:
-        """Validate and coerce file:size to int, rejecting invalid types."""
-        if size is None:
-            return None
-        if isinstance(size, bool):
-            return None
-        if isinstance(size, int):
-            return size
-        if isinstance(size, str):
-            try:
-                return int(size)
-            except ValueError:
-                return None
-        return None
-
-    # Count collection-level assets
-    for asset in collection.assets.values():
-        raw_size = asset.extra_fields.get("file:size") if asset.extra_fields else None
-        size = _validate_file_size(raw_size)
-        if size is not None:
-            total_size += size
-            asset_count += 1
-            has_file_extension = True
-
-    # Count item-level assets
-    for item in collection.get_items(recursive=True):
-        for asset in item.assets.values():
-            raw_size = asset.extra_fields.get("file:size") if asset.extra_fields else None
-            size = _validate_file_size(raw_size)
-            if size is not None:
-                total_size += size
-                asset_count += 1
-                has_file_extension = True
-
-    collection.extra_fields["portolan:total_size_bytes"] = total_size
-    collection.extra_fields["portolan:asset_count"] = asset_count
-
-    # Declare file extension if any asset has file:size
-    if has_file_extension:
-        file_ext_url = EXTENSION_URLS["file"]
-        if collection.stac_extensions is None:
-            collection.stac_extensions = []
-        if file_ext_url not in collection.stac_extensions:
-            collection.stac_extensions.append(file_ext_url)
+    file_ext_url = EXTENSION_URLS["file"]
+    if collection.stac_extensions is None:
+        collection.stac_extensions = []
+    if file_ext_url not in collection.stac_extensions:
+        collection.stac_extensions.append(file_ext_url)
 
 
-def update_catalog_file_statistics(catalog_root: Path) -> None:
-    """Compute and set aggregate file statistics on a catalog.
+def _any_asset_declares_file_fields(collection: pystac.Collection) -> bool:
+    """Whether any asset on the collection or its items carries ``file:size``."""
+    if any(_has_file_size(asset) for asset in collection.assets.values()):
+        return True
+    return any(
+        _has_file_size(asset)
+        for item in collection.get_items(recursive=True)
+        for asset in item.assets.values()
+    )
 
-    Reads all collection.json files under the catalog root and aggregates
-    their portolan:total_size_bytes and portolan:asset_count fields.
 
-    Sets on catalog.json:
-        portolan:total_size_bytes: Sum across all collections
-        portolan:asset_count: Sum across all collections
-        portolan:collection_count: Number of collections
+def _has_file_size(asset: pystac.Asset) -> bool:
+    """Whether an asset declares a usable ``file:size``.
+
+    A boolean is not a size even though ``bool`` is an ``int``, and a string is
+    only one when it parses; anything else is a malformed value that must not
+    make the collection claim an extension it does not use.
+    """
+    size = asset.extra_fields.get("file:size") if asset.extra_fields else None
+    if isinstance(size, bool):
+        return False
+    if isinstance(size, int):
+        return True
+    if isinstance(size, str):
+        return size.strip().lstrip("+-").isdigit()
+    return False
+
+
+def update_catalog_provenance(catalog_root: Path) -> None:
+    """Stamp the root catalog's sync time when the whole tree is a mirror (issue #684).
+
+    PTL-PRO-003 requires the top-level ``updated`` field on every mirror
+    collection, and on the root catalog too when every collection under it is a
+    mirror — at that point the catalog as a whole is a copy of data published
+    elsewhere. A tree that mixes official and mirrored collections leaves the
+    root alone, since the catalog is not wholly either one.
+
+    The value is the newest sync time among the collections, so the root reports
+    the freshness a consumer would compare against the source.
 
     Args:
         catalog_root: Root directory of the catalog.
@@ -1437,30 +1728,27 @@ def update_catalog_file_statistics(catalog_root: Path) -> None:
     if not catalog_path.exists():
         return
 
-    total_size = 0
-    asset_count = 0
-    collection_count = 0
-
-    # Walk catalog looking for collection.json files
+    stamps: list[str] = []
     for collection_json in catalog_root.rglob("collection.json"):
-        # Skip if it's not a direct child pattern (avoid nested catalogs confusion)
         try:
-            data = json.loads(collection_json.read_text())
-            if data.get("type") != "Collection":
-                continue
-            collection_count += 1
-            total_size += data.get("portolan:total_size_bytes", 0)
-            asset_count += data.get("portolan:asset_count", 0)
+            data = json.loads(collection_json.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
+        if data.get("type") != "Collection":
+            continue
+        if derive_provenance(data.get("providers")) != "mirror":
+            return
+        updated = data.get("updated")
+        if isinstance(updated, str):
+            stamps.append(updated)
 
-    # Update catalog.json
+    if not stamps:
+        return
+
     try:
-        catalog_data = json.loads(catalog_path.read_text())
-        catalog_data["portolan:total_size_bytes"] = total_size
-        catalog_data["portolan:asset_count"] = asset_count
-        catalog_data["portolan:collection_count"] = collection_count
-        catalog_path.write_text(json.dumps(catalog_data, indent=2) + "\n")
+        catalog_data = json.loads(catalog_path.read_text(encoding="utf-8"))
+        catalog_data["updated"] = max(stamps)
+        write_json_atomic(catalog_path, catalog_data)
     except (json.JSONDecodeError, OSError):
         pass
 
@@ -1511,7 +1799,7 @@ def add_via_link(
     }
     links.append(via_link)
 
-    collection_path.write_text(json.dumps(collection_data, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(collection_path, collection_data)
 
 
 def is_technical_name(text: str | None) -> bool:
@@ -1644,8 +1932,6 @@ def update_stac_metadata(
         updated = True
 
     if updated:
-        path.write_text(
-            json.dumps(stac_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-        )
+        write_json_atomic(path, stac_data)
 
     return updated

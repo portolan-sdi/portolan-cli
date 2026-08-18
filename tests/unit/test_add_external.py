@@ -40,7 +40,7 @@ def runner() -> CliRunner:
 
 
 def setup_catalog(path: Path) -> None:
-    """Create an initialized Portolan catalog (per ADR-0023 and ADR-0029)."""
+    """Create an initialized Portolan catalog ."""
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
@@ -121,45 +121,62 @@ class TestBboxValidation:
 
 
 class TestADR0030URLValidation:
-    """Tests for ADR-0030 input validation compliance (F1, F2)."""
+    """Tests for input validation compliance (F1, F2)."""
 
     def test_rejects_file_scheme(self, tmp_path: Path) -> None:
         """file:// URLs are local paths disguised as URIs — must reject."""
         setup_catalog(tmp_path)
         with pytest.raises(InputValidationError, match="Unsupported URL scheme"):
-            add_external(catalog_root=tmp_path, url="file:///etc/passwd", collection_id="x")
+            add_external(
+                license="CC-BY-4.0",
+                catalog_root=tmp_path,
+                url="file:///etc/passwd",
+                collection_id="x",
+            )
 
     def test_rejects_path_traversal(self, tmp_path: Path) -> None:
         """Path traversals in URLs must be rejected."""
         setup_catalog(tmp_path)
         with pytest.raises(InputValidationError, match="traversal"):
-            add_external(catalog_root=tmp_path, url="s3://bucket/../etc/passwd", collection_id="x")
+            add_external(
+                license="CC-BY-4.0",
+                catalog_root=tmp_path,
+                url="s3://bucket/../etc/passwd",
+                collection_id="x",
+            )
 
     def test_rejects_control_characters(self, tmp_path: Path) -> None:
         """Control characters in URLs must be rejected."""
         setup_catalog(tmp_path)
         with pytest.raises(InputValidationError, match="Control characters"):
             add_external(
-                catalog_root=tmp_path, url="s3://bucket/key\x00.parquet", collection_id="x"
+                license="CC-BY-4.0",
+                catalog_root=tmp_path,
+                url="s3://bucket/key\x00.parquet",
+                collection_id="x",
             )
 
     def test_rejects_empty_host(self, tmp_path: Path) -> None:
         """URLs without host/bucket must be rejected."""
         setup_catalog(tmp_path)
         with pytest.raises(InputValidationError, match="missing host"):
-            add_external(catalog_root=tmp_path, url="s3://", collection_id="x")
+            add_external(license="CC-BY-4.0", catalog_root=tmp_path, url="s3://", collection_id="x")
 
     def test_rejects_unsupported_scheme(self, tmp_path: Path) -> None:
         """Only s3, gs, az, http, https are allowed."""
         setup_catalog(tmp_path)
         with pytest.raises(InputValidationError, match="Unsupported URL scheme"):
             add_external(
-                catalog_root=tmp_path, url="ftp://example.org/data.parquet", collection_id="x"
+                license="CC-BY-4.0",
+                catalog_root=tmp_path,
+                url="ftp://example.org/data.parquet",
+                collection_id="x",
             )
 
     def test_accepts_valid_s3_url(self, tmp_path: Path) -> None:
         setup_catalog(tmp_path)
         result = add_external(
+            license="CC-BY-4.0",
             catalog_root=tmp_path,
             url="s3://bucket/path/to/data.parquet",
             collection_id="test",
@@ -169,6 +186,7 @@ class TestADR0030URLValidation:
     def test_accepts_valid_https_url(self, tmp_path: Path) -> None:
         setup_catalog(tmp_path)
         result = add_external(
+            license="CC-BY-4.0",
             catalog_root=tmp_path,
             url="https://example.org/data.parquet",
             collection_id="test",
@@ -178,6 +196,7 @@ class TestADR0030URLValidation:
     def test_accepts_valid_gs_url(self, tmp_path: Path) -> None:
         setup_catalog(tmp_path)
         result = add_external(
+            license="CC-BY-4.0",
             catalog_root=tmp_path,
             url="gs://bucket/path/data.parquet",
             collection_id="test",
@@ -187,6 +206,7 @@ class TestADR0030URLValidation:
     def test_accepts_valid_az_url(self, tmp_path: Path) -> None:
         setup_catalog(tmp_path)
         result = add_external(
+            license="CC-BY-4.0",
             catalog_root=tmp_path,
             url="az://container/blob.parquet",
             collection_id="test",
@@ -200,20 +220,26 @@ class TestOverwriteProtection:
     def test_rejects_overwrite_without_force(self, tmp_path: Path) -> None:
         """Existing collections must not be overwritten without --force."""
         setup_catalog(tmp_path)
-        add_external(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="test")
+        add_external(
+            license="CC-BY-4.0", catalog_root=tmp_path, url=OVERTURE_URL, collection_id="test"
+        )
         with pytest.raises(FileExistsError, match="already exists"):
-            add_external(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="test")
+            add_external(
+                license="CC-BY-4.0", catalog_root=tmp_path, url=OVERTURE_URL, collection_id="test"
+            )
 
     def test_allows_overwrite_with_force(self, tmp_path: Path) -> None:
         """With force=True, existing collections can be overwritten."""
         setup_catalog(tmp_path)
         add_external(
+            license="CC-BY-4.0",
             catalog_root=tmp_path,
             url=OVERTURE_URL,
             collection_id="test",
             title="Original",
         )
         result = add_external(
+            license="CC-BY-4.0",
             catalog_root=tmp_path,
             url=OVERTURE_URL,
             collection_id="test",
@@ -232,6 +258,7 @@ class TestAddExternal:
         setup_catalog(tmp_path)
 
         result = add_external(
+            license="CC-BY-4.0",
             catalog_root=tmp_path,
             url=OVERTURE_URL,
             collection_id="overture-places",
@@ -248,11 +275,12 @@ class TestAddExternal:
 
         data = json.loads(collection_path.read_text())
 
-        # data asset points at the remote URL, kept as-is, marked external.
+        # data asset points at the remote URL, kept as-is, marked external by
+        # the role alone: the spec defines no portolan: field (issue #654).
         asset = data["assets"]["data"]
         assert asset["href"] == OVERTURE_URL
         assert asset["type"] == "application/vnd.apache.parquet"
-        assert asset["portolan:managed"] is False
+        assert "portolan:managed" not in asset
         assert "external" in asset["roles"]
         assert "data" in asset["roles"]
 
@@ -264,18 +292,28 @@ class TestAddExternal:
     def test_no_local_file_written(self, tmp_path: Path) -> None:
         """Nothing is downloaded: only metadata sidecars exist in the collection.
 
-        AGENTS.md is scaffolded alongside collection.json (ADR-0052) — it is
+        AGENTS.md is scaffolded alongside collection.json — it is
         metadata, not downloaded data, so the "no local data file" invariant holds.
         """
         setup_catalog(tmp_path)
-        add_external(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="overture-places")
+        add_external(
+            license="CC-BY-4.0",
+            catalog_root=tmp_path,
+            url=OVERTURE_URL,
+            collection_id="overture-places",
+        )
         collection_dir = tmp_path / "overture-places"
         files = sorted(p.name for p in collection_dir.iterdir())
         assert files == ["AGENTS.md", "collection.json"]
 
     def test_links_collection_into_root_catalog(self, tmp_path: Path) -> None:
         setup_catalog(tmp_path)
-        add_external(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="overture-places")
+        add_external(
+            license="CC-BY-4.0",
+            catalog_root=tmp_path,
+            url=OVERTURE_URL,
+            collection_id="overture-places",
+        )
         catalog = json.loads((tmp_path / "catalog.json").read_text())
         child_hrefs = [link["href"] for link in catalog["links"] if link["rel"] == "child"]
         assert "./overture-places/collection.json" in child_hrefs
@@ -283,7 +321,12 @@ class TestAddExternal:
     def test_check_scanner_does_not_flag_remote_asset(self, tmp_path: Path) -> None:
         """The metadata scanner must not report the remote asset as MISSING."""
         setup_catalog(tmp_path)
-        add_external(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="overture-places")
+        add_external(
+            license="CC-BY-4.0",
+            catalog_root=tmp_path,
+            url=OVERTURE_URL,
+            collection_id="overture-places",
+        )
         report = scan_catalog_metadata(tmp_path)
         # No result should reference the external href as a problem.
         assert all(OVERTURE_URL not in str(r.file_path) for r in report.results)
@@ -292,11 +335,18 @@ class TestAddExternal:
         """Local filesystem paths must be rejected (use 'portolan add' instead)."""
         setup_catalog(tmp_path)
         with pytest.raises(InputValidationError, match="Unsupported URL scheme"):
-            add_external(catalog_root=tmp_path, url="/tmp/local.parquet", collection_id="x")
+            add_external(
+                license="CC-BY-4.0",
+                catalog_root=tmp_path,
+                url="/tmp/local.parquet",
+                collection_id="x",
+            )
 
     def test_rejects_uninitialised_catalog(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError, match="Not a Portolan catalog"):
-            add_external(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="x")
+            add_external(
+                license="CC-BY-4.0", catalog_root=tmp_path, url=OVERTURE_URL, collection_id="x"
+            )
 
 
 class TestAddExternalCommand:
@@ -310,6 +360,8 @@ class TestAddExternalCommand:
                 cli,
                 [
                     "add-external",
+                    "--license",
+                    "CC-BY-4.0",
                     OVERTURE_URL,
                     "--collection",
                     "overture-places",
@@ -327,7 +379,15 @@ class TestAddExternalCommand:
             setup_catalog(Path.cwd())
             result = runner.invoke(
                 cli,
-                ["add-external", OVERTURE_URL, "--collection", "overture-places", "--json"],
+                [
+                    "add-external",
+                    "--license",
+                    "CC-BY-4.0",
+                    OVERTURE_URL,
+                    "--collection",
+                    "overture-places",
+                    "--json",
+                ],
             )
             assert result.exit_code == 0, result.output
             payload = json.loads(result.output)
@@ -339,7 +399,17 @@ class TestAddExternalCommand:
     def test_command_rejects_local_path(self, runner: CliRunner) -> None:
         with runner.isolated_filesystem():
             setup_catalog(Path.cwd())
-            result = runner.invoke(cli, ["add-external", "/tmp/local.parquet", "--collection", "x"])
+            result = runner.invoke(
+                cli,
+                [
+                    "add-external",
+                    "--license",
+                    "CC-BY-4.0",
+                    "/tmp/local.parquet",
+                    "--collection",
+                    "x",
+                ],
+            )
             assert result.exit_code == 1
             assert "Unsupported URL scheme" in result.output
 
@@ -347,7 +417,17 @@ class TestAddExternalCommand:
         """file:// URLs must be rejected via CLI."""
         with runner.isolated_filesystem():
             setup_catalog(Path.cwd())
-            result = runner.invoke(cli, ["add-external", "file:///etc/passwd", "--collection", "x"])
+            result = runner.invoke(
+                cli,
+                [
+                    "add-external",
+                    "--license",
+                    "CC-BY-4.0",
+                    "file:///etc/passwd",
+                    "--collection",
+                    "x",
+                ],
+            )
             assert result.exit_code == 1
             assert "Unsupported URL scheme" in result.output
 
@@ -356,7 +436,15 @@ class TestAddExternalCommand:
         with runner.isolated_filesystem():
             setup_catalog(Path.cwd())
             result = runner.invoke(
-                cli, ["add-external", "s3://bucket/../etc/passwd", "--collection", "x"]
+                cli,
+                [
+                    "add-external",
+                    "--license",
+                    "CC-BY-4.0",
+                    "s3://bucket/../etc/passwd",
+                    "--collection",
+                    "x",
+                ],
             )
             assert result.exit_code == 1
             assert "traversal" in result.output
@@ -367,14 +455,29 @@ class TestAddExternalCommand:
             catalog = Path.cwd()
             setup_catalog(catalog)
             # Create initial collection
-            runner.invoke(cli, ["add-external", OVERTURE_URL, "--collection", "test"])
+            runner.invoke(
+                cli,
+                ["add-external", "--license", "CC-BY-4.0", OVERTURE_URL, "--collection", "test"],
+            )
             # Without --force, should fail
-            result = runner.invoke(cli, ["add-external", OVERTURE_URL, "--collection", "test"])
+            result = runner.invoke(
+                cli,
+                ["add-external", "--license", "CC-BY-4.0", OVERTURE_URL, "--collection", "test"],
+            )
             assert result.exit_code == 1
             assert "already exists" in result.output
             # With --force, should succeed
             result = runner.invoke(
-                cli, ["add-external", OVERTURE_URL, "--collection", "test", "--force"]
+                cli,
+                [
+                    "add-external",
+                    "--license",
+                    "CC-BY-4.0",
+                    OVERTURE_URL,
+                    "--collection",
+                    "test",
+                    "--force",
+                ],
             )
             assert result.exit_code == 0
 
@@ -387,6 +490,8 @@ class TestAddExternalCommand:
                 cli,
                 [
                     "add-external",
+                    "--license",
+                    "CC-BY-4.0",
                     OVERTURE_URL,
                     "--collection",
                     "test",
@@ -404,7 +509,16 @@ class TestAddExternalCommand:
             setup_catalog(Path.cwd())
             result = runner.invoke(
                 cli,
-                ["add-external", OVERTURE_URL, "--collection", "test", "--bbox", "-200,0,0,0"],
+                [
+                    "add-external",
+                    "--license",
+                    "CC-BY-4.0",
+                    OVERTURE_URL,
+                    "--collection",
+                    "test",
+                    "--bbox",
+                    "-200,0,0,0",
+                ],
             )
             assert result.exit_code == 1
             assert "Longitude" in result.output
@@ -416,7 +530,14 @@ class TestAddExternalCommand:
             setup_catalog(catalog)
             result = runner.invoke(
                 cli,
-                ["add-external", OVERTURE_URL, "--collection", "test", "--license", "CC-BY-4.0"],
+                [
+                    "add-external",
+                    OVERTURE_URL,
+                    "--collection",
+                    "test",
+                    "--license",
+                    "CC-BY-4.0",
+                ],
             )
             assert result.exit_code == 0, result.output
             data = json.loads((catalog / "test" / "collection.json").read_text())
@@ -431,6 +552,8 @@ class TestAddExternalCommand:
                 cli,
                 [
                     "add-external",
+                    "--license",
+                    "CC-BY-4.0",
                     OVERTURE_URL,
                     "--collection",
                     "test",
@@ -448,9 +571,94 @@ class TestAddExternalCommand:
             setup_catalog(Path.cwd())
             result = runner.invoke(
                 cli,
-                ["--format", "json", "add-external", OVERTURE_URL, "--collection", "test"],
+                [
+                    "--format",
+                    "json",
+                    "add-external",
+                    "--license",
+                    "CC-BY-4.0",
+                    OVERTURE_URL,
+                    "--collection",
+                    "test",
+                ],
             )
             assert result.exit_code == 0, result.output
             payload = json.loads(result.output)
             assert payload["success"] is True
             assert payload["data"]["collection_id"] == "test"
+
+
+class TestAddExternalRequiresALicense:
+    """Issue #686: --license used to default to 'other' with no way to add a link.
+
+    Every external collection therefore shipped a guaranteed PTL-LIC-002 error.
+    Referencing data in place does not make its license unknowable, so the flag is
+    required and 'other' now has a --license-url to pair with.
+    """
+
+    def test_missing_license_fails(self, runner: CliRunner) -> None:
+        with runner.isolated_filesystem():
+            setup_catalog(Path.cwd())
+            result = runner.invoke(cli, ["add-external", OVERTURE_URL, "--collection", "x"])
+
+            assert result.exit_code == 1, result.output
+            assert "PRTLN-VAL004" in result.output
+            assert "--license" in result.output
+
+    def test_other_without_a_url_fails(self, runner: CliRunner) -> None:
+        with runner.isolated_filesystem():
+            setup_catalog(Path.cwd())
+            result = runner.invoke(
+                cli,
+                ["add-external", OVERTURE_URL, "--collection", "x", "--license", "other"],
+            )
+
+            assert result.exit_code == 1, result.output
+            assert "license_url" in result.output
+
+    def test_writes_no_collection_when_it_refuses(self, runner: CliRunner) -> None:
+        """The license is validated before add_external touches the filesystem."""
+        with runner.isolated_filesystem():
+            setup_catalog(Path.cwd())
+            result = runner.invoke(cli, ["add-external", OVERTURE_URL, "--collection", "x"])
+
+            assert result.exit_code == 1
+            assert not (Path.cwd() / "x").exists()
+
+    def test_other_with_a_url_emits_the_license_link(self, runner: CliRunner) -> None:
+        """PTL-LIC-002 is satisfied by the rel='license' link, not by the id alone."""
+        with runner.isolated_filesystem():
+            setup_catalog(Path.cwd())
+            result = runner.invoke(
+                cli,
+                [
+                    "add-external",
+                    OVERTURE_URL,
+                    "--collection",
+                    "x",
+                    "--license",
+                    "other",
+                    "--license-url",
+                    "https://example.org/terms",
+                ],
+            )
+
+            assert result.exit_code == 0, result.output
+            collection = json.loads((Path.cwd() / "x" / "collection.json").read_text())
+            assert collection["license"] == "other"
+            license_links = [link for link in collection["links"] if link["rel"] == "license"]
+            assert len(license_links) == 1
+            assert license_links[0]["href"] == "https://example.org/terms"
+
+    def test_an_spdx_identifier_needs_no_link(self, runner: CliRunner) -> None:
+        with runner.isolated_filesystem():
+            setup_catalog(Path.cwd())
+            result = runner.invoke(
+                cli,
+                ["add-external", OVERTURE_URL, "--collection", "x", "--license", "ODbL-1.0"],
+            )
+
+            assert result.exit_code == 0, result.output
+            collection = json.loads((Path.cwd() / "x" / "collection.json").read_text())
+            assert collection["license"] == "ODbL-1.0"
+            assert [link for link in collection["links"] if link["rel"] == "license"] == []

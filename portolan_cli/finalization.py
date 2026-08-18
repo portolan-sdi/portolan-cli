@@ -12,7 +12,7 @@ one write per collection instead of O(n) per item. A per-item preparation
 failure therefore leaves no partial version entry (see ``.claude/rules``:
 "add must be atomic").
 
-Per ADR-0007 the CLI stays a thin wrapper; ``add.py`` orchestrates on top of the
+the CLI stays a thin wrapper; ``add.py`` orchestrates on top of the
 routines here. This module deliberately imports nothing from ``add`` so the
 dependency edge is one-directional (add -> finalization). Imports of
 ``catalog`` / ``backends`` / ``version_ops`` are kept **function-local** on
@@ -24,8 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 import pystac
@@ -34,6 +33,7 @@ from pystac.layout import AsIsLayoutStrategy
 from portolan_cli.config import load_merged_metadata
 from portolan_cli.formats import FormatType
 from portolan_cli.humanize import humanize_slug
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata import extract_geoparquet_metadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
 from portolan_cli.preparation import PreparedItem
@@ -47,13 +47,16 @@ from portolan_cli.stac import (
     add_partition_metadata_to_collection,
     add_table_extension,
     aggregate_table_metadata,
+    apply_human_license,
+    apply_human_providers,
     apply_human_titles,
+    apply_provenance,
     create_collection,
-    load_catalog,
-    update_catalog_file_statistics,
-    update_collection_file_statistics,
+    declare_file_extension,
+    update_catalog_provenance,
     update_collection_summaries,
 )
+from portolan_cli.utils import href_root, relative_href
 from portolan_cli.versions import (
     Asset,
     VersionsFile,
@@ -95,6 +98,46 @@ def _deduplicate_collection_item_links(collection: pystac.Collection) -> None:
     collection.links = unique_links
 
 
+def relative_root_href(catalog_root: PurePath, collection_dir: PurePath) -> str:
+    """The href from ``collection_dir`` to the root ``catalog.json``, in POSIX.
+
+    Args:
+        catalog_root: Directory holding the root ``catalog.json``.
+        collection_dir: Directory the link will live in.
+
+    Returns:
+        A relative POSIX href, e.g. ``../catalog.json``.
+    """
+    return relative_href(collection_dir, PurePath(catalog_root) / "catalog.json")
+
+
+def _set_structural_link(
+    links: list[dict[str, Any]],
+    rel: str,
+    href: str,
+    media_type: str = "application/json",
+) -> None:
+    """Point ``rel`` at ``href``, adding the link when it is absent.
+
+    Repointing matters as much as adding. PySTAC writes a ``parent`` link of its
+    own, so a generator that only fills in missing links leaves PySTAC's answer
+    standing, which is how the wrong parent survived to disk (issue #711).
+    """
+    for link in links:
+        if link.get("rel") == rel:
+            # PySTAC stamps the owning object's title on the links it writes, so
+            # a title that survived a repoint would now name the old target.
+            # Titles on child/item links are backfilled from the target by
+            # ensure_link_titles; these structural rels are not, so dropping is
+            # the honest option.
+            if link.get("href") != href:
+                link.pop("title", None)
+            link["href"] = href
+            link["type"] = media_type
+            return
+    links.append({"rel": rel, "href": href, "type": media_type})
+
+
 def _fix_collection_links(
     collection_json_path: Path,
     catalog_root: Path,
@@ -102,7 +145,13 @@ def _fix_collection_links(
 ) -> None:
     """Fix root/parent links and deduplicate item links in collection JSON.
 
-    PySTAC sets root to self by default; we need to point to catalog root.
+    PySTAC sets root to self by default, so both structural links need
+    repointing: ``root`` at the catalog root, and ``parent`` at whatever catalog
+    contains this collection. Those two coincide only for a single-level id. For
+    a nested id the container is the intermediate ``catalog.json`` that
+    ``create_intermediate_catalogs`` writes one level up, and reusing the root
+    href walked straight past it (rashid PTL-LNK-006, issue #711).
+
     Also deduplicates item links that can occur when add is called
     multiple times on the same collection.
     """
@@ -110,25 +159,12 @@ def _fix_collection_links(
         return
 
     collection_data = json.loads(collection_json_path.read_text(encoding="utf-8"))
-    relative_root = os.path.relpath(catalog_root / "catalog.json", collection_dir)
+    links: list[dict[str, Any]] = collection_data.setdefault("links", [])
 
-    # Update root link to point to catalog
-    for link in collection_data.get("links", []):
-        if link.get("rel") == "root":
-            link["href"] = relative_root
-            break
-    else:
-        # No root link found, add one
-        collection_data.setdefault("links", []).append(
-            {"rel": "root", "href": relative_root, "type": "application/json"}
-        )
-
-    # Add parent link if missing
-    has_parent = any(link.get("rel") == "parent" for link in collection_data.get("links", []))
-    if not has_parent:
-        collection_data["links"].append(
-            {"rel": "parent", "href": relative_root, "type": "application/json"}
-        )
+    _set_structural_link(links, "root", relative_root_href(catalog_root, collection_dir))
+    _set_structural_link(
+        links, "parent", relative_href(collection_dir, collection_dir.parent / "catalog.json")
+    )
 
     # Deduplicate item links (can occur when add is called multiple times)
     seen_item_hrefs: set[str] = set()
@@ -142,53 +178,80 @@ def _fix_collection_links(
         deduped_links.append(link)
     collection_data["links"] = deduped_links
 
-    collection_json_path.write_text(json.dumps(collection_data, indent=2), encoding="utf-8")
+    write_json_atomic(collection_json_path, collection_data)
+
+
+def _fix_item_links(
+    collection_json_path: Path,
+    catalog_root: Path,
+    collection_dir: Path,
+) -> None:
+    """Repoint the structural links of every item this collection owns.
+
+    ``Collection.save`` serializes its items, but the collection is loaded
+    standalone and never attached to a parent ``pystac.Catalog``, so PySTAC
+    resolves each item's root to the collection itself and writes
+    ``root -> collection.json``. The spec wants the catalog root there
+    (core.md:262-264, rashid PTL-LNK-006), and until now only ``check --fix``
+    repaired it — generation and repair disagreed.
+
+    ``parent`` and ``collection`` both point at the owning collection, which is
+    what PySTAC already writes; they are set here so a hand-edited or partially
+    written item ends up complete.
+
+    Args:
+        collection_json_path: The saved ``collection.json``, read for item links.
+        catalog_root: Directory holding the root ``catalog.json``.
+        collection_dir: Directory holding ``collection.json``.
+    """
+    if not collection_json_path.exists():
+        return
+
+    collection_data = json.loads(collection_json_path.read_text(encoding="utf-8"))
+    for link in collection_data.get("links", []):
+        if link.get("rel") != "item":
+            continue
+        href = link.get("href", "")
+        if not href:
+            continue
+        item_path = (collection_dir / href).resolve()
+        if not item_path.exists():
+            continue
+
+        item_data = json.loads(item_path.read_text(encoding="utf-8"))
+        item_dir = item_path.parent
+        item_links: list[dict[str, Any]] = item_data.setdefault("links", [])
+        collection_href = relative_href(item_dir, collection_dir / "collection.json")
+
+        _set_structural_link(
+            item_links, "root", relative_href(item_dir, catalog_root / "catalog.json")
+        )
+        _set_structural_link(item_links, "parent", collection_href)
+        _set_structural_link(item_links, "collection", collection_href)
+        write_json_atomic(item_path, item_data)
 
 
 def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
-    """Ensure catalog has link to collection.
+    """Ensure the catalog tree has a child link down to this collection.
 
-    For nested collection IDs (ADR-0032), delegates to update_catalog_links_for_nested
-    which properly links through the catalog hierarchy.
+    ``update_catalog_links_for_nested`` handles both shapes: a flat id gets one
+    child link on the root, a nested id gets one at every level. It edits only
+    the ``links`` arrays it must, which is why the flat case routes here too.
+
+    The flat case used to load the root with PySTAC and call
+    ``save(SELF_CONTAINED)``. That walks and re-serializes every descendant, and
+    ``normalize_hrefs`` lays children out by ``id`` — so an intermediate catalog,
+    whose id is its POSIX path, was relocated from ``env/air/`` to
+    ``env/env/air/`` and its child link followed. Adding a flat collection
+    corrupted the nested half of the catalog (issue #711).
 
     Args:
         catalog_root: Root directory of the catalog.
         collection_id: Collection identifier (may be nested like "climate/hittekaart").
     """
-    # For nested collection IDs, use the nested catalog link updater (ADR-0032)
-    if "/" in collection_id:
-        from portolan_cli.catalog import update_catalog_links_for_nested
+    from portolan_cli.catalog import update_catalog_links_for_nested
 
-        update_catalog_links_for_nested(catalog_root, collection_id)
-        return
-
-    # For single-level collections, add direct link from root
-    catalog_path = catalog_root / "catalog.json"
-    catalog = load_catalog(catalog_path)
-
-    # Trailing slash required: pystac treats paths with dots in final component as files
-    catalog.normalize_hrefs(f"{catalog_root}/")
-
-    # Extract collection IDs from existing child links
-    # Links are in format: "./{collection_id}/collection.json"
-    existing_collection_ids: set[str] = set()
-    for link in catalog.links:
-        if link.rel != "child":
-            continue
-        href = link.href or ""
-        # Extract collection ID from href pattern: ./{collection_id}/collection.json
-        if href.endswith("/collection.json"):
-            # Parse: ./{collection_id}/collection.json or {collection_id}/collection.json
-            parts = href.replace("./", "").split("/")
-            if len(parts) >= 2:
-                coll_id = parts[0]
-                existing_collection_ids.add(coll_id)
-
-    if collection_id not in existing_collection_ids:
-        collection_href = f"./{collection_id}/collection.json"
-        catalog.add_link(pystac.Link(rel="child", target=collection_href))
-        # Re-save catalog
-        catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
+    update_catalog_links_for_nested(catalog_root, collection_id)
 
 
 def _save_collection_with_links(
@@ -207,15 +270,15 @@ def _save_collection_with_links(
     """
     _deduplicate_collection_item_links(collection)
     collection.set_self_href(str(collection_dir / "collection.json"))
-    # Trailing slash required: pystac treats paths with dots in final component as files
-    collection.normalize_hrefs(f"{collection_dir}/", strategy=AsIsLayoutStrategy())
+    collection.normalize_hrefs(href_root(collection_dir), strategy=AsIsLayoutStrategy())
     collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
 
     collection_json_path = collection_dir / "collection.json"
     _fix_collection_links(collection_json_path, catalog_root, collection_dir)
+    _fix_item_links(collection_json_path, catalog_root, collection_dir)
     _update_catalog_links(catalog_root, collection_id)
 
-    # Scaffold AGENTS.md and add the rel="agents" link (ADR-0052, RULE-0081).
+    # Scaffold AGENTS.md and add the rel="agents" link (rashid PTL-FIL-002).
     # Idempotent and merge-safe: never overwrites an existing AGENTS.md, only
     # adds the link when absent, so re-running `add` preserves human edits.
     from portolan_cli.agents_md import ensure_agents_md
@@ -329,7 +392,7 @@ def _get_or_create_collection(
     Returns:
         pystac.Collection object.
     """
-    # STAC at root level (per ADR-0023), handle nested paths (per ADR-0032)
+    # STAC at root level, handle nested paths
     collection_path = catalog_root / Path(*collection_id.split("/")) / "collection.json"
 
     if collection_path.exists():
@@ -354,7 +417,7 @@ def _add_prepared_items_to_collection(
 ) -> None:
     """Add prepared items or collection-level assets to a collection.
 
-    Per ADR-0031: Collection-level vector assets go directly in collection.assets.
+    Collection-level vector assets go directly in collection.assets.
     Item-level assets get linked via add_item_to_collection.
 
     Args:
@@ -373,9 +436,11 @@ def _add_prepared_items_to_collection(
                     update_extent_from_bbox=p.bbox,
                     merge_strategy=merge_strategy,
                 )
-            # Add format-specific properties (proj:epsg, pmtiles:*, flatgeobuf:*)
+            # Add format-specific properties (proj:code, pmtiles:*, flatgeobuf:*)
             if p.metadata is not None:
-                add_collection_properties_from_metadata(collection, p.metadata)
+                add_collection_properties_from_metadata(
+                    collection, p.metadata, asset_keys=p.stac_assets.keys()
+                )
         elif p.stac_item is not None:
             # Item-level: add item link to collection
             add_item_to_collection(
@@ -409,6 +474,14 @@ def _collect_parquet_metadata_from_disk(
     # Build set of tracked asset hrefs (normalized without ./ prefix)
     tracked_hrefs: set[str] = set()
     for asset in collection.assets.values():
+        # The item mirror is derived metadata, not data: it carries no
+        # GeoParquet bbox, and folding it into table aggregation broke
+        # partitioned collections whose data is tracked by a glob href
+        # (#654). stac-items covers catalogs written before the role
+        # upgrade, mirroring the skip in viz/pmtiles.py.
+        roles = asset.roles or []
+        if "collection-mirror" in roles or "stac-items" in roles:
+            continue
         if asset.href:
             # Normalize to match relative_to(...).as_posix() below: drop only an
             # exact "./" prefix. lstrip("./") would also strip leading dots from
@@ -633,7 +706,7 @@ def _batch_update_versions(
 
     Returns:
         Tuple of (current_version, asset_count, total_size_bytes) for catalog-level
-        versioning updates (ADR-0005).
+        versioning updates.
     """
     versions_path = collection_dir / "versions.json"
 
@@ -657,7 +730,7 @@ def _batch_update_versions(
     all_assets: dict[str, Asset] = {}
     for p in items:
         for filename, (file_path, file_checksum, file_size) in p.asset_files.items():
-            # For collection-level assets (ADR-0031), omit item_id from path
+            # For collection-level assets, omit item_id from path
             # asset_key is collection-relative; href is catalog-relative
             if p.is_collection_level_asset:
                 href = f"{collection_id}/{filename}"
@@ -667,11 +740,11 @@ def _batch_update_versions(
                 asset_key = f"{p.item_id}/{filename}"
 
             stat = file_path.stat()
-            # Collection-level assets (ADR-0031) have no companion item.json, so
+            # Collection-level assets have no companion item.json, so
             # the freshness check reads their baseline straight from
             # versions.json. Persist source_mtime + heuristics here so a plain
             # `add` produces a FRESH asset instead of a perpetual STALE (#512),
-            # and so a touched-but-identical asset stays FRESH via the ADR-0017
+            # and so a touched-but-identical asset stays FRESH via the
             # heuristic fallback rather than flipping to STALE/BREAKING.
             source_mtime, feature_count, schema_fingerprint = _asset_freshness_fields(
                 file_path, is_collection_level=p.is_collection_level_asset
@@ -698,7 +771,7 @@ def _batch_update_versions(
     # Single write for all items
     write_versions(versions_path, updated)
 
-    # Return info for catalog-level versioning (ADR-0005)
+    # Return info for catalog-level versioning
     # Get latest version's asset info
     latest = updated.versions[-1] if updated.versions else None
     if latest:
@@ -792,7 +865,7 @@ def _finalize_with_file_backend(
 
     File backend fast path (O(1) write per collection). Updates the
     collection-level versions.json first, then mirrors the summary into the
-    catalog-level versions.json (ADR-0005). A catalog-level failure is logged
+    catalog-level versions.json. A catalog-level failure is logged
     but never fails the add: the collection version was already published.
     """
     from portolan_cli.catalog import update_catalog_versions
@@ -803,7 +876,7 @@ def _finalize_with_file_backend(
         items=items,
     )
 
-    # Update catalog-level versions.json (ADR-0005)
+    # Update catalog-level versions.json
     # This keeps the catalog-level view in sync with collection state.
     # Wrap in try/except to avoid failing the add if catalog update fails
     # (collection-level versions.json was already written successfully).
@@ -837,7 +910,7 @@ def _publish_collection_version(
 
     Plugin backends (e.g. Iceberg) publish + run post-add hooks; the default
     file backend uses the optimized batch write. Backend selection follows the
-    resolved ``backend`` setting (ADR-0046).
+    resolved ``backend`` setting.
     """
     from portolan_cli.config import get_setting
 
@@ -948,7 +1021,7 @@ def _finalize_collection(
 
     Args:
         catalog_root: Root directory of the catalog.
-        collection_id: Collection identifier (may be nested per ADR-0032).
+        collection_id: Collection identifier (may be nested).
         items: Prepared items belonging to this collection.
         merge_strategy: How to merge auto-detected metadata with existing values.
 
@@ -965,9 +1038,16 @@ def _finalize_collection(
         initial_bbox=first_item.bbox,
     )
 
-    # Issue #502: apply human title/description overrides from
+    # Issue #502/#654: apply human title/description/license overrides from
     # metadata.yaml (highest precedence over the auto-derived defaults).
-    apply_human_titles(collection, load_merged_metadata(collection_dir, catalog_root))
+    merged_metadata = load_merged_metadata(collection_dir, catalog_root)
+    apply_human_titles(collection, merged_metadata)
+    apply_human_license(collection, merged_metadata)
+
+    # Issue #684: providers name who produced the data and who hosts this copy,
+    # and their relationship is what makes this collection official or a mirror.
+    apply_human_providers(collection, merged_metadata)
+    apply_provenance(collection, merged_metadata)
 
     # Add items or collection-level assets to collection (in memory)
     _add_prepared_items_to_collection(collection, items, merge_strategy)
@@ -981,13 +1061,13 @@ def _finalize_collection(
     # Add partition extension if any items have partition metadata (Issue #232/#443)
     _emit_partition_warnings(collection, collection_dir, items)
 
-    # Compute collection summaries from items (per ADR-0036)
+    # Compute collection summaries from items
     # Moved here from push.py for separation of concerns - summaries are now
     # available immediately after add, not just after push.
     update_collection_summaries(collection)
 
-    # Compute aggregate file statistics (Issue #501)
-    update_collection_file_statistics(collection)
+    # Declare the file extension the assets use (Issue #501, narrowed by #654)
+    declare_file_extension(collection)
 
     # Add extension declarations based on summaries (Issue #336)
     # Collections should declare extensions used by their items
@@ -1051,19 +1131,23 @@ def finalize_items(
     # Issue #502: backfill human-readable titles onto child/item links so STAC
     # Browser renders names without fetching every child. Done once per batch
     # (O(catalog), not per-collection) after all collections are written.
-    from portolan_cli.catalog import ensure_link_titles
+    from portolan_cli.catalog import ensure_link_titles, ensure_schema_uris
 
     ensure_link_titles(catalog_root)
 
-    # Issue #501: update catalog-level aggregate file statistics
-    # Done after all collections are finalized so totals are accurate.
-    try:
-        update_catalog_file_statistics(catalog_root)
-    except Exception:
-        logger.warning(
-            "Failed to update catalog-level file statistics. "
-            "Catalog may have stale or missing aggregate size data.",
-            exc_info=True,
-        )
+    # / issue #654: every catalog and collection declares the Portolan
+    # profile schema URI and carries AGENTS.md and README.md behind their links.
+    # Swept once per batch so subcatalogs created along the way (
+    # nesting) and pre-existing objects are covered, not just what was written.
+    from portolan_cli.agents_md import ensure_agents_md_tree
+    from portolan_cli.readme import ensure_readmes
+
+    ensure_schema_uris(catalog_root)
+    ensure_agents_md_tree(catalog_root)
+    ensure_readmes(catalog_root)
+
+    # Issue #684: a catalog whose every collection is a mirror carries the sync
+    # time itself. Needs the whole tree, so it runs after the last collection.
+    update_catalog_provenance(catalog_root)
 
     return results

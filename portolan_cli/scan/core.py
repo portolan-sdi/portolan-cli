@@ -5,7 +5,7 @@ geospatial files ready for import and detect structural issues that could
 cause import failures.
 
 The scan command follows the ruff model: separate scanning/validation from
-import (like ruff check vs ruff format). See ADR-0016 for rationale.
+import (like ruff check vs ruff format). See rationale.
 
 Example:
     >>> from portolan_cli.scan.core import scan_directory, ScanOptions
@@ -45,7 +45,7 @@ from portolan_cli.collection_id import (
 )
 from portolan_cli.constants import PARQUET_EXTENSION, WINDOWS_RESERVED_NAMES
 
-# Import format detection from formats.py (ADR-0010: delegate to upstream)
+# Import format detection from formats.py (delegate to upstream)
 from portolan_cli.formats import (
     CloudNativeStatus,
     FormatInfo,
@@ -213,7 +213,7 @@ class ScannedFile:
         format_type: Whether this is VECTOR or RASTER data.
         size_bytes: Total size in bytes.
         inferred_collection_id: Nested collection path derived from directory structure.
-            For nested catalogs (ADR-0032), this is the parent directory path relative
+            For nested catalogs, this is the parent directory path relative
             to the scan root. Example: "climate/hittekaart" for a file at
             climate/hittekaart/data.parquet. Empty string for files at scan root.
         format_status: Cloud-native status classification (CLOUD_NATIVE, CONVERTIBLE, UNSUPPORTED).
@@ -460,12 +460,12 @@ def _get_relative_path(path: Path, root: Path) -> str:
 
 
 def _infer_collection_id_from_relative_path(relative_path: str) -> str:
-    """Infer nested collection ID from a relative path (ADR-0032).
+    """Infer nested collection ID from a relative path.
 
     The collection ID is the directory portion of the relative path,
     representing the leaf collection in a nested catalog structure.
     Hive-style partition directories (key=value) are stripped from the
-    collection ID since they represent Items, not Collections (ADR-0031).
+    collection ID since they represent Items, not Collections.
 
     Warning:
         ANY directory matching the pattern `key=value` (where key is a valid
@@ -560,7 +560,7 @@ def _make_skipped_file(
     )
 
 
-# NOTE: is_geoparquet() is now imported from portolan_cli.formats (ADR-0010)
+# NOTE: is_geoparquet() is now imported from portolan_cli.formats
 
 
 def _is_overview_extension(ext: str) -> bool:
@@ -1294,7 +1294,7 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
             return
         # Check for STAC item files: JSON files named after their parent directory
         # Pattern: item_dir/item_dir.json (e.g., tile_0_0/tile_0_0.json)
-        # This is the standard Portolan item structure per ADR-0031
+        # This is the standard Portolan item structure
         if path.stem.lower() == path.parent.name.lower():
             ctx.skipped.append(
                 SkippedFile(

@@ -402,7 +402,13 @@ class TestPushDefaultRemoteInvariants:
     @given(
         remote_url=st.from_regex(r"s3://[a-z][a-z0-9-]{2,20}/[a-z][a-z0-9-/]{2,30}", fullmatch=True)
     )
-    @settings(max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(
+        max_examples=20,
+        suppress_health_check=[
+            HealthCheck.function_scoped_fixture,
+            HealthCheck.differing_executors,
+        ],
+    )
     def test_configured_remote_used_when_no_arg(self, remote_url: str, tmp_path: Path) -> None:
         """Any valid remote URL via env var should be used when no arg provided."""
         from portolan_cli.sync.push import PushResult
@@ -455,7 +461,13 @@ class TestPushDefaultRemoteInvariants:
         ),
         env_url=st.from_regex(r"s3://[a-z][a-z0-9-]{2,20}/env-[a-z0-9]{2,10}", fullmatch=True),
     )
-    @settings(max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @settings(
+        max_examples=20,
+        suppress_health_check=[
+            HealthCheck.function_scoped_fixture,
+            HealthCheck.differing_executors,
+        ],
+    )
     def test_explicit_always_overrides_env(
         self, explicit_url: str, env_url: str, tmp_path: Path
     ) -> None:
@@ -527,7 +539,7 @@ class TestPushDefaultRemoteIntegration:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize catalog
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0, f"Init failed: {result.output}"
 
             # Create a minimal collection for push

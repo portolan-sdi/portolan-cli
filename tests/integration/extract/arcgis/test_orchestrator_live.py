@@ -65,6 +65,7 @@ class TestLiveExtraction:
             workers=2,  # Lower workers for faster test
             retries=2,
             sort_hilbert=True,
+            license="CC-BY-4.0",
         )
 
         result = extract_arcgis_catalog(

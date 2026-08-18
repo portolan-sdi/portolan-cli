@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
+
+# No `pull_request` trigger: ci.yml's `docs` job already builds the site on
+# every PR and also runs the doc examples, and it feeds the `CI Success` gate.
+# Building here too would duplicate that work and serialize every PR on the
+# single "pages" concurrency group below.
 
 # Least-privilege default; the deploy job widens for Pages/OIDC below.
 permissions:

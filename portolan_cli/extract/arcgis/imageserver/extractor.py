@@ -5,12 +5,12 @@ This module orchestrates the extraction pipeline for ArcGIS ImageServer:
 2. Compute tile grid based on service limits and desired tile size
 3. Download tiles via exportImage API (async, parallel with rate limiting)
 4. Convert each tile to COG format using rio-cogeo
-5. Save extraction report for resume support (with file locking)
+5. Save extraction report for resume support (atomic writes)
 6. Auto-init Portolan catalog (unless raw mode) using standard API
 
 The extractor does NOT create STAC metadata directly. Instead, it extracts
 COG files and then calls the Portolan API (init_catalog + add_files) to
-create proper STAC structure with items per raster (per ADR-0031).
+create proper STAC structure with items per raster.
 
 Typical usage:
     from portolan_cli.extract.arcgis.imageserver.extractor import (
@@ -31,46 +31,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sys
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from urllib.parse import urlencode
-
-# Cross-platform file locking
-if sys.platform == "win32":
-    import msvcrt
-
-    def _lock_file(f: Any) -> None:
-        """Lock file on Windows using msvcrt."""
-        msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
-
-    def _unlock_file(f: Any) -> None:
-        """Unlock file on Windows using msvcrt."""
-        try:
-            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
-        except OSError:
-            pass  # May fail if not locked
-
-else:
-    import fcntl
-
-    def _lock_file(f: Any) -> None:
-        """Lock file on Unix using fcntl."""
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-
-    def _unlock_file(f: Any) -> None:
-        """Unlock file on Unix using fcntl."""
-        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-
 
 import httpx
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import cog_profiles
 
-from portolan_cli.conversion_config import CogSettings, get_cog_settings
+from portolan_cli.conversion_config import CogSettings, get_cog_settings, resolve_cog_settings
 from portolan_cli.extract.arcgis.imageserver.discovery import discover_imageserver
 from portolan_cli.extract.arcgis.imageserver.report import (
     ImageServerExtractionReport,
@@ -84,6 +56,7 @@ from portolan_cli.extract.arcgis.imageserver.resume import (
     should_process_tile,
 )
 from portolan_cli.extract.arcgis.imageserver.tiling import TileSpec, compute_tile_grid
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata_seeding import seed_metadata_yaml
 from portolan_cli.output import detail, error, info, success, warn
 
@@ -150,7 +123,7 @@ class ExtractionConfig:
 
     Attributes:
         tile_size: Desired tile size in pixels (default 4096, per service limits).
-        cog_settings: COG conversion settings (from config.yaml or defaults per ADR-0019).
+        cog_settings: COG conversion settings (from config.yaml or defaults).
         max_retries: Maximum retry attempts per tile on failure.
         dry_run: If True, compute tiles but don't download anything.
         raw: If True, skip auto-init (only create COGs + report, no STAC catalog).
@@ -361,7 +334,7 @@ async def _convert_to_cog(
     """Convert a TIFF to COG format using settings from config.
 
     Runs rio-cogeo in a thread executor since it's CPU-bound.
-    Uses settings from .portolan/config.yaml per ADR-0019.
+    Uses settings from .portolan/config.yaml.
 
     Args:
         input_path: Path to input TIFF.
@@ -371,30 +344,33 @@ async def _convert_to_cog(
     loop = asyncio.get_event_loop()
 
     def _do_convert() -> None:
+        # Fill in any "auto" field from the downloaded tile (Issue #690)
+        settings = resolve_cog_settings(cog_settings, input_path)
+
         # Get base profile and customize with our settings
-        profile = cog_profiles.get(cog_settings.compression.lower())  # type: ignore[no-untyped-call]
+        profile = cog_profiles.get(settings.compression.lower())  # type: ignore[no-untyped-call]
 
         # Apply predictor (for lossless compression)
-        if cog_settings.compression.upper() not in ("JPEG", "WEBP"):
-            profile["predictor"] = cog_settings.predictor
+        if settings.compression.upper() not in ("JPEG", "WEBP"):
+            profile["predictor"] = settings.predictor
 
         # Apply quality for lossy compression
-        if cog_settings.quality is not None and cog_settings.compression.upper() in (
+        if settings.quality is not None and settings.compression.upper() in (
             "JPEG",
             "WEBP",
         ):
-            profile["quality"] = cog_settings.quality
+            profile["quality"] = settings.quality
 
         # Apply tile size
-        profile["blockxsize"] = cog_settings.tile_size
-        profile["blockysize"] = cog_settings.tile_size
+        profile["blockxsize"] = settings.tile_size
+        profile["blockysize"] = settings.tile_size
 
         cog_translate(
             str(input_path),
             str(output_path),
             profile,
             # CogSettings.resampling is validated at config load time
-            overview_resampling=cog_settings.resampling,  # type: ignore[arg-type]
+            overview_resampling=settings.resampling,  # type: ignore[arg-type]
             quiet=True,
         )
 
@@ -543,46 +519,29 @@ def _intersect_bbox(
     }
 
 
-def _save_resume_state_locked(state: ImageServerResumeState, path: Path) -> None:
-    """Save resume state with file locking to prevent race conditions.
+def _save_resume_state(state: ImageServerResumeState, path: Path) -> None:
+    """Save resume state atomically.
 
-    Uses platform-specific locking (fcntl on Unix, msvcrt on Windows)
-    for atomic writes when multiple concurrent tasks complete simultaneously.
+    Concurrent tile tasks each save the whole state, so two saves can overlap.
+    :func:`write_json_atomic` gives each one its own temp file and lands it with
+    ``os.replace``, so a reader sees one complete state and the last writer wins.
+    That replaces the old shared-``.tmp``-plus-``flock`` dance, which serialized
+    writers only after both had already truncated the same temp file.
 
     Args:
         state: Resume state to save.
         path: Path to write the JSON file.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Write to temp file then rename for atomicity
-    temp_path = path.with_suffix(".tmp")
-
-    try:
-        with open(temp_path, "w") as f:
-            # Acquire exclusive lock (cross-platform)
-            _lock_file(f)
-            try:
-                data = {
-                    "extraction_type": "imageserver",
-                    "service_url": state.service_url,
-                    "started_at": state.started_at.isoformat().replace("+00:00", "Z"),
-                    "tiles": {
-                        "succeeded": sorted([list(coord) for coord in state.succeeded_tiles]),
-                        "failed": sorted([list(coord) for coord in state.failed_tiles]),
-                    },
-                }
-                json.dump(data, f, indent=2)
-            finally:
-                _unlock_file(f)
-
-        # Atomic rename
-        temp_path.rename(path)
-    except Exception:
-        # Clean up temp file on error
-        if temp_path.exists():
-            temp_path.unlink()
-        raise
+    data = {
+        "extraction_type": "imageserver",
+        "service_url": state.service_url,
+        "started_at": state.started_at.isoformat().replace("+00:00", "Z"),
+        "tiles": {
+            "succeeded": sorted([list(coord) for coord in state.succeeded_tiles]),
+            "failed": sorted([list(coord) for coord in state.failed_tiles]),
+        },
+    }
+    write_json_atomic(path, data)
 
 
 def _create_empty_result(output_dir: Path) -> ExtractionResult:
@@ -642,7 +601,7 @@ async def _process_tile(
     """Process a single tile: download and convert to COG.
 
     STAC metadata is NOT created here - that's handled by the Portolan API
-    via _auto_init_catalog() after extraction completes (per ADR-0007, ADR-0031).
+    via _auto_init_catalog() after extraction completes.
 
     Args:
         tile: Tile to process.
@@ -866,7 +825,7 @@ def _auto_init_catalog(
 
     Called automatically after extraction unless raw=True.
     Uses the Portolan API (init_catalog + add_files) to create
-    proper STAC structure with items per raster (per ADR-0031).
+    proper STAC structure with items per raster.
 
     Args:
         output_dir: Directory containing extracted COG files.
@@ -886,10 +845,11 @@ def _auto_init_catalog(
     if not cog_files:
         return False  # Nothing to add
 
-    # Initialize the catalog
-    init_catalog(output_dir, title=service_name)
+    # Initialize the catalog. license_id=None because the ImageServer path seeds
+    # metadata.yaml from the harvested service licenseInfo (issue #686).
+    init_catalog(output_dir, title=service_name, license_id=None)
 
-    # Add all COG files - this creates items per raster (per ADR-0031)
+    # Add all COG files - this creates items per raster
     add_files(
         paths=cog_files,
         catalog_root=output_dir,
@@ -968,7 +928,7 @@ async def _extract_all_tiles(
             # Batch resume state saves
             stats.tiles_since_last_save += 1
             if stats.tiles_since_last_save >= RESUME_SAVE_INTERVAL or not result.success:
-                _save_resume_state_locked(resume_state, resume_path)
+                _save_resume_state(resume_state, resume_path)
                 stats.tiles_since_last_save = 0
 
     return stats
@@ -1220,7 +1180,7 @@ async def extract_imageserver(
         on_progress=on_progress,
         collection_name=collection_name,
     )
-    _save_resume_state_locked(resume_state, resume_path)
+    _save_resume_state(resume_state, resume_path)
 
     # Add skipped tiles to results (computed BEFORE extraction)
     for tile in skipped_tile_specs:

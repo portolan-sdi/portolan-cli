@@ -1,7 +1,7 @@
 """Integration tests for adding cloud-native vector formats (PMTiles, FlatGeobuf).
 
 Per Issue #368: Adding PMTiles/FlatGeobuf should work without conversion.
-Per ADR-0031: Vector files are collection-level assets.
+Vector files are collection-level assets.
 
 These tests verify:
 1. PMTiles/FlatGeobuf are NOT converted to GeoParquet
@@ -31,7 +31,7 @@ def runner() -> CliRunner:
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
     """Create an initialized Portolan catalog using CLI."""
-    result = CliRunner().invoke(cli, ["init", str(tmp_path), "--auto"])
+    result = CliRunner().invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
     assert result.exit_code == 0, f"Init failed: {result.output}"
     return tmp_path
 
@@ -220,18 +220,19 @@ class TestAddFlatGeobuf:
         )
         assert result.exit_code == 0
 
-        # Check collection has proj:epsg
+        # CRS lands as proj:code on the data asset, never top-level (#654)
         collection_json = collection_dir / "collection.json"
         assert collection_json.exists()
 
         data = json.loads(collection_json.read_text())
-        assert data.get("proj:epsg") == 4326
+        assert "proj:epsg" not in data
+        assert data["assets"]["borders"]["proj:code"] == "EPSG:4326"
         assert data.get("flatgeobuf:geometry_type") == "Point"
         assert data.get("flatgeobuf:feature_count") == 3
 
 
 class TestCollectionLevelAssetBehavior:
-    """Tests for ADR-0031: Collection-level asset registration."""
+    """Tests for: Collection-level asset registration."""
 
     @pytest.mark.integration
     def test_pmtiles_is_collection_level_asset(
@@ -277,16 +278,18 @@ class TestCollectionLevelAssetBehavior:
 
         data = json.loads((collection_dir / "collection.json").read_text())
 
-        # PMTiles are always Web Mercator (3857)
-        assert data.get("proj:epsg") == 3857
+        # The tile CRS is a visualization artifact and contributes no
+        # projection field (#488, #654)
+        assert "proj:epsg" not in data
+        assert "proj:code" not in data
 
         # PMTiles-specific properties
         assert data.get("pmtiles:min_zoom") == 4
         assert data.get("pmtiles:max_zoom") == 8
         assert data.get("pmtiles:tile_type") == "mvt"
 
-        # Projection extension should be declared
-        assert "https://stac-extensions.github.io/projection/v2.0.0/schema.json" in data.get(
+        # No projection field written, so no projection declaration
+        assert "https://stac-extensions.github.io/projection/v2.0.0/schema.json" not in data.get(
             "stac_extensions", []
         )
 

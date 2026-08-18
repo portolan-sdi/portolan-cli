@@ -141,18 +141,19 @@ class TestCreateItem:
         assert item.datetime == dt
 
     @pytest.mark.unit
-    def test_create_item_default_datetime_is_null_with_provisional_marker(self) -> None:
-        """create_item uses null datetime (open interval) when not specified (ADR-0035)."""
+    def test_create_item_default_datetime_is_null_with_sentinel_range(self) -> None:
+        """create_item uses null datetime (open interval) when not specified."""
         item = create_item(
             item_id="now-item",
             bbox=[0, 0, 1, 1],
         )
 
-        # Per ADR-0035: datetime is null, start/end use sentinel range (STAC 1.1.0 compliance)
+        # Datetime is null, start/end use sentinel range (STAC 1.1.0 compliance)
         assert item.datetime is None
         assert item.properties["start_datetime"] == "1900-01-01T00:00:00Z"
         assert item.properties["end_datetime"] == "9999-12-31T23:59:59Z"
-        assert item.properties.get("portolan:datetime_provisional") is True
+        # The marker that used to travel with the range is gone (issue #654).
+        assert "portolan:datetime_provisional" not in item.properties
 
     @pytest.mark.unit
     def test_create_item_with_properties(self) -> None:
@@ -244,6 +245,30 @@ class TestCatalogOperations:
         save_catalog(catalog, catalog_path)
 
         assert (catalog_path / "catalog.json").exists()
+
+    @pytest.mark.unit
+    def test_save_catalog_with_relative_dotted_dest_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A relative dest_dir must not send catalog.json to the parent.
+
+        Same defect as issue #731, reached through this helper instead of init.
+        pystac discards the trailing slash while absolutizing a relative root,
+        so a dotted directory name trips the file-versus-directory heuristic of
+        issue #401. Before the fix this wrote catalog.json to tmp_path.
+        """
+        catalog = pystac.Catalog(id="relative-dest", description="test")
+        dest_dir = tmp_path / "my.catalog"
+        dest_dir.mkdir()
+        monkeypatch.chdir(tmp_path)
+
+        save_catalog(catalog, Path("my.catalog"))
+
+        assert (dest_dir / "catalog.json").exists(), "catalog.json belongs in dest_dir"
+        assert not (tmp_path / "catalog.json").exists(), (
+            "catalog.json must NOT leak to the parent directory"
+        )
+        assert json.loads((dest_dir / "catalog.json").read_text())["id"] == "relative-dest"
 
 
 class TestCollectionManagement:
@@ -345,12 +370,17 @@ class TestItemManagement:
 
 
 class TestFileStatistics:
-    """Tests for file statistics aggregation (Issue #501)."""
+    """The file extension is declared from the assets that use it (issue #654).
+
+    The aggregates this used to write (``portolan:total_size_bytes``,
+    ``portolan:asset_count``) are gone: the spec defines no portolan: field, and
+    a consumer sums ``file:size`` itself.
+    """
 
     @pytest.mark.unit
-    def test_update_collection_file_statistics_collection_assets(self) -> None:
-        """update_collection_file_statistics aggregates collection-level assets."""
-        from portolan_cli.stac import update_collection_file_statistics
+    def test_declare_file_extension_writes_no_aggregates(self) -> None:
+        """A collection-level file:size declares the extension and nothing else."""
+        from portolan_cli.stac import EXTENSION_URLS, declare_file_extension
 
         collection = create_collection(
             collection_id="stats-test",
@@ -373,15 +403,15 @@ class TestFileStatistics:
         collection.add_asset("data1", asset1)
         collection.add_asset("data2", asset2)
 
-        update_collection_file_statistics(collection)
+        declare_file_extension(collection)
 
-        assert collection.extra_fields["portolan:total_size_bytes"] == 3000
-        assert collection.extra_fields["portolan:asset_count"] == 2
+        assert EXTENSION_URLS["file"] in collection.stac_extensions
+        assert [key for key in collection.extra_fields if key.startswith("portolan:")] == []
 
     @pytest.mark.unit
-    def test_update_collection_file_statistics_item_assets(self) -> None:
-        """update_collection_file_statistics includes item-level assets."""
-        from portolan_cli.stac import update_collection_file_statistics
+    def test_declare_file_extension_sees_item_assets(self) -> None:
+        """An item asset alone is enough to declare the extension."""
+        from portolan_cli.stac import EXTENSION_URLS, declare_file_extension
 
         collection = create_collection(
             collection_id="stats-items",
@@ -399,76 +429,43 @@ class TestFileStatistics:
         item.add_asset("data", item_asset)
         add_item_to_collection(collection, item)
 
-        update_collection_file_statistics(collection)
-
-        assert collection.extra_fields["portolan:total_size_bytes"] == 5000
-        assert collection.extra_fields["portolan:asset_count"] == 1
-
-    @pytest.mark.unit
-    def test_update_collection_file_statistics_adds_extension(self) -> None:
-        """update_collection_file_statistics declares file extension."""
-        from portolan_cli.stac import EXTENSION_URLS, update_collection_file_statistics
-
-        collection = create_collection(
-            collection_id="ext-test",
-            description="Test extension declaration",
-        )
-
-        asset = pystac.Asset(
-            href="./data.parquet",
-            media_type="application/vnd.apache.parquet",
-            roles=["data"],
-            extra_fields={"file:size": 1000},
-        )
-        collection.add_asset("data", asset)
-
-        update_collection_file_statistics(collection)
+        declare_file_extension(collection)
 
         assert EXTENSION_URLS["file"] in collection.stac_extensions
 
     @pytest.mark.unit
-    def test_update_collection_file_statistics_no_assets(self) -> None:
-        """update_collection_file_statistics handles empty collections."""
-        from portolan_cli.stac import update_collection_file_statistics
+    def test_declare_file_extension_no_assets(self) -> None:
+        """An empty collection declares nothing."""
+        from portolan_cli.stac import EXTENSION_URLS, declare_file_extension
 
         collection = create_collection(
             collection_id="empty",
             description="Empty collection",
         )
 
-        update_collection_file_statistics(collection)
+        declare_file_extension(collection)
 
-        assert collection.extra_fields["portolan:total_size_bytes"] == 0
-        assert collection.extra_fields["portolan:asset_count"] == 0
+        assert EXTENSION_URLS["file"] not in (collection.stac_extensions or [])
+        assert [key for key in collection.extra_fields if key.startswith("portolan:")] == []
 
     @pytest.mark.unit
-    def test_update_collection_file_statistics_missing_size(self) -> None:
-        """update_collection_file_statistics skips assets without file:size."""
-        from portolan_cli.stac import update_collection_file_statistics
+    def test_declare_file_extension_ignores_assets_without_size(self) -> None:
+        """An asset with no file:size does not on its own declare the extension."""
+        from portolan_cli.stac import EXTENSION_URLS, declare_file_extension
 
         collection = create_collection(
             collection_id="partial",
             description="Partial file sizes",
         )
 
-        # Asset with file:size
-        asset1 = pystac.Asset(
-            href="./with_size.parquet",
-            media_type="application/vnd.apache.parquet",
-            roles=["data"],
-            extra_fields={"file:size": 1000},
-        )
         # Asset without file:size
-        asset2 = pystac.Asset(
+        asset = pystac.Asset(
             href="./without_size.parquet",
             media_type="application/vnd.apache.parquet",
             roles=["data"],
         )
-        collection.add_asset("with_size", asset1)
-        collection.add_asset("without_size", asset2)
+        collection.add_asset("without_size", asset)
 
-        update_collection_file_statistics(collection)
+        declare_file_extension(collection)
 
-        # Only counts the asset with file:size
-        assert collection.extra_fields["portolan:total_size_bytes"] == 1000
-        assert collection.extra_fields["portolan:asset_count"] == 1
+        assert EXTENSION_URLS["file"] not in (collection.stac_extensions or [])

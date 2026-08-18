@@ -4,16 +4,16 @@ Historically the extension vocabulary was hand-maintained in four places that
 drifted apart (issue #558): ``formats.py`` (cloud-native / convertible /
 unsupported sets), ``constants.py`` (geospatial / tabular / sidecar tables),
 ``scan_classify.py`` (the ten scan categories), and ``add.py`` (media-type
-and asset-role maps). Plus the human doc ``spec/extensions.md``.
+and asset-role maps).
 
 This module is the one place that vocabulary lives now. Every frozenset/dict in
 those modules is *derived* from :data:`EXTENSION_REGISTRY` (see the derivation
-helpers below), and ``spec/extensions.md`` is tied to it by a parity test
-(``tests/spec_compliance/test_extensions_doc_parity.py``). See ADR-0055.
+helpers below), and the human doc ``docs/reference/input-formats.md`` is
+generated from it by ``scripts/gen_input_formats_doc.py`` (freshness guarded by
+``tests/unit/test_input_formats_doc.py``, so the page cannot drift).
 
-It is deliberately a stdlib-only leaf that imports nothing from ``portolan_cli``
-so it can be lifted wholesale into ``rashid`` (the validator being extracted, see
-issue #563) without dragging the app layers along.
+It is deliberately a stdlib-only leaf that imports nothing from ``portolan_cli``,
+so a consumer that needs the vocabulary can vendor it whole.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """Integration tests for consistent catalog root detection across CLI commands.
 
-Per ADR-0029, all CLI commands should use find_catalog_root() from catalog.py,
+All CLI commands should use find_catalog_root() from catalog.py,
 which looks for .portolan/config.yaml as the single sentinel. This ensures
 consistent behavior where commands either all succeed or all fail.
 """
@@ -19,9 +19,9 @@ from portolan_cli.cli import cli
 def setup_managed_catalog(path: Path) -> None:
     """Create a fully managed Portolan catalog structure.
 
-    Per ADR-0023 and ADR-0027:
+    Per and:
     - catalog.json at root (STAC standard)
-    - .portolan/config.yaml (sentinel file per ADR-0027)
+    - .portolan/config.yaml (sentinel file)
     (Note: state.json removed per issue #290)
     """
     # Create .portolan directory with sentinel files

@@ -3,7 +3,7 @@
 Tests the complete PMTiles generation workflow with real tippecanoe execution.
 These tests require tippecanoe to be installed; they skip gracefully if not.
 
-Tests use collection-level asset structure per ADR-0031.
+Tests use collection-level asset structure.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ pytestmark = [
 def collection_with_geoparquet(tmp_path: Path, fixtures_dir: Path) -> Path:
     """Create a minimal collection with a GeoParquet asset.
 
-    Structure per ADR-0031:
+    Structure:
         collection/
             collection.json  (with assets section)
             roads.parquet
@@ -367,12 +367,18 @@ class TestPMTilesGeneration:
         assert "roads.pmtiles" in latest, "Untracked PMTiles must be backfilled on skip"
         if thumb_rendered:
             assert "roads.thumb.jpg" in latest, "Untracked thumbnail must be backfilled on skip"
-            # And it must be re-registered as a STAC asset, not left orphaned.
+            # And it must end up a STAC asset, not left orphaned. Registering moved
+            # to collection_thumbnail in #683, which `add` runs right after the
+            # PMTiles side-step; it adopts exactly the file the backfill tracked.
+            from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
+
+            ensure_collection_thumbnails(catalog_root, {collection_with_geoparquet.name})
             coll_after = json.loads(coll_path.read_text())
             thumb_stac = [
                 k for k, v in coll_after["assets"].items() if "thumbnail" in v.get("roles", [])
             ]
             assert thumb_stac, "Backfilled thumbnail must be re-registered as a STAC asset"
+            assert coll_after["assets"]["thumbnail"]["href"] == "./roads.thumb.jpg"
 
     def test_backfill_is_idempotent_when_already_tracked(
         self, collection_with_geoparquet: Path

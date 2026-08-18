@@ -1,6 +1,6 @@
 """Tests for intermediate catalog.json / README.md upload on push (Issue #547, #552).
 
-Per ADR-0032 (nested catalogs, flat collections), a nested collection like
+A nested collection like
 ``tst/latest/adm0`` has a ``catalog.json`` at each intermediate level
 (``tst/`` and ``tst/latest/``) created by ``create_intermediate_catalogs``
 during ``add``. These files were never uploaded by ``push`` -- neither the

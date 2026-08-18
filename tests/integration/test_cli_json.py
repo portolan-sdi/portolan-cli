@@ -22,37 +22,14 @@ def runner() -> CliRunner:
 
 
 @pytest.fixture
-def valid_catalog(tmp_path: Path) -> Path:
-    """Create a valid MANAGED Portolan catalog for testing.
+def valid_catalog(conformant_catalog: Path) -> Path:
+    """A generated catalog that passes validation with no findings.
 
-    Creates the v2 structure with:
-    - catalog.json at root
-    - .portolan/config.yaml (required for MANAGED state)
-    (Note: state.json removed per issue #290)
+    Built through `portolan init` rather than by hand: validation runs on
+    rashid and a hand-written catalog.json trips a dozen PTL-* rules
+    before these tests reach their subject, the JSON envelope.
     """
-    # Root catalog.json
-    catalog_file = tmp_path / "catalog.json"
-    catalog_file.write_text(
-        json.dumps(
-            {
-                "type": "Catalog",
-                "stac_version": "1.0.0",
-                "id": "test-catalog",
-                "title": "Test Catalog",
-                "description": "A test catalog",
-                "links": [
-                    {"rel": "agents", "href": "./AGENTS.md", "type": "text/markdown"},
-                ],
-            }
-        )
-    )
-    # AGENTS.md required at catalog root (ADR-0052, RULE-0080)
-    (tmp_path / "AGENTS.md").write_text("# AGENTS.md — Test Catalog\n")
-    # .portolan directory with management files
-    portolan_dir = tmp_path / ".portolan"
-    portolan_dir.mkdir()
-    (portolan_dir / "config.yaml").write_text("{}")
-    return tmp_path
+    return conformant_catalog
 
 
 @pytest.fixture
@@ -171,7 +148,9 @@ class TestInitJsonOutput:
         target = tmp_path / "new_catalog"
         target.mkdir()
 
-        result = runner.invoke(cli, ["--format=json", "init", str(target)])
+        result = runner.invoke(
+            cli, ["--format=json", "init", str(target), "--license", "CC-BY-4.0"]
+        )
 
         assert result.exit_code == 0
 

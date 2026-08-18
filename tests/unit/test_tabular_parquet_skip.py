@@ -1,7 +1,7 @@
 """Unit tests for tabular parquet (no geometry) handling (Issue #177).
 
 Tests that `portolan add` gracefully handles Parquet files without geometry:
-- Per ADR-0028: Track non-geo parquet files as assets when in same dir as geo file
+- Track non-geo parquet files as assets when in same dir as geo file
 - Skip non-geo parquet files that have no companion geo file (can't create STAC item)
 - Emit appropriate log messages
 - Support parquet files as auxiliary/tabular data assets
@@ -37,11 +37,12 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
-    """Create an initialized Portolan catalog structure (per ADR-0023)."""
+    """Create an initialized Portolan catalog structure."""
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
-    # Create config.yaml as sentinel (per ADR-0029)
+    # Create config.yaml as sentinel
     config_path = portolan_dir / "config.yaml"
     config_path.write_text("# Portolan config\n")
 
@@ -158,7 +159,7 @@ class TestTabularParquetWithGeoAsset:
 
         Verifies the core feature: when a tabular parquet and a geo file exist
         in the same directory, the tabular parquet is deferred and then tracked
-        as a non-geospatial asset alongside the primary geo-asset (ADR-0028).
+        as a non-geospatial asset alongside the primary geo-asset.
         """
         # Create a valid GeoJSON file in the same directory as the tabular parquet
         item_dir = tabular_parquet.parent
@@ -524,6 +525,7 @@ class TestTabularParquetHypothesis:
             # Set up catalog
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir(exist_ok=True)
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             config_path = portolan_dir / "config.yaml"
             config_path.write_text("# Portolan config\n")
             catalog_data = {
@@ -577,6 +579,7 @@ class TestTabularParquetHypothesis:
             # Set up catalog
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir(exist_ok=True)
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             config_path = portolan_dir / "config.yaml"
             config_path.write_text("# Portolan config\n")
             catalog_data = {
@@ -653,6 +656,7 @@ class TestTabularParquetHypothesis:
             # Set up catalog
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir(exist_ok=True)
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             config_path = portolan_dir / "config.yaml"
             config_path.write_text("# Portolan config\n")
             catalog_data = {

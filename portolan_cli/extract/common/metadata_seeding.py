@@ -104,7 +104,9 @@ def seed_collection_metadata(
     )
 
     metadata_path = collection_dir / ".portolan" / "metadata.yaml"
-    seeded = seed_metadata_yaml(extracted, metadata_path)
+    # No placeholder: this is a child file and the merge lets the child win, so a
+    # TODO here would override the catalog's real license (issue #686).
+    seeded = seed_metadata_yaml(extracted, metadata_path, license_placeholder=False)
 
     # Per Issue #369: Also update collection.json with title/description
     # This ensures STAC has meaningful metadata, not generic placeholders

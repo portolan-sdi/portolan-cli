@@ -6,6 +6,10 @@ and collection.json to be written to the PARENT directory when the path
 contains a dot (e.g., /tmp/tmp.XXXXXX from mktemp -d).
 
 These tests verify the fix works across all affected workflows.
+
+Issue #731 is the same bug reached through the default path argument. Passing
+"." leaves the dotted component in the working directory rather than the
+argument, so absolutizing before the heuristic runs is what keeps it away.
 """
 
 import json
@@ -80,6 +84,7 @@ class TestDottedPathRegression:
         (portolan_dir / "config.yaml").write_text(
             yaml.dump({"version": 1, "statistics": {"enabled": False}})
         )
+        (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
         # Create collection directory with file directly in it
         # (portolan infers collection from directory structure)
@@ -152,6 +157,7 @@ class TestDottedPathRegression:
         (portolan_dir / "config.yaml").write_text(
             yaml.dump({"version": 1, "statistics": {"enabled": False}})
         )
+        (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
         # Create existing collection stub with item
         existing_coll = catalog_root / "existing"
@@ -204,3 +210,93 @@ class TestDottedPathRegression:
         catalog_data = json.loads((catalog_root / "catalog.json").read_text())
         child_hrefs = [link["href"] for link in catalog_data["links"] if link["rel"] == "child"]
         assert "./new-collection/collection.json" in child_hrefs
+
+
+class TestDefaultPathRegression:
+    """Regression tests for `init` with no path argument (issue #731)."""
+
+    @pytest.mark.integration
+    def test_init_no_path_argument_in_dotted_working_directory(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`portolan init` with no path writes catalog.json to the working directory.
+
+        Regression test for issue #731. The path argument defaults to ".", which
+        pystac absolutizes against the working directory. A dotted working
+        directory name, which `mktemp -d` produces, then trips the same
+        file-versus-directory heuristic as issue #401, and catalog.json lands in
+        the parent. `init` went on to read the file back through the same
+        relative path and raised FileNotFoundError instead of a PortolanError.
+        """
+        working_dir = tmp_path / "tmp.ckdIXs70TT"
+        working_dir.mkdir()
+        monkeypatch.chdir(working_dir)
+
+        result = runner.invoke(
+            cli, ["init", "--auto", "--title", "Base test", "--license", "CC-BY-4.0"]
+        )
+
+        assert result.exit_code == 0, f"Failed: {result.output}"
+        assert result.exception is None, f"Unhandled exception: {result.exception!r}"
+
+        # Positive assertion: catalog.json lands in the working directory.
+        assert (working_dir / "catalog.json").exists(), (
+            "catalog.json should be in the working directory"
+        )
+        # Negative assertion: it must not leak to the parent.
+        assert not (tmp_path / "catalog.json").exists(), (
+            "catalog.json must NOT leak to the parent directory"
+        )
+
+        # The catalog the CLI reports must be the one on disk.
+        catalog_data = json.loads((working_dir / "catalog.json").read_text())
+        assert catalog_data["id"] == "tmp-ckdIXs70TT"
+        assert catalog_data["title"] == "Base test"
+
+    @pytest.mark.integration
+    def test_init_no_path_reports_catalog_id_as_json(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The JSON envelope holds for `init` with no path (issue #731).
+
+        The crash escaped as a traceback rather than a PortolanError, so the
+        envelope contract in .claude/rules/cli-and-output.md did not hold.
+        """
+        working_dir = tmp_path / "tmp.9Qz.Wm"
+        working_dir.mkdir()
+        monkeypatch.chdir(working_dir)
+
+        result = runner.invoke(cli, ["init", "--auto", "--json", "--license", "CC-BY-4.0"])
+
+        assert result.exit_code == 0, f"Failed: {result.output}"
+        payload = json.loads(result.output)
+        assert payload["success"] is True
+        assert payload["command"] == "init"
+        assert payload["data"]["catalog_id"] == "tmp-9Qz-Wm"
+        assert payload["data"]["path"] == str(working_dir.resolve())
+
+
+class TestInitCatalogReturnValue:
+    """`init_catalog` must return a path its caller can read (issue #731)."""
+
+    @pytest.mark.integration
+    def test_returned_catalog_file_is_absolute(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The returned catalog_file resolves without depending on the caller's cwd.
+
+        `init_catalog` returned `path / "catalog.json"`, so a relative path in
+        gave a relative path out. cli.py read it back against whatever working
+        directory it happened to have.
+        """
+        from portolan_cli.catalog import init_catalog
+
+        working_dir = tmp_path / "tmp.relative"
+        working_dir.mkdir()
+        monkeypatch.chdir(working_dir)
+
+        catalog_file, _warnings = init_catalog(Path("."), license_id="CC-BY-4.0")
+
+        assert catalog_file.is_absolute(), f"catalog_file must be absolute, got {catalog_file}"
+        assert catalog_file == working_dir.resolve() / "catalog.json"
+        assert catalog_file.read_text(encoding="utf-8"), "returned path must be readable"

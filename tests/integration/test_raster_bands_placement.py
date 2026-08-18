@@ -35,6 +35,10 @@ def raster_catalog(tmp_path: Path) -> Path:
                 "type": "Catalog",
                 "stac_version": "1.1.0",
                 "id": "test-catalog",
+                # A title is mandatory and `portolan init` always
+                # writes one; without it the catalog fails the Portolan profile
+                # schema that `add` now declares (issue #654).
+                "title": "Test Catalog",
                 "description": "Test catalog",
                 "links": [],
             }
@@ -45,6 +49,7 @@ def raster_catalog(tmp_path: Path) -> Path:
     (portolan_dir / "config.yaml").write_text(
         yaml.dump({"version": 1, "statistics": {"enabled": True}})
     )
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
     (catalog_root / "imagery").mkdir()
     return catalog_root
 
@@ -122,8 +127,11 @@ class TestRasterBandsPlacement:
     def test_raster_item_passes_stac_schema_validation(
         self, raster_catalog: Path, float32_raster: Path
     ) -> None:
-        from portolan_cli.validation.stac_rules import StacSchemaRule
+        """Relocating bands onto the asset must keep the item schema-valid (STAC 1.1.0)."""
+        from rashid import validate
+        from rashid.structural import STR_INVALID
 
         _add_raster(raster_catalog, float32_raster)
-        result = StacSchemaRule().check(raster_catalog)
-        assert result.passed, f"STAC schema validation failed: {result.message}"
+        report = validate(raster_catalog, rules=(), structural=True, data=False)
+        structural = [f for f in report.findings if f.rule_id == STR_INVALID]
+        assert structural == [], f"STAC schema validation failed: {structural}"

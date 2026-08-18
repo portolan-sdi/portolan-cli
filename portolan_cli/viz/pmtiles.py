@@ -22,7 +22,6 @@ Usage:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import shutil
@@ -30,15 +29,23 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from portolan_cli.constants import ROLE_VISUAL
 from portolan_cli.errors import PortolanError
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import error, info, success, warn
+from portolan_cli.stac_parquet import stamp_file_fields, sync_file_extension
+from portolan_cli.versions import track_generated_assets
 
 # The PMTiles constants and pure asset/link classifiers now live in the
 # framework-free leaf pmtiles_links.py so validation/ can reach them without
 # importing this module (which pulls in output/thumbnail/style). Re-imported
 # here — both constants are used below — so pmtiles.py's public API is unchanged
 # for existing callers/tests (see pmtiles_links.py, issue #563).
-from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, WEB_MAP_LINKS_EXTENSION
+from portolan_cli.viz.pmtiles_links import (
+    PMTILES_MEDIA_TYPE,
+    PMTILES_SUFFIX,
+    WEB_MAP_LINKS_EXTENSION,
+)
 from portolan_cli.viz.thumbnail import (
     generate_vector_thumbnail,
     get_thumbnail_config,
@@ -144,7 +151,7 @@ def check_pmtiles_available() -> None:
     """
     # Check for gpio-pmtiles
     try:
-        import gpio_pmtiles  # type: ignore[import-untyped]  # noqa: F401
+        import gpio_pmtiles  # type: ignore[import-untyped] # noqa: F401
     except ImportError as e:
         raise PMTilesNotAvailableError() from e
 
@@ -166,7 +173,7 @@ def _find_geoparquet_assets(collection_path: Path) -> list[tuple[str, Path]]:
     if not collection_json_path.exists():
         return []
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     assets = data.get("assets", {})
 
     geoparquet_assets = []
@@ -181,9 +188,11 @@ def _find_geoparquet_assets(collection_path: Path) -> list[tuple[str, Path]]:
             or href.endswith(".parquet")
         )
 
-        # Skip stac-items parquet (that's metadata, not geodata)
+        # Skip the item mirror (that's metadata, not geodata). The spec role
+        # is collection-mirror; stac-items covers catalogs written before
+        # #654 upgraded the roles.
         roles = asset.get("roles", [])
-        if "stac-items" in roles:
+        if "collection-mirror" in roles or "stac-items" in roles:
             continue
 
         if is_geoparquet:
@@ -380,7 +389,7 @@ def add_pmtiles_asset_to_collection(
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found in {collection_path}")
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     assets = data.get("assets", {})
 
     # Generate asset key from parquet key
@@ -402,15 +411,21 @@ def add_pmtiles_asset_to_collection(
                     existing[key] = value
                     needs_update = True
 
+        # Regeneration rewrites the tiles, so a stale digest is worse than none.
+        if stamp_file_fields(existing, collection_path):
+            needs_update = True
+        if sync_file_extension(data, assets, collection_json_path):
+            needs_update = True
+
         if needs_update:
-            collection_json_path.write_text(json.dumps(data, indent=2))
+            write_json_atomic(collection_json_path, data)
         return
 
     asset_dict: dict[str, Any] = {
         "href": pmtiles_href,
         "type": PMTILES_MEDIA_TYPE,
         "title": f"{source_title} (vector tiles)",
-        "roles": ["visual"],
+        "roles": [ROLE_VISUAL],
     }
 
     # Add any extra properties
@@ -420,7 +435,14 @@ def add_pmtiles_asset_to_collection(
     assets[pmtiles_key] = asset_dict
     data["assets"] = assets
 
-    collection_json_path.write_text(json.dumps(data, indent=2))
+    # PORTO-CORE-028 asks every asset for file:size and file:checksum. The style
+    # and thumbnail writers stamp theirs; PMTiles was the one visual artifact
+    # that shipped without them, drawing a PTL-AST-003 warning nothing caught
+    # until the gate started reading warnings (issue #746).
+    stamp_file_fields(asset_dict, collection_path)
+    sync_file_extension(data, assets, collection_json_path)
+
+    write_json_atomic(collection_json_path, data)
 
 
 def ensure_web_map_links_extension(collection_path: Path) -> bool:
@@ -429,7 +451,7 @@ def ensure_web_map_links_extension(collection_path: Path) -> bool:
     Adds ``WEB_MAP_LINKS_EXTENSION`` to ``stac_extensions`` if absent, without
     touching any links (so existing ``pmtiles:layers`` overrides are preserved).
     Used by ``check --fix`` to repair a collection that carries the PMTiles link
-    but omits the extension declaration (RULE-0061 assertion 3).
+    but omits the extension declaration (part of rashid PTL-VIZ-003).
 
     Args:
         collection_path: Path to collection directory.
@@ -441,14 +463,14 @@ def ensure_web_map_links_extension(collection_path: Path) -> bool:
     if not collection_json_path.exists():
         return False
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     extensions = data.get("stac_extensions", [])
     if WEB_MAP_LINKS_EXTENSION in extensions:
         return False
 
     extensions.append(WEB_MAP_LINKS_EXTENSION)
     data["stac_extensions"] = extensions
-    collection_json_path.write_text(json.dumps(data, indent=2))
+    write_json_atomic(collection_json_path, data)
     return True
 
 
@@ -460,7 +482,7 @@ def add_pmtiles_link_to_collection(
 ) -> None:
     """Add a ``rel="pmtiles"`` collection link following web-map-links (Issue #569).
 
-    The link coexists with the PMTiles *asset* (RULE-0060) and satisfies RULE-0061.
+    The link coexists with the PMTiles *asset* and satisfies rashid PTL-VIZ-003.
     It declares the web-map-links extension in ``stac_extensions`` and carries the
     ``pmtiles:layers`` array of default-visible vector layers. The link is keyed by
     its ``href`` so multiple PMTiles in one collection each get their own link, and
@@ -478,7 +500,7 @@ def add_pmtiles_link_to_collection(
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found in {collection_path}")
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
 
     changed = False
 
@@ -519,154 +541,7 @@ def add_pmtiles_link_to_collection(
             changed = True
 
     if changed:
-        collection_json_path.write_text(json.dumps(data, indent=2))
-
-
-def add_thumbnail_asset_to_collection(
-    collection_path: Path,
-    pmtiles_key: str,
-    thumbnail_path: Path,
-) -> None:
-    """Add thumbnail asset to collection.json.
-
-    Args:
-        collection_path: Path to collection directory.
-        pmtiles_key: Asset key of the PMTiles file (thumbnail key will be pmtiles_key + "-thumbnail").
-        thumbnail_path: Path to thumbnail file.
-    """
-    collection_json_path = collection_path / "collection.json"
-    if not collection_json_path.exists():
-        return
-
-    data = json.loads(collection_json_path.read_text())
-    assets = data.get("assets", {})
-
-    thumb_key = f"{pmtiles_key}-thumbnail"
-    thumb_href = f"./{thumbnail_path.name}"
-
-    # Get title from PMTiles asset if available
-    pmtiles_asset = assets.get(pmtiles_key, {})
-    pmtiles_title = pmtiles_asset.get("title", pmtiles_key)
-
-    assets[thumb_key] = {
-        "href": thumb_href,
-        "type": "image/jpeg",
-        "title": f"{pmtiles_title} (thumbnail)",
-        "roles": ["thumbnail"],
-    }
-    data["assets"] = assets
-
-    collection_json_path.write_text(json.dumps(data, indent=2))
-
-
-def _compute_sha256(path: Path) -> str:
-    """Stream a file in 64KB chunks and return its SHA-256 hex digest.
-
-    Chunked to avoid loading large PMTiles/thumbnail files fully into memory.
-    """
-    hasher = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
-            hasher.update(chunk)
-    return hasher.hexdigest()
-
-
-def _track_generated_assets_in_versions(
-    collection_path: Path,
-    asset_paths: list[Path],
-    catalog_root: Path,
-    *,
-    message: str,
-    only_if_missing: bool = False,
-) -> None:
-    """Track generated side-step assets (PMTiles, thumbnail) in versions.json.
-
-    Computes SHA-256, size, and mtime for each path and records them in a *single*
-    new version snapshot. The PMTiles and its thumbnail come from the same
-    side-step for the same source asset, so they belong in one version, not two
-    (Issue #519). ``add_version`` carries forward the previous version's assets,
-    so the result is a complete snapshot with these assets added/updated.
-
-    Args:
-        collection_path: Path to collection directory.
-        asset_paths: Paths to the generated files to track.
-        catalog_root: Path to catalog root (hrefs are catalog-root-relative).
-        message: Human-readable description of the change.
-        only_if_missing: When True, only track assets whose filename is not
-            already present in the latest version snapshot, and create no version
-            at all if every asset is already tracked. Used by the skip path to
-            backfill artifacts generated before this tracking existed without
-            bumping a version on every unchanged ``add`` (Issue #519).
-
-    Raises:
-        FileNotFoundError: If any asset path doesn't exist.
-    """
-    from portolan_cli.versions import (
-        Asset,
-        VersionsFile,
-        add_version,
-        parse_version,
-        read_versions,
-        write_versions,
-    )
-
-    for asset_path in asset_paths:
-        if not asset_path.exists():
-            raise FileNotFoundError(f"File not found at {asset_path}")
-
-    versions_path = collection_path / "versions.json"
-
-    # If no versions.json, create a minimal one
-    if not versions_path.exists():
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version=None,
-            versions=[],
-        )
-    else:
-        versions_file = read_versions(versions_path)
-
-    # Backfill mode: skip assets already tracked, and create no version if none
-    # are missing (otherwise the message would force a no-op version bump).
-    paths_to_track = asset_paths
-    if only_if_missing and versions_file.versions:
-        tracked = versions_file.versions[-1].assets
-        paths_to_track = [p for p in asset_paths if p.name not in tracked]
-    if not paths_to_track:
-        return
-
-    assets: dict[str, Asset] = {}
-    for asset_path in paths_to_track:
-        stat = asset_path.stat()
-        # Href is relative to catalog root
-        try:
-            rel_path = asset_path.relative_to(catalog_root)
-        except ValueError:
-            # Fallback if not relative
-            rel_path = asset_path.relative_to(collection_path.parent)
-        assets[asset_path.name] = Asset(
-            sha256=_compute_sha256(asset_path),
-            size_bytes=stat.st_size,
-            href=rel_path.as_posix(),
-            mtime=stat.st_mtime,
-        )
-
-    # Determine next version
-    if versions_file.current_version:
-        major, minor, patch = parse_version(versions_file.current_version)
-        new_version = f"{major}.{minor}.{patch + 1}"
-    else:
-        new_version = "1.0.0"
-
-    updated = add_version(
-        versions_file,
-        version=new_version,
-        assets=assets,
-        breaking=False,
-        message=message,
-    )
-
-    write_versions(versions_path, updated)
+        write_json_atomic(collection_json_path, data)
 
 
 def _backfill_skipped_assets(
@@ -676,18 +551,20 @@ def _backfill_skipped_assets(
 
     Runs on the skip path to heal catalogs whose artifacts were generated before
     versions.json tracking existed (Issue #519), without bumping a version when
-    everything is already tracked. When a thumbnail exists on disk it is also
-    re-registered as a STAC asset (mirroring the PMTiles), so the backfilled
-    versions.json entry can never be orphaned from collection.json.
+    everything is already tracked.
+
+    Registering the thumbnail as a STAC asset is not done here.
+    ``collection_thumbnail.ensure_collection_thumbnails`` adopts any
+    ``.thumb.jpg`` on disk and is the single writer of the thumbnail asset
+    (Issue #683), so a backfilled versions.json entry still cannot be orphaned
+    from collection.json.
     """
     backfill = [pmtiles_path]
     existing_thumb = thumbnail_path_for(pmtiles_path)
     if existing_thumb.exists():
-        # Ensure the thumbnail is a STAC asset too, even when skipping generation.
-        add_thumbnail_asset_to_collection(collection_path, f"{asset_key}-tiles", existing_thumb)
         backfill.append(existing_thumb)
     try:
-        _track_generated_assets_in_versions(
+        track_generated_assets(
             collection_path,
             backfill,
             catalog_root,
@@ -702,13 +579,18 @@ def _generate_thumbnail_asset(
     collection_path: Path,
     parquet_path: Path,
     pmtiles_path: Path,
-    asset_key: str,
     catalog_root: Path,
 ) -> Path | None:
-    """Generate the vector thumbnail and register it as a STAC asset.
+    """Render the vector thumbnail from the tiles, the higher-fidelity source.
 
-    Returns the thumbnail path on success, or None if disabled or failed. Failure
+    Writes the file and returns its path, or None if disabled or failed. Failure
     is non-fatal: it must not affect PMTiles success (Issue #13).
+
+    Registering the STAC asset is deliberately not done here.
+    ``collection_thumbnail.ensure_collection_thumbnails`` runs after this and
+    adopts the ``.thumb.jpg`` this writes, so one writer owns the thumbnail
+    asset shape (Issue #683). Rendering from PMTiles still wins, because this
+    runs first and adoption never overwrites.
     """
     try:
         thumb_config = get_thumbnail_config(catalog_root)
@@ -716,15 +598,12 @@ def _generate_thumbnail_asset(
             return None
         # Discover style for thumbnail (Issue #495)
         style_path = _discover_style_for_thumbnail(collection_path)
-        thumb_path = generate_vector_thumbnail(
+        return generate_vector_thumbnail(
             pmtiles_path=pmtiles_path,
             geoparquet_path=parquet_path,  # fallback
             config=thumb_config,
             style_path=style_path,
         )
-        if thumb_path:
-            add_thumbnail_asset_to_collection(collection_path, f"{asset_key}-tiles", thumb_path)
-        return thumb_path
     except Exception as e:
         warn(f"Thumbnail generation failed for {pmtiles_path.name}: {e}")
         return None
@@ -749,9 +628,7 @@ def _track_side_step_assets(
     else:
         message = f"Generated PMTiles: {pmtiles_path.name}"
     try:
-        _track_generated_assets_in_versions(
-            collection_path, generated_assets, catalog_root, message=message
-        )
+        track_generated_assets(collection_path, generated_assets, catalog_root, message=message)
     except Exception as e:
         warn(f"Failed to track generated assets in versions.json for {pmtiles_path.name}: {e}")
 
@@ -807,7 +684,7 @@ def generate_pmtiles_for_collection(
     geoparquet_assets = _find_geoparquet_assets(collection_path)
 
     for asset_key, parquet_path in geoparquet_assets:
-        pmtiles_path = parquet_path.with_suffix(".pmtiles")
+        pmtiles_path = parquet_path.with_suffix(PMTILES_SUFFIX)
 
         # Compute href relative to collection (preserves subdirectory structure)
         # Use as_posix() for STAC-compliant forward slashes on all platforms
@@ -876,7 +753,7 @@ def generate_pmtiles_for_collection(
             result.generated.append(pmtiles_path)
             generation_succeeded = True
 
-            # Generate default style file (ADR-0045)
+            # Generate default style file
             _write_default_style_for_geoparquet(
                 parquet_path=parquet_path,
                 layer_name=layer_name,
@@ -901,11 +778,11 @@ def generate_pmtiles_for_collection(
         # snapshot (one side-step == one version, not two, Issue #519).
         if generation_succeeded:
             thumb_path = _generate_thumbnail_asset(
-                collection_path, parquet_path, pmtiles_path, asset_key, catalog_root
+                collection_path, parquet_path, pmtiles_path, catalog_root
             )
             _track_side_step_assets(collection_path, pmtiles_path, thumb_path, catalog_root)
 
-    # Discover and register style assets (ADR-0045)
+    # Discover and register style assets
     from portolan_cli.viz.style import discover_styles, register_style_assets
 
     styles = discover_styles(collection_path)
@@ -931,7 +808,7 @@ class PMTilesSettings:
 
 
 def get_pmtiles_settings(catalog_root: Path, coll_id: str, coll_path: Path) -> PMTilesSettings:
-    """Resolve PMTiles settings for a collection via hierarchical config (ADR-0039)."""
+    """Resolve PMTiles settings for a collection via hierarchical config."""
     from portolan_cli.config import coerce_bool, coerce_int, get_setting
 
     def get(key: str) -> Any:
@@ -969,8 +846,7 @@ def generate_or_suggest_pmtiles(
 
     For each affected collection, resolves PMTiles settings and generates when
     ``--pmtiles`` was passed or ``pmtiles.enabled`` is configured. Generation runs
-    regardless of output mode so the JSON envelope reflects the final state
-    (ADR-0030); an explicitly-requested generation that fails exits non-zero.
+    regardless of output mode so the JSON envelope reflects the final state; an explicitly-requested generation that fails exits non-zero.
 
     Args:
         catalog_root: Catalog root directory.

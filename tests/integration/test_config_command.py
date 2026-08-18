@@ -42,7 +42,7 @@ class TestConfigWorkflow:
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize catalog
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             # 1. Set a value (using non-sensitive setting)
             result = runner.invoke(cli, ["config", "set", "workers", "4"])
@@ -75,7 +75,7 @@ class TestConfigWorkflow:
         Note: Uses 'workers' instead of 'remote' since remote is a sensitive setting (Issue #356).
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             runner.invoke(cli, ["config", "set", "workers", "8"])
 
             # Verify file exists and contains our value
@@ -92,7 +92,7 @@ class TestConfigWorkflow:
         Note: Uses 'workers' instead of 'remote' since remote is a sensitive setting (Issue #356).
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             # Set value (using non-sensitive setting)
             runner.invoke(cli, ["config", "set", "workers", "16"])
@@ -124,7 +124,7 @@ class TestConfigPrecedence:
         cannot be set in config.yaml (Issue #356).
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             runner.invoke(cli, ["config", "set", "workers", "4"])
 
             # Set env var and verify it takes precedence
@@ -142,7 +142,7 @@ class TestConfigPrecedence:
         Note: Sensitive settings like aws_profile must use env vars (Issue #356).
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             runner.invoke(cli, ["config", "set", "workers", "4"])
 
             with mock.patch.dict(os.environ, {"PORTOLAN_AWS_PROFILE": "env-profile"}):
@@ -170,7 +170,7 @@ class TestConfigCollection:
     def test_set_collection_config(self, runner: CliRunner, tmp_path: Path) -> None:
         """config set --collection should set collection-level config."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(
                 cli,
@@ -188,7 +188,7 @@ class TestConfigCollection:
     def test_get_collection_config(self, runner: CliRunner, tmp_path: Path) -> None:
         """config get --collection should retrieve collection-level config."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             # Set catalog-level and collection-level (using non-sensitive setting)
             runner.invoke(cli, ["config", "set", "workers", "4"])
@@ -208,7 +208,7 @@ class TestConfigCollection:
     def test_collection_inherits_catalog_config(self, runner: CliRunner, tmp_path: Path) -> None:
         """Collection should inherit unset keys from catalog config."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             # Set only catalog-level workers (using non-sensitive setting)
             runner.invoke(cli, ["config", "set", "workers", "32"])
@@ -238,7 +238,7 @@ class TestConfigJsonOutput:
     def test_set_json_envelope(self, runner: CliRunner, tmp_path: Path) -> None:
         """config set should output JSON envelope with --format json."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["--format", "json", "config", "set", "workers", "8"])
 
@@ -253,7 +253,7 @@ class TestConfigJsonOutput:
     def test_get_json_envelope(self, runner: CliRunner, tmp_path: Path) -> None:
         """config get should output JSON envelope with --format json."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             runner.invoke(cli, ["config", "set", "workers", "8"])
 
             result = runner.invoke(cli, ["--format", "json", "config", "get", "workers"])
@@ -270,7 +270,7 @@ class TestConfigJsonOutput:
     def test_list_json_envelope(self, runner: CliRunner, tmp_path: Path) -> None:
         """config list should output JSON envelope with --format json."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             runner.invoke(cli, ["config", "set", "workers", "8"])
 
             result = runner.invoke(cli, ["--format", "json", "config", "list"])
@@ -286,7 +286,7 @@ class TestConfigJsonOutput:
     def test_unset_json_envelope(self, runner: CliRunner, tmp_path: Path) -> None:
         """config unset should output JSON envelope with --format json."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             runner.invoke(cli, ["config", "set", "workers", "8"])
 
             result = runner.invoke(cli, ["--format", "json", "config", "unset", "workers"])
@@ -341,7 +341,7 @@ class TestConfigErrors:
     def test_config_works_from_subdirectory(self, runner: CliRunner, tmp_path: Path) -> None:
         """config should work from a subdirectory of the catalog."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             # Create and enter a subdirectory
             subdir = Path("data/nested")

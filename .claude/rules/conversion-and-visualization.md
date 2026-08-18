@@ -21,7 +21,7 @@ visualizations. Two themes cause almost every bug here: **non-3857 / non-4326
 data breaks downstream tools when reprojection is skipped or done wrong**, and
 **a fix lands in one render path but not its twin**. We orchestrate upstream
 libraries (`geoparquet-io`, `rio-cogeo`, `contextily`, `tippecanoe`), we do not
-reimplement geometry or raster math (ADR-0010).
+reimplement geometry or raster math.
 
 ## Delegate, never reimplement, and guard the known crashes
 
@@ -79,7 +79,7 @@ render paths.
   to the PMTiles path (commit `c41da07`, #468). When you change rendering or CRS
   logic here, grep for every `add_basemap(` call and apply the change to **both**
   paths, then assert parity. Basemaps are for **vector** thumbnails only, raster
-  thumbnails get no basemap (ADR-0043).
+  thumbnails get no basemap.
 - `contextily` is an optional lazy import, guard for its absence.
 - **The matplotlib floor is a punchy data-aware preset, NOT the extracted style**
   (#518, Track 1). The WFS/Mapbox style is pale by design (`fill-opacity 0.2`,
@@ -118,28 +118,44 @@ render paths.
 
 ## PMTiles: thread src_crs through, register at collection level
 
-- PMTiles is required for vector datasets > 100 MB and recommended > 10 MB
-  (ADR-0050). Generate alongside the GeoParquet.
+- PMTiles is required for vector datasets > 100 MB and recommended > 10 MB. Generate alongside the GeoParquet.
 - `pmtiles.src_crs` from `.portolan/config.yaml` must be threaded
   `get_pmtiles_settings()` (in `pmtiles.py`) -> `generate_pmtiles_for_collection()`
   -> `gpio-pmtiles`, which reprojects to WGS84 before tippecanoe. Dropping it
   breaks PMTiles for any projected source.
 - A generated `.pmtiles` MUST be a **collection-level** asset AND have a
   `rel: "pmtiles"` link (web-map-links extension). Item-level-only is
-  non-conformant (RULE-0060 / RULE-0061, both errors). PMTiles discovery
+  non-conformant (rashid PTL-VIZ-003, an error). PMTiles discovery
   (`_find_geoparquet_assets`) only scans collection-level assets.
 
-## Styles are standalone STAC assets (ADR-0045, supersedes 0043)
+## Styles are standalone STAC assets (supersedes 0043)
 
 - A style is a complete **Mapbox GL v8** JSON file in `{collection}/styles/`,
-  not inline in the STAC. Asset key `styles/{stem}`, `type: "application/json"`,
-  `roles` containing `"style"` (RULE-0066).
-- The style JSON MUST have `version == 8`, `sources`, `layers` (RULE-0068).
+  not inline in the STAC. Asset key `styles/{stem}`,
+  `type: "application/vnd.mapbox.style+json"` (`STYLE_MEDIA_TYPE` in `style.py`),
+  `roles` containing `"style"` (rashid PTL-VIZ-002).
+- The style JSON MUST have `version == 8`, `sources`, `layers` (Mapbox GL spec; rashid checks the media type via PTL-VIZ-005).
   `sources.data.url` is a **relative** path to the PMTiles (`../file.pmtiles`),
   `layers[].source` is always `"data"`.
-- `portolan:styles` is an ordered array of asset keys (first = default), and
-  every entry MUST reference an existing asset (RULE-0067). Vary default colors
-  across a catalog so it is not monotone.
+- **Roles carry the whole manifest.** A client finds the styles by filtering
+  assets on `"style"` and the default by `"default"`, so exactly one style asset
+  carries `["style", "default"]` (rashid PTL-VIZ-006). The old
+  `portolan:styles` array is removed; `register_style_assets` strips it on
+  every run and `check` reports a collection that still has one (issue #739).
+- `select_default_style_key` always names a default when styles exist, because
+  PORTO-CORE-070 makes a collection with two styles and no `default` role
+  nonconformant. Precedence: a mark a publisher already made wins, then
+  `styles/default`, then the lexicographically first key. The tie-break reads the
+  keys, not the discovered order, so the answer does not move between runs. When
+  Portolan picks rather than reads the pick, `register_style_assets` prints which
+  style it chose and how to move the role.
+- `register_style_assets` **merges**, it does not rebuild. Only `href`, `type` and
+  `roles` are rewritten from disk; an existing `title`, `description` or any
+  unknown field a publisher added survives a re-run. It also stamps `file:size`
+  and `file:checksum` on each style asset (PORTO-CORE-069) and declares the file
+  extension, reusing `stac_parquet.stamp_file_fields`/`sync_file_extension`
+  (which is why the `viz-is-a-leaf` contract carries one scoped `ignore_imports`).
+- Vary default colors across a catalog so it is not monotone.
 
 ## Partitioning: let geoparquet-io name things, detect Hive by pattern
 
@@ -155,23 +171,26 @@ render paths.
   on-disk Hive structure (an integration test reads it back via DuckDB).
 - Each partition is a STAC item with its own bbox. The collection adds the
   partition extension URL to `stac_extensions` and sets `partition:scheme` and
-  `partition:keys` (ADR-0042). `partitioning.py` is the reference implementation
+  `partition:keys`. `partitioning.py` is the reference implementation
   named by the `stac-partition-extension` repo, so its output must match that
   schema exactly.
 
-## COG and output-location defaults (ADR-0019, ADR-0020)
+## COG and output-location defaults
 
-COG defaults are DEFLATE, predictor=2, 512x512 tiles, nearest resampling.
+COG defaults are DEFLATE and 512x512 tiles. Predictor and overview resampling
+default to `auto`, meaning `derive_cog_defaults()` reads them off the source
+raster's dtype: floats get predictor 3 and `average`, integers get predictor 2
+and `nearest`, multi-band uint8 imagery gets no predictor. Call
+`resolve_cog_settings()` before handing a profile to rio-cogeo (Issue #690).
 Conversion output goes **side-by-side for vectors, in-place for rasters**.
-Accept non-cloud-native formats with a warning, do not hard-fail (ADR-0014).
+Accept non-cloud-native formats with a warning, do not hard-fail.
 Raster band metadata lands on the data asset, see `.claude/rules/stac-assets.md`.
 
 ## Where to investigate further
 
-- ADRs 0010, 0014, 0019, 0020, 0026, 0042, 0043, 0045, 0049, 0050.
-- `spec/formats/vector.md`, `spec/formats/raster.md`, `spec/best-practices.md`,
-  `spec/schema/rules.yaml` (RULE-0030..0032 classification, 0060..0068 PMTiles
-  and styles).
+- The portolan-spec repo (vector and raster formats, best practices), and
+  rashid's PTL-DAT-* / PTL-VIZ-* rules, which enforce classification, PMTiles,
+  and styles.
 - The three `context/shared/known-issues/` files named above.
 - The `stac-partition-extension` repo schema for partition field shapes.
 - Tests: `tests/integration/test_gpio_integration.py`,

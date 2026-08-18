@@ -131,7 +131,7 @@ class TestPartitionGeoparquet:
             call_kwargs = mock_partition.call_args.kwargs
             assert call_kwargs["input_parquet"] == str(input_file)
             assert call_kwargs["output_folder"] == str(output_dir)
-            assert call_kwargs["hive"] is True  # Per ADR-0031
+            assert call_kwargs["hive"] is True  # Per
             assert call_kwargs["auto_target_rows"] == ("rows", 120_000)
 
     @pytest.mark.unit
@@ -236,11 +236,11 @@ class TestGlobPatterns:
 
 
 class TestGlobTransformation:
-    """Tests for portolan:glob field transformation on push (Issue #351)."""
+    """Tests for partition:glob field transformation on push (Issue #351)."""
 
     @pytest.mark.unit
     def test_transform_adds_glob_field_to_pattern_assets(self) -> None:
-        """_transform_collection_glob_assets adds portolan:glob to glob-pattern assets."""
+        """_transform_collection_glob_assets adds partition:glob to glob-pattern assets."""
         import json
 
         from portolan_cli.sync.push import _transform_collection_glob_assets
@@ -266,16 +266,15 @@ class TestGlobTransformation:
         result = _transform_collection_glob_assets(content, "s3://bucket/catalog", "buildings")
         result_json = json.loads(result)
 
-        # Glob asset should have portolan:glob added
+        # Glob asset should have partition:glob added
         partitioned = result_json["assets"]["partitioned_data"]
-        assert "portolan:glob" in partitioned
         assert (
-            partitioned["portolan:glob"] == "s3://bucket/catalog/buildings/kdtree_cell=*/*.parquet"
+            partitioned["partition:glob"] == "s3://bucket/catalog/buildings/kdtree_cell=*/*.parquet"
         )
 
         # Non-glob asset should be unchanged
         thumbnail = result_json["assets"]["thumbnail"]
-        assert "portolan:glob" not in thumbnail
+        assert "partition:glob" not in thumbnail
 
     @pytest.mark.unit
     def test_transform_overwrites_existing_glob_for_sync(self) -> None:
@@ -291,7 +290,7 @@ class TestGlobTransformation:
                 "partitioned_data": {
                     "href": "./kdtree_cell=*/*.parquet",
                     "type": "application/vnd.apache.parquet",
-                    "portolan:glob": "s3://old-bucket/old-path/*/*.parquet",
+                    "partition:glob": "s3://old-bucket/old-path/*/*.parquet",
                 },
             },
         }
@@ -302,7 +301,7 @@ class TestGlobTransformation:
 
         # Should overwrite with current remote URL to keep in sync
         assert (
-            result_json["assets"]["partitioned_data"]["portolan:glob"]
+            result_json["assets"]["partitioned_data"]["partition:glob"]
             == "s3://bucket/catalog/buildings/kdtree_cell=*/*.parquet"
         )
 
@@ -667,11 +666,11 @@ class TestFinalizeItemPartitionWiring:
 
 
 class TestGlobTransformationPartitionExtension:
-    """Tests for partition:glob field emission (ADR-0042 transition)."""
+    """Only partition:glob survives the transition (issue #654)."""
 
     @pytest.mark.unit
-    def test_transform_adds_both_glob_fields(self) -> None:
-        """_transform_collection_glob_assets adds both partition:glob and portolan:glob."""
+    def test_transform_writes_only_the_spec_field(self) -> None:
+        """_transform_collection_glob_assets writes partition:glob and nothing else."""
         import json
 
         from portolan_cli.sync.push import _transform_collection_glob_assets
@@ -694,13 +693,12 @@ class TestGlobTransformationPartitionExtension:
         asset = result_json["assets"]["partitioned_data"]
         expected_glob = "s3://bucket/catalog/buildings/kdtree_cell=*/*.parquet"
 
-        # Both fields should be populated
         assert asset["partition:glob"] == expected_glob
-        assert asset["portolan:glob"] == expected_glob
+        assert "portolan:glob" not in asset
 
     @pytest.mark.unit
-    def test_transform_syncs_both_glob_fields(self) -> None:
-        """_transform_collection_glob_assets syncs both partition:glob and portolan:glob."""
+    def test_transform_drops_the_legacy_field_it_finds(self) -> None:
+        """A collection published by 1.0.0b0 loses portolan:glob on the next push."""
         import json
 
         from portolan_cli.sync.push import _transform_collection_glob_assets
@@ -712,6 +710,7 @@ class TestGlobTransformationPartitionExtension:
                 "partitioned_data": {
                     "href": "./kdtree_cell=*/*.parquet",
                     "partition:glob": "s3://old-bucket/old-path/*/*.parquet",
+                    "portolan:glob": "s3://old-bucket/old-path/*/*.parquet",
                 },
             },
         }
@@ -720,11 +719,9 @@ class TestGlobTransformationPartitionExtension:
         result = _transform_collection_glob_assets(content, "s3://bucket/catalog", "buildings")
         result_json = json.loads(result)
 
-        # Both fields should be updated to current remote URL
         asset = result_json["assets"]["partitioned_data"]
-        expected_glob = "s3://bucket/catalog/buildings/kdtree_cell=*/*.parquet"
-        assert asset["partition:glob"] == expected_glob
-        assert asset["portolan:glob"] == expected_glob
+        assert asset["partition:glob"] == "s3://bucket/catalog/buildings/kdtree_cell=*/*.parquet"
+        assert "portolan:glob" not in asset
 
 
 class TestGlobAssetKeyCollision:

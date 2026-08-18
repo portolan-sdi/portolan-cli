@@ -1,10 +1,10 @@
 """Temporal extent handling for STAC items.
 
-Per ADR-0035:
 - Default to null (open temporal interval) when --datetime not provided
-- Mark null-datetime items as provisional (portolan:datetime_provisional)
+- Publish the sentinel start/end range for a null datetime, which is what says
+  the temporal extent is unknown (no marker field travels with it: the spec
+  defines no portolan: property, issue #654)
 - Accept flexible datetime formats (ISO 8601, YYYY-MM-DD, space-separated)
-- Flag provisional items in portolan check
 """
 
 from __future__ import annotations
@@ -79,10 +79,14 @@ def parse_flexible_datetime(value: str | None) -> datetime | None:
     raise ValueError(f"Invalid datetime format: {value!r}. Use ISO 8601 (e.g., 2024-01-15)")
 
 
-class FlexibleDateTime(click.ParamType):
+class FlexibleDateTime(click.ParamType["datetime | None"]):
     """Click parameter type for flexible datetime parsing.
 
     Accepts multiple formats and returns None for empty input.
+
+    ``ParamType`` is generic in the converted value from click 8.4 on; the
+    parameter is a string annotation because the class is not subscriptable at
+    runtime in that release's stubs-only form.
     """
 
     name = "datetime"

@@ -21,6 +21,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from portolan_cli.constants import PORTOLAN_SCHEMA_URI
 from portolan_cli.scan.classify import (
     FileCategory,
     classify_file,
@@ -229,6 +230,7 @@ def _setup_test_catalog(path: Path) -> None:
     """Create an initialized Portolan catalog for tests."""
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir()
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
     (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
     catalog_data = {
         "type": "Catalog",
@@ -320,10 +322,11 @@ class TestTabularEnabledCheck:
         # Should have no failures
         assert len(failures) == 0
 
-        # File should be in skipped (tracked as collection-level tabular asset)
-        # When tabular.enabled=true, standalone tabular files go to skipped
-        # (like other tracked-but-not-converted files per ADR-0028)
-        assert parquet_file in skipped
+        # A standalone tabular file is its own collection-level data asset on
+        # the single-file collection pattern, so it reports as added rather
+        # than as a no-op (issue #712).
+        assert parquet_file not in skipped
+        assert [i.item_id for i in added] == ["census"]
 
         # collection.json should exist and have the asset
         collection_json = collection_dir / "collection.json"
@@ -335,10 +338,127 @@ class TestTabularEnabledCheck:
         assert "assets" in collection_data, "collection.json should have assets"
         assert len(collection_data["assets"]) > 0, "Should have at least one asset"
 
+    def test_tabular_add_repairs_agents_md_across_the_tree(self, tmp_path: Path) -> None:
+        """The tabular path owes the same tree-wide AGENTS.md repair as ``finalize_items``.
+
+        A tabular-only add never reaches ``finalize_items``, which calls
+        ``ensure_agents_md_tree``. Repairing only the collection it just wrote
+        left a pre-existing root catalog without its AGENTS.md and
+        ``rel="agents"`` link (issue #654) — the same catalog a geo
+        add would have fixed.
+        """
+        import json as json_mod
+
+        from portolan_cli.add import add_files
+
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+        _setup_test_catalog(catalog_root)
+
+        collection_dir = catalog_root / "demographics"
+        collection_dir.mkdir()
+        parquet_file = collection_dir / "census.parquet"
+        pq.write_table(
+            pa.table({"tract_id": ["001", "002"], "population": [5000, 7500]}), parquet_file
+        )
+        (catalog_root / ".portolan" / "config.yaml").write_text("tabular:\n  enabled: true\n")
+
+        _, _, failures = add_files(paths=[parquet_file], catalog_root=catalog_root)
+        assert failures == []
+
+        assert (catalog_root / "AGENTS.md").exists()
+        catalog_links = json_mod.loads((catalog_root / "catalog.json").read_text())["links"]
+        assert any(link.get("rel") == "agents" for link in catalog_links)
+
+    def test_nested_tabular_collection_sidecar_placed_next_to_collection_json(
+        self, tmp_path: Path
+    ) -> None:
+        """Nested tabular collection id must write versions.json beside collection.json.
+
+        Regression for issue #650 (defect 1): a collection id containing a '/'
+        (e.g. "group/mytable") wrote its own versions.json to the catalog root
+        under the bare last segment ("mytable/") instead of next to its
+        collection.json. Item-level and geo collection-level assets were fine;
+        only the deferred tabular path hit the backend's _versions_path bug.
+        """
+        from portolan_cli.add import add_files
+
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+        _setup_test_catalog(catalog_root)
+
+        # Nested collection id "group/mytable"
+        collection_dir = catalog_root / "group" / "mytable"
+        collection_dir.mkdir(parents=True)
+
+        parquet_file = collection_dir / "mytable.parquet"
+        pq.write_table(pa.table({"geo": ["DE", "FR"], "price": [1.0, 2.0]}), parquet_file)
+
+        config_file = catalog_root / ".portolan" / "config.yaml"
+        config_file.write_text("tabular:\n  enabled: true\n")
+
+        _added, _skipped, failures = add_files(paths=[parquet_file], catalog_root=catalog_root)
+
+        assert failures == []
+        # Sidecar must sit next to collection.json, NOT at the catalog root.
+        assert (collection_dir / "versions.json").exists(), (
+            "versions.json must be written next to the nested collection.json"
+        )
+        assert not (catalog_root / "mytable" / "versions.json").exists(), (
+            "versions.json must not be misplaced at catalog_root/<last-segment>/"
+        )
+
+    def test_tabular_collection_recorded_in_catalog_level_versions(self, tmp_path: Path) -> None:
+        """Tabular collection-level assets must be indexed in catalog versions.json.
+
+        Regression for issue #650 (defect 2): the deferred tabular path published
+        the collection-level versions.json but never mirrored the collection into
+        the catalog-level versions.json 'collections' map, leaving it empty.
+        """
+        from portolan_cli.add import add_files
+
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+        _setup_test_catalog(catalog_root)
+        # A file-backend catalog has a catalog-level versions.json (init writes it).
+        (catalog_root / "versions.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0.0",
+                    "catalog_id": "test-catalog",
+                    "created": "2026-01-01T00:00:00+00:00",
+                    "collections": {},
+                },
+                indent=2,
+            )
+        )
+
+        collection_dir = catalog_root / "demographics"
+        collection_dir.mkdir()
+        parquet_file = collection_dir / "census.parquet"
+        pq.write_table(
+            pa.table({"tract_id": ["001", "002"], "population": [5000, 7500]}), parquet_file
+        )
+
+        config_file = catalog_root / ".portolan" / "config.yaml"
+        config_file.write_text("tabular:\n  enabled: true\n")
+
+        _added, _skipped, failures = add_files(paths=[parquet_file], catalog_root=catalog_root)
+
+        assert failures == []
+        catalog_versions = json.loads((catalog_root / "versions.json").read_text())
+        collections = catalog_versions["collections"]
+        assert "demographics" in collections, (
+            "collection must be recorded in catalog-level versions.json"
+        )
+        entry = collections["demographics"]
+        assert entry["current_version"] == "1.0.0"
+        assert entry["asset_count"] == 1
+
     def test_tabular_companion_asset_works_regardless_of_config(self, tmp_path: Path) -> None:
         """Tabular files WITH a companion geo file work regardless of tabular.enabled.
 
-        This tests the ADR-0028 behavior: when a tabular file is in the same
+        This tests the behavior: when a tabular file is in the same
         directory as a geo file, it's tracked as a companion asset. This should
         work whether tabular.enabled is true or false.
 
@@ -724,7 +844,7 @@ class TestAoiInheritance:
         assert bbox == [-80.0, 35.0, -70.0, 45.0], "Existing extent should be preserved"
 
     def test_metadata_yaml_bbox_takes_priority(self, tmp_path: Path) -> None:
-        """Explicit bbox in metadata.yaml should override sibling inheritance (ADR-0047)."""
+        """Explicit bbox in metadata.yaml should override sibling inheritance."""
         from portolan_cli.add import add_files
 
         # Create catalog with a sibling geo collection
@@ -825,8 +945,11 @@ class TestTabularConversionIntegration:
 
         assert len(failures) == 0, f"Expected no failures, got {failures}"
 
-        # The CSV should be in skipped (processed)
-        assert csv_file in skipped
+        # The converted Parquet is the primary asset and reports as added, with
+        # the CSV retained alongside it as the source (issue #712).
+        assert csv_file not in skipped
+        assert [i.item_id for i in added] == ["records"]
+        assert "records.csv" in added[0].asset_paths
 
         # A Parquet file should now exist in the collection
         parquet_file = collection_dir / "records.parquet"
@@ -927,7 +1050,7 @@ class TestTabularConversionIntegration:
 
 @pytest.mark.unit
 class TestPathTraversalProtection:
-    """Tests for path traversal protection in sibling bbox lookup (ADR-0030)."""
+    """Tests for path traversal protection in sibling bbox lookup."""
 
     def test_malicious_href_outside_catalog_ignored(self, tmp_path: Path) -> None:
         """Malicious hrefs pointing outside catalog should be ignored."""
@@ -1315,15 +1438,15 @@ extent:
 
 
 @pytest.mark.unit
-class TestPortolanGeospatialFlag:
-    """Tests for portolan:geospatial flag on tabular collections (RULE-0090).
+class TestTabularCollectionEmission:
+    """A tabular collection carries no portolan: fields (issue #654).
 
-    Tabular collections MUST have portolan:geospatial set to false to distinguish
-    intentionally non-spatial from spatial-but-unmeasured collections.
+    Tabular status is derived from asset content, so the collection Portolan
+    writes declares the profile schema URI and nothing from a private namespace.
     """
 
-    def test_tabular_collection_has_geospatial_false(self, tmp_path: Path) -> None:
-        """Tabular collections should have portolan:geospatial: false set."""
+    def test_tabular_collection_omits_the_geospatial_flag(self, tmp_path: Path) -> None:
+        """Tabular collections are no longer flagged portolan:geospatial: false."""
         from portolan_cli.add import add_files
 
         # Create catalog structure
@@ -1350,18 +1473,15 @@ class TestPortolanGeospatialFlag:
             catalog_root=catalog_root,
         )
 
-        # Tabular files go to skipped (tracked as collection-level assets)
+        # Standalone tabular files report as added, not skipped (issue #712)
         assert len(failures) == 0
-        assert parquet_file in skipped, "Tabular file should be in skipped list"
+        assert parquet_file not in skipped
+        assert [i.item_id for i in added] == ["census"]
 
         # Check collection.json has portolan:geospatial: false
         collection_json = tabular_dir / "collection.json"
         assert collection_json.exists(), "collection.json should be created"
 
         collection_data = json.loads(collection_json.read_text())
-        assert "portolan:geospatial" in collection_data, (
-            "Tabular collection should have portolan:geospatial property (RULE-0090)"
-        )
-        assert collection_data["portolan:geospatial"] is False, (
-            "Tabular collection should have portolan:geospatial: false"
-        )
+        assert "portolan:geospatial" not in collection_data
+        assert PORTOLAN_SCHEMA_URI in collection_data["stac_extensions"]

@@ -20,11 +20,13 @@ overwrite-on-re-add) have been fixed, reverted, and re-fixed many times. Read
 this before touching any module that writes `catalog.json`, `collection.json`,
 `item.json`, or asset entries.
 
-The canonical spec for everything below lives in this repo under `spec/` (the
-`portolan-spec` GitHub repo is a read-only mirror, ADR-0048). The
-machine-readable rule matrix is `spec/schema/rules.yaml` (RULE-0001..RULE-0095).
-The CLI validators in `portolan_cli/validation/` must satisfy it, so when you
-change STAC output, check the relevant RULE-id there.
+The canonical spec lives in the `portolan-spec` repo, and `rashid` is its
+executable form: it owns the rule set (`PTL-*` ids citing `PORTO-*` spec
+requirements) that `portolan check` reports. What Portolan generates
+must satisfy it, so when you change STAC output, run
+`tests/integration/test_generated_catalog_conformance.py` — the gate that runs
+rashid over a freshly generated catalog. The `RULE-*` ids some comments below
+still cite are the retired native namespace; treat them as historical.
 
 ## The `add` flow (where each artifact is written)
 
@@ -73,7 +75,7 @@ flowchart TD
     AI --> AJ[output results]
 ```
 
-## Asset keys vs hrefs are NOT the same shape (RULE-0010 / RULE-0011)
+## Asset keys vs hrefs are NOT the same shape
 
 This asymmetry is the single most repeated bug. Get it exactly right.
 
@@ -93,7 +95,7 @@ Before inserting an asset, scan **all** existing assets for one whose resolved
 href already matches and reuse that key, so you preserve human-authored keys
 instead of generating a duplicate. (See `add_asset_to_collection` in `stac.py`.)
 
-## Single-file vector data is a COLLECTION-level asset, not an item (ADR-0031, RULE-0042)
+## Single-file vector data is a COLLECTION-level asset, not an item (rashid PTL-COL-001)
 
 - A single GeoParquet / Shapefile / GeoPackage file sitting directly in a
   collection dir becomes an entry in `collection.json["assets"]`. Do **not**
@@ -105,18 +107,18 @@ instead of generating a duplicate. (See `add_asset_to_collection` in `stac.py`.)
   single file everywhere you enumerate, scan, status, add, collection-id
   inference. Strip the `.gdb`/dot from the name before deriving a collection id
   (a dot is an invalid collection-id char).
-- Asset-type allow-lists in scanners must include **all** ADR-0031 vector
+- Asset-type allow-lists in scanners must include **all** vector
   formats, not just parquet/raster/pmtiles, or `.gpkg`/`.shp` collection assets
   get silently dropped and skip freshness/ORPHANED validation.
 
-## `add` MERGES, it never regenerates (ADR-0038, MergeStrategy in stac.py)
+## `add` MERGES, it never regenerates (MergeStrategy in stac.py)
 
 Re-running `portolan add` on an existing collection must not wipe human metadata
 or double-count machine metadata. This caused repeated data-loss bugs.
 
 - **Preserve human-enrichable fields**: `asset.title`, `asset.description`,
   `table:columns[].description`, collection `description`, `providers`,
-  `license`, `links`, `portolan:styles`.
+  `license`, `links`.
 - **Only update machine-derivable fields**: `href`, `type` (media type),
   `roles`, `table:row_count`, column `name`/`type`, `proj:epsg`,
   `extent.bbox`, summaries. These travel under known prefixes
@@ -133,10 +135,10 @@ or double-count machine metadata. This caused repeated data-loss bugs.
   which is defined but not yet implemented) on **both** item-level and
   collection-level extent/asset updates, not just one.
 
-## pystac leaks absolute paths and mis-detects dirs (known-issues/pystac-absolute-paths.md, ADR-0051)
+## pystac leaks absolute paths and mis-detects dirs (known-issues/pystac-absolute-paths.md)
 
 The catalog type is SELF_CONTAINED, all `root`/`self`/`parent`/`child` links MUST
-be relative, no leading `/`, no `file://`, no `C:\`, no URI scheme (RULE-0040).
+be relative, no leading `/`, no `file://`, no `C:\`, no URI scheme (rashid PTL-LNK-004).
 pystac fights this in two ways.
 
 - **Absolute-path leak.** `to_dict()`/`save()` can emit absolute local paths.
@@ -154,7 +156,16 @@ pystac fights this in two ways.
   `models/_stac_version.py` / `stac.py` everywhere. **Never hardcode `"1.0.0"`**
   in serialization (this regressed in `models/catalog.py`).
 - Raster band metadata (`bands`, formerly `raster:bands`) goes on the **data
-  asset**, never on `item.properties`. Declare the raster extension.
+  asset**, never on `item.properties`. Declare the raster extension (v2.0.0)
+  only when a `raster:`-prefixed field was actually written — v2.0.0 requires
+  a declared item to carry at least one `raster:` field, and the unified
+  `bands` array holds only core fields.
+- Collection CRS is `proj:code` (e.g. `"EPSG:4269"`) on the **data asset**,
+  matching the portolan-spec reference catalog. Never write `proj:epsg`
+  (removed in projection v2.0.0) or a top-level collection projection field.
+  PMTiles metadata contributes no projection field at all.
+- `EXTENSION_URLS` versions are pinned by a unit test against the registry
+  table in portolan-spec `stac/README.md` — update both in lockstep.
 - A collection MUST declare every extension its items use. After building
   summaries, call `build_stac_extensions()` and merge the result into the
   collection's `stac_extensions` (it exists but has been forgotten for
@@ -163,10 +174,28 @@ pystac fights this in two ways.
   tests still compare like-for-like.
 - Parquet media type is `application/vnd.apache.parquet` (RULE), never
   `application/x-parquet`. PMTiles is `application/vnd.pmtiles`.
-- Tabular (non-geo) collections MUST set `portolan:geospatial: false`
-  (RULE-0090, ADR-0047). Absent or true means full spatial requirements apply.
-  A `.parquet` with no `geo` schema-metadata key is NOT GeoParquet (RULE-0030),
-  route it to the tabular pipeline.
+- Tabular (non-geo) status is **derived**, never flagged: a `.parquet` with no
+  `geo` schema-metadata key is NOT GeoParquet, route it to the
+  tabular pipeline. Do not reintroduce `portolan:geospatial` (issue #654,
+  as amended) — the spec defines no `portolan:` namespace.
+- Every `catalog.json` and `collection.json` declares the versioned Portolan
+  profile URI (`constants.PORTOLAN_SCHEMA_URI`) in `stac_extensions`, and
+  carries a `README.md` behind a `rel="describedby"` link plus an `AGENTS.md`
+  behind `rel="agents"`. `catalog.ensure_schema_uris` / `readme.ensure_readmes`
+  / `agents_md.ensure_agents_md` are the single writers, shared by `init`,
+  `add`, and `check --fix`.
+- The catalog **logo** is a `rel="icon"` link on the ROOT `catalog.json` only,
+  never a collection, with the image copied to `_assets/` and a relative href
+  (PORTO-CORE-074..077). `logo.set_catalog_logo` is the single writer, shared by
+  `init --logo` and `portolan logo`. Its `type` must be one of the seven
+  permitted image media types; anything else is rejected rather than guessed,
+  because a client drops an icon whose media type it does not recognize. It is a
+  MAY, so nothing scaffolds one by default and `check --fix` does not add one.
+  `_assets/` is the one root directory push uploads outside a collection.
+- `file:checksum` is a hex **multihash** (`sync.checksums.multihash_sha256`),
+  not a bare or `sha256:`-prefixed digest.
+- The core v1.1.0 `bands` array (including `bands[].statistics`) does NOT imply
+  the raster extension; only `raster:`-prefixed fields do.
 
 ## `add` must be atomic
 
@@ -178,7 +207,7 @@ from a failed generation step are a recurring complaint.
 ## Catalog root detection is centralized
 
 Every command finds the catalog root through the single `find_catalog_root()` in
-`catalog.py`, whose only sentinel is `.portolan/config.yaml` (ADR-0027/0029).
+`catalog.py`, whose only sentinel is `.portolan/config.yaml`.
 Never re-implement root detection locally, divergent logic produces "shadow
 catalogs" where `add` succeeds but `list`/`status` see nothing. Do not
 reintroduce a `state.json` sentinel.
@@ -195,10 +224,7 @@ Pair the fix with a regression test that fails before and passes after.
 
 ## Where to investigate further
 
-- `spec/structure.md`, `spec/core.md`, `spec/versions.md`,
-  `spec/formats/vector.md`, `spec/schema/rules.yaml` (the RULE-ids cited above).
-- ADRs 0028 (all files as assets), 0031 (collection-level vector assets),
-  0032 (nested catalogs, flat collections), 0038 (metadata.yaml enrichment),
-  0041 (STAC manifest canonical), 0047 (tabular), 0051 (SELF_CONTAINED).
+- The portolan-spec repo (structure, core, versions, vector formats), and
+  rashid's rule set, which is what `portolan check` enforces.
 - `context/shared/known-issues/pystac-absolute-paths.md`.
 - Tests: `tests/integration/test_add_*`, the STAC snapshot/compliance tests.

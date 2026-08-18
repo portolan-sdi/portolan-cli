@@ -1,7 +1,7 @@
 """Unit tests for non-geospatial CSV/TSV handling (Issue #140).
 
 Tests that `portolan add` gracefully handles CSV/TSV files without geometry:
-- Per ADR-0028: Track non-geo files as assets when in same dir as geo file
+- Track non-geo files as assets when in same dir as geo file
 - Skip non-geo files that have no companion geo file (can't create STAC item)
 - Emit appropriate log messages
 - Support both CSV and TSV file formats
@@ -35,9 +35,10 @@ from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
 
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
-    """Create an initialized Portolan catalog structure (per ADR-0023)."""
+    """Create an initialized Portolan catalog structure."""
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
     catalog_data = {
         "type": "Catalog",
@@ -445,6 +446,7 @@ class TestCsvSkipHypothesis:
             # Set up catalog
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir(exist_ok=True)
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             catalog_data = {
                 "type": "Catalog",
                 "stac_version": "1.0.0",
@@ -497,6 +499,7 @@ class TestCsvSkipHypothesis:
             # Set up catalog
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir(exist_ok=True)
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             catalog_data = {
                 "type": "Catalog",
                 "stac_version": "1.0.0",
@@ -575,6 +578,7 @@ class TestCsvSkipHypothesis:
             # Set up catalog
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir(exist_ok=True)
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             catalog_data = {
                 "type": "Catalog",
                 "stac_version": "1.0.0",
@@ -764,18 +768,18 @@ class TestExceptionHandlingNarrowness:
 
 
 # =============================================================================
-# ADR-0028 Asset Tracking Tests
+# Asset Tracking Tests
 # =============================================================================
 
 
 class TestAdr0028AssetTracking:
-    """Tests for ADR-0028 compliance: non-geo files tracked as assets."""
+    """Tests for compliance: non-geo files tracked as assets."""
 
     @pytest.mark.unit
     def test_non_geo_csv_with_geo_file_tracked_as_asset(
         self, initialized_catalog: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Non-geo CSV in same dir as geo file should be tracked as asset (ADR-0028)."""
+        """Non-geo CSV in same dir as geo file should be tracked as asset."""
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1291,7 +1295,7 @@ class TestAddFilesCodePaths:
                 mock_add.return_value = MagicMock(item_id="data", collection_id="my-collection")
                 mock_finalize.return_value = []
 
-                # Don't pass collection_id - should be inferred (ADR-0032)
+                # Don't pass collection_id - should be inferred
                 added, skipped, failures = add_files(
                     paths=[geojson],
                     catalog_root=initialized_catalog,
@@ -1578,6 +1582,7 @@ class TestMixedFormatIntegration:
             # Set up catalog
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir(exist_ok=True)
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             catalog_data = {
                 "type": "Catalog",
                 "stac_version": "1.0.0",

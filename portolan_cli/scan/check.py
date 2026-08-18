@@ -6,7 +6,7 @@ This module provides the check command functionality:
 - Dry-run mode for previewing changes
 - Removing legacy files after successful conversion (--remove-legacy)
 
-Per ADR-0007, this module contains the logic; CLI commands are thin wrappers.
+This module contains the logic; CLI commands are thin wrappers.
 
 See Also:
     - GitHub Issue #209: Add --remove-legacy flag to check --fix
@@ -527,7 +527,7 @@ def _get_relative_path(file_path: Path, root: Path) -> str:
         return file_path.as_posix()
 
 
-# --- Check / fix workflow orchestration (ADR-0007: logic lives here) ---
+# --- Check / fix workflow orchestration (logic lives here) ---
 
 
 def resolve_catalog_root_for_check(path: Path) -> Path | None:
@@ -548,27 +548,6 @@ def resolve_catalog_root_for_check(path: Path) -> Path | None:
             break
         candidate = candidate.parent
     return None
-
-
-def build_check_rules(path: Path, *, strict: bool) -> tuple[Any, ...]:
-    """Build the validation rule set, honoring config severity overrides.
-
-    Loads ``.portolan/config.yaml`` (when present) for ``stac_lint.severity.*``
-    overrides and always routes through ``_build_rules`` so the ``strict`` flag
-    and config are respected.
-
-    Args:
-        path: Directory being checked (catalog root or a subdirectory).
-        strict: Whether ``--strict`` was passed (escalates warnings to errors).
-
-    Returns:
-        The ordered list of validation rule instances.
-    """
-    from portolan_cli.config import load_config
-    from portolan_cli.validation.runner import _build_rules
-
-    config = load_config(path) if (path / ".portolan" / "config.yaml").exists() else None
-    return _build_rules(strict=strict, config=config)
 
 
 @dataclass
@@ -603,7 +582,7 @@ def run_fix_workflow(
 ) -> FixWorkflowOutcome:
     """Run the metadata and/or geo-asset fix workflow and return the reports.
 
-    This owns the fix orchestration (ADR-0007): resolving the catalog root,
+    This owns the fix orchestration: resolving the catalog root,
     scanning metadata, applying fixes plus the title/tabular/PMTiles repairs, and
     converting geo-assets. It performs no output rendering or process exit — the
     caller renders the returned :class:`FixWorkflowOutcome` and decides exit codes.
@@ -626,12 +605,6 @@ def run_fix_workflow(
     # Fix metadata if in scope
     if run_metadata:
         from portolan_cli.metadata import fix_metadata
-        from portolan_cli.metadata.fix import (
-            repair_agents_md,
-            repair_pmtiles_links,
-            repair_tabular_flags,
-            repair_titles_and_links,
-        )
         from portolan_cli.metadata.scan import scan_catalog_metadata
 
         # Resolve to the catalog root before scanning. Without this the scanner
@@ -653,26 +626,20 @@ def run_fix_workflow(
                 )
                 return outcome
         else:
+            # Item freshness, plus the removed-field sweep. The title, schema-URI,
+            # README, AGENTS.md and PMTiles-link repairs that used to run here now
+            # belong to the fixer registry (portolan_cli.validation.fixers), which
+            # `check --fix` dispatches from the rashid findings that actually name
+            # each defect. Running them here as well would repeat every repair.
+            #
+            # These two stay because no rule reports them: a rule fires on a spec
+            # requirement an object fails, and neither a stale item nor a field the
+            # spec does not define is something a requirement can name (issue #654).
+            from portolan_cli.metadata.fix import strip_removed_fields
+
             metadata_check_report = scan_catalog_metadata(catalog_root)
             metadata_fix_report = fix_metadata(catalog_root, metadata_check_report, dry_run=dry_run)
-
-            # Issue #502: populate human-readable titles/descriptions and
-            # backfill child/item link titles as part of the metadata fix.
-            metadata_fix_report.results.extend(
-                repair_titles_and_links(catalog_root, dry_run=dry_run)
-            )
-
-            # Issue #481: backfill portolan:geospatial: false on tabular
-            # collections (RULE-0090) as part of the metadata fix.
-            metadata_fix_report.results.extend(repair_tabular_flags(catalog_root, dry_run=dry_run))
-
-            # Issue #569: backfill the rel="pmtiles" web-map-links link on
-            # collections with a PMTiles asset but no link (RULE-0061).
-            metadata_fix_report.results.extend(repair_pmtiles_links(catalog_root, dry_run=dry_run))
-
-            # ADR-0052: scaffold AGENTS.md and backfill the rel="agents" link on
-            # catalogs and collections that lack them (RULE-0080/0081).
-            metadata_fix_report.results.extend(repair_agents_md(catalog_root, dry_run=dry_run))
+            metadata_fix_report.results.extend(strip_removed_fields(catalog_root, dry_run=dry_run))
 
             outcome.metadata_fix_report = metadata_fix_report
             if metadata_fix_report.failure_count > 0:

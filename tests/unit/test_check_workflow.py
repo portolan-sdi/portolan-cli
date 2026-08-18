@@ -57,33 +57,6 @@ class TestResolveCatalogRootForCheck:
         assert resolve_catalog_root_for_check(loose) is None
 
 
-class TestBuildCheckRules:
-    """Tests for build_check_rules (extraction parity, #620)."""
-
-    @pytest.mark.unit
-    def test_matches_underlying_build_rules(self, tmp_path: Path) -> None:
-        """Without config, build_check_rules matches validation.runner._build_rules."""
-        from portolan_cli.scan.check import build_check_rules
-        from portolan_cli.validation.runner import _build_rules
-
-        _init_catalog(tmp_path)
-        got = build_check_rules(tmp_path, strict=False)
-        expected = _build_rules(strict=False, config=None)
-
-        assert [type(r).__name__ for r in got] == [type(r).__name__ for r in expected]
-
-    @pytest.mark.unit
-    def test_returns_rules_without_portolan_dir(self, tmp_path: Path) -> None:
-        """A path with no .portolan/config.yaml still yields the default rules."""
-        from portolan_cli.scan.check import build_check_rules
-        from portolan_cli.validation.runner import _build_rules
-
-        got = build_check_rules(tmp_path, strict=True)
-        expected = _build_rules(strict=True, config=None)
-
-        assert [type(r).__name__ for r in got] == [type(r).__name__ for r in expected]
-
-
 class TestRunFixWorkflow:
     """Tests for run_fix_workflow returning a FixWorkflowOutcome (#620)."""
 

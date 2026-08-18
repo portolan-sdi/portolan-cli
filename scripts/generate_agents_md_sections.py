@@ -2,7 +2,6 @@
 """Generate auto-updated sections for AGENTS.md.
 
 This script generates sections that should stay in sync with the codebase:
-1. ADR Index - from context/shared/adr/
 2. Known Issues - from context/shared/known-issues/
 3. Test Markers - from pyproject.toml
 4. CLI Commands - from portolan_cli/cli.py
@@ -37,66 +36,6 @@ def get_project_root() -> Path:
             return current
         current = current.parent
     return Path.cwd()
-
-
-# =============================================================================
-# ADR Index Generator
-# =============================================================================
-
-
-@dataclass
-class ADRInfo:
-    """Information about an ADR."""
-
-    number: str
-    title: str
-    path: str
-
-
-def extract_adr_title(adr_path: Path) -> str:
-    """Extract title from ADR file (first # heading)."""
-    try:
-        content = adr_path.read_text()
-        # Match first H1 heading
-        match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
-        if match:
-            title = match.group(1).strip()
-            # Remove ADR number prefix if present
-            title = re.sub(r"^ADR[- ]\d+[:\s-]*", "", title, flags=re.IGNORECASE)
-            return title
-        # Fallback: derive from filename
-        return adr_path.stem.split("-", 1)[-1].replace("-", " ").title()
-    except (FileNotFoundError, UnicodeDecodeError):
-        return adr_path.stem
-
-
-def generate_adr_index(root: Path) -> str:
-    """Generate ADR index table."""
-    adr_dir = root / "context" / "shared" / "adr"
-    if not adr_dir.exists():
-        return "No ADRs found."
-
-    adrs: list[ADRInfo] = []
-    for adr_file in sorted(adr_dir.glob("*.md")):
-        if adr_file.name == "0000-template.md":
-            continue
-
-        # Extract ADR number
-        match = re.match(r"(\d{4})-(.+)\.md", adr_file.name)
-        if match:
-            number = match.group(1)
-            title = extract_adr_title(adr_file)
-            rel_path = f"context/shared/adr/{adr_file.name}"
-            adrs.append(ADRInfo(number=number, title=title, path=rel_path))
-
-    if not adrs:
-        return "No ADRs found."
-
-    lines = ["| ADR | Decision |", "|-----|----------|"]
-    for adr in adrs:
-        lines.append(f"| [{adr.number}]({adr.path}) | {adr.title} |")
-
-    return "\n".join(lines)
 
 
 # =============================================================================
@@ -331,7 +270,6 @@ def add_freshness_marker(section_header: str, date: str | None = None) -> str:
 
 
 GENERATORS = {
-    "adr-index": generate_adr_index,
     "known-issues": generate_known_issues,
     "test-markers": generate_test_markers,
     "cli-commands": generate_cli_commands,

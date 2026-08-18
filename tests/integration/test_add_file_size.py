@@ -25,7 +25,7 @@ def runner() -> CliRunner:
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
     """Create an initialized Portolan catalog using CLI."""
-    result = CliRunner().invoke(cli, ["init", str(tmp_path), "--auto"])
+    result = CliRunner().invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
     assert result.exit_code == 0, f"Init failed: {result.output}"
     return tmp_path
 
@@ -102,18 +102,18 @@ class TestFileSizePopulation:
         collection_data = json.loads(collection_jsons[0].read_text())
         assets = collection_data.get("assets", {})
 
-        # Check that file:checksum is populated with sha256 prefix
+        # file:checksum is a hex multihash: 1220 (sha2-256, 32 bytes) + digest.
         for asset_key, asset in assets.items():
             assert "file:checksum" in asset, f"Asset {asset_key} missing file:checksum"
             checksum = asset["file:checksum"]
-            assert checksum.startswith("sha256:"), "Checksum should start with sha256:"
-            assert len(checksum) > 70, f"Checksum too short: {checksum}"
+            assert checksum.startswith("1220"), f"Checksum is not a sha2-256 multihash: {checksum}"
+            assert len(checksum) == 68, f"Unexpected checksum length: {checksum}"
 
     @pytest.mark.integration
-    def test_add_populates_collection_aggregates(
+    def test_add_writes_no_portolan_fields_on_the_collection(
         self, runner: CliRunner, initialized_catalog: Path, sample_parquet_in_catalog: Path
     ) -> None:
-        """portolan add should populate portolan:total_size_bytes on collection."""
+        """The size and count aggregates are gone: the spec defines no portolan: field."""
         # Act
         result = runner.invoke(
             cli,
@@ -127,17 +127,16 @@ class TestFileSizePopulation:
         collection_jsons = list(initialized_catalog.rglob("collection.json"))
         collection_data = json.loads(collection_jsons[0].read_text())
 
-        # Check aggregates
-        assert "portolan:total_size_bytes" in collection_data
-        assert "portolan:asset_count" in collection_data
-        assert collection_data["portolan:total_size_bytes"] > 0
-        assert collection_data["portolan:asset_count"] > 0
+        assert [key for key in collection_data if key.startswith("portolan:")] == []
+        # The per-asset facts a consumer would sum are still published.
+        assets = collection_data["assets"]
+        assert any("file:size" in asset for asset in assets.values())
 
     @pytest.mark.integration
-    def test_add_populates_catalog_aggregates(
+    def test_add_writes_no_portolan_fields_on_the_catalog(
         self, runner: CliRunner, initialized_catalog: Path, sample_parquet_in_catalog: Path
     ) -> None:
-        """portolan add should populate portolan:total_size_bytes on catalog."""
+        """The catalog-level rollup is gone too (issue #654)."""
         # Act
         result = runner.invoke(
             cli,
@@ -152,13 +151,7 @@ class TestFileSizePopulation:
         assert catalog_json.exists()
         catalog_data = json.loads(catalog_json.read_text())
 
-        # Check aggregates
-        assert "portolan:total_size_bytes" in catalog_data
-        assert "portolan:asset_count" in catalog_data
-        assert "portolan:collection_count" in catalog_data
-        assert catalog_data["portolan:total_size_bytes"] > 0
-        assert catalog_data["portolan:asset_count"] > 0
-        assert catalog_data["portolan:collection_count"] == 1
+        assert [key for key in catalog_data if key.startswith("portolan:")] == []
 
     @pytest.mark.integration
     def test_add_declares_file_extension(

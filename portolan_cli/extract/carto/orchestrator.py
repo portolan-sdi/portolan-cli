@@ -57,9 +57,12 @@ from portolan_cli.extract.common.report import (
 )
 from portolan_cli.extract.common.resume import ResumeState, get_resume_state, should_process_layer
 from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
+from portolan_cli.licensing import resolve_harvest_license
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from portolan_cli.licensing import ResolvedLicense
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +70,7 @@ _GLOB_CHARS = ("*", "?", "[")
 
 _NON_SPATIAL_NOTE = (
     "Non-spatial table (no geometry column); will be extracted as plain Parquet "
-    "into a tabular collection (portolan:geospatial: false, ADR-0047)."
+    "into a tabular collection."
 )
 
 
@@ -88,6 +91,10 @@ class ExtractionOptions:
         include_cols: Comma-separated columns to include.
         exclude_cols: Comma-separated columns to exclude.
         api_key: Carto API key (or set via the CARTO_API_KEY env var).
+        license: SPDX identifier for the harvested data, or "other" with
+            license_url. Carto exposes no license metadata, so this is the only
+            source (issue #686).
+        license_url: URL of the license text.
     """
 
     workers: int = 1
@@ -102,6 +109,8 @@ class ExtractionOptions:
     include_cols: str | None = None
     exclude_cols: str | None = None
     api_key: str | None = None
+    license: str | None = None
+    license_url: str | None = None
 
 
 def _slug_for_table(name: str) -> str:
@@ -193,7 +202,7 @@ def _extract_single_table(
 
     Spatial tables become optimized GeoParquet; non-spatial tables become plain
     Parquet (no ``geo`` metadata key) via gpio's ``geometry=False`` path, so they
-    can be routed into Portolan's tabular pipeline (ADR-0047). ``bbox`` is dropped
+    can be routed into Portolan's tabular pipeline. ``bbox`` is dropped
     for non-spatial tables because a bounding-box filter requires a geometry.
 
     Returns:
@@ -461,6 +470,18 @@ def extract_carto_catalog(
     if options.dry_run:
         return _build_dry_run_report(sql_api_url, tables, discovery.account_name)
 
+    # Resolve the license before downloading anything (issue #686). Carto publishes
+    # no license metadata at all, so --license is the only source.
+    resolved_license = (
+        None
+        if options.raw
+        else resolve_harvest_license(
+            cli_license=options.license,
+            cli_license_url=options.license_url,
+            harvested_license_url=None,
+        )
+    )
+
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / ".portolan").mkdir(exist_ok=True)
 
@@ -493,7 +514,7 @@ def extract_carto_catalog(
     save_report(report, report_path)
 
     if not options.raw:
-        _auto_init_catalog(output_dir, report, discovery)
+        _auto_init_catalog(output_dir, report, discovery, resolved_license)
 
     return report
 
@@ -502,6 +523,7 @@ def _auto_init_catalog(
     output_dir: Path,
     report: ExtractionReport,
     discovery: CartoDiscoveryResult,
+    resolved_license: ResolvedLicense | None = None,
 ) -> None:
     """Initialize a Portolan catalog and add extracted tables.
 
@@ -512,13 +534,17 @@ def _auto_init_catalog(
     def _post_init(out: Path, parquet_files: list[Path]) -> None:
         # Non-geo (tabular) outputs carry no `geo` metadata key; add_files only
         # accepts them as standalone collection-level assets when tabular support
-        # is enabled (ADR-0047). Enable it before add_files when any output is
+        # is enabled. Enable it before add_files when any output is
         # non-geo.
         from portolan_cli.config import set_setting
         from portolan_cli.formats import is_geoparquet
 
         if any(not is_geoparquet(path) for path in parquet_files):
             set_setting(out, "tabular.enabled", True)
+
+        # Seed metadata.yaml here, between init_catalog and add_files, so the
+        # license is in place before add checks for one (issue #686).
+        _seed_metadata_from_extraction(out, report, discovery.account_name, resolved_license)
 
     added = init_extracted_catalog(
         output_dir,
@@ -531,7 +557,6 @@ def _auto_init_catalog(
         return
 
     _add_via_links_to_collections(output_dir, report)
-    _seed_metadata_from_extraction(output_dir, report, discovery.account_name)
     _seed_collection_metadata_carto(output_dir, report)
 
 
@@ -546,13 +571,16 @@ def _add_via_links_to_collections(output_dir: Path, report: ExtractionReport) ->
 
 
 def _seed_metadata_from_extraction(
-    output_dir: Path, report: ExtractionReport, account_name: str | None
+    output_dir: Path,
+    report: ExtractionReport,
+    account_name: str | None,
+    resolved_license: ResolvedLicense | None = None,
 ) -> None:
     """Seed catalog-level metadata.yaml from Carto account metadata."""
     from portolan_cli.extract.carto.metadata import extract_carto_metadata
 
     extracted = extract_carto_metadata(report.source_url, account_name).to_extracted()
-    seed_catalog_metadata(output_dir, extracted)
+    seed_catalog_metadata(output_dir, extracted, resolved_license)
 
 
 def _seed_collection_metadata_carto(output_dir: Path, report: ExtractionReport) -> None:

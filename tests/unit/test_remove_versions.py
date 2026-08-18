@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.remove import _remove_from_versions
+from portolan_cli.remove import _remove_from_versions, _remove_one_file
 from portolan_cli.versions import (
     SPEC_VERSION,
     Asset,
@@ -143,6 +143,91 @@ def test_remove_collection_level_key_dropped(tmp_path: Path) -> None:
     assert "tunnels.parquet" not in latest.assets
 
 
+def _nested_catalog(tmp_path: Path, asset_key: str) -> tuple[Path, Path]:
+    """Build a catalog whose collection sits under a subcatalog (``sub/coll``).
+
+    Mirrors what ``add`` writes for a nested collection id (ADR-0032): the
+    collection dir carries ``collection.json`` and ``versions.json``, and the
+    tracked href includes both path segments. Returns ``(coll_dir, versions_path)``.
+    """
+    portolan_dir = tmp_path / ".portolan"
+    portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "catalog.json").write_text("{}\n", encoding="utf-8")
+
+    coll_dir = tmp_path / "sub" / "coll"
+    coll_dir.mkdir(parents=True)
+    (coll_dir / "collection.json").write_text("{}\n", encoding="utf-8")
+
+    assets = {asset_key: Asset(sha256="abc", size_bytes=1, href=f"sub/coll/{asset_key}")}
+    version = Version(
+        version="1.0.0",
+        created=datetime.now(timezone.utc),
+        breaking=False,
+        assets=assets,
+        changes=[asset_key],
+    )
+    versions_path = coll_dir / "versions.json"
+    write_versions(
+        versions_path,
+        VersionsFile(spec_version=SPEC_VERSION, current_version="1.0.0", versions=[version]),
+    )
+    return coll_dir, versions_path
+
+
+@pytest.mark.unit
+def test_nested_collection_resolves_the_real_catalog_root(tmp_path: Path) -> None:
+    """Publishing a removal for ``sub/coll`` writes that collection's versions.json.
+
+    Acceptance criterion for #723. ``JsonFileBackend._versions_path`` used to
+    flatten the nested id through ``Path(collection).name``, so the new version
+    landed in ``{catalog_root}/coll/versions.json`` and the real file kept the
+    asset as a phantom entry.
+    """
+    coll_dir, versions_path = _nested_catalog(tmp_path, "tunnels.parquet")
+    file_path = _touch(coll_dir, "tunnels.parquet")
+
+    _remove_from_versions(file_path, versions_path)
+
+    latest = read_versions(versions_path).versions[-1]
+    assert "tunnels.parquet" not in latest.assets
+    assert not (tmp_path / "coll").exists(), "removal wrote to a flattened collection dir"
+
+
+@pytest.mark.unit
+def test_remove_one_file_untracks_asset_in_a_nested_collection(tmp_path: Path) -> None:
+    """``rm`` finds the versions.json of a collection under a subcatalog (#723).
+
+    ``_remove_one_file`` built the path from ``resolve_collection_id``, which
+    returns only the first component (``sub``). It looked for
+    ``{catalog_root}/sub/versions.json``, found nothing, and skipped untracking
+    while still deleting the file — the phantom entry in the issue transcript.
+    """
+    coll_dir, versions_path = _nested_catalog(tmp_path, "polygons.parquet")
+    file_path = _touch(coll_dir, "polygons.parquet")
+
+    removed = _remove_one_file(file_path, catalog_root=tmp_path, keep=False, dry_run=False)
+
+    assert removed is True
+    assert not file_path.exists()
+    versions_file = read_versions(versions_path)
+    assert len(versions_file.versions) == 2, "removal published no new version"
+    assert "polygons.parquet" not in versions_file.versions[-1].assets
+
+
+@pytest.mark.unit
+def test_remove_one_file_untracks_item_asset_in_a_nested_collection(tmp_path: Path) -> None:
+    """The collection dir is found from an item subdir, not just the file's parent."""
+    coll_dir, versions_path = _nested_catalog(tmp_path, "scene-001/band.parquet")
+    file_path = _touch(coll_dir, "scene-001/band.parquet")
+
+    removed = _remove_one_file(file_path, catalog_root=tmp_path, keep=False, dry_run=False)
+
+    assert removed is True
+    latest = read_versions(versions_path).versions[-1]
+    assert "scene-001/band.parquet" not in latest.assets
+
+
 @pytest.mark.unit
 def test_remove_source_drops_converted_parquet_asset(tmp_path: Path) -> None:
     """Removing a non-cloud-native source drops its converted ``.parquet`` asset.
@@ -191,17 +276,7 @@ def test_new_version_records_the_removed_filename(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "#723: rm on a collection under a subcatalog (ADR-0032) leaves a "
-        "phantom versions.json entry. JsonFileBackend._versions_path flattens "
-        "a nested collection id through Path(collection).name, so publishing "
-        "'sub/coll' writes {catalog_root}/coll/versions.json. Drop this marker "
-        "with the fix; it is the acceptance criterion."
-    ),
-)
-def test_nested_collection_resolves_the_real_catalog_root(tmp_path: Path) -> None:
+def test_nested_collection_resolves_hrefs_against_the_catalog_root(tmp_path: Path) -> None:
     """Hrefs are resolved against the catalog root, not the collection's grandparent.
 
     Under a subcatalog (ADR-0032) the collection sits two levels below the root,

@@ -27,21 +27,28 @@ class TestMetadataInit:
         return CliRunner()
 
     @pytest.mark.unit
-    def test_creates_metadata_yaml_at_catalog_root(self, runner: CliRunner, tmp_path: Path) -> None:
-        """metadata init --no-recursive should create .portolan/metadata.yaml at catalog root."""
+    def test_leaves_the_catalog_root_metadata_alone(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """`portolan init` seeds the root metadata.yaml, so `metadata init` must not clobber it.
+
+        Overwriting it would drop the license the human supplied at init and leave
+        the catalog unable to accept an add (issue #686).
+        """
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["metadata", "init", "--no-recursive"])
 
-            assert result.exit_code == 0, f"Failed: {result.output}"
-            assert Path(".portolan/metadata.yaml").exists()
+            assert result.exit_code == 1
+            assert "already exists" in result.output
+            assert 'license: "CC-BY-4.0"' in Path(".portolan/metadata.yaml").read_text()
 
     @pytest.mark.unit
     def test_creates_metadata_yaml_at_collection(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata init PATH --no-recursive should create .portolan/metadata.yaml at collection level."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("demographics").mkdir()
 
             result = runner.invoke(cli, ["metadata", "init", "demographics", "--no-recursive"])
@@ -53,7 +60,7 @@ class TestMetadataInit:
     def test_does_not_overwrite_existing(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata init --no-recursive should not overwrite existing metadata.yaml."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path(".portolan/metadata.yaml").write_text("license: CC-BY-4.0\n")
 
             runner.invoke(cli, ["metadata", "init", "--no-recursive"])
@@ -66,7 +73,7 @@ class TestMetadataInit:
     def test_force_overwrites_existing(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata init --force --no-recursive should overwrite existing metadata.yaml."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path(".portolan/metadata.yaml").write_text("license: Old\n")
 
             result = runner.invoke(cli, ["metadata", "init", "--force", "--no-recursive"])
@@ -80,9 +87,21 @@ class TestMetadataInit:
     def test_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata init --format json --no-recursive should output JSON envelope."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
+            # The root file exists after init, so target a collection to write one.
+            Path("demographics").mkdir()
 
-            result = runner.invoke(cli, ["--format", "json", "metadata", "init", "--no-recursive"])
+            result = runner.invoke(
+                cli,
+                [
+                    "--format",
+                    "json",
+                    "metadata",
+                    "init",
+                    "demographics",
+                    "--no-recursive",
+                ],
+            )
 
             assert result.exit_code == 0
             output = json.loads(result.output)
@@ -106,7 +125,7 @@ class TestMetadataInit:
         """metadata init (recursive by default) should create templates at all STAC levels."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Set up catalog with subcatalog and collection
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Subcatalog
             Path("climate").mkdir()
             Path("climate/catalog.json").write_text('{"type": "Catalog"}')
@@ -133,7 +152,7 @@ class TestMetadataInit:
     def test_recursive_skips_existing_metadata(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata init (recursive by default) should skip directories with existing metadata.yaml."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Create collection with existing metadata
             Path("demographics").mkdir()
             Path("demographics/collection.json").write_text('{"type": "Collection"}')
@@ -153,7 +172,7 @@ class TestMetadataInit:
     def test_recursive_skips_items(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata init (recursive by default) should NOT create metadata for items."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Collection with an item
             Path("demographics").mkdir()
             Path("demographics/collection.json").write_text('{"type": "Collection"}')
@@ -172,7 +191,7 @@ class TestMetadataInit:
     def test_recursive_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata init --json (recursive by default) should report created and skipped paths."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("demographics").mkdir()
             Path("demographics/collection.json").write_text('{"type": "Collection"}')
 
@@ -188,7 +207,7 @@ class TestMetadataInit:
     def test_recursive_with_explicit_path(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata init PATH (recursive by default) should start from specified path."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Subcatalog with nested collection
             Path("climate").mkdir()
             Path("climate/catalog.json").write_text('{"type": "Catalog"}')
@@ -204,8 +223,8 @@ class TestMetadataInit:
             # climate subtree should have metadata
             assert Path("climate/.portolan/metadata.yaml").exists()
             assert Path("climate/hittekaart/.portolan/metadata.yaml").exists()
-            # Root should NOT have metadata (we started from climate)
-            assert not Path(".portolan/metadata.yaml").exists()
+            # Root was seeded by init and must be untouched (we started from climate)
+            assert 'license: "CC-BY-4.0"' in Path(".portolan/metadata.yaml").read_text()
             # demographics should NOT have metadata
             assert not Path("demographics/.portolan/metadata.yaml").exists()
 
@@ -213,7 +232,7 @@ class TestMetadataInit:
     def test_recursive_nonexistent_path_fails(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata init with non-existent path should fail with clear error."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["metadata", "init", "nonexistent"])
 
@@ -226,9 +245,12 @@ class TestMetadataInit:
     ) -> None:
         """metadata init with non-existent path should output JSON error."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
-            result = runner.invoke(cli, ["--format", "json", "metadata", "init", "nonexistent"])
+            result = runner.invoke(
+                cli,
+                ["--format", "json", "metadata", "init", "nonexistent"],
+            )
 
             assert result.exit_code != 0
             output = json.loads(result.output)
@@ -239,7 +261,7 @@ class TestMetadataInit:
     def test_recursive_force_overwrites_content(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata init --force (recursive by default) should actually overwrite existing content."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("demographics").mkdir()
             Path("demographics/collection.json").write_text('{"type": "Collection"}')
             Path("demographics/.portolan").mkdir()
@@ -258,7 +280,7 @@ class TestMetadataInit:
     def test_recursive_json_output_complete_schema(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata init --json (recursive by default) should have complete schema fields."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Create collection with existing metadata (to get skipped paths)
             Path("demographics").mkdir()
             Path("demographics/collection.json").write_text('{"type": "Collection"}')
@@ -292,7 +314,7 @@ class TestMetadataInit:
     def test_recursive_skips_symlinks(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata init (recursive by default) should skip symlinks to prevent infinite loops."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("climate").mkdir()
             Path("climate/catalog.json").write_text('{"type": "Catalog"}')
             # Create a symlink that would cause infinite loop
@@ -320,7 +342,7 @@ class TestMetadataValidate:
     def test_passes_for_valid_metadata(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata validate --no-recursive should pass for valid metadata.yaml with contact + license."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Only contact and license are required now
             Path(".portolan/metadata.yaml").write_text(
                 "contact:\n  name: Test User\n  email: test@example.org\nlicense: CC-BY-4.0\n"
@@ -334,7 +356,7 @@ class TestMetadataValidate:
     def test_fails_for_missing_required_fields(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata validate --no-recursive should fail when required fields (contact, license) are missing."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path(".portolan/metadata.yaml").write_text(
                 "citation: Some citation\n"  # Missing contact and license
             )
@@ -349,7 +371,7 @@ class TestMetadataValidate:
     def test_fails_for_invalid_email(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata validate --no-recursive should fail for invalid email format."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path(".portolan/metadata.yaml").write_text(
                 "contact:\n  name: Test\n  email: not-an-email\nlicense: MIT\n"
             )
@@ -363,7 +385,7 @@ class TestMetadataValidate:
     def test_validates_collection_level(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata validate PATH --no-recursive should validate at collection level."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("demographics/.portolan").mkdir(parents=True)
             Path("demographics/.portolan/metadata.yaml").write_text(
                 "contact:\n  name: Team\n  email: team@org.com\nlicense: CC0-1.0\n"
@@ -377,7 +399,7 @@ class TestMetadataValidate:
     def test_json_output_success(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata validate --format json --no-recursive should output JSON on success."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path(".portolan/metadata.yaml").write_text(
                 "contact:\n  name: N\n  email: a@b.c\nlicense: MIT\n"
             )
@@ -396,7 +418,7 @@ class TestMetadataValidate:
     def test_json_output_failure(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata validate --format json --no-recursive should output errors in JSON."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path(".portolan/metadata.yaml").write_text("citation: Test\n")  # Incomplete
 
             result = runner.invoke(
@@ -413,7 +435,7 @@ class TestMetadataValidate:
     def test_recursive_validates_all_levels(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata validate (recursive by default) should validate all STAC levels."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             valid_metadata = "contact:\n  name: Test\n  email: test@example.org\nlicense: MIT\n"
             # Root metadata
             Path(".portolan/metadata.yaml").write_text(valid_metadata)
@@ -441,7 +463,7 @@ class TestMetadataValidate:
         (not just missing fields, which would inherit from parent).
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             valid_metadata = "contact:\n  name: Test\n  email: test@example.org\nlicense: MIT\n"
             # Invalid metadata: override with invalid email (can't be fixed by inheritance)
             invalid_email_metadata = "contact:\n  name: Test\n  email: not-an-email\nlicense: MIT\n"
@@ -468,7 +490,7 @@ class TestMetadataValidate:
     def test_recursive_json_output_schema(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata validate --json should have complete recursive schema."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             valid_metadata = "contact:\n  name: Test\n  email: test@example.org\nlicense: MIT\n"
             invalid_metadata = "citation: Test\n"
             # Root: valid
@@ -501,7 +523,7 @@ class TestMetadataValidate:
         To test actual errors, children must explicitly override with INVALID values.
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             valid_metadata = "contact:\n  name: Test\n  email: test@example.org\nlicense: MIT\n"
             # Invalid: override with invalid email (can't be fixed by inheritance)
             invalid_email = "contact:\n  name: Test\n  email: not-valid\nlicense: MIT\n"
@@ -521,7 +543,7 @@ class TestMetadataValidate:
     def test_no_recursive_limits_to_single_path(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata validate --no-recursive should only validate target path."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             valid_metadata = "contact:\n  name: Test\n  email: test@example.org\nlicense: MIT\n"
             invalid_metadata = "citation: Test\n"
             # Root: valid
@@ -543,7 +565,7 @@ class TestMetadataValidate:
     ) -> None:
         """metadata validate should skip STAC levels without metadata.yaml."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             valid_metadata = "contact:\n  name: Test\n  email: test@example.org\nlicense: MIT\n"
             # Root: valid
             Path(".portolan/metadata.yaml").write_text(valid_metadata)
@@ -560,7 +582,7 @@ class TestMetadataValidate:
     def test_no_recursive_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata validate --no-recursive --json should output single-path schema."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path(".portolan/metadata.yaml").write_text(
                 "contact:\n  name: N\n  email: a@b.c\nlicense: MIT\n"
             )
@@ -588,7 +610,7 @@ class TestReadmeGenerate:
     def test_generates_readme_at_catalog_root(self, runner: CliRunner, tmp_path: Path) -> None:
         """readme should generate README.md at catalog root."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Create catalog.json with title
             Path("catalog.json").write_text(
                 json.dumps(
@@ -615,7 +637,7 @@ class TestReadmeGenerate:
     def test_generates_readme_at_collection(self, runner: CliRunner, tmp_path: Path) -> None:
         """readme PATH should generate README.md at collection level."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("demographics/.portolan").mkdir(parents=True)
             Path("demographics/collection.json").write_text(
                 json.dumps(
@@ -643,13 +665,17 @@ class TestReadmeGenerate:
         Note: --stdout requires --no-recursive since you can't print multiple READMEs to stdout.
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("catalog.json").write_text(
                 json.dumps({"type": "Catalog", "id": "test", "title": "My Catalog"})
             )
             Path(".portolan/metadata.yaml").write_text(
                 "contact:\n  name: N\n  email: a@b.c\nlicense: MIT\n"
             )
+
+            # `init` scaffolds a README (issue #654); remove it so the
+            # assertion below measures what --stdout writes, not what init did.
+            Path("README.md").unlink()
 
             result = runner.invoke(cli, ["readme", "--stdout", "--no-recursive"])
 
@@ -661,7 +687,7 @@ class TestReadmeGenerate:
     def test_check_mode_passes_when_fresh(self, runner: CliRunner, tmp_path: Path) -> None:
         """readme --check should pass (exit 0) when README is up-to-date."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("catalog.json").write_text(
                 json.dumps({"type": "Catalog", "id": "test", "title": "Test"})
             )
@@ -679,7 +705,7 @@ class TestReadmeGenerate:
     def test_check_mode_fails_when_stale(self, runner: CliRunner, tmp_path: Path) -> None:
         """readme --check should fail (exit 1) when README is stale."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("catalog.json").write_text(
                 json.dumps({"type": "Catalog", "id": "test", "title": "Test"})
             )
@@ -697,7 +723,7 @@ class TestReadmeGenerate:
     def test_check_mode_fails_when_missing(self, runner: CliRunner, tmp_path: Path) -> None:
         """readme --check should fail (exit 1) when README doesn't exist."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("catalog.json").write_text(
                 json.dumps({"type": "Catalog", "id": "test", "title": "Test"})
             )
@@ -713,7 +739,7 @@ class TestReadmeGenerate:
     def test_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """readme --format json should output JSON envelope."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("catalog.json").write_text(
                 json.dumps({"type": "Catalog", "id": "test", "title": "Test"})
             )
@@ -732,7 +758,7 @@ class TestReadmeGenerate:
     def test_uses_stac_title_not_metadata(self, runner: CliRunner, tmp_path: Path) -> None:
         """readme should use title from STAC, not metadata.yaml."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -758,7 +784,7 @@ class TestReadmeGenerate:
     def test_verbose_shows_file_reads(self, runner: CliRunner, tmp_path: Path) -> None:
         """readme --verbose should show which files are being read."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("demographics").mkdir()
             Path("demographics/collection.json").write_text(
                 json.dumps({"type": "Collection", "id": "demographics", "title": "Demographics"})
@@ -782,7 +808,7 @@ class TestReadmeGenerate:
     def test_verbose_short_flag(self, runner: CliRunner, tmp_path: Path) -> None:
         """readme -v should work as shorthand for --verbose."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("catalog.json").write_text(
                 json.dumps({"type": "Catalog", "id": "test", "title": "Test"})
             )
@@ -802,7 +828,7 @@ class TestReadmeGenerate:
     ) -> None:
         """readme --verbose (recursive by default) should show progress for each collection."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("catalog.json").write_text(
                 json.dumps({"type": "Catalog", "id": "root", "title": "Root"})
             )
@@ -833,7 +859,7 @@ class TestReadmeGenerate:
     ) -> None:
         """readme --check --verbose should show file reads even when README is fresh."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("catalog.json").write_text(
                 json.dumps({"type": "Catalog", "id": "test", "title": "Test"})
             )
@@ -853,7 +879,7 @@ class TestReadmeGenerate:
     def test_verbose_ignored_with_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """readme --verbose --json should not include verbose messages in JSON."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("catalog.json").write_text(
                 json.dumps({"type": "Catalog", "id": "test", "title": "Test"})
             )
@@ -873,7 +899,7 @@ class TestReadmeGenerate:
     def test_default_no_verbose_is_minimal(self, runner: CliRunner, tmp_path: Path) -> None:
         """readme without --verbose should produce minimal output."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("catalog.json").write_text(
                 json.dumps({"type": "Catalog", "id": "test", "title": "Test"})
             )
@@ -891,7 +917,7 @@ class TestReadmeGenerate:
 
 
 class TestPathTraversalHardening:
-    """ADR-0030: user-supplied PATH args must not escape the catalog root."""
+    """user-supplied PATH args must not escape the catalog root."""
 
     @pytest.fixture
     def runner(self) -> CliRunner:
@@ -904,7 +930,7 @@ class TestPathTraversalHardening:
     ) -> None:
         """metadata init (recursive default) rejects a PATH escaping the catalog."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["metadata", "init", "../escape"])
 
@@ -917,7 +943,7 @@ class TestPathTraversalHardening:
     ) -> None:
         """metadata init --no-recursive rejects a PATH escaping the catalog."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["metadata", "init", "../escape", "--no-recursive"])
 
@@ -928,7 +954,7 @@ class TestPathTraversalHardening:
     def test_metadata_validate_rejects_traversal(self, runner: CliRunner, tmp_path: Path) -> None:
         """metadata validate rejects a PATH escaping the catalog."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["metadata", "validate", "../escape"])
 
@@ -941,7 +967,7 @@ class TestPathTraversalHardening:
     ) -> None:
         """metadata validate --no-recursive rejects a PATH escaping the catalog."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["metadata", "validate", "../escape", "--no-recursive"])
 
@@ -952,7 +978,7 @@ class TestPathTraversalHardening:
     def test_readme_rejects_traversal(self, runner: CliRunner, tmp_path: Path) -> None:
         """readme rejects a PATH escaping the catalog."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["readme", "../escape"])
 
@@ -963,7 +989,7 @@ class TestPathTraversalHardening:
     def test_readme_no_recursive_rejects_traversal(self, runner: CliRunner, tmp_path: Path) -> None:
         """readme --no-recursive rejects a PATH escaping the catalog."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["readme", "../escape", "--no-recursive"])
 
@@ -976,7 +1002,7 @@ class TestPathTraversalHardening:
     ) -> None:
         """JSON error for a recursive readme traversal must be labeled 'readme'."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["--format", "json", "readme", "../escape"])
 
@@ -990,7 +1016,7 @@ class TestPathTraversalHardening:
     ) -> None:
         """JSON error for a recursive validate traversal must be labeled 'metadata validate'."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["--format", "json", "metadata", "validate", "../escape"])
 

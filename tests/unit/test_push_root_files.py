@@ -145,7 +145,7 @@ class TestPushAllCollectionsRootFiles:
     def test_versions_json_uploaded_last(
         self, mock_push: MagicMock, mock_obs_put: MagicMock, tmp_path: Path
     ) -> None:
-        """versions.json is uploaded last (manifest-last atomicity per ADR-0005)."""
+        """versions.json is uploaded last (manifest-last atomicity)."""
         _setup_valid_catalog(tmp_path)
         _create_catalog_json(tmp_path)
         _create_root_readme(tmp_path)

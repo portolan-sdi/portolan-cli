@@ -4,7 +4,6 @@ Extracts statistics from:
 - COG/raster files via rasterio (min, max, mean, stddev)
 - GeoParquet files via PyArrow metadata (min, max, null_count)
 
-Per ADR-0034:
 - Stats computed by default
 - Raster uses approx mode (~100ms via GDAL overviews)
 - Parquet uses PyArrow metadata only (instant, no DuckDB)
@@ -197,7 +196,7 @@ def extract_parquet_statistics(path: Path) -> dict[str, ColumnStatistics]:
     Works on 10GB+ files instantly.
 
     Limitations:
-    - Only min/max/null_count (no mean/stddev without DuckDB per ADR-0034)
+    - Only min/max/null_count (no mean/stddev without DuckDB)
     - Statistics must be present in file (write-time setting)
     - Geometry columns (binary) are skipped - no meaningful min/max
 

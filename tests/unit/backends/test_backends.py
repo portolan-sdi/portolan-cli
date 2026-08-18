@@ -3,7 +3,6 @@
 Tests the VersioningBackend protocol and get_backend() discovery function
 that allows external backends (like portolake) to integrate with portolan-cli.
 
-See ADR-0015 (Two-Tier Versioning Architecture) and ADR-0003 (Plugin Architecture).
 """
 
 from __future__ import annotations
@@ -306,7 +305,98 @@ class TestJsonFileBackend:
         """Whitespace-only collection name raises ValueError."""
         backend = JsonFileBackend()
         with pytest.raises(ValueError, match="Collection name cannot be empty"):
-            backend._versions_path("   ")
+            backend._versions_path(" ")
+
+    @pytest.mark.unit
+    def test_nested_collection_id_keeps_its_full_path(self, tmp_path: Any) -> None:
+        """A nested collection id resolves under every one of its segments (#723).
+
+        ``add`` creates collections under subcatalogs (``infer_nested_collection_id``,
+        ADR-0032), so ``climate/hittekaart`` is a real collection id. Flattening it
+        through ``Path(collection).name`` wrote ``{root}/hittekaart/versions.json``
+        and left the collection's own file untouched.
+        """
+        from pathlib import Path
+
+        backend = JsonFileBackend(catalog_root=Path(tmp_path))
+
+        result = backend._versions_path("climate/hittekaart")
+
+        assert result == Path(tmp_path) / "climate" / "hittekaart" / "versions.json"
+
+    @pytest.mark.unit
+    def test_deeply_nested_collection_id_keeps_its_full_path(self, tmp_path: Any) -> None:
+        """Nesting is not capped at two segments (``rivers/2020/q1``)."""
+        from pathlib import Path
+
+        backend = JsonFileBackend(catalog_root=Path(tmp_path))
+
+        result = backend._versions_path("rivers/2020/q1")
+
+        assert result == Path(tmp_path) / "rivers" / "2020" / "q1" / "versions.json"
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "collection",
+        ["../evil", "climate/../../evil", "climate/..", ".."],
+    )
+    def test_parent_traversal_rejected(self, tmp_path: Any, collection: str) -> None:
+        """A collection id escaping the catalog root raises, nesting notwithstanding."""
+        from pathlib import Path
+
+        backend = JsonFileBackend(catalog_root=Path(tmp_path))
+
+        with pytest.raises(ValueError, match="Invalid collection name"):
+            backend._versions_path(collection)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "collection",
+        [
+            "/etc/passwd",
+            "C:\\Windows\\system32",
+            "C:/Windows/system32",
+            "//server/share",
+            "\\\\server\\share",
+            "climate\\..\\..\\etc",
+        ],
+    )
+    def test_absolute_collection_path_rejected(self, tmp_path: Any, collection: str) -> None:
+        """An absolute collection id raises instead of escaping the catalog root.
+
+        The guard must not depend on the host's path flavor. ``pathlib`` splits
+        by platform, so on Windows ``/etc/passwd`` is rooted but not absolute
+        (absolute needs a drive) and slipped through, while on POSIX every
+        backslash form is one filename and slipped through the other way. A
+        collection id is a slash-separated spec string, so both flavors judge it.
+        """
+        from pathlib import Path
+
+        backend = JsonFileBackend(catalog_root=Path(tmp_path))
+
+        with pytest.raises(ValueError, match="Invalid collection name"):
+            backend._versions_path(collection)
+
+    @pytest.mark.unit
+    def test_nested_collection_survives_the_flavor_guard(self, tmp_path: Any) -> None:
+        """The cross-flavor guard must not reject a legitimate nested id (#723)."""
+        from pathlib import Path
+
+        backend = JsonFileBackend(catalog_root=Path(tmp_path))
+
+        result = backend._versions_path("climate/hittekaart")
+
+        assert result == Path(tmp_path) / "climate" / "hittekaart" / "versions.json"
+
+    @pytest.mark.unit
+    def test_dot_collection_rejected(self, tmp_path: Any) -> None:
+        """``.`` resolves to the catalog root itself and is not a collection."""
+        from pathlib import Path
+
+        backend = JsonFileBackend(catalog_root=Path(tmp_path))
+
+        with pytest.raises(ValueError, match="Invalid collection name"):
+            backend._versions_path(".")
 
     @pytest.mark.unit
     def test_rollback_raises_not_implemented_with_clear_message(self) -> None:

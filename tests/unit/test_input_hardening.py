@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.validation import (
+from portolan_cli.input_hardening import (
     InputValidationError,
     validate_collection_id,
     validate_config_key,
@@ -128,7 +128,7 @@ class TestValidateCollectionId:
             validate_collection_id("%2e%2e")  # Encoded ../
 
     def test_allows_forward_slashes_rejects_backslashes(self) -> None:
-        """Forward slashes allowed for nested catalogs (ADR-0032), backslashes rejected."""
+        """Forward slashes allowed for nested catalogs, backslashes rejected."""
         # Forward slashes are allowed (nested catalog paths)
         validate_collection_id("environment/air-quality")  # Should not raise
 
@@ -137,21 +137,21 @@ class TestValidateCollectionId:
             validate_collection_id("parent\\child")
 
     def test_allows_path_segments_starting_with_numbers(self) -> None:
-        """Path segments CAN start with numbers for year-based organization (ADR-0032)."""
+        """Path segments CAN start with numbers for year-based organization."""
         # These should NOT raise - numbers at segment start are valid
         validate_collection_id("environment/2024")
         validate_collection_id("2024/january")
         validate_collection_id("rivers/2020/q1")
 
     def test_rejects_path_segments_starting_with_hyphen(self) -> None:
-        """Path segments starting with hyphens are rejected (ADR-0032)."""
+        """Path segments starting with hyphens are rejected."""
         with pytest.raises(InputValidationError, match="invalid"):
             validate_collection_id("environment/-air")
         with pytest.raises(InputValidationError, match="invalid"):
             validate_collection_id("-environment/air")
 
     def test_rejects_path_segments_starting_with_underscore(self) -> None:
-        """Path segments starting with underscores are rejected (ADR-0032)."""
+        """Path segments starting with underscores are rejected."""
         with pytest.raises(InputValidationError, match="invalid"):
             validate_collection_id("environment/_quality")
         with pytest.raises(InputValidationError, match="invalid"):
@@ -278,7 +278,7 @@ class TestValidateRemoteUrl:
                 raise ValueError("Invalid URL characters")
             return original_urlparse(url, *args, **kwargs)
 
-        monkeypatch.setattr("portolan_cli.validation.input_hardening.urlparse", mock_urlparse)
+        monkeypatch.setattr("portolan_cli.input_hardening.urlparse", mock_urlparse)
 
         with pytest.raises(InputValidationError, match="Malformed URL"):
             validate_remote_url("s3://trigger_value_error/path")

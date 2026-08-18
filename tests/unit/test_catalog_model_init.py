@@ -11,7 +11,6 @@ Tests cover:
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -307,7 +306,7 @@ class TestInitCatalogBackendOption:
         catalog_dir.mkdir()
 
         with patch("portolan_cli.backends.get_backend", return_value=MagicMock()):
-            init_catalog(catalog_dir, backend="iceberg")
+            init_catalog(catalog_dir, backend="iceberg", license_id="CC-BY-4.0")
 
         config = yaml.safe_load((catalog_dir / ".portolan" / "config.yaml").read_text())
         assert config["backend"] == "iceberg"
@@ -323,7 +322,7 @@ class TestInitCatalogBackendOption:
         catalog_dir.mkdir()
 
         with patch("portolan_cli.backends.get_backend", return_value=MagicMock()):
-            init_catalog(catalog_dir, backend="iceberg")
+            init_catalog(catalog_dir, backend="iceberg", license_id="CC-BY-4.0")
 
         assert not (catalog_dir / "versions.json").exists()
 
@@ -338,7 +337,7 @@ class TestInitCatalogBackendOption:
         catalog_dir.mkdir()
 
         with patch("portolan_cli.backends.get_backend", return_value=MagicMock()):
-            init_catalog(catalog_dir, backend="iceberg")
+            init_catalog(catalog_dir, backend="iceberg", license_id="CC-BY-4.0")
 
         assert not (catalog_dir / ".portolan" / "state.json").exists()
 
@@ -353,7 +352,7 @@ class TestInitCatalogBackendOption:
         catalog_dir.mkdir()
 
         with patch("portolan_cli.backends.get_backend", return_value=MagicMock()):
-            init_catalog(catalog_dir, backend="iceberg")
+            init_catalog(catalog_dir, backend="iceberg", license_id="CC-BY-4.0")
 
         assert (catalog_dir / "catalog.json").exists()
 
@@ -365,7 +364,7 @@ class TestInitCatalogBackendOption:
         catalog_dir = tmp_path / "test"
         catalog_dir.mkdir()
 
-        init_catalog(catalog_dir, backend="file")
+        init_catalog(catalog_dir, backend="file", license_id="CC-BY-4.0")
 
         assert (catalog_dir / "versions.json").exists()
         # state.json was removed per issue #290; config.yaml is the sole sentinel
@@ -380,7 +379,7 @@ class TestInitCatalogBackendOption:
         catalog_dir.mkdir()
 
         with pytest.raises(CatalogInitError, match="Unknown backend"):
-            init_catalog(catalog_dir, backend="nonexistent")
+            init_catalog(catalog_dir, backend="nonexistent", license_id="CC-BY-4.0")
 
 
 class TestInitCatalogFilesystemErrors:
@@ -403,7 +402,7 @@ class TestInitCatalogFilesystemErrors:
 
         with patch.object(Path, "mkdir", failing_mkdir):
             with pytest.raises(CatalogInitError) as exc_info:
-                init_catalog(tmp_path / "nonexistent-parent" / "catalog")
+                init_catalog(tmp_path / "nonexistent-parent" / "catalog", license_id="CC-BY-4.0")
             assert "Cannot create directory" in exc_info.value.message
 
     @pytest.mark.unit
@@ -425,7 +424,7 @@ class TestInitCatalogFilesystemErrors:
 
         with patch.object(Path, "mkdir", failing_mkdir):
             with pytest.raises(CatalogInitError) as exc_info:
-                init_catalog(catalog_dir)
+                init_catalog(catalog_dir, license_id="CC-BY-4.0")
             assert "Cannot create .portolan directory" in exc_info.value.message
 
     @pytest.mark.unit
@@ -438,17 +437,39 @@ class TestInitCatalogFilesystemErrors:
         catalog_dir = tmp_path / "test"
         catalog_dir.mkdir()
 
-        original_write_text = Path.write_text
-
-        def failing_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
-            if "config.yaml" in str(self):
+        # config.yaml is written through the atomic helper, so the failure is
+        # simulated there rather than on Path.write_text. metadata.yaml goes through
+        # the same helper and is written first, so fail only on config.yaml to keep
+        # this test about the step it names.
+        def failing_write_text_atomic(path: Path, content: str) -> None:
+            if path.name == "config.yaml":
                 raise OSError("Disk full")
-            return original_write_text(self, *args, **kwargs)
 
-        with patch.object(Path, "write_text", failing_write_text):
+        with patch("portolan_cli.catalog.write_text_atomic", failing_write_text_atomic):
             with pytest.raises(CatalogInitError) as exc_info:
-                init_catalog(catalog_dir)
+                init_catalog(catalog_dir, license_id="CC-BY-4.0")
             assert "Cannot write config.yaml" in exc_info.value.message
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_metadata_write_failure(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when the seeded metadata.yaml write fails (issue #686)."""
+        from unittest.mock import patch
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        def failing_write_text_atomic(path: Path, content: str) -> None:
+            if path.name == "metadata.yaml":
+                raise OSError("Disk full")
+
+        with patch("portolan_cli.catalog.write_text_atomic", failing_write_text_atomic):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(catalog_dir, license_id="CC-BY-4.0")
+            assert "Cannot write metadata.yaml" in exc_info.value.message
+        # config.yaml is the sentinel and is written last, so the catalog stays FRESH.
+        assert not (catalog_dir / ".portolan" / "config.yaml").exists()
 
     # Note: test_init_catalog_raises_on_state_write_failure removed per issue #290
     # state.json is no longer created during init
@@ -463,16 +484,18 @@ class TestInitCatalogFilesystemErrors:
         catalog_dir = tmp_path / "test"
         catalog_dir.mkdir()
 
-        original_write_text = Path.write_text
+        # versions.json is written through the atomic helper; fail only that
+        # path so the rest of init proceeds normally up to the error.
+        from portolan_cli.json_io import write_json_atomic as real_write
 
-        def failing_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
-            if "versions.json" in str(self):
+        def failing_write_json_atomic(path: Path, data: Any) -> None:
+            if "versions.json" in str(path):
                 raise OSError("Disk full")
-            return original_write_text(self, *args, **kwargs)
+            real_write(path, data)
 
-        with patch.object(Path, "write_text", failing_write_text):
+        with patch("portolan_cli.catalog.write_json_atomic", failing_write_json_atomic):
             with pytest.raises(CatalogInitError) as exc_info:
-                init_catalog(catalog_dir)
+                init_catalog(catalog_dir, license_id="CC-BY-4.0")
             assert "Cannot write versions.json" in exc_info.value.message
 
     @pytest.mark.unit
@@ -492,55 +515,5 @@ class TestInitCatalogFilesystemErrors:
 
         with patch.object(pystac.Catalog, "save", failing_save):
             with pytest.raises(CatalogInitError) as exc_info:
-                init_catalog(catalog_dir)
+                init_catalog(catalog_dir, license_id="CC-BY-4.0")
             assert "Cannot write catalog.json" in exc_info.value.message
-
-    @pytest.mark.unit
-    def test_init_catalog_raises_on_self_link_update_failure(self, tmp_path: Path) -> None:
-        """CatalogInitError raised when adding self link fails."""
-        from unittest.mock import patch
-
-        from portolan_cli.catalog import CatalogInitError, init_catalog
-
-        catalog_dir = tmp_path / "test"
-        catalog_dir.mkdir()
-
-        original_write_text = Path.write_text
-
-        def failing_write_text(self: Path, content: str, *args: Any, **kwargs: Any) -> int:
-            # Only fail on the self-link update (when content contains "self" link)
-            if "catalog.json" in str(self):
-                try:
-                    data = json.loads(content)
-                    if any(link.get("rel") == "self" for link in data.get("links", [])):
-                        raise OSError("Cannot update catalog")
-                except json.JSONDecodeError:
-                    pass
-            return original_write_text(self, content, *args, **kwargs)
-
-        with patch.object(Path, "write_text", failing_write_text):
-            with pytest.raises(CatalogInitError) as exc_info:
-                init_catalog(catalog_dir)
-            assert "Cannot update catalog.json with self link" in exc_info.value.message
-
-    @pytest.mark.unit
-    def test_init_catalog_raises_on_catalog_json_decode_error(self, tmp_path: Path) -> None:
-        """CatalogInitError raised when catalog.json is corrupted."""
-        from unittest.mock import patch
-
-        from portolan_cli.catalog import CatalogInitError, init_catalog
-
-        catalog_dir = tmp_path / "test"
-        catalog_dir.mkdir()
-
-        original_read_text = Path.read_text
-
-        def corrupted_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
-            if "catalog.json" in str(self):
-                return "not valid json {"
-            return original_read_text(self, *args, **kwargs)
-
-        with patch.object(Path, "read_text", corrupted_read_text):
-            with pytest.raises(CatalogInitError) as exc_info:
-                init_catalog(catalog_dir)
-            assert "Cannot parse catalog.json" in exc_info.value.message

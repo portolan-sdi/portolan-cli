@@ -989,11 +989,12 @@ class TestRasterExtension:
     """
 
     @pytest.mark.unit
-    def test_build_stac_extensions_detects_bands_key(self) -> None:
-        """build_stac_extensions includes raster extension when 'bands' key present.
+    def test_build_stac_extensions_ignores_core_bands_key(self) -> None:
+        """A bare 'bands' array does not declare the raster extension (issue #654).
 
-        STAC v1.1.0 uses a unified 'bands' array instead of 'raster:bands'.
-        The raster extension should be declared when bands array exists.
+        STAC v1.1.0 promoted the unified `bands` array (and its `statistics`)
+        into the core schema, so declaring the raster extension for it claims
+        conformance the object does not need.
         """
         from portolan_cli.stac import EXTENSION_URLS, build_stac_extensions
 
@@ -1002,7 +1003,7 @@ class TestRasterExtension:
         }
         result = build_stac_extensions(properties)
 
-        assert EXTENSION_URLS["raster"] in result
+        assert EXTENSION_URLS["raster"] not in result
 
     @pytest.mark.unit
     def test_build_stac_extensions_detects_bands_with_raster_fields(self) -> None:
@@ -1124,6 +1125,56 @@ class TestRasterExtension:
         assert "raster:spatial_resolution" not in item.properties
 
     @pytest.mark.unit
+    def test_add_raster_extension_not_declared_without_raster_field(self) -> None:
+        """No raster: field written -> no raster extension declared (issue #654).
+
+        Raster v2.0.0 requires a declared item to carry at least one
+        ``raster:``-prefixed field in properties, bands, or an asset. The
+        CLI's generated bands carry only core fields (name/data_type/nodata),
+        so a COG with no computable resolution must not declare the extension
+        or it fails v2.0.0 validation.
+        """
+        from portolan_cli.stac import EXTENSION_URLS, add_raster_extension, create_item
+
+        item = create_item(item_id="test-no-raster-field", bbox=[0, 0, 1, 1])
+        metadata = COGMetadata(
+            bbox=(0, 0, 1, 1),
+            crs="EPSG:4326",
+            width=100,
+            height=100,
+            band_count=1,
+            dtype="uint8",
+            nodata=None,
+            resolution=None,
+        )
+
+        add_raster_extension(item, metadata)
+
+        assert EXTENSION_URLS["raster"] not in (item.stac_extensions or [])
+
+    @pytest.mark.unit
+    def test_add_raster_extension_declared_with_preexisting_raster_field(self) -> None:
+        """A raster: field already on the item keeps the declaration."""
+        from portolan_cli.stac import EXTENSION_URLS, add_raster_extension, create_item
+
+        item = create_item(item_id="test-pre-raster-field", bbox=[0, 0, 1, 1])
+        item.properties["raster:sampling"] = "area"
+        metadata = COGMetadata(
+            bbox=(0, 0, 1, 1),
+            crs="EPSG:4326",
+            width=100,
+            height=100,
+            band_count=1,
+            dtype="uint8",
+            nodata=None,
+            resolution=None,
+        )
+
+        add_raster_extension(item, metadata)
+
+        assert EXTENSION_URLS["raster"] in (item.stac_extensions or [])
+
+    @pytest.mark.unit
     def test_add_raster_extension_idempotent(self) -> None:
         """add_raster_extension doesn't duplicate extension URL on multiple calls."""
         from portolan_cli.stac import EXTENSION_URLS, add_raster_extension, create_item
@@ -1147,6 +1198,41 @@ class TestRasterExtension:
             1 for ext in (item.stac_extensions or []) if ext == EXTENSION_URLS["raster"]
         )
         assert raster_count == 1
+
+
+class TestExtensionRegistryVersions:
+    """Anti-drift gate for EXTENSION_URLS (issue #654).
+
+    The normative registry is the extension table in portolan-spec
+    ``stac/README.md``. The raster entry sat a major version behind that
+    table unnoticed because nothing pinned the mapping. When the spec
+    registry moves, update EXTENSION_URLS and this test in the same change.
+    """
+
+    @pytest.mark.unit
+    def test_extension_urls_match_spec_registry(self) -> None:
+        """Every EXTENSION_URLS entry carries the spec-registry version."""
+        from portolan_cli.constants import PARTITION_EXTENSION_URI
+        from portolan_cli.stac import EXTENSION_URLS
+
+        assert EXTENSION_URLS == {
+            "table": "https://stac-extensions.github.io/table/v1.2.0/schema.json",
+            "projection": "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
+            "raster": "https://stac-extensions.github.io/raster/v2.0.0/schema.json",
+            "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",
+            "vector": "https://stac-extensions.github.io/vector/v0.1.0/schema.json",
+            "partition": PARTITION_EXTENSION_URI,
+        }
+
+    @pytest.mark.unit
+    def test_web_map_links_matches_spec_registry(self) -> None:
+        """The rel=pmtiles link extension carries the spec-registry version."""
+        from portolan_cli.viz.pmtiles_links import WEB_MAP_LINKS_EXTENSION
+
+        assert (
+            WEB_MAP_LINKS_EXTENSION
+            == "https://stac-extensions.github.io/web-map-links/v1.3.0/schema.json"
+        )
 
 
 class TestCollectionExtensionAggregation:

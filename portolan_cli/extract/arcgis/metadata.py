@@ -79,6 +79,7 @@ class ArcGISMetadata:
         Returns:
             ExtractedMetadata instance with mapped fields.
         """
+        from portolan_cli.licensing import license_url_from_text
         from portolan_cli.metadata_extraction import ExtractedMetadata
 
         return ExtractedMetadata(
@@ -90,6 +91,7 @@ class ArcGISMetadata:
             contact_name=self.contact_name,
             contact_email=None,  # ArcGIS doesn't provide email
             license_raw=self.license_info_raw,
+            license_url=license_url_from_text(self.license_info_raw),
             processing_notes=self.processing_notes,
             known_issues=self.known_issues,
         )

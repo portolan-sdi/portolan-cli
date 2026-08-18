@@ -20,13 +20,13 @@ Config is stored in .portolan/config.yaml under the 'conversion' key:
 See:
 - GitHub Issue #75: FlatGeobuf cloud-native status
 - GitHub Issue #103: Config for non-cloud-native file handling
-- ADR-0014: Accept non-cloud-native formats
+- Accept non-cloud-native formats
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
@@ -188,6 +188,14 @@ LOSSY_COMPRESSIONS: frozenset[str] = frozenset({"JPEG", "WEBP"})
 # Compression methods that support quality setting
 QUALITY_COMPRESSIONS: frozenset[str] = frozenset({"JPEG", "WEBP"})
 
+# Sentinel meaning "derive this from the source raster" (Issue #690).
+AUTO = "auto"
+
+# Fallback pair used when a raster cannot be inspected. These are the values
+# Portolan hardcoded before #690: safe everywhere, optimal nowhere.
+FALLBACK_PREDICTOR = 2
+FALLBACK_RESAMPLING = "nearest"
+
 # Valid resampling methods for overview generation
 # See: rio_cogeo.cogeo.cog_translate overview_resampling parameter
 VALID_RESAMPLING_METHODS: frozenset[str] = frozenset(
@@ -209,24 +217,93 @@ VALID_RESAMPLING_METHODS: frozenset[str] = frozenset(
 class CogSettings:
     """Configuration for Cloud-Optimized GeoTIFF conversion.
 
-    Defaults match ADR-0019: COG Optimization Defaults.
+    Defaults are the built-in COG settings.
 
     Attributes:
         compression: Compression algorithm (DEFLATE, JPEG, LZW, ZSTD, etc.).
         quality: Quality setting (1-100). Applies to JPEG and WEBP compression.
         tile_size: Internal tile size in pixels (default 512).
-        predictor: Compression predictor (1=none, 2=horizontal, 3=floating point).
-        resampling: Overview resampling method (nearest, bilinear, cubic, etc.).
+        predictor: Compression predictor (1=none, 2=horizontal, 3=floating point),
+            or "auto" to derive it from the source raster's dtype.
+        resampling: Overview resampling method (nearest, bilinear, cubic, etc.),
+            or "auto" to derive it from the source raster's dtype.
     """
 
     compression: str = "DEFLATE"
     quality: int | None = None
     tile_size: int = 512
-    predictor: int = 2
-    resampling: str = "nearest"
+    predictor: int | str = AUTO
+    resampling: str = AUTO
     generate_thumbnail: bool = True
     thumbnail_max_size: int = 512
     thumbnail_quality: int = 75
+
+
+def derive_cog_defaults(source: Path) -> tuple[int, str]:
+    """Pick a predictor and an overview resampling method for one raster.
+
+    The spec's conversion defaults tie both settings to what the pixels mean
+    (see specs/best-practices/conversion-defaults.md in portolan-spec):
+
+    - Floating-point rasters (elevation, model output) compress better with the
+      floating-point predictor, and their overviews should be averaged.
+    - Integer rasters may carry class codes, so their overviews stay nearest:
+      averaging two class codes invents a class that does not exist.
+    - Multi-band byte imagery gains nothing from horizontal differencing, so it
+      gets no predictor at all.
+
+    Continuous versus categorical has no perfect signal. Dtype is the one signal
+    that is cheap and rarely wrong, and both results stay overridable through
+    ``conversion.cog`` in ``.portolan/config.yaml``.
+
+    Args:
+        source: Raster to inspect.
+
+    Returns:
+        A ``(predictor, resampling)`` pair. Unreadable rasters yield the
+        conservative fallback, ``(2, "nearest")``.
+    """
+    import rasterio
+
+    try:
+        with rasterio.open(source) as src:
+            dtype = str(src.dtypes[0])
+            band_count = int(src.count)
+    except Exception as exc:  # noqa: BLE001 - any read failure means "use fallback"
+        logger.debug("Could not inspect %s for COG defaults (%s); using fallback", source, exc)
+        return FALLBACK_PREDICTOR, FALLBACK_RESAMPLING
+
+    if dtype.startswith("float") or dtype.startswith("complex"):
+        return 3, "average"
+    if dtype == "uint8" and band_count >= 3:
+        return 1, FALLBACK_RESAMPLING
+    return FALLBACK_PREDICTOR, FALLBACK_RESAMPLING
+
+
+def resolve_cog_settings(settings: CogSettings, source: Path) -> CogSettings:
+    """Replace any "auto" field in ``settings`` with a value read off ``source``.
+
+    Configured values pass through untouched. Call this immediately before
+    handing a profile to rio-cogeo, never at config load time: derivation needs
+    the raster, and one catalog holds many.
+
+    Args:
+        settings: Settings as loaded from config.
+        source: Raster about to be converted.
+
+    Returns:
+        Settings with concrete ``predictor`` and ``resampling`` values.
+    """
+    if settings.predictor != AUTO and settings.resampling != AUTO:
+        return settings
+
+    derived_predictor, derived_resampling = derive_cog_defaults(source)
+
+    return replace(
+        settings,
+        predictor=derived_predictor if settings.predictor == AUTO else settings.predictor,
+        resampling=derived_resampling if settings.resampling == AUTO else settings.resampling,
+    )
 
 
 def validate_cog_settings(settings: CogSettings) -> list[str]:
@@ -253,7 +330,7 @@ def validate_cog_settings(settings: CogSettings) -> list[str]:
         )
 
     # Validate resampling
-    if settings.resampling not in VALID_RESAMPLING_METHODS:
+    if settings.resampling != AUTO and settings.resampling not in VALID_RESAMPLING_METHODS:
         warnings.append(
             f"Unknown resampling method '{settings.resampling}'. "
             f"Valid values: {', '.join(sorted(VALID_RESAMPLING_METHODS))}. "
@@ -294,15 +371,19 @@ def validate_cog_settings(settings: CogSettings) -> list[str]:
         )
 
     # Validate predictor
-    if settings.predictor not in (1, 2, 3):
+    if settings.predictor != AUTO and settings.predictor not in (1, 2, 3):
         warnings.append(
             f"Predictor {settings.predictor} is invalid. "
-            "Valid values: 1 (none), 2 (horizontal), 3 (floating point). "
-            "Using predictor=2."
+            "Valid values: 1 (none), 2 (horizontal), 3 (floating point), "
+            "or 'auto' to derive from the source raster. Using predictor=2."
         )
 
     # Warn about predictor with lossy compression
-    if settings.compression in LOSSY_COMPRESSIONS and settings.predictor != 1:
+    if (
+        settings.compression in LOSSY_COMPRESSIONS
+        and settings.predictor != AUTO
+        and settings.predictor != 1
+    ):
         warnings.append(
             f"Predictor={settings.predictor} is ignored for lossy compression "
             f"'{settings.compression}'. Consider setting predictor=1 to avoid confusion."
@@ -374,16 +455,18 @@ def get_cog_settings(catalog_path: Path) -> CogSettings:
     if not isinstance(tile_size, int):
         tile_size = 512
 
-    predictor = cog.get("predictor")
-    if not isinstance(predictor, int):
-        predictor = 2
-
-    resampling = cog.get("resampling")
-    if not isinstance(resampling, str):
-        resampling = "nearest"
+    # predictor and resampling both accept "auto", meaning "derive from the
+    # source raster at conversion time" (Issue #690). Anything unparsable
+    # falls back to "auto" rather than to a hardcoded value.
+    raw_predictor = cog.get("predictor", AUTO)
+    predictor: int | str
+    if isinstance(raw_predictor, bool) or not isinstance(raw_predictor, int):
+        predictor = AUTO
     else:
-        # Normalize resampling to lowercase
-        resampling = resampling.lower()
+        predictor = raw_predictor
+
+    raw_resampling = cog.get("resampling", AUTO)
+    resampling = raw_resampling.lower() if isinstance(raw_resampling, str) else AUTO
 
     generate_thumbnail = cog.get("generate_thumbnail")
     if not isinstance(generate_thumbnail, bool):

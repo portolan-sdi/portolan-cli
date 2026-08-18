@@ -1,14 +1,14 @@
 """File-based versioning backend using versions.json.
 
 This is the MVP implementation of VersioningBackend that stores version history
-in a JSON file. It assumes single-writer access (see ADR-0015).
+in a JSON file. It assumes single-writer access.
 
 For multi-user concurrent access, use an enterprise plugin backend.
 
 Implementation Status (MINOR #9, #10):
     - get_current_version: Implemented
     - list_versions: Implemented
-    - publish: Implemented (with schema and message support per ADR-0005)
+    - publish: Implemented (with schema and message support)
     - check_drift: Stub (deferred to sync implementation)
     - rollback: Deferred to enterprise plugin backends
     - prune: Deferred to enterprise plugin backends
@@ -21,7 +21,7 @@ Deferred Features:
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
 from portolan_cli.backends.protocol import DriftReport, SchemaFingerprint
@@ -43,7 +43,7 @@ class JsonFileBackend:
     """MVP versioning backend using versions.json.
 
     This backend uses the versions.json file as the single source of truth
-    for version history, sync state, and integrity checksums (ADR-0005).
+    for version history, sync state, and integrity checksums.
 
     Limitations:
         - Single-writer access only (no concurrent safety)
@@ -73,17 +73,36 @@ class JsonFileBackend:
             Path to the collection's versions.json file.
 
         Raises:
-            ValueError: If collection name is empty.
+            ValueError: If collection name is empty or escapes the catalog root.
         """
         if not collection or not collection.strip():
             raise ValueError("Collection name cannot be empty")
-        # Normalize path to prevent directory traversal (MAJOR #8)
-        safe_collection = Path(collection).name
-        # Explicitly reject traversal attempts that survive Path.name
-        if safe_collection in ("", ".", ".."):
+        # Nested collection ids are first-class: `add` creates collections under
+        # subcatalogs (`infer_nested_collection_id`, ADR-0032), and the spec allows
+        # a slash-separated id such as `climate/hittekaart`. Collapsing that to its
+        # last segment via `Path(collection).name` wrote every nested collection's
+        # versions.json to `{catalog_root}/hittekaart/`. The collection's own file
+        # went stale, which is the phantom entry in issue #723.
+        #
+        # Keep the traversal guard (MAJOR #8) by validating the id lexically rather
+        # than discarding its parts. Validation stays lexical (no `resolve()`) so the
+        # returned path keeps the caller's catalog root verbatim, which matters where
+        # the root is itself a symlink (macOS `/tmp`).
+        # Judge the id under both path flavors, never just the host's. `pathlib`
+        # splits by platform, and each flavor is blind to the other's escapes.
+        # On Windows `/etc/passwd` is rooted but not absolute, because absolute
+        # there needs a drive, so the guard passed it. On POSIX every backslash
+        # form (`C:\Windows`, `\\server\share`, `climate\..\..\etc`) is a single
+        # filename, so the guard passed those instead. A collection id is a
+        # slash-separated spec string, not a host path, so it must satisfy both.
+        candidate = Path(collection)
+        flavors = (PurePosixPath(collection), PureWindowsPath(collection))
+        if not candidate.parts or any(
+            f.is_absolute() or f.root or f.drive or ".." in f.parts for f in flavors
+        ):
             raise ValueError(f"Invalid collection name: {collection!r}")
-        # versions.json at collection root (per ADR-0023)
-        return self._catalog_root / safe_collection / "versions.json"
+        # versions.json at collection root
+        return self._catalog_root.joinpath(*candidate.parts) / "versions.json"
 
     def get_current_version(self, collection: str) -> Version:
         """Get the current (latest) version of a collection.
@@ -131,7 +150,7 @@ class JsonFileBackend:
     ) -> Version:
         """Publish a new version of a collection.
 
-        Stores schema fingerprint and message as per ADR-0005.
+        Stores schema fingerprint and message as.
         Uses atomic write to prevent corruption (CRITICAL #2).
 
         Args:
@@ -247,10 +266,7 @@ class JsonFileBackend:
         Raises:
             NotImplementedError: Rollback is deferred to enterprise plugin backends.
         """
-        raise NotImplementedError(
-            "Rollback is deferred to enterprise plugin backends. "
-            "See ADR-0015 for details on the two-tier versioning architecture."
-        )
+        raise NotImplementedError("Rollback is deferred to enterprise plugin backends. ")
 
     def prune(self, collection: str, keep: int, dry_run: bool) -> list[Version]:
         """Remove old versions, keeping the N most recent.
@@ -270,10 +286,7 @@ class JsonFileBackend:
         Raises:
             NotImplementedError: Prune is deferred to enterprise plugin backends.
         """
-        raise NotImplementedError(
-            "Prune is deferred to enterprise plugin backends. "
-            "See ADR-0015 for details on the two-tier versioning architecture."
-        )
+        raise NotImplementedError("Prune is deferred to enterprise plugin backends. ")
 
     def check_drift(self, collection: str) -> DriftReport:
         """Check for drift between local and remote state.

@@ -28,7 +28,7 @@ Before you ask for review, a PR should clear this bar:
 - [ ] **CodeRabbit comments addressed.** The automated reviewer's findings are
       resolved or explicitly answered.
 - [ ] **Docs and ADRs updated.** User-facing behavior is documented; non-obvious
-      decisions have an ADR (`context/shared/adr/`); `menard` doc-freshness passes.
+      decisions are recorded where they apply.
 
 If you run `prek run --all-files` locally and it is green, you have cleared most of
 this bar before pushing.
@@ -104,12 +104,11 @@ job. That single job covers:
 
 - **ruff** — lint + format
 - **mypy** — type checking (strict)
-- **import-linter** — architecture contracts ([ADR-0025](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0025-architecture-as-code.md))
+- **import-linter** — architecture contracts
 - **codespell** — spelling
 - **vulture** / **xenon** / **pylint** — dead code, complexity, duplication
 - **bandit** — security scanning
 - **deptry** — dependency hygiene
-- **menard** — code↔doc freshness
 - **actionlint** / **zizmor** — GitHub Actions workflow linting + supply-chain audit
 
 Alongside `quality`, CI runs the **test matrix** (Python 3.10–3.13 × Linux/macOS/
@@ -194,22 +193,24 @@ GitHub Release.
 
 - All code requires type annotations (`mypy --strict`)
 - Use `portolan_cli/output.py` for all user-facing terminal messages
-- Non-obvious design decisions require an ADR in `context/shared/adr/`
+- Non-obvious design decisions are recorded next to what they govern: user-facing
+  behavior in `docs/`, maintainer rationale in `context/shared/documentation/`,
+  accepted limitations in `context/shared/known-issues/`, and call-site gotchas in
+  the relevant docstring
 
 ## Spec Changes
 
-The Portolan specification lives in `spec/` within this repository. The CLI repo
-is the **source of truth** for the spec; the separate
-[portolan-spec](https://github.com/portolan-sdi/portolan-spec) repository is a
-read-only mirror synced via CI.
+The Portolan specification lives in the
+[portolan-spec](https://github.com/portolan-sdi/portolan-spec) repository, which
+is the source of truth. Propose spec changes there.
 
-To propose spec changes:
-
-1. Open a PR in this repository that modifies files in `spec/`
-2. The PR itself is the proposal — discuss in the PR comments
-3. On merge, CI automatically syncs changes to portolan-spec
-
-See [ADR-0048](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0048-cli-as-spec-source.md) for rationale.
+The CLI consumes the spec through
+[rashid](https://github.com/portolan-sdi/rashid), the validator behind
+`portolan check`: rashid implements each requirement as a `PTL-*` rule citing
+the `PORTO-*` requirement it enforces. A spec change therefore lands in three
+steps — the requirement in portolan-spec, the rule in rashid, then whatever
+generation change the CLI needs so freshly generated catalogs still pass
+`tests/integration/test_generated_catalog_conformance.py`.
 
 ## Questions?
 

@@ -31,14 +31,13 @@ Install with: `uv tool install prek && prek install`
 
 - `ruff` / `ruff format` — Linting with auto-fix + formatting
 - `mypy` — Type checking (strict)
-- `import-linter` — Architecture contracts (ADR-0025)
+- `import-linter` — Architecture contracts
 - `codespell` — Spell checking
 - `vulture` / `xenon` / `pylint` — Dead code, complexity, duplicate code (R0801)
 - `bandit` — Static security analysis
 - `deptry` — Dependency hygiene
 - `actionlint` / `zizmor` — GitHub Actions workflow linting + supply-chain audit
-- `menard check` / `check-protected` — Documentation freshness + protected content
-- `validate-agents-md` — ADR index / reference validation
+- `validate-agents-md` — AGENTS.md reference validation
 - `pytest -m unit` — Fast unit tests (pre-push stage)
 - `commitizen` — Commit message validation (commit-msg stage)
 - Builtin hooks: trailing whitespace, YAML/TOML validation, large file detection
@@ -60,13 +59,13 @@ Workflow: `.github/workflows/ci.yml`
 
 Runs `prek run --all-files` — the *same* hooks developers run locally (see Tier 1),
 so CI and local hooks can't drift. Covers ruff, mypy, import-linter, codespell,
-vulture, xenon, pylint-duplicate, bandit, deptry, menard, actionlint, zizmor, and
+vulture, xenon, pylint-duplicate, bandit, deptry, actionlint, zizmor, and
 the builtin file hooks. Replaces the old separate `lint` and `dead-code` jobs.
 
 CI skips three hooks: `no-commit-to-branch` (fails on push-to-main), `fast-tests`
 (the `test` job covers them), and `update-freshness` (stamps today's date, so it's
-non-deterministic in CI — drift is still caught by the non-mutating `menard-check`
-and `validate-agents-md`).
+non-deterministic in CI — drift is still caught by the non-mutating
+`validate-agents-md`).
 
 #### `security` — Dependency Audit
 
@@ -116,48 +115,23 @@ Runs at 4 AM UTC daily. Can be triggered manually.
 
 ### Jobs
 
-#### Mutation Testing (two scopes)
+#### Mutation Testing
 
 Uses `mutmut` to verify tests actually catch bugs. The full codebase generates
-~45k mutants — far more than any single run can test in a nightly window — so
-mutation testing runs at two scopes that share one scorer:
+~45k mutants, far more than any single run can test in a nightly window. One
+scope runs it. Pull requests carry no mutation gate (#779).
 
-- **PR-scoped** (`mutation-pr` in `ci.yml`, PR-only, advisory): mutates only the
-  `portolan_cli` files the PR changed, so feedback lands on new code when the
-  author can act on it. Skipped when a PR touches no source. A PR that changes
-  only comments/docstrings produces no mutants and passes (`--allow-empty`).
-  Advisory today — not in the `ci-success` gate — until the floor is validated
-  against a real full run; promote it to required by adding it to `ci-success`
-  needs.
 - **Nightly sweep** (`mutation` in `nightly.yml`, hard gate): mutates a
-  deterministic `1/NUM_SHARDS` slice of the source files, picked by day-of-year,
-  so the whole tree is covered every `NUM_SHARDS` nights (currently 25). Lower
-  `NUM_SHARDS` to cover more per night, but only if a run still finishes within
-  `timeout-minutes` — and re-measure the per-shard rates, which a new count
-  invalidates.
+  deterministic `1/NUM_SHARDS` slice of the source files, round-robin by
+  day-of-year, so the whole tree is covered every `NUM_SHARDS` nights (currently
+  25). Lower `NUM_SHARDS` to cover more per night, but only if a run still
+  finishes within `timeout-minutes`.
 
-**Shard membership is a hash of each file's path** (`scripts/shard_select.py`),
-not its index in the sorted file list. Index assignment shifted every file's
-shard whenever one file was added, which would stale every recorded per-shard
-rate on any commit adding a module. Hashing moves only the added file.
-
-**Two floors.** `.mutation-baseline` holds one repo-wide integer: the
-catastrophe floor every run must clear. `.mutation-shards.json` holds each
-shard's own measured kill rate, and the nightly sweep requires the shard to hold
-that rate minus a small tolerance for timeout jitter. Both are needed because a
-shard's rate depends on which modules land in it — the first complete sweep
-(shard 8, 2026-07-27) measured 44.63% overall, spanning 18% for
-`sync.upload_progress` to 95% for `backends.iceberg.config`. One repo-wide
-number set high enough to catch a regression in the strong modules would red the
-nightly every time a weak shard came up; set low enough to stay green, it would
-gate nothing.
-
-A shard with no recorded rate is gated by the repo-wide floor alone, and the run
-prints the JSON line to paste into `.mutation-shards.json`. Recording it is what
-tightens the gate, so do it when a sweep surfaces one. The score counts
-`killed + timeout + suspicious` as killed over `killed_total + survived`
-testable (`no_tests` excluded). **Lowering either floor requires a justification
-in the PR that does so.**
+**Threshold:** the floor lives in `.mutation-baseline` (a single integer). The
+sweep reads it via `scripts/mutation_score.py` rather than hardcoding it, so it
+ratchets up in a one-line, reviewable diff. The score counts `killed + timeout +
+suspicious` as killed over `killed_total + survived` testable (`no_tests`
+excluded). **Lowering the floor requires a justification in the PR that does so.**
 
 **Mutant-free files are filtered out before mutmut sees them**
 (`scripts/mutant_globs.py`). About a fifth of `portolan_cli` generates no
@@ -167,7 +141,7 @@ mutmut raises `Filtered for specific mutants, but nothing matches` and fails the
 whole run — which is what killed the 2026-08-02 nightly, whose shard held two
 re-export packages and nothing else. Emptiness comes from mutmut's own mutation
 pass, because nine of those files do define functions and a "has a `def`" test
-would still pass them through. Both scopes skip cleanly when the filter leaves
+would still pass them through. The sweep skips cleanly when the filter leaves
 nothing, and the skipped files are named in the log.
 
 **Fails loud, never silent.** On the nightly sweep, zero testable mutants means
@@ -175,7 +149,7 @@ mutation testing is broken, not passing — the scorer hard-fails (it used to
 `exit 0` and report a green nightly, hiding a broken setup). The one exception is
 a shard the filter empties, where the run and floor steps are skipped outright
 rather than scored against absent stats. `[tool.mutmut]` in
-`pyproject.toml` copies the `scripts/` package, `spec/` schemas, and data files
+`pyproject.toml` copies the `scripts/` package and the data files
 into the mutants sandbox and scopes the stats run to the fast, offline suite with
 `--no-cov`.
 
@@ -183,12 +157,20 @@ into the mutants sandbox and scopes the stats run to the fast, offline suite wit
 instruments code with a trampoline that reads `os.environ["MUTANT_UNDER_TEST"]`.
 Two consequences the tests must respect: a cleared environment must preserve that
 var (use `cleared_environ()` from `tests/conftest.py`, not
-`patch.dict(..., clear=True)`), and files read by repo-root path (e.g.
-`spec/schema/`, `.mutation-shards.json`) must be listed in
-`[tool.mutmut] also_copy`. Parallel conversion
+`patch.dict(..., clear=True)`), and files read by repo-root path must be
+listed in `[tool.mutmut] also_copy`. Parallel conversion
 falls back to serial when a process pool can't start in the sandbox
 (`convert.py`). (The geoparquet-io #565 CWD guard was evaluated and is **not**
 needed: `isolated_filesystem`/`chdir` tests do not crash the stats phase.)
+
+Static tests that inspect the checked-out Python source use the `source_scan`
+marker. Mutmut instruments the whole source tree before selecting a mutant, so
+those tests otherwise inspect every dormant mutation alternative and fail the
+clean baseline. Ordinary unit CI still runs them; only mutmut excludes them.
+
+The PR changed-file filter uses Git's `:(glob)portolan_cli/**/*.py` pathspec.
+The explicit glob magic matters: default Git pathspec handling treats the same
+text as nested-only and skips package-root modules such as `portolan_cli/add.py`.
 
 Why this matters: AI-generated tests can be tautological — they may pass but not actually verify behavior. Mutation testing injects bugs and checks if tests catch them.
 
@@ -222,8 +204,9 @@ Why this matters: AI-generated tests can be tautological — they may pass but n
 
 ## Branch Protection
 
-`main` protection is defined **as code** in `scripts/apply_branch_protection.sh`
-(idempotent, admin one-shot). It creates two rulesets:
+Branch protection is defined **as code** in `scripts/apply_branch_protection.sh`
+(idempotent, admin one-shot). It binds `refs/heads/main` and
+`refs/heads/release/*`, the two places PRs land. It creates two rulesets:
 
 - **PR + green checks** (no bypass — binds admins too): every push goes through a
   PR and the required status checks must pass.
@@ -362,14 +345,4 @@ Refactor the flagged function/module. Consider extracting helper functions or si
 
 ### "pip-audit found vulnerabilities"
 
-Update the affected dependency or add a temporary exception with justification in an ADR.
-
-### "menard: stale documentation detected"
-
-Code was modified but linked documentation wasn't updated. Options:
-1. Update the documentation to reflect the code changes
-2. Run `menard fix` for interactive resolution
-3. Run `menard fix-mark-reviewed <code-file> <doc-file>` if the doc doesn't need changes
-4. Run `menard fix-ignore <code-file> <doc-file>` to permanently ignore the relationship
-
-To see what changed: `menard list-stale --show-diff`
+Update the affected dependency, or add a temporary exception to `.pip-audit-ignores` with an expiry date and a stated reason.

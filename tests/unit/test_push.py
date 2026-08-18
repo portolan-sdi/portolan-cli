@@ -47,7 +47,7 @@ def local_catalog(tmp_path: Path) -> Path:
     catalog_dir = tmp_path / "catalog"
     catalog_dir.mkdir()
 
-    # Create test/versions.json (per ADR-0023)
+    # Create test/versions.json
     versions_dir = catalog_dir / "test"
     versions_dir.mkdir(parents=True)
 
@@ -200,7 +200,7 @@ def local_catalog_malformed(tmp_path: Path) -> Path:
     catalog_dir = tmp_path / "catalog_malformed"
     catalog_dir.mkdir()
 
-    # Create test/versions.json (per ADR-0023) with missing required keys
+    # Create test/versions.json with missing required keys
     versions_dir = catalog_dir / "test"
     versions_dir.mkdir(parents=True)
 
@@ -883,6 +883,159 @@ class TestMissingAssetDetection:
             _get_assets_to_upload(
                 catalog_root=local_catalog,
                 versions_data=versions_data,
+                versions_to_push=["1.0.0"],
+            )
+
+
+class TestMissingDerivedAsset:
+    """Push warns and skips an optional derivative that left the disk (#735).
+
+    The spec calls a ``visual``, ``thumbnail``, ``style`` or
+    ``collection-mirror`` asset optional. Portolan rebuilds each one from other
+    files in the catalog. A user who deletes one still holds a sound catalog. An
+    asset with role ``data`` or ``source`` still raises. The role decides, and
+    the filenames only answer for an href no STAC object claims.
+    """
+
+    @staticmethod
+    def _versions_data(assets: dict[str, str]) -> dict[str, Any]:
+        """One version whose assets are ``{asset_name: href}``."""
+        return {
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "assets": {
+                        name: {"sha256": f"sha-{name}", "size_bytes": 10, "href": href}
+                        for name, href in assets.items()
+                    },
+                }
+            ]
+        }
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "missing_href",
+        [
+            "test/scene1/scene1.thumb.jpg",
+            "test/items.parquet",
+            "test/data.pmtiles",
+        ],
+    )
+    def test_missing_derived_asset_is_skipped(
+        self, local_catalog: Path, capsys: pytest.CaptureFixture[str], missing_href: str
+    ) -> None:
+        """Push skips a recorded derived artifact that is no longer on disk."""
+        from portolan_cli.sync.push import _get_assets_to_upload
+
+        source = local_catalog / "test" / "scene1" / "scene1.tif"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"raster bytes")
+
+        assets = _get_assets_to_upload(
+            catalog_root=local_catalog,
+            versions_data=self._versions_data(
+                {
+                    "scene1/scene1.tif": "test/scene1/scene1.tif",
+                    "derived": missing_href,
+                }
+            ),
+            versions_to_push=["1.0.0"],
+        )
+
+        assert assets == [source.resolve()]
+        assert missing_href in capsys.readouterr().err
+
+    @pytest.mark.unit
+    def test_missing_source_asset_still_raises(self, local_catalog: Path) -> None:
+        """The user's own data is still a hard failure."""
+        from portolan_cli.sync.push import _get_assets_to_upload
+
+        with pytest.raises(FileNotFoundError, match=r"test/scene1/scene1\.tif"):
+            _get_assets_to_upload(
+                catalog_root=local_catalog,
+                versions_data=self._versions_data({"scene1/scene1.tif": "test/scene1/scene1.tif"}),
+                versions_to_push=["1.0.0"],
+            )
+
+    @staticmethod
+    def _register_collection_asset(
+        catalog_root: Path, key: str, href: str, roles: list[str]
+    ) -> None:
+        """Give the collection.json one asset, so the href resolves to a role."""
+        collection_json = catalog_root / "test" / "collection.json"
+        data = json.loads(collection_json.read_text())
+        data.setdefault("assets", {})[key] = {
+            "href": href,
+            "type": "application/octet-stream",
+            "roles": roles,
+        }
+        collection_json.write_text(json.dumps(data, indent=2))
+
+    @pytest.mark.unit
+    def test_data_role_beats_a_generated_filename(self, local_catalog: Path) -> None:
+        """A publisher's own PMTiles carries role `data`, so push still raises.
+
+        The extension registry gives .pmtiles the role `data`, and the spec lets
+        a publisher ship PMTiles as the primary asset. A filename test alone
+        would skip that file and publish a manifest without it.
+        """
+        from portolan_cli.sync.push import _get_assets_to_upload
+
+        self._register_collection_asset(local_catalog, "data", "./data.pmtiles", ["data"])
+
+        with pytest.raises(FileNotFoundError, match=r"test/data\.pmtiles"):
+            _get_assets_to_upload(
+                catalog_root=local_catalog,
+                versions_data=self._versions_data({"data.pmtiles": "test/data.pmtiles"}),
+                versions_to_push=["1.0.0"],
+            )
+
+    @pytest.mark.unit
+    def test_thumbnail_role_wins_over_an_unknown_filename(
+        self, local_catalog: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Push skips a preview the spec calls optional, whatever its name."""
+        from portolan_cli.sync.push import _get_assets_to_upload
+
+        self._register_collection_asset(local_catalog, "thumbnail", "./preview.webp", ["thumbnail"])
+
+        assets = _get_assets_to_upload(
+            catalog_root=local_catalog,
+            versions_data=self._versions_data({"preview.webp": "test/preview.webp"}),
+            versions_to_push=["1.0.0"],
+        )
+
+        assert assets == []
+        assert "test/preview.webp" in capsys.readouterr().err
+
+    @pytest.mark.unit
+    def test_source_role_still_raises(self, local_catalog: Path) -> None:
+        """An upstream original kept locally is data nothing can rebuild."""
+        from portolan_cli.sync.push import _get_assets_to_upload
+
+        self._register_collection_asset(local_catalog, "upstream", "./original.gpkg", ["source"])
+
+        with pytest.raises(FileNotFoundError, match=r"test/original\.gpkg"):
+            _get_assets_to_upload(
+                catalog_root=local_catalog,
+                versions_data=self._versions_data({"original.gpkg": "test/original.gpkg"}),
+                versions_to_push=["1.0.0"],
+            )
+
+    @pytest.mark.unit
+    def test_missing_user_supplied_image_still_raises(self, local_catalog: Path) -> None:
+        """An adopted ``thumbnail.png`` is the user's image, not our render.
+
+        One writer records both an adopted image and a rendered one. Only the
+        ``{stem}.thumb.jpg`` name marks an artifact Portolan drew. A user's own
+        picture must keep the hard failure.
+        """
+        from portolan_cli.sync.push import _get_assets_to_upload
+
+        with pytest.raises(FileNotFoundError, match=r"test/thumbnail\.png"):
+            _get_assets_to_upload(
+                catalog_root=local_catalog,
+                versions_data=self._versions_data({"thumbnail.png": "test/thumbnail.png"}),
                 versions_to_push=["1.0.0"],
             )
 
@@ -2780,7 +2933,7 @@ class TestAssetDiffing:
             }
         }
 
-        # Local version has all 3001 assets (complete snapshot per ADR-0005)
+        # Local version has all 3001 assets (complete snapshot)
         all_assets = {**existing_assets, **new_asset}
         local_versions_data = {
             "versions": [

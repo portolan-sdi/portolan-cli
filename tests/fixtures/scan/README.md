@@ -37,7 +37,7 @@ These fixtures test **directory structure detection**, not file content parsing.
 | `geoparquet_with_companions/` | GeoParquet + plain Parquet companion | Companion file detection |
 | `multiple_geoparquet/` | Two GeoParquet files in same dir | Multiple geo-primary warning |
 | `deep_nested/` | 5+ levels of nesting | Extreme depth handling |
-| `flat_collection/` | Multiple files at root level | ADR-0031 flat pattern |
+| `flat_collection/` | Multiple files at root level | flat pattern |
 | `unsupported/` | `.csv`, `.mxd` + one valid file | Skip unsupported, find valid |
 | `duplicate_basenames/` | `argentina.geojson` + `Argentina.geojson` | Warning: case collision |
 | `json_geojson/` | GeoJSON in `.json` file + plain JSON | Issue #256: content-based GeoJSON detection |
@@ -167,7 +167,7 @@ Two files with the same base name but different case.
 
 ### `three_level_nested/`
 
-Three-level directory nesting for testing ADR-0032 nested catalog support.
+Three-level directory nesting for testing nested catalog support.
 
 ```
 three_level_nested/
@@ -212,7 +212,7 @@ mixed_depths/
 
 ### `geoparquet_with_companions/`
 
-One GeoParquet primary + plain Parquet companion file (valid per ADR-0031).
+One GeoParquet primary + plain Parquet companion file (valid).
 
 ```
 geoparquet_with_companions/
@@ -273,7 +273,7 @@ deep_nested/
 
 ### `flat_collection/`
 
-Multiple GeoParquet files at root level — tests ADR-0031 flat collection pattern.
+Multiple GeoParquet files at root level — tests flat collection pattern.
 
 ```
 flat_collection/

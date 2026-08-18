@@ -20,6 +20,7 @@ from portolan_cli.extract.arcgis.report import (
     LayerResult,
     MetadataExtracted,
 )
+from portolan_cli.licensing import ResolvedLicense
 
 pytestmark = [pytest.mark.integration]
 
@@ -94,6 +95,11 @@ def make_report(
     )
 
 
+# Calling _auto_init_catalog directly skips the resolution the orchestrator does
+# before its download, so the license is passed in here (issue #686).
+TEST_LICENSE = ResolvedLicense(license_id="CC-BY-4.0", license_url=None)
+
+
 class TestAutoInitCatalog:
     """Tests for automatic catalog initialization after extraction."""
 
@@ -119,7 +125,7 @@ class TestAutoInitCatalog:
             ],
         )
 
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(output_dir, report, TEST_LICENSE)
 
         # Should have catalog.json at root
         assert (output_dir / "catalog.json").exists(), "catalog.json should be created"
@@ -145,9 +151,9 @@ class TestAutoInitCatalog:
             ],
         )
 
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(output_dir, report, TEST_LICENSE)
 
-        # Should have .portolan/config.yaml (per ADR-0027)
+        # Should have .portolan/config.yaml
         assert (output_dir / ".portolan" / "config.yaml").exists(), "config.yaml should exist"
 
     def test_auto_init_creates_collection_per_layer(self, tmp_path: Path) -> None:
@@ -178,7 +184,7 @@ class TestAutoInitCatalog:
 
         report = make_report(layers=layers)
 
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(output_dir, report, TEST_LICENSE)
 
         # Each layer should have a collection.json
         assert (output_dir / "layer_0" / "collection.json").exists()
@@ -199,7 +205,7 @@ class TestAutoInitCatalog:
             ],
         )
 
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(output_dir, report, TEST_LICENSE)
 
         # Should NOT create catalog (no successful extractions)
         assert not (output_dir / "catalog.json").exists()
@@ -229,7 +235,7 @@ class TestAutoInitCatalog:
             source_url="https://services.arcgis.com/abc/arcgis/rest/services/DenHaagHousing/FeatureServer",
         )
 
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(output_dir, report, TEST_LICENSE)
 
         # Check catalog title
         catalog_json = json.loads((output_dir / "catalog.json").read_text())
@@ -287,7 +293,7 @@ class TestExtractWithRawFlag:
         assert (output_dir / ".portolan" / "extraction-report.json").exists()
 
     def test_default_extraction_creates_catalog(self, tmp_path: Path) -> None:
-        """ExtractionOptions(raw=False, the default) creates catalog."""
+        """ExtractionOptions(raw=False, the default, license="CC-BY-4.0") creates catalog."""
         from unittest.mock import patch
 
         from portolan_cli.extract.arcgis.discovery import LayerInfo, ServiceDiscoveryResult
@@ -321,7 +327,7 @@ class TestExtractWithRawFlag:
                 extract_arcgis_catalog(
                     url="https://example.com/arcgis/rest/services/Test/FeatureServer",
                     output_dir=output_dir,
-                    options=ExtractionOptions(dry_run=False, raw=False),
+                    options=ExtractionOptions(dry_run=False, raw=False, license="CC-BY-4.0"),
                 )
 
         # Should have catalog.json (default behavior)
@@ -373,7 +379,7 @@ class TestMetadataPropagation:
             license_info_raw=None,
         )
 
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(output_dir, report, TEST_LICENSE)
 
         # Check catalog.json has the description
         catalog_json = json.loads((output_dir / "catalog.json").read_text())
@@ -414,7 +420,7 @@ class TestMetadataPropagation:
                 "name": "Buildings",
                 "description": "Building footprints with construction year and height attributes",
             }
-            _auto_init_catalog(output_dir, report)
+            _auto_init_catalog(output_dir, report, TEST_LICENSE)
 
         # Check collection.json has the layer description
         collection_json = json.loads((layer_dir / "collection.json").read_text())
@@ -446,7 +452,7 @@ class TestMetadataPropagation:
             source_url="https://example.com/arcgis/rest/services/bu_building_emprise_v2/FeatureServer",
         )
 
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(output_dir, report, TEST_LICENSE)
 
         catalog_json = json.loads((output_dir / "catalog.json").read_text())
         # Catalog should be created
@@ -494,7 +500,7 @@ class TestMetadataPropagation:
                 "name": "Land Parcels",
                 "description": "Municipal land parcel boundaries",
             }
-            _auto_init_catalog(output_dir, report)
+            _auto_init_catalog(output_dir, report, TEST_LICENSE)
 
         collection_json = json.loads((layer_dir / "collection.json").read_text())
         # Title should be present (either from layer name or as set)

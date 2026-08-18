@@ -57,7 +57,7 @@ hooks = [
       "tests",
       "vulture_whitelist.py",
       "--exclude",
-      "portolan_cli/validation/rules.py,portolan_cli/backends/protocol.py,portolan_cli/backends/json_file.py,portolan_cli/backends/iceberg/backend.py",
+      "portolan_cli/backends/protocol.py,portolan_cli/backends/json_file.py,portolan_cli/backends/iceberg/backend.py",
     ],
   },
 ]
@@ -129,7 +129,7 @@ hooks = [
     name = "auto-update AGENTS.md sections",
     entry = "uv run python scripts/generate_agents_md_sections.py --update",
     language = "system",
-    files = { glob = ["AGENTS.md", "context/shared/adr/*.md", "context/shared/known-issues/*.md", "pyproject.toml", "portolan_cli/cli.py"] },
+    files = { glob = ["AGENTS.md", "context/shared/known-issues/*.md", "pyproject.toml", "portolan_cli/cli.py"] },
     pass_filenames = false,
   },
   {
@@ -147,7 +147,7 @@ hooks = [
     name = "validate AGENTS.md references",
     entry = "uv run python scripts/validate_agents_md.py",
     language = "system",
-    files = { glob = ["AGENTS.md", "context/shared/adr/*.md", "context/shared/known-issues/*.md"] },
+    files = { glob = ["AGENTS.md", "context/shared/known-issues/*.md"] },
     pass_filenames = false,
   },
   {
@@ -218,23 +218,4 @@ hooks = [
     pass_filenames = false,
   },
 
-  # === DOCUMENTATION SYNC HOOKS ===
-  # menard: detect when code changes require doc updates
-  {
-    id = "menard-check",
-    name = "check documentation freshness",
-    entry = "uv run menard check",
-    language = "system",
-    files = { glob = "portolan_cli/**/*.py" },
-    pass_filenames = false,
-  },
-  {
-    id = "menard-protected",
-    name = "check protected content",
-    entry = "uv run menard check-protected",
-    language = "system",
-    files = { glob = ["**/*.md", "**/*.py"] },
-    exclude = { glob = "**/*.gdb/**" },
-    pass_filenames = false,
-  },
 ]

@@ -1,6 +1,6 @@
 """Integration tests for `portolan init` command with new file structure.
 
-The new init command creates (per ADR-0023, updated by issue #290):
+The new init command creates (updated by issue #290):
 - catalog.json at ROOT level (valid STAC catalog via pystac)
 - versions.json at ROOT level (consumer-visible catalog-level versioning)
 - .portolan/config.yaml -- sentinel file and user config
@@ -36,18 +36,18 @@ class TestInitCreatesRequiredFiles:
     def test_init_creates_root_catalog_json(self, runner: CliRunner, tmp_path: Path) -> None:
         """Init should create catalog.json at ROOT level (not inside .portolan)."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             assert Path("catalog.json").exists(), "catalog.json should be at root"
 
     @pytest.mark.integration
     def test_init_creates_portolan_config(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Init should create .portolan/config.yaml (per ADR-0027, serves as sentinel and user config)."""
+        """Init should create .portolan/config.yaml (serves as sentinel and user config)."""
         import yaml
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 0
             config_file = Path(".portolan/config.yaml")
@@ -63,18 +63,18 @@ class TestInitCreatesRequiredFiles:
     def test_init_creates_portolan_versions(self, runner: CliRunner, tmp_path: Path) -> None:
         """Init should create versions.json at catalog ROOT with minimal versioning.
 
-        Per ADR-0023: versions.json is consumer-visible metadata and must live
+        Versions.json is consumer-visible metadata and must live
         at the catalog root alongside STAC files, not inside .portolan/.
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 0
-            # Per ADR-0023: versions.json is at root, NOT inside .portolan/
+            # Versions.json is at root, NOT inside .portolan/
             versions_file = Path("versions.json")
-            assert versions_file.exists(), "versions.json must be at catalog root per ADR-0023"
+            assert versions_file.exists(), "versions.json must be at catalog root"
             assert not Path(".portolan/versions.json").exists(), (
-                "versions.json must NOT be inside .portolan/ per ADR-0023"
+                "versions.json must NOT be inside .portolan/"
             )
             data = json.loads(versions_file.read_text())
             # Should have at least a version field
@@ -82,7 +82,7 @@ class TestInitCreatesRequiredFiles:
 
     @pytest.mark.integration
     def test_init_creates_all_four_files(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Init should create all 4 required files in correct locations (ADR-0023).
+        """Init should create all 4 required files in correct locations.
 
         Root level (user-visible STAC + versioning):
           - catalog.json
@@ -94,7 +94,7 @@ class TestInitCreatesRequiredFiles:
         Note: state.json was removed per issue #290.
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 0
             # Root level: STAC catalog + consumer-visible versioning
@@ -104,7 +104,7 @@ class TestInitCreatesRequiredFiles:
             assert Path(".portolan/config.yaml").exists()
             # state.json removed per issue #290
             assert not Path(".portolan/state.json").exists()
-            # versions.json must NOT be inside .portolan/ (ADR-0023)
+            # versions.json must NOT be inside .portolan/
             assert not Path(".portolan/versions.json").exists()
 
     @pytest.mark.integration
@@ -122,7 +122,7 @@ class TestInitCreatesRequiredFiles:
         target_dir = tmp_path / "my.catalog"
         target_dir.mkdir()
 
-        result = runner.invoke(cli, ["init", str(target_dir), "--auto"])
+        result = runner.invoke(cli, ["init", str(target_dir), "--auto", "--license", "CC-BY-4.0"])
 
         assert result.exit_code == 0, f"Failed: {result.output}"
         assert (target_dir / "catalog.json").exists(), "catalog.json should be in target directory"
@@ -150,7 +150,7 @@ class TestCatalogJsonValidity:
     def test_catalog_json_is_valid_stac(self, runner: CliRunner, tmp_path: Path) -> None:
         """catalog.json should be loadable by pystac."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             # pystac should be able to read it
             catalog = pystac.Catalog.from_file("catalog.json")
@@ -163,7 +163,7 @@ class TestCatalogJsonValidity:
     def test_catalog_json_has_required_stac_fields(self, runner: CliRunner, tmp_path: Path) -> None:
         """catalog.json must have required STAC Catalog fields."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             data = json.loads(Path("catalog.json").read_text())
             assert data["type"] == "Catalog"
@@ -179,7 +179,7 @@ class TestCatalogJsonValidity:
         catalog_dir = tmp_path / "my-geospatial-catalog"
         catalog_dir.mkdir()
 
-        result = runner.invoke(cli, ["init", "--auto", str(catalog_dir)])
+        result = runner.invoke(cli, ["init", "--auto", str(catalog_dir), "--license", "CC-BY-4.0"])
 
         assert result.exit_code == 0
         data = json.loads((catalog_dir / "catalog.json").read_text())
@@ -204,7 +204,7 @@ class TestInitErrorCases:
             (portolan / "config.yaml").write_text("{}")
 
             # Use --auto to skip interactive prompts and test error path
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 1
             assert "already" in result.output.lower()
@@ -224,7 +224,7 @@ class TestInitErrorCases:
             Path("catalog.json").write_text(json.dumps(catalog_data))
 
             # Use --auto to skip interactive prompts and test error path
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 1
             output_lower = result.output.lower()
@@ -250,7 +250,7 @@ class TestInitPartialState:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             Path(".portolan").mkdir()
 
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 0
             assert Path("catalog.json").exists()
@@ -266,7 +266,7 @@ class TestInitPartialState:
             portolan.mkdir()
             (portolan / "config.yaml").write_text("{}")
 
-            result = runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             # Should fail because config.yaml exists = MANAGED state
             assert result.exit_code == 1
@@ -285,7 +285,9 @@ class TestInitFlags:
     def test_title_flag_sets_catalog_title(self, runner: CliRunner, tmp_path: Path) -> None:
         """--title flag should set catalog title."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["init", "--auto", "--title", "My Awesome Catalog"])
+            result = runner.invoke(
+                cli, ["init", "--auto", "--title", "My Awesome Catalog", "--license", "CC-BY-4.0"]
+            )
 
             assert result.exit_code == 0
             data = json.loads(Path("catalog.json").read_text())
@@ -298,7 +300,15 @@ class TestInitFlags:
         """--description flag should set catalog description."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(
-                cli, ["init", "--auto", "--description", "A test catalog for unit tests"]
+                cli,
+                [
+                    "init",
+                    "--auto",
+                    "--description",
+                    "A test catalog for unit tests",
+                    "--license",
+                    "CC-BY-4.0",
+                ],
             )
 
             assert result.exit_code == 0
@@ -310,7 +320,9 @@ class TestInitFlags:
         """--auto flag should complete without any prompts."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # If this blocks for input, the test will timeout
-            result = runner.invoke(cli, ["init", "--auto"], catch_exceptions=False)
+            result = runner.invoke(
+                cli, ["init", "--auto", "--license", "CC-BY-4.0"], catch_exceptions=False
+            )
 
             assert result.exit_code == 0
 
@@ -327,6 +339,8 @@ class TestInitFlags:
                     "Combined Test",
                     "--description",
                     "Testing all flags",
+                    "--license",
+                    "CC-BY-4.0",
                 ],
             )
 
@@ -348,7 +362,9 @@ class TestInitJsonOutput:
     def test_json_output_on_success(self, runner: CliRunner, tmp_path: Path) -> None:
         """JSON output should indicate success with envelope."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["--format", "json", "init", "--auto"])
+            result = runner.invoke(
+                cli, ["--format", "json", "init", "--auto", "--license", "CC-BY-4.0"]
+            )
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -363,7 +379,7 @@ class TestInitJsonOutput:
             portolan.mkdir()
             (portolan / "config.yaml").write_text("{}")
 
-            result = runner.invoke(cli, ["--format", "json", "init"])
+            result = runner.invoke(cli, ["--format", "json", "init", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 1
             data = json.loads(result.output)
@@ -383,7 +399,7 @@ class TestInitJsonOutput:
             }
             Path("catalog.json").write_text(json.dumps(catalog_data))
 
-            result = runner.invoke(cli, ["--format", "json", "init"])
+            result = runner.invoke(cli, ["--format", "json", "init", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 1
             data = json.loads(result.output)

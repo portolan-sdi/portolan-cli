@@ -24,10 +24,10 @@ license: "CC-BY-4.0"
 # Data defaults - applied when auto-extraction fails
 defaults:
   temporal:
-    year: 2025              # All items default to 2025-01-01
+    year: 2025 # All items default to 2025-01-01
 
   raster:
-    nodata: 0               # Black pixels (0) are nodata
+    nodata: 0 # Black pixels (0) are nodata
 ```
 
 ## Temporal Defaults
@@ -39,7 +39,7 @@ For collections where all items share an acquisition period:
 ```yaml
 defaults:
   temporal:
-    year: 2025    # Produces datetime: 2025-01-01T00:00:00Z
+    year: 2025 # Produces datetime: 2025-01-01T00:00:00Z
 ```
 
 ### Explicit Date Range
@@ -47,7 +47,7 @@ defaults:
 ```yaml
 defaults:
   temporal:
-    start: "2025-04-15"    # ISO format: YYYY-MM-DD
+    start: "2025-04-15" # ISO format: YYYY-MM-DD
     end: "2025-05-30"
 ```
 
@@ -75,7 +75,7 @@ For COG files where nodata wasn't set in the source:
 ```yaml
 defaults:
   raster:
-    nodata: 0    # Applied to all bands
+    nodata: 0 # Applied to all bands
 ```
 
 ### Per-Band Nodata
@@ -83,7 +83,7 @@ defaults:
 ```yaml
 defaults:
   raster:
-    nodata: [0, 0, 255]    # R=0, G=0, B=255
+    nodata: [0, 0, 255] # R=0, G=0, B=255
 ```
 
 !!! tip "When to Use Per-Band"
@@ -94,9 +94,9 @@ defaults:
 Defaults follow Portolan's hierarchical config pattern:
 
 ```
-catalog/.portolan/metadata.yaml          # Catalog-level defaults
+catalog/.portolan/metadata.yaml # Catalog-level defaults
   └── collection/.portolan/metadata.yaml # Collection overrides
-        └── subcatalog/.portolan/metadata.yaml  # Most specific wins
+        └── subcatalog/.portolan/metadata.yaml # Most specific wins
 ```
 
 **Example**: Set nodata at catalog level, override temporal at collection level:
@@ -113,6 +113,26 @@ defaults:
     year: 2025
   # Inherits raster.nodata: 0 from parent
 ```
+
+## Where metadata comes from
+
+Every STAC field Portolan writes falls into one of four tiers. The tier decides
+who supplies the value and whether a default may overwrite it.
+
+| Tier | Source | Example fields |
+|------|--------|----------------|
+| 1 | Read from the data file | bbox, CRS, geometry type, band count, feature count |
+| 2 | Derived from tier 1 or the file path | collection id, spatial extent, media type, asset roles |
+| 3 | `metadata.yaml` defaults | temporal extent, nodata values, license |
+| 4 | Written by a person | title, description, keywords, provider |
+
+Tiers 1 and 2 always win, because the file is the authority on its own contents.
+Tier 3 fills what tiers 1 and 2 could not supply, which is why a default never
+overwrites an extracted value. Tier 4 is the layer Portolan cannot generate; no
+field in it blocks `add`.
+
+This split is what keeps `portolan add` runnable with no human input. Anything a
+person must write is optional by construction.
 
 ## Behavior Rules
 
@@ -154,24 +174,24 @@ Portolan validates defaults when loading `metadata.yaml`. Invalid defaults cause
 # ✓ Valid
 defaults:
   temporal:
-    year: 2025              # Integer in range
+    year: 2025 # Integer in range
 
 # ✗ Invalid - will error
 defaults:
   temporal:
-    year: "2025"            # String instead of integer
-    start: "04-15-2025"     # Wrong date format (must be YYYY-MM-DD)
+    year: "2025" # String instead of integer
+    start: "04-15-2025" # Wrong date format (must be YYYY-MM-DD)
 
 # ✗ Invalid - mutual exclusion
 defaults:
   temporal:
     year: 2025
-    start: "2025-04-15"     # Error: can't specify both
+    start: "2025-04-15" # Error: can't specify both
 
 # ✗ Invalid - per-band mismatch
 defaults:
   raster:
-    nodata: [0, 0, 255, 127]  # Error if raster only has 3 bands
+    nodata: [0, 0, 255, 127] # Error if raster only has 3 bands
 ```
 
 ## Example: Philadelphia Aerial Imagery
@@ -185,20 +205,22 @@ contact:
   name: "Nissim Lebovits"
   email: "nlebovits@pm.me"
 
-license: "LicenseRef-CityOfPhiladelphia"
+license: "other"
+license_url: "https://www.phila.gov/terms-of-use/"
 attribution: "City of Philadelphia / PASDA"
 
 defaults:
   temporal:
-    year: 2025    # All 2025 imagery defaults to 2025-01-01
+    year: 2025 # All 2025 imagery defaults to 2025-01-01
 
   raster:
-    nodata: 0     # Black collar pixels are nodata
+    nodata: 0 # Black collar pixels are nodata
 ```
 
 This sets consistent metadata across all 947 items without requiring per-file flags.
 
-## Related
+The city's terms are not an SPDX license, so the collection declares `other` and
+links the terms page. `license` must be an SPDX identifier or `other`; a
+`LicenseRef-` value is rejected.
 
-- [ADR-0038: Metadata YAML Enrichment](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0038-metadata-yaml-enrichment.md) - Design decision
-- [ADR-0035: Temporal Extent Handling](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0035-temporal-extent-handling.md) - Why null datetime is allowed
+## Related

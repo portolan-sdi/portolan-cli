@@ -29,7 +29,7 @@ class TestConfigSet:
         """config set should create .portolan/config.yaml if it doesn't exist."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize catalog first
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["config", "set", "backend", "stac"])
 
@@ -40,7 +40,7 @@ class TestConfigSet:
     def test_set_writes_value(self, runner: CliRunner, tmp_path: Path) -> None:
         """config set should write the value to config file."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["config", "set", "backend", "iceberg"])
 
@@ -52,7 +52,7 @@ class TestConfigSet:
     def test_set_outputs_success_message(self, runner: CliRunner, tmp_path: Path) -> None:
         """config set should output a success message."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["config", "set", "backend", "stac"])
 
@@ -64,7 +64,7 @@ class TestConfigSet:
     def test_set_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """config set should output JSON envelope with --format json."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["--format", "json", "config", "set", "backend", "stac"])
 
@@ -79,7 +79,7 @@ class TestConfigSet:
     def test_set_collection_level(self, runner: CliRunner, tmp_path: Path) -> None:
         """config set --collection should set collection-level config."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(
                 cli,
@@ -106,7 +106,7 @@ class TestConfigSet:
     def test_set_shows_collection_in_text_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """config set --collection should mention collection in text output."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(
                 cli,
@@ -120,7 +120,7 @@ class TestConfigSet:
     def test_set_rejects_sensitive_settings(self, runner: CliRunner, tmp_path: Path) -> None:
         """config set should reject sensitive settings (remote, profile, region)."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             # Test remote
             result = runner.invoke(cli, ["config", "set", "remote", "s3://bucket/"])
@@ -148,7 +148,7 @@ class TestConfigGet:
         from portolan_cli.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Use non-sensitive key for testing config read
             save_config(Path("."), {"backend": "iceberg"})
 
@@ -163,7 +163,7 @@ class TestConfigGet:
         from portolan_cli.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(Path("."), {"backend": "iceberg"})
 
             result = runner.invoke(cli, ["config", "get", "backend"])
@@ -178,7 +178,7 @@ class TestConfigGet:
         from portolan_cli.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(Path("."), {"remote": "s3://from-config/"})
 
             with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://from-env/"}):
@@ -192,7 +192,7 @@ class TestConfigGet:
     def test_get_not_set(self, runner: CliRunner, tmp_path: Path) -> None:
         """config get should indicate when a setting is not set."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["config", "get", "remote"])
 
@@ -217,7 +217,7 @@ class TestConfigGet:
         from portolan_cli.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(Path("."), {"backend": "iceberg"})
 
             result = runner.invoke(cli, ["--format", "json", "config", "get", "backend"])
@@ -245,7 +245,7 @@ class TestConfigList:
         from portolan_cli.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(Path("."), {"backend": "iceberg", "statistics.enabled": True})
 
             result = runner.invoke(cli, ["config", "list"])
@@ -260,7 +260,7 @@ class TestConfigList:
         from portolan_cli.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(Path("."), {"backend": "iceberg"})
 
             with mock.patch.dict(os.environ, {"PORTOLAN_STATISTICS_ENABLED": "true"}):
@@ -277,7 +277,7 @@ class TestConfigList:
         from portolan_cli.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(Path("."), {"backend": "iceberg"})
 
             result = runner.invoke(cli, ["--format", "json", "config", "list"])
@@ -292,7 +292,7 @@ class TestConfigList:
     def test_list_empty_config(self, runner: CliRunner, tmp_path: Path) -> None:
         """config list should handle empty config gracefully."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["config", "list"])
 
@@ -316,7 +316,7 @@ class TestConfigList:
         from portolan_cli.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(
                 Path("."),
                 {"collections": {"demo": {"backend": "iceberg"}}},
@@ -342,7 +342,7 @@ class TestConfigUnset:
         from portolan_cli.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(Path("."), {"remote": "s3://bucket/"})
 
             result = runner.invoke(cli, ["config", "unset", "remote"])
@@ -355,7 +355,7 @@ class TestConfigUnset:
     def test_unset_nonexistent_key(self, runner: CliRunner, tmp_path: Path) -> None:
         """config unset should warn when key doesn't exist."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["config", "unset", "nonexistent"])
 
@@ -380,7 +380,7 @@ class TestConfigUnset:
         from portolan_cli.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(Path("."), {"remote": "s3://bucket/"})
 
             result = runner.invoke(cli, ["--format", "json", "config", "unset", "remote"])
@@ -398,7 +398,7 @@ class TestConfigUnset:
         from portolan_cli.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(
                 Path("."),
                 {"collections": {"demographics": {"remote": "s3://collection/"}}},
@@ -426,7 +426,7 @@ class TestConfigErrorMessages:
         # The actual error would be in sync/push commands, not config
         # But we can test that config get shows helpful info
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["config", "get", "remote"])
 
@@ -442,7 +442,7 @@ class TestConfigErrorMessages:
     def test_get_json_output_not_set(self, runner: CliRunner, tmp_path: Path) -> None:
         """config get should output JSON with value=null when not set."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             result = runner.invoke(cli, ["--format", "json", "config", "get", "remote"])
 
@@ -458,7 +458,7 @@ class TestConfigErrorMessages:
         from portolan_cli.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(
                 Path("."),
                 {"collections": {"demo": {"backend": "iceberg"}}},
@@ -478,7 +478,7 @@ class TestConfigErrorMessages:
     def test_set_collection_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """config set --collection should include collection in JSON output."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             # Use non-sensitive key for testing JSON output format
             result = runner.invoke(
@@ -506,7 +506,7 @@ class TestConfigErrorMessages:
         from portolan_cli.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Use non-sensitive key (backend) to create collection config
             save_config(
                 Path("."),
@@ -567,7 +567,7 @@ class TestConfigErrorMessages:
         from portolan_cli.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(
                 Path("."),
                 {"collections": {"demo": {"remote": "s3://col/"}}},

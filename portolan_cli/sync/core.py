@@ -10,8 +10,6 @@ Workflow:
 4. Check: Validate cloud-native status, optionally convert with --fix
 5. Push: Upload changes to remote storage
 
-See ADR-0005 for versions.json as single source of truth.
-See ADR-0007 for CLI wraps Python API (all logic in library layer).
 """
 
 from __future__ import annotations
@@ -169,8 +167,7 @@ def list_remote_collections(
     """List all collections available in a remote catalog.
 
     Recursively fetches catalog.json files and parses STAC child links
-    to discover collection names. Handles nested catalog structures
-    per ADR-0032 (nested catalogs with flat collections).
+    to discover collection names. Handles nested catalog structures (nested catalogs with flat collections).
 
     Args:
         remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
@@ -499,7 +496,9 @@ def _step_init(
     if state == CatalogState.FRESH:
         info("Initializing catalog...")
         try:
-            init_catalog(catalog_root)
+            # No license here: sync wraps a directory whose collections already
+            # exist, and it never writes a collection.json of its own (issue #686).
+            init_catalog(catalog_root, license_id=None)
             success("Initialized catalog")
             return True, None
         except Exception as e:
@@ -872,6 +871,9 @@ def clone(
             local_path,
             title=f"Clone of {remote_url}",
             description=f"Cloned from {remote_url}",
+            # No license here: each cloned collection.json arrives carrying the
+            # license the publisher set, and a local default would misstate it.
+            license_id=None,
         )
     except Exception as e:
         error_msg = f"Failed to initialize catalog: {e}"

@@ -14,8 +14,6 @@ Mental model: `portolan pull` is like `git pull`
 - Show what would change with --dry-run
 - Update tracking file (versions.json) after successful sync
 
-See ADR-0005 for versions.json as single source of truth.
-See ADR-0017 for MTIME + heuristics change detection.
 
 Async Migration (Wave 2A):
 - `pull_async()` is the primary implementation using asyncio
@@ -39,6 +37,7 @@ from portolan_cli.async_utils import (
     CircuitBreakerError,
     get_default_concurrency,
 )
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import detail, error, info, output_section, success, warn
 from portolan_cli.sync.checksums import compute_checksum
 from portolan_cli.sync.download import download_file, get_remote_file_size_async
@@ -172,7 +171,7 @@ def detect_uncommitted_changes(
     This is like `git status` - it compares the actual local files against
     what the local versions.json says they should be.
 
-    Uses mtime + size as a fast-path heuristic per ADR-0017:
+    Uses mtime + size as a fast-path heuristic:
     - If mtime and size match, skip the expensive checksum computation.
     - Only compute checksum when mtime/size suggest a change.
 
@@ -186,7 +185,7 @@ def detect_uncommitted_changes(
     Raises:
         FileNotFoundError: If versions.json doesn't exist.
     """
-    # versions.json at collection root (per ADR-0023)
+    # versions.json at collection root
     versions_path = catalog_root / collection / "versions.json"
 
     try:
@@ -211,7 +210,7 @@ def detect_uncommitted_changes(
             uncommitted.append(asset_name)
             continue
 
-        # Fast path: check mtime and size first (ADR-0017)
+        # Fast path: check mtime and size first
         # Only works if we have recorded mtime; otherwise fall through to checksum
         stat = local_path.stat()
         if asset.mtime is not None:
@@ -248,7 +247,7 @@ def find_missing_files(
     Returns:
         List of asset names (filenames) that are missing from disk.
     """
-    # versions.json at collection root (per ADR-0023)
+    # versions.json at collection root
     versions_path = catalog_root / collection / "versions.json"
 
     try:
@@ -376,7 +375,7 @@ def _fetch_remote_versions(
     Raises:
         PullError: If fetch fails.
     """
-    # Build remote versions.json path (per ADR-0023)
+    # Build remote versions.json path
     remote_versions_url = f"{remote_url.rstrip('/')}/{collection}/versions.json"
 
     # Download to temp file
@@ -531,7 +530,7 @@ def _check_sync_state_conflicts(
     if diff.is_local_ahead:
         warn("Local has unpushed versions that would be lost:")
         for v in diff.local_only_versions:
-            detail(f"  {v}")
+            detail(f" {v}")
         warn("Push your changes first, or use --force to discard them")
         return PullResult(
             success=False,
@@ -544,8 +543,8 @@ def _check_sync_state_conflicts(
 
     if diff.is_diverged:
         warn("Local and remote have diverged:")
-        warn(f"  Local-only versions: {diff.local_only_versions}")
-        warn(f"  Remote-only versions: {diff.remote_only_versions}")
+        warn(f" Local-only versions: {diff.local_only_versions}")
+        warn(f" Remote-only versions: {diff.remote_only_versions}")
         warn("Resolve by pushing --force or pulling --force (will lose data)")
         return PullResult(
             success=False,
@@ -585,7 +584,7 @@ def _check_uncommitted_conflicts(
     if conflicts:
         warn("Uncommitted local changes would be overwritten:")
         for filename in conflicts:
-            detail(f"  {filename}")
+            detail(f" {filename}")
         warn("Use --force to discard local changes")
 
         return PullResult(
@@ -629,9 +628,9 @@ def _report_pull_plan(
 
     info(f"Using concurrency: {concurrency}")
     for filename in all_files[:5]:
-        detail(f"  {filename}")
+        detail(f" {filename}")
     if len(all_files) > 5:
-        detail(f"  ... and {len(all_files) - 5} more")
+        detail(f" ... and {len(all_files) - 5} more")
 
 
 # =============================================================================
@@ -701,7 +700,7 @@ async def _fetch_remote_versions_async(
     Raises:
         PullError: If fetch fails.
     """
-    # Build remote versions.json path (per ADR-0023)
+    # Build remote versions.json path
     import json
 
     remote_versions_url = f"{remote_url.rstrip('/')}/{collection}/versions.json"
@@ -741,7 +740,7 @@ async def _download_assets_async(
 ) -> tuple[int, int]:
     """Download assets concurrently using asyncio.
 
-    Per ADR-0040: Uses progress bar for batch downloads. Per-file output
+    Uses progress bar for batch downloads. Per-file output
     only shown in verbose mode.
 
     Args:
@@ -817,7 +816,7 @@ async def _download_assets_async(
                     try:
                         await _download_file_async(store, remote_key, local_path)
                         circuit_breaker.record_success()
-                        # Per ADR-0040: per-file output only in verbose mode
+                        # Per-file output only in verbose mode
                         if verbose:
                             info(f"Downloaded: {filename}")
                         return filename, True, None, file_size
@@ -962,7 +961,7 @@ async def _enrich_file_sizes_safe(
         )
         if sizes_populated > 0 and verbose:
             detail(f"Populated file:size for {sizes_populated} asset(s)")
-    except Exception:  # noqa: BLE001  # nosec B110 - Non-fatal: file sizes are nice-to-have
+    except Exception:  # noqa: BLE001 # nosec B110 - Non-fatal: file sizes are nice-to-have
         pass
 
 
@@ -976,7 +975,7 @@ async def _process_stac_file_sizes(
     import json
 
     try:
-        data = json.loads(stac_file.read_text())
+        data = json.loads(stac_file.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return 0
 
@@ -1005,7 +1004,7 @@ async def _process_stac_file_sizes(
                 detail(f"Fetched file:size for {stac_file.name}:{asset_key}")
 
     if modified:
-        stac_file.write_text(json.dumps(data, indent=2) + "\n")
+        write_json_atomic(stac_file, data)
 
     return populated
 
@@ -1054,7 +1053,7 @@ async def pull_async(
         concurrency: Maximum concurrent downloads (default: 50).
         store: Optional pre-configured object store. If provided, reuses
             this connection instead of creating a new one (for connection pooling).
-        verbose: If True, show per-file download messages (ADR-0040).
+        verbose: If True, show per-file download messages.
         json_mode: If True, suppress progress output (for agent/batch usage).
 
     Returns:
@@ -1073,7 +1072,7 @@ async def pull_async(
     if store is None:
         store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=4)
 
-    # Path to local versions.json (per ADR-0023)
+    # Path to local versions.json
     versions_path = local_root / collection / "versions.json"
 
     # Load local versions (may not exist yet)
@@ -1243,7 +1242,7 @@ def pull(
             See issue #325.
         profile: AWS profile name (for S3).
         concurrency: Maximum concurrent downloads (default: 50).
-        verbose: If True, show per-file download messages (ADR-0040).
+        verbose: If True, show per-file download messages.
         json_mode: If True, suppress progress output (for agent/batch usage).
 
     Returns:
@@ -1303,7 +1302,7 @@ async def pull_all_collections_async(
         concurrency: Maximum concurrent collection pulls. None = auto-detect.
         file_concurrency: Maximum concurrent file downloads within each collection.
             None = use pull_async default. (Maps to --concurrency CLI flag.)
-        verbose: If True, show per-file download messages (ADR-0040).
+        verbose: If True, show per-file download messages.
         json_mode: If True, suppress progress output (for agent/batch usage).
 
     Returns:
@@ -1430,7 +1429,7 @@ async def pull_all_collections_async(
         else:
             warn(f"Completed with errors: {successful} succeeded, {failed} failed")
             for collection, errors in collection_errors.items():
-                warn(f"  {collection}: {', '.join(errors)}")
+                warn(f" {collection}: {', '.join(errors)}")
 
     return PullAllResult(
         success=(failed == 0),
@@ -1473,7 +1472,7 @@ def pull_all_collections(
             (Maps to 'concurrency' in async implementation.)
         file_concurrency: Maximum concurrent file downloads within each collection.
             None = use pull_async default. (Maps to --concurrency CLI flag.)
-        verbose: If True, show per-file download messages (ADR-0040).
+        verbose: If True, show per-file download messages.
         json_mode: If True, suppress progress output (for agent/batch usage).
 
     Returns:

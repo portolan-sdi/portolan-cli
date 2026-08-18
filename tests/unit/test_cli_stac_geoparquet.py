@@ -141,10 +141,14 @@ class TestStacGeoparquetCommand:
         assert (collection_path / "items.parquet").exists()
 
     @pytest.mark.unit
-    def test_generate_adds_link_to_collection(
+    def test_generate_registers_asset_without_link(
         self, runner: CliRunner, catalog_with_collection: Path
     ) -> None:
-        """Test that generate adds parquet link to collection.json."""
+        """Generation registers the collection-mirror asset and no link (#654).
+
+        Spec formats.md: the single asset registration is the whole
+        requirement; no rel="items" link is needed.
+        """
         result = runner.invoke(
             cli,
             [
@@ -158,7 +162,6 @@ class TestStacGeoparquetCommand:
 
         assert result.exit_code == 0
 
-        # Check collection.json has the link
         collection_json = json.loads(
             (catalog_with_collection / "imagery" / "collection.json").read_text()
         )
@@ -167,8 +170,10 @@ class TestStacGeoparquetCommand:
             for link in collection_json["links"]
             if link.get("type") == "application/vnd.apache.parquet"
         ]
-        assert len(parquet_links) == 1
-        assert parquet_links[0]["rel"] == "items"
+        assert parquet_links == []
+        asset = collection_json["assets"]["geoparquet-items"]
+        assert asset["type"] == "application/vnd.apache.parquet"
+        assert asset["roles"] == ["collection-mirror"]
 
     @pytest.mark.unit
     def test_generate_outputs_success_message(
@@ -238,6 +243,76 @@ class TestStacGeoparquetCatalogLevel:
         assert result.exit_code == 0
         # Should have generated parquet for the imagery collection
         assert (catalog_with_collection / "imagery" / "items.parquet").exists()
+
+    @pytest.mark.unit
+    def test_discovery_finds_a_collection_organized_by_catalogs(self, tmp_path: Path) -> None:
+        """A collection whose items hang off catalogs is still a collection.
+
+        Discovery accepted only a collection carrying its own ``rel="item"``
+        links, so this layout was skipped silently and never got a mirror.
+        """
+        from portolan_cli.cli import _discover_collections_with_items
+
+        collection_dir = tmp_path / "landsat"
+        (collection_dir / "2024").mkdir(parents=True)
+        (collection_dir / "collection.json").write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "stac_version": "1.1.0",
+                    "id": "landsat",
+                    "description": "Grouped by year",
+                    "license": "CC-BY-4.0",
+                    "extent": {
+                        "spatial": {"bbox": [[0.0, 0.0, 1.0, 1.0]]},
+                        "temporal": {"interval": [[None, None]]},
+                    },
+                    "links": [{"rel": "child", "href": "./2024/catalog.json"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (collection_dir / "2024" / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "stac_version": "1.1.0",
+                    "id": "landsat-2024",
+                    "description": "2024",
+                    "links": [{"rel": "item", "href": "./scene-a.json"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert _discover_collections_with_items(tmp_path) == ["landsat"]
+
+    @pytest.mark.unit
+    def test_discovery_skips_a_collection_with_no_items(self, tmp_path: Path) -> None:
+        """Descending must not turn an genuinely empty collection into a hit."""
+        from portolan_cli.cli import _discover_collections_with_items
+
+        collection_dir = tmp_path / "empty"
+        collection_dir.mkdir(parents=True)
+        (collection_dir / "collection.json").write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "stac_version": "1.1.0",
+                    "id": "empty",
+                    "description": "No items",
+                    "license": "CC-BY-4.0",
+                    "extent": {
+                        "spatial": {"bbox": [[0.0, 0.0, 1.0, 1.0]]},
+                        "temporal": {"interval": [[None, None]]},
+                    },
+                    "links": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert _discover_collections_with_items(tmp_path) == []
 
     @pytest.mark.unit
     def test_generate_all_collections_json(

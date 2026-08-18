@@ -21,11 +21,17 @@ from portolan_cli.extract.common.report import (
     LayerResult,
     MetadataExtracted,
 )
+from portolan_cli.licensing import ResolvedLicense
 
 pytestmark = [pytest.mark.integration]
 
 FIXTURES_DIR = Path(__file__).parent.parent.parent.parent / "fixtures"
 SQL_API_URL = "https://phl.carto.com/api/v2/sql"
+
+
+# Calling _auto_init_catalog directly skips the resolution the orchestrator does
+# before its download, so the license is passed in here (issue #686).
+TEST_LICENSE = ResolvedLicense(license_id="CC-BY-4.0", license_url=None)
 
 
 def _report(output_path: str, name: str) -> ExtractionReport:
@@ -84,7 +90,7 @@ def test_auto_init_builds_catalog_with_via_link_and_metadata(tmp_path: Path) -> 
     shutil.copy(FIXTURES_DIR / "simple.parquet", collection_dir / "vacant_land.parquet")
 
     report = _report("vacant_land/vacant_land.parquet", "vacant_land")
-    _auto_init_catalog(tmp_path, report, _discovery())
+    _auto_init_catalog(tmp_path, report, _discovery(), TEST_LICENSE)
 
     # Catalog + collection STAC created
     assert (tmp_path / "catalog.json").exists()
@@ -104,11 +110,13 @@ def test_auto_init_builds_catalog_with_via_link_and_metadata(tmp_path: Path) -> 
 
 
 def test_auto_init_tracks_non_geo_table_as_tabular_collection(tmp_path: Path) -> None:
-    """A non-geo extracted Parquet becomes a tabular collection (ADR-0047).
+    """A non-geo extracted Parquet becomes a tabular collection.
 
-    Auto-init must enable ``tabular.enabled`` (otherwise add_files rejects a
-    geometry-less file) and the resulting collection must carry
-    ``portolan:geospatial: false`` (RULE-0090).
+    Auto-init must enable ``tabular.enabled``, otherwise add_files rejects a
+    geometry-less file. The collection carries no marker field: tabular status
+    is read off the asset itself. The docstring used to promise a
+    ``portolan:geospatial: false`` flag under a validator rule id that no
+    longer exists, which contradicted the assertion below (issue #654).
     """
     from portolan_cli.config import get_setting
 
@@ -125,7 +133,7 @@ def test_auto_init_tracks_non_geo_table_as_tabular_collection(tmp_path: Path) ->
         tables=[CartoTableInfo("lookup", id=0, has_geometry=False)],
         account_name="phl",
     )
-    _auto_init_catalog(tmp_path, report, discovery)
+    _auto_init_catalog(tmp_path, report, discovery, TEST_LICENSE)
 
     # Tabular support auto-enabled because a non-geo output was present.
     assert get_setting("tabular.enabled", catalog_path=tmp_path) is True
@@ -133,7 +141,8 @@ def test_auto_init_tracks_non_geo_table_as_tabular_collection(tmp_path: Path) ->
     collection_json = tmp_path / "lookup" / "collection.json"
     assert collection_json.exists()
     coll = json.loads(collection_json.read_text())
-    assert coll.get("portolan:geospatial") is False
+    # Tabular status is derived from asset content, not flagged (issue #654).
+    assert "portolan:geospatial" not in coll
 
     # Provenance via-link still wired for the tabular collection.
     via = [link for link in coll.get("links", []) if link.get("rel") == "via"]
@@ -146,5 +155,5 @@ def test_auto_init_skipped_when_no_successful_tables(tmp_path: Path) -> None:
     report.layers[0].status = "failed"
     report.layers[0].output_path = None
 
-    _auto_init_catalog(tmp_path, report, _discovery())
+    _auto_init_catalog(tmp_path, report, _discovery(), TEST_LICENSE)
     assert not (tmp_path / "catalog.json").exists()

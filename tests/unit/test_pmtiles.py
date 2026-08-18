@@ -291,6 +291,98 @@ class TestAddPMTilesAssetToCollection:
         # Should still have exactly 2 assets
         assert len(updated["assets"]) == 2
 
+    @pytest.mark.unit
+    def test_stamps_file_fields_on_a_new_asset(self, tmp_path: Path) -> None:
+        """PORTO-CORE-028: the tiles asset claims its own size and checksum.
+
+        The style and thumbnail writers already did this. PMTiles was the one
+        visual artifact shipping without it, which cost two PTL-AST-003 warnings
+        nobody saw until the conformance gate started reading warnings (#746).
+        """
+        from portolan_cli.viz.pmtiles import add_pmtiles_asset_to_collection
+
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+        (collection_dir / "data.pmtiles").write_bytes(b"tile bytes")
+        (collection_dir / "collection.json").write_text(
+            json.dumps({"type": "Collection", "assets": {"data": {"href": "./data.parquet"}}})
+        )
+
+        add_pmtiles_asset_to_collection(collection_dir, "data", "./data.pmtiles")
+
+        updated = json.loads((collection_dir / "collection.json").read_text())
+        tiles = updated["assets"]["data-tiles"]
+
+        assert tiles["file:size"] == len(b"tile bytes")
+        # Multihash, not a bare digest: 0x12 sha2-256, 0x20 32 bytes.
+        assert tiles["file:checksum"].startswith("1220")
+        assert (
+            "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+            in updated["stac_extensions"]
+        )
+
+    @pytest.mark.unit
+    def test_regenerating_tiles_restamps_the_existing_asset(self, tmp_path: Path) -> None:
+        """A stale digest is a false claim about bytes, worse than no claim.
+
+        PORTO-CORE-030 makes a published ``file:checksum`` a statement about what
+        the href resolves to, and rashid's data pass reports a mismatch as an
+        error. Regeneration rewrites the tiles, so the asset already on disk has
+        to be restamped rather than left alone.
+        """
+        from portolan_cli.viz.pmtiles import add_pmtiles_asset_to_collection
+
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+        (collection_dir / "data.pmtiles").write_bytes(b"first")
+        (collection_dir / "collection.json").write_text(
+            json.dumps({"type": "Collection", "assets": {"data": {"href": "./data.parquet"}}})
+        )
+
+        add_pmtiles_asset_to_collection(collection_dir, "data", "./data.pmtiles")
+        stale = json.loads((collection_dir / "collection.json").read_text())
+        stale_asset = stale["assets"]["data-tiles"]
+
+        (collection_dir / "data.pmtiles").write_bytes(b"second, and longer")
+        add_pmtiles_asset_to_collection(collection_dir, "data", "./data.pmtiles")
+
+        fresh = json.loads((collection_dir / "collection.json").read_text())["assets"]["data-tiles"]
+
+        assert fresh["file:size"] == len(b"second, and longer")
+        assert fresh["file:size"] != stale_asset["file:size"]
+        assert fresh["file:checksum"] != stale_asset["file:checksum"]
+
+    @pytest.mark.unit
+    def test_a_dropped_file_extension_is_declared_again(self, tmp_path: Path) -> None:
+        """Declaring the extension is a conditional MUST, so it has to self-heal.
+
+        An asset carrying ``file:`` fields obliges its collection to declare
+        file/v2.1.0. Hand-editing or an older writer can leave the fields without
+        the declaration, and the next run has to put it back rather than assume
+        the first run got there.
+        """
+        from portolan_cli.viz.pmtiles import add_pmtiles_asset_to_collection
+
+        file_ext = "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+        (collection_dir / "data.pmtiles").write_bytes(b"tile bytes")
+        collection_json = collection_dir / "collection.json"
+        collection_json.write_text(
+            json.dumps({"type": "Collection", "assets": {"data": {"href": "./data.parquet"}}})
+        )
+
+        add_pmtiles_asset_to_collection(collection_dir, "data", "./data.pmtiles")
+
+        stripped = json.loads(collection_json.read_text())
+        stripped["stac_extensions"] = [e for e in stripped["stac_extensions"] if e != file_ext]
+        collection_json.write_text(json.dumps(stripped))
+        assert file_ext not in json.loads(collection_json.read_text())["stac_extensions"]
+
+        add_pmtiles_asset_to_collection(collection_dir, "data", "./data.pmtiles")
+
+        assert file_ext in json.loads(collection_json.read_text())["stac_extensions"]
+
 
 class TestAddPMTilesLinkToCollection:
     """Tests for add_pmtiles_link_to_collection (Issue #569)."""
@@ -362,7 +454,10 @@ class TestAddPMTilesLinkToCollection:
 
 
 class TestTrackGeneratedAssetsInVersions:
-    """Tests for _track_generated_assets_in_versions (Issue #519).
+    """Tests for versions.track_generated_assets (Issue #519).
+
+    Moved out of viz.pmtiles in #683: the collection-thumbnail orchestrator
+    records derived assets the same way, and viz may not reach the sync layer.
 
     Generated side-step artifacts (PMTiles, thumbnail) must be tracked in
     versions.json with a checksum, size, and mtime so sync can verify integrity
@@ -396,8 +491,7 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_asset_tracked_with_checksum_size_mtime(self, tmp_path: Path) -> None:
         """A generated thumbnail is added to versions.json as a full asset."""
-        from portolan_cli.versions import read_versions
-        from portolan_cli.viz.pmtiles import _track_generated_assets_in_versions
+        from portolan_cli.versions import read_versions, track_generated_assets
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -406,7 +500,7 @@ class TestTrackGeneratedAssetsInVersions:
         thumb = collection_dir / "data.thumb.png"
         thumb.write_bytes(b"\x89PNG fake-thumbnail-bytes")
 
-        _track_generated_assets_in_versions(
+        track_generated_assets(
             collection_dir, [thumb], tmp_path, message="Generated thumbnail: data.thumb.png"
         )
 
@@ -430,8 +524,7 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_pmtiles_and_thumbnail_share_one_version(self, tmp_path: Path) -> None:
         """PMTiles + thumbnail tracked together land in a SINGLE version (Issue #519)."""
-        from portolan_cli.versions import read_versions
-        from portolan_cli.viz.pmtiles import _track_generated_assets_in_versions
+        from portolan_cli.versions import read_versions, track_generated_assets
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -442,7 +535,7 @@ class TestTrackGeneratedAssetsInVersions:
         thumb = collection_dir / "data.thumb.jpg"
         thumb.write_bytes(b"\xff\xd8\xff jpeg")
 
-        _track_generated_assets_in_versions(
+        track_generated_assets(
             collection_dir, [pmtiles, thumb], tmp_path, message="Generated PMTiles and thumbnail"
         )
 
@@ -457,8 +550,7 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_only_if_missing_skips_already_tracked(self, tmp_path: Path) -> None:
         """only_if_missing creates no version when every asset is already tracked."""
-        from portolan_cli.versions import read_versions
-        from portolan_cli.viz.pmtiles import _track_generated_assets_in_versions
+        from portolan_cli.versions import read_versions, track_generated_assets
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -467,7 +559,7 @@ class TestTrackGeneratedAssetsInVersions:
         parquet = collection_dir / "data.parquet"  # already tracked in fixture
         parquet.write_bytes(b"PAR1")
 
-        _track_generated_assets_in_versions(
+        track_generated_assets(
             collection_dir, [parquet], tmp_path, message="Backfill", only_if_missing=True
         )
 
@@ -479,8 +571,7 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_creates_versions_file_when_missing(self, tmp_path: Path) -> None:
         """First-ever version is created at 1.0.0 if versions.json is absent."""
-        from portolan_cli.versions import read_versions
-        from portolan_cli.viz.pmtiles import _track_generated_assets_in_versions
+        from portolan_cli.versions import read_versions, track_generated_assets
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -488,7 +579,7 @@ class TestTrackGeneratedAssetsInVersions:
         thumb = collection_dir / "data.thumb.png"
         thumb.write_bytes(b"\x89PNG fake-thumbnail-bytes")
 
-        _track_generated_assets_in_versions(
+        track_generated_assets(
             collection_dir, [thumb], tmp_path, message="Generated thumbnail: data.thumb.png"
         )
 
@@ -499,14 +590,14 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_raises_when_asset_missing(self, tmp_path: Path) -> None:
         """A missing asset file is a hard error (no phantom asset)."""
-        from portolan_cli.viz.pmtiles import _track_generated_assets_in_versions
+        from portolan_cli.versions import track_generated_assets
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
         self._write_versions(collection_dir)
 
         with pytest.raises(FileNotFoundError):
-            _track_generated_assets_in_versions(
+            track_generated_assets(
                 collection_dir, [collection_dir / "data.thumb.png"], tmp_path, message="x"
             )
 
@@ -954,8 +1045,10 @@ class TestGeneratePMTilesForCollection:
         (collection_dir / "collection.json").write_text(json.dumps(collection_json))
 
         # Source parquet OLDER than pmtiles -> _should_generate returns False.
+        # A real GeoParquet, because the thumbnail orchestrator derives geospatial
+        # status by reading the `geo` schema metadata (#683).
         parquet = collection_dir / "data.parquet"
-        parquet.write_bytes(b"PAR1")
+        shutil.copy(Path(__file__).parent.parent / "fixtures" / "simple.parquet", parquet)
         pmtiles = collection_dir / "data.pmtiles"
         pmtiles.write_bytes(b"PMTILES")
         # Thumbnail uses the .thumb.jpg convention (thumbnail_path_for).
@@ -995,13 +1088,19 @@ class TestGeneratePMTilesForCollection:
         assert "data.pmtiles" in latest, "Untracked PMTiles should be backfilled on skip"
         assert "data.thumb.jpg" in latest, "Untracked thumbnail should be backfilled on skip"
 
-        # The thumbnail must also be (re-)registered as a STAC asset on skip, so a
-        # backfilled versions.json entry is never orphaned from collection.json.
+        # Registering the STAC asset moved to collection_thumbnail in #683, which
+        # adopts this .thumb.jpg. Prove the pair still meets: the orchestrator
+        # picks up exactly what the backfill tracked, so the versions.json entry
+        # cannot be orphaned from collection.json.
+        from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
+
+        ensure_collection_thumbnails(tmp_path, {"demographics"})
         coll_json = json.loads((collection_dir / "collection.json").read_text())
         thumb_assets = [
             k for k, v in coll_json["assets"].items() if "thumbnail" in v.get("roles", [])
         ]
         assert thumb_assets, "Backfilled thumbnail must be registered as a STAC asset"
+        assert coll_json["assets"]["thumbnail"]["href"] == "./data.thumb.jpg"
 
         # Idempotent: a second run with everything tracked creates NO new version.
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):

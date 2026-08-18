@@ -363,7 +363,7 @@ conversion:
         non_cog_tif: Path,
         tmp_path: Path,
     ) -> None:
-        """Convert without catalog_path uses ADR-0019 defaults."""
+        """Convert without catalog_path uses the built-in defaults."""
         import rasterio
 
         from portolan_cli.convert import ConversionStatus, convert_file
@@ -484,3 +484,98 @@ conversion:
         else:
             # WEBP not available - that's OK, just verify error is clear
             assert result.error is not None
+
+
+# =============================================================================
+# COG Defaults Derived From the Source Raster (Issue #690)
+# =============================================================================
+
+
+def _write_raster(path: Path, *, dtype: str, count: int = 1) -> Path:
+    """Write a small GeoTIFF with a chosen dtype and band count."""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    profile = {
+        "driver": "GTiff",
+        "height": 1024,
+        "width": 1024,
+        "count": count,
+        "dtype": dtype,
+        "crs": "EPSG:4326",
+        "transform": from_origin(0, 10.24, 0.01, 0.01),
+    }
+    with rasterio.open(path, "w", **profile) as dst:
+        for band in range(1, count + 1):
+            values = np.random.default_rng(seed=band).random((1024, 1024)) * 100
+            dst.write(values.astype(dtype), band)
+    return path
+
+
+def _predictor_of(path: Path) -> int:
+    """Read the TIFF predictor GDAL actually wrote."""
+    import rasterio
+
+    with rasterio.open(path) as src:
+        return int(src.tags(ns="IMAGE_STRUCTURE").get("PREDICTOR", 1))
+
+
+@pytest.mark.integration
+class TestCogDefaultsFromSourceRaster:
+    """Conversion picks predictor and resampling from what the pixels are."""
+
+    def test_float_raster_written_with_floating_point_predictor(self, tmp_path: Path) -> None:
+        """A float32 raster gets predictor 3 rather than horizontal differencing."""
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        source = _write_raster(tmp_path / "elevation.tif", dtype="float32")
+
+        result = convert_file(source, output_dir=tmp_path)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+        assert _predictor_of(result.output) == 3
+
+    def test_integer_raster_keeps_horizontal_predictor(self, tmp_path: Path) -> None:
+        """An int16 raster still gets predictor 2."""
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        source = _write_raster(tmp_path / "landcover.tif", dtype="int16")
+
+        result = convert_file(source, output_dir=tmp_path)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+        assert _predictor_of(result.output) == 2
+
+    def test_byte_imagery_written_without_a_predictor(self, tmp_path: Path) -> None:
+        """Three-band uint8 imagery gets no predictor."""
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        source = _write_raster(tmp_path / "rgb.tif", dtype="uint8", count=3)
+
+        result = convert_file(source, output_dir=tmp_path)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+        assert _predictor_of(result.output) == 1
+
+    def test_config_predictor_overrides_derivation(self, tmp_path: Path) -> None:
+        """An explicit predictor in config.yaml beats the derived one."""
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("""
+conversion:
+  cog:
+    predictor: 1
+""")
+        source = _write_raster(tmp_path / "elevation.tif", dtype="float32")
+
+        result = convert_file(source, output_dir=tmp_path, catalog_path=tmp_path)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+        assert _predictor_of(result.output) == 1

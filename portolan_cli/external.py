@@ -7,11 +7,11 @@ catalog as an external collection that points at the remote URL — rather than
 downloaded and re-converted.
 
 This module creates a STAC ``collection.json`` whose collection-level ``data``
-asset ``href`` is the remote URL, marked as external / not-managed, plus a
+asset ``href`` is the remote URL, carrying the ``external`` role, plus a
 ``rel:"via"`` provenance link to the source. No bytes are downloaded and no
 conversion runs.
 
-Per ADR-0031 a single vector file is a collection-level asset (no item.json),
+a single vector file is a collection-level asset (no item.json),
 so external single-file data maps cleanly onto one collection with one
 collection-level asset.
 
@@ -30,21 +30,20 @@ from urllib.parse import urlparse
 import pystac
 
 from portolan_cli.finalization import _save_collection_with_links
+from portolan_cli.input_hardening import InputValidationError, validate_remote_url
 from portolan_cli.preparation import _validate_collection_id
 from portolan_cli.stac import (
-    DEFAULT_LICENSE,
     add_asset_to_collection,
     add_via_link,
+    apply_human_license,
     create_collection,
 )
-from portolan_cli.validation import InputValidationError, validate_remote_url
 
-# Marks an asset as referenced in place rather than managed (downloaded/
-# converted) by Portolan. Consumers can use this to distinguish in-place
-# remote data from catalog-owned data.
-MANAGED_FIELD = "portolan:managed"
-
-# Role applied to external assets in addition to "data".
+# Role applied to external assets in addition to "data". This is what marks an
+# asset as referenced in place rather than downloaded and converted: a role is
+# spec-defined and every STAC client already reads them. The field that used to
+# carry the same fact is ``constants.LEGACY_MANAGED_FIELD``, which issue #654
+# stopped writing; `check --fix` reads it once to backfill this role.
 EXTERNAL_ROLE = "external"
 
 # URI scheme matcher for is_external_href (used by scanner/check to skip
@@ -171,7 +170,8 @@ def add_external(
     title: str | None = None,
     description: str | None = None,
     media_type: str | None = None,
-    license: str = DEFAULT_LICENSE,
+    license: str,
+    license_url: str | None = None,
     via_url: str | None = None,
     bbox: list[float] | None = None,
     asset_key: str = "data",
@@ -181,7 +181,7 @@ def add_external(
 
     Creates ``<catalog_root>/<collection_id>/collection.json`` with a
     collection-level ``data`` asset whose ``href`` is ``url`` (kept as-is,
-    not downloaded), marked external / not-managed, plus a ``rel:"via"``
+    not downloaded), carrying the ``external`` role, plus a ``rel:"via"``
     provenance link. The collection is linked into the root catalog.
 
     Args:
@@ -191,8 +191,12 @@ def add_external(
         title: Optional human-readable collection title.
         description: Optional description (defaults to a generated one).
         media_type: Asset media type. Inferred from the URL when omitted.
-        license: SPDX license expression, or "other" for a non-SPDX license
-            (default: "other"). STAC 1.1 no longer accepts "proprietary".
+        license: SPDX license expression, or "other" alongside license_url. Required
+            rather than defaulted: the old "other" default shipped a collection with
+            no rel="license" link, which is a PTL-LIC-002 error (issue #686). STAC
+            1.1 no longer accepts "proprietary".
+        license_url: URL of the license text, emitted as a rel="license" link.
+            Required when license is "other".
         via_url: Provenance URL for the ``rel:"via"`` link. Defaults to ``url``.
         bbox: Optional WGS84 bbox [min_x, min_y, max_x, max_y]. Global if omitted.
         asset_key: Key for the asset entry in collection.json (default "data").
@@ -208,7 +212,7 @@ def add_external(
         FileNotFoundError: If ``catalog_root`` is not an initialised catalog.
         FileExistsError: If collection already exists and force=False.
     """
-    # ADR-0030: validate remote URL (rejects file://, path traversals, etc.)
+    # validate remote URL (rejects file://, path traversals, etc.)
     try:
         validate_remote_url(url)
     except InputValidationError as e:
@@ -246,12 +250,15 @@ def add_external(
         bbox=bbox,
     )
 
+    # Emit the rel="license" link, so a license of "other" is conformant rather than
+    # a PTL-LIC-002 error. Reuses the applier the add path uses (issue #686).
+    apply_human_license(collection, {"license": license, "license_url": license_url})
+
     asset = pystac.Asset(
         href=url,
         media_type=resolved_media_type,
         roles=["data", EXTERNAL_ROLE],
         title=title or "External data",
-        extra_fields={MANAGED_FIELD: False},
     )
     add_asset_to_collection(collection, asset_key, asset)
 

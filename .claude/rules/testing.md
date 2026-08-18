@@ -21,7 +21,7 @@ Test markers are documented in the root `AGENTS.md` (kept there because
 keep them in sync with `pyproject.toml`).
 
 **Real-world fixtures:** See `context/shared/documentation/test-fixtures.md` for details.
-These test Portolan's **orchestration** with production data, they do NOT test geometry conversion (that's upstream's job per [ADR-0010](context/shared/adr/0010-delegate-conversion-validation.md)).
+These test Portolan's **orchestration** with production data, they do NOT test geometry conversion (that's upstream's job).
 
 ## Defending Against Tautological Tests
 

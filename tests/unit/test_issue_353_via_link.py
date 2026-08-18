@@ -36,6 +36,7 @@ class TestViaLinkGeneration:
             LayerResult,
             MetadataExtracted,
         )
+        from portolan_cli.licensing import ResolvedLicense
 
         output_dir = tmp_path / "test_catalog"
         output_dir.mkdir()
@@ -91,7 +92,9 @@ class TestViaLinkGeneration:
             ),
         )
 
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(
+            output_dir, report, ResolvedLicense(license_id="CC-BY-4.0", license_url=None)
+        )
 
         # Verify collection.json has via link
         collection_json_path = output_dir / "test_layer" / "collection.json"
@@ -122,6 +125,7 @@ class TestViaLinkGeneration:
             LayerResult,
             MetadataExtracted,
         )
+        from portolan_cli.licensing import ResolvedLicense
 
         output_dir = tmp_path / "test_catalog"
         output_dir.mkdir()
@@ -179,7 +183,9 @@ class TestViaLinkGeneration:
             ),
         )
 
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(
+            output_dir, report, ResolvedLicense(license_id="CC-BY-4.0", license_url=None)
+        )
 
         # Verify via link points to layer-specific URL
         collection_json_path = output_dir / "census_tracts" / "collection.json"
@@ -202,6 +208,7 @@ class TestViaLinkGeneration:
             LayerResult,
             MetadataExtracted,
         )
+        from portolan_cli.licensing import ResolvedLicense
 
         output_dir = tmp_path / "test_catalog"
         output_dir.mkdir()
@@ -250,7 +257,9 @@ class TestViaLinkGeneration:
         )
 
         # Should not create catalog (no successful extractions)
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(
+            output_dir, report, ResolvedLicense(license_id="CC-BY-4.0", license_url=None)
+        )
 
         # No collection.json should exist
         assert not (output_dir / "failed_layer" / "collection.json").exists()

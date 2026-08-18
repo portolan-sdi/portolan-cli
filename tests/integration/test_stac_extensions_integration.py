@@ -440,22 +440,20 @@ class TestRasterExtensionCompliance:
         )
 
     @pytest.mark.integration
-    def test_bands_key_triggers_raster_extension(self) -> None:
-        """STAC v1.1.0 unified bands array should trigger raster extension.
+    def test_bands_key_alone_does_not_trigger_raster_extension(self) -> None:
+        """The core `bands` array does not declare the raster extension (issue #654).
 
-        Issue #336: build_stac_extensions() didn't detect the 'bands' key,
-        only 'raster:' prefix. STAC v1.1.0 uses top-level 'bands' instead of 'raster:bands'.
+        Reverses issue #336: STAC v1.1.0 moved the unified `bands` array into
+        core, so band metadata (including `statistics`) validates without the
+        extension. Only `raster:`-prefixed fields still require it.
         """
         from portolan_cli.stac import build_stac_extensions
 
-        # Properties with only 'bands' (no raster: prefix)
         properties = {
             "bands": [{"name": "red", "data_type": "uint8"}],
             "datetime": "2024-01-01T00:00:00Z",
         }
+        assert EXTENSION_URLS["raster"] not in build_stac_extensions(properties)
 
-        extensions = build_stac_extensions(properties)
-
-        assert EXTENSION_URLS["raster"] in extensions, (
-            f"Raster extension not detected from 'bands' key: {extensions}"
-        )
+        with_raster_field = {**properties, "raster:spatial_resolution": 10.0}
+        assert EXTENSION_URLS["raster"] in build_stac_extensions(with_raster_field)

@@ -69,7 +69,7 @@ def empty_catalog(tmp_path: Path, runner: CliRunner) -> Iterator[Path]:
     Yields a temporary directory with `portolan init --auto` already run.
     Useful for testing workflows that start from a clean catalog.
     """
-    result = runner.invoke(cli, ["init", str(tmp_path), "--auto"])
+    result = runner.invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
     assert result.exit_code == 0, f"Init failed: {result.output}"
     yield tmp_path
 

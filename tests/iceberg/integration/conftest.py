@@ -90,7 +90,7 @@ def initialized_iceberg_catalog(tmp_path: Path, runner: CliRunner) -> Path:
     with patch("portolan_cli.backends.iceberg.config._get_external_config", return_value=None):
         result = runner.invoke(
             cli,
-            ["init", str(tmp_path), "--auto", "--backend", "iceberg"],
+            ["init", str(tmp_path), "--auto", "--backend", "iceberg", "--license", "CC-BY-4.0"],
             catch_exceptions=False,
         )
     assert result.exit_code == 0, f"Init failed: {result.output}"
@@ -122,8 +122,7 @@ def place_geojson_in_collection(
 ) -> Path:
     """Write a GeoJSON file into the expected catalog directory structure.
 
-    For vector data (GeoJSON), portolan-cli uses collection-level assets
-    (ADR-0031): parent directory = collection. So:
+    For vector data (GeoJSON), portolan-cli uses collection-level assets: parent directory = collection. So:
       catalog_root/collection/data.geojson -> collection = "collection"
 
     Returns the file path.

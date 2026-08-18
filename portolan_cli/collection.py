@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from portolan_cli.bbox import to_2d_bbox
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.models.collection import (
     CollectionModel,
     ExtentModel,
@@ -136,8 +137,7 @@ def write_collection_json(collection: CollectionModel, path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     output_path = path / "collection.json"
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(collection.to_dict(), f, indent=2)
+    write_json_atomic(output_path, collection.to_dict())
 
     return output_path
 
@@ -155,8 +155,7 @@ def write_schema_json(schema: SchemaModel, path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     output_path = path / "schema.json"
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(schema.to_dict(), f, indent=2)
+    write_json_atomic(output_path, schema.to_dict())
 
     return output_path
 
@@ -176,7 +175,7 @@ def read_collection_json(path: Path) -> CollectionModel:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     return CollectionModel.from_dict(data)
@@ -197,7 +196,7 @@ def read_schema_json(path: Path) -> SchemaModel:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     return SchemaModel.from_dict(data)
@@ -221,7 +220,7 @@ def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
         return []
 
     try:
-        with open(catalog_path) as f:
+        with open(catalog_path, encoding="utf-8") as f:
             catalog_data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return []
@@ -237,7 +236,7 @@ def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
         if not href.endswith("collection.json"):
             continue
 
-        # Security: Validate path is within catalog_root (ADR-0030 path hardening)
+        # Security: Validate path is within catalog_root (path hardening)
         # Prevents path traversal via malicious hrefs like "../../../etc/passwd"
         try:
             collection_path = (catalog_root / href).resolve()
@@ -251,7 +250,7 @@ def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
             continue
 
         try:
-            with open(collection_path) as f:
+            with open(collection_path, encoding="utf-8") as f:
                 collection_data = json.load(f)
 
             # Extract bbox from extent
@@ -304,7 +303,7 @@ def _compute_union_bbox(bboxes: list[list[float]]) -> list[float]:
 
 
 def _get_metadata_yaml_bbox(collection_dir: Path) -> list[float] | None:
-    """Check metadata.yaml for explicit bbox (ADR-0047 priority 1).
+    """Check metadata.yaml for explicit bbox (priority 1).
 
     Args:
         collection_dir: Path to the collection directory.
@@ -319,7 +318,7 @@ def _get_metadata_yaml_bbox(collection_dir: Path) -> list[float] | None:
     try:
         import yaml
 
-        with open(metadata_path) as f:
+        with open(metadata_path, encoding="utf-8") as f:
             metadata = yaml.safe_load(f) or {}
 
         # Check for explicit bbox in metadata.yaml

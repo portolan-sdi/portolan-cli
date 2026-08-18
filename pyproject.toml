@@ -26,32 +26,32 @@ classifiers = [
     "Topic :: Scientific/Engineering :: GIS",
 ]
 dependencies = [
-    "antimeridian>=0.3.11",  # RFC 7946 compliant antimeridian handling for STAC bbox
-    "click>=8.3.3,<8.4",  # PYSEC-2026-2132 fix; <8.4 defers ParamType-generic API change to its own PR
-    "defusedxml>=0.7.1",  # Safe XML parsing (XXE protection) for CSW/ISO 19139 metadata
-    "geoparquet-io>=1.3.0",  # WFS auto-tile + 100K page_size defaults (Issue #529); git main pinned via [tool.uv.sources]
-    "httpx>=0.27.0",  # HTTP client for ArcGIS REST API discovery
-    "obstore>=0.8.2",  # Cloud object storage (S3, GCS, Azure) via Rust bindings
-    "python-dotenv>=1.0.0",  # Load .env files for credentials (ADR-0024, Issue #356)
-    "numpy>=1.24.0",  # Array ops (transitive via rasterio, but we import directly for thumbnails)
-    "pyarrow>=12.0.0,<25.0.0",  # v22+ has ABI incompatibility with abseil on some systems
-    "pyproj>=3.0.0",  # CRS transformations (transitive via rasterio, but we import directly)
-    "pystac>=1.10.0",  # STAC catalog/collection/item creation
-    "stac-geoparquet>=0.6.0",  # Generate items.parquet for efficient STAC queries (optional)
-    "pyyaml>=6.0",  # YAML config file support
-    "rasterio>=1.3.0",  # Raster I/O (transitive via rio-cogeo, but we import directly)
-    "cryptography>=46.0.7",  # CVE-2026-39892 fix (transitive via httpx/certifi, pinned for security)
-    "lxml>=6.1.0",  # CVE-2026-41066 fix (transitive via owslib, pinned for security)
-    "pillow>=12.3.0",  # PYSEC-2026-2253..2257 fix (transitive via rasterio, pinned for security)
-    "pmtiles>=3.0.0",  # PMTiles metadata reading (header, bounds, zoom levels)
-    "pyogrio>=0.7.0",  # FlatGeobuf metadata reading (transitive via geoparquet-io, but we import directly)
-    "pygments>=2.20.0",  # CVE-2026-4539 fix (transitive via rich, pinned for security)
-    "requests>=2.33.0",  # CVE-2026-25645 fix (transitive, pinned for security)
-    "rich>=13.0.0",  # Terminal progress bars (transitive via geoparquet-io, but we import directly)
-    "rio-cogeo>=5.0.0",  # COG creation/validation (includes rasterio)
-    "stac-check>=1.4.0",  # STAC schema validation + best practices linting
-    "jsonschema>=4.18.0",  # Hermetic spec-schema validation in validation/ seam (registry API needs >=4.18); was transitive via stac-check
-    "referencing>=0.30.0",  # Offline $ref registry for vendored STAC schemas (validation/schema_registry.py)
+    "antimeridian>=0.3.11", # RFC 7946 compliant antimeridian handling for STAC bbox
+    "click>=8.4,<8.5", # PYSEC-2026-2132 fix; 8.4 makes ParamType generic (temporal.FlexibleDateTime subscripts it)
+    "defusedxml>=0.7.1", # Safe XML parsing (XXE protection) for CSW/ISO 19139 metadata
+    "geopandas>=0.14.0", # Reads GeoParquet for the thumbnail floor, which every collection needs (Issue #683)
+    "geoparquet-io>=1.3.0", # WFS auto-tile + 100K page_size defaults (Issue #529); git main pinned via [tool.uv.sources]
+    "httpx>=0.27.0", # HTTP client for ArcGIS REST API discovery
+    "matplotlib>=3.8.0", # Renders the deterministic thumbnail floor. Core, not optional: PTL-VIZ-001 is an ERROR, so a default install must be able to produce a conformant catalog (#518 Track 1, #683)
+    "obstore>=0.8.2", # Cloud object storage (S3, GCS, Azure) via Rust bindings
+    "python-dotenv>=1.0.0", # Load .env files for credentials (Issue #356)
+    "numpy>=1.24.0", # Array ops (transitive via rasterio, but we import directly for thumbnails)
+    "pyarrow>=12.0.0,<25.0.0", # v22+ has ABI incompatibility with abseil on some systems
+    "pyproj>=3.0.0", # CRS transformations (transitive via rasterio, but we import directly)
+    "pystac>=1.10.0", # STAC catalog/collection/item creation
+    "stac-geoparquet>=0.6.0", # Generate items.parquet for efficient STAC queries (optional)
+    "pyyaml>=6.0", # YAML config file support
+    "rasterio>=1.3.0", # Raster I/O (transitive via rio-cogeo, but we import directly)
+    "cryptography>=46.0.7", # CVE-2026-39892 fix (transitive via httpx/certifi, pinned for security)
+    "lxml>=6.1.0", # CVE-2026-41066 fix (transitive via owslib, pinned for security)
+    "pillow>=12.3.0", # PYSEC-2026-2253..2257 fix (transitive via rasterio, pinned for security)
+    "pmtiles>=3.0.0", # PMTiles metadata reading (header, bounds, zoom levels)
+    "pyogrio>=0.7.0", # FlatGeobuf metadata reading (transitive via geoparquet-io, but we import directly)
+    "pygments>=2.20.0", # CVE-2026-4539 fix (transitive via rich, pinned for security)
+    "requests>=2.33.0", # CVE-2026-25645 fix (transitive, pinned for security)
+    "rich>=13.0.0", # Terminal progress bars (transitive via geoparquet-io, but we import directly)
+    "rio-cogeo>=5.0.0", # COG creation/validation (includes rasterio)
+    "rashid>=0.1.5,<0.2.0", # Conformance validator behind `portolan check`; ships its own STAC + Portolan profile schemas, so validation runs offline. 0.1.5 is the floor for the catalog-logo rules PTL-LNK-007/008/009 (PORTO-CORE-074..077) and for PTL-AST-006, whose absence in 0.1.4 let a wrong COG media type mask PTL-COL-004 and PTL-MIR-001. The conformance gate asserts all four, so this is a hard floor, not a preference
     "typing_extensions>=4.0.0; python_version < '3.11'",
 ]
 
@@ -76,10 +76,9 @@ e2e = [
 dev = [
     "bandit>=1.9.3",
     "codespell>=2.4.1",
-    # menard: in [dependency-groups].dev only — git deps can't be published to PyPI
-    "deptry>=0.25.1",  # Dependency checker (unused, missing, transitive deps)
-    "gitingest>=0.1.0",  # Auto-fetch API docs for core dependencies
-    "import-linter>=2.0",  # Architecture enforcement via import contracts
+    "deptry>=0.25.1", # Dependency checker (unused, missing, transitive deps)
+    "gitingest>=0.1.0", # Auto-fetch API docs for core dependencies
+    "import-linter>=2.0", # Architecture enforcement via import contracts
     "commitizen>=4.13.4",
     "hypothesis>=6.151.5",
     "mutmut>=3.4.0",
@@ -91,31 +90,32 @@ dev = [
     "pytest-timeout>=2.3.1",
     "radon>=6.0.1",
     "ruff>=0.14.11",
-    "types-defusedxml>=0.7.0",  # Type stubs for defusedxml
-    "types-jsonschema>=4.18.0",  # Type stubs for jsonschema (validation/schema_registry.py)
-    "types-PyYAML>=6.0",  # Type stubs for PyYAML
+    "types-defusedxml>=0.7.0", # Type stubs for defusedxml
+    "types-PyYAML>=6.0", # Type stubs for PyYAML
     "vulture>=2.14",
     "xenon>=0.9.3",
 ]
 pmtiles = [
-    "gpio-pmtiles>=0.1.0",  # PMTiles generation from GeoParquet (requires tippecanoe)
+    "gpio-pmtiles>=0.1.0", # PMTiles generation from GeoParquet (requires tippecanoe)
 ]
+# Rendering itself is core (matplotlib, geopandas). What stays optional here is
+# the extra fidelity: basemap tiles under a vector thumbnail, and the MVT decode
+# that only the PMTiles render path uses. Both are lazily imported and guarded,
+# so a default install renders without them.
 thumbnails = [
-    "contextily>=1.5.0",  # Basemap tiles for vector thumbnails
-    "geopandas>=0.14.0",  # GeoParquet reading for thumbnail generation
-    "mapbox-vector-tile>=2.0.0",  # MVT decoding for PMTiles thumbnail generation
-    "matplotlib>=3.8.0",  # Rendering geometries to JPEG
+    "contextily>=1.5.0", # Basemap tiles for vector thumbnails
+    "mapbox-vector-tile>=2.0.0", # MVT decoding for PMTiles thumbnail generation
 ]
 docs = [
     "mkdocs>=1.6.1",
-    "mkdocs-click>=0.8.0",  # Auto-generate CLI reference from Click commands
+    "mkdocs-click>=0.8.0", # Auto-generate CLI reference from Click commands
     "mkdocs-material>=9.7.1",
     "mkdocstrings[python]>=1.0.0",
-    "pymdown-extensions>=10.21.2",  # Fix filename=None bug in highlight extension
+    "pymdown-extensions>=10.21.2", # Fix filename=None bug in highlight extension
 ]
 
 [tool.hatch.metadata]
-allow-direct-references = true  # Allow git dependencies (menard during development)
+allow-direct-references = true # Allow git dependencies (geoparquet-io during development)
 
 [tool.hatch.build.targets.wheel]
 packages = ["portolan_cli"]
@@ -150,6 +150,7 @@ markers = [
     "slow: Takes > 5 seconds",
     "e2e: End-to-end tests requiring Docker (REST catalog + MinIO)",
     "e2e_slow: Extended E2E tests (concurrency stress, large datasets) - nightly only",
+    "source_scan: Static source-tree guard incompatible with mutmut instrumentation",
 ]
 
 [tool.coverage.run]
@@ -177,18 +178,18 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "UP",  # pyupgrade
+    "E", # pycodestyle errors
+    "W", # pycodestyle warnings
+    "F", # pyflakes
+    "I", # isort
+    "B", # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
 ]
 ignore = [
-    "E501",  # line too long (handled by formatter)
-    "B008",  # do not perform function calls in argument defaults
-    "C901",  # too complex
+    "E501", # line too long (handled by formatter)
+    "B008", # do not perform function calls in argument defaults
+    "C901", # too complex
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -206,7 +207,7 @@ docstring-code-format = true
 
 [tool.mypy]
 python_version = "3.10"
-strict = true  # Enables all strict flags at once
+strict = true # Enables all strict flags at once
 # pyarrow >=24 ships py.typed but leaves pyarrow.parquet helpers untyped, so
 # strict's disallow_untyped_calls trips on every read_table/write_table/
 # ParquetFile/read_metadata/read_schema call. Scope the suppression to pyarrow
@@ -214,14 +215,14 @@ strict = true  # Enables all strict flags at once
 untyped_calls_exclude = ["pyarrow"]
 
 [[tool.mypy.overrides]]
-module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*", "pyiceberg.*", "shapely.*", "pygeohash.*", "mutmut.*"]
+module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*", "pyiceberg.*", "shapely.*", "pygeohash.*", "mutmut.*", "geopandas.*", "contextily.*", "jsonschema.*"]
 ignore_missing_imports = true
 
 # ---------- security ----------
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]
-skips = []  # Add specific checks to skip if needed, e.g., ["B101"]
+skips = [] # Add specific checks to skip if needed, e.g., ["B101"]
 
 # ---------- spell check ----------
 
@@ -231,10 +232,6 @@ skips = []  # Add specific checks to skip if needed, e.g., ["B101"]
 # "BU" is the INSPIRE theme code for Buildings (used in test fixtures)
 # "disjointness" is a real set-theory term (codespell wants "disjointedness")
 ignore-words-list = "nd,bu,ue,adresse,projet,environnement,copie,explicite,connexion,objets,visibles,issus,fonction,mesures,informations,disjointness"
-# Vendored upstream STAC schemas are byte-identical third-party data (they carry
-# upstream's own typos, e.g. "sumamry" in collection.json). Never spell-check them;
-# a refresh re-imports upstream text verbatim. Keep in sync with the ci.yml --skip.
-skip = "portolan_cli/validation/_vendored"
 
 # ---------- dead code ----------
 
@@ -242,10 +239,9 @@ skip = "portolan_cli/validation/_vendored"
 min_confidence = 80
 paths = ["portolan_cli", "tests", "vulture_whitelist.py"]
 exclude = [
-    "portolan_cli/validation/rules.py",  # Abstract methods have unused params
-    "portolan_cli/backends/protocol.py",  # Protocol method params are intentionally unused
-    "portolan_cli/backends/json_file.py",  # Stub methods raise NotImplementedError
-    "portolan_cli/backends/iceberg/backend.py",  # Protocol methods + lifecycle hooks
+    "portolan_cli/backends/protocol.py", # Protocol method params are intentionally unused
+    "portolan_cli/backends/json_file.py", # Stub methods raise NotImplementedError
+    "portolan_cli/backends/iceberg/backend.py", # Protocol methods + lifecycle hooks
 ]
 sort_by_size = true
 verbose = false
@@ -263,42 +259,44 @@ pytest_add_cli_args_test_selection = ["tests/"]
 # guard).
 # scripts/ (imported by a few tests) and the data files those tests read must
 # be present in the sandbox, or collection/execution dies there.
-# spec/ holds the shipped STAC schemas + extensions.md that the spec_compliance
-# suite reads by repo-root path (tests/spec_compliance/conftest.py resolves
-# spec/schema/, test_extensions_doc_parity.py reads spec/extensions.md). Without
-# it the baseline errors with FileNotFoundError on mutants/spec/... (172 KiB).
+# (spec/ used to be copied here for the spec_compliance suite; both are gone —
+# the spec moved to portolan-spec and validation to rashid, which ships its own
+# schemas inside its wheel, so nothing reads a schema by repo-root path now.)
+# `.mutation-shards.json` joins `.mutation-baseline` here because
+# TestShardBaselines::test_repo_baseline_file_parses reads it by repo-root path:
+# inside the copied sandbox that root is `mutants/`, so an uncopied file is a
+# FileNotFoundError that fails the in-mutation pytest run and aborts the gate.
+# docs/reference/ holds input-formats.md, read by the generated-page freshness
+# test (tests/unit/test_input_formats_doc.py), a strong mutant killer for
+# extension_registry.py. It must be a directory entry: mutmut copies file
+# entries with shutil.copy2, which cannot create mutants/docs/reference/,
+# while directory entries go through copytree, which can.
 also_copy = [
   "scripts/",
   ".pip-audit-ignores",
   ".mutation-baseline",
   ".mutation-shards.json",
-  "spec/",
+  "docs/reference/",
 ]
 # The stats/baseline run must mirror the fast CI test job, not the whole suite:
 # - --no-cov: pyproject's addopts inject --cov, whose instrumentation conflicts
-#   with mutmut's; without this the stats phase is unreliable.
+# with mutmut's; without this the stats phase is unreliable.
 # - --tb=short: a stats-phase failure must show WHERE it broke.
 # - marker filter: exclude network/slow/benchmark/e2e (mutation of portolan_cli
-#   is validated by the fast, offline suite; e2e needs Docker, network needs a
-#   live server).
+# is validated by the fast, offline suite; e2e needs Docker, network needs a
+# live server).
 pytest_add_cli_args = [
     "--no-cov",
     "--tb=short",
-    "-m", "not network and not slow and not benchmark and not e2e and not e2e_slow",
+    "-m", "not network and not slow and not benchmark and not e2e and not e2e_slow and not source_scan",
 ]
 
 # ---------- architecture enforcement ----------
-# See ADR-0025 for rationale. These contracts enforce critical architectural boundaries.
 # Stricter layered contracts are aspirational - the current architecture has some coupling
 # that would need refactoring to support full layered enforcement.
 
 [tool.importlinter]
 root_packages = ["portolan_cli"]
-# Required so the validation-no-framework-leakage contract can forbid the
-# external `click`/`rich` packages (import-linter needs external nodes in the
-# graph at the top level). Only adds external nodes; internal contracts are
-# unaffected.
-include_external_packages = true
 
 [[tool.importlinter.contracts]]
 id = "cli-no-storage"
@@ -306,17 +304,17 @@ name = "CLI cannot import storage backends directly"
 type = "forbidden"
 source_modules = ["portolan_cli.cli"]
 forbidden_modules = ["portolan_cli.backends"]
-# Allow intermediate modules to access backends (ADR-0007: CLI wraps API).
+# Allow intermediate modules to access backends (CLI wraps API).
 # cli.py uses these modules as a clean interface; direct cli->backends is still forbidden.
 ignore_imports = [
     "portolan_cli.catalog -> portolan_cli.backends",
     # finalize_items routes version snapshots to the active backend (#624 moved
     # this edge out of add.py into finalization.py); cli reaches it only via the
-    # library layer, so the direct cli->backends ban still holds (ADR-0007).
+    # library layer, so the direct cli->backends ban still holds.
     "portolan_cli.finalization -> portolan_cli.backends",
     "portolan_cli.version_ops -> portolan_cli.backends",
     "portolan_cli.version_ops -> portolan_cli.backends.protocol",
-    "portolan_cli.cli -> portolan_cli.backends.protocol",  # TYPE_CHECKING only
+    "portolan_cli.cli -> portolan_cli.backends.protocol", # TYPE_CHECKING only
 ]
 
 [[tool.importlinter.contracts]]
@@ -327,41 +325,16 @@ source_modules = ["portolan_cli.backends.iceberg"]
 forbidden_modules = ["portolan_cli.cli"]
 
 [[tool.importlinter.contracts]]
-id = "validation-seam-for-rashid"
-name = "Validation must not import CLI/output/config layers (rashid extraction seam)"
+id = "validation-is-an-adapter"
+name = "Validation is a rashid adapter and must not import the CLI"
 type = "forbidden"
-# portolan_cli.validation is nearly extraction-ready as the future `rashid`
-# package (see issue #563). It stays free of the app-framework layers so the
-# seam is cheap to protect now, ahead of the post-sprint extraction.
+# The extraction seam is gone: rashid ships as a package and
+# portolan_cli.validation is the adapter in front of it. What
+# remains worth locking is direction. The adapter builds rashid's config,
+# calls it, and returns plain data (validation.report emits dicts, never
+# Click/Rich output), so cli.py depends on validation and never the reverse.
 source_modules = ["portolan_cli.validation"]
-forbidden_modules = [
-    "portolan_cli.cli",
-    "portolan_cli.output",
-    "portolan_cli.config",
-]
-# Intentional extraction-time couplings: validation reaches into these
-# pure-logic/data modules for classification, bbox checks, and metadata scan.
-# They are leaves (or a self-contained subtree) that carry no CLI/output/config
-# dependency, so they move with `rashid` or vendor trivially at extraction time.
-# Documented per the second checkbox on #563 (which listed only scan_classify;
-# metadata.scan and bbox are the same kind of coupling, added since).
-#   portolan_cli.validation -> portolan_cli.scan.classify
-#   portolan_cli.validation -> portolan_cli.metadata.scan
-#   portolan_cli.validation -> portolan_cli.bbox
-#   portolan_cli.validation -> portolan_cli.viz.pmtiles_links
-# (pmtiles_links is a stdlib-only leaf holding the PMTiles asset/link classifiers;
-#  it exists precisely so validation never imports pmtiles.py, issue #586/#592.)
-
-[[tool.importlinter.contracts]]
-id = "validation-no-framework-leakage"
-name = "Validation must not import Click or Rich (rashid extraction seam)"
-type = "forbidden"
-# Framework tripwire: Click/Rich only ever reach validation *through* the
-# cli/output layers forbidden above. Guarding the external packages directly
-# catches a regression even if a new intermediate module were introduced.
-# (External-node analysis is enabled by the top-level include_external_packages.)
-source_modules = ["portolan_cli.validation"]
-forbidden_modules = ["click", "rich"]
+forbidden_modules = ["portolan_cli.cli"]
 
 [[tool.importlinter.contracts]]
 id = "utilities-are-foundational"
@@ -372,6 +345,10 @@ modules = [
     "portolan_cli.errors",
     "portolan_cli.constants",
     "portolan_cli.json_output",
+    # input sanitization. A stdlib-only leaf (re, pathlib, urllib):
+    # it hardens agent-supplied arguments, which is not catalog validation, so
+    # it sits at the top level rather than inside validation/.
+    "portolan_cli.input_hardening",
 ]
 
 # ---------- feature-package boundaries (#625) ----------
@@ -389,6 +366,18 @@ type = "forbidden"
 # styles, PMTiles). It is a leaf: it depends on neither scanning nor sync.
 source_modules = ["portolan_cli.viz"]
 forbidden_modules = ["portolan_cli.scan", "portolan_cli.sync"]
+ignore_imports = [
+    # PORTO-CORE-069 makes `file:size`/`file:checksum` on a style asset a claim
+    # about the style file's bytes, so `viz.style` must stamp them. It reuses
+    # `stac_parquet.stamp_file_fields`/`sync_file_extension` rather than hashing
+    # on its own terms, and those reach `sync.checksums` — a stdlib+rashid leaf,
+    # not the sync orchestration this contract exists to keep out of viz. The
+    # same reasoning is written into the scan contract below.
+    "portolan_cli.viz.style -> portolan_cli.stac_parquet",
+    # Same reasoning for the PMTiles writer, which was the one visual artifact
+    # shipping without file:size/file:checksum until issue #746.
+    "portolan_cli.viz.pmtiles -> portolan_cli.stac_parquet",
+]
 
 [[tool.importlinter.contracts]]
 id = "scan-below-sync"
@@ -416,9 +405,9 @@ allow_indirect_imports = true
 optional_dependencies_dev_groups = ["dev", "docs"]
 # Extend default exclusions (venv, .venv, tests, .git already excluded)
 extend_exclude = [
-    "scripts",  # Standalone scripts may use external tools
-    "context",  # Documentation context, not runtime code
-    ".claude",  # Claude Code worktrees and temp files
+    "scripts", # Standalone scripts may use external tools
+    "context", # Documentation context, not runtime code
+    ".claude", # Claude Code worktrees and temp files
 ]
 
 [tool.deptry.per_rule_ignores]
@@ -433,13 +422,15 @@ DEP002 = ["cryptography", "lxml", "pillow", "pygments", "requests", "pyiceberg",
 [dependency-groups]
 dev = [
     "fastembed>=0.8.0",
-    "menard[brevity] @ git+https://github.com/nlebovits/menard.git@main",
+    # The conformance gate validates emitted raster items against the vendored
+    # raster v2.0.0 schema. jsonschema arrives transitively through rashid, but
+    # the gate would break silently if rashid ever dropped it, so declare it.
+    "jsonschema>=4.0.0",
     "moto[s3,server]>=5.0.0",
     "numpy>=2.2.6",
     "pylint>=4.0.5",
     "pytest-asyncio>=1.3.0",
     "pytest-xdist>=3.8.0",
-    "types-jsonschema>=4.18.0",
     "types-pyyaml>=6.0.12.20250915",
 ]
 
@@ -449,13 +440,3 @@ dev = [
 # dev-only source override pulls main so portolan picks up upstream WFS fixes
 # (auto-tile, 100K page_size) before they hit a PyPI release.
 geoparquet-io = { git = "https://github.com/geoparquet/geoparquet-io.git", branch = "main" }
-
-[tool.menard]
-mode = "block"
-transitive_depth = 1
-enforce_symmetry = true
-require_links = ["portolan_cli/**/*.py"]
-exempt = ["tests/**"]
-# Only track USER-FACING docs (not ADRs, plans, or internal context)
-# ADRs are historical records - they don't need updating when code changes
-doc_paths = ["docs/**/*.md", "README.md"]

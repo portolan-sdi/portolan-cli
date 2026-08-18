@@ -4,7 +4,7 @@ These tests exercise the full add workflow with real fixtures,
 verifying that format conversion, metadata extraction, and STAC creation
 work end-to-end.
 
-Per ADR-0022 (track in-place design): Files must be INSIDE the catalog
+Files must be INSIDE the catalog
 directory structure BEFORE calling add(). Tests copy fixtures
 into the catalog first, then call add() on the copied paths.
 """
@@ -30,7 +30,7 @@ from portolan_cli.formats import FormatType
 
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
-    """Create an initialized Portolan catalog structure (per ADR-0023).
+    """Create an initialized Portolan catalog structure.
 
     This creates all required files for a managed catalog:
     - catalog.json at root (STAC entry point)
@@ -41,7 +41,7 @@ def initialized_catalog(tmp_path: Path) -> Path:
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
 
-    # catalog.json at root level (per ADR-0023)
+    # catalog.json at root level
     catalog_data = {
         "type": "Catalog",
         "stac_version": "1.0.0",
@@ -51,7 +51,7 @@ def initialized_catalog(tmp_path: Path) -> Path:
     }
     (tmp_path / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
 
-    # config.yaml is the sentinel for catalog root detection (per ADR-0029)
+    # config.yaml is the sentinel for catalog root detection
     (portolan_dir / "config.yaml").write_text("version: 1\n")
 
     # Note: state.json removed per issue #290
@@ -208,7 +208,7 @@ class TestComputeChecksum:
 class TestAddIntegration:
     """Integration tests for full add workflow.
 
-    Per ADR-0022 (track in-place design): Files must be inside the catalog
+    Files must be inside the catalog
     directory BEFORE calling add(). Tests copy fixtures into the
     collection/item directory structure first.
     """
@@ -218,7 +218,7 @@ class TestAddIntegration:
         self, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
         """add converts GeoJSON and creates STAC item."""
-        # Per ADR-0022: Copy file INTO catalog first (track in-place design)
+        # Copy file INTO catalog first (track in-place design)
         collection_dir = initialized_catalog / "test-vectors"
         item_dir = collection_dir / valid_points_geojson.stem
         item_dir.mkdir(parents=True)
@@ -239,7 +239,7 @@ class TestAddIntegration:
         # Bbox should be valid (not Null Island)
         assert result.bbox != [0, 0, 0, 0]
 
-        # Verify STAC structure was created (at root level per ADR-0023)
+        # Verify STAC structure was created (at root level)
         assert collection_dir.exists()
         assert (collection_dir / "collection.json").exists()
         assert (collection_dir / "versions.json").exists()
@@ -251,7 +251,7 @@ class TestAddIntegration:
     @pytest.mark.integration
     def test_add_raster_end_to_end(self, initialized_catalog: Path, valid_rgb_cog: Path) -> None:
         """add converts raster and creates STAC item."""
-        # Per ADR-0022: Copy file INTO catalog first
+        # Copy file INTO catalog first
         collection_dir = initialized_catalog / "imagery"
         item_dir = collection_dir / valid_rgb_cog.stem
         item_dir.mkdir(parents=True)
@@ -268,15 +268,79 @@ class TestAddIntegration:
         assert result.format_type == FormatType.RASTER
         assert len(result.bbox) == 4
 
-        # Verify STAC structure (at root level per ADR-0023)
+        # Verify STAC structure (at root level)
         assert (collection_dir / "collection.json").exists()
+
+    @pytest.mark.integration
+    def test_add_raster_registers_thumbnail_asset(
+        self, initialized_catalog: Path, valid_rgb_cog: Path
+    ) -> None:
+        """add generates a COG thumbnail sidecar and registers it as an asset (Issue #657).
+
+        The add path converts via convert_raster(), which historically did not
+        generate a thumbnail, so COG items had only a "data" asset. This asserts
+        the thumbnail is both written to disk and registered with role
+        "thumbnail" in the item.json.
+        """
+        # Per ADR-0022: Copy file INTO catalog first
+        collection_dir = initialized_catalog / "imagery"
+        item_dir = collection_dir / valid_rgb_cog.stem
+        item_dir.mkdir(parents=True)
+        in_catalog_path = item_dir / valid_rgb_cog.name
+        shutil.copy(valid_rgb_cog, in_catalog_path)
+
+        add(
+            path=in_catalog_path,
+            catalog_root=initialized_catalog,
+            collection_id="imagery",
+        )
+
+        # The .thumb.jpg sidecar is written next to the COG.
+        thumb_path = item_dir / f"{valid_rgb_cog.stem}.thumb.jpg"
+        assert thumb_path.exists(), "add did not generate the COG thumbnail sidecar"
+
+        # And it is registered as a thumbnail-role asset in the item.json.
+        item_json = item_dir / f"{valid_rgb_cog.stem}.json"
+        assets = json.loads(item_json.read_text())["assets"]
+        thumbnail_assets = [
+            asset for asset in assets.values() if "thumbnail" in asset.get("roles", [])
+        ]
+        assert len(thumbnail_assets) == 1, f"expected one thumbnail asset, got {assets}"
+        assert thumbnail_assets[0]["href"] == f"./{valid_rgb_cog.stem}.thumb.jpg"
+        assert thumbnail_assets[0]["type"] == "image/jpeg"
+
+    @pytest.mark.integration
+    def test_add_raster_thumbnail_disabled_via_config(
+        self, initialized_catalog: Path, valid_rgb_cog: Path
+    ) -> None:
+        """generate_thumbnail=false suppresses the COG thumbnail sidecar (Issue #657)."""
+        (initialized_catalog / ".portolan" / "config.yaml").write_text(
+            "version: 1\nconversion:\n  cog:\n    generate_thumbnail: false\n"
+        )
+        collection_dir = initialized_catalog / "imagery"
+        item_dir = collection_dir / valid_rgb_cog.stem
+        item_dir.mkdir(parents=True)
+        in_catalog_path = item_dir / valid_rgb_cog.name
+        shutil.copy(valid_rgb_cog, in_catalog_path)
+
+        add(
+            path=in_catalog_path,
+            catalog_root=initialized_catalog,
+            collection_id="imagery",
+        )
+
+        assert not (item_dir / f"{valid_rgb_cog.stem}.thumb.jpg").exists()
+        item_json = item_dir / f"{valid_rgb_cog.stem}.json"
+        assets = json.loads(item_json.read_text())["assets"]
+        thumbnail_assets = [a for a in assets.values() if "thumbnail" in a.get("roles", [])]
+        assert thumbnail_assets == []
 
     @pytest.mark.integration
     def test_add_multiple_items_same_collection(
         self, initialized_catalog: Path, valid_points_geojson: Path, valid_polygons_geojson: Path
     ) -> None:
         """Multiple items can be added to the same collection."""
-        # Per ADR-0022: Copy files INTO catalog first
+        # Copy files INTO catalog first
         collection_dir = initialized_catalog / "vectors"
 
         # First file
@@ -310,7 +374,7 @@ class TestAddIntegration:
         self, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
         """get_item_info returns correct info for added item."""
-        # Per ADR-0022: Copy file INTO catalog first
+        # Copy file INTO catalog first
         collection_dir = initialized_catalog / "test-col"
         item_dir = collection_dir / valid_points_geojson.stem
         item_dir.mkdir(parents=True)
@@ -347,7 +411,7 @@ class TestMultiAssetIntegration:
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
         """End-to-end: add geo file with thumbnail and readme tracks all."""
-        # Per ADR-0022: Create file INSIDE catalog directory structure
+        # Create file INSIDE catalog directory structure
         collection_dir = initialized_catalog / "multi-asset-test"
         item_dir = collection_dir / "data"
         item_dir.mkdir(parents=True)

@@ -234,7 +234,7 @@ def _check_catalog(catalog_path: Path) -> MetadataCheckResult | None:
         MetadataCheckResult or None if not a valid catalog.
     """
     try:
-        with open(catalog_path) as f:
+        with open(catalog_path, encoding="utf-8") as f:
             data = json.load(f)
 
         if data.get("type") != "Catalog":
@@ -276,7 +276,7 @@ def _check_collection(collection_path: Path) -> MetadataCheckResult | None:
         MetadataCheckResult or None if not a valid collection.
     """
     try:
-        with open(collection_path) as f:
+        with open(collection_path, encoding="utf-8") as f:
             data = json.load(f)
 
         if data.get("type") != "Collection":
@@ -310,7 +310,7 @@ def _check_item_json(json_path: Path) -> MetadataCheckResult | None:
         MetadataCheckResult or None if not a STAC item.
     """
     try:
-        with open(json_path) as f:
+        with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
 
         if data.get("type") != "Feature":

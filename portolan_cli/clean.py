@@ -53,7 +53,7 @@ def is_stac_metadata(path: Path) -> bool:
         return False
 
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return False
         stac_type = data.get("type")

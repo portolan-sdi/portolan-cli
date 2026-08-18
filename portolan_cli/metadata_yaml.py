@@ -1,4 +1,4 @@
-"""Metadata YAML schema and validation (ADR-0038).
+"""Metadata YAML schema and validation.
 
 This module provides validation and template generation for .portolan/metadata.yaml
 files. These files contain ONLY human-enrichable fields that can't be derived from
@@ -6,7 +6,13 @@ STAC or other sources.
 
 **Required fields (human-only):**
 - contact.name, contact.email - Accountability
-- license - SPDX identifier
+- license - SPDX identifier, or "other" alongside license_url
+
+``license`` is the one required field generation actually enforces: ``portolan add``
+refuses to write a collection without a usable one, because a collection with no
+license fails PTL-LIC-001 or PTL-LIC-002 under ``portolan check`` (issue #686). The
+predicate lives in ``portolan_cli.licensing``; ``portolan init`` seeds the value so
+the requirement is already met before the first add.
 
 **Auto-filled from STAC (NOT in metadata.yaml):**
 - title, description - From catalog/collection init
@@ -38,56 +44,18 @@ from pathlib import Path
 from typing import Any
 
 from portolan_cli.config import load_merged_metadata
+from portolan_cli.licensing import OTHER_LICENSE, license_gap
+from portolan_cli.providers import HOST_ROLE, PROVIDER_ROLES
 
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# Required fields per ADR-0038 (revised)
+# Required fields (revised)
 # Title and description come from STAC, not metadata.yaml
 # =============================================================================
 
 REQUIRED_FIELDS = frozenset({"contact", "license"})
 REQUIRED_CONTACT_FIELDS = frozenset({"name", "email"})
-
-# =============================================================================
-# SPDX License identifiers (common subset)
-# Full list: https://spdx.org/licenses/
-# =============================================================================
-
-COMMON_SPDX_LICENSES = frozenset(
-    {
-        # Creative Commons
-        "CC0-1.0",
-        "CC-BY-4.0",
-        "CC-BY-SA-4.0",
-        "CC-BY-NC-4.0",
-        "CC-BY-NC-SA-4.0",
-        "CC-BY-ND-4.0",
-        "CC-BY-NC-ND-4.0",
-        # Open source
-        "MIT",
-        "Apache-2.0",
-        "BSD-2-Clause",
-        "BSD-3-Clause",
-        "GPL-2.0-only",
-        "GPL-2.0-or-later",
-        "GPL-3.0-only",
-        "GPL-3.0-or-later",
-        "LGPL-2.1-only",
-        "LGPL-2.1-or-later",
-        "LGPL-3.0-only",
-        "LGPL-3.0-or-later",
-        "MPL-2.0",
-        "ISC",
-        "Unlicense",
-        # Public domain / open data
-        "PDDL-1.0",
-        "ODbL-1.0",
-        "ODC-By-1.0",
-        # Government
-        "CC-PDDC",
-    }
-)
 
 # =============================================================================
 # Validation regex patterns
@@ -100,11 +68,6 @@ EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # Suffix can contain any non-whitespace characters
 # See: https://www.doi.org/doi_handbook/2_Numbering.html
 DOI_PATTERN = re.compile(r"^10\.\d{4,}/\S+$")
-
-# LicenseRef pattern: LicenseRef-[idstring] per SPDX spec Section 6
-# idstring: alphanumeric plus dot, hyphen; must have at least one character
-# See: https://spdx.github.io/spdx-spec/v2.3/other-licensing-information-detected/
-LICENSEREF_PATTERN = re.compile(r"^LicenseRef-[A-Za-z0-9.\-]+$")
 
 # ISO date pattern: YYYY-MM-DD
 ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -321,10 +284,12 @@ def _validate_contact(metadata: dict[str, Any]) -> list[str]:
 def _validate_license(metadata: dict[str, Any]) -> list[str]:
     """Validate the required 'license' field.
 
-    License must be a valid SPDX identifier, a LicenseRef-* custom identifier,
-    or the STAC 1.1 keyword ``other`` (a license not covered by SPDX; a
-    rel="license" link is expected alongside it). STAC 1.1 no longer accepts
-    the deprecated ``proprietary`` value (issue #568).
+    The verdict comes from :func:`portolan_cli.licensing.license_gap`, so this
+    command, ``portolan add``, and ``portolan check`` all apply one policy to
+    one SPDX list (issue #727). A license must be an identifier in
+    ``rashid.api.SPDX_LICENSE_IDS``, or the STAC 1.1 keyword ``other`` with a
+    link to the license text. STAC 1.1 no longer accepts the deprecated
+    ``proprietary`` value (issue #568).
 
     Args:
         metadata: The full metadata dictionary.
@@ -342,18 +307,99 @@ def _validate_license(metadata: dict[str, Any]) -> list[str]:
         errors.append("Field 'license' cannot be empty")
         return errors
 
-    # Validate license is an SPDX identifier, the STAC 1.1 "other" keyword,
-    # or a valid LicenseRef-* custom identifier.
-    license_id = str(metadata.get("license"))
-    is_standard_license = license_id in COMMON_SPDX_LICENSES
-    is_other_license = license_id == "other"
-    is_custom_license = LICENSEREF_PATTERN.match(license_id) is not None
-    if not (is_standard_license or is_other_license or is_custom_license):
+    license_id = str(metadata["license"])
+    gap = license_gap(license_id, has_license_link=bool(metadata.get("license_url")))
+    if gap is None:
+        return errors
+
+    # This function reads metadata.yaml alone, so it cannot see a rel="license"
+    # link already written to collection.json. Name that escape as well.
+    if license_id == OTHER_LICENSE:
+        gap += ', or a rel="license" link already on the collection'
+    errors.append(f"Invalid license: {gap}")
+
+    return errors
+
+
+def _validate_provider_roles(roles: Any, index: int) -> list[str]:
+    """Validate one provider's roles against the four STAC defines."""
+    if not isinstance(roles, list):
+        return [f"Field 'providers[{index}].roles' must be a list"]
+
+    errors: list[str] = []
+    for role in roles:
+        if not isinstance(role, str) or role not in PROVIDER_ROLES:
+            errors.append(
+                f"Field 'providers[{index}].roles' has unknown role '{role}'. "
+                f"Use one of {', '.join(PROVIDER_ROLES)}"
+            )
+    return errors
+
+
+def _validate_host_contact(host: dict[str, Any], index: int) -> list[str]:
+    """The host provider must be reachable: a url or an email, per PORTO-CORE-051."""
+    url = host.get("url")
+    email = host.get("email")
+    has_url = isinstance(url, str) and url.strip()
+    has_email = isinstance(email, str) and email.strip()
+
+    if not has_url and not has_email:
+        return [
+            f"Field 'providers[{index}]' carries the host role, so it needs a 'url' or an 'email'"
+        ]
+    if has_email and not EMAIL_PATTERN.match(str(email)):
+        return [f"Invalid email format in 'providers[{index}].email': '{email}'"]
+    return []
+
+
+def _validate_providers(metadata: dict[str, Any]) -> list[str]:
+    """Validate the optional 'providers' array (issue #684).
+
+    The array is optional here because the host is seeded from ``contact`` when
+    it is absent, and because a producer is a human fact Portolan cannot invent —
+    a collection with no producer keeps reporting PTL-PRV-001 from
+    ``portolan check``. What this catches is an array that exists but cannot be
+    put in conformant shape.
+
+    Args:
+        metadata: The full metadata dictionary.
+
+    Returns:
+        List of validation error messages.
+    """
+    providers = metadata.get("providers")
+    if providers is None:
+        return []
+    if not isinstance(providers, list):
+        return ["Field 'providers' must be a list"]
+
+    errors: list[str] = []
+    hosts: list[int] = []
+
+    for index, provider in enumerate(providers):
+        if not isinstance(provider, dict):
+            errors.append(f"Field 'providers[{index}]' must be a mapping with a 'name'")
+            continue
+
+        name = provider.get("name")
+        if name is None:
+            errors.append(f"Field 'providers[{index}].name' is missing")
+        elif not str(name).strip():
+            errors.append(f"Field 'providers[{index}].name' cannot be empty")
+
+        roles = provider.get("roles")
+        if roles is not None:
+            errors.extend(_validate_provider_roles(roles, index))
+            if isinstance(roles, list) and HOST_ROLE in roles:
+                hosts.append(index)
+
+    if len(hosts) > 1:
+        listed = ", ".join(f"providers[{i}]" for i in hosts)
         errors.append(
-            f"Invalid SPDX license identifier: '{license_id}'. "
-            f"Use a standard license (MIT, Apache-2.0, CC-BY-4.0, CC0-1.0), "
-            f"'other' for a non-SPDX license, or custom format LicenseRef-YourLicense"
+            f"Exactly one provider may carry the host role, but {len(hosts)} do: {listed}"
         )
+    for index in hosts:
+        errors.extend(_validate_host_contact(providers[index], index))
 
     return errors
 
@@ -427,6 +473,7 @@ def validate_metadata(metadata: dict[str, Any]) -> list[str]:
     errors.extend(_validate_license(metadata))
 
     # Optional fields with format validation
+    errors.extend(_validate_providers(metadata))
     errors.extend(_validate_doi(metadata))
     errors.extend(_validate_title_description(metadata))
 
@@ -591,7 +638,7 @@ def _validate_defaults(defaults: dict[str, Any]) -> list[str]:
     return errors
 
 
-def generate_metadata_template() -> str:
+def generate_metadata_template(*, license_id: str = "", license_url: str = "") -> str:
     """Generate a metadata.yaml template with comments.
 
     Returns a YAML string with required and optional fields,
@@ -600,10 +647,35 @@ def generate_metadata_template() -> str:
     Note: title and description are auto-derived from the collection id
     (humanized, per Issue #502); the optional keys below override them.
 
+    ``portolan init`` fills the license in, because ``portolan add`` refuses to
+    write a collection without one (issue #686). ``portolan metadata init`` leaves
+    both blank, since a bare template is what that command is for.
+
+    Args:
+        license_id: SPDX identifier, or "other", to write into the template.
+        license_url: URL of the license text, required alongside "other".
+
     Returns:
         YAML template string ready to write to file.
     """
-    return """# .portolan/metadata.yaml
+    # Comments line up at column 37 in this template; keep both license lines there.
+    comment_column = 36
+    license_line = f'license: "{license_id}"'.ljust(comment_column) + (
+        '# SPDX identifier (e.g., "CC-BY-4.0", "MIT")'
+    )
+    license_url_line = f'license_url: "{license_url}"'.ljust(comment_column) + (
+        "# optional - URL to full license text"
+    )
+
+    # Substituted rather than interpolated: an f-string over the whole template
+    # reads to bandit as string-built SQL (B608), and a nosec here would blunt a
+    # check that catches the real thing elsewhere in the tree.
+    return _TEMPLATE.replace("__LICENSE_LINE__", license_line).replace(
+        "__LICENSE_URL_LINE__", license_url_line
+    )
+
+
+_TEMPLATE = """# .portolan/metadata.yaml
 #
 # Human-enrichable metadata that supplements STAC.
 # Columns and bands are auto-extracted from data files.
@@ -628,13 +700,39 @@ contact:
   name: ""                          # Person or team name
   email: ""                         # Contact email
 
-license: ""                         # SPDX identifier (e.g., "CC-BY-4.0", "MIT")
+__LICENSE_LINE__
+
+# -----------------------------------------------------------------------------
+# Providers: who made this data, and who maintains this copy of it
+#
+# Name the organization that originally created the data with the "producer"
+# role. Add "licensor" and "processor" where they apply. Roles may be combined,
+# so a self-published collection is one entry holding both producer and host.
+#
+# The "host" is whoever maintains this catalog, not the cloud vendor storing it:
+# a catalog on S3 run by a city GIS office lists the office, never AWS. Leave the
+# host out and it is taken from `contact` above. Order does not matter; Portolan
+# writes the host last, as the spec requires.
+#
+# Producer and host together decide what kind of catalog this is. Same
+# organization means official, this catalog being the data's canonical home.
+# Different organizations mean a mirror, and Portolan then links back to
+# `source_url` below and records each sync.
+# -----------------------------------------------------------------------------
+
+# providers:
+#   - name: "National Statistics Institute"
+#     roles: ["producer", "licensor"]
+#     url: "https://stats.example.org"
+#   - name: "City GIS Office"       # omit to derive this from `contact`
+#     roles: ["host"]
+#     url: "https://gis.example.org"   # a url or an email is required on the host
 
 # -----------------------------------------------------------------------------
 # OPTIONAL: Discovery and citation
 # -----------------------------------------------------------------------------
 
-license_url: ""                     # optional - URL to full license text
+__LICENSE_URL_LINE__
 citation: ""                        # optional - Academic citation text
 doi: ""                             # optional - Zenodo/DataCite DOI
 keywords: []                        # optional - Discovery tags

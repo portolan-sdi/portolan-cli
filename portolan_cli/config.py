@@ -8,7 +8,7 @@ This module provides hierarchical configuration with the following precedence
 4. Catalog-level config
 5. Built-in default (None)
 
-Config is stored in `.portolan/config.yaml` (see ADR-0024).
+Config is stored in `.portolan/config.yaml`.
 
 Usage:
     from portolan_cli.config import get_setting, set_setting, load_config
@@ -50,8 +50,7 @@ KNOWN_SETTINGS: frozenset[str] = frozenset(
         "backend",
         "statistics.enabled",
         "statistics.raster_mode",
-        "parquet.enabled",  # Generate items.parquet for large collections
-        "parquet.threshold",  # Item count threshold to suggest parquet generation
+        "parquet.enabled",  # Generate the items.parquet item mirror (opt-out)
         "partitioning.enabled",  # Auto-partition large GeoParquet files (Issue #352)
         "partitioning.prompt",  # Prompt before partitioning in interactive mode (default: true)
         "partitioning.threshold_gb",  # Size threshold in GB (default: 2.0)
@@ -81,12 +80,13 @@ SETTING_ALIASES: dict[str, list[str]] = {
     "aws_profile": ["profile"],
 }
 
-# Default values for settings (per ADR-0034 for statistics)
+# Default values for settings ( for statistics)
 DEFAULT_SETTINGS: dict[str, Any] = {
     "statistics.enabled": True,
     "statistics.raster_mode": "approx",
-    "parquet.enabled": False,  # Disabled by default (100% optional per issue #319)
-    "parquet.threshold": 100,  # Suggest parquet generation when items > threshold
+    # Enabled by default: the spec says the item mirror SHOULD be published
+    # and applies no item-count threshold (PORTO-FMT-040, issue #654).
+    "parquet.enabled": True,
     "partitioning.enabled": True,  # Auto-partition large GeoParquet files (>2GB)
     "partitioning.prompt": True,  # Prompt before partitioning in interactive mode
     "partitioning.threshold_gb": 2.0,  # 2GB per OGC best practices
@@ -129,7 +129,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "tabular.convert": True,  # Convert CSV/TSV/Excel to Parquet by default
 }
 
-# Default glob patterns for files to exclude from asset tracking (per ADR-0028).
+# Default glob patterns for files to exclude from asset tracking.
 # These cover common OS-generated junk files and temporary files that should
 # never appear as STAC assets. Users can override this list in config.yaml.
 DEFAULT_IGNORED_FILES: list[str] = [
@@ -208,20 +208,26 @@ def load_config(catalog_path: Path) -> dict[str, Any]:
 def get_ignored_files(catalog_path: Path | None) -> list[str]:
     """Return the list of glob patterns for files to exclude from asset tracking.
 
-    Reads the ``ignored_files`` key from .portolan/config.yaml.  If the key is
+    Reads the ``ignored_files`` key from .portolan/config.yaml. If the key is
     absent (or no catalog_path is given) the built-in DEFAULT_IGNORED_FILES list
     is returned so that callers always get a usable value without any config
     being present.
 
     The config value **replaces** the defaults entirely — if a user sets
-    ``ignored_files``, they take full control over the list.  This matches how
+    ``ignored_files``, they take full control over the list. This matches how
     ``.gitignore`` works: a file at a given scope replaces inherited patterns.
+
+    .. warning::
+       Nothing on the asset-write path calls this function, so setting
+       ``ignored_files`` in ``.portolan/config.yaml`` currently has no effect.
+       Only the unit tests exercise it. Wire it into asset preparation before
+       documenting the key as user-facing.
 
     Args:
         catalog_path: Root path of the catalog, or None to get defaults.
 
     Returns:
-        List of glob patterns (strings).  Never returns None.
+        List of glob patterns (strings). Never returns None.
 
     Raises:
         ConfigInvalidStructureError: If ``ignored_files`` is present but not a
@@ -273,7 +279,7 @@ def save_config(catalog_path: Path, config: dict[str, Any]) -> None:
 
     # Use default_flow_style=False for readable multi-line YAML
     content = yaml.safe_dump(config, default_flow_style=False, sort_keys=False)
-    config_file.write_text(content)
+    config_file.write_text(content, encoding="utf-8")
 
 
 def _get_env_var_name(key: str) -> str:
@@ -307,7 +313,7 @@ def get_setting(
     Precedence (highest to lowest):
     1. CLI argument (cli_value)
     2. Environment variable (PORTOLAN_<KEY>)
-    3. Hierarchical .portolan/ config (if collection_path specified, ADR-0039)
+    3. Hierarchical .portolan/ config (if collection_path specified)
     4. Legacy collection-level config (collections: section, if collection specified)
     5. Catalog-level config
     6. Built-in default (None)
@@ -379,7 +385,7 @@ def get_setting(
                     f"config files. Use environment variable {env_var_name} or .env file."
                 )
 
-    # 3. Hierarchical .portolan/ config (ADR-0039)
+    # 3. Hierarchical .portolan/ config
     if collection_path is not None:
         merged_config = load_merged_config(collection_path, catalog_path)
         _check_sensitive_in_config(merged_config, key)
@@ -593,7 +599,7 @@ def get_setting_source(
 
 
 # =============================================================================
-# Hierarchical .portolan/ support (ADR-0039)
+# Hierarchical .portolan/ support
 # =============================================================================
 
 
@@ -752,8 +758,8 @@ def load_merged_config(
     """Load merged config.yaml with backwards compatibility.
 
     Supports both:
-    1. New: .portolan/config.yaml at each level (ADR-0039)
-    2. Legacy: collections: section in root config.yaml (ADR-0024)
+    1. New: .portolan/config.yaml at each level
+    2. Legacy: collections: section in root config.yaml
 
     Collection .portolan/config.yaml takes precedence over root collections:.
 

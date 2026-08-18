@@ -44,7 +44,7 @@ class ImageServerMetadata:
     band count, pixel type, resolution, extent, and capabilities.
 
     Also includes metadata fields matching FeatureServer extraction pattern
-    for consistent metadata.yaml population (see ADR-0038).
+    for consistent metadata.yaml population.
 
     Attributes:
         name: Service name

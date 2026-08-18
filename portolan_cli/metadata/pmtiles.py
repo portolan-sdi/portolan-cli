@@ -3,7 +3,7 @@
 Uses the pmtiles package to read PMTiles header metadata.
 PMTiles store bounds in WGS84 (4326) but tiles are Web Mercator (3857).
 
-Per ADR-0031, PMTiles are collection-level assets when added to a catalog.
+PMTiles are collection-level assets when added to a catalog.
 """
 
 from __future__ import annotations
@@ -52,11 +52,12 @@ class PMTilesMetadata:
     def to_stac_properties(self) -> dict[str, Any]:
         """Convert to STAC Item/Collection properties format.
 
-        PMTiles are always in Web Mercator (3857) internally, even though
-        bounds are stored in WGS84 (4326) for discoverability.
+        Contributes no projection field: PMTiles tiles are always Web
+        Mercator internally, but that describes the visualization artifact,
+        not the source data, so it must never surface as the collection's
+        CRS (issues #488, #654).
         """
         props: dict[str, Any] = {
-            "proj:epsg": 3857,  # PMTiles tiles are always Web Mercator
             "pmtiles:min_zoom": self.min_zoom,
             "pmtiles:max_zoom": self.max_zoom,
             "pmtiles:tile_type": self.tile_type,

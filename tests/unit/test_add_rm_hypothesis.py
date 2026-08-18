@@ -359,7 +359,7 @@ class TestGeospatialExtensionsProperties:
 class TestFindCatalogRootProperties:
     """Property-based tests for find_catalog_root function.
 
-    Per ADR-0029, find_catalog_root uses .portolan/config.yaml as the single sentinel,
+    Find_catalog_root uses .portolan/config.yaml as the single sentinel,
     unifying detection across all CLI commands.
     """
 
@@ -373,6 +373,7 @@ class TestFindCatalogRootProperties:
             # Create managed catalog with .portolan/config.yaml + catalog.json (per issue #290)
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir()
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             (portolan_dir / "config.yaml").write_text("# Portolan config\n")
             (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file
 
@@ -397,6 +398,7 @@ class TestFindCatalogRootProperties:
             # Create managed catalog with .portolan/config.yaml + catalog.json (per issue #290)
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir()
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             (portolan_dir / "config.yaml").write_text("# Portolan config\n")
             (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file
             (tmp_path / collection).mkdir(exist_ok=True)
@@ -430,6 +432,7 @@ class TestFindCatalogRootProperties:
             tmp_path = Path(tmp_dir)
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir()
+            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
             (portolan_dir / "config.yaml").write_text("# Portolan config\n")
             (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file
 
@@ -455,7 +458,7 @@ class TestFindCatalogRootProperties:
 
             result = find_catalog_root(search_dir)
 
-            # Per ADR-0029, should NOT find unmanaged STAC catalogs
+            # Should NOT find unmanaged STAC catalogs
             assert result is None, f"Should ignore UNMANAGED_STAC, got {result}"
 
 
@@ -821,6 +824,7 @@ class TestAddFilesEdgeCases:
         catalog.mkdir()
         (catalog / "catalog.json").write_text('{"type": "Catalog"}')
         (catalog / ".portolan").mkdir()
+        (catalog / ".portolan" / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
         # Create real file and symlink
         collection = catalog / "data"
@@ -877,6 +881,7 @@ class TestAddFilesEdgeCases:
         catalog.mkdir()
         (catalog / "catalog.json").write_text('{"type": "Catalog"}')
         (catalog / ".portolan").mkdir()
+        (catalog / ".portolan" / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
         collection = catalog / "data"
         collection.mkdir()
@@ -1211,7 +1216,7 @@ class TestMultiAssetProperties:
         from portolan_cli.add import IGNORED_FILES
 
         # Structural files and link targets that must never be tracked as assets.
-        # AGENTS.md is referenced via a rel="agents" link, not an asset (ADR-0052).
+        # AGENTS.md is referenced via a rel="agents" link, not an asset.
         expected = {"catalog.json", "collection.json", "versions.json", "AGENTS.md"}
         assert IGNORED_FILES == frozenset(expected)
 
@@ -1293,12 +1298,12 @@ class TestMultiAssetProperties:
 
 
 # =============================================================================
-# Property: catalog root detection for add . (Issue #137)
+# Property: catalog root detection for add. (Issue #137)
 # =============================================================================
 
 
 class TestCatalogRootAddProperties:
-    """Property-based tests for add . at catalog root behavior.
+    """Property-based tests for add. at catalog root behavior.
 
     These tests verify the invariants of the fix for Issue #137:
     - resolve_collection_id(path, catalog_root) raises ValueError when path == catalog_root
@@ -1356,7 +1361,7 @@ class TestCatalogRootAddProperties:
     ) -> None:
         """resolve_collection_id returns FIRST component, not full path, for deep nesting.
 
-        Per ADR-0022: the collection is always the first directory component.
+        The collection is always the first directory component.
         For a/b/c.parquet relative to root, the collection is 'a', not 'a/b'.
         """
         with tempfile.TemporaryDirectory() as tmp:
@@ -1415,9 +1420,10 @@ def _setup_managed_catalog(catalog_root: Path) -> None:
     # STAC catalog at root
     (catalog_root / "catalog.json").write_text(json.dumps(MINIMAL_CATALOG_TEMPLATE, indent=2))
 
-    # .portolan sentinel (per ADR-0029)
+    # .portolan sentinel
     portolan_dir = catalog_root / ".portolan"
     portolan_dir.mkdir(exist_ok=True)
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
     (portolan_dir / "config.yaml").write_text("# Portolan config\n")
 
 

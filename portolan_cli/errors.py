@@ -8,6 +8,7 @@ All errors follow the format PRTLN-{category}{number}:
 - PRTLN-VER*: Version errors
 - PRTLN-VAL*: Validation errors
 - PRTLN-CNV*: Conversion errors
+- PRTLN-LOG*: Catalog logo errors
 - PRTLN-CFG*: Configuration errors
 - PRTLN-EXT*: Extract / harvest errors
 """
@@ -310,6 +311,40 @@ class InvalidBboxError(ValidationError):
         super().__init__(f"Invalid bounding box: {reason}", reason=reason)
 
 
+class InvalidProvidersError(ValidationError):
+    """Raised when metadata.yaml declares a providers array Portolan cannot use.
+
+    Generation tolerates a missing providers block — the host is seeded from
+    ``contact`` and PTL-PRV-001 tells the human to name a producer. It cannot
+    tolerate input where no conformant array exists, such as two entries both
+    claiming the ``host`` role: nothing can choose between them.
+
+    Error code: PRTLN-VAL003
+    """
+
+    code = "PRTLN-VAL003"
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"Invalid providers in metadata.yaml: {reason}", reason=reason)
+
+
+class MissingLicenseError(ValidationError):
+    """Raised when Portolan is about to write a collection with no usable license.
+
+    A license is a legal fact Portolan cannot invent, and a collection without
+    one fails PTL-LIC-001 or PTL-LIC-002 the moment ``portolan check`` reads it.
+    Rather than write a catalog it knows to be non-conformant, generation stops
+    and names what the human has to supply (issue #686).
+
+    Error code: PRTLN-VAL004
+    """
+
+    code = "PRTLN-VAL004"
+
+    def __init__(self, target: str, reason: str) -> None:
+        super().__init__(f"No usable license for {target}: {reason}", target=target, reason=reason)
+
+
 # Conversion Errors (PRTLN-CNV*)
 class ConversionError(PortolanError):
     """Base class for conversion-related errors."""
@@ -400,6 +435,64 @@ class CRSMismatchError(ConversionError):
             source_crs=source_crs,
             bbox=bbox,
             likely_actual_crs=likely_actual_crs,
+        )
+
+
+# Logo Errors (PRTLN-LOG*)
+class LogoError(PortolanError):
+    """Base class for catalog-logo errors."""
+
+    code = "PRTLN-LOG000"
+
+
+class UnsupportedLogoFormatError(LogoError):
+    """Raised when a logo's media type is outside the seven the spec permits.
+
+    Error code: PRTLN-LOG001
+
+    PORTO-CORE-075 fixes the enum because a client drops an icon whose media
+    type it does not recognize, so an unlisted type renders nowhere.
+    """
+
+    code = "PRTLN-LOG001"
+
+    def __init__(self, path: str, allowed: list[str]) -> None:
+        super().__init__(
+            f"Unsupported logo format for {path}. Permitted media types: {', '.join(allowed)}",
+            path=path,
+            allowed=allowed,
+        )
+
+
+class LogoSourceNotFoundError(LogoError):
+    """Raised when the logo source path is not an existing file.
+
+    Error code: PRTLN-LOG002
+    """
+
+    code = "PRTLN-LOG002"
+
+    def __init__(self, path: str) -> None:
+        super().__init__(f"Logo source is not a file: {path}", path=path)
+
+
+class RemoteLogoSourceError(LogoError):
+    """Raised when the logo source is a URL rather than a local path.
+
+    Error code: PRTLN-LOG003
+
+    Portolan copies the image into the catalog so the published href stays
+    relative. Fetching a remote image is the caller's job: download it first,
+    then point at the downloaded file.
+    """
+
+    code = "PRTLN-LOG003"
+
+    def __init__(self, source: str) -> None:
+        super().__init__(
+            f"Logo source must be a local file, got a URL: {source}. "
+            "Download the image first, then pass the local path.",
+            source=source,
         )
 
 
