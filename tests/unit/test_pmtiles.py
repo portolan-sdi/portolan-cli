@@ -24,7 +24,7 @@ class TestPMTilesErrors:
         from portolan_cli.viz.pmtiles import PMTilesNotAvailableError
 
         error = PMTilesNotAvailableError()
-        assert "gpio-pmtiles" in str(error)
+        assert "geoparquet-io" in str(error)
         assert "pip install" in str(error)
 
     @pytest.mark.unit
@@ -95,19 +95,19 @@ class TestCheckPMTilesAvailable:
     """Tests for dependency checking."""
 
     @pytest.mark.unit
-    def test_raises_when_gpio_pmtiles_not_installed(self) -> None:
-        """Raises PMTilesNotAvailableError when gpio-pmtiles missing."""
+    def test_raises_when_geoparquet_io_pmtiles_not_installed(self) -> None:
+        """Raises PMTilesNotAvailableError when geoparquet-io PMTiles support is missing."""
         from portolan_cli.viz.pmtiles import (
             PMTilesNotAvailableError,
             check_pmtiles_available,
         )
 
         # Setting sys.modules[name] = None makes `import name` raise ImportError,
-        # scoped to gpio_pmtiles only. Do NOT patch builtins.__import__ globally
-        # here: mutmut's trampoline runs `import os` at call time, so a global
-        # __import__ side_effect raises from the trampoline before the function
-        # body's try/except runs, failing the baseline stats phase (#612).
-        with patch.dict("sys.modules", {"gpio_pmtiles": None}):
+        # scoped to geoparquet_io.api.ops only. Do NOT patch builtins.__import__
+        # globally here: mutmut's trampoline runs `import os` at call time, so a
+        # global __import__ side_effect raises from the trampoline before the
+        # function body's try/except runs, failing the baseline stats phase (#612).
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": None}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 with pytest.raises(PMTilesNotAvailableError):
                     check_pmtiles_available()
@@ -120,9 +120,9 @@ class TestCheckPMTilesAvailable:
             check_pmtiles_available,
         )
 
-        # Mock gpio_pmtiles as available but tippecanoe missing
+        # Mock geoparquet-io PMTiles support as available but tippecanoe missing
         mock_module = MagicMock()
-        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value=None):
                 with pytest.raises(TippecanoeNotFoundError):
                     check_pmtiles_available()
@@ -606,8 +606,8 @@ class TestGeneratePMTiles:
     """Tests for generate_pmtiles function parameter passthrough."""
 
     @pytest.mark.unit
-    def test_passes_all_parameters_to_gpio_pmtiles(self, tmp_path: Path) -> None:
-        """All parameters are passed through to create_pmtiles_from_geoparquet."""
+    def test_passes_all_parameters_to_geoparquet_io(self, tmp_path: Path) -> None:
+        """All parameters are passed through to geoparquet-io create_pmtiles."""
         from portolan_cli.viz.pmtiles import generate_pmtiles
 
         parquet = tmp_path / "data.parquet"
@@ -616,9 +616,9 @@ class TestGeneratePMTiles:
 
         mock_create = MagicMock()
         mock_module = MagicMock()
-        mock_module.create_pmtiles_from_geoparquet = mock_create
+        mock_module.create_pmtiles = mock_create
 
-        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 generate_pmtiles(
                     parquet,
@@ -659,14 +659,39 @@ class TestGeneratePMTiles:
 
         mock_create = MagicMock()
         mock_module = MagicMock()
-        mock_module.create_pmtiles_from_geoparquet = mock_create
+        mock_module.create_pmtiles = mock_create
 
-        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 generate_pmtiles(parquet, pmtiles)
 
         call_kwargs = mock_create.call_args[1]
         assert call_kwargs["precision"] == 6
+
+    @pytest.mark.unit
+    def test_does_not_import_deprecated_gpio_pmtiles(self, tmp_path: Path) -> None:
+        """Generation works when gpio-pmtiles is absent (Issue #754).
+
+        `sys.modules[name] = None` makes `import name` raise ImportError. The
+        deprecated package is therefore unreachable for the duration of the test.
+        """
+        from portolan_cli.viz.pmtiles import generate_pmtiles
+
+        parquet = tmp_path / "data.parquet"
+        pmtiles = tmp_path / "data.pmtiles"
+        parquet.write_bytes(b"PAR1")
+
+        mock_create = MagicMock()
+        mock_module = MagicMock()
+        mock_module.create_pmtiles = mock_create
+
+        with patch.dict(
+            "sys.modules", {"gpio_pmtiles": None, "geoparquet_io.api.ops": mock_module}
+        ):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                generate_pmtiles(parquet, pmtiles)
+
+        mock_create.assert_called_once()
 
 
 class TestGeneratePMTilesForCollection:
@@ -685,7 +710,7 @@ class TestGeneratePMTilesForCollection:
 
         # Mock dependencies as available
         mock_module = MagicMock()
-        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 result = generate_pmtiles_for_collection(collection_dir, tmp_path)
 
@@ -732,7 +757,7 @@ class TestGeneratePMTilesForCollection:
         mock_generate = MagicMock()
         mock_module = MagicMock()
 
-        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate):
                     generate_pmtiles_for_collection(
@@ -766,7 +791,7 @@ class TestGeneratePMTilesForCollection:
     def test_cleans_up_partial_file_on_failure(self, tmp_path: Path) -> None:
         """Partial PMTiles file is deleted when generation fails (Issue #385).
 
-        When gpio-pmtiles/tippecanoe fails mid-generation, it may leave a
+        When geoparquet-io or tippecanoe fails mid-generation, it may leave a
         partial output file. This test verifies that such files are cleaned
         up to prevent phantom assets in versions.json on subsequent add runs.
         """
@@ -795,12 +820,12 @@ class TestGeneratePMTilesForCollection:
 
         # Mock generate_pmtiles to create partial file then raise
         def mock_generate_raises(*args: object, **kwargs: object) -> None:
-            # Simulate: gpio-pmtiles creates file, then fails mid-processing
+            # Simulate: geoparquet-io creates file, then fails mid-processing
             pmtiles_path.write_bytes(b"partial content")
             raise PMTilesGenerationError("data.parquet", ValueError("Non-geospatial"))
 
         mock_module = MagicMock()
-        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate_raises):
                     result = generate_pmtiles_for_collection(collection_dir, tmp_path)
@@ -843,7 +868,7 @@ class TestGeneratePMTilesForCollection:
             raise RuntimeError("Unexpected tippecanoe crash")
 
         mock_module = MagicMock()
-        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate_unexpected):
                     result = generate_pmtiles_for_collection(collection_dir, tmp_path)
@@ -882,7 +907,7 @@ class TestGeneratePMTilesForCollection:
             raise KeyboardInterrupt()
 
         mock_module = MagicMock()
-        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate_interrupted):
                     with pytest.raises(KeyboardInterrupt):
@@ -948,7 +973,7 @@ class TestGeneratePMTilesForCollection:
             return thumb_path
 
         mock_module = MagicMock()
-        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate):
                     with patch(
@@ -1005,7 +1030,7 @@ class TestGeneratePMTilesForCollection:
             pmtiles_path.write_bytes(b"PMTILES")
 
         mock_module = MagicMock()
-        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate):
                     generate_pmtiles_for_collection(collection_dir, tmp_path)
@@ -1075,7 +1100,7 @@ class TestGeneratePMTilesForCollection:
         (collection_dir / "versions.json").write_text(json.dumps(versions_json))
 
         mock_module = MagicMock()
-        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 result = generate_pmtiles_for_collection(collection_dir, tmp_path)
 
@@ -1103,7 +1128,7 @@ class TestGeneratePMTilesForCollection:
         assert coll_json["assets"]["thumbnail"]["href"] == "./data.thumb.jpg"
 
         # Idempotent: a second run with everything tracked creates NO new version.
-        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 generate_pmtiles_for_collection(collection_dir, tmp_path)
         versions_after = read_versions(collection_dir / "versions.json")
@@ -1164,7 +1189,7 @@ class TestGeneratePMTilesForCollection:
             pmtiles_path.write_bytes(b"PMTILES")
 
         mock_module = MagicMock()
-        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate):
                     with _patch(
@@ -1198,7 +1223,7 @@ class TestGeneratePMTilesForCollection:
             raise RuntimeError("render exploded")
 
         mock_module = MagicMock()
-        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate):
                     with patch("portolan_cli.viz.pmtiles.generate_vector_thumbnail", boom):
@@ -1376,3 +1401,71 @@ class TestGenerateOrSuggestPMTiles:
                 verbose=False,
             )
         mock_gen.assert_not_called()
+
+    @pytest.mark.unit
+    def test_force_alone_generates_when_config_disabled(self, tmp_path: Path) -> None:
+        """--force-pmtiles alone turns generation on (Issue #760).
+
+        Before the fix the gate read `--pmtiles` only. A catalog with
+        `pmtiles.enabled: false` therefore skipped the collection, and
+        `generate_pmtiles_for_collection` never ran.
+        """
+        from portolan_cli.viz.pmtiles import PMTilesResult, generate_or_suggest_pmtiles
+
+        coll_path = _make_collection(tmp_path, "roads", "pmtiles:\n  enabled: false\n")
+        with patch(
+            "portolan_cli.viz.pmtiles.generate_pmtiles_for_collection",
+            return_value=PMTilesResult(),
+        ) as mock_gen:
+            generate_or_suggest_pmtiles(
+                tmp_path,
+                {"roads"},
+                generate_pmtiles=False,
+                force=True,
+                verbose=False,
+            )
+        mock_gen.assert_called_once()
+        assert mock_gen.call_args.args[0] == coll_path
+        assert mock_gen.call_args.kwargs["force"] is True
+
+    @pytest.mark.unit
+    def test_force_alone_unavailable_exits(self, tmp_path: Path) -> None:
+        """--force-pmtiles alone is an explicit request, so a missing tool exits 1."""
+        from portolan_cli.viz.pmtiles import (
+            PMTilesNotAvailableError,
+            generate_or_suggest_pmtiles,
+        )
+
+        _make_collection(tmp_path, "roads", "pmtiles:\n  enabled: false\n")
+        with patch(
+            "portolan_cli.viz.pmtiles.generate_pmtiles_for_collection",
+            side_effect=PMTilesNotAvailableError(),
+        ):
+            with pytest.raises(SystemExit):
+                generate_or_suggest_pmtiles(
+                    tmp_path,
+                    {"roads"},
+                    generate_pmtiles=False,
+                    force=True,
+                    verbose=False,
+                )
+
+    @pytest.mark.unit
+    def test_force_alone_failure_exits(self, tmp_path: Path) -> None:
+        """A failure under --force-pmtiles alone exits 1 instead of a warning."""
+        from portolan_cli.viz.pmtiles import PMTilesResult, generate_or_suggest_pmtiles
+
+        _make_collection(tmp_path, "roads", "pmtiles:\n  enabled: false\n")
+        failed = PMTilesResult(failed=[(Path("roads.parquet"), "tippecanoe failed")])
+        with patch(
+            "portolan_cli.viz.pmtiles.generate_pmtiles_for_collection",
+            return_value=failed,
+        ):
+            with pytest.raises(SystemExit):
+                generate_or_suggest_pmtiles(
+                    tmp_path,
+                    {"roads"},
+                    generate_pmtiles=False,
+                    force=True,
+                    verbose=False,
+                )

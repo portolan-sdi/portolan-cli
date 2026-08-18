@@ -1884,20 +1884,6 @@ wheels = [
 ]
 
 [[package]]
-name = "gpio-pmtiles"
-version = "0.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "click" },
-    { name = "geoparquet-io" },
-    { name = "pyarrow" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/cb/7d/35f870fa181a96bf4395bd54196b5118483e11daf25737754cf736213dfa/gpio_pmtiles-0.2.0.tar.gz", hash = "sha256:ce51abb350eb484325c1e30dc60cd82f20d8190f0ff3b641d5ff800af1d1c46c", size = 195995, upload-time = "2026-04-29T12:21:45.445Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fb/e9/1d8173559da8f35957bb6e5d208ef2584674f1c467558a2234d052a31630/gpio_pmtiles-0.2.0-py3-none-any.whl", hash = "sha256:5a1d7e3d9e7faed24c11128e0fd2470ac9e7e478428a5480ec8a6dc66c22257d", size = 13388, upload-time = "2026-04-29T12:21:44.096Z" },
-]
-
-[[package]]
 name = "graphql-core"
 version = "3.2.8"
 source = { registry = "https://pypi.org/simple" }
@@ -4646,9 +4632,7 @@ iceberg = [
     { name = "pyiceberg", extra = ["sql-sqlite"] },
     { name = "shapely" },
 ]
-pmtiles = [
-    { name = "gpio-pmtiles" },
-]
+pmtiles = []
 thumbnails = [
     { name = "contextily" },
     { name = "mapbox-vector-tile" },
@@ -4682,7 +4666,6 @@ requires-dist = [
     { name = "geopandas", specifier = ">=0.14.0" },
     { name = "geoparquet-io", git = "https://github.com/geoparquet/geoparquet-io.git?branch=main" },
     { name = "gitingest", marker = "extra == 'dev'", specifier = ">=0.1.0" },
-    { name = "gpio-pmtiles", marker = "extra == 'pmtiles'", specifier = ">=0.1.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.151.5" },
     { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.0" },

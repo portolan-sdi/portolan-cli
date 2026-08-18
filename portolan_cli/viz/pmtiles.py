@@ -6,7 +6,7 @@ to the source GeoParquet, registered as collection-level assets with role
 ["visual"], and tracked in versions.json for push.
 
 Requires:
-- gpio-pmtiles package (optional dependency: `pip install portolan-cli[pmtiles]`)
+- geoparquet-io (a core dependency) for `create_pmtiles`
 - tippecanoe binary installed and in PATH
 
 Usage:
@@ -65,7 +65,7 @@ class PMTilesError(PortolanError):
 
 
 class PMTilesNotAvailableError(PMTilesError):
-    """Raised when gpio-pmtiles package is not installed.
+    """Raised when geoparquet-io does not provide PMTiles generation.
 
     Error code: PRTLN-PMT001
     """
@@ -74,7 +74,8 @@ class PMTilesNotAvailableError(PMTilesError):
 
     def __init__(self) -> None:
         super().__init__(
-            "gpio-pmtiles package not installed. Install with: pip install portolan-cli[pmtiles]"
+            "geoparquet-io does not provide PMTiles generation. "
+            "Install with: pip install 'geoparquet-io>=1.3.0'"
         )
 
 
@@ -146,12 +147,15 @@ def check_pmtiles_available() -> None:
     """Check that PMTiles generation dependencies are available.
 
     Raises:
-        PMTilesNotAvailableError: If gpio-pmtiles is not installed.
+        PMTilesNotAvailableError: If geoparquet-io has no PMTiles support.
         TippecanoeNotFoundError: If tippecanoe is not in PATH.
     """
-    # Check for gpio-pmtiles
+    # Check for the geoparquet-io PMTiles API. geoparquet-io is a core
+    # dependency, so this only fails on a version below 1.3.0 (Issue #754).
     try:
-        import gpio_pmtiles  # type: ignore[import-untyped] # noqa: F401
+        from geoparquet_io.api.ops import (  # type: ignore[import-untyped] # noqa: F401
+            create_pmtiles,
+        )
     except ImportError as e:
         raise PMTilesNotAvailableError() from e
 
@@ -282,16 +286,16 @@ def generate_pmtiles(
         src_crs: Override source CRS if metadata is incorrect.
 
     Raises:
-        PMTilesNotAvailableError: If gpio-pmtiles not installed.
+        PMTilesNotAvailableError: If geoparquet-io has no PMTiles support.
         TippecanoeNotFoundError: If tippecanoe not in PATH.
         PMTilesGenerationError: If generation fails.
     """
     check_pmtiles_available()
 
-    from gpio_pmtiles import create_pmtiles_from_geoparquet
+    from geoparquet_io.api.ops import create_pmtiles
 
     try:
-        create_pmtiles_from_geoparquet(
+        create_pmtiles(
             input_path=str(parquet_path),
             output_path=str(pmtiles_path),
             min_zoom=min_zoom,
@@ -672,7 +676,7 @@ def generate_pmtiles_for_collection(
         PMTilesResult with generated, skipped, and failed counts.
 
     Raises:
-        PMTilesNotAvailableError: If gpio-pmtiles not installed.
+        PMTilesNotAvailableError: If geoparquet-io has no PMTiles support.
         TippecanoeNotFoundError: If tippecanoe not in PATH.
     """
     # Check dependencies upfront
@@ -845,7 +849,8 @@ def generate_or_suggest_pmtiles(
     """Generate PMTiles for affected collections when requested or configured.
 
     For each affected collection, resolves PMTiles settings and generates when
-    ``--pmtiles`` was passed or ``pmtiles.enabled`` is configured. Generation runs
+    ``--pmtiles`` or ``--force-pmtiles`` was passed, or ``pmtiles.enabled`` is
+    configured. Generation runs
     regardless of output mode so the JSON envelope reflects the final state; an explicitly-requested generation that fails exits non-zero.
 
     Args:
@@ -859,13 +864,19 @@ def generate_or_suggest_pmtiles(
     if not affected_collections:
         return
 
+    # --force-pmtiles asks for a rebuild, so it also turns generation on. The
+    # default is pmtiles.enabled false, so the flag alone used to exit 0 and
+    # leave the old tiles in place (Issue #760). `requested` also drives the
+    # reports below: an explicit request that fails must exit non-zero.
+    requested = generate_pmtiles or force
+
     for coll_id in affected_collections:
         coll_path = catalog_root / coll_id
         if not (coll_path / "collection.json").exists():
             continue
 
         settings = get_pmtiles_settings(catalog_root, coll_id, coll_path)
-        if not (generate_pmtiles or settings.enabled):
+        if not (requested or settings.enabled):
             continue
 
         try:
@@ -883,13 +894,13 @@ def generate_or_suggest_pmtiles(
                 attribution=settings.attribution,
                 src_crs=settings.src_crs,
             )
-            _report_pmtiles_result(result, verbose, generate_pmtiles, use_json=use_json)
+            _report_pmtiles_result(result, verbose, requested, use_json=use_json)
         except PMTilesNotAvailableError as e:
             _report_pmtiles_unavailable(
-                e, generate_pmtiles, settings.enabled, verbose, coll_id, use_json=use_json
+                e, requested, settings.enabled, verbose, coll_id, use_json=use_json
             )
         except TippecanoeNotFoundError as e:
-            _report_tippecanoe_missing(e, generate_pmtiles, coll_id, use_json=use_json)
+            _report_tippecanoe_missing(e, requested, coll_id, use_json=use_json)
 
 
 def _report_pmtiles_result(
@@ -929,9 +940,9 @@ def _report_pmtiles_unavailable(
         return
     # Warn if pmtiles.enabled in config (user expectation), or info if just verbose
     if config_enabled:
-        warn(f"PMTiles enabled for '{coll_id}' but gpio-pmtiles not installed")
+        warn(f"PMTiles enabled for '{coll_id}' but geoparquet-io has no PMTiles support")
     elif verbose:
-        info(f"Skipping PMTiles for '{coll_id}': gpio-pmtiles not installed")
+        info(f"Skipping PMTiles for '{coll_id}': geoparquet-io has no PMTiles support")
 
 
 def _report_tippecanoe_missing(

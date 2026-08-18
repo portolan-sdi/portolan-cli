@@ -219,7 +219,7 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     ),
     "PTL-VIZ-004": _instruct(
         "Generate a PMTiles derivative for this large vector collection so browsers can render it "
-        "; run `portolan viz` with the [pmtiles] extra."
+        "; run `portolan add --pmtiles` with tippecanoe on PATH."
     ),
     # fixer `styles` is new in Phase 3; it corrects the style asset media type
     "PTL-VIZ-005": _auto(

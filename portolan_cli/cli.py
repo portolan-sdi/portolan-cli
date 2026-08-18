@@ -3087,7 +3087,7 @@ def _check_partition_prompt(
     "--force-pmtiles",
     "force_pmtiles",
     is_flag=True,
-    help="Regenerate PMTiles even if they exist and are up-to-date.",
+    help="Regenerate PMTiles even if they exist and are up-to-date. Implies --pmtiles.",
 )
 @click.option(
     "--thumbnails/--no-thumbnails",

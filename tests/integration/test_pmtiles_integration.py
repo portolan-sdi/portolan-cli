@@ -542,7 +542,7 @@ class TestPMTilesMultipleAssets:
 
 
 class TestPMTilesAdvancedParameters:
-    """Test PMTiles generation with advanced gpio-pmtiles parameters."""
+    """Test PMTiles generation with advanced geoparquet-io parameters."""
 
     def test_precision_parameter_accepted(self, collection_with_geoparquet: Path) -> None:
         """Custom precision parameter is accepted by tippecanoe."""
@@ -609,3 +609,60 @@ class TestPMTilesAdvancedParameters:
         assert len(result.generated) == 1
         assert result.success is True
         assert (collection_with_geoparquet / "roads.pmtiles").exists()
+
+
+class TestForcePMTilesFlagEndToEnd:
+    """`portolan add --force-pmtiles` generates tiles on its own (Issue #760)."""
+
+    def test_force_flag_alone_generates_pmtiles(self, tmp_path: Path, fixtures_dir: Path) -> None:
+        """--force-pmtiles without --pmtiles tiles a catalog that never opted in.
+
+        `pmtiles.enabled` defaults to false. Before the fix the gate read
+        `--pmtiles` alone, so this command exited 0 and wrote no tiles.
+        """
+        from click.testing import CliRunner
+
+        from portolan_cli import cli
+
+        root = tmp_path / "catalog"
+        collection_dir = root / "roads"
+        collection_dir.mkdir(parents=True)
+        shutil.copy(
+            fixtures_dir / "realdata" / "road-detections.parquet", collection_dir / "roads.parquet"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "init",
+                str(root),
+                "--auto",
+                "--title",
+                "Force Flag Catalog",
+                "--description",
+                "Roads published to prove --force-pmtiles tiles on its own.",
+                "--license",
+                "CC-BY-4.0",
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0, result.output
+
+        # The catalog never opts in, so only the flag can turn generation on.
+        config_text = (root / ".portolan" / "config.yaml").read_text(encoding="utf-8")
+        assert "pmtiles" not in config_text, config_text
+
+        result = runner.invoke(
+            cli,
+            [
+                "add",
+                "--portolan-dir",
+                str(root),
+                "--force-pmtiles",
+                str(collection_dir / "roads.parquet"),
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0, result.output
+        assert (collection_dir / "roads.pmtiles").is_file(), result.output
