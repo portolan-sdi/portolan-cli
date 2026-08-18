@@ -44,6 +44,7 @@ from portolan_cli.viz.thumbnail import (
     ThumbnailConfig,
     generate_vector_thumbnail,
     get_thumbnail_config,
+    thumbnail_path_for,
 )
 
 logger = logging.getLogger(__name__)
@@ -220,10 +221,12 @@ def generate_cog_thumbnail(
         logger.debug("rasterio/numpy not available, skipping thumbnail generation")
         return None
 
-    # Use ".thumb.jpg" rather than ".jpg" so we don't clobber a user-supplied
-    # sibling thumbnail (e.g. hand-curated data.jpg next to data.tif). The
-    # extension is still .jpg, so _scan_item_assets assigns role "thumbnail".
-    thumb_path = cog_path.with_name(f"{cog_path.stem}.thumb.jpg")
+    # `thumbnail_path_for` names it ".thumb.jpg" rather than ".jpg", so we leave
+    # a user-supplied sibling alone (e.g. hand-curated data.jpg next to
+    # data.tif). The extension stays .jpg, so _scan_item_assets assigns role
+    # "thumbnail". The vector render calls the same helper. One convention then
+    # names every thumbnail we write, and push recognizes it (Issue #735).
+    thumb_path = thumbnail_path_for(cog_path)
 
     try:
         with rasterio.open(cog_path) as src:

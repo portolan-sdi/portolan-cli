@@ -89,6 +89,26 @@ uploaded.
 one. Diff by sha256 against the remote `versions.json` and upload only new or
 changed assets. (See `_get_assets_to_upload` in `push.py`.)
 
+## A missing optional derivative warns, a missing data asset raises
+
+The spec gives every asset at least one role. See portolan-spec
+specs/portolan/core.md, section Assets. Four roles mark an optional derivative,
+namely `visual`, `thumbnail`, `style` and `collection-mirror`. Single-File
+Collections says a collection "may optionally carry a `.pmtiles`, a
+`thumbnail.png`, and a `styles/` directory". Push skips one that left the disk,
+and it warns. Two roles keep the `FileNotFoundError`, namely `data` and `source`.
+Nothing can rebuild those (#735). Conformance gaps belong to `portolan check`,
+not to push.
+
+The predicate `derived_assets.is_optional_derivative` decides. It reads the role
+from the collection.json or item.json that registers the href. The lookup runs
+only for an absent asset, so the common path pays nothing. Filenames are a
+fallback for an href no STAC object claims. Never classify by a filename alone.
+The extension registry gives `.pmtiles` the role `data`, so push would drop a
+publisher's own PMTiles as a derivative. Never classify by a versions.json field
+either. A data asset and a derived asset carry the same fields there, and
+published catalogs predate any new flag.
+
 ## Discovery recurses, nested catalogs exist
 
 Collection discovery must `rglob("versions.json")` (skipping `.portolan/`) so a

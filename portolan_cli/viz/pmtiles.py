@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from portolan_cli.constants import ROLE_VISUAL
 from portolan_cli.errors import PortolanError
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import error, info, success, warn
@@ -40,7 +41,11 @@ from portolan_cli.versions import track_generated_assets
 # importing this module (which pulls in output/thumbnail/style). Re-imported
 # here — both constants are used below — so pmtiles.py's public API is unchanged
 # for existing callers/tests (see pmtiles_links.py, issue #563).
-from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, WEB_MAP_LINKS_EXTENSION
+from portolan_cli.viz.pmtiles_links import (
+    PMTILES_MEDIA_TYPE,
+    PMTILES_SUFFIX,
+    WEB_MAP_LINKS_EXTENSION,
+)
 from portolan_cli.viz.thumbnail import (
     generate_vector_thumbnail,
     get_thumbnail_config,
@@ -420,7 +425,7 @@ def add_pmtiles_asset_to_collection(
         "href": pmtiles_href,
         "type": PMTILES_MEDIA_TYPE,
         "title": f"{source_title} (vector tiles)",
-        "roles": ["visual"],
+        "roles": [ROLE_VISUAL],
     }
 
     # Add any extra properties
@@ -679,7 +684,7 @@ def generate_pmtiles_for_collection(
     geoparquet_assets = _find_geoparquet_assets(collection_path)
 
     for asset_key, parquet_path in geoparquet_assets:
-        pmtiles_path = parquet_path.with_suffix(".pmtiles")
+        pmtiles_path = parquet_path.with_suffix(PMTILES_SUFFIX)
 
         # Compute href relative to collection (preserves subdirectory structure)
         # Use as_posix() for STAC-compliant forward slashes on all platforms

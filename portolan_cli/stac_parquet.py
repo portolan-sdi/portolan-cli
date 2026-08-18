@@ -33,6 +33,7 @@ from typing import Any
 
 from rashid.catalog import is_absolute_href
 
+from portolan_cli.constants import ROLE_COLLECTION_MIRROR
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import info, warn
 from portolan_cli.sync.checksums import file_fields
@@ -429,8 +430,8 @@ def register_mirror_asset(collection_path: Path) -> None:
     if matching:
         for asset in matching:
             roles = asset.setdefault("roles", [])
-            if "collection-mirror" not in roles:
-                roles.append("collection-mirror")
+            if ROLE_COLLECTION_MIRROR not in roles:
+                roles.append(ROLE_COLLECTION_MIRROR)
                 modified = True
             if "stac-items" in roles:
                 roles.remove("stac-items")
@@ -445,7 +446,7 @@ def register_mirror_asset(collection_path: Path) -> None:
             "href": f"./{PARQUET_FILENAME}",
             "type": PARQUET_MEDIA_TYPE,
             "title": "STAC items as GeoParquet",
-            "roles": ["collection-mirror"],
+            "roles": [ROLE_COLLECTION_MIRROR],
         }
         stamp_file_fields(asset, collection_path)
         assets[asset_key] = asset

@@ -19,6 +19,12 @@ from typing import Any
 # MIME type for PMTiles (matches add.py).
 PMTILES_MEDIA_TYPE = "application/vnd.pmtiles"
 
+# Filename suffix of a generated tile archive, and the single source of that
+# name. ``pmtiles.py`` writes ``parquet_path.with_suffix(PMTILES_SUFFIX)``.
+# ``derived_assets.py`` reads the same constant, so push and the writer agree on
+# which files Portolan generated (Issue #735).
+PMTILES_SUFFIX = ".pmtiles"
+
 # web-map-links STAC extension declared for the rel="pmtiles" collection link
 # (Issue #569). v1.3.0 defines the pmtiles rel, the application/vnd.pmtiles media
 # type, and the pmtiles:layers field for default-visible vector layers.
@@ -38,7 +44,7 @@ def pmtiles_asset_hrefs(assets: dict[str, Any]) -> list[str]:
         if isinstance(asset, dict)
         and (
             asset.get("type") == PMTILES_MEDIA_TYPE
-            or str(asset.get("href", "")).endswith(".pmtiles")
+            or str(asset.get("href", "")).endswith(PMTILES_SUFFIX)
         )
         and asset.get("href")
     ]

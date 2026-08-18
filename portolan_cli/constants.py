@@ -110,6 +110,32 @@ SIDECAR_PATTERNS: dict[str, list[str]] = {
     primary: list(patterns) for primary, patterns in _reg.SIDECAR_OF.items()
 }
 
+# STAC asset roles, as the spec names them. See portolan-spec
+# specs/portolan/core.md, section Assets. Every asset carries a `type` and at
+# least one role. Role `data` marks the primary GeoParquet, COG or Parquet. Role
+# `visual` marks the PMTiles derivative a client draws. Role `thumbnail` marks
+# the preview image. Role `style` marks a MapLibre style file, which the spec
+# itself defines. Role `default` marks the one style a client draws first. Role
+# `collection-mirror` marks the STAC-GeoParquet copy of a collection's items.
+# Role `source` marks an upstream original. One home keeps every writer and every
+# reader on the same vocabulary.
+ROLE_VISUAL: str = "visual"
+ROLE_THUMBNAIL: str = "thumbnail"
+ROLE_STYLE: str = "style"
+ROLE_DEFAULT: str = "default"
+ROLE_COLLECTION_MIRROR: str = "collection-mirror"
+
+# Roles the spec calls optional. Single-File Collections in core.md says a
+# collection "may optionally carry a `.pmtiles`, a `thumbnail.png`, and a
+# `styles/` directory". The item mirror in formats.md is a SHOULD and a derived
+# copy. The item JSON stays the normative representation. Portolan rebuilds each
+# artifact from data the catalog still holds. An absent one is a warning, not a
+# failed push (Issue #735). Roles `data`, `source` and `metadata` are absent on
+# purpose, because nothing can reconstruct them.
+OPTIONAL_DERIVATIVE_ROLES: frozenset[str] = frozenset(
+    {ROLE_VISUAL, ROLE_THUMBNAIL, ROLE_STYLE, ROLE_COLLECTION_MIRROR}
+)
+
 # Change detection constants
 # 2 second tolerance for NFS/CIFS compatibility where mtime resolution is coarse
 MTIME_TOLERANCE_SECONDS: float = 2.0
