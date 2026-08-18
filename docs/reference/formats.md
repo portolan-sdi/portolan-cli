@@ -4,18 +4,11 @@ Portolan converts data to cloud-native formats (GeoParquet, COG) for efficient c
 
 ## Supported Formats
 
-| Input Format | Output Format | Notes |
-|--------------|---------------|-------|
-| Shapefile | GeoParquet | Auto-converted |
-| GeoJSON | GeoParquet | Auto-converted |
-| GeoPackage | GeoParquet | Auto-converted |
-| CSV (with geometry) | GeoParquet | Auto-converted |
-| TIFF/GeoTIFF | COG | Auto-converted |
-| JPEG2000 | COG | Auto-converted |
-| GeoParquet | GeoParquet | Already cloud-native |
-| COG | COG | Already cloud-native |
-| FlatGeobuf | — | Accepted as-is (cloud-native) |
-| PMTiles | — | Accepted as-is (cloud-native vector tiles) |
+The complete extension-by-extension vocabulary — what each input format is,
+how it routes, and what it converts to — lives in
+[Input Formats](input-formats.md), a page generated from the code's extension
+registry so it can never drift. This page covers the conversion behavior and
+edge cases around it.
 
 ## ESRI File Geodatabase Rasters
 
