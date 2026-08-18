@@ -7,7 +7,7 @@ claude plugin marketplace add portolan-sdi/portolan-skills
 claude plugin install portolan
 ```
 
-Skills become available as `portolan:portolan-cli`, `portolan:reading-portolan`, `portolan:portolan-bootstrap`, `portolan:portolan-consume`, `portolan:sourcecoop`, and `portolan:register-catalog`.
+Skills become available under the `portolan:` prefix: `portolan:git-backed-catalog`, `portolan:portolan-bootstrap`, `portolan:portolan-cli`, `portolan:portolan-consume`, `portolan:portolan-migrate`, `portolan:portolan-thumbnails`, `portolan:reading-portolan`, `portolan:register-catalog`, `portolan:report-catalog-issue`, and `portolan:sourcecoop`.
 
 ### Claude Code (Web / Cowork)
 
@@ -20,17 +20,25 @@ Gemini CLI natively supports the same `SKILL.md` format:
 ```bash
 # Install skills at user scope
 gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
-  --path skills/portolan-cli --consent
-gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
-  --path skills/reading-portolan --consent
+  --path skills/git-backed-catalog --consent
 gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
   --path skills/portolan-bootstrap --consent
 gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
+  --path skills/portolan-cli --consent
+gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
   --path skills/portolan-consume --consent
 gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
-  --path skills/sourcecoop --consent
+  --path skills/portolan-migrate --consent
+gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
+  --path skills/portolan-thumbnails --consent
+gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
+  --path skills/reading-portolan --consent
 gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
   --path skills/register-catalog --consent
+gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
+  --path skills/report-catalog-issue --consent
+gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
+  --path skills/sourcecoop --consent
 
 # Or at workspace scope (shared via version control)
 gemini skills install https://github.com/portolan-sdi/portolan-skills.git \

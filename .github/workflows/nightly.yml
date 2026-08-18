@@ -54,6 +54,10 @@ jobs:
 
   mutation:
     name: Mutation Testing
+    # The only place mutation runs. ci.yml used to mutate the files a pull
+    # request changed, on a 30 minute timeout, which is too slow to sit in
+    # front of every merge. This sweep covers the tree a shard at a time
+    # instead, and the shard rotates nightly.
     runs-on: ubuntu-latest
     # Hash-assigned shards hold 2-12 files rather than a uniform 6, so the
     # largest night runs roughly twice the mutants of the 6-file shard that took
