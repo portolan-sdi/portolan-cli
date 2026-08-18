@@ -35,10 +35,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
 
-from portolan_cli.extract.common.converters.esri import (
-    ESRIConverterError,
-    convert_esri_renderer,
-)
+from portolan_cli.extract.common.converters.esri import convert_esri_renderer
 from portolan_cli.extract.common.converters.sld import (
     SLDConverterError,
     convert_sld,
@@ -379,7 +376,7 @@ def extract_esri_style(
     # Convert to Mapbox GL
     try:
         style, warnings = convert_esri_renderer(renderer, source_layer, return_warnings=True)
-    except ESRIConverterError as e:
+    except Exception as e:
         logger.warning("Could not convert ESRI renderer: %s", e)
         return None
 

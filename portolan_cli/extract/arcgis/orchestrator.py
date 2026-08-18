@@ -470,13 +470,20 @@ def _extract_one_layer(
         # Extract style from ESRI layer (Issue #490)
         if not options.no_styles:
             layer_url = f"{url.rstrip('/')}/{layer.id}"
-            style_result = extract_esri_style(
-                layer_url=layer_url,
-                collection_path=collection_dir,
-                source_layer=layer_slug,
-            )
-            if style_result:
-                logger.debug("Extracted style for %s: %s", layer.name, style_result.path)
+            try:
+                style_result = extract_esri_style(
+                    layer_url=layer_url,
+                    collection_path=collection_dir,
+                    source_layer=layer_slug,
+                )
+                if style_result:
+                    logger.debug("Extracted style for %s: %s", layer.name, style_result.path)
+            except Exception:
+                logger.warning(
+                    "Style extraction failed for layer '%s'; skipping style.",
+                    layer.name,
+                    exc_info=True,
+                )
 
         return LayerResult(
             id=layer.id,
