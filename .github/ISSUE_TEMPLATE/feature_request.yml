@@ -5,16 +5,16 @@ body:
   - type: markdown
     attributes:
       value: >-
-        Keep this under 200 words outside code blocks. Show the gap rather than
-        arguing for it. Prose follows the
-        [Portolan voice](https://github.com/portolan-sdi/portolan-ops/blob/main/VOICE.md).
+        Write the top for a human. Show the gap rather than arguing for it.
+        Put design detail lower down. Length is fine when the opening makes
+        the outcome obvious.
   - type: textarea
     id: problem
     attributes:
       label: What problem does this solve?
       description: >-
-        The situation where current behavior falls short. For spec-related
-        features, name the spec requirement involved.
+        The situation where current behavior falls short, and who it affects.
+        For spec-related features, name the spec requirement involved.
     validations:
       required: true
   - type: textarea
@@ -31,6 +31,24 @@ body:
     id: proposal
     attributes:
       label: Proposed behavior
-      description: What the tool should do instead. Three or four sentences.
+      description: What the tool should do instead. Name the command or the output.
     validations:
       required: true
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation details
+      description: >-
+        Optional. Where this would live, options you considered, and edge
+        cases the design must handle.
+    validations:
+      required: false
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: >-
+        Optional. The command that proves the capability works, and the data
+        it runs against.
+    validations:
+      required: false
