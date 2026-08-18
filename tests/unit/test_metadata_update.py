@@ -13,15 +13,19 @@ import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
+import rasterio
 
+from portolan_cli.catalog import init_catalog
 from portolan_cli.collection import (
     create_collection,
     read_collection_json,
     write_collection_json,
 )
 from portolan_cli.item import create_item, read_item_json, write_item_json
+from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.update import (
     create_missing_item,
     update_collection_extent,
@@ -39,6 +43,55 @@ from portolan_cli.versions import (
 # Path to test fixtures
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 REALDATA_FIXTURES = FIXTURES_DIR / "realdata"
+
+# The band-refresh rasters (#737). A 4-band int16 COG, and the 1-band uint8 COG
+# that replaces it on disk.
+FOUR_BAND_RASTER = REALDATA_FIXTURES / "rapidai4eo-sample.tif"
+ONE_BAND_RASTER = FIXTURES_DIR / "raster" / "valid" / "singleband.tif"
+
+# The statistics formats.md requires on every COG band ("Raster statistics"),
+# under the STAC field names the raster extension defines.
+REQUIRED_BAND_STATISTICS = frozenset({"minimum", "maximum", "mean", "stddev"})
+
+# The 4-band raster's band 1 statistics, as `add` records them. They are the
+# stale values a refresh must not carry onto a re-shaped file, and 302 is not
+# even representable in the 1-band raster's uint8 bands.
+STALE_BAND_1_STATISTICS = {
+    "minimum": 302.0,
+    "maximum": 1015.0,
+    "mean": 460.38215000000383,
+    "stddev": 51.76964613919496,
+}
+
+
+def _raster_item(root: Path, source: Path) -> tuple[Path, Path]:
+    """Copy `source` into a collection under `root` and write its item.json.
+
+    Returns (item_path, data_path). Initializes a real catalog, because the
+    statistics enrichment only runs where its setting resolves.
+    """
+    if not source.exists():
+        pytest.skip(f"Raster fixture not available: {source.name}")
+    init_catalog(root, license_id="CC-BY-4.0")
+    collection_dir = root / "imagery"
+    collection_dir.mkdir(exist_ok=True)
+    data_file = collection_dir / "scene1.tif"
+    shutil.copy(source, data_file)
+    item = create_item(item_id="scene1", data_path=data_file, collection_id="imagery")
+    return write_item_json(item, collection_dir), data_file
+
+
+def _record_bands(item_path: Path, bands: list[dict[str, Any]]) -> None:
+    """Write `bands` onto the item's data asset, as a previous `add` would have."""
+    item_json = json.loads(item_path.read_text())
+    item_json["assets"]["data"]["bands"] = bands
+    item_path.write_text(json.dumps(item_json, indent=2))
+
+
+def _read_bands(item_path: Path) -> list[dict[str, Any]]:
+    """The data asset's bands array as it stands on disk."""
+    bands: list[dict[str, Any]] = json.loads(item_path.read_text())["assets"]["data"]["bands"]
+    return bands
 
 
 class TestUpdateItemMetadata:
@@ -312,6 +365,236 @@ class TestUpdateItemMetadata:
 
         result = json.loads(item_path.read_text())
         assert result["assets"]["data"]["type"] == cog_media_type
+
+    @pytest.mark.unit
+    @pytest.mark.realdata
+    def test_update_item_metadata_reextracts_reshaped_raster_bands(self, tmp_path: Path) -> None:
+        """A re-shaped raster gets a re-extracted bands array (#737).
+
+        Preserving the array verbatim (#659) leaves 4 int16 bands describing a
+        1-band uint8 file. formats.md makes the file the authority for band
+        statistics, so the raster refresh re-reads the bytes on disk.
+        """
+        item_path, data_file = _raster_item(tmp_path, FOUR_BAND_RASTER)
+        _record_bands(
+            item_path,
+            [
+                {
+                    "name": f"band_{index}",
+                    "data_type": "int16",
+                    "statistics": dict(STALE_BAND_1_STATISTICS),
+                }
+                for index in range(1, 5)
+            ],
+        )
+
+        # Re-shape the raster in place: 4-band int16 becomes 1-band uint8.
+        shutil.copy(ONE_BAND_RASTER, data_file)
+
+        update_item_metadata(item_path, data_file)
+
+        bands = _read_bands(item_path)
+        assert [band["name"] for band in bands] == ["band_1"]
+        assert bands[0]["data_type"] == "uint8"
+        statistics = bands[0]["statistics"]
+        # The full set formats.md requires, describing the uint8 file. Every
+        # value sits inside the type's range, not the int16 raster's 302..1015.
+        assert REQUIRED_BAND_STATISTICS <= statistics.keys()
+        assert 0 <= statistics["minimum"] <= statistics["maximum"] <= 255
+        assert 0 <= statistics["mean"] <= 255
+
+    @pytest.mark.unit
+    def test_update_item_metadata_keeps_hand_authored_band_fields(self, tmp_path: Path) -> None:
+        """A same-shape refresh keeps the band name and description a human wrote (#737).
+
+        A name and a description are descriptive, not derivable from pixels, so
+        the refresh keeps them. The data type is derivable, so it comes from the
+        file.
+        """
+        item_path, data_file = _raster_item(tmp_path, ONE_BAND_RASTER)
+        _record_bands(
+            item_path,
+            [
+                {
+                    "name": "red",
+                    "description": "Surface reflectance, hand authored",
+                    "data_type": "int16",
+                }
+            ],
+        )
+
+        update_item_metadata(item_path, data_file)
+
+        bands = _read_bands(item_path)
+        assert len(bands) == 1
+        assert bands[0]["name"] == "red"
+        assert bands[0]["description"] == "Surface reflectance, hand authored"
+        assert bands[0]["data_type"] == "uint8"
+        assert REQUIRED_BAND_STATISTICS <= bands[0]["statistics"].keys()
+
+    @pytest.mark.unit
+    @pytest.mark.realdata
+    def test_update_item_metadata_drops_band_labels_when_count_changes(
+        self, tmp_path: Path
+    ) -> None:
+        """A hand-authored label never lands on a band it no longer describes (#737)."""
+        item_path, data_file = _raster_item(tmp_path, FOUR_BAND_RASTER)
+        _record_bands(
+            item_path,
+            [
+                {"name": name, "description": f"{name} band", "data_type": "int16"}
+                for name in ("red", "green", "blue", "nir")
+            ],
+        )
+
+        shutil.copy(ONE_BAND_RASTER, data_file)
+
+        update_item_metadata(item_path, data_file)
+
+        bands = _read_bands(item_path)
+        assert [band["name"] for band in bands] == ["band_1"]
+        assert "description" not in bands[0]
+
+    @pytest.mark.unit
+    def test_update_item_metadata_ignores_statistics_sidecar(self, tmp_path: Path) -> None:
+        """A PAM sidecar cannot answer for the file's statistics (#737).
+
+        formats.md is explicit that an external ``.aux.xml`` sidecar does not
+        satisfy the embedded-statistics requirement. GDAL writes one when it
+        computes statistics and never invalidates it when the raster underneath
+        is replaced, so the refresh must read past it.
+        """
+        item_path, data_file = _raster_item(tmp_path, ONE_BAND_RASTER)
+        _record_bands(
+            item_path,
+            [{"name": "band_1", "data_type": "int16", "statistics": STALE_BAND_1_STATISTICS}],
+        )
+
+        # The sidecar `add` left when it read the int16 raster this uint8 file
+        # replaced.
+        (data_file.parent / f"{data_file.name}.aux.xml").write_text(
+            '<PAMDataset><PAMRasterBand band="1"><Metadata>'
+            '<MDI key="STATISTICS_MINIMUM">302</MDI>'
+            '<MDI key="STATISTICS_MAXIMUM">1015</MDI>'
+            '<MDI key="STATISTICS_MEAN">460.38215</MDI>'
+            '<MDI key="STATISTICS_STDDEV">51.769646139195</MDI>'
+            '<MDI key="STATISTICS_VALID_PERCENT">100</MDI>'
+            "</Metadata></PAMRasterBand></PAMDataset>"
+        )
+
+        update_item_metadata(item_path, data_file)
+
+        statistics = _read_bands(item_path)[0]["statistics"]
+        assert REQUIRED_BAND_STATISTICS <= statistics.keys()
+        assert statistics["minimum"] != STALE_BAND_1_STATISTICS["minimum"]
+        assert statistics["maximum"] <= 255
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("failure", ["raises", "empty"])
+    def test_update_item_metadata_preserves_bands_when_reextraction_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        failure: str,
+    ) -> None:
+        """A failed re-extraction keeps the existing array rather than deleting it (#737).
+
+        The lesson of #659. A refresh that cannot read the file must not
+        destroy the record it cannot replace.
+        """
+        item_path, data_file = _raster_item(tmp_path, ONE_BAND_RASTER)
+        bands = [{"name": "band_1", "data_type": "int16", "statistics": STALE_BAND_1_STATISTICS}]
+        _record_bands(item_path, bands)
+
+        def broken(self: COGMetadata) -> dict[str, Any]:
+            if failure == "raises":
+                raise OSError("band extraction failed")
+            return {}
+
+        monkeypatch.setattr(COGMetadata, "to_stac_properties", broken)
+
+        update_item_metadata(item_path, data_file)
+
+        assert _read_bands(item_path) == bands
+
+    @pytest.mark.unit
+    def test_update_item_metadata_computes_statistics_from_pixels(self, tmp_path: Path) -> None:
+        """The refreshed statistics come from the pixels, not from the file's tags (#737).
+
+        This is what keeps the band refresh independent of #748, where a COG
+        Portolan writes carries its statistics in a PAM sidecar instead of
+        embedded in the file. The refresh reads with ``GDAL_PAM_ENABLED=NO`` and
+        the raster below embeds no statistics at all, so a refresh that only
+        read recorded values would write none. ``statistics.raster_mode``
+        defaults to ``approx``, which computes them, so a full set arrives.
+        """
+        item_path, data_file = _raster_item(tmp_path, ONE_BAND_RASTER)
+        _record_bands(item_path, [{"name": "band_1", "data_type": "int16"}])
+
+        # The precondition that makes this a real assertion: nothing to read.
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(data_file) as src:
+            assert "STATISTICS_MINIMUM" not in src.tags(bidx=1)
+        assert not (data_file.parent / f"{data_file.name}.aux.xml").exists()
+
+        update_item_metadata(item_path, data_file)
+
+        band = _read_bands(item_path)[0]
+        assert band["data_type"] == "uint8"
+        assert REQUIRED_BAND_STATISTICS <= band["statistics"].keys()
+        assert 0 <= band["statistics"]["minimum"] <= band["statistics"]["maximum"] <= 255
+
+    @pytest.mark.unit
+    def test_update_item_metadata_keeps_statistics_extraction_cannot_recompute(
+        self, tmp_path: Path
+    ) -> None:
+        """A same-shape refresh never trades recorded statistics for none (#737).
+
+        ``statistics.raster_mode`` defaults to ``approx``, which computes the
+        values. A catalog can set ``cached`` instead, and then the extractor
+        reads embedded tags only. The raster below has none and the refresh
+        disables PAM, so extraction returns no ``statistics`` key at all. The
+        merge must therefore keep the recorded object rather than drop it.
+        """
+        item_path, data_file = _raster_item(tmp_path, ONE_BAND_RASTER)
+        (tmp_path / ".portolan" / "config.yaml").write_text(
+            "statistics:\n  enabled: true\n  raster_mode: cached\n"
+        )
+        _record_bands(
+            item_path,
+            [{"name": "band_1", "data_type": "int16", "statistics": dict(STALE_BAND_1_STATISTICS)}],
+        )
+
+        update_item_metadata(item_path, data_file)
+
+        band = _read_bands(item_path)[0]
+        # Derivable from the file, so the refresh owns it.
+        assert band["data_type"] == "uint8"
+        # Not derivable in this mode, so the recorded object survives intact.
+        assert band["statistics"] == STALE_BAND_1_STATISTICS
+
+    @pytest.mark.unit
+    def test_update_item_metadata_preserves_bands_for_unreadable_raster(
+        self, tmp_path: Path
+    ) -> None:
+        """A raster extension the COG reader cannot open preserves, it does not raise (#737).
+
+        The guard keys on ``RASTER_EXTENSIONS``, which is every extension that
+        routes as raster, so it is wider than the COGs ``extract_cog_metadata``
+        reads. A ``.jp2`` GDAL has no driver for, or any raster whose bytes are
+        unreadable, must therefore fall through to the preserve path rather than
+        failing the refresh.
+        """
+        item_path, data_file = _raster_item(tmp_path, ONE_BAND_RASTER)
+        unreadable = data_file.with_suffix(".jp2")
+        data_file.rename(unreadable)
+        unreadable.write_bytes(b"not a JPEG 2000 codestream")
+
+        bands = [{"name": "band_1", "data_type": "uint16"}]
+        _record_bands(item_path, bands)
+
+        update_item_metadata(item_path, unreadable)
+
+        assert _read_bands(item_path) == bands
 
 
 class TestCreateMissingItem:
