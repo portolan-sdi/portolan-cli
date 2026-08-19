@@ -384,3 +384,50 @@ class TestAntimeridianBboxIntegration:
             # Run check - should pass
             result = runner.invoke(cli, ["check", "."])
             assert "invalid bbox" not in result.output.lower()
+
+    def test_add_fails_loudly_when_projected_bbox_assumed_wgs84(self, tmp_path: Path) -> None:
+        """A projected source whose CRS is lost in conversion must not publish
+        meter-valued extents as degrees (issue #785)."""
+        import shutil
+
+        runner = CliRunner()
+        fixtures = Path(__file__).parent.parent / "fixtures" / "scan" / "complete_shapefile"
+
+        with runner.isolated_filesystem():
+            Path(".portolan").mkdir()
+            Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
+            Path("catalog.json").write_text(
+                json.dumps(
+                    {
+                        "type": "Catalog",
+                        "id": "test-catalog",
+                        "stac_version": "1.1.0",
+                        "description": "Test",
+                        "links": [],
+                    }
+                )
+            )
+            collection_dir = Path("boundaries")
+            collection_dir.mkdir()
+            for file in fixtures.iterdir():
+                shutil.copy(file, collection_dir / file.name)
+
+            result = runner.invoke(cli, ["add", str(collection_dir / "radios_sample.shp")])
+
+            # POSGAR meters must never be published as degrees: either the add
+            # fails with the CRS mismatch (conversion dropped the CRS), or a
+            # future conversion fix preserves the CRS and the bbox is WGS84.
+            if result.exit_code != 0:
+                assert "PRTLN-CNV004" in result.output or "mismatch" in result.output.lower()
+            else:
+                item_files = list(collection_dir.glob("*.json"))
+                assert item_files, "expected an item to be written"
+                bboxes = [
+                    json.loads(f.read_text()).get("bbox")
+                    for f in item_files
+                    if json.loads(f.read_text()).get("bbox")
+                ]
+                assert bboxes and all(abs(b[0]) <= 180 and abs(b[1]) <= 90 for b in bboxes), (
+                    f"projected coordinates published as degrees: {bboxes}"
+                )

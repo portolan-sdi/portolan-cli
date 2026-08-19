@@ -161,8 +161,10 @@ class TestAddIntegration:
         self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
     ) -> None:
         """add shapefile automatically includes sidecar files."""
-        # Use the complete shapefile fixture
-        shapefile_dir = fixtures_dir / "scan" / "complete_shapefile"
+        # Use the WGS84 shapefile fixture (the projected variant now fail-fasts
+        # at add because conversion drops its CRS — covered in
+        # test_bbox_validation.py; this test is about sidecar handling).
+        shapefile_dir = fixtures_dir / "scan" / "complete_shapefile_wgs84"
         if not shapefile_dir.exists():
             pytest.skip("Shapefile fixture not available")
 

@@ -163,6 +163,13 @@ def _reject_non_wgs84_magnitudes(
     minx, miny, maxx, maxy = bbox
     if abs(minx) <= 180 and abs(maxx) <= 180 and abs(miny) <= 90 and abs(maxy) <= 90:
         return
+    # "Effectively infinite" sentinels (issue #516, e.g. WFS-served ±1.79e308)
+    # are not projected coordinates; leave them to the existing invalid-bbox
+    # filtering so their error message stays about invalid values, not CRS.
+    from portolan_cli.bbox import MAX_SANE_COORD
+
+    if any(abs(c) > MAX_SANE_COORD for c in bbox):
+        return
     if allow_guess:
         logger.warning(
             "Bbox %s treated as WGS84 (%s) but coordinates exceed lon/lat range; "
