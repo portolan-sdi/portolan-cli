@@ -226,3 +226,33 @@ class TestTransformBboxToWgs84WithValidation:
         # Should be roughly in Netherlands area
         assert 3.0 < minx < 8.0  # Longitude
         assert 50.0 < miny < 54.0  # Latitude
+
+
+class TestRejectNonWgs84Magnitudes:
+    """Bboxes treated as WGS84 must actually be in lon/lat range (issue #785)."""
+
+    METER_BBOX = (121577.87, 4214399.77, 353182.80, 4486795.22)
+    LONLAT_BBOX = (-7.33, 38.04, -4.70, 40.49)
+
+    def test_none_crs_with_meter_bbox_raises(self) -> None:
+        from portolan_cli.errors import CRSMismatchError
+
+        with pytest.raises(CRSMismatchError):
+            transform_bbox_to_wgs84(self.METER_BBOX, None)
+
+    def test_none_crs_with_lonlat_bbox_passes_through(self) -> None:
+        assert transform_bbox_to_wgs84(self.LONLAT_BBOX, None) == self.LONLAT_BBOX
+
+    def test_declared_wgs84_with_meter_bbox_raises(self) -> None:
+        from portolan_cli.errors import CRSMismatchError
+
+        with pytest.raises(CRSMismatchError):
+            transform_bbox_to_wgs84(self.METER_BBOX, "EPSG:4326")
+
+    def test_allow_guess_warns_and_passes_through(self, caplog: pytest.LogCaptureFixture) -> None:
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            result = transform_bbox_to_wgs84(self.METER_BBOX, None, allow_guess=True)
+        assert result == self.METER_BBOX
+        assert any("exceed lon/lat range" in r.message for r in caplog.records)
