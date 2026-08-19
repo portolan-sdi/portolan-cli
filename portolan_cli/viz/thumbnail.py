@@ -5,7 +5,7 @@ Mirrors the COG thumbnail pattern in convert.py.
 
 Public API:
 - ThumbnailConfig: Configuration dataclass for thumbnail generation
-- generate_vector_thumbnail: Orchestrator (prefers PMTiles, falls back to GeoParquet)
+- generate_vector_thumbnail: Orchestrator (prefers GeoParquet, falls back to PMTiles)
 - generate_thumbnail_from_pmtiles: Generate from PMTiles
 - generate_thumbnail_from_geoparquet: Generate from GeoParquet
 - add_basemap: Add contextily basemap to matplotlib axes
@@ -1291,14 +1291,19 @@ def generate_vector_thumbnail(
     config: ThumbnailConfig,
     style_path: Path | None = None,
 ) -> Path | None:
-    """Generate thumbnail for vector data, preferring PMTiles.
+    """Generate thumbnail for vector data, preferring the GeoParquet source.
 
-    Orchestrator function that tries PMTiles first, then falls back to GeoParquet.
-    This is the main entry point for vector thumbnail generation.
+    Orchestrator function: renders from the GeoParquet when it is locally
+    available, falling back to decoding PMTiles. The parquet carries exact
+    geometry; PMTiles at thumbnail zoom carry tippecanoe's simplification and
+    its tiny-polygon placeholder squares, so datasets whose features are small
+    at collection scale (parcels, forests, POI clusters) rendered as floating
+    rectangles instead of their real shapes (issue #786). Tiles remain the
+    right source when no local parquet exists (e.g. remote data).
 
     Args:
-        pmtiles_path: Path to PMTiles file (optional).
-        geoparquet_path: Path to GeoParquet file (optional, used as fallback).
+        pmtiles_path: Path to PMTiles file (optional, used as fallback).
+        geoparquet_path: Path to GeoParquet file (optional, preferred).
         config: Thumbnail configuration.
         style_path: Optional path to Mapbox GL style for categorical coloring.
 
@@ -1313,15 +1318,15 @@ def generate_vector_thumbnail(
         logger.debug("No source files provided for thumbnail")
         return None
 
-    # Try PMTiles first
-    if pmtiles_path is not None:
-        result = generate_thumbnail_from_pmtiles(pmtiles_path, config, style_path)
+    # Prefer the exact geometry: render from the local GeoParquet
+    if geoparquet_path is not None and geoparquet_path.exists():
+        result = generate_thumbnail_from_geoparquet(geoparquet_path, config, style_path)
         if result is not None:
             return result
-        logger.debug("PMTiles thumbnail failed, falling back to GeoParquet")
+        logger.debug("GeoParquet thumbnail failed, falling back to PMTiles")
 
-    # Fall back to GeoParquet
-    if geoparquet_path is not None:
-        return generate_thumbnail_from_geoparquet(geoparquet_path, config, style_path)
+    # Fall back to PMTiles (simplified tile geometry)
+    if pmtiles_path is not None:
+        return generate_thumbnail_from_pmtiles(pmtiles_path, config, style_path)
 
     return None

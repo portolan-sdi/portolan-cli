@@ -608,16 +608,18 @@ def _generate_thumbnail_asset(
     pmtiles_path: Path,
     catalog_root: Path,
 ) -> Path | None:
-    """Render the vector thumbnail from the tiles, the higher-fidelity source.
+    """Render the vector thumbnail, preferring the exact GeoParquet geometry.
 
     Writes the file and returns its path, or None if disabled or failed. Failure
-    is non-fatal: it must not affect PMTiles success (Issue #13).
+    is non-fatal: it must not affect PMTiles success (Issue #13). PMTiles are
+    only the fallback source: at thumbnail zoom they carry tippecanoe's
+    simplification and tiny-polygon placeholder squares (issue #786).
 
     Registering the STAC asset is deliberately not done here.
     ``collection_thumbnail.ensure_collection_thumbnails`` runs after this and
     adopts the ``.thumb.jpg`` this writes, so one writer owns the thumbnail
-    asset shape (Issue #683). Rendering from PMTiles still wins, because this
-    runs first and adoption never overwrites.
+    asset shape (Issue #683). This render still wins, because it runs first
+    and adoption never overwrites.
     """
     try:
         thumb_config = get_thumbnail_config(catalog_root)
@@ -626,8 +628,8 @@ def _generate_thumbnail_asset(
         # Discover style for thumbnail (Issue #495)
         style_path = _discover_style_for_thumbnail(collection_path)
         return generate_vector_thumbnail(
-            pmtiles_path=pmtiles_path,
-            geoparquet_path=parquet_path,  # fallback
+            pmtiles_path=pmtiles_path,  # fallback
+            geoparquet_path=parquet_path,
             config=thumb_config,
             style_path=style_path,
         )
