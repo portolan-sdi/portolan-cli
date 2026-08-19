@@ -538,6 +538,16 @@ def list_layers(path: Path) -> list[str] | None:
         if not (path.is_dir() and extension == ".gdb"):
             return None
 
+    # A GeoPackage declares its own layers: gpkg_contents is spec-mandated and
+    # names each table's data_type. Reading it directly returns only feature
+    # layers, so non-spatial tables (QGIS ``layer_styles``, attribute-only
+    # tables) never become collection assets (#784) — and it keeps working on
+    # files where the delegated listing comes back empty.
+    if extension == ".gpkg":
+        feature_layers = _gpkg_feature_layers(path)
+        if feature_layers is not None:
+            return feature_layers if feature_layers else None
+
     # Delegate to geoparquet-io for both GeoPackage and FileGDB
     try:
         layers = gpio.list_layers(str(path.resolve()))
@@ -557,6 +567,30 @@ def list_layers(path: Path) -> list[str] | None:
     except Exception as e:
         logger.error("Failed to list layers in %s: %s", path, e)
         return None
+
+
+def _gpkg_feature_layers(path: Path) -> list[str] | None:
+    """Feature layers of a GeoPackage, straight from ``gpkg_contents``.
+
+    Returns None when the file cannot be read as a GeoPackage (caller falls
+    back to the delegated listing); an empty list means the file genuinely
+    has no feature layers.
+    """
+    import sqlite3
+
+    try:
+        con = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True)
+        try:
+            rows = con.execute(
+                "SELECT table_name FROM gpkg_contents WHERE data_type = 'features'"
+                " ORDER BY table_name"
+            ).fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error as e:
+        logger.debug("Could not read gpkg_contents from %s: %s", path, e)
+        return None
+    return [row[0] for row in rows]
 
 
 def is_multilayer(path: Path) -> bool:

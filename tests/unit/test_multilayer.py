@@ -188,3 +188,52 @@ class TestMultiLayerConversion:
 
         layer_names = {r.layer for r in results}
         assert layer_names == {"points", "lines", "polygons"}
+
+
+class TestGpkgNonSpatialLayers:
+    """gpkg_contents-based listing excludes non-spatial tables (issue #784)."""
+
+    def _gpkg_with_layer_styles(self, tmp_path: Path) -> Path:
+        """Copy the multilayer fixture and register a QGIS layer_styles table."""
+        import shutil
+        import sqlite3
+
+        gpkg = tmp_path / "styled.gpkg"
+        shutil.copy2(FIXTURES_DIR / "multilayer.gpkg", gpkg)
+        con = sqlite3.connect(gpkg)
+        con.execute("CREATE TABLE layer_styles (id INTEGER PRIMARY KEY, styleQML TEXT)")
+        con.execute(
+            "INSERT INTO gpkg_contents (table_name, data_type, identifier)"
+            " VALUES ('layer_styles', 'attributes', 'layer_styles')"
+        )
+        con.commit()
+        con.close()
+        return gpkg
+
+    @pytest.mark.unit
+    def test_layer_styles_excluded(self, tmp_path: Path) -> None:
+        from portolan_cli.formats import list_layers
+
+        gpkg = self._gpkg_with_layer_styles(tmp_path)
+        layers = list_layers(gpkg)
+
+        assert layers is not None
+        assert "layer_styles" not in layers
+        assert sorted(layers) == sorted(list_layers(FIXTURES_DIR / "multilayer.gpkg"))
+
+    @pytest.mark.unit
+    def test_matches_fixture_listing(self) -> None:
+        """gpkg_contents listing agrees with the delegated listing on clean files."""
+        from portolan_cli.formats import _gpkg_feature_layers, list_layers
+
+        direct = _gpkg_feature_layers(FIXTURES_DIR / "multilayer.gpkg")
+        assert direct is not None
+        assert sorted(direct) == sorted(list_layers(FIXTURES_DIR / "multilayer.gpkg"))
+
+    @pytest.mark.unit
+    def test_non_gpkg_returns_none(self, tmp_path: Path) -> None:
+        from portolan_cli.formats import _gpkg_feature_layers
+
+        not_gpkg = tmp_path / "plain.gpkg"
+        not_gpkg.write_text("not a sqlite file")
+        assert _gpkg_feature_layers(not_gpkg) is None
