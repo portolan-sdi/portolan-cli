@@ -218,8 +218,9 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "Register the PMTiles asset with a rel='pmtiles' link (web-map-links v1.3.0).",
     ),
     "PTL-VIZ-004": _instruct(
-        "Generate a PMTiles derivative for this large vector collection so browsers can render it "
-        "; run `portolan viz` with the [pmtiles] extra."
+        "Generate a PMTiles derivative for this large vector collection so browsers can render "
+        "it; run `portolan add <collection> --pmtiles` (requires the [pmtiles] extra and "
+        "tippecanoe)."
     ),
     # fixer `styles` is new in Phase 3; it corrects the style asset media type
     "PTL-VIZ-005": _auto(
