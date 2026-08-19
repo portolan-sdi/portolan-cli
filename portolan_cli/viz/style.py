@@ -175,12 +175,26 @@ class RasterStyleConfig:
 # =============================================================================
 
 
+def pmtiles_source_url(pmtiles_path: str) -> str:
+    """Return a MapLibre-loadable source URL for a PMTiles path.
+
+    The MapLibre PMTiles plugin only intercepts URLs carrying the
+    ``pmtiles://`` scheme; a bare path is treated as TileJSON and fails to
+    load (issue #756). Paths that already carry a scheme are returned as-is.
+    """
+    if "://" in pmtiles_path:
+        return pmtiles_path
+    return f"pmtiles://{pmtiles_path}"
+
+
 def build_full_style(
     name: str,
     geometry_type: str,
     source_layer: str,
     pmtiles_relative_path: str,
     config: VectorStyleConfig,
+    min_zoom: int | None = None,
+    max_zoom: int | None = None,
 ) -> dict[str, Any]:
     """Build complete Mapbox GL v8 style with sources and layers.
 
@@ -193,7 +207,13 @@ def build_full_style(
         geometry_type: OGC geometry type (Point, LineString, Polygon, etc.).
         source_layer: Name of the source layer in PMTiles.
         pmtiles_relative_path: Relative path to PMTiles file (e.g., "../data.pmtiles").
+            Written as a ``pmtiles://`` URL so MapLibre can load it.
         config: Style configuration.
+        min_zoom: Minimum zoom of the PMTiles archive, written as the source's
+            ``minzoom`` (omitted when None).
+        max_zoom: Maximum zoom of the PMTiles archive, written as the source's
+            ``maxzoom`` so MapLibre does not request tiles beyond the archive's
+            range (omitted when None).
 
     Returns:
         Complete Mapbox GL style spec dict with version, name, sources, and layers.
@@ -235,15 +255,19 @@ def build_full_style(
         "paint": paint,
     }
 
+    source: dict[str, Any] = {
+        "type": "vector",
+        "url": pmtiles_source_url(pmtiles_relative_path),
+    }
+    if min_zoom is not None:
+        source["minzoom"] = min_zoom
+    if max_zoom is not None:
+        source["maxzoom"] = max_zoom
+
     return {
         "version": 8,
         "name": name,
-        "sources": {
-            "data": {
-                "type": "vector",
-                "url": pmtiles_relative_path,
-            }
-        },
+        "sources": {"data": source},
         "layers": [layer],
     }
 
@@ -279,12 +303,81 @@ def write_style_file(
     return style_path
 
 
+def complete_style_sources(
+    collection_path: Path,
+    pmtiles_relative_path: str,
+    min_zoom: int | None = None,
+    max_zoom: int | None = None,
+) -> list[Path]:
+    """Make every style under styles/ point at a loadable PMTiles source.
+
+    Styles can be written before their archive exists (extract converts SLD
+    styles at extraction time), leaving a vector source with no ``url``; older
+    generations also wrote bare relative paths, which MapLibre treats as
+    TileJSON and fails to load (issue #756). Run after PMTiles generation,
+    this pass repairs both cases and fills the archive's zoom range:
+
+    - a vector source with no ``url`` gets ``pmtiles://../<archive>``;
+    - a bare-path ``url`` is prefixed with the ``pmtiles://`` scheme;
+    - ``minzoom``/``maxzoom`` are set when absent and known.
+
+    Sources that already carry a scheme keep their URL (only the zoom range
+    may be filled in). Files are rewritten only when something changed.
+
+    Args:
+        collection_path: Path to the collection directory.
+        pmtiles_relative_path: Archive path relative to the collection
+            (e.g., "data.pmtiles"), used for sources with no URL.
+        min_zoom: Archive minimum zoom, or None to leave sources untouched.
+        max_zoom: Archive maximum zoom, or None to leave sources untouched.
+
+    Returns:
+        Paths of the style files that were modified.
+    """
+    styles_dir = collection_path / "styles"
+    if not styles_dir.is_dir():
+        return []
+
+    modified: list[Path] = []
+    for style_path in sorted(styles_dir.glob("*.json")):
+        try:
+            style = json.loads(style_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        sources = style.get("sources")
+        if not isinstance(sources, dict):
+            continue
+        changed = False
+        for source in sources.values():
+            if not isinstance(source, dict) or source.get("type") != "vector":
+                continue
+            url = source.get("url")
+            if not url:
+                source["url"] = pmtiles_source_url(f"../{pmtiles_relative_path}")
+                changed = True
+            elif "://" not in url:
+                source["url"] = pmtiles_source_url(url)
+                changed = True
+            if min_zoom is not None and "minzoom" not in source:
+                source["minzoom"] = min_zoom
+                changed = True
+            if max_zoom is not None and "maxzoom" not in source:
+                source["maxzoom"] = max_zoom
+                changed = True
+        if changed:
+            write_json_atomic(style_path, style)
+            modified.append(style_path)
+    return modified
+
+
 def write_default_style(
     collection_path: Path,
     geometry_type: str,
     source_layer: str,
     pmtiles_relative_path: str,
     config: VectorStyleConfig | None = None,
+    min_zoom: int | None = None,
+    max_zoom: int | None = None,
 ) -> Path | None:
     """Write default style to {collection_path}/styles/default.json.
 
@@ -298,6 +391,8 @@ def write_default_style(
         pmtiles_relative_path: PMTiles path relative to collection (e.g., "data.pmtiles"
             or "sub/data.pmtiles"). Will be prefixed with "../" for styles/ directory.
         config: Optional style configuration (uses defaults if None).
+        min_zoom: Optional minimum zoom of the PMTiles archive (source minzoom).
+        max_zoom: Optional maximum zoom of the PMTiles archive (source maxzoom).
 
     Returns:
         Path to written file, or None if default.json already exists.
@@ -318,6 +413,8 @@ def write_default_style(
         source_layer=source_layer,
         pmtiles_relative_path=f"../{pmtiles_relative_path}",
         config=config,
+        min_zoom=min_zoom,
+        max_zoom=max_zoom,
     )
 
     return write_style_file(styles_dir, "default", style_dict)
