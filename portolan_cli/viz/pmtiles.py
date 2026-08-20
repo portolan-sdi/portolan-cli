@@ -356,16 +356,39 @@ def _write_default_style_for_geoparquet(
 
         config = get_vector_style_config(catalog_path) if catalog_path else VectorStyleConfig()
 
+        # Thread the archive's zoom range into the style source so MapLibre
+        # never requests tiles beyond what tippecanoe produced (issue #756).
+        min_zoom, max_zoom = _pmtiles_zoom_range(collection_path / pmtiles_relative_path)
+
         return write_default_style(
             collection_path=collection_path,
             geometry_type=geometry_type,
             source_layer=layer_name,
             pmtiles_relative_path=pmtiles_relative_path,
             config=config,
+            min_zoom=min_zoom,
+            max_zoom=max_zoom,
         )
     except Exception as e:
         logger.debug("Failed to write default style for %s: %s", parquet_path, e)
         return None
+
+
+def _pmtiles_zoom_range(pmtiles_path: Path) -> tuple[int | None, int | None]:
+    """Read (min_zoom, max_zoom) from a PMTiles archive header, or (None, None).
+
+    Zoom range is advisory for styles: a style without it still loads, so any
+    failure to read the header degrades to omitting the range rather than
+    failing style generation.
+    """
+    try:
+        from portolan_cli.metadata.pmtiles import extract_pmtiles_metadata
+
+        meta = extract_pmtiles_metadata(pmtiles_path)
+    except Exception as e:  # pragma: no cover - defensive, header read is best-effort
+        logger.debug("Could not read PMTiles zoom range from %s: %s", pmtiles_path, e)
+        return None, None
+    return meta.min_zoom, meta.max_zoom
 
 
 def add_pmtiles_asset_to_collection(
@@ -787,7 +810,24 @@ def generate_pmtiles_for_collection(
             _track_side_step_assets(collection_path, pmtiles_path, thumb_path, catalog_root)
 
     # Discover and register style assets
-    from portolan_cli.viz.style import discover_styles, register_style_assets
+    from portolan_cli.viz.style import (
+        complete_style_sources,
+        discover_styles,
+        register_style_assets,
+    )
+
+    # Repair styles written before the archive existed (extract-produced SLD
+    # styles have a vector source with no URL) and normalize bare-path URLs to
+    # the loadable pmtiles:// form, filling the archive's zoom range (#756).
+    if result.generated:
+        newest = result.generated[-1]
+        min_zoom, max_zoom = _pmtiles_zoom_range(newest)
+        complete_style_sources(
+            collection_path,
+            pmtiles_relative_path=newest.name,
+            min_zoom=min_zoom,
+            max_zoom=max_zoom,
+        )
 
     styles = discover_styles(collection_path)
     register_style_assets(collection_path, styles)

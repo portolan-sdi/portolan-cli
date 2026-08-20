@@ -308,6 +308,8 @@ def make_mapbox_style(
     source_layer: str,
     layers: list[dict[str, Any]],
     pmtiles_url: str | None = None,
+    min_zoom: int | None = None,
+    max_zoom: int | None = None,
 ) -> dict[str, Any]:
     """Build a complete Mapbox GL style document.
 
@@ -315,14 +317,23 @@ def make_mapbox_style(
         name: Style name (appears in style["name"]).
         source_layer: Default source layer name.
         layers: List of layer dicts (from make_*_layer functions).
-        pmtiles_url: Optional PMTiles URL for the source.
+        pmtiles_url: Optional PMTiles URL for the source. A bare path is
+            written with the ``pmtiles://`` scheme so MapLibre can load it
+            (issue #756). When omitted, the source is completed later by
+            ``viz.style.complete_style_sources`` once the archive exists.
+        min_zoom: Optional archive minimum zoom (source ``minzoom``).
+        max_zoom: Optional archive maximum zoom (source ``maxzoom``).
 
     Returns:
         Complete Mapbox GL style dict with version, sources, and layers.
     """
     source: dict[str, Any] = {"type": "vector"}
     if pmtiles_url:
-        source["url"] = pmtiles_url
+        source["url"] = pmtiles_url if "://" in pmtiles_url else f"pmtiles://{pmtiles_url}"
+    if min_zoom is not None:
+        source["minzoom"] = min_zoom
+    if max_zoom is not None:
+        source["maxzoom"] = max_zoom
 
     return {
         "version": 8,
