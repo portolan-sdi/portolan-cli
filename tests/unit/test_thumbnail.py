@@ -323,14 +323,68 @@ class TestGenerateVectorThumbnail:
     """Tests for generate_vector_thumbnail orchestrator function."""
 
     @pytest.mark.unit
-    def test_prefers_pmtiles_when_available(self, tmp_path: Path) -> None:
-        """Prefers PMTiles over GeoParquet when both available."""
+    def test_prefers_geoparquet_when_available(self, tmp_path: Path) -> None:
+        """Prefers the exact GeoParquet geometry over PMTiles (issue #786)."""
         from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_vector_thumbnail
 
         pmtiles_path = tmp_path / "data.pmtiles"
         gpq_path = tmp_path / "data.parquet"
         pmtiles_path.touch()
         gpq_path.touch()
+
+        with (
+            patch("portolan_cli.viz.thumbnail.generate_thumbnail_from_pmtiles") as mock_pmtiles,
+            patch("portolan_cli.viz.thumbnail.generate_thumbnail_from_geoparquet") as mock_gpq,
+        ):
+            mock_gpq.return_value = tmp_path / "data.thumb.jpg"
+
+            config = ThumbnailConfig()
+            result = generate_vector_thumbnail(
+                pmtiles_path=pmtiles_path,
+                geoparquet_path=gpq_path,
+                config=config,
+            )
+
+            mock_gpq.assert_called_once()
+            mock_pmtiles.assert_not_called()
+            assert result == tmp_path / "data.thumb.jpg"
+
+    @pytest.mark.unit
+    def test_falls_back_to_pmtiles(self, tmp_path: Path) -> None:
+        """Falls back to PMTiles when the GeoParquet render fails."""
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_vector_thumbnail
+
+        pmtiles_path = tmp_path / "data.pmtiles"
+        gpq_path = tmp_path / "data.parquet"
+        pmtiles_path.touch()
+        gpq_path.touch()
+
+        with (
+            patch("portolan_cli.viz.thumbnail.generate_thumbnail_from_pmtiles") as mock_pmtiles,
+            patch("portolan_cli.viz.thumbnail.generate_thumbnail_from_geoparquet") as mock_gpq,
+        ):
+            mock_gpq.return_value = None  # GeoParquet render failed
+            mock_pmtiles.return_value = tmp_path / "data.thumb.jpg"
+
+            config = ThumbnailConfig()
+            result = generate_vector_thumbnail(
+                pmtiles_path=pmtiles_path,
+                geoparquet_path=gpq_path,
+                config=config,
+            )
+
+            mock_gpq.assert_called_once()
+            mock_pmtiles.assert_called_once()
+            assert result == tmp_path / "data.thumb.jpg"
+
+    @pytest.mark.unit
+    def test_missing_parquet_uses_pmtiles(self, tmp_path: Path) -> None:
+        """A geoparquet path that does not exist on disk goes straight to PMTiles."""
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_vector_thumbnail
+
+        pmtiles_path = tmp_path / "data.pmtiles"
+        pmtiles_path.touch()
+        gone = tmp_path / "gone.parquet"  # never created
 
         with (
             patch("portolan_cli.viz.thumbnail.generate_thumbnail_from_pmtiles") as mock_pmtiles,
@@ -341,40 +395,12 @@ class TestGenerateVectorThumbnail:
             config = ThumbnailConfig()
             result = generate_vector_thumbnail(
                 pmtiles_path=pmtiles_path,
-                geoparquet_path=gpq_path,
+                geoparquet_path=gone,
                 config=config,
             )
 
-            mock_pmtiles.assert_called_once()
             mock_gpq.assert_not_called()
-            assert result == tmp_path / "data.thumb.jpg"
-
-    @pytest.mark.unit
-    def test_falls_back_to_geoparquet(self, tmp_path: Path) -> None:
-        """Falls back to GeoParquet when PMTiles fails."""
-        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_vector_thumbnail
-
-        pmtiles_path = tmp_path / "data.pmtiles"
-        gpq_path = tmp_path / "data.parquet"
-        pmtiles_path.touch()
-        gpq_path.touch()
-
-        with (
-            patch("portolan_cli.viz.thumbnail.generate_thumbnail_from_pmtiles") as mock_pmtiles,
-            patch("portolan_cli.viz.thumbnail.generate_thumbnail_from_geoparquet") as mock_gpq,
-        ):
-            mock_pmtiles.return_value = None  # PMTiles failed
-            mock_gpq.return_value = tmp_path / "data.thumb.jpg"
-
-            config = ThumbnailConfig()
-            result = generate_vector_thumbnail(
-                pmtiles_path=pmtiles_path,
-                geoparquet_path=gpq_path,
-                config=config,
-            )
-
             mock_pmtiles.assert_called_once()
-            mock_gpq.assert_called_once()
             assert result == tmp_path / "data.thumb.jpg"
 
     @pytest.mark.unit
