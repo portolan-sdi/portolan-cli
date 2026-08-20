@@ -20,7 +20,7 @@ from pyproj.exceptions import CRSError
 from portolan_cli.errors import CRSMismatchError
 
 if TYPE_CHECKING:
-    pass
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -368,3 +368,93 @@ def _sample_bbox_edges(
         points.append((minx, y))
 
     return points
+
+
+def measure_wgs84_bbox(
+    data_path: Path,
+    geometry_column: str,
+    source_crs: str | None,
+) -> tuple[float, float, float, float] | None:
+    """Measure a GeoParquet's WGS84 extent from its geometry, not its bbox.
+
+    :func:`transform_bbox_to_wgs84` answers a different question: it reprojects
+    a *rectangle*. For a projected CRS the WGS84 envelope of that rectangle is
+    strictly larger than the envelope of the data inside it — the corners of a
+    UTM bbox hold no data and the grid lines curve — so a collection extent
+    derived that way overstates the data, by ~14 km on real UTM zone 30N data.
+    That is not a rounding difference: ``check`` rejects it (PTL-DAT-005), and
+    the PMTiles built from the same file report the tighter, correct box.
+
+    So measure the transformed vertices instead. Row groups are streamed and
+    only the geometry column is read, so peak memory stays bounded on files far
+    too large to hold in one GeoDataFrame.
+
+    Returns None whenever the measurement cannot be made — a missing optional
+    dependency, an unreadable file, a CRS pyproj will not resolve, no finite
+    coordinates. The caller then falls back to reprojecting the bbox, which is
+    wider than the data but never wrong about containing it.
+
+    Args:
+        data_path: GeoParquet file, or a directory of them (partitioned output).
+        geometry_column: Name of the WKB geometry column to read.
+        source_crs: CRS of the stored coordinates (EPSG code, WKT, or None).
+
+    Returns:
+        ``(minx, miny, maxx, maxy)`` in WGS84, or None if not measurable.
+    """
+    if not source_crs:
+        return None
+    try:
+        import math
+
+        import numpy as np
+        import pyarrow.parquet as pq
+        import shapely
+    except ImportError:  # pragma: no cover - shapely/pyarrow are core deps
+        logger.debug("Cannot measure bbox: pyarrow/shapely unavailable")
+        return None
+
+    try:
+        src = CRS.from_user_input(source_crs)
+    except CRSError:
+        logger.debug("Cannot measure bbox: unresolvable CRS %r", source_crs)
+        return None
+    if _is_wgs84(src):
+        return None  # stored coordinates are already WGS84; nothing to measure
+
+    files = sorted(data_path.rglob("*.parquet")) if data_path.is_dir() else [data_path]
+    if not files:
+        return None
+
+    transformer = Transformer.from_crs(src, WGS84, always_xy=True)
+    minx = miny = math.inf
+    maxx = maxy = -math.inf
+
+    try:
+        for file in files:
+            parquet = pq.ParquetFile(file)
+            if geometry_column not in parquet.schema_arrow.names:
+                return None
+            for batch in parquet.iter_batches(columns=[geometry_column]):
+                wkb = [value for value in batch.column(0).to_pylist() if value is not None]
+                if not wkb:
+                    continue
+                coords = shapely.get_coordinates(shapely.from_wkb(wkb))
+                if coords.size == 0:
+                    continue
+                lon, lat = transformer.transform(coords[:, 0], coords[:, 1])
+                # Points pyproj cannot transform come back as infinity; drop them
+                # rather than let one poison the whole extent.
+                finite = np.isfinite(lon) & np.isfinite(lat)
+                if not finite.any():
+                    continue
+                lon, lat = lon[finite], lat[finite]
+                minx, maxx = min(minx, float(lon.min())), max(maxx, float(lon.max()))
+                miny, maxy = min(miny, float(lat.min())), max(maxy, float(lat.max()))
+    except Exception as exc:  # noqa: BLE001 - measurement is best-effort
+        logger.debug("Cannot measure bbox from %s: %s", data_path, exc)
+        return None
+
+    if not all(math.isfinite(v) for v in (minx, miny, maxx, maxy)):
+        return None
+    return (minx, miny, maxx, maxy)
