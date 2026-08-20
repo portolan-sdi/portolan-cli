@@ -92,6 +92,11 @@ def transform_bbox_to_wgs84(
         raise ValueError(f"Input bbox contains non-finite values (inf/nan): {bbox}")
 
     if source_crs is None:
+        # No CRS means "assume WGS84" — but coordinates outside lon/lat range
+        # prove the assumption wrong (e.g. GeoParquet written with a null CRS
+        # from projected data, issue #785). Publishing them would put meters
+        # into a STAC extent, so fail fast instead.
+        _reject_non_wgs84_magnitudes(bbox, "no CRS (assumed WGS84)", allow_guess)
         return bbox
 
     # Parse source CRS with specific exception handling
@@ -107,6 +112,7 @@ def transform_bbox_to_wgs84(
 
     # Check if already WGS84
     if _is_wgs84(src_crs):
+        _reject_non_wgs84_magnitudes(bbox, source_crs, allow_guess)
         return bbox
 
     # Check for CRS mismatch BEFORE attempting transformation
@@ -140,6 +146,43 @@ def transform_bbox_to_wgs84(
             e,
         )
         return bbox
+
+
+def _reject_non_wgs84_magnitudes(
+    bbox: tuple[float, float, float, float],
+    declared: str,
+    allow_guess: bool,
+) -> None:
+    """Fail fast when a bbox treated as WGS84 is outside lon/lat range.
+
+    The inverse of the declared-projected-but-looks-WGS84 mismatch check:
+    here the bbox is about to pass through untransformed, so values beyond
+    +/-180 / +/-90 can only mean the real CRS is projected and the metadata
+    is wrong or missing (issue #785).
+    """
+    minx, miny, maxx, maxy = bbox
+    if abs(minx) <= 180 and abs(maxx) <= 180 and abs(miny) <= 90 and abs(maxy) <= 90:
+        return
+    # "Effectively infinite" sentinels (issue #516, e.g. WFS-served ±1.79e308)
+    # are not projected coordinates; leave them to the existing invalid-bbox
+    # filtering so their error message stays about invalid values, not CRS.
+    from portolan_cli.bbox import MAX_SANE_COORD
+
+    if any(abs(c) > MAX_SANE_COORD for c in bbox):
+        return
+    if allow_guess:
+        logger.warning(
+            "Bbox %s treated as WGS84 (%s) but coordinates exceed lon/lat range; "
+            "passing through unchanged.",
+            bbox,
+            declared,
+        )
+        return
+    raise CRSMismatchError(
+        source_crs=declared,
+        bbox=bbox,
+        likely_actual_crs="a projected CRS (values exceed lon/lat range)",
+    )
 
 
 def _is_wgs84(crs: CRS) -> bool:
