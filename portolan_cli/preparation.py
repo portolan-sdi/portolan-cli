@@ -28,7 +28,7 @@ from portolan_cli import extension_registry as _reg
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
 from portolan_cli.config import get_setting, load_merged_metadata
 from portolan_cli.convert import run_with_transient_convert_retry
-from portolan_cli.crs import transform_bbox_to_wgs84
+from portolan_cli.crs import measure_wgs84_bbox, transform_bbox_to_wgs84
 from portolan_cli.errors import NoGeometryError
 from portolan_cli.formats import FormatType, detect_format, is_cloud_optimized_geotiff
 from portolan_cli.metadata import (
@@ -552,14 +552,24 @@ VectorMetadata = GeoParquetMetadata | PMTilesMetadata | FlatGeobufMetadata
 AllMetadata = VectorMetadata | COGMetadata
 
 
-def _extract_bbox_wgs84(metadata: AllMetadata) -> list[float]:
+def _extract_bbox_wgs84(metadata: AllMetadata, data_path: Path | None = None) -> list[float]:
     """Extract bbox from metadata, transforming to WGS84 if needed.
 
     PMTiles bbox is already in WGS84 (4326). Other formats may need
     CRS transformation.
 
+    For GeoParquet in a projected CRS the extent is *measured* from the
+    geometry when ``data_path`` is given. Reprojecting the stored bbox instead
+    answers a different question — it gives the WGS84 envelope of a rectangle,
+    which for a projected CRS is strictly larger than the envelope of the data
+    inside it, so the declared extent overstates the data and `check` rejects it
+    (PTL-DAT-005). Measurement falls back to the reprojected bbox whenever it
+    cannot be made.
+
     Args:
         metadata: Metadata object with bbox attribute.
+        data_path: Converted data file, when available, to measure the extent
+            from instead of reprojecting the stored bbox.
 
     Returns:
         Bounding box as [min_x, min_y, max_x, max_y] in WGS84.
@@ -573,6 +583,13 @@ def _extract_bbox_wgs84(metadata: AllMetadata) -> list[float]:
     if isinstance(crs_raw, dict):
         raise ValueError("PROJJSON CRS not supported. Convert to EPSG code or WKT string.")
     crs_str = crs_raw if isinstance(crs_raw, str) else None
+
+    geometry_column = getattr(metadata, "geometry_column", None)
+    if data_path is not None and geometry_column:
+        measured = measure_wgs84_bbox(data_path, geometry_column, crs_str)
+        if measured is not None:
+            return list(measured)
+
     return list(transform_bbox_to_wgs84(metadata.bbox, crs_str))  # type: ignore[arg-type]
 
 
@@ -1010,7 +1027,7 @@ def prepare_item(
             path=metadata.id if hasattr(metadata, "id") else path.stem,
             reason="The source file may have no valid geometry.",
         )
-    bbox = _extract_bbox_wgs84(metadata)
+    bbox = _extract_bbox_wgs84(metadata, output_path)
 
     # Step 4b: Generate the COG thumbnail sidecar so the scan below registers it
     # (Issue #657). The add path converts via convert_raster(), which does not
