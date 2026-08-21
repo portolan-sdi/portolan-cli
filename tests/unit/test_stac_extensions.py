@@ -407,13 +407,15 @@ class TestBboxWgs84Transformation:
 
     @pytest.mark.unit
     def test_transform_bbox_to_wgs84_handles_none_crs(self) -> None:
-        """transform_bbox_to_wgs84 returns unchanged bbox when CRS is None."""
+        """None CRS passes lon/lat-range bboxes through; out-of-range raises (#785)."""
         from portolan_cli.crs import transform_bbox_to_wgs84
+        from portolan_cli.errors import CRSMismatchError
 
-        bbox = (100, 200, 300, 400)
-        result = transform_bbox_to_wgs84(bbox, None)
+        bbox = (10.0, 20.0, 30.0, 40.0)
+        assert transform_bbox_to_wgs84(bbox, None) == bbox
 
-        assert result == bbox
+        with pytest.raises(CRSMismatchError):
+            transform_bbox_to_wgs84((100, 200, 300, 400), None)
 
     @pytest.mark.unit
     def test_transform_bbox_to_wgs84_handles_wkt_crs(self) -> None:

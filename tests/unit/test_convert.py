@@ -2059,3 +2059,73 @@ class TestVectorConversionRetriesTransientInterrupt:
             _convert_vector(tmp_path / "in.geojson", tmp_path)
 
         assert calls["n"] == 1
+
+
+class TestRepairShapefileEncodingSidecar:
+    """Encoding sidecar repair before shapefile conversion (issue #783)."""
+
+    def _dbf(self, path: Path, records: bytes) -> None:
+        """Minimal DBF: 32-byte header whose bytes 8-9 point past itself."""
+        import struct
+
+        header = bytearray(32)
+        header[0] = 0x03
+        struct.pack_into("<H", header, 8, 32)
+        path.write_bytes(bytes(header) + records)
+
+    def _shp(self, tmp_path: Path, records: bytes, cpg: str | None = None) -> Path:
+        shp = tmp_path / "data.shp"
+        shp.write_bytes(b"\x00" * 100)
+        self._dbf(shp.with_suffix(".dbf"), records)
+        if cpg is not None:
+            shp.with_suffix(".cpg").write_text(cpg)
+        return shp
+
+    @pytest.mark.unit
+    def test_latin1_records_without_cpg_get_iso_sidecar(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import repair_shapefile_encoding_sidecar
+
+        shp = self._shp(tmp_path, "Tentud\xeda embalse".encode("latin-1"))
+        result = repair_shapefile_encoding_sidecar(shp)
+
+        assert result is not None
+        assert shp.with_suffix(".cpg").read_text() == "ISO-8859-1"
+
+    @pytest.mark.unit
+    def test_lying_cpg_over_utf8_records_is_corrected(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import repair_shapefile_encoding_sidecar
+
+        shp = self._shp(tmp_path, "Valle del Árrago".encode(), cpg="1252")
+        result = repair_shapefile_encoding_sidecar(shp)
+
+        assert result is not None
+        assert shp.with_suffix(".cpg").read_text() == "UTF-8"
+
+    @pytest.mark.unit
+    def test_correct_sidecars_left_alone(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import repair_shapefile_encoding_sidecar
+
+        # UTF-8 records with UTF-8 sidecar
+        shp = self._shp(tmp_path, "Café".encode(), cpg="UTF-8")
+        assert repair_shapefile_encoding_sidecar(shp) is None
+        # Latin-1 records already declared ISO-8859-1
+        sub = tmp_path / "b"
+        sub.mkdir()
+        shp2 = self._shp(sub, "Espa\xf1a".encode("latin-1"), cpg="ISO-8859-1")
+        assert repair_shapefile_encoding_sidecar(shp2) is None
+
+    @pytest.mark.unit
+    def test_ascii_records_without_cpg_untouched(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import repair_shapefile_encoding_sidecar
+
+        shp = self._shp(tmp_path, b"plain ascii only")
+        assert repair_shapefile_encoding_sidecar(shp) is None
+        assert not shp.with_suffix(".cpg").exists()
+
+    @pytest.mark.unit
+    def test_missing_dbf_is_noop(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import repair_shapefile_encoding_sidecar
+
+        shp = tmp_path / "solo.shp"
+        shp.write_bytes(b"\x00" * 100)
+        assert repair_shapefile_encoding_sidecar(shp) is None
