@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import antimeridian
 from pyproj import CRS, Transformer
@@ -370,6 +370,34 @@ def _sample_bbox_edges(
     return points
 
 
+@dataclass
+class _MeasuredBounds:
+    """Running WGS84 bounds, with longitude tracked in two frames."""
+
+    minx: float = float("inf")
+    miny: float = float("inf")
+    maxx: float = float("-inf")
+    maxy: float = float("-inf")
+    min_shifted: float = float("inf")
+    max_shifted: float = float("-inf")
+
+    def update(self, lon: Any, lat: Any, *, np: Any) -> None:
+        self.minx, self.maxx = min(self.minx, float(lon.min())), max(self.maxx, float(lon.max()))
+        self.miny, self.maxy = min(self.miny, float(lat.min())), max(self.maxy, float(lat.max()))
+        shifted = np.where(lon < 0.0, lon + 360.0, lon)
+        self.min_shifted = min(self.min_shifted, float(shifted.min()))
+        self.max_shifted = max(self.max_shifted, float(shifted.max()))
+
+    def is_finite(self, math: Any) -> bool:
+        return all(math.isfinite(v) for v in (self.minx, self.miny, self.maxx, self.maxy))
+
+    def plain_span(self) -> float:
+        return self.maxx - self.minx
+
+    def shifted_span(self) -> float:
+        return self.max_shifted - self.min_shifted
+
+
 def measure_wgs84_bbox(
     data_path: Path,
     geometry_column: str,
@@ -405,16 +433,6 @@ def measure_wgs84_bbox(
     if not source_crs:
         return None
     try:
-        import math
-
-        import numpy as np
-        import pyarrow.parquet as pq
-        import shapely
-    except ImportError:  # pragma: no cover - shapely/pyarrow are core deps
-        logger.debug("Cannot measure bbox: pyarrow/shapely unavailable")
-        return None
-
-    try:
         src = CRS.from_user_input(source_crs)
     except CRSError:
         logger.debug("Cannot measure bbox: unresolvable CRS %r", source_crs)
@@ -426,14 +444,38 @@ def measure_wgs84_bbox(
     if not files:
         return None
 
-    minx = miny = math.inf
-    maxx = maxy = -math.inf
-    # Longitude is tracked twice: once as it comes, and once shifted into
-    # [0, 360). Data that crosses the antimeridian is compact in the shifted
-    # frame and spans almost the whole globe in the plain one, so the two spans
-    # detect the crossing without a second pass over the file.
-    min_shifted, max_shifted = math.inf, -math.inf
+    bounds = _stream_wgs84_bounds(files, geometry_column, src, data_path)
+    if bounds is None:
+        return None
+    return _bbox_from_bounds(bounds)
 
+
+def _stream_wgs84_bounds(
+    files: list[Path],
+    geometry_column: str,
+    src: CRS,
+    data_path: Path,
+) -> _MeasuredBounds | None:
+    """Accumulate WGS84 bounds over the geometry column, one row group at a time.
+
+    Longitude is tracked twice: once as it comes, and once shifted into
+    [0, 360). Data that crosses the antimeridian is compact in the shifted frame
+    and spans almost the whole globe in the plain one, so the two spans detect
+    the crossing without a second pass over the file.
+
+    Returns None when nothing measurable was read.
+    """
+    try:
+        import math
+
+        import numpy as np
+        import pyarrow.parquet as pq
+        import shapely
+    except ImportError:  # pragma: no cover - shapely/pyarrow are core deps
+        logger.debug("Cannot measure bbox: pyarrow/shapely unavailable")
+        return None
+
+    bounds = _MeasuredBounds()
     try:
         # Inside the guard: pyproj raises here when it can build no pipeline
         # between the two CRSs, and that must fall back, not escape.
@@ -455,24 +497,23 @@ def measure_wgs84_bbox(
                 finite = np.isfinite(lon) & np.isfinite(lat)
                 if not finite.any():
                     continue
-                lon, lat = lon[finite], lat[finite]
-                minx, maxx = min(minx, float(lon.min())), max(maxx, float(lon.max()))
-                miny, maxy = min(miny, float(lat.min())), max(maxy, float(lat.max()))
-                shifted = np.where(lon < 0.0, lon + 360.0, lon)
-                min_shifted = min(min_shifted, float(shifted.min()))
-                max_shifted = max(max_shifted, float(shifted.max()))
+                bounds.update(lon[finite], lat[finite], np=np)
     except Exception as exc:  # noqa: BLE001 - measurement is best-effort
         logger.debug("Cannot measure bbox from %s: %s", data_path, exc)
         return None
 
-    if not all(math.isfinite(v) for v in (minx, miny, maxx, maxy)):
-        return None
+    return bounds if bounds.is_finite(math) else None
 
-    # RFC 7946: a bbox that crosses the antimeridian writes west greater than
-    # east. Keep whichever frame describes the data more tightly; a tie keeps
-    # the plain frame, so data that does not cross is unaffected.
-    if max_shifted - min_shifted < maxx - minx:
-        west = min_shifted - 360.0 if min_shifted >= 180.0 else min_shifted
-        east = max_shifted - 360.0 if max_shifted > 180.0 else max_shifted
-        return (west, miny, east, maxy)
-    return (minx, miny, maxx, maxy)
+
+def _bbox_from_bounds(bounds: _MeasuredBounds) -> tuple[float, float, float, float]:
+    """Resolve accumulated bounds to a bbox, honouring an antimeridian crossing.
+
+    RFC 7946: a bbox that crosses the antimeridian writes west greater than
+    east. Keep whichever frame describes the data more tightly; a tie keeps the
+    plain frame, so data that does not cross is unaffected.
+    """
+    if bounds.shifted_span() < bounds.plain_span():
+        west = bounds.min_shifted - 360.0 if bounds.min_shifted >= 180.0 else bounds.min_shifted
+        east = bounds.max_shifted - 360.0 if bounds.max_shifted > 180.0 else bounds.max_shifted
+        return (west, bounds.miny, east, bounds.maxy)
+    return (bounds.minx, bounds.miny, bounds.maxx, bounds.maxy)
