@@ -426,11 +426,18 @@ def measure_wgs84_bbox(
     if not files:
         return None
 
-    transformer = Transformer.from_crs(src, WGS84, always_xy=True)
     minx = miny = math.inf
     maxx = maxy = -math.inf
+    # Longitude is tracked twice: once as it comes, and once shifted into
+    # [0, 360). Data that crosses the antimeridian is compact in the shifted
+    # frame and spans almost the whole globe in the plain one, so the two spans
+    # detect the crossing without a second pass over the file.
+    min_shifted, max_shifted = math.inf, -math.inf
 
     try:
+        # Inside the guard: pyproj raises here when it can build no pipeline
+        # between the two CRSs, and that must fall back, not escape.
+        transformer = Transformer.from_crs(src, WGS84, always_xy=True)
         for file in files:
             parquet = pq.ParquetFile(file)
             if geometry_column not in parquet.schema_arrow.names:
@@ -451,10 +458,21 @@ def measure_wgs84_bbox(
                 lon, lat = lon[finite], lat[finite]
                 minx, maxx = min(minx, float(lon.min())), max(maxx, float(lon.max()))
                 miny, maxy = min(miny, float(lat.min())), max(maxy, float(lat.max()))
+                shifted = np.where(lon < 0.0, lon + 360.0, lon)
+                min_shifted = min(min_shifted, float(shifted.min()))
+                max_shifted = max(max_shifted, float(shifted.max()))
     except Exception as exc:  # noqa: BLE001 - measurement is best-effort
         logger.debug("Cannot measure bbox from %s: %s", data_path, exc)
         return None
 
     if not all(math.isfinite(v) for v in (minx, miny, maxx, maxy)):
         return None
+
+    # RFC 7946: a bbox that crosses the antimeridian writes west greater than
+    # east. Keep whichever frame describes the data more tightly; a tie keeps
+    # the plain frame, so data that does not cross is unaffected.
+    if max_shifted - min_shifted < maxx - minx:
+        west = min_shifted - 360.0 if min_shifted >= 180.0 else min_shifted
+        east = max_shifted - 360.0 if max_shifted > 180.0 else max_shifted
+        return (west, miny, east, maxy)
     return (minx, miny, maxx, maxy)
