@@ -247,6 +247,8 @@ class ExtractionOptions:
         resume: Whether to resume from existing extraction report
         dry_run: If True, list layers without extracting
         sort_hilbert: Whether to apply Hilbert spatial sorting
+        add_bbox: Whether to add a bbox covering column. rashid reads both
+            PTL-DAT-006 and PTL-DAT-007 through this column (issue #805).
         raw: If True, skip auto-init (only create extraction files, no STAC catalog)
         no_styles: If True, skip style extraction from ESRI drawingInfo
         token: Optional ArcGIS token for authenticated endpoints
@@ -264,6 +266,7 @@ class ExtractionOptions:
     raw: bool = False
     dry_run: bool = False
     sort_hilbert: bool = True
+    add_bbox: bool = True
     no_styles: bool = False
     token: str | None = None
     recurse: bool = True
@@ -308,7 +311,10 @@ def _extract_single_layer(
         kwargs["token"] = options.token
     table = gpio.extract_arcgis(layer_url, **kwargs)
 
-    # Apply Hilbert sorting if requested
+    # Add the bbox covering column, then sort. Same order as
+    # convert.apply_vector_settings, so both writers produce the same layout.
+    if options.add_bbox:
+        table = table.add_bbox()
     if options.sort_hilbert:
         table = table.sort_hilbert()
 

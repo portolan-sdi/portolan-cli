@@ -151,6 +151,72 @@ def extract_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
     )
 
 
+def has_bbox_covering_column(path: Path) -> bool:
+    """Report whether a GeoParquet file declares a ``bbox`` covering column.
+
+    Reads only the Parquet footer, so the cost does not grow with the file.
+
+    rashid resolves both PTL-DAT-006 and PTL-DAT-007 through this column. It
+    reads per-row-group extents from the column's min/max statistics for
+    PTL-DAT-007, and it reads row order from the same column for PTL-DAT-006.
+    A file without the column fails PTL-DAT-007 and leaves PTL-DAT-006
+    unevaluated, so Portolan rewrites such a file on ``add`` (issue #805).
+
+    The answer says nothing about row order. A file that carries the column but
+    holds unordered rows still fails PTL-DAT-006, and ``add --force
+    --reconvert`` is what rewrites it.
+
+    Args:
+        path: Path to a Parquet file.
+
+    Returns:
+        True when the file's ``geo`` metadata names a ``covering.bbox`` entry
+        for its primary geometry column, and that column exists in the schema.
+        False for a plain Parquet file with no ``geo`` metadata, and False for
+        an unreadable file.
+    """
+    try:
+        parquet = pq.ParquetFile(path)
+    except Exception:  # noqa: BLE001 - an unreadable file is not a conformant one
+        return False
+
+    geo = _parse_geo_metadata(parquet.schema_arrow.metadata or {})
+    if not geo:
+        return False
+
+    primary = geo.get("primary_column", "geometry")
+    columns = geo.get("columns")
+    column_meta = columns.get(primary, {}) if isinstance(columns, dict) else {}
+    covering = column_meta.get("covering") if isinstance(column_meta, dict) else None
+    bbox_paths = covering.get("bbox") if isinstance(covering, dict) else None
+    if not isinstance(bbox_paths, dict):
+        return False
+
+    # The covering entry names the leaf paths of the struct. Its root must be a
+    # real column, or a reader has nothing to prune on.
+    names = set(parquet.schema_arrow.names)
+    return all(isinstance(leaf, list) and leaf and leaf[0] in names for leaf in bbox_paths.values())
+
+
+def is_geoparquet(path: Path) -> bool:
+    """Report whether a Parquet file carries GeoParquet ``geo`` metadata.
+
+    A Parquet file without the key is tabular data, not a spatial table, so the
+    spatial optimizations do not apply to it.
+
+    Args:
+        path: Path to a Parquet file.
+
+    Returns:
+        True when the file declares GeoParquet metadata.
+    """
+    try:
+        parquet = pq.ParquetFile(path)
+    except Exception:  # noqa: BLE001 - an unreadable file is not GeoParquet
+        return False
+    return bool(_parse_geo_metadata(parquet.schema_arrow.metadata or {}))
+
+
 def _parse_geo_metadata(metadata: dict[bytes, bytes]) -> dict[str, Any]:
     """Parse GeoParquet geo metadata from Arrow schema metadata."""
     geo_key = b"geo"

@@ -37,6 +37,32 @@ reimplement geometry or raster math.
   metadata). When you suspect that, pin/verify the upstream version and document
   in `context/shared/known-issues/`, do not patch around it in our layer.
 
+## Vector conversion writes conforming GeoParquet by default (#805)
+
+`VectorSettings` defaults to `sort="hilbert"` and `add_bbox=True`, and
+`convert.apply_vector_settings` is the one place that applies them. rashid reads
+**both** `PTL-DAT-006` (row order) and `PTL-DAT-007` (per-row-group statistics)
+through the bbox covering column, so dropping `add_bbox` fails one rule and
+silently leaves the other unevaluated. Keep the two defaults together.
+
+Three writers must stay in agreement, and they have drifted before:
+`preparation.convert_vector` (single-file `add`), `convert._convert_vector`
+(multilayer `add`), and `extract/arcgis/orchestrator` (which builds its own
+table). WFS and Carto delegate to `geoparquet-io` helpers that already do both.
+When you change the layout, grep for every `add_bbox(` call and apply it to all
+of them.
+
+A `.parquet` handed to `add` is no longer copied blindly.
+`preparation._needs_spatial_rewrite` reads the footer (O(1)) and rewrites the
+file only when it is GeoParquet **and** carries no covering column. A tabular
+Parquet has no `geo` key and must never reach `add_bbox()`. The footer says
+nothing about row order, so `--force --reconvert` forces the rewrite anyway —
+that is the documented repair for a file that has the column but is unsorted,
+and both `docs/reference/configuration.md` and the `convert` fixer's decline
+message name it. When the source is its own destination, as in a single-file
+collection, `_rewrite_parquet_in_place` writes a sibling and swaps it in, so a
+failed write cannot destroy the operator's data.
+
 ## Skip conversion for ALL cloud-native formats, not just .parquet
 
 The public entry point is `convert_file()` in `convert.py`, which calls

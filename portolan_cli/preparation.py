@@ -27,7 +27,8 @@ import pystac
 from portolan_cli import extension_registry as _reg
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
 from portolan_cli.config import get_setting, load_merged_metadata
-from portolan_cli.convert import run_with_transient_convert_retry
+from portolan_cli.conversion_config import VectorSettings, get_vector_settings
+from portolan_cli.convert import apply_vector_settings, run_with_transient_convert_retry
 from portolan_cli.crs import measure_wgs84_bbox, transform_bbox_to_wgs84
 from portolan_cli.errors import NoGeometryError
 from portolan_cli.formats import FormatType, detect_format, is_cloud_optimized_geotiff
@@ -38,6 +39,8 @@ from portolan_cli.metadata import (
     extract_geoparquet_metadata,
     extract_parquet_statistics,
     extract_pmtiles_metadata,
+    has_bbox_covering_column,
+    is_geoparquet,
 )
 from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.flatgeobuf import FlatGeobufMetadata
@@ -652,6 +655,7 @@ def _convert_and_extract_metadata(
     item_dir: Path,
     format_type: FormatType,
     *,
+    catalog_root: Path | None = None,
     force: bool = False,
     reconvert: bool = False,
 ) -> tuple[Path, AllMetadata]:
@@ -668,6 +672,7 @@ def _convert_and_extract_metadata(
         path: Source file path.
         item_dir: Item directory for output.
         format_type: Detected format type.
+        catalog_root: Catalog root, for reading conversion settings.
         force: If True, bypass change detection (Issue #386).
         reconvert: If True, re-convert from source (requires force=True).
 
@@ -696,7 +701,7 @@ def _convert_and_extract_metadata(
                 _warn_if_source_newer(path, output_path)
                 metadata = extract_geoparquet_metadata(output_path)
             else:
-                output_path = convert_vector(path, item_dir)
+                output_path = convert_vector(path, item_dir, catalog_root, reconvert=reconvert)
                 metadata = extract_geoparquet_metadata(output_path)
     else:  # RASTER
         output_path = item_dir / f"{path.stem}.tif"
@@ -1002,7 +1007,12 @@ def prepare_item(
 
     # Step 3: Convert and extract metadata
     output_path, metadata = _convert_and_extract_metadata(
-        path, item_dir, format_type, force=force, reconvert=reconvert
+        path,
+        item_dir,
+        format_type,
+        catalog_root=catalog_root,
+        force=force,
+        reconvert=reconvert,
     )
 
     # Step 3b: Load metadata.yaml defaults (for temporal/nodata when source lacks them)
@@ -1123,12 +1133,64 @@ def prepare_item(
     )
 
 
-def convert_vector(source: Path, dest_dir: Path) -> Path:
+def _needs_spatial_rewrite(
+    source: Path, settings: VectorSettings, *, reconvert: bool = False
+) -> bool:
+    """Decide whether an existing Parquet file must be rewritten on ``add``.
+
+    ``add`` used to copy every ``.parquet`` source through untouched, which
+    produced a catalog that failed Portolan's own ``check``: the file carried
+    no bbox covering column, so it failed PTL-DAT-007 and left PTL-DAT-006
+    unevaluated (issue #805).
+
+    Two cases always keep the copy:
+
+    - The settings ask for no optimization at all.
+    - The file is tabular Parquet, with no ``geo`` metadata. ``add_bbox()``
+      needs a geometry column.
+
+    Otherwise a file that already declares a bbox covering column is copied,
+    because rewriting a large conformant file would cost time and change
+    nothing. That test cannot see row order, so a file with the column but
+    unordered rows still fails PTL-DAT-006. ``reconvert`` is the operator's
+    answer to that: ``add --force --reconvert`` rewrites the file whatever its
+    footer says.
+
+    Args:
+        source: Source Parquet file.
+        settings: Vector conversion settings.
+        reconvert: True when the operator asked to re-convert from source.
+
+    Returns:
+        True when the file must go through geoparquet-io again.
+    """
+    if not settings.add_bbox and settings.sort == "none" and settings.spatial_index == "none":
+        return False
+    if not is_geoparquet(source):
+        return False
+    return reconvert or not has_bbox_covering_column(source)
+
+
+def convert_vector(
+    source: Path,
+    dest_dir: Path,
+    catalog_root: Path | None = None,
+    *,
+    reconvert: bool = False,
+) -> Path:
     """Convert vector file to GeoParquet.
+
+    Applies the catalog's ``conversion.vector`` settings, which sort rows and
+    add a bbox covering column by default (issue #805). A ``.parquet`` source
+    is copied unless :func:`_needs_spatial_rewrite` says it must be rewritten.
 
     Args:
         source: Source vector file.
         dest_dir: Destination directory.
+        catalog_root: Catalog root, for reading ``conversion.vector`` settings.
+            None uses the built-in defaults.
+        reconvert: True when the operator asked to re-convert from source, which
+            rewrites a Parquet file whatever its footer already declares.
 
     Returns:
         Path to the output GeoParquet file.
@@ -1136,24 +1198,64 @@ def convert_vector(source: Path, dest_dir: Path) -> Path:
     import geoparquet_io as gpio  # type: ignore[import-untyped]
 
     output_path = dest_dir / f"{source.stem}.parquet"
+    settings = get_vector_settings(catalog_root) if catalog_root else VectorSettings()
 
     # Check if already GeoParquet
     if source.suffix.lower() == ".parquet":
-        # If source is already at the destination, no copy needed
-        if source.resolve() == output_path.resolve():
+        same_file = source.resolve() == output_path.resolve()
+        if not _needs_spatial_rewrite(source, settings, reconvert=reconvert):
+            if not same_file:
+                shutil.copy2(source, output_path)
             return output_path
-        shutil.copy2(source, output_path)
-        return output_path
+
+        from portolan_cli.output import info as info_output
+
+        reason = "re-convert requested" if reconvert else "it carries no bbox covering column"
+        info_output(f"Rewriting {source.name}: {reason}")
+        if same_file:
+            # A single-file collection keeps its data where the operator put it,
+            # so there is no separate destination to write to. Write a sibling
+            # and swap it in, because geoparquet-io cannot write the file it
+            # reads.
+            _rewrite_parquet_in_place(source, settings)
+            return output_path
 
     # Convert using geoparquet-io fluent API. Wrapped in the shared retry so a
     # transient DuckDB "Query interrupted" does not fail a bulk add (Issue #339
     # nightly test_add_1000_files_* flake); this is the code path add uses.
-    run_with_transient_convert_retry(
-        lambda: gpio.convert(str(source)).write(str(output_path)),
-        source_name=source.name,
-    )
+    def _run() -> None:
+        table = apply_vector_settings(gpio.convert(str(source)), settings)
+        table.write(str(output_path))
+
+    run_with_transient_convert_retry(_run, source_name=source.name)
 
     return output_path
+
+
+def _rewrite_parquet_in_place(source: Path, settings: VectorSettings) -> None:
+    """Rewrite a GeoParquet file with the vector settings applied.
+
+    Writes a sibling temporary file and swaps it in with :meth:`Path.replace`,
+    which is atomic within one filesystem. The source keeps its bytes if the
+    write raises, so a failed rewrite cannot destroy the operator's data.
+
+    Args:
+        source: GeoParquet file to rewrite.
+        settings: Vector conversion settings to apply.
+    """
+    import geoparquet_io as gpio
+
+    temp_path = source.with_name(f"{source.stem}.portolan-rewrite.parquet")
+
+    def _run() -> None:
+        table = apply_vector_settings(gpio.convert(str(source)), settings)
+        table.write(str(temp_path))
+
+    try:
+        run_with_transient_convert_retry(_run, source_name=source.name)
+        temp_path.replace(source)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def convert_tabular(source: Path, dest_dir: Path) -> Path:

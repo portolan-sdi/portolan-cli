@@ -1994,6 +1994,12 @@ class TestVectorConversionRetriesTransientInterrupt:
             pass
 
         class _FakeTable:
+            def add_bbox(self) -> _FakeTable:
+                return self
+
+            def sort_hilbert(self) -> _FakeTable:
+                return self
+
             def write(self, path: str) -> None:
                 Path(path).write_text("parquet-bytes")
 
@@ -2129,3 +2135,75 @@ class TestRepairShapefileEncodingSidecar:
         shp = tmp_path / "solo.shp"
         shp.write_bytes(b"\x00" * 100)
         assert repair_shapefile_encoding_sidecar(shp) is None
+
+
+class TestApplyVectorSettingsSkipsGeometrylessTables:
+    """Spatial operations need a geometry column (issue #805).
+
+    ``gpio.convert`` reads a CSV of records as a plain table with
+    ``geometry_column`` set to None. Calling ``add_bbox()`` on it makes DuckDB
+    raise ``Binder Error: Column "geometry" referenced that exists in the
+    SELECT clause - but this column cannot be referenced before it is
+    defined``, which failed the whole ``add``.
+    """
+
+    @pytest.mark.unit
+    def test_a_table_with_no_geometry_is_returned_untouched(self) -> None:
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import apply_vector_settings
+
+        class _PlainTable:
+            geometry_column = None
+
+            def add_bbox(self) -> _PlainTable:
+                raise AssertionError("add_bbox must not run without a geometry column")
+
+            def sort_hilbert(self) -> _PlainTable:
+                raise AssertionError("sort_hilbert must not run without a geometry column")
+
+        table = _PlainTable()
+
+        assert apply_vector_settings(table, VectorSettings()) is table
+
+    @pytest.mark.unit
+    def test_a_spatial_table_still_gets_both_operations(self) -> None:
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import apply_vector_settings
+
+        calls: list[str] = []
+
+        class _SpatialTable:
+            geometry_column = "geometry"
+
+            def add_bbox(self) -> _SpatialTable:
+                calls.append("add_bbox")
+                return self
+
+            def sort_hilbert(self) -> _SpatialTable:
+                calls.append("sort_hilbert")
+                return self
+
+        apply_vector_settings(_SpatialTable(), VectorSettings())
+
+        assert calls == ["add_bbox", "sort_hilbert"]
+
+    @pytest.mark.unit
+    def test_a_table_that_predates_the_attribute_is_treated_as_spatial(self) -> None:
+        """An older geoparquet-io Table exposes no `geometry_column`."""
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import apply_vector_settings
+
+        calls: list[str] = []
+
+        class _OldTable:
+            def add_bbox(self) -> _OldTable:
+                calls.append("add_bbox")
+                return self
+
+            def sort_hilbert(self) -> _OldTable:
+                calls.append("sort_hilbert")
+                return self
+
+        apply_vector_settings(_OldTable(), VectorSettings())
+
+        assert calls == ["add_bbox", "sort_hilbert"]

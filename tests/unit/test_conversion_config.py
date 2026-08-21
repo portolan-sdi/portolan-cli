@@ -903,15 +903,15 @@ class TestVectorSettingsDefaults:
 
     @pytest.mark.unit
     def test_default_values(self) -> None:
-        """VectorSettings has correct defaults (no optimization)."""
+        """Defaults produce GeoParquet that conforms to the profile (#805)."""
         from portolan_cli.conversion_config import VectorSettings
 
         settings = VectorSettings()
 
         assert settings.spatial_index == "none"
         assert settings.resolution == "auto"
-        assert settings.sort == "none"
-        assert settings.add_bbox is False
+        assert settings.sort == "hilbert"
+        assert settings.add_bbox is True
         assert settings.partition is False
 
     @pytest.mark.unit
@@ -1184,8 +1184,8 @@ conversion:
         assert settings.resolution == "auto"
 
     @pytest.mark.unit
-    def test_non_bool_add_bbox_falls_back_to_false(self, tmp_path: Path) -> None:
-        """Non-boolean add_bbox falls back to false."""
+    def test_non_bool_add_bbox_falls_back_to_the_default(self, tmp_path: Path) -> None:
+        """A non-boolean add_bbox keeps the default rather than disabling it."""
         from portolan_cli.conversion_config import get_vector_settings
 
         portolan_dir = tmp_path / ".portolan"
@@ -1198,7 +1198,7 @@ conversion:
 """)
         settings = get_vector_settings(tmp_path)
 
-        assert settings.add_bbox is False
+        assert settings.add_bbox is True
 
     @pytest.mark.unit
     def test_invalid_spatial_index_normalized_to_none(self, tmp_path: Path) -> None:
@@ -1218,8 +1218,8 @@ conversion:
         assert settings.spatial_index == "none"
 
     @pytest.mark.unit
-    def test_invalid_sort_normalized_to_none(self, tmp_path: Path) -> None:
-        """Invalid sort method is normalized to 'none'."""
+    def test_invalid_sort_normalized_to_the_default(self, tmp_path: Path) -> None:
+        """An invalid sort method falls back to the default, not to 'none'."""
         from portolan_cli.conversion_config import get_vector_settings
 
         portolan_dir = tmp_path / ".portolan"
@@ -1232,7 +1232,7 @@ conversion:
 """)
         settings = get_vector_settings(tmp_path)
 
-        assert settings.sort == "none"
+        assert settings.sort == "hilbert"
 
     @pytest.mark.unit
     def test_negative_resolution_normalized_to_auto(self, tmp_path: Path) -> None:

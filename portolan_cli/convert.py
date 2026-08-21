@@ -704,7 +704,7 @@ def _convert_vector(
         table = gpio.convert(str(source))
 
         # Apply spatial optimizations based on settings
-        table = _apply_vector_settings(table, resolved)
+        table = apply_vector_settings(table, resolved)
 
         # Write output (partitioned or single file)
         if resolved.partition and resolved.spatial_index != "none":
@@ -719,8 +719,32 @@ def _convert_vector(
     return run_with_transient_convert_retry(_run, source_name=source.name)
 
 
-def _apply_vector_settings(table: Any, settings: VectorSettings) -> Any:
+def has_geometry(table: Any) -> bool:
+    """Report whether a gpio Table carries a geometry column.
+
+    ``gpio.convert`` reads a geometry-less source, a CSV of records for
+    example, as a plain table with ``geometry_column`` set to None. Every
+    spatial operation below needs a geometry column, and DuckDB raises
+    ``Binder Error: Column "geometry" referenced ...`` without one. A Table
+    from an older geoparquet-io may not expose the attribute at all, so a
+    missing attribute counts as "has geometry" and keeps the previous
+    behavior.
+
+    Args:
+        table: geoparquet-io Table instance.
+
+    Returns:
+        False only when the Table reports no geometry column.
+    """
+    return getattr(table, "geometry_column", "geometry") is not None
+
+
+def apply_vector_settings(table: Any, settings: VectorSettings) -> Any:
     """Apply spatial optimization settings to a gpio Table.
+
+    A table with no geometry column is returned untouched. Sorting and the
+    bbox covering column are spatial operations, and the Portolan GeoParquet
+    profile asks for them only of spatial tables (issue #805).
 
     Args:
         table: geoparquet-io Table instance.
@@ -729,6 +753,9 @@ def _apply_vector_settings(table: Any, settings: VectorSettings) -> Any:
     Returns:
         Modified Table with optimizations applied.
     """
+    if not has_geometry(table):
+        return table
+
     # Add bbox column if requested
     if settings.add_bbox:
         table = table.add_bbox()
@@ -1381,7 +1408,7 @@ def _convert_vector_layer(
 
     def _run() -> None:
         table = gpio.convert(source, layer=layer)
-        table = _apply_vector_settings(table, resolved)
+        table = apply_vector_settings(table, resolved)
         table.write(output)
 
     run_with_transient_convert_retry(_run, source_name=f"{source.name}:{layer}")

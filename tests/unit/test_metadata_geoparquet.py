@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.metadata.geoparquet import GeoParquetMetadata, extract_geoparquet_metadata
+from portolan_cli.metadata.geoparquet import (
+    GeoParquetMetadata,
+    extract_geoparquet_metadata,
+    has_bbox_covering_column,
+    is_geoparquet,
+)
 
 
 class TestExtractGeoParquetMetadata:
@@ -421,3 +426,74 @@ class TestGeoParquetMetadataEdgeCases:
 
         metadata = extract_geoparquet_metadata(path)
         assert metadata.geometry_type == "Polygon"
+
+
+class TestCoveringColumnDetection:
+    """Tests for has_bbox_covering_column() and is_geoparquet() (issue #805).
+
+    rashid resolves PTL-DAT-006 and PTL-DAT-007 through the covering column, so
+    ``add`` reads these two answers to decide whether to rewrite a file.
+    """
+
+    @pytest.mark.unit
+    def test_fixture_without_covering_column(self, valid_points_parquet: Path) -> None:
+        """The committed fixture predates #805 and carries no covering column."""
+        assert is_geoparquet(valid_points_parquet) is True
+        assert has_bbox_covering_column(valid_points_parquet) is False
+
+    @pytest.mark.unit
+    def test_rewritten_file_carries_the_column(self, tmp_path: Path) -> None:
+        """A file written through geoparquet-io's add_bbox() reports True."""
+        import geoparquet_io as gpio  # type: ignore[import-untyped]
+
+        source = Path(__file__).resolve().parents[1] / "fixtures" / "vector" / "valid"
+        output = tmp_path / "out.parquet"
+        gpio.convert(str(source / "points.parquet")).add_bbox().write(str(output))
+
+        assert has_bbox_covering_column(output) is True
+
+    @pytest.mark.unit
+    def test_tabular_parquet_is_not_geoparquet(self, tmp_path: Path) -> None:
+        """A Parquet file with no `geo` key is tabular data, not a spatial table."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        path = tmp_path / "census.parquet"
+        pq.write_table(pa.table({"tract": ["001"], "population": [5000]}), path)
+
+        assert is_geoparquet(path) is False
+        assert has_bbox_covering_column(path) is False
+
+    @pytest.mark.unit
+    def test_unreadable_file_is_not_conformant(self, tmp_path: Path) -> None:
+        """An unreadable file answers False rather than raising."""
+        path = tmp_path / "broken.parquet"
+        path.write_bytes(b"not a parquet file")
+
+        assert is_geoparquet(path) is False
+        assert has_bbox_covering_column(path) is False
+
+    @pytest.mark.unit
+    def test_covering_naming_a_column_that_is_gone(self, tmp_path: Path) -> None:
+        """A covering entry that names a dropped column buys a reader nothing."""
+        import json
+
+        import pyarrow.parquet as pq
+
+        source = Path(__file__).resolve().parents[1] / "fixtures" / "vector" / "valid"
+        path = tmp_path / "lying.parquet"
+        table = pq.read_table(source / "points.parquet")
+        metadata = dict(table.schema.metadata or {})
+        geo = json.loads(metadata[b"geo"].decode("utf-8"))
+        geo["columns"][geo["primary_column"]]["covering"] = {
+            "bbox": {
+                "xmin": ["bbox", "xmin"],
+                "ymin": ["bbox", "ymin"],
+                "xmax": ["bbox", "xmax"],
+                "ymax": ["bbox", "ymax"],
+            }
+        }
+        metadata[b"geo"] = json.dumps(geo).encode("utf-8")
+        pq.write_table(table.replace_schema_metadata(metadata), path)
+
+        assert has_bbox_covering_column(path) is False

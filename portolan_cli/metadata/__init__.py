@@ -65,6 +65,8 @@ from portolan_cli.metadata.flatgeobuf import (
 from portolan_cli.metadata.geoparquet import (
     GeoParquetMetadata,
     extract_geoparquet_metadata,
+    has_bbox_covering_column,
+    is_geoparquet,
 )
 from portolan_cli.metadata.models import (
     FileMetadataState,
@@ -111,6 +113,8 @@ __all__ = [
     "extract_flatgeobuf_metadata",
     "extract_geoparquet_metadata",
     "extract_pmtiles_metadata",
+    "has_bbox_covering_column",
+    "is_geoparquet",
     "extract_tabular_metadata",
     # Statistics
     "BandStatistics",

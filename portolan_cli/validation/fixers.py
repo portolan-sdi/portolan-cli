@@ -883,7 +883,9 @@ def _fix_convert(root: Path, dry_run: bool) -> list[FixResult]:
         _skipped(
             root,
             "Conversion runs in the geo-asset pass; re-run `portolan check --fix` "
-            "without --metadata",
+            "without --metadata. A GeoParquet that is already cloud-native but "
+            "unsorted or missing its bbox covering column is rewritten by "
+            "`portolan add --force --reconvert`",
         )
     ]
 

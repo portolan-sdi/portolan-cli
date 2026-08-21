@@ -1,14 +1,14 @@
 """check → fix → re-check, end to end, on a catalog Portolan generated itself.
 
 The acceptance test for the remediation engine. It builds a real catalog, breaks
-six things a fixer is supposed to own, and asserts three properties in order:
+six things a fixer owns plus one it does not, and asserts three properties in
+order:
 
 1. ``check --json`` names the exact ``PTL-*`` ids for the damage, each in the
    AUTO bucket.
 2. ``check --fix`` resolves every one of them.
-3. What survives is exactly the residue the generator cannot satisfy today —
-   the tracked gaps from the Phase-1 conformance gate — and the human output
-   lists them under "Action required" with their requirement sentence.
+3. What survives is exactly the damage no fixer owns, and the human output
+   lists it under "Action required" with its requirement sentence.
 
 Property 3 is the loop-termination guarantee: an agent reading the output learns
 which findings are worth another ``--fix`` (none) and which need it to act.
@@ -32,14 +32,15 @@ pytestmark = pytest.mark.integration
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "simple.parquet"
 
-# The one error a generated catalog still carries: geoparquet-io writes a single
-# row group with no per-row-group spatial statistics for a file this small.
-# Shared with tests/integration/test_generated_catalog_conformance.py, which is
-# the gate that keeps the list honest.
+# Damage no fixer can repair. `_corrupt` strips the bbox covering column off the
+# GeoParquet, which is the shape every catalog written before #805 has. The rule
+# is AUTO and selects the `convert` fixer, but that fixer declines, so this id is
+# the honest survivor of `--fix` and the one entry under "Action required".
 #
-# PTL-VIZ-001 left this list in #683, when `add` started emitting a
-# collection-level thumbnail asset on a default install.
-GENERATION_GAPS = frozenset({"PTL-DAT-007"})
+# Generation itself carries no error: since #805 `add` writes a sorted file with
+# a covering column, so this list holds damage, not a generation gap. PTL-VIZ-001
+# left it in #683, when `add` started emitting a collection-level thumbnail.
+UNFIXABLE_DAMAGE = frozenset({"PTL-DAT-007"})
 
 # What the corruptions below must produce, and nothing else.
 EXPECTED_FROM_DAMAGE = frozenset(
@@ -120,7 +121,7 @@ def _write(path: Path, data: dict[str, Any]) -> None:
 
 
 def _corrupt(root: Path) -> None:
-    """Break one thing per fixer key the registry claims to own."""
+    """Break one thing per fixer key, plus the one damage no fixer repairs."""
     collection_json = root / "roads" / "collection.json"
     data = _read(collection_json)
 
@@ -151,8 +152,35 @@ def _corrupt(root: Path) -> None:
         if "thumbnail" in asset.get("roles", []):
             asset["type"] = "image/gif"
 
+    # 7. convert: strip the bbox covering column, leaving the file with no
+    #    per-row-group spatial statistics. This is what every GeoParquet written
+    #    before #805 looks like. `file:size` is restamped from the shortened
+    #    file, so PTL-DAT-002 stays quiet and PTL-DAT-007 is the only new id.
+    parquet = root / "roads" / "roads.parquet"
+    _strip_bbox_covering_column(parquet)
+    for asset in data["assets"].values():
+        if asset.get("href", "").endswith("roads.parquet"):
+            asset["file:size"] = parquet.stat().st_size
+
     _write(collection_json, data)
     (root / "roads" / "AGENTS.md").unlink()
+
+
+def _strip_bbox_covering_column(path: Path) -> None:
+    """Rewrite a GeoParquet file without its bbox covering column."""
+    import json as jsonlib
+
+    import pyarrow.parquet as pq
+
+    table = pq.read_table(path)
+    metadata = dict(table.schema.metadata or {})
+    geo = jsonlib.loads(metadata[b"geo"].decode("utf-8"))
+    for column in geo.get("columns", {}).values():
+        column.pop("covering", None)
+    metadata[b"geo"] = jsonlib.dumps(geo).encode("utf-8")
+
+    stripped = table.drop_columns(["bbox"]).replace_schema_metadata(metadata)
+    pq.write_table(stripped, path)
 
 
 def _check_json(root: Path, *args: str) -> dict[str, Any]:
@@ -177,18 +205,18 @@ def catalog(tmp_path: Path) -> Path:
 
 
 class TestRashidRoundtrip:
-    def test_generated_catalog_carries_only_the_tracked_gaps(self, catalog: Path) -> None:
-        """Before any damage, the only errors are the ones Phase 1 tracks."""
+    def test_generated_catalog_carries_no_errors(self, catalog: Path) -> None:
+        """Before any damage, a generated catalog is clean (issue #805)."""
         data = _check_json(catalog)
         fired = {f["rule_id"] for f in data["findings"] if f["severity"] == "error"}
-        assert fired == GENERATION_GAPS
+        assert fired == set()
 
     def test_damage_surfaces_the_expected_ids_and_buckets(self, catalog: Path) -> None:
         _corrupt(catalog)
         data = _check_json(catalog)
 
         fired = {f["rule_id"] for f in data["findings"] if f["severity"] == "error"}
-        assert fired == EXPECTED_FROM_DAMAGE | GENERATION_GAPS
+        assert fired == EXPECTED_FROM_DAMAGE | UNFIXABLE_DAMAGE
 
         buckets = {
             f["rule_id"]: f["remediation"]
@@ -207,7 +235,7 @@ class TestRashidRoundtrip:
 
         remaining = {f["rule_id"] for f in data["findings"] if f["severity"] == "error"}
         assert remaining & EXPECTED_FROM_DAMAGE == set()
-        assert remaining == GENERATION_GAPS
+        assert remaining == UNFIXABLE_DAMAGE
 
     def test_fix_payload_reports_what_it_applied_and_what_survived(self, catalog: Path) -> None:
         _corrupt(catalog)
@@ -220,8 +248,8 @@ class TestRashidRoundtrip:
         assert {"schema_uri", "required_files", "links", "titles", "checksum"} <= set(
             fix["applied"]
         )
-        # PTL-DAT-007 is an AUTO rule the convert fixer cannot satisfy for a
-        # single-row-group file, so it is the honest survivor.
+        # PTL-DAT-007 is an AUTO rule the convert fixer declines, so it is the
+        # honest survivor.
         assert {item["rule_id"] for item in fix["survivors"]} == {"PTL-DAT-007"}
         assert fix["fixed_count"] == fix["auto_count"] - len(fix["survivors"])
 
@@ -250,7 +278,7 @@ class TestRashidRoundtrip:
         assert "Action required (" in result.output
         # Every surviving finding carries its requirement sentence, and the AUTO
         # survivor says the automatic fix did not settle it. PTL-DAT-007 is the
-        # survivor since #683 made PTL-VIZ-001 satisfiable by generation.
+        # survivor because `_corrupt` strips the bbox covering column.
         assert "Rewrite the GeoParquet so every row group carries statistics." in result.output
         assert "the automatic fix did not resolve this" in result.output
 
@@ -342,7 +370,7 @@ def _disable_generation_gaps(root: Path) -> None:
     """Silence the tracked generation gaps so exit codes are about this test."""
     config_path = root / ".portolan" / "config.yaml"
     config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    config["check"] = {"disabled": sorted(GENERATION_GAPS)}
+    config["check"] = {"disabled": sorted(UNFIXABLE_DAMAGE)}
     config_path.write_text(yaml.dump(config), encoding="utf-8")
 
 
@@ -465,7 +493,8 @@ class TestHonestFixAccounting:
         assert all(reasons for reasons in fix["skipped"].values())
 
     def test_a_conversion_that_did_not_run_is_not_reported_as_applied(self, catalog: Path) -> None:
-        """PTL-DAT-007 selects `convert`, which declines and says so."""
+        """The stripped covering column fires PTL-DAT-007, which selects
+        `convert`. That fixer declines and says so."""
         _corrupt(catalog)
         before = (catalog / "roads" / "roads.parquet").read_bytes()
 

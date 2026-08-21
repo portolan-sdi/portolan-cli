@@ -91,7 +91,7 @@ class TestConvertAndExtractRouting:
 
         assert output_path == converted
         assert metadata is meta
-        convert.assert_called_once_with(source, item_dir)
+        convert.assert_called_once_with(source, item_dir, None, reconvert=False)
         extract.assert_called_once_with(converted)
 
     def test_raster_converts_to_cog(self, tmp_path: Path) -> None:
@@ -335,6 +335,12 @@ class TestConvertVectorRetriesTransientInterrupt:
             pass
 
         class _FakeTable:
+            def add_bbox(self) -> _FakeTable:
+                return self
+
+            def sort_hilbert(self) -> _FakeTable:
+                return self
+
             def write(self, path: str) -> None:
                 Path(path).write_text("parquet-bytes")
 
