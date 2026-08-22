@@ -1,8 +1,12 @@
 # geoparquet-io drops the CRS on write
 
-**Status:** open upstream. Portolan guards against it.
-**Upstream:** geoparquet-io, git main `a23dafa` (PyPI 1.3.0).
+**Status:** fixed upstream. Portolan carries a stale pin, so it still hits it.
+**Upstream issue:** [geoparquet-io#625](https://github.com/geoparquet/geoparquet-io/issues/625), closed 2026-08-20 by
+[`ff02db8`](https://github.com/geoparquet/geoparquet-io/commit/ff02db82) ("Fix Table API dropping the source CRS between convert() and write()", PR #644).
+**Portolan pin:** git main `a23dafa`, which is 82 commits behind the fix.
 **Portolan issue:** #805.
+
+Do not file a new upstream issue. #625 is the record, and it is fixed.
 
 ## What happens
 
@@ -44,6 +48,9 @@ print("gpio out:", crs_of("out.parquet"))  # None, and the key is absent
 A GeoPackage source behaves the same way. The operations do not matter.
 `add_bbox()` and `sort_hilbert()` change nothing here.
 
+The CLI does not lose the CRS. `gpio convert in.parquet out.parquet` writes
+EPSG:3857. Only the Python Table API drops it, which is what Portolan calls.
+
 ## Why Portolan cares
 
 Issue #805 makes `add` rewrite a GeoParquet in place to give it a bbox covering
@@ -69,8 +76,20 @@ That is the honest outcome. Portolan does not write the CRS back into the
 rewritten copy, because repairing an upstream writer's output in our layer is
 the workaround this repo does not take.
 
-## When the upstream fix lands
+## How to clear it
 
-Remove nothing. The guard is a safety gate on a destructive in-place operation,
-not a workaround for this one bug. It stays useful for any future writer
-regression. The warning stops firing on its own once the CRS survives the write.
+Bump the geoparquet-io pin. `uv lock --upgrade-package geoparquet-io` moves it
+to upstream main, and the reproduction above then prints the source CRS.
+
+That bump is not a drop-in. The 82 commits carry an unrelated behavior change:
+`add` of a Shapefile whose CRS reads as PROJJSON now fails with `PROJJSON CRS
+not supported. Convert to EPSG code or WKT string.` That breaks
+`tests/integration/test_bbox_validation.py::TestAntimeridianBboxIntegration::test_add_fails_loudly_when_projected_bbox_assumed_wgs84`.
+Handle the bump as its own change, with its own issue.
+
+Keep the guard when the pin moves. It gates a destructive in-place operation,
+and it is not a workaround for this one bug. The warning stops on its own once
+the CRS survives the write. One test asserts the current behavior:
+`test_a_projected_file_keeps_its_crs` expects `add` to keep the file. After the
+bump the rewrite succeeds and keeps the CRS, so that test must assert the new
+outcome.

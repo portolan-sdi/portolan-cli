@@ -95,11 +95,13 @@ the rewritten file on row count, column set, and declared CRS, and raises
 other rewrite failure, keeps the operator's file, and warns. This is not
 optional politeness: geoparquet-io writes **no `crs` key at all**, and the
 GeoParquet spec reads an absent `crs` as OGC:CRS84, so an ungated rewrite
-relabels projected data as lon/lat. See
-`context/shared/known-issues/geoparquet-io-write-drops-crs.md`. Do **not**
-"fix" this by writing the CRS back into gpio's output — that is the
-patch-around-upstream this repo refuses. Keep the gate when the upstream bug is
-fixed; it guards the destructive operation, not that one bug.
+relabels projected data as lon/lat. Do **not** "fix" this by writing the CRS
+back into gpio's output — that is the patch-around-upstream this repo refuses.
+The real fix is upstream and already landed (geoparquet-io#625, `ff02db8`); our
+pin is 82 commits behind it, and bumping is its own change because those commits
+also start rejecting PROJJSON CRS on Shapefiles. See
+`context/shared/known-issues/geoparquet-io-write-drops-crs.md`. Keep the gate
+after the pin moves; it guards the destructive operation, not that one bug.
 
 ## Skip conversion for ALL cloud-native formats, not just .parquet
 
