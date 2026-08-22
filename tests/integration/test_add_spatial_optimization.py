@@ -82,8 +82,8 @@ class TestDefaultAddWritesACoveringColumn:
         written = collection / "roads.parquet"
         assert "bbox" in pq.ParquetFile(written).schema_arrow.names
         assert _covering(written) is not None
-        # The rewrite leaves nothing behind.
-        assert list(collection.glob("*.portolan-rewrite.parquet")) == []
+        # The rewrite leaves nothing behind, hidden scratch file included.
+        assert list(collection.glob("*portolan-rewrite*")) == []
 
     def test_row_count_and_columns_survive_the_rewrite(self, tmp_path: Path) -> None:
         """A rewrite adds a column. It must not drop rows or attributes."""
@@ -206,3 +206,281 @@ class TestReconvertRepairsRowOrder:
         assert pq.read_table(target).column("id").to_pylist() != seeded_ids
         assert sorted(pq.read_table(target).column("id").to_pylist()) == sorted(seeded_ids)
         assert _covering(target) is not None
+
+
+class TestForceStillWritesAConformingFile:
+    """`add --force` must not hand back a file that fails `check`.
+
+    `--force` means "ignore change detection", not "convert again", so the add
+    pipeline skips conversion when the output already exists (issue #386). For
+    a single-file collection the output *is* the source, so that skip used to
+    return a file with no covering column and no warning. The catalog then
+    failed its own `check` on PTL-DAT-007, which is the failure #805 removes.
+    """
+
+    def test_force_rewrites_a_file_it_did_not_convert(self, tmp_path: Path) -> None:
+        """A never-added, non-conforming file gets the column under `--force`."""
+        root = tmp_path / "catalog"
+        collection = root / "roads"
+        collection.mkdir(parents=True)
+        target = collection / "roads.parquet"
+        shutil.copy(POINTS, target)
+        _init(root)
+        assert _covering(target) is None
+
+        output = _add(root, target, "--force")
+
+        assert "no bbox covering column" in output
+        assert _covering(target) is not None
+        assert "bbox" in pq.ParquetFile(target).schema_arrow.names
+
+    def test_force_leaves_a_conforming_file_alone(self, tmp_path: Path) -> None:
+        """The check is the footer, so `--force` still copies a good file."""
+        import geoparquet_io as gpio
+
+        root = tmp_path / "catalog"
+        collection = root / "roads"
+        collection.mkdir(parents=True)
+        target = collection / "roads.parquet"
+        gpio.convert(str(POINTS)).add_bbox().sort_hilbert().write(str(target))
+        _init(root)
+        before = target.read_bytes()
+
+        _add(root, target, "--force")
+
+        assert target.read_bytes() == before
+
+    def test_force_does_not_touch_tabular_parquet(self, tmp_path: Path) -> None:
+        """A geometry-less table has no covering column to gain."""
+        root = tmp_path / "catalog"
+        collection = root / "demographics"
+        collection.mkdir(parents=True)
+        target = collection / "census.parquet"
+        pq.write_table(pa.table({"tract": ["001", "002"], "population": [1, 2]}), target)
+        _init(root)
+        config = root / ".portolan" / "config.yaml"
+        config.write_text(config.read_text() + "tabular:\n  enabled: true\n", encoding="utf-8")
+        before = target.read_bytes()
+
+        _add(root, target, "--force")
+
+        assert target.read_bytes() == before
+
+
+class TestRewriteScratchFileIsNeverIngested:
+    """A leftover scratch file must not become a source or an asset.
+
+    `_rewrite_parquet_in_place` writes a sibling and swaps it in. `add` reads
+    the collection directory before it converts anything, and a hard kill skips
+    the cleanup, so a leftover would otherwise be collected as a source. The
+    rewrite then deletes it mid-run and the add fails on a missing file.
+    """
+
+    @pytest.mark.parametrize(
+        "leftover", [".roads.portolan-rewrite.parquet", "x.portolan-rewrite.parquet"]
+    )
+    def test_a_leftover_scratch_file_does_not_break_add(
+        self, tmp_path: Path, leftover: str
+    ) -> None:
+        """Both the hidden name and an older visible one are ignored."""
+        root = tmp_path / "catalog"
+        collection = root / "roads"
+        collection.mkdir(parents=True)
+        target = collection / "roads.parquet"
+        shutil.copy(POINTS, target)
+        (collection / leftover).write_bytes(b"")
+        _init(root)
+
+        output = _add(root, target)
+
+        assert _covering(target) is not None
+        collection_json = json.loads((collection / "collection.json").read_text(encoding="utf-8"))
+        hrefs = [asset.get("href", "") for asset in collection_json["assets"].values()]
+        assert not any("portolan-rewrite" in href for href in hrefs), output
+
+
+class TestRewritePreservesPublisherMetadata:
+    """geoparquet-io writes a fresh `geo` key and drops every other one.
+
+    Publishers do set other keys. geopandas writes `pandas`, which carries the
+    index and dtype information `pd.read_parquet` restores. The rewrite mutates
+    the operator's own file, so it must put those keys back.
+    """
+
+    def test_extra_schema_metadata_survives_the_rewrite(self, tmp_path: Path) -> None:
+        """A publisher key set on the source is still there afterwards."""
+        root = tmp_path / "catalog"
+        collection = root / "roads"
+        collection.mkdir(parents=True)
+        target = collection / "roads.parquet"
+
+        table = pq.read_table(POINTS)
+        metadata = dict(table.schema.metadata or {})
+        metadata[b"publisher:provenance"] = b"national cadastre 2024"
+        pq.write_table(table.replace_schema_metadata(metadata), target)
+        _init(root)
+
+        _add(root, target)
+
+        after = pq.ParquetFile(target).schema_arrow.metadata or {}
+        assert after[b"publisher:provenance"] == b"national cadastre 2024"
+        # The writer still owns `geo`: the rewrite added the covering column.
+        assert _covering(target) is not None
+
+    def test_the_geo_key_is_not_restored_from_the_source(self, tmp_path: Path) -> None:
+        """Restoring the old `geo` would contradict the column just added."""
+        root = tmp_path / "catalog"
+        collection = root / "roads"
+        collection.mkdir(parents=True)
+        target = collection / "roads.parquet"
+        shutil.copy(POINTS, target)
+        source_geo = (pq.ParquetFile(target).schema_arrow.metadata or {})[b"geo"]
+        _init(root)
+
+        _add(root, target)
+
+        assert (pq.ParquetFile(target).schema_arrow.metadata or {})[b"geo"] != source_geo
+
+
+class TestPartialOptOutKeepsTheCopy:
+    """`add_bbox: false` with sorting on must not rewrite on every add.
+
+    The footer is the only thing the decision can read cheaply. With the bbox
+    column off there is nothing to detect and no outcome a rewrite would
+    change, so rewriting anyway would repeat forever and report a reason the
+    rewrite cannot fix.
+    """
+
+    @pytest.mark.parametrize(
+        "vector_config",
+        [
+            "    sort: hilbert\n    add_bbox: false\n",
+            "    sort: none\n    add_bbox: false\n    spatial_index: h3\n",
+        ],
+    )
+    def test_bbox_off_keeps_the_copy(self, tmp_path: Path, vector_config: str) -> None:
+        """No rewrite runs, and the operator is told nothing misleading."""
+        root = tmp_path / "catalog"
+        collection = root / "roads"
+        collection.mkdir(parents=True)
+        target = collection / "roads.parquet"
+        shutil.copy(POINTS, target)
+        _init(root)
+        config = root / ".portolan" / "config.yaml"
+        config.write_text(
+            config.read_text() + f"conversion:\n  vector:\n{vector_config}",
+            encoding="utf-8",
+        )
+        before = target.read_bytes()
+
+        output = _add(root, target)
+
+        assert target.read_bytes() == before
+        assert "no bbox covering column" not in output
+
+    def test_reconvert_still_repairs_a_sort_only_catalog(self, tmp_path: Path) -> None:
+        """The explicit repair path stays open when `add_bbox` is off."""
+        root = tmp_path / "catalog"
+        collection = root / "roads"
+        collection.mkdir(parents=True)
+        target = collection / "roads.parquet"
+        shutil.copy(POINTS, target)
+        _init(root)
+        config = root / ".portolan" / "config.yaml"
+        config.write_text(
+            config.read_text() + "conversion:\n  vector:\n    sort: hilbert\n    add_bbox: false\n",
+            encoding="utf-8",
+        )
+        _add(root, target)
+
+        output = _add(root, target, "--force", "--reconvert")
+
+        assert "re-convert requested" in output
+        # Sorting ran, and `add_bbox: false` was honored.
+        assert "bbox" not in pq.ParquetFile(target).schema_arrow.names
+
+
+class TestTheRewriteNeverLosesData:
+    """The rewrite replaces the operator's file, so it proves it lost nothing.
+
+    geoparquet-io writes no `crs` key. The GeoParquet specification reads an
+    absent `crs` as OGC:CRS84, so a projected file comes back labelled as
+    longitude and latitude. See
+    `context/shared/known-issues/geoparquet-io-write-drops-crs.md`.
+    """
+
+    def test_a_projected_file_keeps_its_crs(self, tmp_path: Path) -> None:
+        """`add` keeps the file rather than relabel EPSG:3857 as WGS84."""
+        import geopandas as gpd
+        from shapely.geometry import Point
+
+        root = tmp_path / "catalog"
+        collection = root / "roads"
+        collection.mkdir(parents=True)
+        target = collection / "roads.parquet"
+        gpd.GeoDataFrame(
+            {"n": [1, 2]},
+            geometry=[Point(-8238310, 4970072), Point(-8237000, 4971000)],
+            crs="EPSG:3857",
+        ).to_parquet(target)
+        _init(root)
+        before = target.read_bytes()
+
+        output = _add(root, target)
+
+        assert target.read_bytes() == before
+        assert "Kept roads.parquet as it is" in output
+        assert "CRS" in output
+        assert gpd.read_parquet(target).crs.to_epsg() == 3857
+
+    def test_a_file_geoparquet_io_cannot_read_is_kept(self, tmp_path: Path) -> None:
+        """A malformed geometry must not turn `add` into a failure."""
+        root = tmp_path / "catalog"
+        collection = root / "roads"
+        collection.mkdir(parents=True)
+        target = collection / "roads.parquet"
+
+        # A truncated WKB point. geoparquet-io raises on it, and `add` used to
+        # copy such a file through untouched.
+        table = pa.table(
+            {
+                "geometry": pa.array([bytes.fromhex("0101000000000000000000")], type=pa.binary()),
+                "id": pa.array([1], type=pa.int64()),
+            }
+        )
+        geo = {
+            "version": "1.0.0",
+            "primary_column": "geometry",
+            "columns": {
+                "geometry": {"encoding": "WKB", "geometry_types": ["Point"], "bbox": [0, 0, 1, 1]}
+            },
+        }
+        pq.write_table(
+            table.cast(table.schema.with_metadata({b"geo": json.dumps(geo).encode()})), target
+        )
+        _init(root)
+        before = target.read_bytes()
+
+        output = _add(root, target)
+
+        assert target.read_bytes() == before
+        assert "Kept roads.parquet as it is" in output
+
+    def test_the_scratch_file_is_gone_after_a_refused_rewrite(self, tmp_path: Path) -> None:
+        """A refused swap still cleans up after itself."""
+        import geopandas as gpd
+        from shapely.geometry import Point
+
+        root = tmp_path / "catalog"
+        collection = root / "roads"
+        collection.mkdir(parents=True)
+        target = collection / "roads.parquet"
+        gpd.GeoDataFrame(
+            {"n": [1]}, geometry=[Point(-8238310, 4970072)], crs="EPSG:3857"
+        ).to_parquet(target)
+        _init(root)
+
+        _add(root, target)
+
+        assert list(collection.glob("*portolan-rewrite*")) == []
+        assert list(collection.glob("*.meta")) == []

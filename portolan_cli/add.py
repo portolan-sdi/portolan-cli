@@ -148,6 +148,9 @@ from portolan_cli.preparation import (
     convert_vector as convert_vector,  # noqa: PLC0414
 )
 from portolan_cli.preparation import (
+    is_rewrite_temp,
+)
+from portolan_cli.preparation import (
     prepare_item as prepare_item,  # noqa: PLC0414
 )
 from portolan_cli.query import ItemInfo, get_item_info, is_current, list_items  # noqa: F401
@@ -889,6 +892,14 @@ def _collect_files_for_add(
             # STAC-GeoParquet mirror (PORTO-FMT-040), and with default-on
             # generation every item-bearing collection carries one (#654).
             if file_path.name == PARQUET_FILENAME:
+                skipped.append(file_path)
+                continue
+
+            # Never ingest the scratch file the in-place GeoParquet rewrite
+            # swaps in. It is hidden and cleaned up on the normal path, but a
+            # killed run leaves one behind, and this phase reads the directory
+            # before conversion starts (issue #805).
+            if is_rewrite_temp(file_path):
                 skipped.append(file_path)
                 continue
 

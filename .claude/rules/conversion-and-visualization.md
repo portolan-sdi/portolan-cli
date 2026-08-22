@@ -50,18 +50,56 @@ Three writers must stay in agreement, and they have drifted before:
 (multilayer `add`), and `extract/arcgis/orchestrator` (which builds its own
 table). WFS and Carto delegate to `geoparquet-io` helpers that already do both.
 When you change the layout, grep for every `add_bbox(` call and apply it to all
-of them.
+of them. Every one of them must first test `convert.has_geometry`: a CSV of
+records and an ArcGIS **Table** layer both read as a table with
+`geometry_column = None`, and `add_bbox()` / `sort_hilbert()` raise a DuckDB
+binder error on one.
 
 A `.parquet` handed to `add` is no longer copied blindly.
-`preparation._needs_spatial_rewrite` reads the footer (O(1)) and rewrites the
-file only when it is GeoParquet **and** carries no covering column. A tabular
-Parquet has no `geo` key and must never reach `add_bbox()`. The footer says
-nothing about row order, so `--force --reconvert` forces the rewrite anyway —
-that is the documented repair for a file that has the column but is unsorted,
-and both `docs/reference/configuration.md` and the `convert` fixer's decline
-message name it. When the source is its own destination, as in a single-file
-collection, `_rewrite_parquet_in_place` writes a sibling and swaps it in, so a
-failed write cannot destroy the operator's data.
+`preparation._needs_spatial_rewrite` reads the footer once through
+`metadata.read_spatial_layout` (O(1)) and rewrites the file only when it is
+GeoParquet **and** `add_bbox` is on **and** the file carries no covering
+column. That last conjunct matters: with `add_bbox: false` the footer shows
+nothing the rewrite could change, so rewriting would repeat on every `add` and
+report a reason it cannot fix. A tabular Parquet has no `geo` key and must
+never reach `add_bbox()`.
+
+The footer says nothing about row order, so `--force --reconvert` forces the
+rewrite anyway. That is the documented repair both for a file that has the
+column but is unsorted and for a sort-only configuration, and
+`docs/reference/configuration.md` and the `convert` fixer's decline message
+name it.
+
+**`--force` alone must still produce a conforming file.** `--force` skips
+conversion when the output exists (issue #386), and for a single-file
+collection the output *is* the source, so that skip once returned a file with
+no covering column and no warning — the exact failure #805 removes. The skip
+branch now calls `_ensure_conforming_geoparquet`, which runs the same footer
+test. If you add another early return to `_convert_and_extract_metadata`, carry
+that call with it.
+
+When the source is its own destination, `_rewrite_parquet_in_place` writes a
+sibling and swaps it in with `Path.replace`, so a failed write cannot destroy
+the operator's data. Two consequences to preserve: geoparquet-io writes a fresh
+`geo` key and **drops every other schema metadata key**, so the helper restores
+them (geopandas writes `pandas`, publishers write provenance keys); and the
+scratch file carries `REWRITE_TEMP_INFIX`, because `add` reads the collection
+directory before conversion starts and a killed run leaves one behind. Both
+`add._collect_files_for_add` and `preparation._scan_item_assets` skip it via
+`is_rewrite_temp` — a leftover that gets tracked as an asset makes every later
+add read a truncated file.
+
+**The swap is gated.** `_assert_rewrite_kept_everything` compares the source and
+the rewritten file on row count, column set, and declared CRS, and raises
+`RewriteFidelityError` when any is lost. `_rewrite_or_keep` catches that and any
+other rewrite failure, keeps the operator's file, and warns. This is not
+optional politeness: geoparquet-io writes **no `crs` key at all**, and the
+GeoParquet spec reads an absent `crs` as OGC:CRS84, so an ungated rewrite
+relabels projected data as lon/lat. See
+`context/shared/known-issues/geoparquet-io-write-drops-crs.md`. Do **not**
+"fix" this by writing the CRS back into gpio's output — that is the
+patch-around-upstream this repo refuses. Keep the gate when the upstream bug is
+fixed; it guards the destructive operation, not that one bug.
 
 ## Skip conversion for ALL cloud-native formats, not just .parquet
 

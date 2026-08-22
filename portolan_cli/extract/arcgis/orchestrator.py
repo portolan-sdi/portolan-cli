@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from portolan_cli.convert import has_geometry
 from portolan_cli.extract.arcgis.discovery import (
     FolderTraversal,
     LayerInfo,
@@ -313,10 +314,14 @@ def _extract_single_layer(
 
     # Add the bbox covering column, then sort. Same order as
     # convert.apply_vector_settings, so both writers produce the same layout.
-    if options.add_bbox:
-        table = table.add_bbox()
-    if options.sort_hilbert:
-        table = table.sort_hilbert()
+    # An ArcGIS service publishes non-spatial Table layers beside its Feature
+    # Layers, and both operations raise a DuckDB binder error on a table with
+    # no geometry column, so the same guard applies here (issue #805).
+    if has_geometry(table):
+        if options.add_bbox:
+            table = table.add_bbox()
+        if options.sort_hilbert:
+            table = table.sort_hilbert()
 
     # Ensure parent directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)

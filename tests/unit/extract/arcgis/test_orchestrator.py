@@ -1510,3 +1510,56 @@ def test_extract_single_layer_honours_add_bbox_false(
     )
 
     assert calls == ["sort_hilbert"]
+
+
+def _fake_gpio_without_geometry(calls: list[str]) -> types.ModuleType:
+    """A geoparquet_io stand-in whose Table reports no geometry column.
+
+    `gpio.extract_arcgis` reads an ArcGIS Table layer as a plain table with
+    `geometry_column` set to None. Both spatial operations raise a DuckDB
+    binder error on such a table.
+    """
+
+    class _Table:
+        num_rows = 1
+        geometry_column = None
+
+        def add_bbox(self) -> _Table:
+            calls.append("add_bbox")
+            raise AssertionError("add_bbox must not run on a table with no geometry")
+
+        def sort_hilbert(self) -> _Table:
+            calls.append("sort_hilbert")
+            raise AssertionError("sort_hilbert must not run on a table with no geometry")
+
+        def write(self, path: str) -> None:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_bytes(b"PAR1")
+
+    module = types.ModuleType("geoparquet_io")
+    module.extract_arcgis = lambda url, **kwargs: _Table()  # type: ignore[attr-defined]
+    return module
+
+
+@pytest.mark.unit
+def test_extract_single_layer_skips_spatial_ops_without_geometry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An ArcGIS Table layer carries no geometry, so neither operation runs.
+
+    `convert.apply_vector_settings` guards this case. The extractor builds its
+    own table and must apply the same guard, or a Table layer aborts the
+    extraction with a raw DuckDB binder error (issue #805).
+    """
+    calls: list[str] = []
+    monkeypatch.setitem(sys.modules, "geoparquet_io", _fake_gpio_without_geometry(calls))
+
+    _extract_single_layer(
+        "https://x/rest/services/F/FeatureServer",
+        LayerInfo(id=1, name="Attributes", layer_type="Table"),
+        tmp_path / "out.parquet",
+        ExtractionOptions(),
+    )
+
+    assert calls == []
+    assert (tmp_path / "out.parquet").exists()

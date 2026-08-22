@@ -74,6 +74,7 @@ from portolan_cli.scan.progress import ScanProgressReporter, count_directories
 from portolan_cli.stac import MergeStrategy
 from portolan_cli.status import CollectionStatus, get_collection_status
 from portolan_cli.temporal import FLEXIBLE_DATETIME
+from portolan_cli.utils import format_size
 from portolan_cli.validation import (
     InputValidationError,
     annotate_survivors,
@@ -83,25 +84,6 @@ from portolan_cli.validation import (
     run_check,
     validate_safe_path,
 )
-
-
-def format_size(size_bytes: int) -> str:
-    """Format a file size in human-readable format.
-
-    Args:
-        size_bytes: Size in bytes.
-
-    Returns:
-        Human-readable size string (e.g., "4.2MB", "100B").
-    """
-    if size_bytes < 1024:
-        return f"{size_bytes}B"
-    elif size_bytes < 1024 * 1024:
-        return f"{size_bytes / 1024:.1f}KB"
-    elif size_bytes < 1024 * 1024 * 1024:
-        return f"{size_bytes / (1024 * 1024):.1f}MB"
-    else:
-        return f"{size_bytes / (1024 * 1024 * 1024):.1f}GB"
 
 
 def should_output_json(ctx: click.Context, json_flag: bool = False) -> bool:

@@ -497,3 +497,124 @@ class TestCoveringColumnDetection:
         pq.write_table(table.replace_schema_metadata(metadata), path)
 
         assert has_bbox_covering_column(path) is False
+
+
+class TestReadSpatialLayout:
+    """One footer read answers both spatial-layout questions.
+
+    `_needs_spatial_rewrite` needs both answers per source file. Asking through
+    `is_geoparquet` and `has_bbox_covering_column` opened the file twice.
+    """
+
+    @pytest.mark.unit
+    def test_a_geoparquet_without_the_column(self, tmp_path: Path) -> None:
+        """The file is GeoParquet, and it has no covering column."""
+        from portolan_cli.metadata import read_spatial_layout
+
+        source = Path(__file__).resolve().parents[1] / "fixtures" / "vector" / "valid"
+        layout = read_spatial_layout(source / "points.parquet")
+
+        assert layout.is_geoparquet is True
+        assert layout.has_bbox_covering is False
+
+    @pytest.mark.unit
+    def test_a_geoparquet_with_the_column(self, tmp_path: Path) -> None:
+        """Both answers are True after `add_bbox`."""
+        import geoparquet_io as gpio  # type: ignore[import-untyped]
+
+        from portolan_cli.metadata import read_spatial_layout
+
+        source = Path(__file__).resolve().parents[1] / "fixtures" / "vector" / "valid"
+        path = tmp_path / "covered.parquet"
+        gpio.convert(str(source / "points.parquet")).add_bbox().write(str(path))
+
+        layout = read_spatial_layout(path)
+
+        assert layout.is_geoparquet is True
+        assert layout.has_bbox_covering is True
+
+    @pytest.mark.unit
+    def test_tabular_parquet(self, tmp_path: Path) -> None:
+        """A file with no `geo` key is not GeoParquet."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.metadata import read_spatial_layout
+
+        path = tmp_path / "census.parquet"
+        pq.write_table(pa.table({"tract": ["001"], "population": [1]}), path)
+
+        layout = read_spatial_layout(path)
+
+        assert layout.is_geoparquet is False
+        assert layout.has_bbox_covering is False
+
+    @pytest.mark.unit
+    def test_an_unreadable_file(self, tmp_path: Path) -> None:
+        """A file that cannot be opened is not a conformant one."""
+        from portolan_cli.metadata import read_spatial_layout
+
+        path = tmp_path / "broken.parquet"
+        path.write_bytes(b"not a parquet file")
+
+        layout = read_spatial_layout(path)
+
+        assert layout.is_geoparquet is False
+        assert layout.has_bbox_covering is False
+
+    @pytest.mark.unit
+    def test_the_wrappers_agree_with_it(self, tmp_path: Path) -> None:
+        """`is_geoparquet` and `has_bbox_covering_column` read the same source."""
+        from portolan_cli.metadata import (
+            has_bbox_covering_column,
+            is_geoparquet,
+            read_spatial_layout,
+        )
+
+        source = Path(__file__).resolve().parents[1] / "fixtures" / "vector" / "valid"
+        path = source / "points.parquet"
+        layout = read_spatial_layout(path)
+
+        assert is_geoparquet(path) is layout.is_geoparquet
+        assert has_bbox_covering_column(path) is layout.has_bbox_covering
+
+
+class TestReadExtraSchemaMetadata:
+    """The rewrite restores the schema keys geoparquet-io drops."""
+
+    @pytest.mark.unit
+    def test_it_returns_publisher_keys(self, tmp_path: Path) -> None:
+        """Every key except `geo` comes back."""
+        import pyarrow.parquet as pq
+
+        from portolan_cli.metadata import read_extra_schema_metadata
+
+        source = Path(__file__).resolve().parents[1] / "fixtures" / "vector" / "valid"
+        path = tmp_path / "tagged.parquet"
+        table = pq.read_table(source / "points.parquet")
+        metadata = dict(table.schema.metadata or {})
+        metadata[b"pandas"] = b"{}"
+        pq.write_table(table.replace_schema_metadata(metadata), path)
+
+        extra = read_extra_schema_metadata(path)
+
+        assert extra[b"pandas"] == b"{}"
+
+    @pytest.mark.unit
+    def test_it_excludes_geo(self, tmp_path: Path) -> None:
+        """The writer owns `geo`, so restoring it would undo the rewrite."""
+        from portolan_cli.metadata import read_extra_schema_metadata
+
+        source = Path(__file__).resolve().parents[1] / "fixtures" / "vector" / "valid"
+
+        assert b"geo" not in read_extra_schema_metadata(source / "points.parquet")
+
+    @pytest.mark.unit
+    def test_an_unreadable_file_has_nothing_to_preserve(self, tmp_path: Path) -> None:
+        """A broken file yields an empty mapping rather than raising."""
+        from portolan_cli.metadata import read_extra_schema_metadata
+
+        path = tmp_path / "broken.parquet"
+        path.write_bytes(b"not a parquet file")
+
+        assert read_extra_schema_metadata(path) == {}

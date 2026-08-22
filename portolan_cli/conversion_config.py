@@ -668,13 +668,21 @@ def get_vector_settings(catalog_path: Path) -> VectorSettings:
     if not isinstance(partition, bool):
         partition = False
 
-    # Normalize invalid values before creating settings
+    # Normalize invalid values before creating settings. A misspelled value
+    # changes what the writer produces, so the operator sees these, not only
+    # the log (issue #805).
+    from portolan_cli.output import warn
+
     if spatial_index not in VALID_SPATIAL_INDEXES:
-        logger.warning("Vector config: Unknown spatial_index '%s', using 'none'", spatial_index)
+        message = f"Vector config: unknown spatial_index '{spatial_index}', using 'none'"
+        logger.warning(message)
+        warn(message)
         spatial_index = "none"
 
     if sort not in VALID_SORT_METHODS:
-        logger.warning("Vector config: Unknown sort '%s', using '%s'", sort, DEFAULT_SORT)
+        message = f"Vector config: unknown sort '{sort}', using '{DEFAULT_SORT}'"
+        logger.warning(message)
+        warn(message)
         sort = DEFAULT_SORT
 
     if resolution != "auto" and (not isinstance(resolution, int) or resolution < 0):
