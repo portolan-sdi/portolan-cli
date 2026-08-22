@@ -12,6 +12,7 @@ See GitHub Issue #75 for context on FlatGeobuf handling.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -903,15 +904,15 @@ class TestVectorSettingsDefaults:
 
     @pytest.mark.unit
     def test_default_values(self) -> None:
-        """VectorSettings has correct defaults (no optimization)."""
+        """Defaults produce GeoParquet that conforms to the profile (#805)."""
         from portolan_cli.conversion_config import VectorSettings
 
         settings = VectorSettings()
 
         assert settings.spatial_index == "none"
         assert settings.resolution == "auto"
-        assert settings.sort == "none"
-        assert settings.add_bbox is False
+        assert settings.sort == "hilbert"
+        assert settings.add_bbox is True
         assert settings.partition is False
 
     @pytest.mark.unit
@@ -1184,8 +1185,8 @@ conversion:
         assert settings.resolution == "auto"
 
     @pytest.mark.unit
-    def test_non_bool_add_bbox_falls_back_to_false(self, tmp_path: Path) -> None:
-        """Non-boolean add_bbox falls back to false."""
+    def test_non_bool_add_bbox_falls_back_to_the_default(self, tmp_path: Path) -> None:
+        """A non-boolean add_bbox keeps the default rather than disabling it."""
         from portolan_cli.conversion_config import get_vector_settings
 
         portolan_dir = tmp_path / ".portolan"
@@ -1198,7 +1199,7 @@ conversion:
 """)
         settings = get_vector_settings(tmp_path)
 
-        assert settings.add_bbox is False
+        assert settings.add_bbox is True
 
     @pytest.mark.unit
     def test_invalid_spatial_index_normalized_to_none(self, tmp_path: Path) -> None:
@@ -1218,8 +1219,8 @@ conversion:
         assert settings.spatial_index == "none"
 
     @pytest.mark.unit
-    def test_invalid_sort_normalized_to_none(self, tmp_path: Path) -> None:
-        """Invalid sort method is normalized to 'none'."""
+    def test_invalid_sort_normalized_to_the_default(self, tmp_path: Path) -> None:
+        """An invalid sort method falls back to the default, not to 'none'."""
         from portolan_cli.conversion_config import get_vector_settings
 
         portolan_dir = tmp_path / ".portolan"
@@ -1232,7 +1233,7 @@ conversion:
 """)
         settings = get_vector_settings(tmp_path)
 
-        assert settings.sort == "none"
+        assert settings.sort == "hilbert"
 
     @pytest.mark.unit
     def test_negative_resolution_normalized_to_auto(self, tmp_path: Path) -> None:
@@ -1466,3 +1467,63 @@ conversion:
         settings = get_cog_settings(tmp_path)
 
         assert settings.predictor == "auto"
+
+
+class TestInvalidValuesReachTheOperator:
+    """A misspelled value changes what the writer produces.
+
+    `sort` and `add_bbox` default to the values the Portolan profile needs, so
+    the fallback for an unknown `sort` is `hilbert`, not `none`. That makes a
+    typo quieter than it used to be: the operator asked for one layout and got
+    another. The warning goes to the terminal, not only the log (issue #805).
+    """
+
+    @pytest.mark.unit
+    def test_unknown_sort_warns_the_operator(self, tmp_path: Path, capsys: Any) -> None:
+        """The message names the value and the fallback."""
+        from portolan_cli.conversion_config import DEFAULT_SORT, get_vector_settings
+
+        portolan = tmp_path / ".portolan"
+        portolan.mkdir(parents=True)
+        (portolan / "config.yaml").write_text(
+            "conversion:\n  vector:\n    sort: hilbertt\n", encoding="utf-8"
+        )
+
+        settings = get_vector_settings(tmp_path)
+
+        assert settings.sort == DEFAULT_SORT
+        captured = capsys.readouterr()
+        assert "hilbertt" in captured.out + captured.err
+
+    @pytest.mark.unit
+    def test_unknown_spatial_index_warns_the_operator(self, tmp_path: Path, capsys: Any) -> None:
+        """The same holds for an unknown index name."""
+        from portolan_cli.conversion_config import get_vector_settings
+
+        portolan = tmp_path / ".portolan"
+        portolan.mkdir(parents=True)
+        (portolan / "config.yaml").write_text(
+            "conversion:\n  vector:\n    spatial_index: h4\n", encoding="utf-8"
+        )
+
+        settings = get_vector_settings(tmp_path)
+
+        assert settings.spatial_index == "none"
+        captured = capsys.readouterr()
+        assert "h4" in captured.out + captured.err
+
+    @pytest.mark.unit
+    def test_a_valid_config_warns_about_nothing(self, tmp_path: Path, capsys: Any) -> None:
+        """The warning must not fire on the default configuration."""
+        from portolan_cli.conversion_config import get_vector_settings
+
+        portolan = tmp_path / ".portolan"
+        portolan.mkdir(parents=True)
+        (portolan / "config.yaml").write_text(
+            "conversion:\n  vector:\n    sort: hilbert\n    add_bbox: true\n", encoding="utf-8"
+        )
+
+        get_vector_settings(tmp_path)
+
+        captured = capsys.readouterr()
+        assert "unknown" not in (captured.out + captured.err).lower()

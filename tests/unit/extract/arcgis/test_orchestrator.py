@@ -105,6 +105,7 @@ def mock_gpio() -> MagicMock:
     mock_table = MagicMock()
     mock_table.__len__ = MagicMock(return_value=100)
     mock_table.sort_hilbert.return_value = mock_table
+    mock_table.add_bbox.return_value = mock_table
     mock.extract_arcgis.return_value = mock_table
     return mock
 
@@ -320,6 +321,7 @@ class TestExtractionOptions:
         assert options.resume is False
         assert options.dry_run is False
         assert options.sort_hilbert is True
+        assert options.add_bbox is True
 
     def test_custom_values(self) -> None:
         """Should accept custom values."""
@@ -330,6 +332,7 @@ class TestExtractionOptions:
             resume=True,
             dry_run=True,
             sort_hilbert=False,
+            add_bbox=False,
         )
 
         assert options.workers == 5
@@ -338,6 +341,7 @@ class TestExtractionOptions:
         assert options.resume is True
         assert options.dry_run is True
         assert options.sort_hilbert is False
+        assert options.add_bbox is False
 
 
 class TestExtractionProgress:
@@ -1417,6 +1421,9 @@ def test_extract_single_layer_passes_token(monkeypatch: pytest.MonkeyPatch, tmp_
         class _T:
             num_rows = 1
 
+            def add_bbox(self) -> _T:
+                return self
+
             def write(self, path: str) -> None:
                 Path(path).parent.mkdir(parents=True, exist_ok=True)
                 Path(path).write_bytes(b"PAR1")
@@ -1435,3 +1442,124 @@ def test_extract_single_layer_passes_token(monkeypatch: pytest.MonkeyPatch, tmp_
         ExtractionOptions(token="TKN", sort_hilbert=False),
     )
     assert captured["token"] == "TKN"
+
+
+# =============================================================================
+# bbox covering column (issue #805)
+# =============================================================================
+
+
+def _fake_gpio_capturing(calls: list[str], tmp_path: Path) -> types.ModuleType:
+    """A geoparquet_io stand-in whose Table records the ops applied to it."""
+
+    class _Table:
+        num_rows = 1
+
+        def add_bbox(self) -> _Table:
+            calls.append("add_bbox")
+            return self
+
+        def sort_hilbert(self) -> _Table:
+            calls.append("sort_hilbert")
+            return self
+
+        def write(self, path: str) -> None:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_bytes(b"PAR1")
+
+    module = types.ModuleType("geoparquet_io")
+    module.extract_arcgis = lambda url, **kwargs: _Table()  # type: ignore[attr-defined]
+    return module
+
+
+@pytest.mark.unit
+def test_extract_single_layer_adds_bbox_before_sorting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """rashid reads PTL-DAT-006 and PTL-DAT-007 through the covering column.
+
+    Without ``add_bbox`` the extractor's output fails PTL-DAT-007 outright, so
+    the call is not optional. The order matches convert.apply_vector_settings.
+    """
+    calls: list[str] = []
+    monkeypatch.setitem(sys.modules, "geoparquet_io", _fake_gpio_capturing(calls, tmp_path))
+
+    _extract_single_layer(
+        "https://x/rest/services/F/FeatureServer",
+        LayerInfo(id=0, name="L", layer_type="Feature Layer"),
+        tmp_path / "out.parquet",
+        ExtractionOptions(),
+    )
+
+    assert calls == ["add_bbox", "sort_hilbert"]
+
+
+@pytest.mark.unit
+def test_extract_single_layer_honours_add_bbox_false(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An operator who turns the column off gets a file without it."""
+    calls: list[str] = []
+    monkeypatch.setitem(sys.modules, "geoparquet_io", _fake_gpio_capturing(calls, tmp_path))
+
+    _extract_single_layer(
+        "https://x/rest/services/F/FeatureServer",
+        LayerInfo(id=0, name="L", layer_type="Feature Layer"),
+        tmp_path / "out.parquet",
+        ExtractionOptions(add_bbox=False),
+    )
+
+    assert calls == ["sort_hilbert"]
+
+
+def _fake_gpio_without_geometry(calls: list[str]) -> types.ModuleType:
+    """A geoparquet_io stand-in whose Table reports no geometry column.
+
+    `gpio.extract_arcgis` reads an ArcGIS Table layer as a plain table with
+    `geometry_column` set to None. Both spatial operations raise a DuckDB
+    binder error on such a table.
+    """
+
+    class _Table:
+        num_rows = 1
+        geometry_column = None
+
+        def add_bbox(self) -> _Table:
+            calls.append("add_bbox")
+            raise AssertionError("add_bbox must not run on a table with no geometry")
+
+        def sort_hilbert(self) -> _Table:
+            calls.append("sort_hilbert")
+            raise AssertionError("sort_hilbert must not run on a table with no geometry")
+
+        def write(self, path: str) -> None:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_bytes(b"PAR1")
+
+    module = types.ModuleType("geoparquet_io")
+    module.extract_arcgis = lambda url, **kwargs: _Table()  # type: ignore[attr-defined]
+    return module
+
+
+@pytest.mark.unit
+def test_extract_single_layer_skips_spatial_ops_without_geometry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An ArcGIS Table layer carries no geometry, so neither operation runs.
+
+    `convert.apply_vector_settings` guards this case. The extractor builds its
+    own table and must apply the same guard, or a Table layer aborts the
+    extraction with a raw DuckDB binder error (issue #805).
+    """
+    calls: list[str] = []
+    monkeypatch.setitem(sys.modules, "geoparquet_io", _fake_gpio_without_geometry(calls))
+
+    _extract_single_layer(
+        "https://x/rest/services/F/FeatureServer",
+        LayerInfo(id=1, name="Attributes", layer_type="Table"),
+        tmp_path / "out.parquet",
+        ExtractionOptions(),
+    )
+
+    assert calls == []
+    assert (tmp_path / "out.parquet").exists()

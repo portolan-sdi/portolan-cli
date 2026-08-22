@@ -156,7 +156,9 @@ class TestAddDirectory:
             mock_detect.return_value = FormatType.VECTOR
 
             # Convert creates output file when called (not before add_directory)
-            def convert_side_effect(source: Path, dest: Path) -> Path:
+            def convert_side_effect(
+                source: Path, dest: Path, catalog_root: Path | None = None, **kwargs: object
+            ) -> Path:
                 output_path = dest / f"{source.stem}.parquet"
                 output_path.write_bytes(b"fake")
                 return output_path
@@ -223,7 +225,9 @@ class TestAddDirectory:
             mock_detect.side_effect = detect_side_effect
 
             # Convert creates output files when called (not before add_directory)
-            def convert_vector_side_effect(source: Path, dest: Path) -> Path:
+            def convert_vector_side_effect(
+                source: Path, dest: Path, catalog_root: Path | None = None, **kwargs: object
+            ) -> Path:
                 output_path = dest / f"{source.stem}.parquet"
                 output_path.write_bytes(b"fake")
                 return output_path
@@ -305,7 +309,9 @@ class TestAddDirectory:
         ):
             mock_detect.return_value = FormatType.VECTOR
 
-            def convert_side_effect(source: Path, dest: Path) -> Path:
+            def convert_side_effect(
+                source: Path, dest: Path, catalog_root: Path | None = None, **kwargs: object
+            ) -> Path:
                 # Create output parquet in the same directory as source (in-place)
                 output_path = source.parent / f"{source.stem}.parquet"
                 output_path.write_bytes(b"fake")

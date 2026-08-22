@@ -69,12 +69,6 @@ LOGO_PNG = bytes.fromhex(
 # so a fix cannot land without deleting its entry here.
 KNOWN_GAPS = frozenset(
     {
-        # PTL-DAT-007: every row group needs spatial statistics. geoparquet-io
-        # writes a single row group for a file this small and emits neither a
-        # bbox covering column nor native GeospatialStatistics for it, so the
-        # rule cannot see per-row-group extents. Surfaced when rashid 0.1.1
-        # promoted the data pass to default-on.
-        "PTL-DAT-007",
         # PTL-DAT-009 (issue #748): COGs ship without embedded band statistics.
         # Portolan does compute them and does write them into the item, but GDAL
         # puts them in a `.aux.xml` PAM sidecar. rashid reads with

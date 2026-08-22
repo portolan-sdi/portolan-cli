@@ -509,6 +509,12 @@ VALID_SPATIAL_INDEXES: frozenset[str] = frozenset({"h3", "quadkey", "s2", "a5", 
 # Valid sort methods
 VALID_SORT_METHODS: frozenset[str] = frozenset({"hilbert", "quadkey", "none"})
 
+# Defaults that make generated GeoParquet conform to the Portolan profile
+# (issue #805). Named so the parse fallbacks below cannot drift from the
+# dataclass defaults.
+DEFAULT_SORT = "hilbert"
+DEFAULT_ADD_BBOX = True
+
 # Default resolutions per index type (geoparquet-io defaults)
 DEFAULT_RESOLUTIONS: dict[str, int] = {
     "h3": 9,
@@ -531,16 +537,23 @@ class VectorSettings:
         spatial_index: Spatial index column to add (h3, quadkey, s2, a5, kdtree, none).
         resolution: Index resolution. "auto" uses geoparquet-io defaults which
             include row-count-based tuning. Explicit int overrides.
-        sort: Row ordering method (hilbert, quadkey, none).
-        add_bbox: Whether to add a bbox struct column.
+        sort: Row ordering method (hilbert, quadkey, none). Defaults to
+            ``hilbert``.
+        add_bbox: Whether to add a bbox struct column. Defaults to ``True``.
         partition: Whether to produce hive-partitioned output. Only affects
             file backend; Iceberg uses native partitioning on the spatial column.
+
+    ``sort`` and ``add_bbox`` default to the values the Portolan GeoParquet
+    profile requires (issue #805). rashid reads row order through the bbox
+    covering column, so ``add_bbox`` is what makes PTL-DAT-006 and PTL-DAT-007
+    evaluable and ``sort`` is what makes PTL-DAT-006 pass. Set ``sort: none``
+    or ``add_bbox: false`` in ``.portolan/config.yaml`` to turn either off.
     """
 
     spatial_index: str = "none"
     resolution: int | str = "auto"
-    sort: str = "none"
-    add_bbox: bool = False
+    sort: str = DEFAULT_SORT
+    add_bbox: bool = DEFAULT_ADD_BBOX
     partition: bool = False
 
 
@@ -570,7 +583,7 @@ def validate_vector_settings(settings: VectorSettings) -> list[str]:
         warnings.append(
             f"Unknown sort method '{settings.sort}'. "
             f"Valid values: {', '.join(sorted(VALID_SORT_METHODS))}. "
-            "Falling back to 'none'."
+            f"Falling back to '{DEFAULT_SORT}'."
         )
 
     # Validate resolution if explicit
@@ -637,31 +650,40 @@ def get_vector_settings(catalog_path: Path) -> VectorSettings:
     elif not isinstance(resolution, int):
         resolution = "auto"
 
-    # Parse sort
+    # Parse sort. A missing or non-string value keeps the default rather than
+    # disabling the optimization (issue #805).
     sort = vector.get("sort")
     if not isinstance(sort, str):
-        sort = "none"
+        sort = DEFAULT_SORT
     else:
         sort = sort.lower()
 
     # Parse add_bbox
     add_bbox = vector.get("add_bbox")
     if not isinstance(add_bbox, bool):
-        add_bbox = False
+        add_bbox = DEFAULT_ADD_BBOX
 
     # Parse partition
     partition = vector.get("partition")
     if not isinstance(partition, bool):
         partition = False
 
-    # Normalize invalid values before creating settings
+    # Normalize invalid values before creating settings. A misspelled value
+    # changes what the writer produces, so the operator sees these, not only
+    # the log (issue #805).
+    from portolan_cli.output import warn
+
     if spatial_index not in VALID_SPATIAL_INDEXES:
-        logger.warning("Vector config: Unknown spatial_index '%s', using 'none'", spatial_index)
+        message = f"Vector config: unknown spatial_index '{spatial_index}', using 'none'"
+        logger.warning(message)
+        warn(message)
         spatial_index = "none"
 
     if sort not in VALID_SORT_METHODS:
-        logger.warning("Vector config: Unknown sort '%s', using 'none'", sort)
-        sort = "none"
+        message = f"Vector config: unknown sort '{sort}', using '{DEFAULT_SORT}'"
+        logger.warning(message)
+        warn(message)
+        sort = DEFAULT_SORT
 
     if resolution != "auto" and (not isinstance(resolution, int) or resolution < 0):
         logger.warning("Vector config: Invalid resolution '%s', using 'auto'", resolution)

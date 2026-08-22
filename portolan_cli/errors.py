@@ -438,6 +438,31 @@ class CRSMismatchError(ConversionError):
         )
 
 
+class RewriteFidelityError(ConversionError):
+    """Raised when an in-place rewrite would lose part of the source file.
+
+    Error code: PRTLN-CNV005
+
+    ``add`` rewrites a GeoParquet in place to give it a bbox covering column
+    (issue #805). That replaces the operator's own file, so the rewrite proves
+    it kept every row, every column, and the declared CRS before it swaps.
+    geoparquet-io writes no CRS, so a projected GeoParquet trips this check.
+
+    Portolan keeps the operator's file when this fires. It does not repair the
+    rewritten copy. The file stays non-conformant, and ``check`` reports it.
+    """
+
+    code = "PRTLN-CNV005"
+
+    def __init__(self, path: str, lost: str) -> None:
+        super().__init__(
+            f"the rewrite of {path} lost {lost}",
+            path=path,
+            lost=lost,
+        )
+        self.lost = lost
+
+
 # Logo Errors (PRTLN-LOG*)
 class LogoError(PortolanError):
     """Base class for catalog-logo errors."""

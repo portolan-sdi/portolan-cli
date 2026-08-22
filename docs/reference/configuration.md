@@ -346,10 +346,44 @@ conversion:
   vector:
     spatial_index: h3 # h3 | quadkey | s2 | a5 | kdtree | none (default: none)
     resolution: auto # auto | explicit int (default: auto)
-    sort: hilbert # hilbert | quadkey | none (default: none)
-    add_bbox: true # Add bbox struct column (default: false)
+    sort: hilbert # hilbert | quadkey | none (default: hilbert)
+    add_bbox: true # Add bbox covering column (default: true)
     partition: false # Produce hive-partitioned output (default: false)
 ```
+
+!!! note "Conforming output by default"
+    `sort` and `add_bbox` carry the values the Portolan GeoParquet profile
+    requires. rashid reads both `PTL-DAT-006` and `PTL-DAT-007` through the
+    bbox covering column, so a file without it fails `portolan check`. Set
+    `sort: none` or `add_bbox: false` to turn either off.
+
+    `add` also rewrites a GeoParquet you hand it when that file carries no
+    covering column. A file that already has one is copied untouched, so a
+    large conformant file costs nothing. `--force` applies the same test, so
+    it cannot leave you with a file that fails `check`.
+
+    The rewrite is a full read, sort, and write, not a copy. `add` reports the
+    file size before it starts, and it needs free space for a second copy of
+    the file while it runs. Every schema metadata key the file carried is
+    restored afterwards, `pandas` and publisher keys included.
+
+    `add` compares the rewritten file against the source before it swaps them
+    in. It checks the row count, the column set, and the declared CRS. It keeps
+    your file and prints the reason when any of those would be lost. The file
+    then stays non-conformant, and `check` reports it. A projected GeoParquet
+    hits this today, because geoparquet-io writes no CRS:
+
+    ```console
+    $ portolan add roads/data.parquet
+    → Rewriting data.parquet (11.1KB): it carries no bbox covering column
+    ⚠ Kept data.parquet as it is: it would lose the CRS it declared, because geoparquet-io writes none
+    ✓ Added 1 file to 1 collection
+    ```
+
+    `add` does not inspect row order. To reorder a file that has the column but
+    is not sorted, run `portolan add <path> --force --reconvert`. That is also
+    the way to apply `sort` to an existing file when you set `add_bbox: false`,
+    because the footer then shows nothing `add` can act on.
 
 !!! note "Resolution defaults"
     When `resolution: auto`, geoparquet-io uses sensible defaults per index type (H3: 9, Quadkey: 13, S2: 13, A5: 15, KD-tree: 9 iterations). Explicit values override these defaults.
@@ -368,8 +402,7 @@ conversion:
 
 | Scenario | Configuration |
 |----------|---------------|
-| Analytics queries (spatial filtering) | `spatial_index: h3`, `add_bbox: true` |
-| Optimal row group statistics | `sort: hilbert`, `add_bbox: true` |
+| Analytics queries (spatial filtering) | `spatial_index: h3` |
 | Partitioned output for large files | `spatial_index: kdtree`, `partition: true` |
 | Web map tiling (PMTiles input) | `spatial_index: quadkey`, `sort: quadkey` |
 
