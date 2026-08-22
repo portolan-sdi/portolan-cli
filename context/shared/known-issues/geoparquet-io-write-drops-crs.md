@@ -4,7 +4,7 @@
 **Upstream issue:** [geoparquet-io#625](https://github.com/geoparquet/geoparquet-io/issues/625), closed 2026-08-20 by
 [`ff02db8`](https://github.com/geoparquet/geoparquet-io/commit/ff02db82) ("Fix Table API dropping the source CRS between convert() and write()", PR #644).
 **Portolan pin:** git main `a23dafa`, which is 82 commits behind the fix.
-**Portolan issue:** #805.
+**Portolan issues:** #805 introduced the guard. #810 tracks the pin bump.
 
 Do not file a new upstream issue. #625 is the record, and it is fixed.
 
@@ -78,7 +78,7 @@ the workaround this repo does not take.
 
 ## How to clear it
 
-Bump the geoparquet-io pin. `uv lock --upgrade-package geoparquet-io` moves it
+Issue #810 tracks this work. Bump the geoparquet-io pin. `uv lock --upgrade-package geoparquet-io` moves it
 to upstream main, and the reproduction above then prints the source CRS.
 
 That bump is not a drop-in. The 82 commits carry an unrelated behavior change:
