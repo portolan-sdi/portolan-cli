@@ -4564,6 +4564,11 @@ def clone(
 
     use_json = should_output_json(ctx, json_output)
 
+    # A clone has no catalog root yet, so load a caller-supplied .env file.
+    from dotenv import load_dotenv
+
+    load_dotenv(override=False)
+
     # Resolve profile: CLI arg > env var > default (no local catalog yet)
     resolved_profile = resolve_aws_profile(profile, catalog_path=None)
 

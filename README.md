@@ -1,99 +1,49 @@
-<div align="center">
-  <img src="docs/assets/images/cover.png" alt="Portolan" width="600"/>
-</div>
+# Portolan CLI
 
-<div align="center">
+Portolan CLI helps GIS publishers build geospatial catalogs as plain files in their own storage. It creates structured STAC metadata, tracks catalog versions, and publishes files to object storage.
 
-[![CI](https://github.com/portolan-sdi/portolan-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/portolan-sdi/portolan-cli/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/portolan-sdi/portolan-cli/branch/main/graph/badge.svg)](https://codecov.io/gh/portolan-sdi/portolan-cli)
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![PyPI version](https://badge.fury.io/py/portolan-cli.svg)](https://badge.fury.io/py/portolan-cli)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+The [Portolan standard](https://github.com/portolan-sdi/portolan-spec) defines catalog requirements. This CLI builds catalogs that you can check with the Portolan validator.
 
-</div>
+## Install
 
----
+Install the CLI with uv:
 
-<!-- --8<-- [start:intro] -->
-Portolan enables organizations to share geospatial data in a low-cost, accessible, sovereign, and reliable way. Built on [cloud-native geospatial](https://cloudnativegeo.org) formats, a Portolan catalog is as interactive as any geospatial portal—but faster, more scalable, and much cheaper to run.
+```sh
+uv tool install portolan-cli
+```
 
-This CLI converts data to cloud-native formats (GeoParquet, COG), generates rich STAC metadata, and syncs to any object storage—no servers required.
-<!-- --8<-- [end:intro] -->
+See [the project README](https://github.com/portolan-sdi/portolan-cli) for development setup.
 
-<!-- --8<-- [start:quickstart] -->
 ## Quick Start
 
-```bash
-# Initialize a catalog (prompts for a license; --license sets it directly)
-portolan init
+Create a catalog with an SPDX license identifier:
 
-# Add files (creates collections from directories)
-portolan add demographics/
-
-# Validate and convert to cloud-native formats
-portolan check --fix
-
-# notest - requires S3 credentials
-# Push to remote storage
-portolan push s3://my-bucket/catalog --collection demographics
-
-# Later: pull updates from remote
-portolan pull s3://my-bucket/catalog -c demographics
-
-# Or sync everything (pull → init → scan → check → push)
-portolan sync s3://my-bucket/catalog -c demographics
+```sh
+portolan init my-catalog --auto --license CC-BY-4.0
 ```
 
-### All Commands
+The [local publishing example](https://github.com/portolan-sdi/portolan-cli/blob/main/docs/examples.md#local-publishing) creates a catalog from a committed GeoJSON file. It checks the generated catalog artifacts.
 
-```bash
-portolan init                               # Initialize catalog (asks for a license)
-portolan scan <path>                        # Scan for issues (--fix for filenames)
-portolan add <path>                         # Track files
-portolan add-external <url>                 # Reference a remote dataset in place (no download/convert)
-portolan rm <path>                          # Untrack files (--keep to preserve data)
-portolan check                              # Validate catalog (metadata + geo-assets)
-portolan check --fix                        # Convert to cloud-native + update metadata
-portolan list                               # List tracked files
-portolan info <path>                        # Show file/collection info
-portolan push <remote>                      # Push to remote storage
-portolan pull <remote>                      # Pull from remote storage
-portolan sync <remote>                      # Full roundtrip sync
-portolan clone <remote> <path>              # Clone remote catalog
-portolan config <set|get|list|unset>        # Manage configuration
-portolan metadata init                      # Create metadata.yaml template
-portolan metadata validate                  # Validate required metadata fields
-portolan readme                             # Generate README.md from STAC + metadata
-portolan clean                              # Remove Portolan metadata
-```
-<!-- --8<-- [end:quickstart] -->
+## Executable Workflows
 
-<!-- --8<-- [start:installation] -->
-## Installation
+The checked-in scripts are the command source for both workflows.
 
-```bash
-# Recommended: uv (fast, isolated, project-aware)
-uv tool install portolan-cli
+- [Local publishing](https://github.com/portolan-sdi/portolan-cli/blob/main/docs/examples.md#local-publishing) creates a catalog on local storage.
+- [MinIO storage round trip](https://github.com/portolan-sdi/portolan-cli/blob/main/docs/examples.md#minio-storage-round-trip) pushes a catalog to S3-compatible storage, then clones it.
 
-# Alternative: pipx (isolated environment)
-# pipx install portolan-cli
+Use the following sensitive settings only in the process environment or a catalog `.env` file. Do not add them to `.portolan/config.yaml`.
 
-# Alternative: pip (global/user site-packages, may conflict)
-# pip install portolan-cli
-```
+- `PORTOLAN_S3_ENDPOINT`: S3-compatible endpoint, such as a MinIO host and port.
+- `PORTOLAN_S3_USE_SSL`: `true` for HTTPS or `false` for HTTP. The default is `true`.
+- `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`: storage credentials.
 
-### For Development
+## Reference
 
-```bash
-git clone https://github.com/portolan-sdi/portolan-cli.git
-cd portolan-cli
-uv sync --all-extras
-uv run portolan --help
-```
-<!-- --8<-- [end:installation] -->
-
-See [Contributing Guide](docs/contributing.md) for full development setup.
+- [CLI reference](https://github.com/portolan-sdi/portolan-cli/blob/main/docs/reference/cli.md) is generated from the shipped Click command tree.
+- [Python API reference](https://github.com/portolan-sdi/portolan-cli/blob/main/docs/reference/python.md) is generated from supported package exports.
+- [Contributing guide](https://github.com/portolan-sdi/portolan-cli/blob/main/docs/contributing.md) explains development and review requirements.
+- [Changelog](https://github.com/portolan-sdi/portolan-cli/blob/main/docs/changelog.md) records released changes.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE)
+Portolan CLI is licensed under Apache-2.0.

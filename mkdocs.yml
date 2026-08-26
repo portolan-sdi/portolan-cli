@@ -76,24 +76,11 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Guides:
-    - Version Management: guides/version-management.md
-    - Merge Strategies: guides/merge-strategies.md
-    - AI Skills: guides/skills.md
-    - Extracting from ArcGIS: guides/extract-arcgis.md
-    - Extracting from WFS: guides/extract-wfs.md
-    - Iceberg Backend: guides/iceberg.md
-    - Licensing: guides/licensing.md
-    - Metadata Defaults: guides/metadata-defaults.md
-    - Nested Catalogs: guides/nested-catalogs.md
-    - Partitioning: guides/partitioning.md
+  - Examples: examples.md
   - Reference:
-    - CLI: reference/cli.md
-    - Configuration: reference/configuration.md
-    - Format Support: reference/formats.md
-    - Input Formats: reference/input-formats.md
-    - Versions Manifest: reference/versions-manifest.md
-    - Iceberg API: reference/iceberg-api.md
+    - Overview: reference/index.md
+    - CLI Reference: reference/cli.md
+    - Python API Reference: reference/python.md
   - Contributing: contributing.md
   - Changelog: changelog.md
 

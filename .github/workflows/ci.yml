@@ -335,11 +335,35 @@ jobs:
           retry_wait_seconds: 15
           command: uv sync --all-extras
 
+      - name: Check generated reference
+        run: uv run python scripts/generate_reference_docs.py --check
+
       - name: Build documentation
         run: uv run mkdocs build --strict
 
+      - name: Start MinIO for documentation example
+        run: |
+          docker compose -f tests/iceberg/e2e/docker-compose.yml up -d minio
+          timeout 60 bash -c 'until curl -sf http://localhost:9000/minio/health/live; do sleep 2; done'
+          docker compose -f tests/iceberg/e2e/docker-compose.yml run --rm --entrypoint /bin/sh minio-init -c 'mc alias set local http://minio:9000 minioadmin minioadmin; mc mb local/portolan-docs || true'
+
       - name: Test documentation examples
+        env:
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
+          AWS_REGION: us-east-1
+          PORTOLAN_DOCS_MINIO: "1"
+          PORTOLAN_S3_ENDPOINT: localhost:9000
+          PORTOLAN_S3_USE_SSL: "false"
         run: uv run pytest tests/docs/ -v --tb=short
+
+      - name: MinIO logs
+        if: failure()
+        run: docker compose -f tests/iceberg/e2e/docker-compose.yml logs
+
+      - name: Stop MinIO
+        if: always()
+        run: docker compose -f tests/iceberg/e2e/docker-compose.yml down -v
 
   build:
     name: Build Package
