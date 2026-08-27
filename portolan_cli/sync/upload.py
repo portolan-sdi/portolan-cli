@@ -518,8 +518,9 @@ def _create_s3_store(
         store_kwargs["virtual_hosted_style_request"] = False
     _add_s3_endpoint_settings(store_kwargs, endpoint, use_ssl)
 
-    client_options = {"allow_http": True} if endpoint and not use_ssl else None
-    return S3Store(bucket, client_options=client_options, **store_kwargs)  # type: ignore[arg-type]
+    if endpoint and not use_ssl:
+        return S3Store(bucket, client_options={"allow_http": True}, **store_kwargs)  # type: ignore[arg-type]
+    return S3Store(bucket, **store_kwargs)  # type: ignore[arg-type]
 
 
 def _setup_store_and_kwargs(
