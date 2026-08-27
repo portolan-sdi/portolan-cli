@@ -8,12 +8,12 @@
 
 Publish geospatial data as plain files in your own storage, connected into a searchable network.
 
-- Build [STAC](https://stacspec.org/en/) Catalogs with [GeoParquet](https://geoparquet.org/) and [COG](https://cogeo.org/) Assets.
+- Build [STAC](https://stacspec.org/en/) catalogs with [GeoParquet](https://geoparquet.org/) and [COG](https://cogeo.org/) assets.
 - Extract ArcGIS, WFS, and Carto sources.
 - Generate thumbnails, [PMTiles](https://docs.protomaps.com/pmtiles/), MapLibre styles, and STAC GeoParquet indexes.
-- Track Collection versions and checksums without a database.
-- Validate Catalog metadata, structure, and Assets against the [Portolan standard](https://github.com/portolan-sdi/portolan-spec).
-- Push, pull, sync, and clone Catalogs through S3, GCS, Azure, or S3-compatible storage.
+- Track collection versions and checksums without a database.
+- Validate catalog metadata, structure, and assets against the [Portolan standard](https://github.com/portolan-sdi/portolan-spec).
+- Push, pull, sync, and clone catalogs through S3, GCS, Azure, or S3-compatible storage.
 - Use structured JSON output, a typed Python API, or backend plugins.
 
 ## Installation

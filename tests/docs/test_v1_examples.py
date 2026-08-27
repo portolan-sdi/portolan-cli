@@ -19,6 +19,11 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE_DIR = PROJECT_ROOT / "examples" / "philadelphia-housing"
 EXAMPLE = EXAMPLE_DIR / "run.sh"
+JOURNEY_STEPS = (
+    EXAMPLE_DIR / "01-create-catalog.sh",
+    EXAMPLE_DIR / "02-add-context.sh",
+    EXAMPLE_DIR / "03-publish.sh",
+)
 QUERY = EXAMPLE_DIR / "query.py"
 FIXTURE_SERVER = PROJECT_ROOT / "tests" / "docs" / "philadelphia_arcgis_server.py"
 FIXTURE_DIR = PROJECT_ROOT / "tests" / "fixtures" / "realdata" / "philadelphia-housing"
@@ -151,6 +156,19 @@ def _requests(request_log: Path) -> list[dict[str, Any]]:
 def test_example_builds_and_analyzes_a_philadelphia_catalog(tmp_path: Path) -> None:
     """The public workflow extracts, documents, validates, and analyzes two Collections."""
     catalog_dir = tmp_path / "philadelphia-housing"
+
+    wrapper = EXAMPLE.read_text()
+    for step in JOURNEY_STEPS:
+        assert step.is_file()
+        assert f'"$example_dir/{step.name}"' in wrapper
+
+    tutorial = (EXAMPLE_DIR / "README.md").read_text()
+    assert tutorial.index("## 3. Publish the catalog") < tutorial.index(
+        "## 4. Use the published catalog"
+    )
+    assert "✓ Extracted 2/2 layers" in tutorial
+    assert "✓ Added 2 files to 2 collections" in tutorial
+    assert "✓ Pushed 2 collection(s), 4 version(s), 18 file(s)" in tutorial
 
     with _arcgis_server(tmp_path) as (arcgis_url, request_log, _process):
         result = _run_example(catalog_dir, arcgis_url)

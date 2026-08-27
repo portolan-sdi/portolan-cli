@@ -1,62 +1,171 @@
-# Publish and analyze Philadelphia housing data
+# Turn Philadelphia housing data into a shareable catalog
 
-Use this tutorial to publish two Philadelphia ArcGIS layers as a Portolan Catalog.
-Then run a spatial join directly against the GeoParquet Assets.
+Imagine that you maintain useful city data in ArcGIS.
+People can view each layer, but they still need to find it, understand it, and combine it.
+You want to make that work easier without deploying another server or API.
 
-The workflow uses these Collections:
+In this tutorial, you follow the same path as a new Portolan publisher:
 
-- Affordable Housing Production contains 501 projects in the pinned August 27, 2026 snapshot.
-- City Council Districts contains the ten districts drawn after the 2020 census.
+1. Convert two public Philadelphia ArcGIS layers.
+2. Organize and document them as one catalog.
+3. Publish the catalog to object storage.
+4. Use the published files to answer a housing question.
 
-For the complete ten-Collection example, see the [published Philadelphia housing Catalog](https://source.coop/nlebovits/phl-housing-demo).
+You will use Affordable Housing Production and City Council Districts.
+The pinned example contains 501 housing projects and all ten districts.
 
-## What the workflow does
-
-The script runs the shipped Portolan CLI from source to published files:
-
-1. Search Philadelphia's ArcGIS services root and select two named services.
-2. Download each FeatureServer layer in parallel, with pagination and retries.
-3. Convert the features to spatially ordered GeoParquet with bbox statistics.
-4. Preserve each ArcGIS renderer as a MapLibre style.
-5. Add publisher, license, contact, and source metadata.
-6. Generate thumbnails, `README.md` files, and `AGENTS.md` files.
-7. Run the Portolan validator in strict mode.
-8. Optionally push the static Catalog to S3-compatible storage.
-
-The Catalog does not need a database, API, or running Portolan service after publication.
+For a larger example, explore the [published Philadelphia housing catalog](https://source.coop/nlebovits/phl-housing-demo).
+It contains ten collections and about 1.78 million features.
 
 ## Before you begin
 
-Clone this repository and install its dependencies:
+Clone this repository.
+Then install Portolan and the tutorial dependencies:
 
 ```sh
 uv sync --all-extras
 ```
 
-The default workflow reads public Philadelphia ArcGIS endpoints.
+Run the commands below from the repository root.
+The default workflow reads public Philadelphia ArcGIS services.
 The City of Philadelphia's [metadata terms](https://metadata.phila.gov/#help/help-faqs/what-are-the-terms-of-use/) apply.
 
-## Build the Catalog
-
-Run these commands from the repository root:
+Choose an empty directory for your local catalog:
 
 ```sh
 export CATALOG_DIR=/tmp/philadelphia-housing
-uv run ./examples/philadelphia-housing/run.sh
 ```
 
-`CATALOG_DIR` must identify a new directory.
-The command creates two Collections and stops if extraction or validation fails.
+## 1. Convert the source layers
 
-The Affordable Housing Production service name becomes the Collection ID `affordablehousingproduction`.
-The City Council Collection ID is `council_districts_2024`.
-
-## Query the GeoParquet Assets
-
-Run the included DuckDB analysis against the local Catalog:
+Create the local catalog:
 
 ```sh
-uv run python examples/philadelphia-housing/query.py "$CATALOG_DIR"
+uv run ./examples/philadelphia-housing/01-create-catalog.sh
+```
+
+Portolan searches Philadelphia's ArcGIS services and selects the two named services.
+It downloads every page, retries temporary failures, and converts each layer to GeoParquet.
+It also preserves the map style from each source layer.
+
+The output shows this work as it happens:
+
+```text
+→ [1/2] Affordable_Housing
+Fetching features 1-100 of 501...
+Fetching features 101-200 of 501...
+HTTP 503 (attempt 1/3)
+...
+Converted 501 features
+Found 25 empty/null geometries.
+    ✓ Success
+→ [2/2] Council_Districts_2024
+Converted 10 features
+    ✓ Success
+✓ Extracted 2/2 layers
+```
+
+The repeatable test service injects the temporary error.
+The retry shows that one failed request does not restart the extraction.
+Portolan keeps the 25 projects without locations instead of dropping them.
+You will see how that affects the final answer.
+
+You now have two collections:
+
+```text
+philadelphia-housing/
+├── affordablehousingproduction/
+└── council_districts_2024/
+```
+
+A collection groups the files and information for one subject.
+The catalog provides one entry point for both collections.
+
+## 2. Add context and check the catalog
+
+Usable data needs more than a file name.
+A reader needs a clear description, source, publisher, license, preview, and usage notes.
+
+This tutorial includes prepared metadata for the two Philadelphia collections.
+Apply it, generate the documentation, and check the result:
+
+```sh
+uv run ./examples/philadelphia-housing/02-add-context.sh
+```
+
+The important output looks like this:
+
+```text
+✓ Added 2 files to 2 collections
+✓ Generated 3 README(s)
+✓ Created/updated 2 metadata items
+✓ Catalog conforms (3 file(s) checked)
+Catalog passes the Portolan check.
+```
+
+This step adds:
+
+- Descriptions and source links.
+- Publisher and license information.
+- Thumbnails and map styles.
+- A `README.md` for each collection.
+- An `AGENTS.md` guide for agent users.
+
+Portolan also checks the complete catalog against the Portolan specification.
+The full report can include recommendations, but the command stops if a strict requirement fails.
+The three generated README files document the catalog and its two collections.
+
+For your own catalog, edit the generated `.portolan/metadata.yaml` files.
+This example copies prepared files so that everyone gets the same result.
+
+## 3. Publish the catalog
+
+When the local catalog looks right, choose an object-storage destination:
+
+```sh
+export PORTOLAN_PHL_REMOTE=s3://my-bucket/philadelphia-housing
+```
+
+Create the bucket with your storage provider before you publish.
+Use the credentials required by your storage provider.
+For S3-compatible storage, set `PORTOLAN_S3_ENDPOINT` and `PORTOLAN_S3_USE_SSL`.
+Do not store credentials in `.portolan/config.yaml`.
+
+Publish the catalog:
+
+```sh
+uv run ./examples/philadelphia-housing/03-publish.sh
+```
+
+The output confirms what Portolan uploaded:
+
+```text
+→ Found 2 collection(s) to push
+✓ [1/2] affordablehousingproduction: 2 version(s), 7 file(s)
+✓ [2/2] council_districts_2024: 2 version(s), 7 file(s)
+✓ Pushed 2 collection(s), 4 version(s), 18 file(s)
+Published catalog to s3://my-bucket/philadelphia-housing.
+```
+
+The result is a set of static files in your bucket.
+You do not need to deploy a Portolan server, database, or API.
+The uploaded files include the GeoParquet assets, metadata, previews, documentation, and version history.
+
+Make the files public according to your storage provider's instructions.
+Your catalog now has one HTTP URL that you can share.
+That public URL can differ from the storage URL in the publish command.
+
+## 4. Use the published catalog
+
+Now ask a practical planning question:
+
+> How many affordable housing projects and units are in each City Council district?
+
+Pass the public catalog URL to the included analysis:
+
+```sh
+uv run python examples/philadelphia-housing/query.py \
+  https://data.example.org/philadelphia-housing
 ```
 
 The pinned August 27, 2026 snapshot returns:
@@ -80,66 +189,66 @@ Projects without geometry: 25
 Units without geometry: 665
 ```
 
-The join places 476 projects and 18,584 units in City Council districts.
-It also identifies 25 projects that lack geometry.
-Those projects account for 665 units and cannot be assigned by this spatial join.
+District 5 has the most projects and units in this snapshot.
+District 3 has the next highest totals.
+
+The result also exposes an important limitation.
+Twenty-five projects have no location, so the spatial join cannot assign their 665 units.
+A useful analysis reports that gap instead of hiding it.
+
+The analysis uses DuckDB, not a Portolan-specific query service.
+DuckDB requests only the required Parquet ranges from object storage.
+It does not clone the catalog or download every file first.
+
+You can also use the published files in tools such as QGIS, ArcGIS, or Python.
+You can give the same catalog URL to an agent.
+The files remain in storage that you control.
 
 Philadelphia can update the live ArcGIS layers.
-Your live result can differ from the pinned CI result.
+Your live result can differ from the pinned result above.
 
-## Publish and query over HTTP
+## What Portolan changed
 
-Set an object-storage destination before you run the workflow:
+You started with two separate ArcGIS services.
+You finished with one documented catalog that people and agents can find, understand, and use.
+
+Portolan handled four parts of the journey:
+
+1. **Convert:** ArcGIS features became cloud-optimized GeoParquet.
+2. **Catalog:** The files gained consistent structure, metadata, previews, and documentation.
+3. **Publish:** The catalog moved to object storage without a new serving layer.
+4. **Use:** Standard tools queried the published files directly.
+
+## Use this pattern with your own data
+
+The same journey works for your ArcGIS services:
+
+1. Change the services root and service names in `01-create-catalog.sh`.
+2. Replace the prepared metadata with descriptions and terms for your collections.
+3. Publish to storage that you control.
+4. Share the catalog URL or use it in your existing tools.
+
+You can also start from files, WFS endpoints, and other supported sources.
+The result has the same basic shape: cloud-native files, clear metadata, and one catalog URL.
+
+## Run the complete workflow
+
+The numbered steps are the recommended way to follow this tutorial.
+For repeat runs, the wrapper executes them in the same order:
 
 ```sh
-export CATALOG_DIR=/tmp/philadelphia-housing-published
+export CATALOG_DIR=/tmp/philadelphia-housing
 export PORTOLAN_PHL_REMOTE=s3://my-bucket/philadelphia-housing
 uv run ./examples/philadelphia-housing/run.sh
 ```
 
-Use the credentials required by your storage provider.
-For S3-compatible storage, set `PORTOLAN_S3_ENDPOINT` and `PORTOLAN_S3_USE_SSL`.
-Do not store credentials in `.portolan/config.yaml`.
+## How CI keeps this tutorial working
 
-After you make the files public, pass their HTTP base URL to the same analysis:
+CI runs the same three scripts against a pinned replay of the Philadelphia services.
+It verifies pagination, retry behavior, metadata, previews, documentation, and validation.
 
-```sh
-uv run python examples/philadelphia-housing/query.py \
-  https://data.example.org/philadelphia-housing
-```
+CI then publishes the catalog to temporary object storage and stops the ArcGIS replay.
+The final test runs the district analysis over HTTP and checks every reported total.
 
-DuckDB reads the required Parquet ranges from object storage.
-It does not download or clone the complete Catalog first.
-
-## How CI verifies the tutorial
-
-CI runs this exact script against a deterministic replay of the two ArcGIS services.
-The replay uses the two GeoParquet Assets from the published Philadelphia Catalog.
-It advertises a 100-feature page limit and returns one temporary HTTP 503 response.
-
-The test verifies all of these results:
-
-- The service filter excludes an unrelated service.
-- Affordable Housing Production requires six pages.
-- The extractor retries the temporary failure.
-- Both Collections include real row counts, styles, thumbnails, documentation, source links, and bbox statistics.
-- Strict Portolan validation passes.
-- The Catalog publishes to MinIO.
-- The ArcGIS replay stops before DuckDB queries the published Assets over HTTP.
-- The district totals match the table in this tutorial.
-
-This test keeps extraction, publication, and analysis in one CI contract.
-
-## Workflow source
-
-The test suite executes this script without rewriting it:
-
-```sh
---8<-- "examples/philadelphia-housing/run.sh"
-```
-
-The test suite also executes this analysis:
-
-```python
---8<-- "examples/philadelphia-housing/query.py"
-```
+The replay and temporary storage exist only to make the tutorial repeatable.
+The user journey and the commands stay the same.
