@@ -312,6 +312,11 @@ def _extract_single_layer(
     if options.sort_hilbert:
         table = table.sort_hilbert()
 
+    # Portolan requires row-group spatial statistics for efficient remote reads.
+    # ArcGIS extraction produces GeoParquet directly, so add the covering before
+    # the file reaches the catalog instead of relying on legacy conversion fixes.
+    table = table.add_bbox()
+
     # Ensure parent directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
 

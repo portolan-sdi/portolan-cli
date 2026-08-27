@@ -228,7 +228,7 @@ Always research before implementing:
 - **ALL** non-obvious decisions are recorded where they apply (see `.claude/rules/documentation.md`)
 - **NO** new dependencies without discussion
 
-<!-- freshness: last-verified: 2026-08-19 -->
+<!-- freshness: last-verified: 2026-08-27 -->
 ## Design Principles
 
 | Principle | Meaning |

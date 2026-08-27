@@ -1,1 +1,1 @@
---8<-- "examples/publish-catalog/README.md"
+--8<-- "examples/philadelphia-housing/README.md"

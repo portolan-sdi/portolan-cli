@@ -10,8 +10,8 @@ Automation engineers are the secondary audience.
 The root README is the concise landing page.
 MkDocs uses that file as its own landing page.
 
-The publishing example is the only human-written tutorial.
-MkDocs includes its README, and tests execute its exact script.
+The Philadelphia housing example is the only human-written tutorial.
+MkDocs includes its README, and tests execute its extraction, publication, and analysis scripts.
 
 The reference generator reads the shipped Click tree and explicit public package exports.
 It writes the CLI wrapper, Python API wrapper, and Reference navigation landing page.

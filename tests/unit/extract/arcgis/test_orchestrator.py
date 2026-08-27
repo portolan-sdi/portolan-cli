@@ -1417,6 +1417,10 @@ def test_extract_single_layer_passes_token(monkeypatch: pytest.MonkeyPatch, tmp_
         class _T:
             num_rows = 1
 
+            def add_bbox(self) -> _T:
+                captured["bbox"] = True
+                return self
+
             def write(self, path: str) -> None:
                 Path(path).parent.mkdir(parents=True, exist_ok=True)
                 Path(path).write_bytes(b"PAR1")
@@ -1435,3 +1439,4 @@ def test_extract_single_layer_passes_token(monkeypatch: pytest.MonkeyPatch, tmp_
         ExtractionOptions(token="TKN", sort_hilbert=False),
     )
     assert captured["token"] == "TKN"
+    assert captured["bbox"] is True

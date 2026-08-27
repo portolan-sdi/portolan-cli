@@ -1,115 +1,257 @@
-"""Behavioral checks for the public end-to-end publishing example."""
+"""Behavioral checks for the Philadelphia housing publishing tutorial."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import subprocess
+import sys
+import time
+from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, cast
 
+import pyarrow.parquet as pq
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-EXAMPLE = PROJECT_ROOT / "examples" / "publish-catalog" / "run.sh"
-POINTS_FIXTURE = PROJECT_ROOT / "examples" / "publish-catalog" / "points.parquet"
+EXAMPLE_DIR = PROJECT_ROOT / "examples" / "philadelphia-housing"
+EXAMPLE = EXAMPLE_DIR / "run.sh"
+QUERY = EXAMPLE_DIR / "query.py"
+FIXTURE_SERVER = PROJECT_ROOT / "tests" / "docs" / "philadelphia_arcgis_server.py"
+FIXTURE_DIR = PROJECT_ROOT / "tests" / "fixtures" / "realdata" / "philadelphia-housing"
+
+EXPECTED_QUERY_OUTPUT = """\
+district  projects  units
+       1        37   2310
+       2        62   1886
+       3        97   3724
+       4        36   1172
+       5       119   4774
+       6         9    264
+       7        44   1915
+       8        53   1796
+       9         9    310
+      10        10    433
+
+Located projects: 476
+Located units: 18,584
+Projects without geometry: 25
+Units without geometry: 665
+"""
 
 
-def _example_environment(catalog_dir: Path, cloned_dir: Path | None = None) -> dict[str, str]:
+@contextmanager
+def _arcgis_server(tmp_path: Path) -> Iterator[tuple[str, Path, subprocess.Popen[str]]]:
+    """Run the deterministic ArcGIS replay used by the public workflow."""
+    assert FIXTURE_SERVER.is_file(), f"Missing fixture server: {FIXTURE_SERVER}"
+    assert (FIXTURE_DIR / "affordable_housing.parquet").is_file()
+    assert (FIXTURE_DIR / "council_districts_2024.parquet").is_file()
+
+    port_file = tmp_path / "arcgis-port.txt"
+    request_log = tmp_path / "arcgis-requests.jsonl"
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            str(FIXTURE_SERVER),
+            "--fixture-dir",
+            str(FIXTURE_DIR),
+            "--port-file",
+            str(port_file),
+            "--request-log",
+            str(request_log),
+        ],
+        cwd=PROJECT_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        for _ in range(100):
+            if port_file.is_file():
+                break
+            if process.poll() is not None:
+                stdout, stderr = process.communicate()
+                pytest.fail(f"ArcGIS fixture server failed:\n{stdout}{stderr}")
+            time.sleep(0.05)
+        else:
+            process.terminate()
+            stdout, stderr = process.communicate(timeout=5)
+            pytest.fail(f"ArcGIS fixture server did not start:\n{stdout}{stderr}")
+
+        port = port_file.read_text().strip()
+        yield f"http://127.0.0.1:{port}/ArcGIS/rest/services", request_log, process
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=5)
+
+
+def _example_environment(
+    catalog_dir: Path,
+    arcgis_url: str,
+    remote: str | None = None,
+) -> dict[str, str]:
     """Build the documented workflow environment."""
     environment = os.environ.copy()
     environment.update(
         {
             "CATALOG_DIR": str(catalog_dir),
-            "PORTOLAN_EXAMPLE_SOURCE": str(POINTS_FIXTURE),
+            "PORTOLAN_PHL_ARCGIS_URL": arcgis_url,
         }
     )
-    if cloned_dir is not None:
-        environment.update(
-            {
-                "CLONED_CATALOG_DIR": str(cloned_dir),
-                "PORTOLAN_EXAMPLE_REMOTE": "s3://portolan-docs/catalog",
-            }
-        )
+    if remote is not None:
+        environment["PORTOLAN_PHL_REMOTE"] = remote
     return environment
 
 
 def _run_example(
-    catalog_dir: Path, cloned_dir: Path | None = None
+    catalog_dir: Path,
+    arcgis_url: str,
+    remote: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run the exact script embedded in the public documentation."""
     return subprocess.run(
         [str(EXAMPLE)],
         cwd=PROJECT_ROOT,
-        env=_example_environment(catalog_dir, cloned_dir),
+        env=_example_environment(catalog_dir, arcgis_url, remote),
         check=False,
         capture_output=True,
         text=True,
     )
 
 
-def _sha256(path: Path) -> str:
-    """Return the hexadecimal SHA-256 digest for one example asset."""
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-@pytest.mark.integration
-def test_example_builds_a_conformant_catalog(tmp_path: Path) -> None:
-    """The documented local workflow produces a complete, valid Collection."""
-    catalog_dir = tmp_path / "source-catalog"
-
-    result = _run_example(catalog_dir)
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    collection = json.loads((catalog_dir / "places" / "collection.json").read_text())
-    versions = json.loads((catalog_dir / "places" / "versions.json").read_text())
-
-    data_assets = [asset for asset in collection["assets"].values() if "data" in asset["roles"]]
-    assert [asset["href"] for asset in data_assets] == ["./points.parquet"]
-    assert data_assets[0]["type"] == "application/vnd.apache.parquet"
-
-    thumbnail_assets = [
-        asset for asset in collection["assets"].values() if "thumbnail" in asset["roles"]
-    ]
-    assert len(thumbnail_assets) == 1
-    assert (catalog_dir / "places" / thumbnail_assets[0]["href"]).is_file()
-
-    providers = {provider["name"]: provider["roles"] for provider in collection["providers"]}
-    assert providers == {
-        "Portolan Documentation": ["host"],
-        "Portolan Project": ["producer", "licensor"],
-    }
-    assert collection["license"] == "CC-BY-4.0"
-    assert any(link["rel"] == "via" for link in collection["links"])
-
-    tracked_assets = versions["versions"][-1]["assets"]
-    assert "points.parquet" in tracked_assets
-    assert any(name.endswith(".thumb.jpg") for name in tracked_assets)
-    assert "Catalog passes the Portolan check." in result.stdout
-
-
-@pytest.mark.e2e
-def test_example_pushes_and_clones_the_same_catalog(tmp_path: Path) -> None:
-    """CI publishes the documented workflow to MinIO and verifies the clone."""
-    if os.environ.get("PORTOLAN_DOCS_MINIO") != "1":
-        pytest.skip("Documentation MinIO service is not running")
-
-    catalog_dir = tmp_path / "source-catalog"
-    cloned_dir = tmp_path / "cloned-catalog"
-
-    result = _run_example(catalog_dir, cloned_dir)
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    source_asset = catalog_dir / "places" / "points.parquet"
-    cloned_asset = cloned_dir / "places" / "points.parquet"
-    assert _sha256(cloned_asset) == _sha256(source_asset)
-
-    check = subprocess.run(
-        ["portolan", "check", str(cloned_dir), "--no-data", "--strict"],
+def _run_query(catalog_url: str) -> subprocess.CompletedProcess[str]:
+    """Run the exact analysis embedded in the public documentation."""
+    return subprocess.run(
+        [sys.executable, str(QUERY), catalog_url],
         cwd=PROJECT_ROOT,
         env=os.environ.copy(),
         check=False,
         capture_output=True,
         text=True,
     )
-    assert check.returncode == 0, check.stdout + check.stderr
+
+
+def _collection(catalog_dir: Path, collection_id: str) -> dict[str, Any]:
+    """Read one generated STAC Collection."""
+    value = json.loads((catalog_dir / collection_id / "collection.json").read_text())
+    return cast(dict[str, Any], value)
+
+
+def _requests(request_log: Path) -> list[dict[str, Any]]:
+    """Read the ArcGIS fixture server request log."""
+    return [cast(dict[str, Any], json.loads(line)) for line in request_log.read_text().splitlines()]
+
+
+@pytest.mark.integration
+def test_example_builds_and_analyzes_a_philadelphia_catalog(tmp_path: Path) -> None:
+    """The public workflow extracts, documents, validates, and analyzes two Collections."""
+    catalog_dir = tmp_path / "philadelphia-housing"
+
+    with _arcgis_server(tmp_path) as (arcgis_url, request_log, _process):
+        result = _run_example(catalog_dir, arcgis_url)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Extracted 2/2 layers" in result.stdout
+    assert "Catalog passes the Portolan check." in result.stdout
+
+    catalog = json.loads((catalog_dir / "catalog.json").read_text())
+    child_links = sorted(link["href"] for link in catalog["links"] if link["rel"] == "child")
+    assert child_links == [
+        "./affordablehousingproduction/collection.json",
+        "./council_districts_2024/collection.json",
+    ]
+
+    expected = {
+        "affordablehousingproduction": {
+            "count": 501,
+            "source": (
+                "https://services.arcgis.com/fLeGjb7u4uXqeF9q/ArcGIS/rest/services/"
+                "AffordableHousingProduction/FeatureServer/0"
+            ),
+        },
+        "council_districts_2024": {
+            "count": 10,
+            "source": (
+                "https://services.arcgis.com/fLeGjb7u4uXqeF9q/ArcGIS/rest/services/"
+                "Council_Districts_2024/FeatureServer/0"
+            ),
+        },
+    }
+    for collection_id, contract in expected.items():
+        collection = _collection(catalog_dir, collection_id)
+        assert collection["table:row_count"] == contract["count"]
+        assert collection["license"] == "other"
+        assert {provider["name"]: provider["roles"] for provider in collection["providers"]} == {
+            "City of Philadelphia": ["producer", "licensor"],
+            "Portolan Documentation": ["processor", "host"],
+        }
+        assert contract["source"] in {
+            link["href"] for link in collection["links"] if link["rel"] == "via"
+        }
+
+        assets = collection["assets"]
+        assert any("style" in asset["roles"] for asset in assets.values())
+        assert sum("thumbnail" in asset["roles"] for asset in assets.values()) == 1
+        assert (catalog_dir / collection_id / "README.md").is_file()
+        assert (catalog_dir / collection_id / "AGENTS.md").is_file()
+
+        parquet_path = catalog_dir / collection_id / f"{collection_id}.parquet"
+        parquet_file = pq.ParquetFile(parquet_path)
+        assert "bbox" in parquet_file.schema_arrow.names
+        bbox_columns = [
+            index
+            for index in range(parquet_file.metadata.num_columns)
+            if parquet_file.schema.column(index).path.startswith("bbox.")
+        ]
+        assert len(bbox_columns) == 4
+        assert all(
+            parquet_file.metadata.row_group(0).column(index).statistics is not None
+            for index in bbox_columns
+        )
+
+    requests = _requests(request_log)
+    query_requests = [
+        request
+        for request in requests
+        if str(request["path"]).endswith("/query")
+        and request["query"].get("returnCountOnly") != ["true"]
+    ]
+    affordable_offsets = [
+        int(request["query"]["resultOffset"][0])
+        for request in query_requests
+        if "AffordableHousingProduction" in str(request["path"])
+    ]
+    assert sorted(set(affordable_offsets)) == [0, 100, 200, 300, 400, 500]
+    assert Counter(affordable_offsets)[200] == 2
+    assert not any("Unrelated_Parks" in str(request["path"]) for request in requests)
+
+    query = _run_query(str(catalog_dir))
+    assert query.returncode == 0, query.stdout + query.stderr
+    assert query.stdout == EXPECTED_QUERY_OUTPUT
+
+
+@pytest.mark.e2e
+def test_example_publishes_assets_that_remain_queryable_without_arcgis(
+    tmp_path: Path,
+) -> None:
+    """CI queries the published Assets after the source service stops."""
+    if os.environ.get("PORTOLAN_DOCS_MINIO") != "1":
+        pytest.skip("Documentation MinIO service is not running")
+
+    catalog_dir = tmp_path / "philadelphia-housing"
+    remote = "s3://portolan-docs/philadelphia-housing"
+
+    with _arcgis_server(tmp_path) as (arcgis_url, _request_log, process):
+        result = _run_example(catalog_dir, arcgis_url, remote)
+        assert result.returncode == 0, result.stdout + result.stderr
+        process.terminate()
+        process.wait(timeout=5)
+
+    query = _run_query("http://localhost:9000/portolan-docs/philadelphia-housing")
+    assert query.returncode == 0, query.stdout + query.stderr
+    assert query.stdout == EXPECTED_QUERY_OUTPUT
