@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import antimeridian
 from pyproj import CRS, Transformer
@@ -20,7 +20,7 @@ from pyproj.exceptions import CRSError
 from portolan_cli.errors import CRSMismatchError
 
 if TYPE_CHECKING:
-    pass
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +92,11 @@ def transform_bbox_to_wgs84(
         raise ValueError(f"Input bbox contains non-finite values (inf/nan): {bbox}")
 
     if source_crs is None:
+        # No CRS means "assume WGS84" — but coordinates outside lon/lat range
+        # prove the assumption wrong (e.g. GeoParquet written with a null CRS
+        # from projected data, issue #785). Publishing them would put meters
+        # into a STAC extent, so fail fast instead.
+        _reject_non_wgs84_magnitudes(bbox, "no CRS (assumed WGS84)", allow_guess)
         return bbox
 
     # Parse source CRS with specific exception handling
@@ -107,6 +112,7 @@ def transform_bbox_to_wgs84(
 
     # Check if already WGS84
     if _is_wgs84(src_crs):
+        _reject_non_wgs84_magnitudes(bbox, source_crs, allow_guess)
         return bbox
 
     # Check for CRS mismatch BEFORE attempting transformation
@@ -140,6 +146,43 @@ def transform_bbox_to_wgs84(
             e,
         )
         return bbox
+
+
+def _reject_non_wgs84_magnitudes(
+    bbox: tuple[float, float, float, float],
+    declared: str,
+    allow_guess: bool,
+) -> None:
+    """Fail fast when a bbox treated as WGS84 is outside lon/lat range.
+
+    The inverse of the declared-projected-but-looks-WGS84 mismatch check:
+    here the bbox is about to pass through untransformed, so values beyond
+    +/-180 / +/-90 can only mean the real CRS is projected and the metadata
+    is wrong or missing (issue #785).
+    """
+    minx, miny, maxx, maxy = bbox
+    if abs(minx) <= 180 and abs(maxx) <= 180 and abs(miny) <= 90 and abs(maxy) <= 90:
+        return
+    # "Effectively infinite" sentinels (issue #516, e.g. WFS-served ±1.79e308)
+    # are not projected coordinates; leave them to the existing invalid-bbox
+    # filtering so their error message stays about invalid values, not CRS.
+    from portolan_cli.bbox import MAX_SANE_COORD
+
+    if any(abs(c) > MAX_SANE_COORD for c in bbox):
+        return
+    if allow_guess:
+        logger.warning(
+            "Bbox %s treated as WGS84 (%s) but coordinates exceed lon/lat range; "
+            "passing through unchanged.",
+            bbox,
+            declared,
+        )
+        return
+    raise CRSMismatchError(
+        source_crs=declared,
+        bbox=bbox,
+        likely_actual_crs="a projected CRS (values exceed lon/lat range)",
+    )
 
 
 def _is_wgs84(crs: CRS) -> bool:
@@ -325,3 +368,152 @@ def _sample_bbox_edges(
         points.append((minx, y))
 
     return points
+
+
+@dataclass
+class _MeasuredBounds:
+    """Running WGS84 bounds, with longitude tracked in two frames."""
+
+    minx: float = float("inf")
+    miny: float = float("inf")
+    maxx: float = float("-inf")
+    maxy: float = float("-inf")
+    min_shifted: float = float("inf")
+    max_shifted: float = float("-inf")
+
+    def update(self, lon: Any, lat: Any, *, np: Any) -> None:
+        self.minx, self.maxx = min(self.minx, float(lon.min())), max(self.maxx, float(lon.max()))
+        self.miny, self.maxy = min(self.miny, float(lat.min())), max(self.maxy, float(lat.max()))
+        shifted = np.where(lon < 0.0, lon + 360.0, lon)
+        self.min_shifted = min(self.min_shifted, float(shifted.min()))
+        self.max_shifted = max(self.max_shifted, float(shifted.max()))
+
+    def is_finite(self, math: Any) -> bool:
+        return all(math.isfinite(v) for v in (self.minx, self.miny, self.maxx, self.maxy))
+
+    def plain_span(self) -> float:
+        return self.maxx - self.minx
+
+    def shifted_span(self) -> float:
+        return self.max_shifted - self.min_shifted
+
+
+def measure_wgs84_bbox(
+    data_path: Path,
+    geometry_column: str,
+    source_crs: str | None,
+) -> tuple[float, float, float, float] | None:
+    """Measure a GeoParquet's WGS84 extent from its geometry, not its bbox.
+
+    :func:`transform_bbox_to_wgs84` answers a different question: it reprojects
+    a *rectangle*. For a projected CRS the WGS84 envelope of that rectangle is
+    strictly larger than the envelope of the data inside it — the corners of a
+    UTM bbox hold no data and the grid lines curve — so a collection extent
+    derived that way overstates the data, by ~14 km on real UTM zone 30N data.
+    That is not a rounding difference: ``check`` rejects it (PTL-DAT-005), and
+    the PMTiles built from the same file report the tighter, correct box.
+
+    So measure the transformed vertices instead. Row groups are streamed and
+    only the geometry column is read, so peak memory stays bounded on files far
+    too large to hold in one GeoDataFrame.
+
+    Returns None whenever the measurement cannot be made — a missing optional
+    dependency, an unreadable file, a CRS pyproj will not resolve, no finite
+    coordinates. The caller then falls back to reprojecting the bbox, which is
+    wider than the data but never wrong about containing it.
+
+    Args:
+        data_path: GeoParquet file, or a directory of them (partitioned output).
+        geometry_column: Name of the WKB geometry column to read.
+        source_crs: CRS of the stored coordinates (EPSG code, WKT, or None).
+
+    Returns:
+        ``(minx, miny, maxx, maxy)`` in WGS84, or None if not measurable.
+    """
+    if not source_crs:
+        return None
+    try:
+        src = CRS.from_user_input(source_crs)
+    except CRSError:
+        logger.debug("Cannot measure bbox: unresolvable CRS %r", source_crs)
+        return None
+    if _is_wgs84(src):
+        return None  # stored coordinates are already WGS84; nothing to measure
+
+    files = sorted(data_path.rglob("*.parquet")) if data_path.is_dir() else [data_path]
+    if not files:
+        return None
+
+    bounds = _stream_wgs84_bounds(files, geometry_column, src, data_path)
+    if bounds is None:
+        return None
+    return _bbox_from_bounds(bounds)
+
+
+def _stream_wgs84_bounds(
+    files: list[Path],
+    geometry_column: str,
+    src: CRS,
+    data_path: Path,
+) -> _MeasuredBounds | None:
+    """Accumulate WGS84 bounds over the geometry column, one row group at a time.
+
+    Longitude is tracked twice: once as it comes, and once shifted into
+    [0, 360). Data that crosses the antimeridian is compact in the shifted frame
+    and spans almost the whole globe in the plain one, so the two spans detect
+    the crossing without a second pass over the file.
+
+    Returns None when nothing measurable was read.
+    """
+    try:
+        import math
+
+        import numpy as np
+        import pyarrow.parquet as pq
+        import shapely
+    except ImportError:  # pragma: no cover - shapely/pyarrow are core deps
+        logger.debug("Cannot measure bbox: pyarrow/shapely unavailable")
+        return None
+
+    bounds = _MeasuredBounds()
+    try:
+        # Inside the guard: pyproj raises here when it can build no pipeline
+        # between the two CRSs, and that must fall back, not escape.
+        transformer = Transformer.from_crs(src, WGS84, always_xy=True)
+        for file in files:
+            parquet = pq.ParquetFile(file)
+            if geometry_column not in parquet.schema_arrow.names:
+                return None
+            for batch in parquet.iter_batches(columns=[geometry_column]):
+                wkb = [value for value in batch.column(0).to_pylist() if value is not None]
+                if not wkb:
+                    continue
+                coords = shapely.get_coordinates(shapely.from_wkb(wkb))
+                if coords.size == 0:
+                    continue
+                lon, lat = transformer.transform(coords[:, 0], coords[:, 1])
+                # Points pyproj cannot transform come back as infinity; drop them
+                # rather than let one poison the whole extent.
+                finite = np.isfinite(lon) & np.isfinite(lat)
+                if not finite.any():
+                    continue
+                bounds.update(lon[finite], lat[finite], np=np)
+    except Exception as exc:  # noqa: BLE001 - measurement is best-effort
+        logger.debug("Cannot measure bbox from %s: %s", data_path, exc)
+        return None
+
+    return bounds if bounds.is_finite(math) else None
+
+
+def _bbox_from_bounds(bounds: _MeasuredBounds) -> tuple[float, float, float, float]:
+    """Resolve accumulated bounds to a bbox, honouring an antimeridian crossing.
+
+    RFC 7946: a bbox that crosses the antimeridian writes west greater than
+    east. Keep whichever frame describes the data more tightly; a tie keeps the
+    plain frame, so data that does not cross is unaffected.
+    """
+    if bounds.shifted_span() < bounds.plain_span():
+        west = bounds.min_shifted - 360.0 if bounds.min_shifted >= 180.0 else bounds.min_shifted
+        east = bounds.max_shifted - 360.0 if bounds.max_shifted > 180.0 else bounds.max_shifted
+        return (west, bounds.miny, east, bounds.maxy)
+    return (bounds.minx, bounds.miny, bounds.maxx, bounds.maxy)

@@ -611,6 +611,60 @@ def run_with_transient_convert_retry(
     raise AssertionError("vector conversion retry loop exited without returning")
 
 
+def repair_shapefile_encoding_sidecar(shp: Path) -> Path | None:
+    """Make a shapefile's ``.cpg`` sidecar match what its DBF records contain.
+
+    Legacy government shapefiles routinely ship Latin-1 attribute text with no
+    ``.cpg`` (GDAL then passes raw bytes through and the GeoParquet writer's
+    UTF-8 validation fails deep in the pipeline), and some ship a sidecar that
+    LIES — UTF-8 records declared as ``1252``, which converts "successfully"
+    into mojibake (issue #783; both defects observed in SITEX Extremadura
+    data).
+
+    The encoding test reads only the DBF *records region* (after the header
+    length at bytes 8-9): the header is binary and would false-flag valid
+    UTF-8 files. Rules, both safe by construction:
+
+    - records are NOT valid UTF-8 and no/UTF-8 sidecar -> write ``ISO-8859-1``
+      (the standard single-byte fallback; it always decodes);
+    - records ARE valid UTF-8 with non-ASCII content but the sidecar declares
+      something else -> correct it to ``UTF-8`` (non-ASCII UTF-8 is
+      essentially unambiguous).
+
+    Returns the sidecar path when one was written or corrected, else None.
+    """
+    import struct
+
+    from portolan_cli.output import info as _output_info
+
+    dbf, cpg = shp.with_suffix(".dbf"), shp.with_suffix(".cpg")
+    if not dbf.exists():
+        return None
+    raw = dbf.read_bytes()
+    if len(raw) <= 32:
+        return None
+    header_len = struct.unpack_from("<H", raw, 8)[0]
+    records = raw[header_len:]
+    try:
+        records.decode("utf-8")
+        records_are_utf8 = True
+    except UnicodeDecodeError:
+        records_are_utf8 = False
+    has_non_ascii = any(b > 0x7F for b in records)
+    declared = cpg.read_text(errors="replace").strip().upper() if cpg.exists() else None
+
+    if records_are_utf8 and has_non_ascii and declared not in (None, "UTF-8", "UTF8"):
+        cpg.write_text("UTF-8")
+        _output_info(f"Corrected {cpg.name}: declared {declared}, DBF records are UTF-8")
+        return cpg
+    if not records_are_utf8 and (declared is None or "UTF" in (declared or "")):
+        cpg.write_text("ISO-8859-1")
+        what = f"corrected from {declared}" if declared else "written"
+        _output_info(f"Encoding sidecar {cpg.name} {what}: DBF records are not valid UTF-8")
+        return cpg
+    return None
+
+
 def _convert_vector(
     source: Path,
     output_dir: Path,
@@ -639,6 +693,9 @@ def _convert_vector(
     if settings is None:
         settings = VectorSettings()
     resolved = settings
+
+    if source.suffix.lower() == ".shp":
+        repair_shapefile_encoding_sidecar(source)
 
     output_path = output_dir / f"{source.stem}.parquet"
 

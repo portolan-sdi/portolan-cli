@@ -120,7 +120,7 @@ class TestStyleInStacAssets:
 
         assert style["version"] == 8
         assert style["name"] == "Default"
-        assert style["sources"]["data"]["url"] == "../data.pmtiles"
+        assert style["sources"]["data"]["url"] == "pmtiles://../data.pmtiles"
         assert len(style["layers"]) == 1
         assert style["layers"][0]["type"] == "fill"
 

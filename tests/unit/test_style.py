@@ -577,7 +577,7 @@ class TestBuildFullStyle:
         assert "sources" in style
         assert "data" in style["sources"]
         assert style["sources"]["data"]["type"] == "vector"
-        assert style["sources"]["data"]["url"] == "../data.pmtiles"
+        assert style["sources"]["data"]["url"] == "pmtiles://../data.pmtiles"
 
         # Check layers
         assert "layers" in style
@@ -798,7 +798,7 @@ class TestWriteDefaultStyle:
         style = json.loads(result_path.read_text())
         assert style["version"] == 8
         assert style["name"] == "Default"
-        assert style["sources"]["data"]["url"] == "../data.pmtiles"
+        assert style["sources"]["data"]["url"] == "pmtiles://../data.pmtiles"
         assert style["layers"][0]["type"] == "fill"
         assert style["layers"][0]["source"] == "data"
         assert style["layers"][0]["source-layer"] == "parcels"
@@ -1492,3 +1492,132 @@ class TestRegisterLegendAssets:
         # A rewrite strips the removed manifest the old catalog carried.
         assert "portolan:legends" not in updated
         assert updated["assets"]["legends/source"]["roles"] == ["legend"]
+
+
+class TestPmtilesSourceUrl:
+    """pmtiles_source_url and zoom range on generated sources (issue #756)."""
+
+    @pytest.mark.unit
+    def test_prefixes_bare_paths(self) -> None:
+        from portolan_cli.viz.style import pmtiles_source_url
+
+        assert pmtiles_source_url("../data.pmtiles") == "pmtiles://../data.pmtiles"
+        assert pmtiles_source_url("pmtiles://../data.pmtiles") == "pmtiles://../data.pmtiles"
+        assert pmtiles_source_url("https://x/y.pmtiles") == "https://x/y.pmtiles"
+
+    @pytest.mark.unit
+    def test_build_full_style_writes_zoom_range(self) -> None:
+        from portolan_cli.viz.style import VectorStyleConfig, build_full_style
+
+        style = build_full_style(
+            name="Default",
+            geometry_type="Polygon",
+            source_layer="parcels",
+            pmtiles_relative_path="../data.pmtiles",
+            config=VectorStyleConfig(),
+            min_zoom=4,
+            max_zoom=12,
+        )
+        source = style["sources"]["data"]
+        assert source["url"] == "pmtiles://../data.pmtiles"
+        assert source["minzoom"] == 4
+        assert source["maxzoom"] == 12
+
+    @pytest.mark.unit
+    def test_build_full_style_omits_unknown_zoom_range(self) -> None:
+        from portolan_cli.viz.style import VectorStyleConfig, build_full_style
+
+        style = build_full_style(
+            name="Default",
+            geometry_type="Polygon",
+            source_layer="parcels",
+            pmtiles_relative_path="../data.pmtiles",
+            config=VectorStyleConfig(),
+        )
+        source = style["sources"]["data"]
+        assert "minzoom" not in source
+        assert "maxzoom" not in source
+
+
+class TestCompleteStyleSources:
+    """complete_style_sources repairs unloadable style sources (issue #756)."""
+
+    def _write(self, path: Path, style: dict) -> None:
+        import json
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(style))
+
+    @pytest.mark.unit
+    def test_fills_missing_url_and_zoom(self, tmp_path: Path) -> None:
+        import json
+
+        from portolan_cli.viz.style import complete_style_sources
+
+        style_path = tmp_path / "styles" / "default.json"
+        self._write(
+            style_path,
+            {"version": 8, "sources": {"data": {"type": "vector"}}, "layers": []},
+        )
+
+        modified = complete_style_sources(
+            tmp_path, pmtiles_relative_path="data.pmtiles", min_zoom=0, max_zoom=11
+        )
+
+        assert modified == [style_path]
+        source = json.loads(style_path.read_text())["sources"]["data"]
+        assert source["url"] == "pmtiles://../data.pmtiles"
+        assert source["minzoom"] == 0
+        assert source["maxzoom"] == 11
+
+    @pytest.mark.unit
+    def test_prefixes_bare_url_keeps_schemed_url(self, tmp_path: Path) -> None:
+        import json
+
+        from portolan_cli.viz.style import complete_style_sources
+
+        bare = tmp_path / "styles" / "bare.json"
+        schemed = tmp_path / "styles" / "schemed.json"
+        self._write(
+            bare,
+            {"version": 8, "sources": {"data": {"type": "vector", "url": "../a.pmtiles"}}},
+        )
+        self._write(
+            schemed,
+            {
+                "version": 8,
+                "sources": {"data": {"type": "vector", "url": "pmtiles://../b.pmtiles"}},
+            },
+        )
+
+        complete_style_sources(tmp_path, pmtiles_relative_path="a.pmtiles")
+
+        assert json.loads(bare.read_text())["sources"]["data"]["url"] == "pmtiles://../a.pmtiles"
+        assert json.loads(schemed.read_text())["sources"]["data"]["url"] == "pmtiles://../b.pmtiles"
+
+    @pytest.mark.unit
+    def test_untouched_file_not_rewritten(self, tmp_path: Path) -> None:
+        from portolan_cli.viz.style import complete_style_sources
+
+        style_path = tmp_path / "styles" / "ok.json"
+        self._write(
+            style_path,
+            {
+                "version": 8,
+                "sources": {
+                    "data": {
+                        "type": "vector",
+                        "url": "pmtiles://../a.pmtiles",
+                        "minzoom": 0,
+                        "maxzoom": 10,
+                    }
+                },
+            },
+        )
+        assert complete_style_sources(tmp_path, "a.pmtiles", min_zoom=1, max_zoom=9) == []
+
+    @pytest.mark.unit
+    def test_no_styles_dir(self, tmp_path: Path) -> None:
+        from portolan_cli.viz.style import complete_style_sources
+
+        assert complete_style_sources(tmp_path, "a.pmtiles") == []

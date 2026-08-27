@@ -338,7 +338,7 @@ class TestMapboxStyleBuilder:
             layers=[layer],
             pmtiles_url="../data.pmtiles",
         )
-        assert style["sources"]["data"]["url"] == "../data.pmtiles"
+        assert style["sources"]["data"]["url"] == "pmtiles://../data.pmtiles"
 
     def test_make_mapbox_style_multiple_layers(self) -> None:
         """Style with multiple layers (e.g., fill + outline)."""
