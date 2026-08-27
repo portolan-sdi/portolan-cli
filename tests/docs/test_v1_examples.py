@@ -75,13 +75,14 @@ def _arcgis_server(tmp_path: Path) -> Iterator[tuple[str, Path, subprocess.Popen
     )
 
     try:
-        for _ in range(100):
+        startup_deadline = time.monotonic() + 30
+        while time.monotonic() < startup_deadline:
             if port_file.is_file():
                 break
             if process.poll() is not None:
                 stdout, stderr = process.communicate()
                 pytest.fail(f"ArcGIS fixture server failed:\n{stdout}{stderr}")
-            time.sleep(0.05)
+            time.sleep(0.1)
         else:
             process.terminate()
             stdout, stderr = process.communicate(timeout=5)
@@ -120,7 +121,7 @@ def _run_example(
 ) -> subprocess.CompletedProcess[str]:
     """Run the exact script embedded in the public documentation."""
     return subprocess.run(
-        [str(EXAMPLE)],
+        ["sh", str(EXAMPLE)],
         cwd=PROJECT_ROOT,
         env=_example_environment(catalog_dir, arcgis_url, remote),
         check=False,
