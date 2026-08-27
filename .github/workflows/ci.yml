@@ -357,6 +357,14 @@ jobs:
           PORTOLAN_S3_USE_SSL: "false"
         run: uv run pytest tests/docs/ -v --tb=short
 
+      - name: Upload documentation preview
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: documentation-site
+          path: site
+          retention-days: 7
+
       - name: MinIO logs
         if: failure()
         run: docker compose -f tests/iceberg/e2e/docker-compose.yml logs
