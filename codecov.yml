@@ -1,36 +1,18 @@
-# Codecov configuration
-# https://docs.codecov.io/docs/codecov-yaml
-
+# Synced skeleton from portolan-sdi/portolan-ops.
+# Codecov reports coverage but never controls a merge. The reusable CI runs
+# diff-cover at 90% as the local coverage gate.
 coverage:
-  precision: 2
-  round: down
-  range: "80...100"
-
   status:
-    # Overall project coverage. `auto` compares against the base commit, so the
-    # gate is "do not regress" rather than a fixed number the repo does not meet.
-    # The previous `target: 90%` sat above actual coverage (83.03%), so it could
-    # only ever fail — see PR #733.
     project:
       default:
         target: auto
-        threshold: 1%  # Absorb run-to-run noise; a real drop still fails.
-        if_ci_failed: error
-
-    # Coverage of changed lines only (patch)
+        threshold: 1%
+        informational: true
     patch:
       default:
-        target: 80%  # Patch coverage target (new code)
-        threshold: 10%  # Allow +-10% tolerance for edge cases
-        if_ci_failed: error
+        target: 90%
+        informational: true
 
-# Don't fail for missing coverage on these patterns
-ignore:
-  - "tests/**/*"
-  - "**/__init__.py"
-
-# Comment configuration
 comment:
-  layout: "header, diff, files"
-  behavior: default
+  layout: "condensed_header, diff, flags"
   require_changes: true
