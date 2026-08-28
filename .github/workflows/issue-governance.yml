@@ -1,0 +1,37 @@
+# Thin caller — synced from portolan-sdi/portolan-ops (ci/issue-governance.yml).
+# Edit it there. Local changes are overwritten on the next sync.
+#
+# Puts every issue on the org project board, gives a new issue the Backlog
+# milestone when it arrives without one, and removes labels outside the
+# canonical set. The set and the rules live in portolan-ops, and norms/repos.md
+# there documents both. Nothing here decides priority.
+name: Issue governance
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serial per issue, and never cancelled: a superseded run may already have
+  # removed a label without leaving the comment that explains it.
+  group: ${{ github.workflow }}-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  enforce:
+    # v1 is a moving major tag. Changes to the label set or the rules reach
+    # this repo when the tag moves, not when ops merges.
+    uses: portolan-sdi/portolan-ops/.github/workflows/reusable-issue-governance.yml@v1
+    permissions:
+      contents: read
+      issues: write
+    secrets:
+      # Named rather than inherited: the called workflow needs these two and
+      # nothing else, and an unconditional inherit hands it every secret the
+      # repo holds. Both are optional there, so a repo without them still
+      # gets the milestone and label rules.
+      OPS_SYNC_APP_CLIENT_ID: ${{ secrets.OPS_SYNC_APP_CLIENT_ID }}
+      OPS_SYNC_APP_KEY: ${{ secrets.OPS_SYNC_APP_KEY }}
