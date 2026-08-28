@@ -12,8 +12,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from click.testing import CliRunner
 
+from portolan_cli.cli import cli
 from portolan_cli.sync.push import (
+    PushAllResult,
     PushResult,
     discover_collections,
     push_all_collections,
@@ -333,3 +336,102 @@ class TestPushAllCollections:
         assert call_kwargs["dry_run"] is True
         assert call_kwargs["collection"] == "col1"
         assert call_kwargs["include_catalog"] is False
+
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
+    def test_dry_run_reports_would_push_estimate(
+        self, mock_push: MagicMock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Dry-run per-collection and summary counts use the would-push estimate.
+
+        Regression for Issue #804. A dry-run does no remote check, so push()
+        returns files_uploaded=0 and versions_pushed=0. The catalog-wide report
+        must show the local upper-bound estimate instead of 0/0, which otherwise
+        contradicts the "Would push up to N" line and misleads an operator.
+        """
+        _setup_valid_catalog(tmp_path)
+
+        (tmp_path / "col1").mkdir()
+        (tmp_path / "col1" / "versions.json").write_text(json.dumps({"versions": []}))
+
+        mock_push.return_value = PushResult(
+            success=True,
+            files_uploaded=0,
+            versions_pushed=0,
+            conflicts=[],
+            errors=[],
+            dry_run=True,
+            would_push_versions=2,
+            would_push_files=3,
+        )
+
+        result = push_all_collections(
+            catalog_root=tmp_path,
+            destination="s3://bucket/catalog",
+            force=False,
+            dry_run=True,
+            profile=None,
+        )
+
+        # The uploaded counts stay at 0 because a dry-run uploads nothing.
+        # The estimate goes to the separate would-push fields.
+        assert result.dry_run is True
+        assert result.total_versions_pushed == 0
+        assert result.total_files_uploaded == 0
+        assert result.total_would_push_versions == 2
+        assert result.total_would_push_files == 3
+
+        # Terminal output must not report the contradictory "0 version(s), 0 file(s)".
+        out = capsys.readouterr().out
+        assert "col1: would push up to 2 version(s), 3 file(s)" in out
+        assert "[DRY RUN] Would push 1 collection(s), 2 version(s), 3 file(s)" in out
+        assert "0 version(s), 0 file(s)" not in out
+
+
+class TestCatalogWideDryRunJson:
+    """The catalog-wide --json dry-run envelope must be side-effect-honest."""
+
+    @patch("portolan_cli.sync.push.push_all_collections")
+    def test_dry_run_json_reports_zero_uploaded(
+        self, mock_push_all: MagicMock, tmp_path: Path
+    ) -> None:
+        """A dry-run uploads nothing, so the JSON envelope reports 0 uploaded.
+
+        Regression for Issue #833. The estimate belongs in the would-push fields.
+        The total_files_uploaded and total_versions_pushed fields stay at 0. An
+        agent that reads total_files_uploaded must not see the estimate there.
+        """
+        _setup_valid_catalog(tmp_path)
+
+        mock_push_all.return_value = PushAllResult(
+            success=True,
+            total_collections=1,
+            successful_collections=1,
+            failed_collections=0,
+            total_files_uploaded=0,
+            total_versions_pushed=0,
+            dry_run=True,
+            total_would_push_files=3,
+            total_would_push_versions=2,
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "push",
+                "s3://bucket/catalog",
+                "--dry-run",
+                "--json",
+                "--catalog",
+                str(tmp_path),
+            ],
+        )
+
+        assert result.exit_code == 0
+        envelope = json.loads(result.output)
+        data = envelope["data"]
+        assert data["total_files_uploaded"] == 0
+        assert data["total_versions_pushed"] == 0
+        assert data["dry_run"] is True
+        assert data["total_would_push_files"] == 3
+        assert data["total_would_push_versions"] == 2
