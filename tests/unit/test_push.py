@@ -2384,6 +2384,7 @@ class TestDryRunNetworkIsolation:
         assert result.files_uploaded == 0  # dry-run never uploads
         assert result.dry_run is True  # H3: result must indicate dry-run mode
         assert result.would_push_versions > 0  # H3: should show how many would push
+        assert result.would_push_files > 0  # Issue #804: also show file estimate
 
     @pytest.mark.unit
     def test_push_dry_run_does_not_call_upload_assets(self, local_catalog: Path) -> None:
