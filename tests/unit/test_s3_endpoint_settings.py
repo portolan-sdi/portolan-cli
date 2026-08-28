@@ -71,6 +71,43 @@ def test_object_store_uses_environment_endpoint() -> None:
     assert s3_store.call_args.kwargs["endpoint"] == "http://minio.example.test:9000"
     assert s3_store.call_args.kwargs["virtual_hosted_style_request"] is False
     assert s3_store.call_args.kwargs["client_options"] == {"allow_http": True}
+    assert s3_store.call_args.kwargs["skip_signature"] is True
+
+
+@pytest.mark.parametrize(
+    "resolved_credentials",
+    [
+        ("AKIAEXAMPLE", "secret", None, None),
+        ("ASIAEXAMPLE", "secret", "session-token", None),
+    ],
+)
+def test_object_store_rejects_credentials_over_http(
+    resolved_credentials: tuple[str, str, str | None, None],
+) -> None:
+    """The common store setup never sends resolved credentials over plaintext."""
+    from portolan_cli.errors import InsecureS3EndpointError
+    from portolan_cli.sync.upload import _setup_store_and_kwargs
+
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("portolan_cli.sync.upload.S3Store") as s3_store,
+        patch(
+            "portolan_cli.sync.upload._resolve_s3_credentials",
+            return_value=resolved_credentials,
+        ),
+    ):
+        with pytest.raises(InsecureS3EndpointError) as exc_info:
+            _setup_store_and_kwargs(
+                "s3://example-bucket",
+                profile=None,
+                chunk_concurrency=4,
+                s3_endpoint="minio.example.test:9000",
+                s3_use_ssl=False,
+            )
+
+    assert exc_info.value.code == "PRTLN-CFG003"
+    assert exc_info.value.context == {"endpoint": "minio.example.test:9000"}
+    s3_store.assert_not_called()
 
 
 def test_default_profile_preserves_environment_credentials() -> None:

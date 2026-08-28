@@ -81,6 +81,13 @@ philadelphia-housing/
 A collection groups the files and information for one subject.
 The catalog provides one entry point for both collections.
 
+Portolan currently has direct extractors for ArcGIS REST, WFS, and the CARTO SQL API.
+You can also start with local files that Portolan supports.
+
+Directory structure can organize a larger catalog.
+Portolan turns intermediate directories into subcatalogs and leaf directories into collections.
+Folders below an ArcGIS services root use the same nested structure.
+
 ## 2. Add context and check the catalog
 
 Usable data needs more than a file name.
@@ -88,6 +95,10 @@ A reader needs a clear description, source, publisher, license, preview, and usa
 
 This tutorial includes prepared metadata for the two Philadelphia collections.
 Apply it, generate the documentation, and check the result:
+
+Portolan accepts an SPDX identifier, such as `CC-BY-4.0`.
+Use `other` with a `license_url` when the terms have no SPDX identifier.
+This example uses `other` and links to Philadelphia's terms.
 
 ```sh
 uv run ./examples/philadelphia-housing/02-add-context.sh
@@ -100,7 +111,7 @@ The important output looks like this:
 ✓ Generated 3 README(s)
 ✓ Created/updated 2 metadata items
 ✓ Catalog conforms (3 file(s) checked)
-Catalog passes the Portolan check.
+catalog passes the Portolan check.
 ```
 
 This step adds:
@@ -118,6 +129,11 @@ The three generated README files document the catalog and its two collections.
 For your own catalog, edit the generated `.portolan/metadata.yaml` files.
 This example copies prepared files so that everyone gets the same result.
 
+`.portolan/metadata.yaml` controls descriptions, licenses, providers, and source information.
+`.portolan/config.yaml` controls non-sensitive CLI behavior.
+Both files can exist at the catalog, subcatalog, or collection level.
+Values inherit down the directory tree, and the nearest file overrides its parents.
+
 ## 3. Publish the catalog
 
 When the local catalog looks right, choose an object-storage destination:
@@ -130,6 +146,8 @@ Create the bucket with your storage provider before you publish.
 Use the credentials required by your storage provider.
 For S3-compatible storage, set `PORTOLAN_S3_ENDPOINT` and `PORTOLAN_S3_USE_SSL`.
 Do not store credentials in `.portolan/config.yaml`.
+Portolan accepts plaintext HTTP only for an endpoint that uses anonymous access.
+It rejects credentials unless the endpoint uses HTTPS.
 
 Publish the catalog:
 
@@ -198,6 +216,7 @@ A useful analysis reports that gap instead of hiding it.
 
 The analysis uses DuckDB, not a Portolan-specific query service.
 DuckDB requests only the required Parquet ranges from object storage.
+It installs the spatial extension when the local cache is empty, then loads it.
 It does not clone the catalog or download every file first.
 
 You can also use the published files in tools such as QGIS, ArcGIS, or Python.
@@ -215,7 +234,7 @@ You finished with one documented catalog that people and agents can find, unders
 Portolan handled four parts of the journey:
 
 1. **Convert:** ArcGIS features became cloud-optimized GeoParquet.
-2. **Catalog:** The files gained consistent structure, metadata, previews, and documentation.
+2. **Organize:** The files gained consistent structure, metadata, previews, and documentation.
 3. **Publish:** The catalog moved to object storage without a new serving layer.
 4. **Use:** Standard tools queried the published files directly.
 
@@ -228,7 +247,7 @@ The same journey works for your ArcGIS services:
 3. Publish to storage that you control.
 4. Share the catalog URL or use it in your existing tools.
 
-You can also start from files, WFS endpoints, and other supported sources.
+You can also start from files or another direct extraction source named above.
 The result has the same basic shape: cloud-native files, clear metadata, and one catalog URL.
 
 ## Run the complete workflow

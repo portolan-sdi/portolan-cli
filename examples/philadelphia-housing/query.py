@@ -10,7 +10,7 @@ import duckdb  # deptry: ignore[DEP003] - tutorial analysis, not CLI runtime cod
 
 
 def _asset(catalog: str, collection_id: str) -> str:
-    """Return a local path or URL for one GeoParquet Asset."""
+    """Return a local path or URL for one GeoParquet asset."""
     parsed = urlparse(catalog)
     relative = f"{collection_id}/{collection_id}.parquet"
     if parsed.scheme in {"http", "https"}:
@@ -25,6 +25,7 @@ def summarize(catalog: str) -> tuple[list[tuple[int, int, int]], tuple[int, int]
 
     connection = duckdb.connect()
     try:
+        connection.execute("INSTALL spatial")
         connection.execute("LOAD spatial")
         rows = connection.execute(
             """
@@ -63,7 +64,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Summarize Philadelphia affordable housing by City Council district."
     )
-    parser.add_argument("catalog", help="Local Catalog path or public Catalog URL")
+    parser.add_argument("catalog", help="Local catalog path or public catalog URL")
     return parser.parse_args()
 
 

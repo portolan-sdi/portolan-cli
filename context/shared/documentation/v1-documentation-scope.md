@@ -2,7 +2,7 @@
 
 ## Audience
 
-The primary audience is GIS data publishers who create their first Portolan Catalog.
+The primary audience is GIS data publishers who create their first Portolan catalog.
 Automation engineers are the secondary audience.
 
 ## Source Layout

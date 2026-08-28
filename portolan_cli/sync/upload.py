@@ -68,6 +68,7 @@ from obstore.store import (
     S3Store,
 )
 
+from portolan_cli.errors import InsecureS3EndpointError
 from portolan_cli.output import detail, error, info, success
 
 # Type alias for all supported object stores
@@ -506,6 +507,10 @@ def _create_s3_store(
     access_key, secret_key, session_token, profile_region = _resolve_s3_credentials(profile)
     region = _resolve_s3_region(s3_region, profile_region, bucket)
 
+    has_credentials = any((access_key, secret_key, session_token))
+    if endpoint and not use_ssl and has_credentials:
+        raise InsecureS3EndpointError(_normalize_s3_endpoint(endpoint))
+
     store_kwargs: dict[str, str | bool] = {}
     if region:
         store_kwargs["region"] = region
@@ -519,6 +524,7 @@ def _create_s3_store(
     _add_s3_endpoint_settings(store_kwargs, endpoint, use_ssl)
 
     if endpoint and not use_ssl:
+        store_kwargs["skip_signature"] = True
         return S3Store(bucket, client_options={"allow_http": True}, **store_kwargs)  # type: ignore[arg-type]
     return S3Store(bucket, **store_kwargs)  # type: ignore[arg-type]
 

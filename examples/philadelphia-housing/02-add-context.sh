@@ -28,4 +28,4 @@ portolan add \
 portolan check "$CATALOG_DIR" --fix --workers 1
 portolan check "$CATALOG_DIR" --strict
 
-echo "Catalog passes the Portolan check."
+echo "catalog passes the Portolan check."

@@ -153,6 +153,30 @@ def _requests(request_log: Path) -> list[dict[str, Any]]:
     return [cast(dict[str, Any], json.loads(line)) for line in request_log.read_text().splitlines()]
 
 
+@pytest.mark.unit
+def test_tutorial_names_catalog_options() -> None:
+    """The single tutorial points readers to supported variations."""
+    tutorial = (EXAMPLE_DIR / "README.md").read_text()
+
+    assert all(source in tutorial for source in ("ArcGIS REST", "WFS", "CARTO SQL API"))
+    assert "SPDX identifier" in tutorial
+    assert "`other`" in tutorial
+    assert "`license_url`" in tutorial
+    assert "`.portolan/metadata.yaml`" in tutorial
+    assert "`.portolan/config.yaml`" in tutorial
+    assert "subcatalog" in tutorial
+
+
+@pytest.mark.unit
+def test_query_installs_spatial_before_loading_it() -> None:
+    """The documented query works when DuckDB has an empty extension cache."""
+    source = QUERY.read_text()
+
+    assert source.index('connection.execute("INSTALL spatial")') < source.index(
+        'connection.execute("LOAD spatial")'
+    )
+
+
 @pytest.mark.integration
 def test_example_builds_and_analyzes_a_philadelphia_catalog(tmp_path: Path) -> None:
     """The public workflow extracts, documents, validates, and analyzes two Collections."""
@@ -176,7 +200,7 @@ def test_example_builds_and_analyzes_a_philadelphia_catalog(tmp_path: Path) -> N
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Extracted 2/2 layers" in result.stdout
-    assert "Catalog passes the Portolan check." in result.stdout
+    assert "catalog passes the Portolan check." in result.stdout
 
     catalog = json.loads((catalog_dir / "catalog.json").read_text())
     child_links = sorted(link["href"] for link in catalog["links"] if link["rel"] == "child")
