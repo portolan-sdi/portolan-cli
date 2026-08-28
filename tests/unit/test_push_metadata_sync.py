@@ -815,7 +815,7 @@ class TestPushNoVersionChangeMetadataSync:
 
     @pytest.mark.unit
     def test_nothing_to_push_when_no_metadata_changed(self, tmp_path: Path) -> None:
-        """push_async reports "Nothing to push" for a collection with no metadata."""
+        """push_async returns files_uploaded=0 for a collection with no metadata."""
         import asyncio
 
         from portolan_cli.sync.push import push_async
@@ -878,3 +878,47 @@ class TestPushNoVersionChangeMetadataSync:
         assert result.versions_pushed == 0
         assert result.files_uploaded == 0
         assert uploaded_keys == []
+
+    @pytest.mark.unit
+    def test_metadata_error_reports_summary_without_version_bump(
+        self, catalog_with_metadata: Path
+    ) -> None:
+        """push_async warns a metadata error count on the no-version-change path."""
+        import asyncio
+
+        from portolan_cli.sync.push import push_async
+
+        collection_dir = catalog_with_metadata / "collection1"
+        (collection_dir / "AGENTS.md").write_text("# Agent guide\nUse the new query.")
+
+        # Remote versions.json is identical to local, so the version diff is empty.
+        local_versions = json.loads((collection_dir / "versions.json").read_text())
+
+        async def failing_put_async(store: Any, key: str, content: Any, **kwargs: Any) -> None:
+            raise OSError("permission denied")
+
+        warnings: list[str] = []
+
+        with (
+            patch("portolan_cli.sync.push.setup_store", return_value=(MagicMock(), "prefix")),
+            patch(
+                "portolan_cli.sync.push._fetch_remote_versions_async",
+                new=AsyncMock(return_value=(local_versions, "etag-1")),
+            ),
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=failing_put_async),
+            patch("portolan_cli.sync.push.warn", side_effect=warnings.append),
+        ):
+            result = asyncio.run(
+                push_async(
+                    catalog_root=catalog_with_metadata,
+                    collection="collection1",
+                    destination="s3://test-bucket/catalog",
+                    json_mode=True,
+                )
+            )
+
+        assert result.success is True
+        assert result.versions_pushed == 0
+        assert len(result.metadata_errors) > 0
+        # The summary warn reports the failed metadata file count.
+        assert any("metadata file(s) failed to upload" in message for message in warnings)

@@ -2070,8 +2070,11 @@ async def _sync_collection_metadata_only(
         concurrency=concurrency,
         verbose=verbose,
     )
-    if metadata_uploaded == 0:
-        info("Nothing to push - local and remote are in sync")
+    # Warn with a summary count, the same as the normal upload path.
+    if metadata_errors:
+        warn(f"{len(metadata_errors)} metadata file(s) failed to upload:")
+        for err in metadata_errors:
+            warn(f" {err}")
     return PushResult(
         success=True,
         files_uploaded=metadata_uploaded,
