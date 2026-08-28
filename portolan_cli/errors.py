@@ -535,6 +535,22 @@ class ConfigInvalidStructureError(ConfigError):
         )
 
 
+class InsecureS3EndpointError(ConfigError):
+    """Raised when an S3 endpoint would send credentials over plaintext HTTP.
+
+    Error code: PRTLN-CFG003
+    """
+
+    code = "PRTLN-CFG003"
+
+    def __init__(self, endpoint: str) -> None:
+        super().__init__(
+            "Refusing to send S3 credentials over plaintext HTTP. "
+            "Use HTTPS or remove the credentials for anonymous access.",
+            endpoint=endpoint,
+        )
+
+
 # Extract Errors (PRTLN-EXT*)
 class ArcGISAuthError(PortolanError):
     """Raised when ArcGIS token resolution or authentication fails.

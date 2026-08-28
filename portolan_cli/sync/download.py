@@ -287,7 +287,7 @@ def download_file(
     overwrite: bool = True,
     s3_endpoint: str | None = None,
     s3_region: str | None = None,
-    s3_use_ssl: bool = True,
+    s3_use_ssl: bool | None = None,
     chunk_concurrency: int = 4,
 ) -> DownloadResult:
     """Download a single file from S3/GCS/Azure.
@@ -587,7 +587,7 @@ def download_directory(
     overwrite: bool = True,
     s3_endpoint: str | None = None,
     s3_region: str | None = None,
-    s3_use_ssl: bool = True,
+    s3_use_ssl: bool | None = None,
     verbose: bool = False,
 ) -> DownloadResult:
     """Download a directory from S3/GCS/Azure with parallel downloads.

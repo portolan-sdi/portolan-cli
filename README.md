@@ -1,99 +1,64 @@
-<div align="center">
-  <img src="docs/assets/images/cover.png" alt="Portolan" width="600"/>
-</div>
+# Portolan CLI
 
-<div align="center">
-
+[![PyPI version](https://badge.fury.io/py/portolan-cli.svg)](https://badge.fury.io/py/portolan-cli)
 [![CI](https://github.com/portolan-sdi/portolan-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/portolan-sdi/portolan-cli/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/portolan-sdi/portolan-cli/branch/main/graph/badge.svg)](https://codecov.io/gh/portolan-sdi/portolan-cli)
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![PyPI version](https://badge.fury.io/py/portolan-cli.svg)](https://badge.fury.io/py/portolan-cli)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/portolan-sdi/portolan-cli/blob/main/LICENSE)
 
-</div>
+Portolan is an opinionated specification for serverless spatial data infrastructures.
+It defines how publishers store, organize, document, and serve geospatial data as static files in their own storage.
+Every Portolan catalog should offer a predictable, high-quality experience for publishers, people, and agents.
 
----
+Portolan builds on existing standards instead of replacing them.
+GeoParquet and PMTiles serve vector data, while COG serves raster data.
+STAC provides a consistent catalog structure and index.
+Required README and AGENTS.md files explain each catalog to people and agents.
+The specification also covers operational details such as spatial ordering, bounding boxes, and CORS.
 
-<!-- --8<-- [start:intro] -->
-Portolan enables organizations to share geospatial data in a low-cost, accessible, sovereign, and reliable way. Built on [cloud-native geospatial](https://cloudnativegeo.org) formats, a Portolan catalog is as interactive as any geospatial portal—but faster, more scalable, and much cheaper to run.
+This repository contains the Portolan CLI, an implementation of the specification.
+It helps publishers:
 
-This CLI converts data to cloud-native formats (GeoParquet, COG), generates rich STAC metadata, and syncs to any object storage—no servers required.
-<!-- --8<-- [end:intro] -->
+- Build [STAC](https://stacspec.org/en/) catalogs with [GeoParquet](https://geoparquet.org/) and [COG](https://cogeo.org/) assets.
+- Extract ArcGIS, WFS, and Carto sources.
+- Generate thumbnails, [PMTiles](https://docs.protomaps.com/pmtiles/), MapLibre styles, and STAC GeoParquet indexes.
+- Track collection versions and checksums without a database.
+- Validate catalog metadata, structure, and assets against the [Portolan specification](https://github.com/portolan-sdi/portolan-spec).
+- Push, pull, sync, and clone catalogs through S3, GCS, Azure, or S3-compatible storage.
+- Use structured JSON output, a typed Python API, or backend plugins.
 
-<!-- --8<-- [start:quickstart] -->
-## Quick Start
-
-```bash
-# Initialize a catalog (prompts for a license; --license sets it directly)
-portolan init
-
-# Add files (creates collections from directories)
-portolan add demographics/
-
-# Validate and convert to cloud-native formats
-portolan check --fix
-
-# notest - requires S3 credentials
-# Push to remote storage
-portolan push s3://my-bucket/catalog --collection demographics
-
-# Later: pull updates from remote
-portolan pull s3://my-bucket/catalog -c demographics
-
-# Or sync everything (pull → init → scan → check → push)
-portolan sync s3://my-bucket/catalog -c demographics
-```
-
-### All Commands
-
-```bash
-portolan init                               # Initialize catalog (asks for a license)
-portolan scan <path>                        # Scan for issues (--fix for filenames)
-portolan add <path>                         # Track files
-portolan add-external <url>                 # Reference a remote dataset in place (no download/convert)
-portolan rm <path>                          # Untrack files (--keep to preserve data)
-portolan check                              # Validate catalog (metadata + geo-assets)
-portolan check --fix                        # Convert to cloud-native + update metadata
-portolan list                               # List tracked files
-portolan info <path>                        # Show file/collection info
-portolan push <remote>                      # Push to remote storage
-portolan pull <remote>                      # Pull from remote storage
-portolan sync <remote>                      # Full roundtrip sync
-portolan clone <remote> <path>              # Clone remote catalog
-portolan config <set|get|list|unset>        # Manage configuration
-portolan metadata init                      # Create metadata.yaml template
-portolan metadata validate                  # Validate required metadata fields
-portolan readme                             # Generate README.md from STAC + metadata
-portolan clean                              # Remove Portolan metadata
-```
-<!-- --8<-- [end:quickstart] -->
-
-<!-- --8<-- [start:installation] -->
 ## Installation
 
-```bash
-# Recommended: uv (fast, isolated, project-aware)
+```sh
 uv tool install portolan-cli
-
-# Alternative: pipx (isolated environment)
-# pipx install portolan-cli
-
-# Alternative: pip (global/user site-packages, may conflict)
-# pip install portolan-cli
 ```
 
-### For Development
+Or with pip:
 
-```bash
+```sh
+pip install portolan-cli
+```
+
+## Documentation
+
+Start with the [end-to-end publishing example](https://portolan-sdi.github.io/portolan-cli/examples/).
+We plan to add more tutorials over time.
+
+See the [full documentation](https://portolan-sdi.github.io/portolan-cli/).
+It includes an auto-generated [CLI reference](https://portolan-sdi.github.io/portolan-cli/reference/cli/)
+and [Python API reference](https://portolan-sdi.github.io/portolan-cli/reference/python/).
+
+## Development
+
+```sh
 git clone https://github.com/portolan-sdi/portolan-cli.git
 cd portolan-cli
 uv sync --all-extras
-uv run portolan --help
+uv run pytest
 ```
-<!-- --8<-- [end:installation] -->
 
-See [Contributing Guide](docs/contributing.md) for full development setup.
+See the [contributing guide](https://portolan-sdi.github.io/portolan-cli/contributing/) for details.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE)
+[Apache 2.0](https://github.com/portolan-sdi/portolan-cli/blob/main/LICENSE)

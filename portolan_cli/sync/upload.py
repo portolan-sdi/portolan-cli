@@ -68,6 +68,7 @@ from obstore.store import (
     S3Store,
 )
 
+from portolan_cli.errors import InsecureS3EndpointError
 from portolan_cli.output import detail, error, info, success
 
 # Type alias for all supported object stores
@@ -420,13 +421,121 @@ def check_credentials(destination: str, profile: str | None = None) -> tuple[boo
 # =============================================================================
 
 
+def _resolve_s3_endpoint_settings(
+    s3_endpoint: str | None, s3_use_ssl: bool | None
+) -> tuple[str | None, bool]:
+    """Resolve explicit or environment-only S3 endpoint settings."""
+    from portolan_cli.config import resolve_s3_endpoint_settings
+
+    environment_settings = resolve_s3_endpoint_settings()
+    return (
+        s3_endpoint if s3_endpoint is not None else environment_settings.endpoint,
+        s3_use_ssl if s3_use_ssl is not None else environment_settings.use_ssl,
+    )
+
+
+def _should_load_profile(profile: str) -> bool:
+    """Return whether a named profile should override environment credentials."""
+    has_environment_credentials = os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get(
+        "AWS_SECRET_ACCESS_KEY"
+    )
+    return profile != "default" or not has_environment_credentials
+
+
+S3Credentials = tuple[str | None, str | None, str | None, str | None]
+
+
+def _resolve_s3_credentials(profile: str | None) -> S3Credentials:
+    """Load credentials from an explicit profile or the process environment."""
+    if profile is not None and _should_load_profile(profile):
+        return _load_aws_credentials_from_profile(profile)
+
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+    session_token = os.environ.get("AWS_SESSION_TOKEN")
+    if access_key and secret_key:
+        return access_key, secret_key, session_token, None
+    return _load_aws_credentials_from_profile("default")
+
+
+def _resolve_s3_region(
+    s3_region: str | None, profile_region: str | None, bucket: str
+) -> str | None:
+    """Resolve a region from explicit, environment, profile, or bucket settings."""
+    if s3_region:
+        return s3_region
+    environment_region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+    if environment_region:
+        return environment_region
+    if profile_region:
+        return profile_region
+    return _try_infer_region_from_bucket(bucket)
+
+
+def _normalize_s3_endpoint(endpoint: str) -> str:
+    """Remove an optional scheme from an S3-compatible endpoint."""
+    if endpoint.startswith("https://"):
+        return endpoint[8:]
+    if endpoint.startswith("http://"):
+        return endpoint[7:]
+    return endpoint
+
+
+def _add_s3_endpoint_settings(
+    store_kwargs: dict[str, str | bool], endpoint: str | None, use_ssl: bool
+) -> None:
+    """Add path-style custom endpoint settings to S3 store options."""
+    if endpoint is None:
+        return
+    store_kwargs["virtual_hosted_style_request"] = False
+    protocol = "https" if use_ssl else "http"
+    store_kwargs["endpoint"] = f"{protocol}://{_normalize_s3_endpoint(endpoint)}"
+    if "region" not in store_kwargs:
+        store_kwargs["region"] = "us-east-1"
+
+
+def _create_s3_store(
+    bucket_url: str,
+    profile: str | None,
+    s3_endpoint: str | None,
+    s3_region: str | None,
+    s3_use_ssl: bool | None,
+) -> ObjectStore:
+    """Create an S3 store with credentials and endpoint settings."""
+    endpoint, use_ssl = _resolve_s3_endpoint_settings(s3_endpoint, s3_use_ssl)
+    bucket = bucket_url.replace("s3://", "").split("/")[0]
+    access_key, secret_key, session_token, profile_region = _resolve_s3_credentials(profile)
+    region = _resolve_s3_region(s3_region, profile_region, bucket)
+
+    has_credentials = any((access_key, secret_key, session_token))
+    if endpoint and not use_ssl and has_credentials:
+        raise InsecureS3EndpointError(_normalize_s3_endpoint(endpoint))
+
+    store_kwargs: dict[str, str | bool] = {}
+    if region:
+        store_kwargs["region"] = region
+    if access_key and secret_key:
+        store_kwargs["access_key_id"] = access_key
+        store_kwargs["secret_access_key"] = secret_key
+        if session_token:
+            store_kwargs["aws_session_token"] = session_token
+    if "." in bucket:
+        store_kwargs["virtual_hosted_style_request"] = False
+    _add_s3_endpoint_settings(store_kwargs, endpoint, use_ssl)
+
+    if endpoint and not use_ssl:
+        store_kwargs["skip_signature"] = True
+        return S3Store(bucket, client_options={"allow_http": True}, **store_kwargs)  # type: ignore[arg-type]
+    return S3Store(bucket, **store_kwargs)  # type: ignore[arg-type]
+
+
 def _setup_store_and_kwargs(
     bucket_url: str,
     profile: str | None,
     chunk_concurrency: int,
     s3_endpoint: str | None = None,
     s3_region: str | None = None,
-    s3_use_ssl: bool = True,
+    s3_use_ssl: bool | None = None,
 ) -> tuple[ObjectStore, dict[str, int]]:
     """Setup object store and upload kwargs.
 
@@ -447,84 +556,12 @@ def _setup_store_and_kwargs(
     3. Default profile in ~/.aws/credentials (automatic fallback)
     """
     if bucket_url.startswith("s3://"):
-        bucket = bucket_url.replace("s3://", "").split("/")[0]
-
-        # Load credentials from profile, environment, or default profile
-        access_key: str | None = None
-        secret_key: str | None = None
-        session_token: str | None = None
-        profile_region: str | None = None
-
-        if profile:
-            (
-                access_key,
-                secret_key,
-                session_token,
-                profile_region,
-            ) = _load_aws_credentials_from_profile(profile)
-        else:
-            # Try environment variables first
-            access_key = os.environ.get("AWS_ACCESS_KEY_ID")
-            secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-            session_token = os.environ.get("AWS_SESSION_TOKEN")
-
-            # Fall back to default profile if no env vars
-            if not (access_key and secret_key):
-                (
-                    access_key,
-                    secret_key,
-                    session_token,
-                    profile_region,
-                ) = _load_aws_credentials_from_profile("default")
-
-        # Determine region: explicit flag > env var > profile config > bucket heuristic
-        region = s3_region
-        if not region:
-            region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
-        if not region and profile_region:
-            region = profile_region
-        if not region:
-            region = _try_infer_region_from_bucket(bucket)
-
-        # Build S3Store with appropriate configuration
-        store_kwargs: dict[str, str | bool] = {}
-        if region:
-            store_kwargs["region"] = region
-
-        if access_key and secret_key:
-            store_kwargs["access_key_id"] = access_key
-            store_kwargs["secret_access_key"] = secret_key
-            # Forward the session token for temporary (STS) credentials, e.g.
-            # those issued by Source Cooperative. Without it, obstore sends an
-            # 'ASIA…' key with no token and S3 returns 403 InvalidAccessKeyId.
-            if session_token:
-                store_kwargs["aws_session_token"] = session_token
-
-        # Bucket names with dots (e.g., us-west-2.opendata.source.coop) require
-        # path-style requests because virtual-hosted style would create invalid
-        # DNS names (bucket.s3.region.amazonaws.com doesn't work with dots)
-        if "." in bucket:
-            store_kwargs["virtual_hosted_style_request"] = False
-
-        if s3_endpoint:
-            # Strip existing scheme if present to avoid double-protocol
-            endpoint = s3_endpoint
-            if endpoint.startswith("https://"):
-                endpoint = endpoint[8:]
-            elif endpoint.startswith("http://"):
-                endpoint = endpoint[7:]
-            protocol = "https" if s3_use_ssl else "http"
-            store_kwargs["endpoint"] = f"{protocol}://{endpoint}"
-            if not region:
-                store_kwargs["region"] = "us-east-1"  # Default for custom endpoints
-
-        store: ObjectStore = S3Store(bucket, **store_kwargs)  # type: ignore[arg-type]
+        store = _create_s3_store(bucket_url, profile, s3_endpoint, s3_region, s3_use_ssl)
     else:
         # Non-S3 stores (GCS, Azure, HTTP)
         store = obs.store.from_url(bucket_url)
 
-    kwargs = {"max_concurrency": chunk_concurrency}
-    return store, kwargs
+    return store, {"max_concurrency": chunk_concurrency}
 
 
 def setup_store(
@@ -672,7 +709,7 @@ def upload_file(
     dry_run: bool = False,
     s3_endpoint: str | None = None,
     s3_region: str | None = None,
-    s3_use_ssl: bool = True,
+    s3_use_ssl: bool | None = None,
     chunk_concurrency: int = 4,
 ) -> UploadResult:
     """Upload a single file to S3/GCS/Azure.
@@ -879,7 +916,7 @@ def upload_directory(
     dry_run: bool = False,
     s3_endpoint: str | None = None,
     s3_region: str | None = None,
-    s3_use_ssl: bool = True,
+    s3_use_ssl: bool | None = None,
     verbose: bool = False,
 ) -> UploadResult:
     """Upload a directory to S3/GCS/Azure with parallel uploads.

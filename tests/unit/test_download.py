@@ -620,8 +620,8 @@ class TestCustomS3Endpoint:
                 assert "minio.example.com:9000" in call_kwargs["endpoint"]
 
     @pytest.mark.unit
-    def test_download_file_custom_endpoint_no_ssl(self, temp_download_dir: Path) -> None:
-        """download_file should support HTTP for custom endpoints."""
+    def test_download_file_custom_endpoint_anonymous_http(self, temp_download_dir: Path) -> None:
+        """download_file supports unsigned HTTP for public custom endpoints."""
         from portolan_cli.sync.download import download_file
 
         dest_file = temp_download_dir / "data.parquet"
@@ -638,9 +638,12 @@ class TestCustomS3Endpoint:
                 mock_response.__iter__ = lambda self: iter([test_data])
                 mock_obs.get.return_value = mock_response
 
-                with patch.dict(
-                    os.environ,
-                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+                with (
+                    patch.dict(os.environ, {}, clear=True),
+                    patch(
+                        "portolan_cli.sync.upload._load_aws_credentials_from_profile",
+                        return_value=(None, None, None, None),
+                    ),
                 ):
                     result = download_file(
                         source="s3://mybucket/data.parquet",
@@ -652,6 +655,7 @@ class TestCustomS3Endpoint:
                 assert result.success is True
                 call_kwargs = mock_s3_store.call_args.kwargs
                 assert call_kwargs["endpoint"] == "http://localhost:9000"
+                assert call_kwargs["skip_signature"] is True
 
 
 # =============================================================================

@@ -1,0 +1,405 @@
+"""Behavioral checks for the Philadelphia housing publishing tutorial."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import threading
+from collections import Counter
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, cast
+
+import pyarrow.parquet as pq
+import pytest
+
+from .philadelphia_arcgis_server import create_server
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+README = PROJECT_ROOT / "README.md"
+EXAMPLE_DIR = PROJECT_ROOT / "examples" / "philadelphia-housing"
+EXAMPLE = EXAMPLE_DIR / "run.sh"
+JOURNEY_STEPS = (
+    EXAMPLE_DIR / "01-create-catalog.sh",
+    EXAMPLE_DIR / "02-add-context.sh",
+    EXAMPLE_DIR / "03-publish.sh",
+)
+QUERY = EXAMPLE_DIR / "query.py"
+FIXTURE_DIR = PROJECT_ROOT / "tests" / "fixtures" / "realdata" / "philadelphia-housing"
+CI_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
+
+EXPECTED_QUERY_OUTPUT = """\
+district  projects  units
+       1        37   2310
+       2        62   1886
+       3        97   3724
+       4        36   1172
+       5       119   4774
+       6         9    264
+       7        44   1915
+       8        53   1796
+       9         9    310
+      10        10    433
+
+Located projects: 476
+Located units: 18,584
+Projects without geometry: 25
+Units without geometry: 665
+"""
+
+
+def _read_text(path: Path) -> str:
+    """Read a repository text file with platform-independent decoding."""
+    return path.read_text(encoding="utf-8")
+
+
+@contextmanager
+def _arcgis_server(tmp_path: Path) -> Iterator[tuple[str, Path, Callable[[], None]]]:
+    """Run the deterministic ArcGIS replay inside the current test worker."""
+    assert (FIXTURE_DIR / "affordable_housing.parquet").is_file()
+    assert (FIXTURE_DIR / "council_districts_2024.parquet").is_file()
+
+    request_log = tmp_path / "arcgis-requests.jsonl"
+    server = create_server(FIXTURE_DIR, request_log)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    stopped = False
+
+    def stop_server() -> None:
+        nonlocal stopped
+        if stopped:
+            return
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        if thread.is_alive():
+            raise RuntimeError("ArcGIS fixture server did not stop")
+        stopped = True
+
+    port = int(server.server_address[1])
+    try:
+        yield f"http://127.0.0.1:{port}/ArcGIS/rest/services", request_log, stop_server
+    finally:
+        stop_server()
+
+
+def _example_environment(
+    catalog_dir: Path,
+    arcgis_url: str,
+    remote: str | None = None,
+) -> dict[str, str]:
+    """Build the documented workflow environment."""
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "CATALOG_DIR": str(catalog_dir),
+            "PORTOLAN_PHL_ARCGIS_URL": arcgis_url,
+            "PYTHONIOENCODING": "utf-8",
+        }
+    )
+    if remote is not None:
+        environment["PORTOLAN_PHL_REMOTE"] = remote
+    return environment
+
+
+def _run_example(
+    catalog_dir: Path,
+    arcgis_url: str,
+    remote: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run the exact script embedded in the public documentation."""
+    return subprocess.run(
+        ["sh", str(EXAMPLE)],
+        cwd=PROJECT_ROOT,
+        env=_example_environment(catalog_dir, arcgis_url, remote),
+        check=False,
+        capture_output=True,
+        encoding="utf-8",
+    )
+
+
+def _run_query(catalog_url: str) -> subprocess.CompletedProcess[str]:
+    """Run the exact analysis embedded in the public documentation."""
+    environment = os.environ.copy()
+    environment["PYTHONIOENCODING"] = "utf-8"
+    return subprocess.run(
+        [sys.executable, str(QUERY), catalog_url],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        encoding="utf-8",
+    )
+
+
+def _collection(catalog_dir: Path, collection_id: str) -> dict[str, Any]:
+    """Read one generated STAC Collection."""
+    value = json.loads(_read_text(catalog_dir / collection_id / "collection.json"))
+    return cast(dict[str, Any], value)
+
+
+def _requests(request_log: Path) -> list[dict[str, Any]]:
+    """Read the ArcGIS fixture server request log."""
+    return [cast(dict[str, Any], json.loads(line)) for line in _read_text(request_log).splitlines()]
+
+
+@pytest.mark.unit
+def test_readme_describes_portolan_as_a_specification() -> None:
+    """The README distinguishes the specification from this CLI implementation."""
+    readme = _read_text(README)
+
+    assert "Portolan is an opinionated specification" in readme
+    assert "This repository contains the Portolan CLI" in readme
+    assert "Portolan standard" not in readme
+    assert "end-to-end publishing example" in readme
+    assert "more tutorials over time" in readme
+    assert "CLI reference" in readme
+    assert "Python API reference" in readme
+
+
+@pytest.mark.unit
+def test_tutorial_names_catalog_options() -> None:
+    """The single tutorial points readers to supported variations."""
+    tutorial = _read_text(EXAMPLE_DIR / "README.md")
+
+    assert all(source in tutorial for source in ("ArcGIS REST", "WFS", "CARTO SQL API"))
+    assert "SPDX identifier" in tutorial
+    assert "`other`" in tutorial
+    assert "`license_url`" in tutorial
+    assert "`.portolan/metadata.yaml`" in tutorial
+    assert "`.portolan/config.yaml`" in tutorial
+    assert "subcatalog" in tutorial
+
+
+@pytest.mark.unit
+def test_tutorial_shows_every_file_that_the_workflow_executes_or_copies() -> None:
+    """Readers can inspect every source file used by the documented workflow."""
+    tutorial = _read_text(EXAMPLE_DIR / "README.md")
+    visible_sources = (
+        *((source, "sh") for source in JOURNEY_STEPS),
+        (EXAMPLE, "sh"),
+        (QUERY, "python"),
+        *((source, "yaml") for source in sorted((EXAMPLE_DIR / "metadata").glob("*.yaml"))),
+    )
+
+    for source, language in visible_sources:
+        source_text = _read_text(source).rstrip()
+        assert source_text, f"Visible source is empty: {source.name}"
+        fenced_source = f"```{language}\n{source_text}\n```"
+        assert fenced_source in tutorial, f"Tutorial hides {source.name}"
+
+
+@pytest.mark.unit
+def test_tutorial_uses_a_placeholder_contact() -> None:
+    """The public example does not publish a real personal or project email."""
+    tutorial = _read_text(EXAMPLE_DIR / "README.md")
+    metadata = "\n".join(
+        _read_text(source) for source in sorted((EXAMPLE_DIR / "metadata").glob("*.yaml"))
+    )
+
+    for real_email in ("nlebovits@pm.me", "portolan@googlegroups.com"):
+        assert real_email not in tutorial
+        assert real_email not in metadata
+    assert tutorial.count("publisher@example.org") == 3
+    assert metadata.count("publisher@example.org") == 3
+
+
+@pytest.mark.unit
+def test_docs_ci_uses_anonymous_http_minio() -> None:
+    """The docs job does not send credentials to its plaintext test service."""
+    workflow = _read_text(CI_WORKFLOW)
+    docs_job = workflow.partition("\n  docs:\n")[2].partition("\n  build:\n")[0]
+
+    assert docs_job
+    assert "mc anonymous set public local/portolan-docs" in docs_job
+    assert "AWS_ACCESS_KEY_ID" not in docs_job
+    assert "AWS_SECRET_ACCESS_KEY" not in docs_job
+    assert 'PORTOLAN_S3_USE_SSL: "false"' in docs_job
+
+
+@pytest.mark.unit
+def test_arcgis_fixture_starts_without_a_child_python_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fixture does not repeat heavy imports in a resource-constrained child."""
+
+    def reject_child_process(*args: object, **kwargs: object) -> None:
+        raise AssertionError("ArcGIS fixture started a child Python process")
+
+    monkeypatch.setattr(subprocess, "Popen", reject_child_process)
+
+    with _arcgis_server(tmp_path) as (arcgis_url, request_log, stop_server):
+        assert arcgis_url.startswith("http://127.0.0.1:")
+        assert request_log == tmp_path / "arcgis-requests.jsonl"
+        assert callable(stop_server)
+
+
+@pytest.mark.unit
+def test_docs_text_reader_requests_utf8(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Documentation tests decode symbols consistently on every platform."""
+    text_file = tmp_path / "symbols.txt"
+    text_file.write_text("✓ →", encoding="utf-8")
+    path_read_text = Path.read_text
+
+    def require_utf8(path: Path, encoding: str | None = None, errors: str | None = None) -> str:
+        assert encoding == "utf-8"
+        return path_read_text(path, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", require_utf8)
+
+    assert _read_text(text_file) == "✓ →"
+
+
+@pytest.mark.unit
+def test_example_subprocess_forces_utf8_stdio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Windows test process can emit and capture tutorial symbols."""
+
+    def capture_run(_command: object, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        environment = cast(dict[str, str], kwargs["env"])
+        assert environment["PYTHONIOENCODING"] == "utf-8"
+        assert kwargs["encoding"] == "utf-8"
+        assert "text" not in kwargs
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", capture_run)
+
+    result = _run_example(tmp_path, "http://127.0.0.1:1/ArcGIS/rest/services")
+
+    assert result.returncode == 0
+
+
+@pytest.mark.unit
+def test_query_installs_spatial_before_loading_it() -> None:
+    """The documented query works when DuckDB has an empty extension cache."""
+    source = _read_text(QUERY)
+
+    assert source.index('connection.execute("INSTALL spatial")') < source.index(
+        'connection.execute("LOAD spatial")'
+    )
+
+
+@pytest.mark.integration
+def test_example_builds_and_analyzes_a_philadelphia_catalog(tmp_path: Path) -> None:
+    """The public workflow extracts, documents, validates, and analyzes two Collections."""
+    catalog_dir = tmp_path / "philadelphia-housing"
+
+    wrapper = _read_text(EXAMPLE)
+    for step in JOURNEY_STEPS:
+        assert step.is_file()
+        assert f'"$example_dir/{step.name}"' in wrapper
+
+    tutorial = _read_text(EXAMPLE_DIR / "README.md")
+    assert tutorial.index("## 3. Publish the Catalog") < tutorial.index(
+        "## 4. Use the Published Catalog"
+    )
+    assert "✓ Extracted 2/2 layers" in tutorial
+    assert "✓ Added 2 files to 2 collections" in tutorial
+    assert "✓ Pushed 2 collection(s), 4 version(s), 18 file(s)" in tutorial
+
+    with _arcgis_server(tmp_path) as (arcgis_url, request_log, _process):
+        result = _run_example(catalog_dir, arcgis_url)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Extracted 2/2 layers" in result.stdout
+    assert "catalog passes the Portolan check." in result.stdout
+
+    catalog = json.loads(_read_text(catalog_dir / "catalog.json"))
+    child_links = sorted(link["href"] for link in catalog["links"] if link["rel"] == "child")
+    assert child_links == [
+        "./affordablehousingproduction/collection.json",
+        "./council_districts_2024/collection.json",
+    ]
+
+    expected = {
+        "affordablehousingproduction": {
+            "count": 501,
+            "source": (
+                "https://services.arcgis.com/fLeGjb7u4uXqeF9q/ArcGIS/rest/services/"
+                "AffordableHousingProduction/FeatureServer/0"
+            ),
+        },
+        "council_districts_2024": {
+            "count": 10,
+            "source": (
+                "https://services.arcgis.com/fLeGjb7u4uXqeF9q/ArcGIS/rest/services/"
+                "Council_Districts_2024/FeatureServer/0"
+            ),
+        },
+    }
+    for collection_id, contract in expected.items():
+        collection = _collection(catalog_dir, collection_id)
+        assert collection["table:row_count"] == contract["count"]
+        assert collection["license"] == "other"
+        assert {provider["name"]: provider["roles"] for provider in collection["providers"]} == {
+            "City of Philadelphia": ["producer", "licensor"],
+            "Portolan Documentation": ["processor", "host"],
+        }
+        assert contract["source"] in {
+            link["href"] for link in collection["links"] if link["rel"] == "via"
+        }
+
+        assets = collection["assets"]
+        assert any("style" in asset["roles"] for asset in assets.values())
+        assert sum("thumbnail" in asset["roles"] for asset in assets.values()) == 1
+        assert (catalog_dir / collection_id / "README.md").is_file()
+        assert (catalog_dir / collection_id / "AGENTS.md").is_file()
+
+        parquet_path = catalog_dir / collection_id / f"{collection_id}.parquet"
+        parquet_file = pq.ParquetFile(parquet_path)
+        assert "bbox" in parquet_file.schema_arrow.names
+        bbox_columns = [
+            index
+            for index in range(parquet_file.metadata.num_columns)
+            if parquet_file.schema.column(index).path.startswith("bbox.")
+        ]
+        assert len(bbox_columns) == 4
+        assert all(
+            parquet_file.metadata.row_group(0).column(index).statistics is not None
+            for index in bbox_columns
+        )
+
+    requests = _requests(request_log)
+    query_requests = [
+        request
+        for request in requests
+        if str(request["path"]).endswith("/query")
+        and request["query"].get("returnCountOnly") != ["true"]
+    ]
+    affordable_offsets = [
+        int(request["query"]["resultOffset"][0])
+        for request in query_requests
+        if "AffordableHousingProduction" in str(request["path"])
+    ]
+    assert sorted(set(affordable_offsets)) == [0, 100, 200, 300, 400, 500]
+    assert Counter(affordable_offsets)[200] == 2
+    assert not any("Unrelated_Parks" in str(request["path"]) for request in requests)
+
+    query = _run_query(str(catalog_dir))
+    assert query.returncode == 0, query.stdout + query.stderr
+    assert query.stdout == EXPECTED_QUERY_OUTPUT
+
+
+@pytest.mark.e2e
+def test_example_publishes_assets_that_remain_queryable_without_arcgis(
+    tmp_path: Path,
+) -> None:
+    """CI queries the published Assets after the source service stops."""
+    if os.environ.get("PORTOLAN_DOCS_MINIO") != "1":
+        pytest.skip("Documentation MinIO service is not running")
+
+    catalog_dir = tmp_path / "philadelphia-housing"
+    remote = "s3://portolan-docs/philadelphia-housing"
+
+    with _arcgis_server(tmp_path) as (arcgis_url, _request_log, stop_arcgis):
+        result = _run_example(catalog_dir, arcgis_url, remote)
+        assert result.returncode == 0, result.stdout + result.stderr
+        stop_arcgis()
+
+    query = _run_query("http://localhost:9000/portolan-docs/philadelphia-housing")
+    assert query.returncode == 0, query.stdout + query.stderr
+    assert query.stdout == EXPECTED_QUERY_OUTPUT

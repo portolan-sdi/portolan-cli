@@ -20,7 +20,7 @@ This document outlines the branding implementation for Portolan CLI documentatio
 | Gradient Start | `#395eca` | Gradient backgrounds (start) |
 | Gradient End | `#848bd8` | Gradient backgrounds (end) |
 
-## Logo Assets
+## Logo assets
 
 All logo files are located in `docs/assets/images/`:
 

@@ -26,6 +26,7 @@ Usage:
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,8 @@ SENSITIVE_SETTINGS: frozenset[str] = frozenset(
         "aws_profile",
         "profile",
         "region",
+        "s3_endpoint",
+        "s3_use_ssl",
     }
 )
 
@@ -146,6 +149,46 @@ DEFAULT_IGNORED_FILES: list[str] = [
     ".env.*",  # .env.local, .env.production, etc.
     ".env.local",  # Explicit for common pattern
 ]
+
+
+@dataclass(frozen=True)
+class S3EndpointSettings:
+    """S3-compatible endpoint settings resolved from the process environment.
+
+    These settings are deliberately absent from ``config.yaml``. Catalog
+    configuration is published with the catalog, while endpoints can reveal
+    internal storage topology.
+    """
+
+    endpoint: str | None
+    use_ssl: bool
+
+
+def resolve_s3_endpoint_settings() -> S3EndpointSettings:
+    """Resolve S3-compatible endpoint settings from the process environment.
+
+    ``PORTOLAN_S3_ENDPOINT`` is optional. ``PORTOLAN_S3_USE_SSL`` defaults to
+    ``true`` and accepts only ``true`` or ``false`` so a misspelled setting
+    cannot silently change a transport security decision.
+
+    Returns:
+        The resolved endpoint and TLS setting.
+
+    Raises:
+        ValueError: If ``PORTOLAN_S3_USE_SSL`` is not ``true`` or ``false``.
+    """
+    endpoint = os.environ.get("PORTOLAN_S3_ENDPOINT") or None
+    raw_use_ssl = os.environ.get("PORTOLAN_S3_USE_SSL")
+    if raw_use_ssl is None:
+        return S3EndpointSettings(endpoint=endpoint, use_ssl=True)
+
+    normalized = raw_use_ssl.strip().lower()
+    if normalized == "true":
+        return S3EndpointSettings(endpoint=endpoint, use_ssl=True)
+    if normalized == "false":
+        return S3EndpointSettings(endpoint=endpoint, use_ssl=False)
+    raise ValueError("PORTOLAN_S3_USE_SSL must be 'true' or 'false'")
+
 
 # Config file name (inside .portolan/)
 CONFIG_FILENAME = "config.yaml"
