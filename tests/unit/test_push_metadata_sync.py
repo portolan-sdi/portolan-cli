@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -757,3 +757,168 @@ class TestDiscoverRootOnlyFiles:
         )
 
         assert len(files) == 0
+
+
+# =============================================================================
+# Tests for metadata sync when no version changes (Issue #816)
+# =============================================================================
+
+
+class TestPushNoVersionChangeMetadataSync:
+    """A push with no version bump must still sync non-versioned metadata (#816).
+
+    An edited AGENTS.md changes no data asset, so it bumps no version. Before the
+    fix, push saw an empty version diff, printed "Nothing to push", and left the
+    remote agent guide stale.
+    """
+
+    @pytest.mark.unit
+    def test_agents_md_syncs_without_version_bump(self, catalog_with_metadata: Path) -> None:
+        """push_async uploads a collection's AGENTS.md when no version changed."""
+        import asyncio
+
+        from portolan_cli.sync.push import push_async
+
+        collection_dir = catalog_with_metadata / "collection1"
+        (collection_dir / "AGENTS.md").write_text("# Agent guide\nUse the new query.")
+
+        # Remote versions.json is identical to local, so the version diff is empty.
+        local_versions = json.loads((collection_dir / "versions.json").read_text())
+
+        uploaded_keys: list[str] = []
+
+        async def mock_put_async(store: Any, key: str, content: Any, **kwargs: Any) -> None:
+            uploaded_keys.append(key)
+
+        with (
+            patch("portolan_cli.sync.push.setup_store", return_value=(MagicMock(), "prefix")),
+            patch(
+                "portolan_cli.sync.push._fetch_remote_versions_async",
+                new=AsyncMock(return_value=(local_versions, "etag-1")),
+            ),
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
+        ):
+            result = asyncio.run(
+                push_async(
+                    catalog_root=catalog_with_metadata,
+                    collection="collection1",
+                    destination="s3://test-bucket/catalog",
+                    json_mode=True,
+                )
+            )
+
+        assert result.success is True
+        assert result.versions_pushed == 0
+        # The agent guide reached the bucket even though no version changed.
+        assert "prefix/collection1/AGENTS.md" in uploaded_keys
+        assert result.files_uploaded > 0
+
+    @pytest.mark.unit
+    def test_nothing_to_push_when_no_metadata_changed(self, tmp_path: Path) -> None:
+        """push_async returns files_uploaded=0 for a collection with no metadata."""
+        import asyncio
+
+        from portolan_cli.sync.push import push_async
+
+        # A bare catalog: the collection has only versions.json, no extra metadata.
+        catalog_root = tmp_path / "catalog"
+        portolan_dir = catalog_root / ".portolan"
+        portolan_dir.mkdir(parents=True)
+        (portolan_dir / "config.yaml").write_text("backend: filesystem")
+        (catalog_root / "catalog.json").write_text(
+            json.dumps({"type": "Catalog", "id": "test-catalog"})
+        )
+
+        collection_dir = catalog_root / "collection1"
+        collection_dir.mkdir()
+        (collection_dir / "collection.json").write_text(
+            json.dumps({"type": "Collection", "id": "collection1"})
+        )
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": "v1",
+            "versions": [
+                {
+                    "version": "v1",
+                    "created": "2024-01-01T00:00:00Z",
+                    "breaking": False,
+                    "message": "Initial version",
+                    "assets": {},
+                    "changes": [],
+                }
+            ],
+        }
+        (collection_dir / "versions.json").write_text(json.dumps(versions_data))
+
+        uploaded_keys: list[str] = []
+
+        async def mock_put_async(store: Any, key: str, content: Any, **kwargs: Any) -> None:
+            uploaded_keys.append(key)
+
+        with (
+            patch("portolan_cli.sync.push.setup_store", return_value=(MagicMock(), "prefix")),
+            patch(
+                "portolan_cli.sync.push._fetch_remote_versions_async",
+                new=AsyncMock(return_value=(versions_data, "etag-1")),
+            ),
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
+        ):
+            result = asyncio.run(
+                push_async(
+                    catalog_root=catalog_root,
+                    collection="collection1",
+                    destination="s3://test-bucket/catalog",
+                    # include_catalog=False so root files stay out of this check.
+                    include_catalog=False,
+                    json_mode=True,
+                )
+            )
+
+        assert result.success is True
+        assert result.versions_pushed == 0
+        assert result.files_uploaded == 0
+        assert uploaded_keys == []
+
+    @pytest.mark.unit
+    def test_metadata_error_reports_summary_without_version_bump(
+        self, catalog_with_metadata: Path
+    ) -> None:
+        """push_async warns a metadata error count on the no-version-change path."""
+        import asyncio
+
+        from portolan_cli.sync.push import push_async
+
+        collection_dir = catalog_with_metadata / "collection1"
+        (collection_dir / "AGENTS.md").write_text("# Agent guide\nUse the new query.")
+
+        # Remote versions.json is identical to local, so the version diff is empty.
+        local_versions = json.loads((collection_dir / "versions.json").read_text())
+
+        async def failing_put_async(store: Any, key: str, content: Any, **kwargs: Any) -> None:
+            raise OSError("permission denied")
+
+        warnings: list[str] = []
+
+        with (
+            patch("portolan_cli.sync.push.setup_store", return_value=(MagicMock(), "prefix")),
+            patch(
+                "portolan_cli.sync.push._fetch_remote_versions_async",
+                new=AsyncMock(return_value=(local_versions, "etag-1")),
+            ),
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=failing_put_async),
+            patch("portolan_cli.sync.push.warn", side_effect=warnings.append),
+        ):
+            result = asyncio.run(
+                push_async(
+                    catalog_root=catalog_with_metadata,
+                    collection="collection1",
+                    destination="s3://test-bucket/catalog",
+                    json_mode=True,
+                )
+            )
+
+        assert result.success is True
+        assert result.versions_pushed == 0
+        assert len(result.metadata_errors) > 0
+        # The summary warn reports the failed metadata file count.
+        assert any("metadata file(s) failed to upload" in message for message in warnings)
