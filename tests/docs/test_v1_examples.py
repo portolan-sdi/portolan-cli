@@ -17,6 +17,7 @@ import pyarrow.parquet as pq
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+README = PROJECT_ROOT / "README.md"
 EXAMPLE_DIR = PROJECT_ROOT / "examples" / "philadelphia-housing"
 EXAMPLE = EXAMPLE_DIR / "run.sh"
 JOURNEY_STEPS = (
@@ -151,6 +152,20 @@ def _collection(catalog_dir: Path, collection_id: str) -> dict[str, Any]:
 def _requests(request_log: Path) -> list[dict[str, Any]]:
     """Read the ArcGIS fixture server request log."""
     return [cast(dict[str, Any], json.loads(line)) for line in request_log.read_text().splitlines()]
+
+
+@pytest.mark.unit
+def test_readme_describes_portolan_as_a_specification() -> None:
+    """The README distinguishes the specification from this CLI implementation."""
+    readme = README.read_text()
+
+    assert "Portolan is an opinionated specification" in readme
+    assert "This repository contains the Portolan CLI" in readme
+    assert "Portolan standard" not in readme
+    assert "end-to-end publishing example" in readme
+    assert "more tutorials over time" in readme
+    assert "CLI reference" in readme
+    assert "Python API reference" in readme
 
 
 @pytest.mark.unit
