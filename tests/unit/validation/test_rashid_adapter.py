@@ -191,6 +191,40 @@ class TestRunCheckRouting:
         assert outcome.report.files_checked == 1
 
 
+class TestDataScope:
+    """``data_scope`` selects the rashid reader the data pass uses."""
+
+    def test_scope_all_uses_the_default_reader(self, tmp_path: Path, monkeypatch: Any) -> None:
+        _minimal_catalog(tmp_path)
+        captured: dict[str, Any] = {}
+
+        def fake_validate(root: Path, **kwargs: Any) -> Any:
+            captured.update(kwargs)
+            from rashid.model import Report
+
+            return Report(findings=[], files_checked=0)
+
+        monkeypatch.setattr("portolan_cli.validation.runner.validate", fake_validate)
+        run_check(tmp_path, data=True, geo_assets=False)
+        assert captured["data_reader_factory"] is None
+
+    def test_scope_local_uses_the_local_only_reader(self, tmp_path: Path, monkeypatch: Any) -> None:
+        from rashid.data.reader import LocalOnlyReader
+
+        _minimal_catalog(tmp_path)
+        captured: dict[str, Any] = {}
+
+        def fake_validate(root: Path, **kwargs: Any) -> Any:
+            captured.update(kwargs)
+            from rashid.model import Report
+
+            return Report(findings=[], files_checked=0)
+
+        monkeypatch.setattr("portolan_cli.validation.runner.validate", fake_validate)
+        run_check(tmp_path, data=True, data_scope="local", geo_assets=False)
+        assert captured["data_reader_factory"] is LocalOnlyReader
+
+
 class TestLiveHint:
     def test_hint_when_published_and_live_not_requested(self, tmp_path: Path) -> None:
         _minimal_catalog(tmp_path)
