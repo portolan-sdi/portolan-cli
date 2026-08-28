@@ -51,6 +51,11 @@ Units without geometry: 665
 """
 
 
+def _read_text(path: Path) -> str:
+    """Read a repository text file with platform-independent decoding."""
+    return path.read_text(encoding="utf-8")
+
+
 @contextmanager
 def _arcgis_server(tmp_path: Path) -> Iterator[tuple[str, Path, Callable[[], None]]]:
     """Run the deterministic ArcGIS replay inside the current test worker."""
@@ -129,19 +134,19 @@ def _run_query(catalog_url: str) -> subprocess.CompletedProcess[str]:
 
 def _collection(catalog_dir: Path, collection_id: str) -> dict[str, Any]:
     """Read one generated STAC Collection."""
-    value = json.loads((catalog_dir / collection_id / "collection.json").read_text())
+    value = json.loads(_read_text(catalog_dir / collection_id / "collection.json"))
     return cast(dict[str, Any], value)
 
 
 def _requests(request_log: Path) -> list[dict[str, Any]]:
     """Read the ArcGIS fixture server request log."""
-    return [cast(dict[str, Any], json.loads(line)) for line in request_log.read_text().splitlines()]
+    return [cast(dict[str, Any], json.loads(line)) for line in _read_text(request_log).splitlines()]
 
 
 @pytest.mark.unit
 def test_readme_describes_portolan_as_a_specification() -> None:
     """The README distinguishes the specification from this CLI implementation."""
-    readme = README.read_text()
+    readme = _read_text(README)
 
     assert "Portolan is an opinionated specification" in readme
     assert "This repository contains the Portolan CLI" in readme
@@ -155,7 +160,7 @@ def test_readme_describes_portolan_as_a_specification() -> None:
 @pytest.mark.unit
 def test_tutorial_names_catalog_options() -> None:
     """The single tutorial points readers to supported variations."""
-    tutorial = (EXAMPLE_DIR / "README.md").read_text()
+    tutorial = _read_text(EXAMPLE_DIR / "README.md")
 
     assert all(source in tutorial for source in ("ArcGIS REST", "WFS", "CARTO SQL API"))
     assert "SPDX identifier" in tutorial
@@ -169,7 +174,7 @@ def test_tutorial_names_catalog_options() -> None:
 @pytest.mark.unit
 def test_tutorial_shows_every_file_that_the_workflow_executes_or_copies() -> None:
     """Readers can inspect every source file used by the documented workflow."""
-    tutorial = (EXAMPLE_DIR / "README.md").read_text()
+    tutorial = _read_text(EXAMPLE_DIR / "README.md")
     visible_sources = (
         *((source, "sh") for source in JOURNEY_STEPS),
         (EXAMPLE, "sh"),
@@ -178,7 +183,7 @@ def test_tutorial_shows_every_file_that_the_workflow_executes_or_copies() -> Non
     )
 
     for source, language in visible_sources:
-        source_text = source.read_text().rstrip()
+        source_text = _read_text(source).rstrip()
         assert source_text, f"Visible source is empty: {source.name}"
         fenced_source = f"```{language}\n{source_text}\n```"
         assert fenced_source in tutorial, f"Tutorial hides {source.name}"
@@ -187,9 +192,9 @@ def test_tutorial_shows_every_file_that_the_workflow_executes_or_copies() -> Non
 @pytest.mark.unit
 def test_tutorial_uses_a_placeholder_contact() -> None:
     """The public example does not publish a real personal or project email."""
-    tutorial = (EXAMPLE_DIR / "README.md").read_text()
+    tutorial = _read_text(EXAMPLE_DIR / "README.md")
     metadata = "\n".join(
-        source.read_text() for source in sorted((EXAMPLE_DIR / "metadata").glob("*.yaml"))
+        _read_text(source) for source in sorted((EXAMPLE_DIR / "metadata").glob("*.yaml"))
     )
 
     for real_email in ("nlebovits@pm.me", "portolan@googlegroups.com"):
@@ -202,7 +207,7 @@ def test_tutorial_uses_a_placeholder_contact() -> None:
 @pytest.mark.unit
 def test_docs_ci_uses_anonymous_http_minio() -> None:
     """The docs job does not send credentials to its plaintext test service."""
-    workflow = CI_WORKFLOW.read_text()
+    workflow = _read_text(CI_WORKFLOW)
     docs_job = workflow.partition("\n  docs:\n")[2].partition("\n  build:\n")[0]
 
     assert docs_job
@@ -230,9 +235,25 @@ def test_arcgis_fixture_starts_without_a_child_python_process(
 
 
 @pytest.mark.unit
+def test_docs_text_reader_requests_utf8(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Documentation tests decode symbols consistently on every platform."""
+    text_file = tmp_path / "symbols.txt"
+    text_file.write_text("✓ →", encoding="utf-8")
+    path_read_text = Path.read_text
+
+    def require_utf8(path: Path, encoding: str | None = None, errors: str | None = None) -> str:
+        assert encoding == "utf-8"
+        return path_read_text(path, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", require_utf8)
+
+    assert _read_text(text_file) == "✓ →"
+
+
+@pytest.mark.unit
 def test_query_installs_spatial_before_loading_it() -> None:
     """The documented query works when DuckDB has an empty extension cache."""
-    source = QUERY.read_text()
+    source = _read_text(QUERY)
 
     assert source.index('connection.execute("INSTALL spatial")') < source.index(
         'connection.execute("LOAD spatial")'
@@ -244,12 +265,12 @@ def test_example_builds_and_analyzes_a_philadelphia_catalog(tmp_path: Path) -> N
     """The public workflow extracts, documents, validates, and analyzes two Collections."""
     catalog_dir = tmp_path / "philadelphia-housing"
 
-    wrapper = EXAMPLE.read_text()
+    wrapper = _read_text(EXAMPLE)
     for step in JOURNEY_STEPS:
         assert step.is_file()
         assert f'"$example_dir/{step.name}"' in wrapper
 
-    tutorial = (EXAMPLE_DIR / "README.md").read_text()
+    tutorial = _read_text(EXAMPLE_DIR / "README.md")
     assert tutorial.index("## 3. Publish the Catalog") < tutorial.index(
         "## 4. Use the Published Catalog"
     )
@@ -264,7 +285,7 @@ def test_example_builds_and_analyzes_a_philadelphia_catalog(tmp_path: Path) -> N
     assert "Extracted 2/2 layers" in result.stdout
     assert "catalog passes the Portolan check." in result.stdout
 
-    catalog = json.loads((catalog_dir / "catalog.json").read_text())
+    catalog = json.loads(_read_text(catalog_dir / "catalog.json"))
     child_links = sorted(link["href"] for link in catalog["links"] if link["rel"] == "child")
     assert child_links == [
         "./affordablehousingproduction/collection.json",
