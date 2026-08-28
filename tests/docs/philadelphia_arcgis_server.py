@@ -247,6 +247,30 @@ class PhiladelphiaArcGISHandler(BaseHTTPRequestHandler):
         return None
 
 
+def create_server(fixture_dir: Path, request_log: Path) -> PhiladelphiaArcGISServer:
+    """Load the pinned Assets and bind an ArcGIS replay server."""
+    layers = {
+        "AffordableHousingProduction": _load_layer(
+            fixture_dir / "affordable_housing.parquet",
+            service_name="AffordableHousingProduction",
+            layer_name="Affordable_Housing",
+            geometry_type="esriGeometryPoint",
+            description=(
+                "Affordable housing projects funded by Philadelphia's Division of Housing "
+                "and Community Development."
+            ),
+        ),
+        "Council_Districts_2024": _load_layer(
+            fixture_dir / "council_districts_2024.parquet",
+            service_name="Council_Districts_2024",
+            layer_name="Council_Districts_2024",
+            geometry_type="esriGeometryPolygon",
+            description="Philadelphia City Council districts redrawn after the 2020 census.",
+        ),
+    }
+    return PhiladelphiaArcGISServer(("127.0.0.1", 0), layers, request_log)
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--fixture-dir", type=Path, required=True)
@@ -258,26 +282,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     """Load the pinned Assets and serve them until the test stops the process."""
     args = _parse_args()
-    layers = {
-        "AffordableHousingProduction": _load_layer(
-            args.fixture_dir / "affordable_housing.parquet",
-            service_name="AffordableHousingProduction",
-            layer_name="Affordable_Housing",
-            geometry_type="esriGeometryPoint",
-            description=(
-                "Affordable housing projects funded by Philadelphia's Division of Housing "
-                "and Community Development."
-            ),
-        ),
-        "Council_Districts_2024": _load_layer(
-            args.fixture_dir / "council_districts_2024.parquet",
-            service_name="Council_Districts_2024",
-            layer_name="Council_Districts_2024",
-            geometry_type="esriGeometryPolygon",
-            description="Philadelphia City Council districts redrawn after the 2020 census.",
-        ),
-    }
-    server = PhiladelphiaArcGISServer(("127.0.0.1", 0), layers, args.request_log)
+    server = create_server(args.fixture_dir, args.request_log)
     port = int(server.server_address[1])
     args.port_file.write_text(str(port), encoding="utf-8")
     server.serve_forever()

@@ -6,15 +6,17 @@ import json
 import os
 import subprocess
 import sys
-import time
+import threading
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
 import pyarrow.parquet as pq
 import pytest
+
+from .philadelphia_arcgis_server import create_server
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 README = PROJECT_ROOT / "README.md"
@@ -26,7 +28,6 @@ JOURNEY_STEPS = (
     EXAMPLE_DIR / "03-publish.sh",
 )
 QUERY = EXAMPLE_DIR / "query.py"
-FIXTURE_SERVER = PROJECT_ROOT / "tests" / "docs" / "philadelphia_arcgis_server.py"
 FIXTURE_DIR = PROJECT_ROOT / "tests" / "fixtures" / "realdata" / "philadelphia-housing"
 CI_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
 
@@ -51,51 +52,33 @@ Units without geometry: 665
 
 
 @contextmanager
-def _arcgis_server(tmp_path: Path) -> Iterator[tuple[str, Path, subprocess.Popen[str]]]:
-    """Run the deterministic ArcGIS replay used by the public workflow."""
-    assert FIXTURE_SERVER.is_file(), f"Missing fixture server: {FIXTURE_SERVER}"
+def _arcgis_server(tmp_path: Path) -> Iterator[tuple[str, Path, Callable[[], None]]]:
+    """Run the deterministic ArcGIS replay inside the current test worker."""
     assert (FIXTURE_DIR / "affordable_housing.parquet").is_file()
     assert (FIXTURE_DIR / "council_districts_2024.parquet").is_file()
 
-    port_file = tmp_path / "arcgis-port.txt"
     request_log = tmp_path / "arcgis-requests.jsonl"
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            str(FIXTURE_SERVER),
-            "--fixture-dir",
-            str(FIXTURE_DIR),
-            "--port-file",
-            str(port_file),
-            "--request-log",
-            str(request_log),
-        ],
-        cwd=PROJECT_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    server = create_server(FIXTURE_DIR, request_log)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    stopped = False
 
+    def stop_server() -> None:
+        nonlocal stopped
+        if stopped:
+            return
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        if thread.is_alive():
+            raise RuntimeError("ArcGIS fixture server did not stop")
+        stopped = True
+
+    port = int(server.server_address[1])
     try:
-        startup_deadline = time.monotonic() + 30
-        while time.monotonic() < startup_deadline:
-            if port_file.is_file():
-                break
-            if process.poll() is not None:
-                stdout, stderr = process.communicate()
-                pytest.fail(f"ArcGIS fixture server failed:\n{stdout}{stderr}")
-            time.sleep(0.1)
-        else:
-            process.terminate()
-            stdout, stderr = process.communicate(timeout=5)
-            pytest.fail(f"ArcGIS fixture server did not start:\n{stdout}{stderr}")
-
-        port = port_file.read_text().strip()
-        yield f"http://127.0.0.1:{port}/ArcGIS/rest/services", request_log, process
+        yield f"http://127.0.0.1:{port}/ArcGIS/rest/services", request_log, stop_server
     finally:
-        if process.poll() is None:
-            process.terminate()
-            process.wait(timeout=5)
+        stop_server()
 
 
 def _example_environment(
@@ -230,6 +213,23 @@ def test_docs_ci_uses_anonymous_http_minio() -> None:
 
 
 @pytest.mark.unit
+def test_arcgis_fixture_starts_without_a_child_python_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fixture does not repeat heavy imports in a resource-constrained child."""
+
+    def reject_child_process(*args: object, **kwargs: object) -> None:
+        raise AssertionError("ArcGIS fixture started a child Python process")
+
+    monkeypatch.setattr(subprocess, "Popen", reject_child_process)
+
+    with _arcgis_server(tmp_path) as (arcgis_url, request_log, stop_server):
+        assert arcgis_url.startswith("http://127.0.0.1:")
+        assert request_log == tmp_path / "arcgis-requests.jsonl"
+        assert callable(stop_server)
+
+
+@pytest.mark.unit
 def test_query_installs_spatial_before_loading_it() -> None:
     """The documented query works when DuckDB has an empty extension cache."""
     source = QUERY.read_text()
@@ -351,11 +351,10 @@ def test_example_publishes_assets_that_remain_queryable_without_arcgis(
     catalog_dir = tmp_path / "philadelphia-housing"
     remote = "s3://portolan-docs/philadelphia-housing"
 
-    with _arcgis_server(tmp_path) as (arcgis_url, _request_log, process):
+    with _arcgis_server(tmp_path) as (arcgis_url, _request_log, stop_arcgis):
         result = _run_example(catalog_dir, arcgis_url, remote)
         assert result.returncode == 0, result.stdout + result.stderr
-        process.terminate()
-        process.wait(timeout=5)
+        stop_arcgis()
 
     query = _run_query("http://localhost:9000/portolan-docs/philadelphia-housing")
     assert query.returncode == 0, query.stdout + query.stderr
