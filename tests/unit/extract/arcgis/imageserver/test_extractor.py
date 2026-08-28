@@ -547,3 +547,66 @@ class TestJsonErrorParsing:
         # Error message should contain the ArcGIS error details
         assert "400" in str(exc_info.value)
         assert "exceeds the size limit" in str(exc_info.value)
+
+
+@pytest.mark.unit
+class TestAutoInitCatalogExistingCatalog:
+    """Tests for _auto_init_catalog on an existing catalog (issue #767, #832)."""
+
+    def _make_tile(self, output_dir: Path, collection_name: str = "tiles") -> None:
+        """Write a placeholder COG so _auto_init_catalog finds a file to add."""
+        item_dir = output_dir / collection_name / "tile_0_0"
+        item_dir.mkdir(parents=True)
+        (item_dir / "tile_0_0.tif").write_bytes(b"fake-cog")
+
+    def test_first_extraction_initializes_catalog(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A fresh directory calls init_catalog, then add_files."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _auto_init_catalog
+
+        self._make_tile(tmp_path)
+        events: list[str] = []
+
+        import portolan_cli.add as add_mod
+        import portolan_cli.catalog as catalog_mod
+
+        monkeypatch.setattr(catalog_mod, "init_catalog", lambda *a, **k: events.append("init"))
+        monkeypatch.setattr(add_mod, "add_files", lambda **k: events.append("add"))
+
+        result = _auto_init_catalog(tmp_path, service_name="svc")
+
+        assert result is True
+        assert events == ["init", "add"]
+
+    def test_second_extraction_skips_init_on_existing_catalog(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A second ImageServer extraction adds tiles without aborting (issue #767).
+
+        The COG tiles download before _auto_init_catalog runs. Before the fix,
+        init_catalog raised CatalogAlreadyExistsError on a MANAGED directory, so
+        the run aborted after the download and never wrote collection.json. The
+        guard must skip init_catalog and add the tiles instead.
+        """
+        from portolan_cli.extract.arcgis.imageserver.extractor import _auto_init_catalog
+
+        # Mark the directory as an existing Portolan catalog. detect_state reads
+        # config.yaml alone to return MANAGED.
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text("# Portolan configuration\n")
+
+        self._make_tile(tmp_path, collection_name="naip-2024")
+        events: list[str] = []
+
+        import portolan_cli.add as add_mod
+        import portolan_cli.catalog as catalog_mod
+
+        monkeypatch.setattr(catalog_mod, "init_catalog", lambda *a, **k: events.append("init"))
+        monkeypatch.setattr(add_mod, "add_files", lambda **k: events.append("add"))
+
+        result = _auto_init_catalog(tmp_path, service_name="svc", collection_name="naip-2024")
+
+        assert result is True
+        # init_catalog is skipped for an existing catalog; the tiles are added.
+        assert events == ["add"]

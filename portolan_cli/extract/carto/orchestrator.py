@@ -531,7 +531,7 @@ def _auto_init_catalog(
     and seeds metadata.yaml at catalog and collection level.
     """
 
-    def _post_init(out: Path, parquet_files: list[Path]) -> None:
+    def _post_init(out: Path, parquet_files: list[Path], _fresh: bool) -> None:
         # Non-geo (tabular) outputs carry no `geo` metadata key; add_files only
         # accepts them as standalone collection-level assets when tabular support
         # is enabled. Enable it before add_files when any output is

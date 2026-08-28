@@ -649,10 +649,13 @@ def _auto_init_catalog(
     filtered_title = None if is_technical_name(title) else title
     filtered_description = None if is_technical_name(description) else description
 
-    def _post_init(out: Path, _files: list[Path]) -> None:
+    def _post_init(out: Path, _files: list[Path], fresh: bool) -> None:
         # Per Issue #369: overwrite init_catalog defaults with the rich
-        # (unfiltered) service metadata now that catalog.json exists.
-        update_stac_metadata(out / "catalog.json", title=title, description=description)
+        # (unfiltered) service metadata now that catalog.json exists. Skip this
+        # when the catalog already existed, so a second extraction from a different
+        # service does not replace the root title/description (issue #832).
+        if fresh:
+            update_stac_metadata(out / "catalog.json", title=title, description=description)
         # Seed metadata.yaml here, between init_catalog and add_files, so the
         # harvested license is in place before add checks for one (issue #686).
         _seed_metadata_from_extraction(out, report, resolved_license)

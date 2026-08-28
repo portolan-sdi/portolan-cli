@@ -836,7 +836,7 @@ def _auto_init_catalog(
         True if catalog was initialized, False if no files to add.
     """
     from portolan_cli.add import add_files
-    from portolan_cli.catalog import init_catalog
+    from portolan_cli.catalog import CatalogState, detect_state, init_catalog
 
     # Get list of extracted COG files (nested in item directories)
     collection_dir = output_dir / collection_name
@@ -845,9 +845,14 @@ def _auto_init_catalog(
     if not cog_files:
         return False  # Nothing to add
 
-    # Initialize the catalog. license_id=None because the ImageServer path seeds
-    # metadata.yaml from the harvested service licenseInfo (issue #686).
-    init_catalog(output_dir, title=service_name, license_id=None)
+    # A directory that is already a Portolan catalog gets the new rasters added to
+    # it, not an abort after the tiles already downloaded (issue #767). init_catalog
+    # raises CatalogAlreadyExistsError on a MANAGED directory, so skip it. The
+    # catalog already carries a license, so the add license gate (issue #686) passes.
+    if detect_state(output_dir) is not CatalogState.MANAGED:
+        # Initialize the catalog. license_id=None because the ImageServer path seeds
+        # metadata.yaml from the harvested service licenseInfo (issue #686).
+        init_catalog(output_dir, title=service_name, license_id=None)
 
     # Add all COG files - this creates items per raster
     add_files(
