@@ -626,6 +626,74 @@ class TestRmIntegration:
         assert target.exists(), f"File {target} was deleted despite --keep"
 
     @pytest.mark.integration
+    def test_rm_untracks_a_file_deleted_from_disk(
+        self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """rm untracks a tracked asset that is already gone from disk (#803).
+
+        Reproduces the issue: a tracked file is deleted by hand, status reports
+        it under "Deleted files", and rm --force must drop the phantom entry so
+        status reports clean afterwards.
+        """
+        import json
+
+        # Set up and track a file.
+        collection_dir = initialized_catalog / "vectors"
+        collection_dir.mkdir()
+        test_file = collection_dir / "data.geojson"
+        shutil.copy(valid_points_geojson, test_file)
+
+        add_result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(initialized_catalog), str(test_file)],
+            catch_exceptions=False,
+        )
+        assert add_result.exit_code == 0, f"Add failed: {add_result.output}"
+
+        # The tracked asset is the converted parquet. Delete it from disk to
+        # simulate a lost file.
+        parquet_files = list(collection_dir.rglob("*.parquet"))
+        assert parquet_files, "add produced no parquet to delete"
+        lost = parquet_files[0]
+        lost.unlink()
+
+        # status now reports the asset as deleted (missing from disk).
+        before = runner.invoke(
+            cli,
+            ["--format", "json", "status", "--catalog", str(initialized_catalog), "--offline"],
+            catch_exceptions=False,
+        )
+        assert before.exit_code == 0, f"status failed: {before.output}"
+        before_status = json.loads(before.output)
+        deleted_before = [
+            f for coll in before_status["data"]["collections"] for f in coll["deleted_files"]
+        ]
+        assert deleted_before, "status should list the missing asset before rm"
+
+        # rm --force untracks the missing file. Before the fix this failed at the
+        # CLI with "Path ... does not exist".
+        rm_result = runner.invoke(
+            cli,
+            ["rm", "--portolan-dir", str(initialized_catalog), "--force", str(lost)],
+            catch_exceptions=False,
+        )
+        assert rm_result.exit_code == 0, f"rm failed: {rm_result.output}"
+        assert "does not exist" not in rm_result.output
+
+        # status is clean afterwards: no deleted files remain.
+        after = runner.invoke(
+            cli,
+            ["--format", "json", "status", "--catalog", str(initialized_catalog), "--offline"],
+            catch_exceptions=False,
+        )
+        assert after.exit_code == 0, f"status failed: {after.output}"
+        after_status = json.loads(after.output)
+        deleted_after = [
+            f for coll in after_status["data"]["collections"] for f in coll["deleted_files"]
+        ]
+        assert deleted_after == [], f"asset still reported deleted after rm: {deleted_after}"
+
+    @pytest.mark.integration
     def test_rm_directory_removes_all(
         self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:

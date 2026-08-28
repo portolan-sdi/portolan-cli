@@ -9,6 +9,7 @@ from pathlib import Path
 from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.discovery import get_sidecars
 from portolan_cli.versions import (
+    Version,
     read_versions,
 )
 
@@ -77,6 +78,11 @@ def _remove_one_file(
 ) -> bool:
     """Untrack (and optionally delete) a single file.
 
+    A file that is gone from disk is still untracked, so ``rm`` can drop a
+    tracked asset that a user already deleted (issue #803). The delete step has
+    nothing to delete, so it is skipped. A path that is neither on disk nor
+    tracked is a no-op and reports as skipped.
+
     Args:
         file_path: File to remove.
         catalog_root: Root directory of the catalog.
@@ -86,12 +92,12 @@ def _remove_one_file(
     Returns:
         True if the file was removed (or would be, in dry-run), False if skipped.
     """
-    if not file_path.exists() and not keep:
-        return False
+    file_missing = not file_path.exists()
 
     # Refuse to delete symlinks - they might point outside the catalog and
     # deleting them could have unintended consequences. Users should resolve
-    # symlinks manually or use --keep to just untrack.
+    # symlinks manually or use --keep to just untrack. A missing path is never a
+    # symlink, so this guard only affects files present on disk.
     if file_path.is_symlink() and not keep:
         return False
 
@@ -101,18 +107,28 @@ def _remove_one_file(
     except ValueError:
         return False
 
-    if dry_run:
-        return True
-
-    # Remove from versions.json. The owning collection is found by walking up from
-    # the file, because a collection id can span several path segments and
-    # `resolve_collection_id` returns only the first (#723). Fall back to that
-    # first component when no marker is found; nothing is tracked there either
-    # way, so the file is still deleted below.
+    # The owning collection is found by walking up from the file, because a
+    # collection id can span several path segments and `resolve_collection_id`
+    # returns only the first (#723). Fall back to that first component when no
+    # marker is found; nothing is tracked there either way.
     collection_dir = _resolve_collection_dir(file_path, catalog_root) or catalog_root / coll_id
     versions_path = collection_dir / "versions.json"
-    if versions_path.exists():
-        _remove_from_versions(file_path, versions_path)
+
+    if dry_run:
+        # A file that is gone from disk is only removable when it is still
+        # tracked. Otherwise the preview reports a phantom removal (#803).
+        if file_missing:
+            return _file_is_tracked(file_path, versions_path)
+        return True
+
+    # Remove from versions.json.
+    untracked = _remove_from_versions(file_path, versions_path)
+
+    # A path that is gone from disk untracks only. There is nothing to delete,
+    # so a path that is neither on disk nor tracked is a no-op we report as
+    # skipped (#803).
+    if file_missing:
+        return untracked
 
     # Remove STAC item and files (unless --keep)
     if not keep:
@@ -178,7 +194,70 @@ def remove_files(
     return removed, skipped
 
 
-def _remove_from_versions(file_path: Path, versions_path: Path) -> None:
+def _versions_catalog_root(versions_path: Path) -> Path:
+    """Resolve the catalog root that hrefs in ``versions_path`` are relative to.
+
+    Falls back to the collection's grandparent when no ``.portolan`` sentinel is
+    found (e.g. a bare test catalog without ``catalog.json``).
+    """
+    from portolan_cli.catalog import find_catalog_root
+
+    catalog_root = find_catalog_root(versions_path.parent)
+    if catalog_root is None:
+        catalog_root = versions_path.parent.parent
+    return catalog_root
+
+
+def _matching_asset_keys(file_path: Path, version: Version, catalog_root: Path) -> set[str]:
+    """Return the asset keys in ``version`` that track ``file_path``.
+
+    Match on the tracked asset's href, not a key reconstructed from the file
+    stem. Hrefs are catalog-root-relative and POSIX and already encode the
+    true item directory that add._batch_update_versions used as the key prefix
+    ("{collection_id}/{item_id}/{filename}", or "{collection_id}/{filename}"
+    for collection-level assets). Reconstructing "{stem}/{filename}" is wrong
+    for every layout where the item dir name != the file stem — every real
+    Hive partition ("kdtree_cell=.../data.parquet") and nested item dir
+    (issue #589). Href matching is also unique per file, so it can't
+    over-match a sibling item that happens to share a filename.
+    """
+    try:
+        target_href = file_path.resolve().relative_to(catalog_root.resolve()).as_posix()
+    except ValueError:
+        # File lives outside the catalog; nothing tracked here can match it.
+        return set()
+
+    keys = {name for name, asset in version.assets.items() if asset.href == target_href}
+
+    # Convert-on-add: a non-cloud-native source (e.g. roads.shp) is tracked as
+    # its converted roads.parquet. Removing the source must still untrack the
+    # parquet, or it becomes a phantom entry.
+    if not keys and file_path.suffix and file_path.suffix != ".parquet":
+        parquet_href = (
+            file_path.resolve()
+            .relative_to(catalog_root.resolve())
+            .with_suffix(".parquet")
+            .as_posix()
+        )
+        keys = {name for name, asset in version.assets.items() if asset.href == parquet_href}
+
+    return keys
+
+
+def _file_is_tracked(file_path: Path, versions_path: Path) -> bool:
+    """Report whether ``file_path`` matches a tracked asset in ``versions_path``."""
+    if not versions_path.exists():
+        return False
+
+    versions_file = read_versions(versions_path)
+    if not versions_file.versions:
+        return False
+
+    catalog_root = _versions_catalog_root(versions_path)
+    return bool(_matching_asset_keys(file_path, versions_file.versions[-1], catalog_root))
+
+
+def _remove_from_versions(file_path: Path, versions_path: Path) -> bool:
     """Remove a file from version tracking via the active backend.
 
     This creates a new version entry without the specified file.
@@ -186,55 +265,23 @@ def _remove_from_versions(file_path: Path, versions_path: Path) -> None:
     Args:
         file_path: Path to the file to untrack.
         versions_path: Path to the versions.json file.
+
+    Returns:
+        True if the file was tracked and a removal version was published.
+        False if nothing matched (no new version).
     """
     if not versions_path.exists():
-        return
+        return False
 
     versions_file = read_versions(versions_path)
     if not versions_file.versions:
-        return
+        return False
 
-    from portolan_cli.catalog import find_catalog_root
-
-    catalog_root = find_catalog_root(versions_path.parent)
-    if catalog_root is None:
-        catalog_root = versions_path.parent.parent
-
-    # Match on the tracked asset's href, not a key reconstructed from the file
-    # stem. Hrefs are catalog-root-relative and POSIX and already encode the
-    # true item directory that add._batch_update_versions used as the key prefix
-    # ("{collection_id}/{item_id}/{filename}", or "{collection_id}/{filename}"
-    # for collection-level assets). Reconstructing "{stem}/{filename}" is wrong
-    # for every layout where the item dir name != the file stem — every real
-    # Hive partition ("kdtree_cell=.../data.parquet") and nested item dir
-    # (issue #589). Href matching is also unique per file, so it can't
-    # over-match a sibling item that happens to share a filename.
-    try:
-        target_href = file_path.resolve().relative_to(catalog_root.resolve()).as_posix()
-    except ValueError:
-        # File lives outside the catalog; nothing tracked here can match it.
-        return
-
-    current = versions_file.versions[-1]
-    removed_keys = {name for name, asset in current.assets.items() if asset.href == target_href}
-
-    # Convert-on-add: a non-cloud-native source (e.g. roads.shp) is tracked as
-    # its converted roads.parquet. Removing the source must still untrack the
-    # parquet, or it becomes a phantom entry.
-    if not removed_keys and file_path.suffix and file_path.suffix != ".parquet":
-        parquet_href = (
-            file_path.resolve()
-            .relative_to(catalog_root.resolve())
-            .with_suffix(".parquet")
-            .as_posix()
-        )
-        removed_keys = {
-            name for name, asset in current.assets.items() if asset.href == parquet_href
-        }
-
+    catalog_root = _versions_catalog_root(versions_path)
+    removed_keys = _matching_asset_keys(file_path, versions_file.versions[-1], catalog_root)
     if not removed_keys:
         # File wasn't tracked, nothing to do
-        return
+        return False
 
     from portolan_cli.version_ops import publish_version
 
@@ -247,3 +294,4 @@ def _remove_from_versions(file_path: Path, versions_path: Path) -> None:
         message=f"Removed {file_path.name}",
         catalog_root=catalog_root,
     )
+    return True
