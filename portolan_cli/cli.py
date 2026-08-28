@@ -1313,6 +1313,14 @@ def _output_check_json(payload: dict[str, Any], *, failed: bool) -> None:
     help="Skip the data pass; validate metadata without reading asset bytes",
 )
 @click.option(
+    "--data-scope",
+    "data_scope",
+    type=click.Choice(["all", "local"]),
+    default="all",
+    help="Which assets the data pass may read: all (default), or local to read only "
+    "the assets inside the catalog tree, leaving assets hosted elsewhere unread",
+)
+@click.option(
     "--no-structural",
     "no_structural",
     is_flag=True,
@@ -1341,6 +1349,7 @@ def check(
     live: bool,
     public_url: str | None,
     no_data: bool,
+    data_scope: str,
     no_structural: bool,
     schema: bool,
 ) -> None:
@@ -1348,8 +1357,17 @@ def check(
 
     Validation runs on rashid, which reports PTL-* rule ids citing the spec
     requirements they enforce. By default it checks metadata, STAC 1.1.0
-    structure, and the asset bytes themselves; every pass is offline.
-    With --fix, applies the mechanical repairs and re-checks.
+    structure, and the asset bytes themselves. The metadata and structural
+    passes are offline. The data pass reads asset bytes, including remote https
+    assets over HTTP range requests. Use --data-scope local to read only the
+    assets inside the catalog tree. Use --no-data to skip the pass. With --fix,
+    applies the mechanical repairs and re-checks.
+
+    The --live pass probes the published host for HTTP Range support and CORS
+    headers. It skips an upstream host only when it knows the base URL, from
+    --url or publish.public_url. Without a base URL it probes every absolute
+    href as declared, which can report CORS failures against a host you do not
+    control.
 
     PATH is the directory to check (default: current directory).
 
@@ -1365,6 +1383,8 @@ def check(
         portolan check --metadata             # Validate the catalog only
 
         portolan check --geo-assets           # Check source files only
+
+        portolan check --data-scope local     # Read only assets inside the catalog tree
 
         portolan check --no-data              # Skip reading asset bytes (faster)
 
@@ -1392,6 +1412,10 @@ def check(
     if force and not fix:
         warn("--force requires --fix")
 
+    # Warn if --data-scope is set while --no-data disables the pass it scopes
+    if data_scope != "all" and no_data:
+        warn("--data-scope has no effect with --no-data")
+
     # Resolve worker count: auto-detect from CPU count when unset, so a large
     # --fix run parallelizes by default (issue #530). An explicit value wins.
     resolved_workers = workers if workers is not None else (os.cpu_count() or 1)
@@ -1416,6 +1440,7 @@ def check(
         live=live,
         public_url=public_url,
         data=not no_data,
+        data_scope=data_scope,
         structural=not no_structural,
         schema=schema,
     )
@@ -1556,6 +1581,7 @@ def _execute_check_workflow(
     live: bool = False,
     public_url: str | None = None,
     data: bool = True,
+    data_scope: str = "all",
     structural: bool = True,
     schema: bool = False,
 ) -> None:
@@ -1576,6 +1602,7 @@ def _execute_check_workflow(
     validate_metadata = _should_validate(path, run_metadata=run_metadata, fix=fix)
     check_kwargs: dict[str, Any] = {
         "data": data,
+        "data_scope": data_scope,
         "structural": structural,
         "schema": schema,
         "metadata": validate_metadata,
@@ -3547,8 +3574,63 @@ def add_external_cmd(
             info_output(f"  via:  {result.via_url}")
 
 
+def _resolve_rm_catalog_root(
+    catalog_path: Path | None,
+    use_json: bool,
+) -> Path:
+    """Resolve the catalog root for rm, or exit with an error."""
+    if catalog_path is not None:
+        return catalog_path.resolve()
+
+    detected_root = find_catalog_root()
+    if detected_root is None:
+        emit_error(
+            "rm",
+            "NotACatalogError",
+            "Not inside a Portolan catalog (no .portolan/config.yaml found)",
+            use_json=use_json,
+        )
+        if not use_json:
+            detail("Run 'portolan init' to create a catalog, or cd into one")
+        raise SystemExit(1)
+    return detected_root
+
+
+def _render_rm_result(
+    path: Path,
+    removed: list[Path],
+    skipped: list[Path],
+    keep: bool,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Print the styled rm result to the terminal."""
+    if dry_run:
+        info_output("Dry run - no files were actually removed:")
+    for p in removed:
+        if dry_run:
+            detail(f"  Would remove: {p.name}")
+        elif keep:
+            success(f"Untracked {p.name} (file preserved)")
+        else:
+            success(f"Removed {p.name}")
+
+    # Show skipped files in verbose mode
+    if verbose and skipped:
+        for p in skipped:
+            warn(f"Skipped {p.name} (not in catalog or outside catalog)")
+
+    # Nothing matched a tracked asset or a file on disk. Report the
+    # no-op so a typo does not look like a success (issue #827).
+    if not removed:
+        if path.exists():
+            warn(f"Nothing to remove: {path.name} is not tracked")
+        else:
+            warn(f"Nothing to remove: {path.name} is not tracked and not on disk")
+
+
 @cli.command("rm")
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.argument("path", type=click.Path(exists=False, path_type=Path))
 @click.option(
     "--keep",
     is_flag=True,
@@ -3599,6 +3681,10 @@ def rm_cmd(
     Works like git: run from anywhere inside a catalog and it auto-detects
     the catalog root. Use --portolan-dir to override.
 
+    A file that is already gone from disk is still untracked, so you can drop a
+    tracked asset that you deleted by hand. The removal is recorded as a new
+    version.
+
     \b
     Safety flags:
     - --keep: Untrack file but preserve it on disk (safe, no --force needed)
@@ -3630,22 +3716,7 @@ def rm_cmd(
         raise SystemExit(1)
 
     # Auto-detect catalog root (git-style)
-    catalog_root: Path
-    if catalog_path is not None:
-        catalog_root = catalog_path.resolve()
-    else:
-        detected_root = find_catalog_root()
-        if detected_root is None:
-            emit_error(
-                "rm",
-                "NotACatalogError",
-                "Not inside a Portolan catalog (no .portolan/config.yaml found)",
-                use_json=use_json,
-            )
-            if not use_json:
-                detail("Run 'portolan init' to create a catalog, or cd into one")
-            raise SystemExit(1)
-        catalog_root = detected_root
+    catalog_root = _resolve_rm_catalog_root(catalog_path, use_json)
 
     try:
         target_path = path.resolve()
@@ -3667,20 +3738,7 @@ def rm_cmd(
             envelope = success_envelope("rm", data)
             output_json_envelope(envelope)
         else:
-            if dry_run:
-                info_output("Dry run - no files were actually removed:")
-            for p in removed:
-                if dry_run:
-                    detail(f"  Would remove: {p.name}")
-                elif keep:
-                    success(f"Untracked {p.name} (file preserved)")
-                else:
-                    success(f"Removed {p.name}")
-
-            # Show skipped files in verbose mode
-            if verbose and skipped:
-                for p in skipped:
-                    warn(f"Skipped {p.name} (not in catalog or outside catalog)")
+            _render_rm_result(path, removed, skipped, keep, dry_run, verbose)
 
     except ValueError as err:
         emit_error("rm", "ValueError", str(err), use_json=use_json)
@@ -4034,8 +4092,10 @@ def push(
             elif dry_run:
                 # Dry-run mode: push.py already printed what would be done
                 info_output("[DRY RUN] Complete - no files were uploaded")
-            else:
+            elif result.files_uploaded == 0:
                 info_output("Nothing to push - local and remote are in sync")
+            # A metadata-only sync (files_uploaded > 0, no version bump) already
+            # reported "Synced N metadata file(s)" from push_async (#816).
 
     except PushConflictError as err:
         if use_json:

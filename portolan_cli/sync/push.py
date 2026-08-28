@@ -2040,6 +2040,51 @@ async def _execute_push_uploads_async(
     )
 
 
+async def _sync_collection_metadata_only(
+    store: ObjectStore,
+    catalog_root: Path,
+    prefix: str,
+    collection: str,
+    *,
+    include_catalog_root: bool,
+    concurrency: int,
+    verbose: bool,
+) -> PushResult:
+    """Sync a collection's non-versioned metadata when no version changed (#816).
+
+    An edited ``AGENTS.md`` changes no data asset, so it bumps no version. The
+    version diff is empty and the normal upload path does not run. The catalog
+    root re-syncs its non-versioned metadata on every push, so a collection gets
+    the same treatment here. This function uploads the non-versioned metadata
+    files that ``_discover_catalog_files`` finds, such as ``AGENTS.md``. Without
+    it an edited agent guide never reaches the bucket.
+
+    A push with no new version and no metadata change uploads nothing.
+    """
+    metadata_uploaded, metadata_errors = await _upload_metadata_files_async(
+        store,
+        catalog_root,
+        prefix,
+        collection,
+        include_catalog_root=include_catalog_root,
+        concurrency=concurrency,
+        verbose=verbose,
+    )
+    # Warn with a summary count, the same as the normal upload path.
+    if metadata_errors:
+        warn(f"{len(metadata_errors)} metadata file(s) failed to upload:")
+        for err in metadata_errors:
+            warn(f" {err}")
+    return PushResult(
+        success=True,
+        files_uploaded=metadata_uploaded,
+        versions_pushed=0,
+        conflicts=[],
+        errors=[],
+        metadata_errors=list(metadata_errors),
+    )
+
+
 async def push_async(
     catalog_root: Path,
     collection: str,
@@ -2130,15 +2175,20 @@ async def push_async(
             "Pull changes first or use --force to overwrite."
         )
 
-    # Nothing to push?
+    # No new versions to push.
     # With --force, proceed even when the version list is unchanged so that
     # regenerated metadata (collection.json, catalog.json, styles) is re-uploaded
     # (Issue #496). Unchanged data assets are still skipped by the sha256 diff in
     # _get_assets_to_upload, so this refreshes metadata without a full re-push.
     if not force and not diff.local_only:
-        info("Nothing to push - local and remote are in sync")
-        return PushResult(
-            success=True, files_uploaded=0, versions_pushed=0, conflicts=[], errors=[]
+        return await _sync_collection_metadata_only(
+            store,
+            catalog_root,
+            prefix,
+            collection,
+            include_catalog_root=include_catalog,
+            concurrency=concurrency,
+            verbose=verbose,
         )
 
     # Execute uploads (with remote data for sha256 diffing, Issue #329)

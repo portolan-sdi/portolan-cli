@@ -192,8 +192,12 @@ class TestRemoveOneFile:
         assert removed is True
         assert (item_dir / "districts.parquet").exists()
 
-    def test_missing_file_is_skipped(self, catalog: Path) -> None:
-        """A file that is already gone is skipped rather than reported removed."""
+    def test_missing_and_untracked_file_is_skipped(self, catalog: Path) -> None:
+        """A file that is gone and never tracked is skipped, not reported removed.
+
+        The fixture writes no versions.json for ``mycoll``, so ``gone.parquet``
+        is neither on disk nor tracked. Removing it is a no-op (#803).
+        """
         removed = _remove_one_file(
             catalog / "mycoll" / "gone.parquet",
             catalog_root=catalog,
@@ -203,16 +207,95 @@ class TestRemoveOneFile:
 
         assert removed is False
 
-    def test_missing_file_is_still_untracked_under_keep(self, catalog: Path) -> None:
-        """keep=True unblocks the missing-file guard so tracking can be dropped."""
+    @pytest.mark.parametrize("keep", [False, True])
+    def test_missing_but_tracked_file_is_untracked(self, catalog: Path, keep: bool) -> None:
+        """A tracked file that is gone from disk is untracked (#803).
+
+        This is the acceptance case: a user deletes an asset by hand, then runs
+        ``rm`` to drop the phantom versions.json entry. The ``keep`` flag makes
+        no difference because there is nothing on disk to preserve or delete.
+        """
+        coll_dir = catalog / "mycoll"
+        versions_path = coll_dir / "versions.json"
+        write_versions(
+            versions_path,
+            VersionsFile(
+                spec_version=SPEC_VERSION,
+                current_version="1.0.0",
+                versions=[
+                    Version(
+                        version="1.0.0",
+                        created=datetime.now(timezone.utc),
+                        breaking=False,
+                        assets={
+                            "gone.pmtiles": Asset(
+                                sha256="abc", size_bytes=1, href="mycoll/gone.pmtiles"
+                            )
+                        },
+                        changes=["gone.pmtiles"],
+                    )
+                ],
+            ),
+        )
+        # The asset was never written to disk, so it is "missing from disk".
+        assert not (coll_dir / "gone.pmtiles").exists()
+
         removed = _remove_one_file(
-            catalog / "mycoll" / "gone.parquet",
+            coll_dir / "gone.pmtiles",
             catalog_root=catalog,
-            keep=True,
+            keep=keep,
             dry_run=False,
         )
 
         assert removed is True
+        latest = read_versions(versions_path).versions[-1]
+        assert "gone.pmtiles" not in latest.assets
+
+    def test_missing_but_tracked_file_dry_run_reports_removal(self, catalog: Path) -> None:
+        """dry-run on a tracked-but-missing file reports removal without publishing."""
+        coll_dir = catalog / "mycoll"
+        versions_path = coll_dir / "versions.json"
+        write_versions(
+            versions_path,
+            VersionsFile(
+                spec_version=SPEC_VERSION,
+                current_version="1.0.0",
+                versions=[
+                    Version(
+                        version="1.0.0",
+                        created=datetime.now(timezone.utc),
+                        breaking=False,
+                        assets={
+                            "gone.pmtiles": Asset(
+                                sha256="abc", size_bytes=1, href="mycoll/gone.pmtiles"
+                            )
+                        },
+                        changes=["gone.pmtiles"],
+                    )
+                ],
+            ),
+        )
+
+        removed = _remove_one_file(
+            coll_dir / "gone.pmtiles",
+            catalog_root=catalog,
+            keep=False,
+            dry_run=True,
+        )
+
+        assert removed is True
+        assert len(read_versions(versions_path).versions) == 1
+
+    def test_missing_and_untracked_file_dry_run_is_skipped(self, catalog: Path) -> None:
+        """dry-run on a missing, untracked file reports skip, not a phantom removal."""
+        removed = _remove_one_file(
+            catalog / "mycoll" / "gone.pmtiles",
+            catalog_root=catalog,
+            keep=False,
+            dry_run=True,
+        )
+
+        assert removed is False
 
     def test_symlink_is_refused(self, catalog: Path) -> None:
         """A symlink is left alone rather than followed into a delete.

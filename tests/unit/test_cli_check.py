@@ -276,6 +276,49 @@ class TestCheckPassFlags:
         assert mock_run.call_args.kwargs["public_url"] == "https://data.example.org/c/"
 
 
+class TestCheckDataScope:
+    """--data-scope selects which assets the data pass may read."""
+
+    @pytest.mark.unit
+    def test_flag_is_advertised(self, runner: CliRunner) -> None:
+        result = runner.invoke(cli, ["check", "--help"])
+        assert "--data-scope" in result.output
+
+    @pytest.mark.unit
+    def test_help_no_longer_claims_every_pass_is_offline(self, runner: CliRunner) -> None:
+        result = runner.invoke(cli, ["check", "--help"])
+        assert "every pass is offline" not in result.output
+        assert "HTTP range requests" in result.output
+
+    @pytest.mark.unit
+    def test_scope_defaults_to_all(self, runner: CliRunner, valid_catalog: Path) -> None:
+        with patch("portolan_cli.cli.run_check") as mock_run:
+            mock_run.return_value = _empty_outcome()
+            runner.invoke(cli, ["check", str(valid_catalog)])
+        assert mock_run.call_args.kwargs["data_scope"] == "all"
+
+    @pytest.mark.unit
+    def test_scope_local_is_threaded_through(self, runner: CliRunner, valid_catalog: Path) -> None:
+        with patch("portolan_cli.cli.run_check") as mock_run:
+            mock_run.return_value = _empty_outcome()
+            runner.invoke(cli, ["check", str(valid_catalog), "--data-scope", "local"])
+        assert mock_run.call_args.kwargs["data_scope"] == "local"
+
+    @pytest.mark.unit
+    def test_invalid_scope_is_rejected(self, runner: CliRunner, valid_catalog: Path) -> None:
+        result = runner.invoke(cli, ["check", str(valid_catalog), "--data-scope", "remote"])
+        assert result.exit_code != 0
+
+    @pytest.mark.unit
+    def test_scope_with_no_data_warns(self, runner: CliRunner, valid_catalog: Path) -> None:
+        with patch("portolan_cli.cli.run_check") as mock_run:
+            mock_run.return_value = _empty_outcome()
+            result = runner.invoke(
+                cli, ["check", str(valid_catalog), "--data-scope", "local", "--no-data"]
+            )
+        assert "--data-scope has no effect with --no-data" in result.output
+
+
 def _empty_outcome() -> Any:
     """A CheckOutcome with a clean report and nothing else set."""
     from rashid.model import Report

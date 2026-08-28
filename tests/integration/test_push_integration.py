@@ -1279,25 +1279,13 @@ class TestPushOutputInvariants:
             )
 
     @pytest.mark.integration
-    @given(
-        files_uploaded=st.integers(min_value=0, max_value=100),
-    )
-    @settings(
-        max_examples=25,
-        suppress_health_check=[
-            HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
-        ],
-        deadline=None,  # CLI invocation can be slow
-    )
-    def test_non_dry_run_zero_versions_shows_nothing_to_push(
+    def test_non_dry_run_zero_versions_zero_files_shows_nothing_to_push(
         self,
         catalog_with_versions: Path,
-        files_uploaded: int,
     ) -> None:
-        """Property: Non-dry-run with 0 versions pushed shows 'Nothing to push'.
+        """Property: Non-dry-run with 0 versions AND 0 files shows 'Nothing to push'.
 
-        This invariant ensures the normal case still works correctly.
+        This invariant ensures the fully-in-sync case still works correctly.
         """
         from portolan_cli.cli import cli
         from portolan_cli.sync.push import PushResult
@@ -1307,7 +1295,7 @@ class TestPushOutputInvariants:
         with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
-                files_uploaded=files_uploaded,
+                files_uploaded=0,  # Key: nothing uploaded
                 versions_pushed=0,  # Key: 0 versions
                 conflicts=[],
                 errors=[],
@@ -1327,10 +1315,66 @@ class TestPushOutputInvariants:
                 catch_exceptions=False,
             )
 
-            # INVARIANT: Non-dry-run with 0 versions should show "Nothing to push"
+            # INVARIANT: Non-dry-run with 0 versions and 0 files shows "Nothing to push"
             assert "Nothing to push" in result.output, (
+                f"Non-dry-run with 0 files and 0 versions didn't show "
+                f"'Nothing to push': {result.output}"
+            )
+
+    @pytest.mark.integration
+    @given(
+        files_uploaded=st.integers(min_value=1, max_value=100),
+    )
+    @settings(
+        max_examples=25,
+        suppress_health_check=[
+            HealthCheck.function_scoped_fixture,
+            HealthCheck.differing_executors,
+        ],
+        deadline=None,  # CLI invocation can be slow
+    )
+    def test_non_dry_run_metadata_only_sync_hides_nothing_to_push(
+        self,
+        catalog_with_versions: Path,
+        files_uploaded: int,
+    ) -> None:
+        """Property: A metadata-only sync (0 versions, >0 files) hides 'Nothing to push'.
+
+        An edited AGENTS.md uploads with no version bump (#816). The CLI must not
+        report 'Nothing to push' when it actually pushed metadata files.
+        """
+        from portolan_cli.cli import cli
+        from portolan_cli.sync.push import PushResult
+
+        runner = CliRunner()
+
+        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
+            mock_push.return_value = PushResult(
+                success=True,
+                files_uploaded=files_uploaded,  # Key: metadata files uploaded
+                versions_pushed=0,  # Key: 0 versions
+                conflicts=[],
+                errors=[],
+            )
+
+            result = runner.invoke(
+                cli,
+                [
+                    "push",
+                    "s3://mybucket/catalog",
+                    "--collection",
+                    "demographics",
+                    # No --dry-run
+                    "--catalog",
+                    str(catalog_with_versions),
+                ],
+                catch_exceptions=False,
+            )
+
+            # INVARIANT: A metadata-only sync must NOT claim "Nothing to push"
+            assert "Nothing to push" not in result.output, (
                 f"Non-dry-run with files_uploaded={files_uploaded}, "
-                f"versions_pushed=0 didn't show 'Nothing to push': {result.output}"
+                f"versions_pushed=0 wrongly showed 'Nothing to push': {result.output}"
             )
 
     @pytest.mark.integration
