@@ -10,19 +10,11 @@ theme:
   name: material
   logo: assets/images/icon-white.svg
   favicon: assets/images/favicon.ico
+  # Light mode only. The brand kit carries no dark theme and no toggle.
   palette:
-    - scheme: default
-      primary: custom
-      accent: custom
-      toggle:
-        icon: material/brightness-4
-        name: Switch to dark mode
-    - scheme: slate
-      primary: custom
-      accent: custom
-      toggle:
-        icon: material/brightness-7
-        name: Switch to light mode
+    scheme: default
+    primary: custom
+    accent: custom
   features:
     - navigation.top
     - navigation.tabs
