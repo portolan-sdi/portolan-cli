@@ -9,7 +9,7 @@ edit_uri: edit/main/docs/
 theme:
   name: material
   logo: assets/images/icon-white.svg
-  favicon: assets/images/logo.png
+  favicon: assets/images/favicon.ico
   palette:
     - scheme: default
       primary: custom

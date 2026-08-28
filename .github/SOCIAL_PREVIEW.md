@@ -1,30 +1,29 @@
 # GitHub Social Preview Setup
 
-To configure the repository's social preview image:
+To configure the repository social preview image:
 
-1. Go to repository **Settings** → **General**
-2. Scroll to **Social preview**
-3. Click **Edit**
-4. Upload the image at `docs/assets/images/social-card.png` (3500x1440px)
+1. Go to repository **Settings** and then **General**.
+2. Scroll to **Social preview**.
+3. Click **Edit**.
+4. Upload the image at `docs/assets/images/social-card.png` (3500x1440px).
 
-This will make the Portolan logo and cover image appear when sharing the repository on social media, Slack, Discord, etc.
+The Portolan lockup then appears when someone shares the repository on
+social media, Slack, or Discord.
 
 ## Files Available
 
-- **Logo (square)**: `docs/assets/images/logo.png` (1000x1000)
-- **Logo (vector)**: `docs/assets/images/logo.svg`
+- **Mark (vector)**: `docs/assets/images/icon.svg`
+- **Mark on a dark ground**: `docs/assets/images/icon-white.svg`
+- **Mark (square raster)**: `docs/assets/images/logo.png` (1000x1000)
+- **Favicon**: `docs/assets/images/favicon.ico` (16, 32, and 48 px)
 - **Social card**: `docs/assets/images/social-card.png` (3500x1440)
 
-## Brand Colors
+## Brand Values
 
-- **Background**: `#eaedf9`
-- **Dark text**: `#202a4f`
-- **Primary**: `#4163cc`
-- **Gradient**: `#395eca` → `#848bd8`
+The brand kit in
+[portolan-ops](https://github.com/portolan-sdi/portolan-ops/blob/main/brand/)
+holds the canonical palette, fonts, and logo files. Read `brand.json` there.
+Do not restate a hex value in this repository.
 
-## Typography
-
-- **Font**: Archivo Medium
-- **Designer**: Omnibus-Type
-- **License**: Open Font License
-- **Icon**: Designed by Icons By Alfredo
+The social card sets the horizontal lockup in Portolan blue on cream paper.
+The wordmark is Hanken Grotesk SemiBold.
