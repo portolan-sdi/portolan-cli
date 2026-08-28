@@ -780,6 +780,10 @@ class TestRm:
             assert result.exit_code == 0
             assert "does not exist" not in result.output
             assert "Removed" not in result.output
+            # A path that is neither tracked nor on disk is a no-op. rm must
+            # report it, not exit silently (#827).
+            assert "Nothing to remove" in result.output
+            assert "gone.parquet" in result.output
 
     @pytest.mark.unit
     def test_rm_directory_with_force(self, runner: CliRunner) -> None:

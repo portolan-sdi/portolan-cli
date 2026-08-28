@@ -3693,6 +3693,14 @@ def rm_cmd(
                 for p in skipped:
                     warn(f"Skipped {p.name} (not in catalog or outside catalog)")
 
+            # Nothing matched a tracked asset or a file on disk. Report the
+            # no-op so a typo does not look like a success (issue #827).
+            if not removed:
+                if path.exists():
+                    warn(f"Nothing to remove: {path.name} is not tracked")
+                else:
+                    warn(f"Nothing to remove: {path.name} is not tracked and not on disk")
+
     except ValueError as err:
         emit_error("rm", "ValueError", str(err), use_json=use_json)
         raise SystemExit(1) from err
