@@ -190,6 +190,124 @@ class TestAutoInitCatalog:
         assert (output_dir / "layer_0" / "collection.json").exists()
         assert (output_dir / "layer_1" / "collection.json").exists()
 
+    def test_second_extraction_adds_collection_to_existing_catalog(self, tmp_path: Path) -> None:
+        """A second extraction into an existing catalog adds a collection (issue #767).
+
+        Before the fix, the second _auto_init_catalog call raised
+        CatalogAlreadyExistsError after the data was already on disk, so the
+        second layer's collection.json was never written.
+        """
+        import json
+
+        output_dir = tmp_path / "shared_catalog"
+        output_dir.mkdir()
+
+        def _extract_layer(name: str, layer_id: int) -> ExtractionReport:
+            layer_dir = output_dir / name
+            layer_dir.mkdir()
+            output_parquet = layer_dir / "data.parquet"
+            shutil.copy(FIXTURES_DIR / "simple.parquet", output_parquet)
+            report = make_report(
+                layers=[
+                    make_layer_result(
+                        layer_id=layer_id,
+                        name=name,
+                        output_path=f"{name}/data.parquet",
+                        size_bytes=output_parquet.stat().st_size,
+                    )
+                ],
+            )
+            _auto_init_catalog(output_dir, report, TEST_LICENSE)
+            return report
+
+        # First layer creates the catalog.
+        _extract_layer("layer_a", 0)
+        assert (output_dir / "catalog.json").exists()
+        assert (output_dir / "layer_a" / "collection.json").exists()
+
+        # Second layer must be added, not refused.
+        _extract_layer("layer_b", 1)
+        assert (output_dir / "layer_b" / "collection.json").exists(), (
+            "second layer's collection.json should be written into the existing catalog"
+        )
+
+        # The root catalog links to both collections.
+        catalog_json = json.loads((output_dir / "catalog.json").read_text())
+        child_hrefs = {
+            link.get("href") for link in catalog_json.get("links", []) if link.get("rel") == "child"
+        }
+        assert "./layer_a/collection.json" in child_hrefs
+        assert "./layer_b/collection.json" in child_hrefs
+
+    def test_second_extraction_keeps_root_catalog_title_and_description(
+        self, tmp_path: Path
+    ) -> None:
+        """A second extraction from a different service keeps the root metadata (issue #832).
+
+        The #767 fix lets a second extraction add a collection to an existing
+        catalog. Before this fix, that second run also rewrote the root
+        catalog.json title and description with the new service's values. The
+        root metadata must survive the second extraction.
+        """
+        import json
+
+        output_dir = tmp_path / "shared_catalog"
+        output_dir.mkdir()
+
+        def _extract(name: str, layer_id: int, source_url: str, description: str) -> None:
+            layer_dir = output_dir / name
+            layer_dir.mkdir()
+            output_parquet = layer_dir / "data.parquet"
+            shutil.copy(FIXTURES_DIR / "simple.parquet", output_parquet)
+            report = make_report(
+                layers=[
+                    make_layer_result(
+                        layer_id=layer_id,
+                        name=name,
+                        output_path=f"{name}/data.parquet",
+                        size_bytes=output_parquet.stat().st_size,
+                    )
+                ],
+                source_url=source_url,
+            )
+            report.metadata_extracted = MetadataExtracted(
+                source_url=source_url,
+                description=description,
+                attribution=None,
+                keywords=None,
+                contact_name=None,
+                processing_notes=None,
+                known_issues=None,
+                license_info_raw=None,
+            )
+            _auto_init_catalog(output_dir, report, TEST_LICENSE)
+
+        # First extraction seeds the root title and description.
+        _extract(
+            "housing",
+            0,
+            "https://services.arcgis.com/abc/arcgis/rest/services/HousingData/FeatureServer",
+            "Housing information for the municipality.",
+        )
+        catalog_before = json.loads((output_dir / "catalog.json").read_text())
+        assert catalog_before.get("title") == "HousingData"
+        assert "housing information" in catalog_before.get("description", "").lower()
+
+        # Second extraction from a different service must not replace the root metadata.
+        _extract(
+            "roads",
+            1,
+            "https://services.arcgis.com/abc/arcgis/rest/services/RoadNetwork/FeatureServer",
+            "Road centerlines for the region.",
+        )
+        catalog_after = json.loads((output_dir / "catalog.json").read_text())
+        assert catalog_after.get("title") == "HousingData", (
+            "second extraction must not overwrite the root catalog title"
+        )
+        assert catalog_after.get("description") == catalog_before.get("description"), (
+            "second extraction must not overwrite the root catalog description"
+        )
+
     def test_auto_init_skipped_when_no_successful_layers(self, tmp_path: Path) -> None:
         """No catalog created when all layers failed."""
         output_dir = tmp_path / "failed_extraction"

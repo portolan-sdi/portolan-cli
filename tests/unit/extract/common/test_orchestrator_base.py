@@ -97,7 +97,7 @@ class TestInitExtractedCatalog:
         report = _report([_layer(0, "a", status="failed")])
         called = {"post_init": False}
 
-        def _post_init(_out: Path, _files: list[Path]) -> None:
+        def _post_init(_out: Path, _files: list[Path], _fresh: bool) -> None:
             called["post_init"] = True
 
         result = init_extracted_catalog(
@@ -132,9 +132,12 @@ class TestInitExtractedCatalog:
         def _fake_add(*, paths: list[Path], catalog_root: Path) -> None:
             events.append("add")
 
-        def _post_init(_out: Path, files: list[Path]) -> None:
+        def _post_init(_out: Path, files: list[Path], fresh: bool) -> None:
             events.append("post_init")
             assert files == [tmp_path / "a/a.parquet"]
+            # The catalog was created by this call, so the hook may seed root
+            # metadata (issue #832).
+            assert fresh is True
 
         monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
         monkeypatch.setattr(catalog_mod, "add_files", _fake_add)
@@ -155,6 +158,44 @@ class TestInitExtractedCatalog:
 
         result = init_extracted_catalog(tmp_path, report, title=None, description=None)
         assert result == [tmp_path / "a/a.parquet"]
+
+    def test_adds_to_existing_catalog_without_init(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A directory that is already a Portolan catalog (issue #767). detect_state
+        # reads config.yaml alone to return MANAGED.
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text("# Portolan configuration\n")
+
+        report = _report([_layer(0, "a", output_path="a/a.parquet")])
+        events: list[str] = []
+
+        import portolan_cli.catalog as catalog_mod
+
+        def _fake_init(*_a: object, **_k: object) -> None:
+            events.append("init")
+
+        def _fake_add(*, paths: list[Path], catalog_root: Path) -> None:
+            events.append("add")
+
+        def _post_init(_out: Path, files: list[Path], fresh: bool) -> None:
+            events.append("post_init")
+            assert files == [tmp_path / "a/a.parquet"]
+            # The catalog already existed, so the hook must not overwrite root
+            # metadata (issue #832).
+            assert fresh is False
+
+        monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
+        monkeypatch.setattr(catalog_mod, "add_files", _fake_add)
+
+        result = init_extracted_catalog(
+            tmp_path, report, title="t", description="d", post_init=_post_init
+        )
+
+        assert result == [tmp_path / "a/a.parquet"]
+        # init_catalog is skipped for an existing catalog; the new collection is
+        # added instead of the run aborting.
+        assert events == ["post_init", "add"]
 
 
 class TestAddSourceLinks:
