@@ -4632,7 +4632,6 @@ iceberg = [
     { name = "pyiceberg", extra = ["sql-sqlite"] },
     { name = "shapely" },
 ]
-pmtiles = []
 thumbnails = [
     { name = "contextily" },
     { name = "mapbox-vector-tile" },
@@ -4683,7 +4682,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.10.0" },
     { name = "pmtiles", specifier = ">=3.0.0" },
-    { name = "pyarrow", specifier = ">=12.0.0,<25.0.0" },
+    { name = "pyarrow", specifier = ">=12.0.0,<26.0.0" },
     { name = "pygeohash", marker = "extra == 'iceberg'", specifier = ">=1.2.0" },
     { name = "pygments", specifier = ">=2.20.0" },
     { name = "pyiceberg", extras = ["sql-sqlite"], marker = "extra == 'iceberg'", specifier = ">=0.8.0" },
