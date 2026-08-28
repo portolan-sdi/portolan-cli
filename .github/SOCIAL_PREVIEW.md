@@ -14,6 +14,7 @@ social media, Slack, or Discord.
 
 - **Mark (vector)**: `docs/assets/images/icon.svg`
 - **Mark on a dark ground**: `docs/assets/images/icon-white.svg`
+- **Horizontal lockup**: `docs/assets/images/logo.svg`
 - **Mark (square raster)**: `docs/assets/images/logo.png` (1000x1000)
 - **Favicon**: `docs/assets/images/favicon.ico` (16, 32, and 48 px)
 - **Social card**: `docs/assets/images/social-card.png` (3500x1440)

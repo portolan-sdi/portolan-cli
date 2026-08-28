@@ -27,6 +27,7 @@ All logo files live in `docs/assets/images/`:
 |---|---|
 | `icon.svg` | The mark in Portolan blue. Use it on a light ground. |
 | `icon-white.svg` | The mark in cream. Use it on a dark ground. |
+| `logo.svg` | The horizontal lockup. The mark with the wordmark beside it. |
 | `logo.png` | 1000x1000 raster mark for a fallback. |
 | `favicon.ico` | The browser tab icon at 16, 32, and 48 px. |
 | `social-card.png` | 3500x1440 card for social media previews. |
