@@ -97,6 +97,7 @@ def _example_environment(
         {
             "CATALOG_DIR": str(catalog_dir),
             "PORTOLAN_PHL_ARCGIS_URL": arcgis_url,
+            "PYTHONIOENCODING": "utf-8",
         }
     )
     if remote is not None:
@@ -116,19 +117,21 @@ def _run_example(
         env=_example_environment(catalog_dir, arcgis_url, remote),
         check=False,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     )
 
 
 def _run_query(catalog_url: str) -> subprocess.CompletedProcess[str]:
     """Run the exact analysis embedded in the public documentation."""
+    environment = os.environ.copy()
+    environment["PYTHONIOENCODING"] = "utf-8"
     return subprocess.run(
         [sys.executable, str(QUERY), catalog_url],
         cwd=PROJECT_ROOT,
-        env=os.environ.copy(),
+        env=environment,
         check=False,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     )
 
 
@@ -248,6 +251,26 @@ def test_docs_text_reader_requests_utf8(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setattr(Path, "read_text", require_utf8)
 
     assert _read_text(text_file) == "✓ →"
+
+
+@pytest.mark.unit
+def test_example_subprocess_forces_utf8_stdio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Windows test process can emit and capture tutorial symbols."""
+
+    def capture_run(_command: object, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        environment = cast(dict[str, str], kwargs["env"])
+        assert environment["PYTHONIOENCODING"] == "utf-8"
+        assert kwargs["encoding"] == "utf-8"
+        assert "text" not in kwargs
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", capture_run)
+
+    result = _run_example(tmp_path, "http://127.0.0.1:1/ArcGIS/rest/services")
+
+    assert result.returncode == 0
 
 
 @pytest.mark.unit
