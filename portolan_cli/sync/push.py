@@ -2232,6 +2232,11 @@ class PushAllResult:
         failed_collections: Number of collections that failed to push.
         total_files_uploaded: Aggregate count of files uploaded across all collections.
         total_versions_pushed: Aggregate count of versions pushed across all collections.
+        dry_run: True if this was a dry-run operation (no network calls made).
+        total_would_push_files: In dry-run mode, max asset files that would be uploaded
+            (upper bound; actual count depends on remote state).
+        total_would_push_versions: In dry-run mode, max versions that would be pushed
+            (upper bound; actual count depends on remote state).
         collection_errors: Dict mapping collection name to error messages.
     """
 
@@ -2241,6 +2246,9 @@ class PushAllResult:
     failed_collections: int
     total_files_uploaded: int
     total_versions_pushed: int
+    dry_run: bool = False
+    total_would_push_files: int = 0
+    total_would_push_versions: int = 0
     collection_errors: dict[str, list[str]] = field(default_factory=dict)
 
 
@@ -2331,9 +2339,10 @@ def _push_all_process_result(
             stats["failed"] += 1
             stats["errors"][coll] = [err_msg]
         elif result and result.success:
-            # Dry-run does no remote check, so report the local upper-bound estimate.
-            # Reporting the real 0/0 counts here contradicts the "Would push up to N"
-            # estimate that push() prints and misleads an operator (Issue #804).
+            # A dry-run does no remote check, so the terminal line reports the local
+            # upper-bound estimate. The estimate goes to the would-push stats, not the
+            # uploaded stats. The uploaded stats stay at 0 to keep the JSON envelope
+            # side-effect-honest and consistent with the single-collection path.
             if result.dry_run:
                 v = result.would_push_versions
                 f = result.would_push_files
@@ -2341,13 +2350,15 @@ def _push_all_process_result(
                     f"[{current_completed}/{total}] {coll}: "
                     f"would push up to {v} version(s), {f} file(s)"
                 )
+                stats["total_would_push_files"] += f
+                stats["total_would_push_versions"] += v
             else:
                 v = result.versions_pushed
                 f = result.files_uploaded
                 success(f"[{current_completed}/{total}] {coll}: {v} version(s), {f} file(s)")
+                stats["total_files"] += f
+                stats["total_versions"] += v
             stats["successful"] += 1
-            stats["total_files"] += f
-            stats["total_versions"] += v
             if result.metrics:
                 stats["metrics"].merge(result.metrics)
         elif result:
@@ -2595,6 +2606,7 @@ async def push_all_collections_async(
             failed_collections=0,
             total_files_uploaded=0,
             total_versions_pushed=0,
+            dry_run=dry_run,
         )
 
     info(f"Found {total} collection(s) to push")
@@ -2605,6 +2617,8 @@ async def push_all_collections_async(
         "failed": 0,
         "total_files": 0,
         "total_versions": 0,
+        "total_would_push_files": 0,
+        "total_would_push_versions": 0,
         "metrics": UploadMetrics(),
         "errors": {},
     }
@@ -2667,8 +2681,10 @@ async def push_all_collections_async(
         info(f"\n{'=' * 60}")
         if overall_success:
             if dry_run:
+                wv = stats["total_would_push_versions"]
+                wf = stats["total_would_push_files"]
                 msg = f"[DRY RUN] Would push {stats['successful']} collection(s), "
-                msg += f"{stats['total_versions']} version(s), {stats['total_files']} file(s)"
+                msg += f"{wv} version(s), {wf} file(s)"
             else:
                 msg = f"Pushed {stats['successful']} collection(s), "
                 msg += f"{stats['total_versions']} version(s), {stats['total_files']} file(s)"
@@ -2691,6 +2707,9 @@ async def push_all_collections_async(
         failed_collections=stats["failed"],
         total_files_uploaded=stats["total_files"],
         total_versions_pushed=stats["total_versions"],
+        dry_run=dry_run,
+        total_would_push_files=stats["total_would_push_files"],
+        total_would_push_versions=stats["total_would_push_versions"],
         collection_errors=stats["errors"],
     )
 

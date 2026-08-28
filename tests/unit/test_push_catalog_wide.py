@@ -12,8 +12,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from click.testing import CliRunner
 
+from portolan_cli.cli import cli
 from portolan_cli.sync.push import (
+    PushAllResult,
     PushResult,
     discover_collections,
     push_all_collections,
@@ -369,12 +372,66 @@ class TestPushAllCollections:
             profile=None,
         )
 
-        # Aggregate result carries the estimate, not the real 0/0 counts.
-        assert result.total_versions_pushed == 2
-        assert result.total_files_uploaded == 3
+        # The uploaded counts stay at 0 because a dry-run uploads nothing.
+        # The estimate goes to the separate would-push fields.
+        assert result.dry_run is True
+        assert result.total_versions_pushed == 0
+        assert result.total_files_uploaded == 0
+        assert result.total_would_push_versions == 2
+        assert result.total_would_push_files == 3
 
         # Terminal output must not report the contradictory "0 version(s), 0 file(s)".
         out = capsys.readouterr().out
         assert "col1: would push up to 2 version(s), 3 file(s)" in out
         assert "[DRY RUN] Would push 1 collection(s), 2 version(s), 3 file(s)" in out
         assert "0 version(s), 0 file(s)" not in out
+
+
+class TestCatalogWideDryRunJson:
+    """The catalog-wide --json dry-run envelope must be side-effect-honest."""
+
+    @patch("portolan_cli.sync.push.push_all_collections")
+    def test_dry_run_json_reports_zero_uploaded(
+        self, mock_push_all: MagicMock, tmp_path: Path
+    ) -> None:
+        """A dry-run uploads nothing, so the JSON envelope reports 0 uploaded.
+
+        Regression for Issue #833. The estimate belongs in the would-push fields.
+        The total_files_uploaded and total_versions_pushed fields stay at 0. An
+        agent that reads total_files_uploaded must not see the estimate there.
+        """
+        _setup_valid_catalog(tmp_path)
+
+        mock_push_all.return_value = PushAllResult(
+            success=True,
+            total_collections=1,
+            successful_collections=1,
+            failed_collections=0,
+            total_files_uploaded=0,
+            total_versions_pushed=0,
+            dry_run=True,
+            total_would_push_files=3,
+            total_would_push_versions=2,
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "push",
+                "s3://bucket/catalog",
+                "--dry-run",
+                "--json",
+                "--catalog",
+                str(tmp_path),
+            ],
+        )
+
+        assert result.exit_code == 0
+        envelope = json.loads(result.output)
+        data = envelope["data"]
+        assert data["total_files_uploaded"] == 0
+        assert data["total_versions_pushed"] == 0
+        assert data["dry_run"] is True
+        assert data["total_would_push_files"] == 3
+        assert data["total_would_push_versions"] == 2
