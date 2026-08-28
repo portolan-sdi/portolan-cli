@@ -333,3 +333,48 @@ class TestPushAllCollections:
         assert call_kwargs["dry_run"] is True
         assert call_kwargs["collection"] == "col1"
         assert call_kwargs["include_catalog"] is False
+
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
+    def test_dry_run_reports_would_push_estimate(
+        self, mock_push: MagicMock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Dry-run per-collection and summary counts use the would-push estimate.
+
+        Regression for Issue #804. A dry-run does no remote check, so push()
+        returns files_uploaded=0 and versions_pushed=0. The catalog-wide report
+        must show the local upper-bound estimate instead of 0/0, which otherwise
+        contradicts the "Would push up to N" line and misleads an operator.
+        """
+        _setup_valid_catalog(tmp_path)
+
+        (tmp_path / "col1").mkdir()
+        (tmp_path / "col1" / "versions.json").write_text(json.dumps({"versions": []}))
+
+        mock_push.return_value = PushResult(
+            success=True,
+            files_uploaded=0,
+            versions_pushed=0,
+            conflicts=[],
+            errors=[],
+            dry_run=True,
+            would_push_versions=2,
+            would_push_files=3,
+        )
+
+        result = push_all_collections(
+            catalog_root=tmp_path,
+            destination="s3://bucket/catalog",
+            force=False,
+            dry_run=True,
+            profile=None,
+        )
+
+        # Aggregate result carries the estimate, not the real 0/0 counts.
+        assert result.total_versions_pushed == 2
+        assert result.total_files_uploaded == 3
+
+        # Terminal output must not report the contradictory "0 version(s), 0 file(s)".
+        out = capsys.readouterr().out
+        assert "col1: would push up to 2 version(s), 3 file(s)" in out
+        assert "[DRY RUN] Would push 1 collection(s), 2 version(s), 3 file(s)" in out
+        assert "0 version(s), 0 file(s)" not in out

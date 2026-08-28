@@ -104,6 +104,8 @@ class PushResult:
         dry_run: True if this was a dry-run operation (no network calls made).
         would_push_versions: In dry-run mode, max versions that would be pushed
             (upper bound; actual count depends on remote state).
+        would_push_files: In dry-run mode, max asset files that would be uploaded
+            (upper bound; actual count depends on remote state).
         metrics: Upload performance metrics (bytes, duration, speed).
     """
 
@@ -115,6 +117,7 @@ class PushResult:
     metadata_errors: list[str] = field(default_factory=list)
     dry_run: bool = False
     would_push_versions: int = 0
+    would_push_files: int = 0
     metrics: UploadMetrics | None = None
 
     @property
@@ -1283,6 +1286,7 @@ def _handle_push_dry_run(
         errors=missing_assets,
         dry_run=True,
         would_push_versions=len(local_versions),
+        would_push_files=asset_count,
     )
 
 
@@ -2327,9 +2331,20 @@ def _push_all_process_result(
             stats["failed"] += 1
             stats["errors"][coll] = [err_msg]
         elif result and result.success:
-            v = result.versions_pushed
-            f = result.files_uploaded
-            success(f"[{current_completed}/{total}] {coll}: {v} version(s), {f} file(s)")
+            # Dry-run does no remote check, so report the local upper-bound estimate.
+            # Reporting the real 0/0 counts here contradicts the "Would push up to N"
+            # estimate that push() prints and misleads an operator (Issue #804).
+            if result.dry_run:
+                v = result.would_push_versions
+                f = result.would_push_files
+                success(
+                    f"[{current_completed}/{total}] {coll}: "
+                    f"would push up to {v} version(s), {f} file(s)"
+                )
+            else:
+                v = result.versions_pushed
+                f = result.files_uploaded
+                success(f"[{current_completed}/{total}] {coll}: {v} version(s), {f} file(s)")
             stats["successful"] += 1
             stats["total_files"] += f
             stats["total_versions"] += v
@@ -2651,12 +2666,16 @@ async def push_all_collections_async(
     with output_section():
         info(f"\n{'=' * 60}")
         if overall_success:
-            msg = f"Pushed {stats['successful']} collection(s), "
-            msg += f"{stats['total_versions']} version(s), {stats['total_files']} file(s)"
-            if stats["metrics"].total_bytes > 0:
-                size = format_file_size(stats["metrics"].total_bytes)
-                speed = format_speed(stats["metrics"].average_speed)
-                msg += f" ({size}, avg {speed})"
+            if dry_run:
+                msg = f"[DRY RUN] Would push {stats['successful']} collection(s), "
+                msg += f"{stats['total_versions']} version(s), {stats['total_files']} file(s)"
+            else:
+                msg = f"Pushed {stats['successful']} collection(s), "
+                msg += f"{stats['total_versions']} version(s), {stats['total_files']} file(s)"
+                if stats["metrics"].total_bytes > 0:
+                    size = format_file_size(stats["metrics"].total_bytes)
+                    speed = format_speed(stats["metrics"].average_speed)
+                    msg += f" ({size}, avg {speed})"
             success(msg)
         else:
             warn(
