@@ -53,6 +53,32 @@ class TestTitlePrecedence:
         assert collection.title == "City Roads"
 
 
+class TestDescriptionPrecedence:
+    def test_inherited_description_never_overwrites_a_collection_description(
+        self, tmp_path: Path
+    ) -> None:
+        """An ancestor description must not become the collection description (issue #755)."""
+        _write_metadata(tmp_path, {"description": "Root catalog description"})
+        collection_dir = _collection_dir(tmp_path)
+        collection = create_collection(
+            collection_id="roads", description="Road network of the city"
+        )
+
+        apply_human_metadata(collection, collection_dir, tmp_path)
+
+        assert collection.description == "Road network of the city"
+
+    def test_own_description_wins(self, tmp_path: Path) -> None:
+        _write_metadata(tmp_path, {"description": "Root catalog description"})
+        collection_dir = _collection_dir(tmp_path)
+        _write_metadata(collection_dir, {"description": "City road network"})
+        collection = create_collection(collection_id="roads", description="Roads")
+
+        apply_human_metadata(collection, collection_dir, tmp_path)
+
+        assert collection.description == "City road network"
+
+
 class TestLicensePrecedence:
     def test_inherited_license_fills_placeholder(self, tmp_path: Path) -> None:
         _write_metadata(tmp_path, {"license": "CC-BY-4.0"})
@@ -85,7 +111,7 @@ class TestLicensePrecedence:
 
 
 class TestProvidersPrecedence:
-    def test_inherited_contact_fills_missing_providers(self, tmp_path: Path) -> None:
+    def test_inherited_providers_fill_missing_providers(self, tmp_path: Path) -> None:
         _write_metadata(
             tmp_path,
             {
@@ -95,6 +121,27 @@ class TestProvidersPrecedence:
         collection_dir = _collection_dir(tmp_path)
         collection = create_collection(collection_id="roads", description="Roads")
         assert not collection.providers
+
+        apply_human_metadata(collection, collection_dir, tmp_path)
+
+        names = [provider.name for provider in collection.providers or []]
+        assert names == ["City GIS"]
+
+    def test_own_contact_regenerates_providers(self, tmp_path: Path) -> None:
+        """An owned contact rebuilds providers, even over a hand-edited array.
+
+        A collection's own metadata.yaml is authoritative. A contact it declares
+        seeds the host provider, so the resolved providers replace the array.
+        """
+        collection_dir = _collection_dir(tmp_path)
+        _write_metadata(
+            collection_dir,
+            {"contact": {"name": "City GIS", "email": "gis@city.example"}},
+        )
+        collection = create_collection(collection_id="roads", description="Roads")
+        import pystac
+
+        collection.providers = [pystac.Provider(name="Hand Edited", roles=["producer", "host"])]
 
         apply_human_metadata(collection, collection_dir, tmp_path)
 

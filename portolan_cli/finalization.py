@@ -424,6 +424,11 @@ def apply_human_metadata(
     replaces a title, a license, or providers a maintainer set on this collection,
     and a catalog title never becomes a collection title (issue #755).
 
+    An own ``contact`` counts as an own providers declaration. It seeds the host
+    provider, so it regenerates the providers array even over one a maintainer
+    hand-edited into collection.json. Do not set both a hand-edited array and an
+    own ``contact`` unless you want the contact to win.
+
     Args:
         collection: The collection to update in place.
         collection_dir: The collection's directory under the catalog root.
@@ -445,8 +450,9 @@ def apply_human_metadata(
         # still resolve its link.
         apply_human_license(collection, own)
 
-    # Providers: the own declaration wins, and a host seeds from an inherited
-    # contact. An inherited array fills only a collection that declares none yet.
+    # Providers: an own providers array or an own contact rebuilds the array,
+    # because both are own declarations (an own contact seeds the host). An
+    # inherited array fills only a collection that declares none yet.
     if "providers" in own or "contact" in own or not collection.providers:
         apply_human_providers(collection, merged)
 
