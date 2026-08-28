@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from portolan_cli.input_hardening import (
+    MAX_CATALOG_ID_LENGTH,
     InputValidationError,
     validate_catalog_id,
     validate_collection_id,
@@ -224,31 +225,31 @@ class TestValidateCatalogId:
         with pytest.raises(InputValidationError, match="cannot be empty"):
             validate_catalog_id("")
 
-    def test_rejects_control_characters(self) -> None:
-        """Control characters are rejected."""
-        with pytest.raises(InputValidationError, match="Control characters"):
-            validate_catalog_id("catalog\x00data")
-
-    def test_rejects_query_parameters(self) -> None:
-        """Query parameters are rejected."""
-        with pytest.raises(InputValidationError, match="Query parameters"):
-            validate_catalog_id("catalog?fields=name")
-
-    def test_rejects_url_encoding(self) -> None:
-        """Pre-encoded strings are rejected."""
-        with pytest.raises(InputValidationError, match="URL-encoded"):
-            validate_catalog_id("catalog%20name")
-
-    def test_rejects_path_traversals(self) -> None:
-        """Path traversals are rejected."""
-        with pytest.raises(InputValidationError, match="Path separators"):
-            validate_catalog_id("../catalog")
-        with pytest.raises(InputValidationError, match="Path separators"):
-            validate_catalog_id("parent/child")
+    def test_rejects_id_over_the_length_limit(self) -> None:
+        """A catalog ID stays inside the 255-character name limit."""
+        assert validate_catalog_id("a" * MAX_CATALOG_ID_LENGTH)
+        with pytest.raises(InputValidationError, match="too long"):
+            validate_catalog_id("a" * (MAX_CATALOG_ID_LENGTH + 1))
 
     def test_rejects_characters_outside_stac_pattern(self) -> None:
-        """A catalog ID must match the STAC identifier pattern."""
-        for bad in ("my catalog", "catalog.v2", "catalog!", "\u65e5\u672c\u8a9e"):
+        """One rule rejects every class of bad input a shell can deliver.
+
+        A tab, a query string, a percent escape, and a path separator all reach
+        the CLI as ordinary argument text, so each must fail the pattern.
+        """
+        bad_ids = (
+            "my catalog",
+            "catalog.v2",
+            "catalog!",
+            "\u65e5\u672c\u8a9e",
+            "catalog\tdata",
+            "catalog?fields=name",
+            "catalog%20name",
+            "../catalog",
+            "parent/child",
+            "parent\\child",
+        )
+        for bad in bad_ids:
             with pytest.raises(InputValidationError, match="letters, digits"):
                 validate_catalog_id(bad)
 

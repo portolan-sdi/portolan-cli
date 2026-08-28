@@ -866,6 +866,13 @@ def _auto_init_catalog(
         )
         for message in init_warnings:
             warn(message)
+    elif catalog_id is not None:
+        # The catalog already exists and keeps the id it was created with. Say so,
+        # rather than accept the flag and change nothing (issue #821).
+        warn(
+            f"Ignored --id '{catalog_id}'. {output_dir} is already a Portolan "
+            "catalog and keeps the id it was created with."
+        )
 
     # Add all COG files - this creates items per raster
     add_files(

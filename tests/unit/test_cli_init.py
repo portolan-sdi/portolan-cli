@@ -159,6 +159,29 @@ class TestCliInit:
             assert not Path("catalog.json").exists()
 
     @pytest.mark.unit
+    def test_rejected_id_creates_no_directory(self, runner: CliRunner, tmp_path: Path) -> None:
+        """A rejected --id leaves no directory behind (issue #821)."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            result = runner.invoke(
+                cli, ["init", "newdir", "--auto", "--id", "bad id", "--license", "CC-BY-4.0"]
+            )
+
+            assert result.exit_code != 0
+            assert not Path("newdir").exists()
+
+    @pytest.mark.unit
+    def test_warns_when_derived_id_is_an_extract_output_directory(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """The output directory `extract` picks by itself warns like any artifact."""
+        target = tmp_path / "wfs_extract"
+        target.mkdir()
+        result = runner.invoke(cli, ["init", str(target), "--auto", "--license", "CC-BY-4.0"])
+
+        assert result.exit_code == 0
+        assert "tooling artifact" in result.output
+
+    @pytest.mark.unit
     def test_warns_when_derived_id_is_a_tooling_artifact(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:

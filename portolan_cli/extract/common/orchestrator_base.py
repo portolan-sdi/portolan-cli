@@ -102,6 +102,7 @@ def init_extracted_catalog(
         add (the caller should then stop — no catalog was created).
     """
     from portolan_cli.catalog import CatalogState, add_files, detect_state, init_catalog
+    from portolan_cli.output import warn
 
     parquet_files = collect_successful_parquet_files(output_dir, report)
     if not parquet_files:
@@ -129,17 +130,12 @@ def init_extracted_catalog(
             description=description,
             license_id=None,
         )
-        if init_warnings:
-            from portolan_cli.output import warn
-
-            for message in init_warnings:
-                warn(message)
+        for message in init_warnings:
+            warn(message)
 
     elif catalog_id is not None:
         # The catalog already exists and keeps the id it was created with. Say so,
         # rather than accept the flag and change nothing (issue #821).
-        from portolan_cli.output import warn
-
         warn(
             f"Ignored --id '{catalog_id}'. {output_dir} is already a Portolan "
             "catalog and keeps the id it was created with."

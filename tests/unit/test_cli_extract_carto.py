@@ -140,3 +140,23 @@ def test_extract_carto_id_threads_into_options(monkeypatch: pytest.MonkeyPatch) 
     )
     assert result.exit_code == 0
     assert captured["catalog_id"] == "phl-housing"
+
+
+def test_extract_carto_rejects_bad_id_before_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bad --id fails before the download starts, not after it (issue #821)."""
+    calls: list[str] = []
+
+    def _never_called(*args: object, **kwargs: object) -> None:
+        calls.append("extract")
+
+    monkeypatch.setattr(
+        "portolan_cli.extract.carto.orchestrator.extract_carto_catalog", _never_called
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["extract", "carto", "https://phl.carto.com", "--id", "bad id", "--auto"]
+    )
+
+    assert result.exit_code == 1
+    assert calls == []
+    assert "Invalid catalog ID" in result.output

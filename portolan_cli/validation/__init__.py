@@ -24,6 +24,7 @@ arguments is not catalog validation. These names are re-exported for the
 existing ``from portolan_cli.validation import ...`` call sites:
 - InputValidationError: Exception for input validation failures
 - validate_safe_path(): Protect against path traversal attacks
+- validate_catalog_id(): Validate STAC catalog IDs
 - validate_collection_id(): Validate STAC collection IDs
 - validate_item_id(): Validate STAC item IDs
 - validate_remote_url(): Validate S3/GCS/Azure URLs
@@ -33,6 +34,7 @@ existing ``from portolan_cli.validation import ...`` call sites:
 
 from portolan_cli.input_hardening import (
     InputValidationError,
+    validate_catalog_id,
     validate_collection_id,
     validate_config_key,
     validate_config_value,
@@ -71,6 +73,7 @@ __all__ = [
     "build_fix_payload",
     "remediation_for",
     "run_check",
+    "validate_catalog_id",
     "validate_collection_id",
     "validate_config_key",
     "validate_config_value",

@@ -185,6 +185,11 @@ def validate_item_id(item_id: str) -> str:
 # versions.json, so it carries no dots or other punctuation (issue #821).
 _CATALOG_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
+#: Upper bound on a catalog ID. The ID reaches catalog.json, versions.json, and
+#: every href a consumer resolves, so it stays inside the 255-byte name limit
+#: that common filesystems and object stores impose.
+MAX_CATALOG_ID_LENGTH = 255
+
 
 def validate_catalog_id(catalog_id: str) -> str:
     """Validate a STAC catalog ID for safety and compliance.
@@ -193,6 +198,10 @@ def validate_catalog_id(catalog_id: str) -> str:
     directory name is not something the caller typed. An ID the caller supplies
     is a deliberate choice, so this function rejects a bad value instead of
     silently rewriting it (issue #821).
+
+    The pattern alone rejects control characters, path separators, traversals,
+    and URL punctuation, so this function states one rule rather than repeat
+    each class of bad input as its own check.
 
     Args:
         catalog_id: The catalog ID to validate.
@@ -206,17 +215,10 @@ def validate_catalog_id(catalog_id: str) -> str:
     if not catalog_id:
         raise InputValidationError("Catalog ID cannot be empty")
 
-    if any(ord(c) < 0x20 for c in catalog_id):
-        raise InputValidationError("Control characters not allowed in catalog ID")
-
-    if "?" in catalog_id or "#" in catalog_id:
-        raise InputValidationError("Query parameters/fragments not allowed in catalog ID")
-
-    if "%" in catalog_id:
-        raise InputValidationError("URL-encoded characters not allowed in catalog ID")
-
-    if ".." in catalog_id or "/" in catalog_id or "\\" in catalog_id:
-        raise InputValidationError("Path separators/traversals not allowed in catalog ID")
+    if len(catalog_id) > MAX_CATALOG_ID_LENGTH:
+        raise InputValidationError(
+            f"Catalog ID is too long: {len(catalog_id)} characters, limit {MAX_CATALOG_ID_LENGTH}"
+        )
 
     if not _CATALOG_ID_PATTERN.match(catalog_id):
         raise InputValidationError(

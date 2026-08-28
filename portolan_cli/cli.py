@@ -81,6 +81,7 @@ from portolan_cli.validation import (
     build_fix_payload,
     remediation_for,
     run_check,
+    validate_catalog_id,
     validate_safe_path,
 )
 
@@ -6413,6 +6414,46 @@ def _output_extract_error(
         error(message)
 
 
+def _check_extract_catalog_id(
+    catalog_id: str | None,
+    *,
+    raw: bool,
+    url: str,
+    command: str,
+    use_json: bool,
+) -> None:
+    """Check ``--id`` before the extraction starts.
+
+    ``init_catalog`` validates the id, but extract calls it after the whole
+    download. A rejected id would cost the harvest and leave data on disk with
+    no catalog.json. This check fails on the first line instead. ``--raw``
+    writes no catalog at all, so the flag does nothing and says so (issue #821).
+
+    Args:
+        catalog_id: The id the caller supplied, or None.
+        raw: True when ``--raw`` suppresses catalog creation.
+        url: The service URL, for the JSON error envelope.
+        command: The command name for the JSON error envelope.
+        use_json: True when the command emits JSON.
+
+    Raises:
+        SystemExit: If the id is not a valid STAC identifier.
+    """
+    if catalog_id is None:
+        return
+
+    from portolan_cli.output import warn
+
+    try:
+        validate_catalog_id(catalog_id)
+    except InputValidationError as err:
+        _output_extract_error(use_json, "InputValidationError", str(err), url, command=command)
+        raise SystemExit(1) from None
+
+    if raw:
+        warn(f"Ignored --id '{catalog_id}'. --raw writes no catalog.")
+
+
 def _resolve_arcgis_token(
     *,
     url: str,
@@ -6872,6 +6913,16 @@ def extract_arcgis_cmd(
         _output_extract_error(use_json, "InvalidURLError", str(e), url)
         raise SystemExit(1) from None
 
+    # The ImageServer path always writes a catalog, so --raw does not suppress
+    # one there and --id still applies.
+    _check_extract_catalog_id(
+        catalog_id,
+        raw=raw and parsed.url_type != ArcGISURLType.IMAGE_SERVER,
+        url=url,
+        command="extract-arcgis",
+        use_json=use_json,
+    )
+
     resolved_token = _resolve_arcgis_token(
         url=url,
         token=token,
@@ -7204,6 +7255,10 @@ def extract_wfs_cmd(
 
     use_json = should_output_json(ctx, json_output)
 
+    _check_extract_catalog_id(
+        catalog_id, raw=raw, url=url, command="extract-wfs", use_json=use_json
+    )
+
     # Default output directory
     if output_dir is None:
         output_dir = Path("wfs_extract")
@@ -7478,6 +7533,10 @@ def extract_carto_cmd(
     from portolan_cli.output import detail, info, warn
 
     use_json = should_output_json(ctx, json_output)
+
+    _check_extract_catalog_id(
+        catalog_id, raw=raw, url=url, command="extract-carto", use_json=use_json
+    )
 
     if output_dir is None:
         output_dir = Path("carto_extract")

@@ -113,3 +113,49 @@ def test_extract_wfs_id_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert result.exit_code == 0
     assert captured["catalog_id"] is None
+
+
+@pytest.mark.unit
+def test_extract_wfs_rejects_bad_id_before_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bad --id fails before the download starts, not after it (issue #821)."""
+    calls: list[str] = []
+
+    def _never_called(*args: object, **kwargs: object) -> None:
+        calls.append("extract")
+
+    monkeypatch.setattr("portolan_cli.extract.wfs.orchestrator.extract_wfs_catalog", _never_called)
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["extract", "wfs", "https://example.com/wfs", "--id", "bad id", "--auto"]
+    )
+
+    assert result.exit_code == 1
+    assert calls == []
+    assert "Invalid catalog ID" in result.output
+
+
+@pytest.mark.unit
+def test_extract_wfs_warns_that_raw_ignores_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--raw writes no catalog, so --id does nothing and says so (issue #821)."""
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "portolan_cli.extract.wfs.orchestrator.extract_wfs_catalog",
+        _make_capturing_fake(captured),
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "extract",
+            "wfs",
+            "https://example.com/wfs",
+            "--id",
+            "phl-housing",
+            "--raw",
+            "--dry-run",
+            "--auto",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Ignored --id 'phl-housing'" in result.output

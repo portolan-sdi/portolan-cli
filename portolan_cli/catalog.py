@@ -238,7 +238,11 @@ def _sanitize_id(name: str) -> str:
 # Directory names that name a step in someone's workflow rather than the data
 # itself. `init` inside one of these silently published a catalog whose id was
 # "publish" (issue #821). Every entry is a valid STAC id, so no syntactic check
-# catches it. Only the meaning is wrong. The comparison ignores case.
+# catches it. Only the meaning is wrong.
+#
+# The last group is the output directory `extract` picks when the caller names
+# none. Those are the ids the tool produces on its own, so they reach a
+# published catalog most easily of all.
 _TOOLING_ARTIFACT_IDS = frozenset(
     {
         "build",
@@ -252,8 +256,28 @@ _TOOLING_ARTIFACT_IDS = frozenset(
         "temp",
         "tmp",
         "untitled",
+        "extract",
+        "arcgis-extract",
+        "carto-extract",
+        "services-extract",
+        "wfs-extract",
     }
 )
+
+
+def _is_tooling_artifact_id(catalog_id: str) -> bool:
+    """Report whether an id names a workflow step rather than the data.
+
+    Case and the choice of hyphen or underscore carry no meaning here, so
+    "WFS_Extract" and "wfs-extract" both match.
+
+    Args:
+        catalog_id: The candidate catalog id.
+
+    Returns:
+        True when the id names a tooling artifact.
+    """
+    return catalog_id.lower().replace("_", "-") in _TOOLING_ARTIFACT_IDS
 
 
 @overload
@@ -426,7 +450,7 @@ def _resolve_catalog_identity(
     # A derived id that names a workflow step rather than the data is the failure
     # in issue #821. Warn only when the id was derived. An explicit id is the
     # caller's decision.
-    if derived_id and catalog_id.lower() in _TOOLING_ARTIFACT_IDS:
+    if derived_id and _is_tooling_artifact_id(catalog_id):
         warnings.append(
             f"Derived catalog id '{catalog_id}' from the directory name. "
             "It looks like a tooling artifact, not the name of the data. "
@@ -485,6 +509,9 @@ def init_catalog(
         path: Directory path for the catalog. Will be created if doesn't exist.
             Resolved before use, so a relative path such as the CLI's "." default
             is interpreted against the working directory exactly once.
+        catalog_id: Catalog id. None derives one from the directory name, which
+            is the behavior before issue #821. A supplied id is validated and
+            rejected when invalid, rather than coerced.
         title: Optional catalog title.
         description: Optional catalog description.
         backend: Versioning backend name.
@@ -502,6 +529,9 @@ def init_catalog(
         can read it back without matching the working directory init ran in.
 
     Raises:
+        InputValidationError: If ``catalog_id`` is not a valid STAC identifier.
+            Raised before the directory is created, so a rejected id leaves no
+            trace on disk (issue #821).
         CatalogAlreadyExistsError: If directory is in MANAGED state.
         UnmanagedStacCatalogError: If directory is in UNMANAGED_STAC state.
         CatalogInitError: If filesystem operations fail.
@@ -521,6 +551,11 @@ def init_catalog(
     # parent. Resolving here keeps the trailing slash meaningful and gives the
     # caller an absolute path to read back (issue #731).
     path = Path(path).resolve()
+
+    # Resolve the identity before anything touches the filesystem. A rejected
+    # --id must leave no directory behind for the caller to clean up (issue #821).
+    catalog_id, title, identity_warnings = _resolve_catalog_identity(path, catalog_id, title)
+
     try:
         path.mkdir(parents=True, exist_ok=True)
     except OSError as e:
@@ -550,10 +585,7 @@ def init_catalog(
         except ValueError as e:
             raise CatalogInitError(str(e)) from e
 
-    warnings: list[str] = []
-
-    catalog_id, title, identity_warnings = _resolve_catalog_identity(path, catalog_id, title)
-    warnings.extend(identity_warnings)
+    warnings: list[str] = list(identity_warnings)
 
     if description is None:
         description = "A Portolan-managed STAC catalog"
