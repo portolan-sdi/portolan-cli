@@ -3555,7 +3555,7 @@ def add_external_cmd(
 
 
 @cli.command("rm")
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.argument("path", type=click.Path(exists=False, path_type=Path))
 @click.option(
     "--keep",
     is_flag=True,
@@ -3605,6 +3605,10 @@ def rm_cmd(
 
     Works like git: run from anywhere inside a catalog and it auto-detects
     the catalog root. Use --portolan-dir to override.
+
+    A file that is already gone from disk is still untracked, so you can drop a
+    tracked asset that you deleted by hand. The removal is recorded as a new
+    version.
 
     \b
     Safety flags:

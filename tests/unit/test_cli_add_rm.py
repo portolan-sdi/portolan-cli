@@ -757,11 +757,29 @@ class TestRm:
                 assert call_kwargs.get("dry_run") is True
 
     @pytest.mark.unit
-    def test_rm_nonexistent_fails(self, runner: CliRunner) -> None:
-        """rm fails for nonexistent path."""
-        result = runner.invoke(cli, ["rm", "--force", "/nonexistent/file.parquet"])
+    def test_rm_missing_path_is_not_rejected_at_the_cli(self, runner: CliRunner) -> None:
+        """rm no longer rejects a path missing from disk at the CLI boundary (#803).
 
-        assert result.exit_code != 0
+        Before the fix, click's ``Path(exists=True)`` blocked rm on a deleted
+        file. Now a missing, untracked path reaches ``remove_files`` and is
+        skipped cleanly rather than failing with "does not exist".
+        """
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            collection_dir = temp_path / "data"
+            collection_dir.mkdir()
+
+            result = runner.invoke(
+                cli,
+                ["rm", "--force", str(collection_dir / "gone.parquet")],
+                catch_exceptions=False,
+            )
+
+            assert result.exit_code == 0
+            assert "does not exist" not in result.output
+            assert "Removed" not in result.output
 
     @pytest.mark.unit
     def test_rm_directory_with_force(self, runner: CliRunner) -> None:
