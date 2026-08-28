@@ -97,7 +97,7 @@ class TestInitExtractedCatalog:
         report = _report([_layer(0, "a", status="failed")])
         called = {"post_init": False}
 
-        def _post_init(_out: Path, _files: list[Path]) -> None:
+        def _post_init(_out: Path, _files: list[Path], _fresh: bool) -> None:
             called["post_init"] = True
 
         result = init_extracted_catalog(
@@ -132,9 +132,12 @@ class TestInitExtractedCatalog:
         def _fake_add(*, paths: list[Path], catalog_root: Path) -> None:
             events.append("add")
 
-        def _post_init(_out: Path, files: list[Path]) -> None:
+        def _post_init(_out: Path, files: list[Path], fresh: bool) -> None:
             events.append("post_init")
             assert files == [tmp_path / "a/a.parquet"]
+            # The catalog was created by this call, so the hook may seed root
+            # metadata (issue #832).
+            assert fresh is True
 
         monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
         monkeypatch.setattr(catalog_mod, "add_files", _fake_add)
@@ -175,9 +178,12 @@ class TestInitExtractedCatalog:
         def _fake_add(*, paths: list[Path], catalog_root: Path) -> None:
             events.append("add")
 
-        def _post_init(_out: Path, files: list[Path]) -> None:
+        def _post_init(_out: Path, files: list[Path], fresh: bool) -> None:
             events.append("post_init")
             assert files == [tmp_path / "a/a.parquet"]
+            # The catalog already existed, so the hook must not overwrite root
+            # metadata (issue #832).
+            assert fresh is False
 
         monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
         monkeypatch.setattr(catalog_mod, "add_files", _fake_add)

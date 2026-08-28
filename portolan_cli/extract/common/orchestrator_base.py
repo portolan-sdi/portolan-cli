@@ -66,7 +66,7 @@ def init_extracted_catalog(
     *,
     title: str | None,
     description: str | None,
-    post_init: Callable[[Path, list[Path]], None] | None = None,
+    post_init: Callable[[Path, list[Path], bool], None] | None = None,
 ) -> list[Path] | None:
     """Initialize a catalog and add the extracted assets.
 
@@ -87,8 +87,12 @@ def init_extracted_catalog(
         report: The extraction report.
         title: Catalog title for ``init_catalog`` (already filtered by caller).
         description: Catalog description for ``init_catalog``.
-        post_init: Optional hook called as ``post_init(output_dir, parquet_files)``
-            between ``init_catalog`` and ``add_files``.
+        post_init: Optional hook called as
+            ``post_init(output_dir, parquet_files, fresh)`` between ``init_catalog``
+            and ``add_files``. ``fresh`` is True only when this call created the
+            catalog. A hook must not overwrite root catalog metadata when ``fresh``
+            is False, because the catalog already belongs to an earlier extraction
+            (issue #832).
 
     Returns:
         The list of added parquet files, or ``None`` when there was nothing to
@@ -106,7 +110,8 @@ def init_extracted_catalog(
     # new layers added, not a refusal. init_catalog raises CatalogAlreadyExistsError
     # on a MANAGED directory, so skip it. The catalog already carries a license, so
     # the add license gate (issue #686) still passes.
-    if detect_state(output_dir) is not CatalogState.MANAGED:
+    fresh = detect_state(output_dir) is not CatalogState.MANAGED
+    if fresh:
         # license_id=None: extract owns metadata.yaml, seeding it from harvested
         # service metadata in post_init below. Writing a template here first would
         # make that seeder's O_EXCL create a no-op and drop everything harvested
@@ -114,7 +119,7 @@ def init_extracted_catalog(
         init_catalog(output_dir, title=title, description=description, license_id=None)
 
     if post_init is not None:
-        post_init(output_dir, parquet_files)
+        post_init(output_dir, parquet_files, fresh)
 
     add_files(paths=parquet_files, catalog_root=output_dir)
     return parquet_files
