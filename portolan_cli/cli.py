@@ -1313,6 +1313,14 @@ def _output_check_json(payload: dict[str, Any], *, failed: bool) -> None:
     help="Skip the data pass; validate metadata without reading asset bytes",
 )
 @click.option(
+    "--data-scope",
+    "data_scope",
+    type=click.Choice(["all", "local"]),
+    default="all",
+    help="Which assets the data pass may read: all (default), or local to read only "
+    "the assets inside the catalog tree, leaving assets hosted elsewhere unread",
+)
+@click.option(
     "--no-structural",
     "no_structural",
     is_flag=True,
@@ -1341,6 +1349,7 @@ def check(
     live: bool,
     public_url: str | None,
     no_data: bool,
+    data_scope: str,
     no_structural: bool,
     schema: bool,
 ) -> None:
@@ -1348,8 +1357,17 @@ def check(
 
     Validation runs on rashid, which reports PTL-* rule ids citing the spec
     requirements they enforce. By default it checks metadata, STAC 1.1.0
-    structure, and the asset bytes themselves; every pass is offline.
-    With --fix, applies the mechanical repairs and re-checks.
+    structure, and the asset bytes themselves. The metadata and structural
+    passes are offline. The data pass reads asset bytes, including remote https
+    assets over HTTP range requests. Use --data-scope local to read only the
+    assets inside the catalog tree. Use --no-data to skip the pass. With --fix,
+    applies the mechanical repairs and re-checks.
+
+    The --live pass probes the published host for HTTP Range support and CORS
+    headers. It skips an upstream host only when it knows the base URL, from
+    --url or publish.public_url. Without a base URL it probes every absolute
+    href as declared, which can report CORS failures against a host you do not
+    control.
 
     PATH is the directory to check (default: current directory).
 
@@ -1365,6 +1383,8 @@ def check(
         portolan check --metadata             # Validate the catalog only
 
         portolan check --geo-assets           # Check source files only
+
+        portolan check --data-scope local     # Read only assets inside the catalog tree
 
         portolan check --no-data              # Skip reading asset bytes (faster)
 
@@ -1392,6 +1412,10 @@ def check(
     if force and not fix:
         warn("--force requires --fix")
 
+    # Warn if --data-scope is set while --no-data disables the pass it scopes
+    if data_scope != "all" and no_data:
+        warn("--data-scope has no effect with --no-data")
+
     # Resolve worker count: auto-detect from CPU count when unset, so a large
     # --fix run parallelizes by default (issue #530). An explicit value wins.
     resolved_workers = workers if workers is not None else (os.cpu_count() or 1)
@@ -1416,6 +1440,7 @@ def check(
         live=live,
         public_url=public_url,
         data=not no_data,
+        data_scope=data_scope,
         structural=not no_structural,
         schema=schema,
     )
@@ -1556,6 +1581,7 @@ def _execute_check_workflow(
     live: bool = False,
     public_url: str | None = None,
     data: bool = True,
+    data_scope: str = "all",
     structural: bool = True,
     schema: bool = False,
 ) -> None:
@@ -1576,6 +1602,7 @@ def _execute_check_workflow(
     validate_metadata = _should_validate(path, run_metadata=run_metadata, fix=fix)
     check_kwargs: dict[str, Any] = {
         "data": data,
+        "data_scope": data_scope,
         "structural": structural,
         "schema": schema,
         "metadata": validate_metadata,

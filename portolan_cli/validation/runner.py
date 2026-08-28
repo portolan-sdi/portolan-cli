@@ -11,7 +11,10 @@ Which passes run by default, and why:
 - **data** (asset bytes: checksum, size, format, COG and GeoParquet internals) —
   on. Verifying that the bytes match what the metadata claims is most of what a
   catalog validator is for, and rashid promoted its geospatial stack to core
-  dependencies precisely so the pass could default on.
+  dependencies precisely so the pass could default on. The pass reads local
+  files and remote ``https`` assets over HTTP range requests. ``data_scope``
+  narrows it to the assets inside the catalog tree, which keeps a metadata-only
+  mirror off the upstream hosts it points at.
 - **schema** (the Portolan profile JSON Schema) — **off**. rashid maintains a
   parity invariant between the profile schema and its hand-written rules, so
   running both restates every defect twice: once from a rule that names the
@@ -32,6 +35,7 @@ from pathlib import Path, PurePath
 from typing import Any
 
 from rashid import validate
+from rashid.data.reader import LocalOnlyReader
 from rashid.model import Report
 
 from portolan_cli.validation.config import load_public_url, load_rules_config
@@ -181,6 +185,7 @@ def run_check(
     path: Path,
     *,
     data: bool = True,
+    data_scope: str = "all",
     live: bool = False,
     structural: bool = True,
     schema: bool = False,
@@ -198,6 +203,10 @@ def run_check(
         path: Directory to check. Resolved up to the catalog root, so checking a
             collection subdirectory validates the catalog it belongs to.
         data: Run the data pass over asset bytes.
+        data_scope: Which assets the data pass may read. ``"all"`` (default)
+            reads local files and remote ``https`` assets over HTTP range
+            requests. ``"local"`` reads only the assets inside the catalog tree
+            and leaves assets hosted elsewhere unread.
         live: Probe the published host over HTTP.
         structural: Run the STAC 1.1.0 structural pass.
         schema: Run the Portolan profile schema pass (off by default; see the
@@ -233,6 +242,7 @@ def run_check(
             schema=schema,
             schema_validator=schema_validator,
             data=data,
+            data_reader_factory=LocalOnlyReader if data_scope == "local" else None,
             live=live,
             live_prober=live_prober,
             live_base_url=public_url or load_public_url(root),
