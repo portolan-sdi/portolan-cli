@@ -1128,11 +1128,20 @@ def finalize_items(
     for collection_id, items in by_collection.items():
         results.extend(_finalize_collection(catalog_root, collection_id, items, merge_strategy))
 
+    from portolan_cli.catalog import (
+        apply_catalog_human_titles,
+        ensure_link_titles,
+        ensure_schema_uris,
+    )
+
+    # Issue #815: the root catalog takes its title and description from the root
+    # metadata.yaml, as every collection already does. It runs before the README
+    # sweep below, which reads catalog.json.
+    apply_catalog_human_titles(catalog_root)
+
     # Issue #502: backfill human-readable titles onto child/item links so STAC
     # Browser renders names without fetching every child. Done once per batch
     # (O(catalog), not per-collection) after all collections are written.
-    from portolan_cli.catalog import ensure_link_titles, ensure_schema_uris
-
     ensure_link_titles(catalog_root)
 
     # / issue #654: every catalog and collection declares the Portolan

@@ -938,6 +938,60 @@ def ensure_link_titles(catalog_root: Path) -> bool:
     return changed_any
 
 
+def apply_catalog_human_titles(catalog_root: Path) -> bool:
+    """Apply the root metadata.yaml title/description to catalog.json (issue #815).
+
+    A collection takes its human-authored title and description from
+    ``metadata.yaml`` through :func:`portolan_cli.stac.apply_human_titles`. The
+    root catalog kept the value ``init`` wrote, so a title a human authored after
+    creation never reached ``catalog.json``. ``extract`` names the catalog after
+    its directory, which made that the published title.
+
+    Only the root ``catalog.json`` is touched. A subcatalog title comes from its
+    own path segment, and a title never inherits (see
+    :data:`portolan_cli.config.NON_INHERITED_METADATA_KEYS`).
+
+    Idempotent. A catalog that already carries the values is not rewritten.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+
+    Returns:
+        True if catalog.json was modified.
+    """
+    from portolan_cli.config import NON_INHERITED_METADATA_KEYS, load_merged_metadata
+
+    catalog_path = catalog_root / "catalog.json"
+    if not catalog_path.is_file():
+        return False
+
+    metadata = load_merged_metadata(catalog_root, catalog_root)
+    if not metadata:
+        return False
+
+    try:
+        catalog_data = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(catalog_data, dict):
+        return False
+
+    changed = False
+    for field in NON_INHERITED_METADATA_KEYS:
+        value = metadata.get(field)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        cleaned = value.strip()
+        if catalog_data.get(field) == cleaned:
+            continue
+        catalog_data[field] = cleaned
+        changed = True
+
+    if changed:
+        write_json_atomic(catalog_path, catalog_data)
+    return changed
+
+
 def ensure_schema_uris(catalog_root: Path) -> bool:
     """Declare the Portolan profile schema URI across a catalog tree (issue #654).
 

@@ -687,6 +687,8 @@ _TEMPLATE = """# .portolan/metadata.yaml
 # Portolan auto-derives a human-readable title from the collection id
 # (e.g. "publico_arbolado" -> "Publico Arbolado"). Set these to override it
 # with a better name/description; leave blank to keep the auto-derived value.
+# At the catalog root they name the catalog itself. They apply to this object
+# alone: a child never inherits a title or a description from its parent.
 # -----------------------------------------------------------------------------
 
 # title: ""                         # optional - overrides the auto-derived title

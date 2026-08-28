@@ -192,6 +192,7 @@ def resolve_s3_endpoint_settings() -> S3EndpointSettings:
 
 # Config file name (inside .portolan/)
 CONFIG_FILENAME = "config.yaml"
+METADATA_FILENAME = "metadata.yaml"
 
 
 def get_config_path(catalog_path: Path) -> Path:
@@ -855,13 +856,23 @@ def load_merged_config(
     return merged
 
 
+#: metadata.yaml keys that name one object and therefore never inherit (#815).
+#: Every other key describes a whole subtree, such as the license, the contact,
+#: or the attribution. A child that declares none of those takes the parent
+#: value. A title does the opposite. It identifies the object it sits on, so an
+#: inherited title renamed every collection after its catalog.
+NON_INHERITED_METADATA_KEYS: tuple[str, ...] = ("title", "description")
+
+
 def load_merged_metadata(
     path: Path,
     catalog_root: Path,
 ) -> dict[str, Any]:
     """Load merged metadata.yaml from hierarchy.
 
-    Simply delegates to load_merged_yaml for metadata.yaml files.
+    Delegates to load_merged_yaml, then drops the keys in
+    :data:`NON_INHERITED_METADATA_KEYS` that came from an ancestor rather than
+    from ``path`` itself (#815).
 
     Args:
         path: Path to collection or subcatalog directory.
@@ -870,7 +881,16 @@ def load_merged_metadata(
     Returns:
         Merged metadata dictionary.
     """
-    return load_merged_yaml(path, "metadata.yaml", catalog_root)
+    merged = load_merged_yaml(path, METADATA_FILENAME, catalog_root)
+    if not merged:
+        return merged
+
+    own_path = path / ".portolan" / METADATA_FILENAME
+    own = (_load_validated_mapping(own_path) or {}) if own_path.is_file() else {}
+    for key in NON_INHERITED_METADATA_KEYS:
+        if key in merged and key not in own:
+            del merged[key]
+    return merged
 
 
 # =============================================================================

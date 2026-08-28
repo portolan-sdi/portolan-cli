@@ -108,3 +108,82 @@ class TestAddProducesHumanReadableTitles:
         catalog = json.loads((root / "catalog.json").read_text(encoding="utf-8"))
         child = next(link for link in catalog["links"] if link.get("rel") == "child")
         assert child["title"] == "Áreas Programáticas de Desarrollo Social"
+
+
+@pytest.mark.integration
+class TestRootMetadataTitleReachesCatalog:
+    """`portolan add` applies the root metadata.yaml title (issue #815)."""
+
+    def test_root_title_and_description_reach_catalog_json(self, tmp_path: Path) -> None:
+        root = tmp_path / "catalog"
+        _init_catalog(root)
+        (root / ".portolan" / "metadata.yaml").write_text(
+            yaml.dump(
+                {
+                    "license": "CC-BY-4.0",
+                    "title": "Philadelphia Housing and Land Use",
+                    "description": "Ten collections about property and zoning.",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        _add_slug_collection(root)
+
+        catalog = json.loads((root / "catalog.json").read_text(encoding="utf-8"))
+        assert catalog["title"] == "Philadelphia Housing and Land Use"
+        assert catalog["description"] == "Ten collections about property and zoning."
+
+    def test_root_title_does_not_replace_collection_title(self, tmp_path: Path) -> None:
+        """A collection with its own title keeps it (issue #815)."""
+        root = tmp_path / "catalog"
+        _init_catalog(root)
+        (root / ".portolan" / "metadata.yaml").write_text(
+            yaml.dump({"license": "CC-BY-4.0", "title": "Philadelphia Housing and Land Use"}),
+            encoding="utf-8",
+        )
+
+        collection_dir = _add_slug_collection(
+            root,
+            metadata_yaml={"license": "CC-BY-4.0", "title": "Property Parcels"},
+        )
+
+        coll = json.loads((collection_dir / "collection.json").read_text(encoding="utf-8"))
+        assert coll["title"] == "Property Parcels"
+
+    def test_readme_shows_the_root_title(self, tmp_path: Path) -> None:
+        root = tmp_path / "catalog"
+        _init_catalog(root)
+        (root / ".portolan" / "metadata.yaml").write_text(
+            yaml.dump({"license": "CC-BY-4.0", "title": "Philadelphia Housing and Land Use"}),
+            encoding="utf-8",
+        )
+
+        _add_slug_collection(root)
+
+        readme = (root / "README.md").read_text(encoding="utf-8")
+        assert readme.startswith("# Philadelphia Housing and Land Use")
+
+    def test_collection_without_a_title_keeps_the_humanized_one(self, tmp_path: Path) -> None:
+        """The root title must not rename every collection (issue #815)."""
+        root = tmp_path / "catalog"
+        _init_catalog(root)
+        (root / ".portolan" / "metadata.yaml").write_text(
+            yaml.dump(
+                {
+                    "license": "CC-BY-4.0",
+                    "title": "Philadelphia Housing and Land Use",
+                    "description": "Ten collections about property and zoning.",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        collection_dir = _add_slug_collection(root)
+
+        coll = json.loads((collection_dir / "collection.json").read_text(encoding="utf-8"))
+        assert coll["title"] == "Publico Areas Programaticas Desarrollo Social"
+        assert coll["description"] == "Publico Areas Programaticas Desarrollo Social"
+
+        readme = (collection_dir / "README.md").read_text(encoding="utf-8")
+        assert readme.startswith("# Publico Areas Programaticas Desarrollo Social")
