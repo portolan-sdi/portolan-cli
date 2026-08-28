@@ -243,3 +243,54 @@ def test_output_crs_threads_into_options(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert result.exit_code == 0, result.output
     assert captured["output_crs"] == "EPSG:28992"
+
+
+@pytest.mark.unit
+def test_catalog_id_threads_into_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--id reaches ExtractionOptions passed to extract_arcgis_catalog (issue #821)."""
+    from types import SimpleNamespace
+
+    from portolan_cli.extract.arcgis.orchestrator import ExtractionOptions
+
+    captured: dict[str, object] = {}
+
+    def fake_extract(**kwargs: object) -> SimpleNamespace:
+        options = kwargs["options"]
+        assert isinstance(options, ExtractionOptions)
+        captured["catalog_id"] = options.catalog_id
+        summary = SimpleNamespace(
+            total_layers=0,
+            succeeded=0,
+            failed=0,
+            skipped=0,
+            empty=0,
+            total_features=0,
+            total_size_bytes=0,
+        )
+        return SimpleNamespace(
+            source_url="https://x/rest/services/F/FeatureServer",
+            summary=summary,
+            layers=[],
+            folder_coverage=None,
+        )
+
+    monkeypatch.setattr(
+        "portolan_cli.extract.arcgis.orchestrator.extract_arcgis_catalog", fake_extract
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "extract",
+            "arcgis",
+            "https://x/rest/services/F/FeatureServer",
+            "./out",
+            "--id",
+            "phl-housing",
+            "--auto",
+            "--raw",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["catalog_id"] == "phl-housing"

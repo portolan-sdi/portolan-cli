@@ -130,6 +130,36 @@ class TestAutoInitCatalog:
         # Should have catalog.json at root
         assert (output_dir / "catalog.json").exists(), "catalog.json should be created"
 
+    def test_auto_init_uses_supplied_catalog_id(self, tmp_path: Path) -> None:
+        """extract --id names the catalog instead of the directory (issue #821)."""
+        import json
+
+        # A scratch directory name is exactly what produced the "publish" catalog
+        # in issue #821, so the derived id here differs from the supplied one.
+        output_dir = tmp_path / "publish"
+        output_dir.mkdir()
+
+        layer_dir = output_dir / "test_layer"
+        layer_dir.mkdir()
+        output_parquet = layer_dir / "data.parquet"
+        shutil.copy(FIXTURES_DIR / "simple.parquet", output_parquet)
+
+        report = make_report(
+            layers=[
+                make_layer_result(
+                    output_path="test_layer/data.parquet",
+                    size_bytes=output_parquet.stat().st_size,
+                )
+            ],
+        )
+
+        _auto_init_catalog(output_dir, report, TEST_LICENSE, "phl-housing")
+
+        catalog = json.loads((output_dir / "catalog.json").read_text(encoding="utf-8"))
+        versions = json.loads((output_dir / "versions.json").read_text(encoding="utf-8"))
+        assert catalog["id"] == "phl-housing"
+        assert versions["catalog_id"] == "phl-housing"
+
     def test_auto_init_creates_config_yaml(self, tmp_path: Path) -> None:
         """_auto_init_catalog creates .portolan/config.yaml sentinel."""
         output_dir = tmp_path / "test_catalog"

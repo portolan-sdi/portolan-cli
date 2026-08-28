@@ -120,14 +120,16 @@ class TestInitExtractedCatalog:
         def _fake_init(
             output_dir: Path,
             *,
+            catalog_id: str | None,
             title: str | None,
             description: str | None,
             license_id: str | None,
-        ) -> None:
+        ) -> tuple[Path, list[str]]:
             events.append("init")
             # Issue #686: extract seeds metadata.yaml itself, in post_init, so
             # init_catalog must not write a template over it.
             assert license_id is None
+            return output_dir / "catalog.json", []
 
         def _fake_add(*, paths: list[Path], catalog_root: Path) -> None:
             events.append("add")
@@ -153,11 +155,53 @@ class TestInitExtractedCatalog:
         report = _report([_layer(0, "a", output_path="a/a.parquet")])
         import portolan_cli.catalog as catalog_mod
 
-        monkeypatch.setattr(catalog_mod, "init_catalog", lambda *a, **k: None)
+        monkeypatch.setattr(catalog_mod, "init_catalog", lambda *a, **k: (Path("catalog.json"), []))
         monkeypatch.setattr(catalog_mod, "add_files", lambda *a, **k: None)
 
         result = init_extracted_catalog(tmp_path, report, title=None, description=None)
         assert result == [tmp_path / "a/a.parquet"]
+
+    def test_catalog_id_reaches_init_catalog(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The shared seam forwards the caller's id to init_catalog (issue #821)."""
+        report = _report([_layer(0, "a", output_path="a/a.parquet")])
+        seen: dict[str, object] = {}
+
+        import portolan_cli.catalog as catalog_mod
+
+        def _fake_init(output_dir: Path, **kwargs: object) -> tuple[Path, list[str]]:
+            seen["catalog_id"] = kwargs["catalog_id"]
+            return output_dir / "catalog.json", []
+
+        monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
+        monkeypatch.setattr(catalog_mod, "add_files", lambda *a, **k: None)
+
+        init_extracted_catalog(
+            tmp_path, report, catalog_id="phl-housing", title=None, description=None
+        )
+
+        assert seen["catalog_id"] == "phl-housing"
+
+    def test_catalog_id_defaults_to_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without an id the seam keeps the directory-name derivation."""
+        report = _report([_layer(0, "a", output_path="a/a.parquet")])
+        seen: dict[str, object] = {}
+
+        import portolan_cli.catalog as catalog_mod
+
+        def _fake_init(output_dir: Path, **kwargs: object) -> tuple[Path, list[str]]:
+            seen["catalog_id"] = kwargs["catalog_id"]
+            return output_dir / "catalog.json", []
+
+        monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
+        monkeypatch.setattr(catalog_mod, "add_files", lambda *a, **k: None)
+
+        init_extracted_catalog(tmp_path, report, title=None, description=None)
+
+        assert seen["catalog_id"] is None
 
     def test_adds_to_existing_catalog_without_init(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -196,6 +240,44 @@ class TestInitExtractedCatalog:
         # init_catalog is skipped for an existing catalog; the new collection is
         # added instead of the run aborting.
         assert events == ["post_init", "add"]
+
+    def test_reports_init_catalog_warnings(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """extract prints what init_catalog had to guess, the way `init` does (#821)."""
+        report = _report([_layer(0, "a", output_path="a/a.parquet")])
+
+        import portolan_cli.catalog as catalog_mod
+
+        def _fake_init(output_dir: Path, **kwargs: object) -> tuple[Path, list[str]]:
+            return output_dir / "catalog.json", ["Derived catalog id 'publish'"]
+
+        monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
+        monkeypatch.setattr(catalog_mod, "add_files", lambda *a, **k: None)
+
+        init_extracted_catalog(tmp_path, report, title=None, description=None)
+
+        assert "Derived catalog id 'publish'" in capsys.readouterr().err
+
+    def test_warns_when_id_cannot_apply_to_an_existing_catalog(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An existing catalog keeps its id, so a passed --id must not go silent."""
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text("# Portolan configuration\n")
+
+        report = _report([_layer(0, "a", output_path="a/a.parquet")])
+
+        import portolan_cli.catalog as catalog_mod
+
+        monkeypatch.setattr(catalog_mod, "init_catalog", lambda *a, **k: (Path("catalog.json"), []))
+        monkeypatch.setattr(catalog_mod, "add_files", lambda *a, **k: None)
+
+        init_extracted_catalog(
+            tmp_path, report, catalog_id="phl-housing", title=None, description=None
+        )
+
+        assert "phl-housing" in capsys.readouterr().err
 
 
 class TestAddSourceLinks:

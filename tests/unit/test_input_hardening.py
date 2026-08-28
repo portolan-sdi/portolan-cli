@@ -12,6 +12,7 @@ import pytest
 
 from portolan_cli.input_hardening import (
     InputValidationError,
+    validate_catalog_id,
     validate_collection_id,
     validate_config_key,
     validate_config_value,
@@ -206,6 +207,50 @@ class TestValidateItemId:
             validate_item_id("../item")
         with pytest.raises(InputValidationError, match="Path separators"):
             validate_item_id("parent/child")
+
+
+@pytest.mark.unit
+class TestValidateCatalogId:
+    """Tests for catalog ID validation (issue #821)."""
+
+    def test_valid_catalog_id(self) -> None:
+        """Valid catalog IDs are accepted."""
+        assert validate_catalog_id("phl-housing") == "phl-housing"
+        assert validate_catalog_id("census_2020") == "census_2020"
+        assert validate_catalog_id("IGN-Argentina") == "IGN-Argentina"
+
+    def test_rejects_empty_id(self) -> None:
+        """Empty catalog ID is rejected."""
+        with pytest.raises(InputValidationError, match="cannot be empty"):
+            validate_catalog_id("")
+
+    def test_rejects_control_characters(self) -> None:
+        """Control characters are rejected."""
+        with pytest.raises(InputValidationError, match="Control characters"):
+            validate_catalog_id("catalog\x00data")
+
+    def test_rejects_query_parameters(self) -> None:
+        """Query parameters are rejected."""
+        with pytest.raises(InputValidationError, match="Query parameters"):
+            validate_catalog_id("catalog?fields=name")
+
+    def test_rejects_url_encoding(self) -> None:
+        """Pre-encoded strings are rejected."""
+        with pytest.raises(InputValidationError, match="URL-encoded"):
+            validate_catalog_id("catalog%20name")
+
+    def test_rejects_path_traversals(self) -> None:
+        """Path traversals are rejected."""
+        with pytest.raises(InputValidationError, match="Path separators"):
+            validate_catalog_id("../catalog")
+        with pytest.raises(InputValidationError, match="Path separators"):
+            validate_catalog_id("parent/child")
+
+    def test_rejects_characters_outside_stac_pattern(self) -> None:
+        """A catalog ID must match the STAC identifier pattern."""
+        for bad in ("my catalog", "catalog.v2", "catalog!", "\u65e5\u672c\u8a9e"):
+            with pytest.raises(InputValidationError, match="letters, digits"):
+                validate_catalog_id(bad)
 
 
 @pytest.mark.unit

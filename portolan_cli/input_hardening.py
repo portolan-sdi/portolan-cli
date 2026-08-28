@@ -180,6 +180,52 @@ def validate_item_id(item_id: str) -> str:
     return item_id
 
 
+# STAC identifiers match ^[a-zA-Z0-9_-]+$. A catalog ID is stricter than an item
+# ID. It names a directory-level identity that reaches catalog.json and
+# versions.json, so it carries no dots or other punctuation (issue #821).
+_CATALOG_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def validate_catalog_id(catalog_id: str) -> str:
+    """Validate a STAC catalog ID for safety and compliance.
+
+    ``init_catalog`` sanitizes a *derived* ID by coercing it, because the
+    directory name is not something the caller typed. An ID the caller supplies
+    is a deliberate choice, so this function rejects a bad value instead of
+    silently rewriting it (issue #821).
+
+    Args:
+        catalog_id: The catalog ID to validate.
+
+    Returns:
+        The validated catalog ID.
+
+    Raises:
+        InputValidationError: If validation fails.
+    """
+    if not catalog_id:
+        raise InputValidationError("Catalog ID cannot be empty")
+
+    if any(ord(c) < 0x20 for c in catalog_id):
+        raise InputValidationError("Control characters not allowed in catalog ID")
+
+    if "?" in catalog_id or "#" in catalog_id:
+        raise InputValidationError("Query parameters/fragments not allowed in catalog ID")
+
+    if "%" in catalog_id:
+        raise InputValidationError("URL-encoded characters not allowed in catalog ID")
+
+    if ".." in catalog_id or "/" in catalog_id or "\\" in catalog_id:
+        raise InputValidationError("Path separators/traversals not allowed in catalog ID")
+
+    if not _CATALOG_ID_PATTERN.match(catalog_id):
+        raise InputValidationError(
+            f"Invalid catalog ID {catalog_id!r}: use only letters, digits, hyphens, and underscores"
+        )
+
+    return catalog_id
+
+
 def validate_remote_url(url: str) -> str:
     """Validate a remote storage URL for push/pull/sync operations.
 

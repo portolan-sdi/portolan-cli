@@ -58,6 +58,8 @@ class ImageServerCLIOptions:
         compression: COG compression method ("DEFLATE" or "JPEG").
         use_json: If True, suppress progress output (for JSON mode).
         collection_name: Optional name for the collection (default: 'tiles').
+        catalog_id: Catalog id for the created catalog. None derives it from
+            the output directory name, which is the behavior before issue #821.
     """
 
     tile_size: int = 4096
@@ -71,6 +73,7 @@ class ImageServerCLIOptions:
     compression: str = "DEFLATE"
     use_json: bool = False
     collection_name: str | None = None
+    catalog_id: str | None = None
 
 
 def _create_progress_callback(
@@ -139,6 +142,7 @@ async def run_imageserver_extraction(
 
     # Build extraction config from CLI options
     config = ExtractionConfig(
+        catalog_id=options.catalog_id,
         tile_size=options.tile_size,
         max_concurrent=options.max_concurrent,
         dry_run=options.dry_run,

@@ -33,6 +33,7 @@ def _make_capturing_fake(
         assert options is not None
         captured["page_size"] = options.page_size
         captured["auto_tile"] = options.auto_tile
+        captured["catalog_id"] = options.catalog_id
         return _build_dry_run_report(url=url, layers=[], discovery_result=None)
 
     return fake_extract
@@ -79,3 +80,36 @@ def test_extract_wfs_no_auto_tile_threads_false(monkeypatch: pytest.MonkeyPatch)
     )
     assert result.exit_code == 0
     assert captured["auto_tile"] is False
+
+
+@pytest.mark.unit
+def test_extract_wfs_id_threads_into_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--id threads catalog_id into ExtractionOptions (issue #821)."""
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "portolan_cli.extract.wfs.orchestrator.extract_wfs_catalog",
+        _make_capturing_fake(captured),
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["extract", "wfs", "https://example.com/wfs", "--id", "phl-housing", "--dry-run", "--auto"],
+    )
+    assert result.exit_code == 0
+    assert captured["catalog_id"] == "phl-housing"
+
+
+@pytest.mark.unit
+def test_extract_wfs_id_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without --id the orchestrator keeps deriving the id from the directory name."""
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "portolan_cli.extract.wfs.orchestrator.extract_wfs_catalog",
+        _make_capturing_fake(captured),
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["extract", "wfs", "https://example.com/wfs", "--dry-run", "--auto"]
+    )
+    assert result.exit_code == 0
+    assert captured["catalog_id"] is None

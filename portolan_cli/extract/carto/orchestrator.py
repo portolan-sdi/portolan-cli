@@ -95,6 +95,8 @@ class ExtractionOptions:
             license_url. Carto exposes no license metadata, so this is the only
             source (issue #686).
         license_url: URL of the license text.
+        catalog_id: Catalog id for the created catalog. None derives it from
+            the output directory name, which is the behavior before issue #821.
     """
 
     workers: int = 1
@@ -111,6 +113,7 @@ class ExtractionOptions:
     api_key: str | None = None
     license: str | None = None
     license_url: str | None = None
+    catalog_id: str | None = None
 
 
 def _slug_for_table(name: str) -> str:
@@ -514,7 +517,7 @@ def extract_carto_catalog(
     save_report(report, report_path)
 
     if not options.raw:
-        _auto_init_catalog(output_dir, report, discovery, resolved_license)
+        _auto_init_catalog(output_dir, report, discovery, resolved_license, options.catalog_id)
 
     return report
 
@@ -524,6 +527,7 @@ def _auto_init_catalog(
     report: ExtractionReport,
     discovery: CartoDiscoveryResult,
     resolved_license: ResolvedLicense | None = None,
+    catalog_id: str | None = None,
 ) -> None:
     """Initialize a Portolan catalog and add extracted tables.
 
@@ -549,6 +553,7 @@ def _auto_init_catalog(
     added = init_extracted_catalog(
         output_dir,
         report,
+        catalog_id=catalog_id,
         title=discovery.account_name,
         description=None,
         post_init=_post_init,

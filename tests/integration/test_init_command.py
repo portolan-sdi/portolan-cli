@@ -61,6 +61,26 @@ class TestInitCommandAutoMode:
         assert data["id"] == "my-cool-catalog"
 
     @pytest.mark.integration
+    def test_id_flag_writes_catalog_json_and_versions_json(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """--id must reach both id write sites, so they cannot drift (issue #821)."""
+        catalog_dir = tmp_path / "publish"
+        catalog_dir.mkdir()
+
+        result = runner.invoke(
+            cli,
+            ["init", "--auto", str(catalog_dir), "--id", "phl-housing", "--license", "CC-BY-4.0"],
+        )
+
+        assert result.exit_code == 0
+        catalog = json.loads((catalog_dir / "catalog.json").read_text())
+        versions = json.loads((catalog_dir / "versions.json").read_text())
+
+        assert catalog["id"] == "phl-housing"
+        assert versions["catalog_id"] == "phl-housing"
+
+    @pytest.mark.integration
     def test_init_auto_emits_warnings(self, runner: CliRunner, tmp_path: Path) -> None:
         """portolan init --auto should emit warnings for missing best-practice fields."""
         with runner.isolated_filesystem(temp_dir=tmp_path):

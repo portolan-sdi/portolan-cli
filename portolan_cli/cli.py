@@ -385,6 +385,13 @@ def cli(ctx: click.Context, output_format: str) -> None:
     help="Skip interactive prompts and use auto-extracted/default values.",
 )
 @click.option(
+    "--id",
+    "catalog_id",
+    type=str,
+    default=None,
+    help="Catalog id. Defaults to the sanitized directory name.",
+)
+@click.option(
     "--title",
     "-t",
     type=str,
@@ -435,6 +442,7 @@ def init(
     path: Path,
     json_output: bool,
     auto_mode: bool,
+    catalog_id: str | None,
     title: str | None,
     description: str | None,
     backend: str,
@@ -449,7 +457,9 @@ def init(
     management files (config.yaml, metadata.yaml). Also creates versions.json at
     the root.
 
-    Auto-extracts the catalog ID from the directory name.
+    Derives the catalog ID from the directory name. Pass --id to set it
+    yourself. The ID is the catalog's public STAC identity, so a directory
+    named for a step in your workflow makes a poor one.
 
     PATH is the directory where the catalog should be created (default: current directory).
 
@@ -458,8 +468,8 @@ def init(
     Pass an SPDX identifier, or 'other' with --license-url when the license has no
     identifier. Without --auto or --json you are prompted for it.
 
-    Use --auto to skip all prompts and use default values. Use --title and
-    --description to set catalog metadata directly.
+    Use --auto to skip all prompts and use default values. Use --id, --title,
+    and --description to set catalog metadata directly.
 
     A logo is optional. Pass --logo with a local image to copy it into _assets/
     and publish it as a rel="icon" link, or add one later with 'portolan logo'.
@@ -469,6 +479,7 @@ def init(
         portolan init                            # Prompts for the license
         portolan init --auto --license CC-BY-4.0 # Skip prompts
         portolan init --title "My Catalog" --license MIT
+        portolan init --id phl-housing --license CC-BY-4.0
         portolan init --license other --license-url https://x.org/terms
         portolan init --backend iceberg --license CC0-1.0
         portolan init --auto --license CC-BY-4.0 --logo brand.png
@@ -515,6 +526,7 @@ def init(
     try:
         catalog_file, warnings = init_catalog(
             path,
+            catalog_id=catalog_id,
             title=title,
             description=description,
             backend=backend,
@@ -547,6 +559,11 @@ def init(
             for w in warnings:
                 warn(w)
 
+    except InputValidationError as err:
+        # A bad --id fails before init_catalog writes anything, so the directory
+        # is untouched and the caller can retry with a valid id (issue #821).
+        emit_error("init", "InputValidationError", str(err), use_json=use_json)
+        raise SystemExit(1) from err
     except LogoError as err:
         emit_error("init", type(err).__name__, str(err), use_json=use_json, code=err.code)
         raise SystemExit(1) from err
@@ -6259,6 +6276,7 @@ def _handle_imageserver_extraction(
     ctx: click.Context,
     url: str,
     output_dir: Path,
+    catalog_id: str | None,
     tile_size: int,
     bbox: str | None,
     bbox_crs: str | None,
@@ -6328,6 +6346,7 @@ def _handle_imageserver_extraction(
 
     # Build options
     options = ImageServerCLIOptions(
+        catalog_id=catalog_id,
         tile_size=tile_size,
         max_concurrent=max_concurrent,
         dry_run=dry_run,
@@ -6730,6 +6749,13 @@ def extract() -> None:
     help="[ImageServer] Name for the collection (default: 'tiles').",
 )
 @click.option(
+    "--id",
+    "catalog_id",
+    type=str,
+    default=None,
+    help="Catalog id. Defaults to the sanitized directory name.",
+)
+@click.option(
     "--license",
     "license_id",
     type=str,
@@ -6746,6 +6772,7 @@ def extract() -> None:
 @click.pass_context
 def extract_arcgis_cmd(
     ctx: click.Context,
+    catalog_id: str | None,
     license_id: str | None,
     license_url: str | None,
     url: str,
@@ -6783,6 +6810,9 @@ def extract_arcgis_cmd(
 
     URL is the ArcGIS service URL (FeatureServer, MapServer, ImageServer, or services root).
     OUTPUT_DIR is the directory to write extracted data (default: inferred from service name).
+
+    The catalog id comes from the output directory name. Pass --id to set it
+    yourself, because that id is the catalog's public STAC identity.
 
     \b
     URL Types:
@@ -6891,6 +6921,7 @@ def extract_arcgis_cmd(
             ctx=ctx,
             url=url,
             output_dir=output_dir,
+            catalog_id=catalog_id,
             tile_size=tile_size,
             bbox=bbox,
             bbox_crs=bbox_crs,
@@ -6915,6 +6946,7 @@ def extract_arcgis_cmd(
 
     # Build options
     options = ExtractionOptions(
+        catalog_id=catalog_id,
         workers=workers,
         retries=retries,
         timeout=timeout,
@@ -7080,6 +7112,13 @@ def extract_arcgis_cmd(
     help="Skip auto-init: create only extraction files, no STAC catalog.",
 )
 @click.option(
+    "--id",
+    "catalog_id",
+    type=str,
+    default=None,
+    help="Catalog id. Defaults to the sanitized directory name.",
+)
+@click.option(
     "--license",
     "license_id",
     type=str,
@@ -7096,6 +7135,7 @@ def extract_arcgis_cmd(
 @click.pass_context
 def extract_wfs_cmd(
     ctx: click.Context,
+    catalog_id: str | None,
     license_id: str | None,
     license_url: str | None,
     url: str,
@@ -7124,6 +7164,9 @@ def extract_wfs_cmd(
 
     URL is the WFS service endpoint URL.
     OUTPUT_DIR is the directory to write extracted data (default: 'wfs_extract').
+
+    The catalog id comes from the output directory name. Pass --id to set it
+    yourself, because that id is the catalog's public STAC identity.
 
     \b
     WFS Versions:
@@ -7190,6 +7233,7 @@ def extract_wfs_cmd(
 
     # Build options
     options = ExtractionOptions(
+        catalog_id=catalog_id,
         workers=workers,
         retries=retries,
         timeout=timeout,
@@ -7353,6 +7397,13 @@ def extract_wfs_cmd(
     help="Skip auto-init: create only extraction files, no STAC catalog.",
 )
 @click.option(
+    "--id",
+    "catalog_id",
+    type=str,
+    default=None,
+    help="Catalog id. Defaults to the sanitized directory name.",
+)
+@click.option(
     "--license",
     "license_id",
     type=str,
@@ -7369,6 +7420,7 @@ def extract_wfs_cmd(
 @click.pass_context
 def extract_carto_cmd(
     ctx: click.Context,
+    catalog_id: str | None,
     license_id: str | None,
     license_url: str | None,
     url: str,
@@ -7400,6 +7452,9 @@ def extract_carto_cmd(
     URL is the Carto SQL API endpoint or account domain
     (e.g. https://phl.carto.com or https://phl.carto.com/api/v2/sql).
     OUTPUT_DIR is the directory to write extracted data (default: 'carto_extract').
+
+    The catalog id comes from the output directory name. Pass --id to set it
+    yourself, because that id is the catalog's public STAC identity.
 
     \b
     Examples:
@@ -7451,6 +7506,7 @@ def extract_carto_cmd(
     table_exclude = _parse_filter_patterns(exclude_tables)
 
     options = ExtractionOptions(
+        catalog_id=catalog_id,
         workers=workers,
         retries=retries,
         timeout=timeout,
