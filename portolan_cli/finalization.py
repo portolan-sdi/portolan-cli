@@ -30,7 +30,7 @@ from typing import Any
 import pystac
 from pystac.layout import AsIsLayoutStrategy
 
-from portolan_cli.config import load_merged_metadata
+from portolan_cli.config import load_merged_metadata, load_own_metadata
 from portolan_cli.formats import FormatType
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
@@ -39,6 +39,7 @@ from portolan_cli.metadata.geoparquet import GeoParquetMetadata
 from portolan_cli.preparation import PreparedItem
 from portolan_cli.query import ItemInfo
 from portolan_cli.stac import (
+    DEFAULT_LICENSE,
     MergeStrategy,
     add_asset_to_collection,
     add_collection_extensions_from_summaries,
@@ -408,6 +409,50 @@ def _get_or_create_collection(
         title=title,
         bbox=initial_bbox,
     )
+
+
+def apply_human_metadata(
+    collection: pystac.Collection,
+    collection_dir: Path,
+    catalog_root: Path,
+) -> None:
+    """Write human-authored metadata onto a collection, own value over inherited.
+
+    A metadata.yaml the collection owns is authoritative. Portolan re-applies its
+    title, description, license, and providers on every add. A metadata.yaml an
+    ancestor owns only fills a field the collection still lacks. So a re-add never
+    replaces a title, a license, or providers a maintainer set on this collection,
+    and a catalog title never becomes a collection title (issue #755).
+
+    Args:
+        collection: The collection to update in place.
+        collection_dir: The collection's directory under the catalog root.
+        catalog_root: Root directory of the catalog.
+    """
+    own = load_own_metadata(collection_dir)
+    merged = load_merged_metadata(collection_dir, catalog_root)
+
+    # Title and description: only the collection's own declaration applies. An
+    # ancestor title names the catalog, not this collection, so it never inherits.
+    apply_human_titles(collection, own)
+
+    # License: the own declaration wins. An inherited license fills only a
+    # collection that still carries the placeholder default license.
+    if "license" in own or collection.license == DEFAULT_LICENSE:
+        apply_human_license(collection, merged)
+    else:
+        # Preserve the existing license, but let the collection's own license_url
+        # still resolve its link.
+        apply_human_license(collection, own)
+
+    # Providers: the own declaration wins, and a host seeds from an inherited
+    # contact. An inherited array fills only a collection that declares none yet.
+    if "providers" in own or "contact" in own or not collection.providers:
+        apply_human_providers(collection, merged)
+
+    # Provenance derives from the providers now on the collection and the source
+    # link the merged metadata declares.
+    apply_provenance(collection, merged)
 
 
 def _add_prepared_items_to_collection(
@@ -1038,16 +1083,10 @@ def _finalize_collection(
         initial_bbox=first_item.bbox,
     )
 
-    # Issue #502/#654: apply human title/description/license overrides from
-    # metadata.yaml (highest precedence over the auto-derived defaults).
-    merged_metadata = load_merged_metadata(collection_dir, catalog_root)
-    apply_human_titles(collection, merged_metadata)
-    apply_human_license(collection, merged_metadata)
-
-    # Issue #684: providers name who produced the data and who hosts this copy,
-    # and their relationship is what makes this collection official or a mirror.
-    apply_human_providers(collection, merged_metadata)
-    apply_provenance(collection, merged_metadata)
+    # Issue #502/#654/#684/#755: apply human title/description/license/providers
+    # from metadata.yaml. The collection's own metadata.yaml wins; inherited
+    # ancestor metadata only fills fields the collection still lacks.
+    apply_human_metadata(collection, collection_dir, catalog_root)
 
     # Add items or collection-level assets to collection (in memory)
     _add_prepared_items_to_collection(collection, items, merge_strategy)

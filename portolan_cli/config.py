@@ -893,6 +893,27 @@ def load_merged_metadata(
     return merged
 
 
+def load_own_metadata(path: Path) -> dict[str, Any]:
+    """Load only the metadata.yaml a directory owns, with no inheritance.
+
+    ``load_merged_metadata`` merges a collection's metadata.yaml with the ones its
+    ancestors own. This reads the single ``.portolan/metadata.yaml`` in ``path``
+    alone. A caller uses it to tell a value the collection declares from a value it
+    inherits (issue #755).
+
+    Args:
+        path: Directory that may own a ``.portolan/metadata.yaml``.
+
+    Returns:
+        The parsed metadata mapping, or an empty dict when the file is absent,
+        empty, or not a mapping.
+    """
+    file_path = path / ".portolan" / "metadata.yaml"
+    if not file_path.is_file():
+        return {}
+    return _load_validated_mapping(file_path) or {}
+
+
 # =============================================================================
 # .env file support (Issue #356)
 # =============================================================================
