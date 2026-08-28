@@ -4014,8 +4014,10 @@ def push(
             elif dry_run:
                 # Dry-run mode: push.py already printed what would be done
                 info_output("[DRY RUN] Complete - no files were uploaded")
-            else:
+            elif result.files_uploaded == 0:
                 info_output("Nothing to push - local and remote are in sync")
+            # A metadata-only sync (files_uploaded > 0, no version bump) already
+            # reported "Synced N metadata file(s)" from push_async (#816).
 
     except PushConflictError as err:
         if use_json:
