@@ -32,9 +32,19 @@ if TYPE_CHECKING:
 
 # Any versioned Portolan profile URI, not just the current one: matching the
 # whole family is what lets a stale claim be rewritten rather than duplicated.
+# The capture groups read the SemVer triple, so the stamper can compare versions
+# and keep the higher one (issue #755).
 PORTOLAN_SCHEMA_URI_PATTERN = re.compile(
-    r"^https://schemas\.portolan-sdi\.org/portolan/v\d+\.\d+\.\d+/schema\.json$"
+    r"^https://schemas\.portolan-sdi\.org/portolan/v(\d+)\.(\d+)\.(\d+)/schema\.json$"
 )
+
+
+def _profile_version(uri: str) -> tuple[int, int, int] | None:
+    """Return the SemVer triple of a Portolan profile URI, or None when it does not match."""
+    match = PORTOLAN_SCHEMA_URI_PATTERN.match(uri)
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
 class MergeStrategy(Enum):
@@ -927,6 +937,10 @@ def ensure_portolan_schema_uri(document: dict[str, Any]) -> bool:
     upgrades it instead of accumulating claims. Other extension declarations keep
     their relative order.
 
+    The URI never moves down a version. A catalog that already declares a newer
+    spec release than the one the installed validator bundles keeps its version,
+    so ``add`` does not stamp an older schema over a newer one (issue #755).
+
     Args:
         document: Parsed ``catalog.json`` or ``collection.json``, mutated in place.
 
@@ -936,18 +950,30 @@ def ensure_portolan_schema_uri(document: dict[str, Any]) -> bool:
     existing = document.get("stac_extensions")
     declared: list[str] = list(existing) if isinstance(existing, list) else []
 
+    # Keep the highest version between what is declared and what this CLI stamps,
+    # so a re-add upgrades an older claim but never downgrades a newer one.
+    canonical = PORTOLAN_SCHEMA_URI
+    canonical_version = _profile_version(PORTOLAN_SCHEMA_URI)
+    for uri in declared:
+        if not isinstance(uri, str):
+            continue
+        version = _profile_version(uri)
+        if version is not None and canonical_version is not None and version > canonical_version:
+            canonical = uri
+            canonical_version = version
+
     kept: list[str] = []
     stamped = False
     for uri in declared:
         if isinstance(uri, str) and PORTOLAN_SCHEMA_URI_PATTERN.match(uri):
             # Collapse every profile claim (stale or duplicate) onto the first.
             if not stamped:
-                kept.append(PORTOLAN_SCHEMA_URI)
+                kept.append(canonical)
                 stamped = True
             continue
         kept.append(uri)
     if not stamped:
-        kept.append(PORTOLAN_SCHEMA_URI)
+        kept.append(canonical)
 
     if kept == declared and isinstance(existing, list):
         return False

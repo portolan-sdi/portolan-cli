@@ -81,6 +81,9 @@ from portolan_cli.finalization import (
     _update_catalog_links as _update_catalog_links,  # noqa: PLC0414
 )
 from portolan_cli.finalization import (
+    apply_human_metadata as apply_human_metadata,  # noqa: PLC0414
+)
+from portolan_cli.finalization import (
     finalize_items as finalize_items,  # noqa: PLC0414
 )
 from portolan_cli.formats import (
@@ -154,9 +157,6 @@ from portolan_cli.query import ItemInfo, get_item_info, is_current, list_items  
 from portolan_cli.remove import remove_files  # noqa: F401
 from portolan_cli.stac import (
     MergeStrategy,
-    apply_human_license,
-    apply_human_providers,
-    apply_provenance,
     create_collection,
     declare_file_extension,
     document_tabular_table,
@@ -546,12 +546,9 @@ def _ensure_tabular_collection(
     )
 
     # A tabular-only add never reaches finalize_items, so apply the same
-    # human-authored license, providers, and derived provenance metadata.yaml
-    # carries for geo collections (issue #654 / issue #684).
-    merged_metadata = load_merged_metadata(collection_dir, catalog_root)
-    apply_human_license(collection, merged_metadata)
-    apply_human_providers(collection, merged_metadata)
-    apply_provenance(collection, merged_metadata)
+    # human-authored title, license, providers, and derived provenance
+    # metadata.yaml carries for geo collections (issue #654 / issue #684 / #755).
+    apply_human_metadata(collection, collection_dir, catalog_root)
 
     # Save collection.json
     collection_dir.mkdir(parents=True, exist_ok=True)
