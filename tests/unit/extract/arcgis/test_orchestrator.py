@@ -1659,7 +1659,10 @@ def _read_crs(path: Path) -> object:
 
     import pyarrow.parquet as pq
 
-    geo = json.loads(pq.ParquetFile(path).metadata.metadata[b"geo"])
+    # Close the reader before returning. Windows blocks a replace on the file
+    # while a handle stays open.
+    with pq.ParquetFile(path) as parquet_file:
+        geo = json.loads(parquet_file.metadata.metadata[b"geo"])
     return geo["columns"][geo["primary_column"]].get("crs")
 
 

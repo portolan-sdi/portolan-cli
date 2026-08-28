@@ -288,7 +288,7 @@ def _is_wgs84_crs(crs: dict[str, object]) -> bool:
     try:
         parsed = CRS.from_json_dict(crs)
     except (CRSError, KeyError, TypeError, ValueError):
-        # An unparseable CRS is not WGS84, so tag it rather than assume CRS84.
+        # An unparsable CRS is not WGS84, so tag it rather than assume CRS84.
         return False
     return parsed.to_epsg() == 4326 or parsed == CRS("OGC:CRS84")
 
@@ -312,29 +312,33 @@ def _ensure_geoparquet_crs(output_path: Path, source_crs: dict[str, object] | No
 
     import pyarrow.parquet as pq
 
-    parquet_file = pq.ParquetFile(output_path)
-    schema = parquet_file.schema_arrow
-    metadata = schema.metadata or {}
-    geo_bytes = metadata.get(b"geo")
-    if geo_bytes is None:
-        return
-
-    geo = json.loads(geo_bytes)
-    primary = geo.get("primary_column")
-    column = geo.get("columns", {}).get(primary)
-    if column is None or column.get("crs") == source_crs:
-        # Already tagged with the source CRS; nothing to rewrite.
-        return
-
-    column["crs"] = source_crs
-    new_schema = schema.with_metadata({**metadata, b"geo": json.dumps(geo).encode("utf-8")})
-
-    # Parquet keeps its CRS in the footer, so a rewrite is the only way to change
-    # it. Copy the row groups verbatim to keep the covering statistics intact.
     temp_path = output_path.with_suffix(output_path.suffix + ".tmp")
-    with pq.ParquetWriter(temp_path, new_schema, compression="zstd") as writer:
-        for row_group in range(parquet_file.num_row_groups):
-            writer.write_table(parquet_file.read_row_group(row_group))
+    with pq.ParquetFile(output_path) as parquet_file:
+        schema = parquet_file.schema_arrow
+        metadata = schema.metadata or {}
+        geo_bytes = metadata.get(b"geo")
+        if geo_bytes is None:
+            return
+
+        geo = json.loads(geo_bytes)
+        primary = geo.get("primary_column")
+        column = geo.get("columns", {}).get(primary)
+        if column is None or column.get("crs") == source_crs:
+            # Already tagged with the source CRS; nothing to rewrite.
+            return
+
+        column["crs"] = source_crs
+        new_schema = schema.with_metadata({**metadata, b"geo": json.dumps(geo).encode("utf-8")})
+
+        # Parquet keeps its CRS in the footer, so a rewrite is the only way to
+        # change it. Copy the row groups verbatim to keep the covering
+        # statistics intact.
+        with pq.ParquetWriter(temp_path, new_schema, compression="zstd") as writer:
+            for row_group in range(parquet_file.num_row_groups):
+                writer.write_table(parquet_file.read_row_group(row_group))
+
+    # Windows refuses to replace a file while a reader still holds it open. The
+    # rename runs after the ParquetFile closes.
     temp_path.replace(output_path)
 
 
