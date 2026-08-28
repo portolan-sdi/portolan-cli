@@ -53,6 +53,7 @@ set -eu
 arcgis_url=${PORTOLAN_PHL_ARCGIS_URL:-https://services.arcgis.com/fLeGjb7u4uXqeF9q/ArcGIS/rest/services}
 
 portolan extract arcgis "$arcgis_url" "$CATALOG_DIR" \
+    --id philadelphia-housing \
     --services "AffordableHousingProduction,Council_Districts_2024" \
     --workers 2 \
     --retries 3 \
@@ -70,6 +71,10 @@ uv run ./examples/philadelphia-housing/01-create-catalog.sh
 Portolan searches Philadelphia's ArcGIS services and selects the two named services.
 It downloads every page, retries temporary failures, and converts each layer to GeoParquet.
 It also preserves the map style from each source layer.
+
+The `--id` flag names the catalog. Without it, Portolan derives the id from
+the output directory name. That id is the catalog's public STAC identity, so
+a scratch directory makes a poor one.
 
 The output shows this work as it happens:
 

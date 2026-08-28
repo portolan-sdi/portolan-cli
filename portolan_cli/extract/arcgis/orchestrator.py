@@ -258,6 +258,8 @@ class ExtractionOptions:
         output_crs: CRS for the extracted GeoParquet. "native" keeps the
             service's source CRS (default). An EPSG code (e.g. "EPSG:4326")
             reprojects the coordinates to that CRS (issue #802).
+        catalog_id: Catalog id for the created catalog. None derives it from
+            the output directory name, which is the behavior before issue #821.
     """
 
     workers: int = 3
@@ -273,6 +275,7 @@ class ExtractionOptions:
     license: str | None = None
     license_url: str | None = None
     output_crs: str = "native"
+    catalog_id: str | None = None
 
 
 def _is_wgs84_crs(crs: dict[str, object]) -> bool:
@@ -716,13 +719,16 @@ def extract_arcgis_catalog(
 
     # Auto-init catalog unless raw mode
     if not options.raw:
-        _auto_init_catalog(output_dir, report, resolved_license)
+        _auto_init_catalog(output_dir, report, resolved_license, options.catalog_id)
 
     return report
 
 
 def _auto_init_catalog(
-    output_dir: Path, report: ExtractionReport, resolved_license: ResolvedLicense | None = None
+    output_dir: Path,
+    report: ExtractionReport,
+    resolved_license: ResolvedLicense | None = None,
+    catalog_id: str | None = None,
 ) -> None:
     """Initialize a Portolan catalog and add extracted files.
 
@@ -757,6 +763,7 @@ def _auto_init_catalog(
     added = init_extracted_catalog(
         output_dir,
         report,
+        catalog_id=catalog_id,
         title=filtered_title,
         description=filtered_description,
         post_init=_post_init,
@@ -1280,7 +1287,7 @@ def _extract_services_root(
 
     # Auto-init catalog unless raw mode
     if not options.raw:
-        _auto_init_catalog(output_dir, report, resolved_license)
+        _auto_init_catalog(output_dir, report, resolved_license, options.catalog_id)
 
     return report
 

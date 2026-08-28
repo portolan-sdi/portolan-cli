@@ -130,6 +130,8 @@ class ExtractionConfig:
         timeout: HTTP request timeout in seconds.
         max_concurrent: Maximum concurrent tile downloads.
         rate_limit_delay: Minimum delay between requests per slot (seconds).
+        catalog_id: Catalog id for the created catalog. None derives it from
+            the output directory name, which is the behavior before issue #821.
     """
 
     tile_size: int = 4096
@@ -140,6 +142,7 @@ class ExtractionConfig:
     timeout: float = 120.0
     max_concurrent: int = 4
     rate_limit_delay: float = DEFAULT_RATE_LIMIT_DELAY
+    catalog_id: str | None = None
 
     # Legacy compatibility: accept compression directly
     compression: str | None = None
@@ -820,6 +823,7 @@ def _auto_init_catalog(
     output_dir: Path,
     service_name: str | None = None,
     collection_name: str = "tiles",
+    catalog_id: str | None = None,
 ) -> bool:
     """Initialize a Portolan catalog and add extracted COG files.
 
@@ -831,6 +835,8 @@ def _auto_init_catalog(
         output_dir: Directory containing extracted COG files.
         service_name: Optional name for the catalog.
         collection_name: Name for the collection directory (default: 'tiles').
+        catalog_id: Catalog id for the created catalog. None derives it from
+            the output directory name, which is the behavior before issue #821.
 
     Returns:
         True if catalog was initialized, False if no files to add.
@@ -852,7 +858,21 @@ def _auto_init_catalog(
     if detect_state(output_dir) is not CatalogState.MANAGED:
         # Initialize the catalog. license_id=None because the ImageServer path seeds
         # metadata.yaml from the harvested service licenseInfo (issue #686).
-        init_catalog(output_dir, title=service_name, license_id=None)
+        # Print what init_catalog had to guess, the way `init` does, so a derived
+        # id that names a tooling artifact does not reach a published catalog
+        # unflagged (issue #821).
+        _, init_warnings = init_catalog(
+            output_dir, catalog_id=catalog_id, title=service_name, license_id=None
+        )
+        for message in init_warnings:
+            warn(message)
+    elif catalog_id is not None:
+        # The catalog already exists and keeps the id it was created with. Say so,
+        # rather than accept the flag and change nothing (issue #821).
+        warn(
+            f"Ignored --id '{catalog_id}'. {output_dir} is already a Portolan "
+            "catalog and keeps the id it was created with."
+        )
 
     # Add all COG files - this creates items per raster
     add_files(
@@ -1226,7 +1246,9 @@ async def extract_imageserver(
     catalog_initialized = False
     if not config.raw:
         info("Initializing Portolan catalog...")
-        catalog_initialized = _auto_init_catalog(output_dir, metadata.name, collection_name)
+        catalog_initialized = _auto_init_catalog(
+            output_dir, metadata.name, collection_name, config.catalog_id
+        )
         if catalog_initialized:
             success("Catalog initialized with STAC metadata")
         else:

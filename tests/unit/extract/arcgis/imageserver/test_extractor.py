@@ -571,7 +571,11 @@ class TestAutoInitCatalogExistingCatalog:
         import portolan_cli.add as add_mod
         import portolan_cli.catalog as catalog_mod
 
-        monkeypatch.setattr(catalog_mod, "init_catalog", lambda *a, **k: events.append("init"))
+        def _fake_init(output_dir: Path, **kwargs: object) -> tuple[Path, list[str]]:
+            events.append("init")
+            return output_dir / "catalog.json", []
+
+        monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
         monkeypatch.setattr(add_mod, "add_files", lambda **k: events.append("add"))
 
         result = _auto_init_catalog(tmp_path, service_name="svc")
@@ -602,7 +606,9 @@ class TestAutoInitCatalogExistingCatalog:
         import portolan_cli.add as add_mod
         import portolan_cli.catalog as catalog_mod
 
-        monkeypatch.setattr(catalog_mod, "init_catalog", lambda *a, **k: events.append("init"))
+        monkeypatch.setattr(
+            catalog_mod, "init_catalog", lambda *a, **k: (tmp_path / "catalog.json", [])
+        )
         monkeypatch.setattr(add_mod, "add_files", lambda **k: events.append("add"))
 
         result = _auto_init_catalog(tmp_path, service_name="svc", collection_name="naip-2024")
@@ -610,3 +616,42 @@ class TestAutoInitCatalogExistingCatalog:
         assert result is True
         # init_catalog is skipped for an existing catalog; the tiles are added.
         assert events == ["add"]
+
+    def test_reports_init_catalog_warnings(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The raster path prints what init_catalog had to guess (issue #821)."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _auto_init_catalog
+
+        self._make_tile(tmp_path)
+
+        import portolan_cli.add as add_mod
+        import portolan_cli.catalog as catalog_mod
+
+        def _fake_init(output_dir: Path, **kwargs: object) -> tuple[Path, list[str]]:
+            return output_dir / "catalog.json", ["Derived catalog id 'publish'"]
+
+        monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
+        monkeypatch.setattr(add_mod, "add_files", lambda **k: None)
+
+        _auto_init_catalog(tmp_path, service_name="svc")
+
+        assert "Derived catalog id 'publish'" in capsys.readouterr().err
+
+    def test_warns_when_id_cannot_apply_to_an_existing_catalog(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An existing catalog keeps its id, so a passed --id must not go silent."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _auto_init_catalog
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text("# Portolan configuration\n")
+        self._make_tile(tmp_path)
+
+        import portolan_cli.add as add_mod
+
+        monkeypatch.setattr(add_mod, "add_files", lambda **k: None)
+
+        _auto_init_catalog(tmp_path, service_name="svc", catalog_id="phl-housing")
+
+        assert "Ignored --id 'phl-housing'" in capsys.readouterr().err

@@ -11,7 +11,9 @@ from pathlib import Path
 import pytest
 
 from portolan_cli.input_hardening import (
+    MAX_CATALOG_ID_LENGTH,
     InputValidationError,
+    validate_catalog_id,
     validate_collection_id,
     validate_config_key,
     validate_config_value,
@@ -206,6 +208,50 @@ class TestValidateItemId:
             validate_item_id("../item")
         with pytest.raises(InputValidationError, match="Path separators"):
             validate_item_id("parent/child")
+
+
+@pytest.mark.unit
+class TestValidateCatalogId:
+    """Tests for catalog ID validation (issue #821)."""
+
+    def test_valid_catalog_id(self) -> None:
+        """Valid catalog IDs are accepted."""
+        assert validate_catalog_id("phl-housing") == "phl-housing"
+        assert validate_catalog_id("census_2020") == "census_2020"
+        assert validate_catalog_id("IGN-Argentina") == "IGN-Argentina"
+
+    def test_rejects_empty_id(self) -> None:
+        """Empty catalog ID is rejected."""
+        with pytest.raises(InputValidationError, match="cannot be empty"):
+            validate_catalog_id("")
+
+    def test_rejects_id_over_the_length_limit(self) -> None:
+        """A catalog ID stays inside the 255-character name limit."""
+        assert validate_catalog_id("a" * MAX_CATALOG_ID_LENGTH)
+        with pytest.raises(InputValidationError, match="too long"):
+            validate_catalog_id("a" * (MAX_CATALOG_ID_LENGTH + 1))
+
+    def test_rejects_characters_outside_stac_pattern(self) -> None:
+        """One rule rejects every class of bad input a shell can deliver.
+
+        A tab, a query string, a percent escape, and a path separator all reach
+        the CLI as ordinary argument text, so each must fail the pattern.
+        """
+        bad_ids = (
+            "my catalog",
+            "catalog.v2",
+            "catalog!",
+            "\u65e5\u672c\u8a9e",
+            "catalog\tdata",
+            "catalog?fields=name",
+            "catalog%20name",
+            "../catalog",
+            "parent/child",
+            "parent\\child",
+        )
+        for bad in bad_ids:
+            with pytest.raises(InputValidationError, match="letters, digits"):
+                validate_catalog_id(bad)
 
 
 @pytest.mark.unit

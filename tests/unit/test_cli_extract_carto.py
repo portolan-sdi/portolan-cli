@@ -35,6 +35,7 @@ def _make_capturing_fake(captured: dict[str, object]) -> Callable[..., Extractio
         captured["limit"] = options.limit
         captured["api_key"] = options.api_key
         captured["workers"] = options.workers
+        captured["catalog_id"] = options.catalog_id
         captured["layer_filter"] = layer_filter
         captured["layer_exclude"] = layer_exclude
         return _build_dry_run_report(url, [])
@@ -123,3 +124,39 @@ def test_extract_carto_rejects_bad_bbox(monkeypatch: pytest.MonkeyPatch) -> None
         ["extract", "carto", "https://phl.carto.com", "--bbox", "1,2,3", "--auto"],
     )
     assert result.exit_code == 1
+
+
+def test_extract_carto_id_threads_into_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--id threads catalog_id into ExtractionOptions (issue #821)."""
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "portolan_cli.extract.carto.orchestrator.extract_carto_catalog",
+        _make_capturing_fake(captured),
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["extract", "carto", "https://phl.carto.com", "--id", "phl-housing", "--dry-run", "--auto"],
+    )
+    assert result.exit_code == 0
+    assert captured["catalog_id"] == "phl-housing"
+
+
+def test_extract_carto_rejects_bad_id_before_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bad --id fails before the download starts, not after it (issue #821)."""
+    calls: list[str] = []
+
+    def _never_called(*args: object, **kwargs: object) -> None:
+        calls.append("extract")
+
+    monkeypatch.setattr(
+        "portolan_cli.extract.carto.orchestrator.extract_carto_catalog", _never_called
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["extract", "carto", "https://phl.carto.com", "--id", "bad id", "--auto"]
+    )
+
+    assert result.exit_code == 1
+    assert calls == []
+    assert "Invalid catalog ID" in result.output

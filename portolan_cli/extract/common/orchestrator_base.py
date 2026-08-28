@@ -64,6 +64,7 @@ def init_extracted_catalog(
     output_dir: Path,
     report: ExtractionReport,
     *,
+    catalog_id: str | None = None,
     title: str | None,
     description: str | None,
     post_init: Callable[[Path, list[Path], bool], None] | None = None,
@@ -85,6 +86,8 @@ def init_extracted_catalog(
     Args:
         output_dir: The catalog output directory.
         report: The extraction report.
+        catalog_id: Catalog id for ``init_catalog``. None derives it from the
+            output directory name, which is the behavior before issue #821.
         title: Catalog title for ``init_catalog`` (already filtered by caller).
         description: Catalog description for ``init_catalog``.
         post_init: Optional hook called as
@@ -99,6 +102,7 @@ def init_extracted_catalog(
         add (the caller should then stop — no catalog was created).
     """
     from portolan_cli.catalog import CatalogState, add_files, detect_state, init_catalog
+    from portolan_cli.output import warn
 
     parquet_files = collect_successful_parquet_files(output_dir, report)
     if not parquet_files:
@@ -116,7 +120,26 @@ def init_extracted_catalog(
         # service metadata in post_init below. Writing a template here first would
         # make that seeder's O_EXCL create a no-op and drop everything harvested
         # (issue #686).
-        init_catalog(output_dir, title=title, description=description, license_id=None)
+        # init_catalog reports what it had to guess. `init` prints those warnings,
+        # so extract prints them too. Otherwise a derived id that names a tooling
+        # artifact reaches a published catalog unflagged (issue #821).
+        _, init_warnings = init_catalog(
+            output_dir,
+            catalog_id=catalog_id,
+            title=title,
+            description=description,
+            license_id=None,
+        )
+        for message in init_warnings:
+            warn(message)
+
+    elif catalog_id is not None:
+        # The catalog already exists and keeps the id it was created with. Say so,
+        # rather than accept the flag and change nothing (issue #821).
+        warn(
+            f"Ignored --id '{catalog_id}'. {output_dir} is already a Portolan "
+            "catalog and keeps the id it was created with."
+        )
 
     if post_init is not None:
         post_init(output_dir, parquet_files, fresh)

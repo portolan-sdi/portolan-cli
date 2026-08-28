@@ -96,6 +96,8 @@ class ExtractionOptions:
             license_url. Overrides any license URL found in the service's own
             license text (issue #686).
         license_url: URL of the license text.
+        catalog_id: Catalog id for the created catalog. None derives it from
+            the output directory name, which is the behavior before issue #821.
     """
 
     workers: int = 1
@@ -113,6 +115,7 @@ class ExtractionOptions:
     auto_tile: bool = True
     license: str | None = None
     license_url: str | None = None
+    catalog_id: str | None = None
 
 
 def _slugify(name: str, disambiguate: bool = False, unique_id: int | None = None) -> str:
@@ -787,7 +790,9 @@ def extract_wfs_catalog(
 
     # Auto-init catalog unless raw mode
     if not options.raw:
-        _auto_init_catalog(output_dir, report, discovery_result, resolved_license)
+        _auto_init_catalog(
+            output_dir, report, discovery_result, resolved_license, options.catalog_id
+        )
 
     return report
 
@@ -797,6 +802,7 @@ def _auto_init_catalog(
     report: ExtractionReport,
     discovery_result: WFSDiscoveryResult | None = None,
     resolved_license: ResolvedLicense | None = None,
+    catalog_id: str | None = None,
 ) -> None:
     """Initialize a Portolan catalog and add extracted files.
 
@@ -829,6 +835,7 @@ def _auto_init_catalog(
     added = init_extracted_catalog(
         output_dir,
         report,
+        catalog_id=catalog_id,
         title=filtered_title,
         description=filtered_description,
         post_init=_post_init,

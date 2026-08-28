@@ -19,6 +19,7 @@ from typing import Any, Literal, overload
 from portolan_cli.agents_md import visible_stac_files
 from portolan_cli.errors import CatalogAlreadyExistsError
 from portolan_cli.humanize import humanize_slug
+from portolan_cli.input_hardening import validate_catalog_id
 from portolan_cli.json_io import write_json_atomic, write_text_atomic
 from portolan_cli.models.catalog import CatalogModel
 from portolan_cli.utils import href_root, relative_href
@@ -234,6 +235,51 @@ def _sanitize_id(name: str) -> str:
     return sanitized
 
 
+# Directory names that name a step in someone's workflow rather than the data
+# itself. `init` inside one of these silently published a catalog whose id was
+# "publish" (issue #821). Every entry is a valid STAC id, so no syntactic check
+# catches it. Only the meaning is wrong.
+#
+# The last group is the output directory `extract` picks when the caller names
+# none. Those are the ids the tool produces on its own, so they reach a
+# published catalog most easily of all.
+_TOOLING_ARTIFACT_IDS = frozenset(
+    {
+        "build",
+        "data",
+        "dist",
+        "new",
+        "out",
+        "output",
+        "publish",
+        "staging",
+        "temp",
+        "tmp",
+        "untitled",
+        "extract",
+        "arcgis-extract",
+        "carto-extract",
+        "services-extract",
+        "wfs-extract",
+    }
+)
+
+
+def _is_tooling_artifact_id(catalog_id: str) -> bool:
+    """Report whether an id names a workflow step rather than the data.
+
+    Case and the choice of hyphen or underscore carry no meaning here, so
+    "WFS_Extract" and "wfs-extract" both match.
+
+    Args:
+        catalog_id: The candidate catalog id.
+
+    Returns:
+        True when the id names a tooling artifact.
+    """
+    return catalog_id.lower().replace("_", "-") in _TOOLING_ARTIFACT_IDS
+
+
 @overload
 def create_catalog(
     path: Path,
@@ -370,9 +416,61 @@ def _seed_root_metadata(
     return []
 
 
+def _resolve_catalog_identity(
+    path: Path, catalog_id: str | None, title: str | None
+) -> tuple[str, str, list[str]]:
+    """Decide the catalog's id and title, and report what had to be guessed.
+
+    The caller may name the catalog outright. Otherwise the id comes from the
+    directory name, which is what every catalog did before issue #821.
+    ``_sanitize_id`` coerces a derived id. A supplied id goes through
+    ``validate_catalog_id``, which rejects a bad value rather than rewrite it,
+    because the caller typed that value deliberately.
+
+    Args:
+        path: The resolved catalog directory, whose name seeds a derived id.
+        catalog_id: The id the caller supplied, or None to derive one.
+        title: The title the caller supplied, or None to derive one.
+
+    Returns:
+        A tuple of the catalog id, the title, and the warnings to report.
+
+    Raises:
+        InputValidationError: If a supplied id is not a valid STAC identifier.
+    """
+    warnings: list[str] = []
+    derived_id = catalog_id is None
+
+    if catalog_id is None:
+        # path is already resolved, so path.name is the real directory name.
+        catalog_id = _sanitize_id(path.name)
+    else:
+        catalog_id = validate_catalog_id(catalog_id)
+
+    # A derived id that names a workflow step rather than the data is the failure
+    # in issue #821. Warn only when the id was derived. An explicit id is the
+    # caller's decision.
+    if derived_id and _is_tooling_artifact_id(catalog_id):
+        warnings.append(
+            f"Derived catalog id '{catalog_id}' from the directory name. "
+            "It looks like a tooling artifact, not the name of the data. "
+            "Pass --id to set the catalog identity."
+        )
+
+    # Issue #502: a title is mandatory and must be human-readable, so derive one
+    # from the id instead of leaving it empty.
+    if not title:
+        title = humanize_slug(catalog_id)
+        source = "directory name" if derived_id else "catalog id"
+        warnings.append(f"Derived catalog title '{title}' from {source}")
+
+    return catalog_id, title, warnings
+
+
 def init_catalog(
     path: Path,
     *,
+    catalog_id: str | None = None,
     title: str | None = None,
     description: str | None = None,
     backend: str = "file",
@@ -411,6 +509,9 @@ def init_catalog(
         path: Directory path for the catalog. Will be created if doesn't exist.
             Resolved before use, so a relative path such as the CLI's "." default
             is interpreted against the working directory exactly once.
+        catalog_id: Catalog id. None derives one from the directory name, which
+            is the behavior before issue #821. A supplied id is validated and
+            rejected when invalid, rather than coerced.
         title: Optional catalog title.
         description: Optional catalog description.
         backend: Versioning backend name.
@@ -428,6 +529,9 @@ def init_catalog(
         can read it back without matching the working directory init ran in.
 
     Raises:
+        InputValidationError: If ``catalog_id`` is not a valid STAC identifier.
+            Raised before the directory is created, so a rejected id leaves no
+            trace on disk (issue #821).
         CatalogAlreadyExistsError: If directory is in MANAGED state.
         UnmanagedStacCatalogError: If directory is in UNMANAGED_STAC state.
         CatalogInitError: If filesystem operations fail.
@@ -447,6 +551,11 @@ def init_catalog(
     # parent. Resolving here keeps the trailing slash meaningful and gives the
     # caller an absolute path to read back (issue #731).
     path = Path(path).resolve()
+
+    # Resolve the identity before anything touches the filesystem. A rejected
+    # --id must leave no directory behind for the caller to clean up (issue #821).
+    catalog_id, title, identity_warnings = _resolve_catalog_identity(path, catalog_id, title)
+
     try:
         path.mkdir(parents=True, exist_ok=True)
     except OSError as e:
@@ -476,16 +585,7 @@ def init_catalog(
         except ValueError as e:
             raise CatalogInitError(str(e)) from e
 
-    warnings: list[str] = []
-
-    # Auto-extract id from directory name (path is already resolved)
-    catalog_id = _sanitize_id(path.name)
-
-    # Set defaults. Issue #502: title is mandatory and must be human-readable,
-    # so derive one from the directory name instead of leaving it empty.
-    if not title:
-        title = humanize_slug(catalog_id)
-        warnings.append(f"Derived catalog title '{title}' from directory name")
+    warnings: list[str] = list(identity_warnings)
 
     if description is None:
         description = "A Portolan-managed STAC catalog"

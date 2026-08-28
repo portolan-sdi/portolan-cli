@@ -243,3 +243,119 @@ def test_output_crs_threads_into_options(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert result.exit_code == 0, result.output
     assert captured["output_crs"] == "EPSG:28992"
+
+
+@pytest.mark.unit
+def test_catalog_id_threads_into_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--id reaches ExtractionOptions passed to extract_arcgis_catalog (issue #821)."""
+    from types import SimpleNamespace
+
+    from portolan_cli.extract.arcgis.orchestrator import ExtractionOptions
+
+    captured: dict[str, object] = {}
+
+    def fake_extract(**kwargs: object) -> SimpleNamespace:
+        options = kwargs["options"]
+        assert isinstance(options, ExtractionOptions)
+        captured["catalog_id"] = options.catalog_id
+        summary = SimpleNamespace(
+            total_layers=0,
+            succeeded=0,
+            failed=0,
+            skipped=0,
+            empty=0,
+            total_features=0,
+            total_size_bytes=0,
+        )
+        return SimpleNamespace(
+            source_url="https://x/rest/services/F/FeatureServer",
+            summary=summary,
+            layers=[],
+            folder_coverage=None,
+        )
+
+    monkeypatch.setattr(
+        "portolan_cli.extract.arcgis.orchestrator.extract_arcgis_catalog", fake_extract
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "extract",
+            "arcgis",
+            "https://x/rest/services/F/FeatureServer",
+            "./out",
+            "--id",
+            "phl-housing",
+            "--auto",
+            "--raw",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["catalog_id"] == "phl-housing"
+
+
+@pytest.mark.unit
+def test_extract_arcgis_rejects_bad_id_before_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bad --id fails before the download starts, not after it (issue #821)."""
+    calls: list[str] = []
+
+    def _never_called(*args: object, **kwargs: object) -> None:
+        calls.append("extract")
+
+    monkeypatch.setattr(
+        "portolan_cli.extract.arcgis.orchestrator.extract_arcgis_catalog", _never_called
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "extract",
+            "arcgis",
+            "https://example.com/arcgis/rest/services/x/FeatureServer",
+            "--id",
+            "bad id",
+            "--auto",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert calls == []
+    assert "Invalid catalog ID" in result.output
+
+
+@pytest.mark.unit
+def test_extract_arcgis_rejects_bad_id_before_imageserver_extraction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The raster path checks --id at the boundary too (issue #821).
+
+    An ImageServer URL dispatches to a different handler than the vector path,
+    so the check must sit before that branch, not inside it.
+    """
+    calls: list[str] = []
+
+    def _never_called(*args: object, **kwargs: object) -> None:
+        calls.append("imageserver")
+
+    monkeypatch.setattr(
+        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction_sync",
+        _never_called,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "extract",
+            "arcgis",
+            "https://example.com/arcgis/rest/services/x/ImageServer",
+            "--id",
+            "bad id",
+            "--auto",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert calls == []
+    assert "Invalid catalog ID" in result.output

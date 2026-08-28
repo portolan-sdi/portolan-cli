@@ -118,6 +118,96 @@ class TestCliInit:
             data = json.loads(Path("catalog.json").read_text())
             assert data.get("description") == "Test description"
 
+    @pytest.mark.unit
+    def test_init_with_id_flag(self, runner: CliRunner, tmp_path: Path) -> None:
+        """portolan init --id should set the catalog id."""
+        import json
+
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            result = runner.invoke(
+                cli, ["init", "--auto", "--id", "phl-housing", "--license", "CC-BY-4.0"]
+            )
+
+            assert result.exit_code == 0
+            data = json.loads(Path("catalog.json").read_text())
+            assert data.get("id") == "phl-housing"
+
+    @pytest.mark.unit
+    def test_id_flag_overrides_directory_name(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--id wins over the directory name the id is otherwise derived from."""
+        import json
+
+        target = tmp_path / "publish"
+        target.mkdir()
+        result = runner.invoke(
+            cli, ["init", str(target), "--auto", "--id", "phl-housing", "--license", "CC-BY-4.0"]
+        )
+
+        assert result.exit_code == 0
+        data = json.loads((target / "catalog.json").read_text())
+        assert data.get("id") == "phl-housing"
+
+    @pytest.mark.unit
+    def test_invalid_id_is_rejected(self, runner: CliRunner, tmp_path: Path) -> None:
+        """An --id outside the STAC identifier pattern fails instead of being coerced."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            result = runner.invoke(
+                cli, ["init", "--auto", "--id", "my catalog", "--license", "CC-BY-4.0"]
+            )
+
+            assert result.exit_code != 0
+            assert not Path("catalog.json").exists()
+
+    @pytest.mark.unit
+    def test_rejected_id_creates_no_directory(self, runner: CliRunner, tmp_path: Path) -> None:
+        """A rejected --id leaves no directory behind (issue #821)."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            result = runner.invoke(
+                cli, ["init", "newdir", "--auto", "--id", "bad id", "--license", "CC-BY-4.0"]
+            )
+
+            assert result.exit_code != 0
+            assert not Path("newdir").exists()
+
+    @pytest.mark.unit
+    def test_warns_when_derived_id_is_an_extract_output_directory(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """The output directory `extract` picks by itself warns like any artifact."""
+        target = tmp_path / "wfs_extract"
+        target.mkdir()
+        result = runner.invoke(cli, ["init", str(target), "--auto", "--license", "CC-BY-4.0"])
+
+        assert result.exit_code == 0
+        assert "tooling artifact" in result.output
+
+    @pytest.mark.unit
+    def test_warns_when_derived_id_is_a_tooling_artifact(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A directory named 'publish' warns that the derived id names no data (#821)."""
+        target = tmp_path / "publish"
+        target.mkdir()
+        result = runner.invoke(cli, ["init", str(target), "--auto", "--license", "CC-BY-4.0"])
+
+        assert result.exit_code == 0
+        assert "tooling artifact" in result.output
+        assert "--id" in result.output
+
+    @pytest.mark.unit
+    def test_no_artifact_warning_when_id_is_explicit(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """An explicit --id is the caller's decision, so the artifact warning stays quiet."""
+        target = tmp_path / "publish"
+        target.mkdir()
+        result = runner.invoke(
+            cli, ["init", str(target), "--auto", "--id", "phl-housing", "--license", "CC-BY-4.0"]
+        )
+
+        assert result.exit_code == 0
+        assert "tooling artifact" not in result.output
+
 
 class TestCliInitInteractive:
     """Tests for interactive prompting in the init command."""
