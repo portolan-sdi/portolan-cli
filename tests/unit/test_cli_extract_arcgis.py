@@ -182,3 +182,64 @@ def test_imageserver_rejects_auth_flags() -> None:
     )
     assert result.exit_code == 1
     assert "ImageServer" in result.output
+
+
+@pytest.mark.unit
+def test_extract_arcgis_has_output_crs_flag() -> None:
+    """The --output-crs flag must appear in help (issue #802)."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["extract", "arcgis", "--help"])
+    assert result.exit_code == 0
+    assert "--output-crs" in result.output
+    assert "native" in result.output
+
+
+@pytest.mark.unit
+def test_output_crs_threads_into_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--output-crs reaches ExtractionOptions passed to extract_arcgis_catalog (issue #802)."""
+    from types import SimpleNamespace
+
+    from portolan_cli.extract.arcgis.orchestrator import ExtractionOptions
+
+    captured: dict[str, object] = {}
+
+    def fake_extract(**kwargs: object) -> SimpleNamespace:
+        options = kwargs["options"]
+        assert isinstance(options, ExtractionOptions)
+        captured["output_crs"] = options.output_crs
+        summary = SimpleNamespace(
+            total_layers=0,
+            succeeded=0,
+            failed=0,
+            skipped=0,
+            empty=0,
+            total_features=0,
+            total_size_bytes=0,
+        )
+        return SimpleNamespace(
+            source_url="https://x/rest/services/F/FeatureServer",
+            summary=summary,
+            layers=[],
+            folder_coverage=None,
+        )
+
+    monkeypatch.setattr(
+        "portolan_cli.extract.arcgis.orchestrator.extract_arcgis_catalog", fake_extract
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "extract",
+            "arcgis",
+            "https://x/rest/services/F/FeatureServer",
+            "./out",
+            "--output-crs",
+            "EPSG:28992",
+            "--auto",
+            "--raw",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["output_crs"] == "EPSG:28992"
