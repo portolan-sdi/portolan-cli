@@ -66,7 +66,7 @@ def init_extracted_catalog(
     *,
     title: str | None,
     description: str | None,
-    post_init: Callable[[Path, list[Path]], None] | None = None,
+    post_init: Callable[[Path, list[Path], bool], None] | None = None,
 ) -> list[Path] | None:
     """Initialize a catalog and add the extracted assets.
 
@@ -77,31 +77,49 @@ def init_extracted_catalog(
     metadata, or enabling tabular support for non-geo outputs), then add the
     assets.
 
+    When ``output_dir`` is already a Portolan catalog, the ``init_catalog`` step
+    is skipped and the assets are added as new collections (issue #767). This lets
+    a caller extract more layers into a catalog they already built, rather than
+    abort after the download wrote the data.
+
     Args:
         output_dir: The catalog output directory.
         report: The extraction report.
         title: Catalog title for ``init_catalog`` (already filtered by caller).
         description: Catalog description for ``init_catalog``.
-        post_init: Optional hook called as ``post_init(output_dir, parquet_files)``
-            between ``init_catalog`` and ``add_files``.
+        post_init: Optional hook called as
+            ``post_init(output_dir, parquet_files, fresh)`` between ``init_catalog``
+            and ``add_files``. ``fresh`` is True only when this call created the
+            catalog. A hook must not overwrite root catalog metadata when ``fresh``
+            is False, because the catalog already belongs to an earlier extraction
+            (issue #832).
 
     Returns:
         The list of added parquet files, or ``None`` when there was nothing to
         add (the caller should then stop — no catalog was created).
     """
-    from portolan_cli.catalog import add_files, init_catalog
+    from portolan_cli.catalog import CatalogState, add_files, detect_state, init_catalog
 
     parquet_files = collect_successful_parquet_files(output_dir, report)
     if not parquet_files:
         return None
 
-    # license_id=None: extract owns metadata.yaml, seeding it from harvested service
-    # metadata in post_init below. Writing a template here first would make that
-    # seeder's O_EXCL create a no-op and drop everything harvested (issue #686).
-    init_catalog(output_dir, title=title, description=description, license_id=None)
+    # A directory that is already a Portolan catalog gets the new collections added
+    # to it, not an abort after the download already wrote the data (issue #767). A
+    # caller who runs extract into a directory they already extracted into wants the
+    # new layers added, not a refusal. init_catalog raises CatalogAlreadyExistsError
+    # on a MANAGED directory, so skip it. The catalog already carries a license, so
+    # the add license gate (issue #686) still passes.
+    fresh = detect_state(output_dir) is not CatalogState.MANAGED
+    if fresh:
+        # license_id=None: extract owns metadata.yaml, seeding it from harvested
+        # service metadata in post_init below. Writing a template here first would
+        # make that seeder's O_EXCL create a no-op and drop everything harvested
+        # (issue #686).
+        init_catalog(output_dir, title=title, description=description, license_id=None)
 
     if post_init is not None:
-        post_init(output_dir, parquet_files)
+        post_init(output_dir, parquet_files, fresh)
 
     add_files(paths=parquet_files, catalog_root=output_dir)
     return parquet_files
