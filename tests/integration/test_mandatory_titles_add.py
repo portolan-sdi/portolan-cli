@@ -187,3 +187,70 @@ class TestRootMetadataTitleReachesCatalog:
 
         readme = (collection_dir / "README.md").read_text(encoding="utf-8")
         assert readme.startswith("# Publico Areas Programaticas Desarrollo Social")
+
+
+@pytest.mark.integration
+class TestCheckFixAppliesTheMetadataTitle:
+    """`portolan check --fix` applies a title edited after creation (#815).
+
+    No rashid rule reports the drift, because rashid grades `catalog.json` and
+    never reads `metadata.yaml`. A user who renames the catalog must not have to
+    re-run `add` over the data to publish the new name.
+    """
+
+    def test_check_fix_applies_the_edited_title(self, tmp_path: Path) -> None:
+        root = tmp_path / "catalog"
+        _init_catalog(root)
+        _add_slug_collection(root)
+        (root / ".portolan" / "metadata.yaml").write_text(
+            yaml.dump(
+                {
+                    "license": "CC-BY-4.0",
+                    "title": "Philadelphia Housing and Land Use",
+                    "description": "Ten collections about property and zoning.",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        # The fixture catalog carries unrelated conformance gaps, such as a
+        # missing provider, so `check` exits non-zero. The title sweep still runs.
+        CliRunner().invoke(cli, ["check", "--fix", str(root)], catch_exceptions=False)
+
+        catalog = json.loads((root / "catalog.json").read_text(encoding="utf-8"))
+        assert catalog["title"] == "Philadelphia Housing and Land Use"
+        assert catalog["description"] == "Ten collections about property and zoning."
+
+    def test_dry_run_leaves_the_catalog_untouched(self, tmp_path: Path) -> None:
+        root = tmp_path / "catalog"
+        _init_catalog(root)
+        _add_slug_collection(root)
+        (root / ".portolan" / "metadata.yaml").write_text(
+            yaml.dump({"license": "CC-BY-4.0", "title": "Philadelphia Housing"}),
+            encoding="utf-8",
+        )
+
+        CliRunner().invoke(cli, ["check", "--fix", "--dry-run", str(root)], catch_exceptions=False)
+
+        catalog = json.loads((root / "catalog.json").read_text(encoding="utf-8"))
+        assert catalog["title"] == "Demo Catalog"
+
+    def test_collection_readme_does_not_show_the_root_description(self, tmp_path: Path) -> None:
+        """A description names one object and never inherits (#815)."""
+        root = tmp_path / "catalog"
+        _init_catalog(root)
+        (root / ".portolan" / "metadata.yaml").write_text(
+            yaml.dump(
+                {
+                    "license": "CC-BY-4.0",
+                    "title": "Philadelphia Housing and Land Use",
+                    "description": "Ten collections about property and zoning.",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        collection_dir = _add_slug_collection(root)
+
+        readme = (collection_dir / "README.md").read_text(encoding="utf-8")
+        assert "Ten collections about property and zoning." not in readme

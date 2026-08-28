@@ -49,7 +49,7 @@ class TestApplyCatalogHumanTitles:
             },
         )
 
-        assert apply_catalog_human_titles(tmp_path) is True
+        assert apply_catalog_human_titles(tmp_path) == [tmp_path / "catalog.json"]
 
         catalog = json.loads((tmp_path / "catalog.json").read_text())
         assert catalog["title"] == "Philadelphia Housing and Land Use"
@@ -59,7 +59,7 @@ class TestApplyCatalogHumanTitles:
         _catalog(tmp_path)
         _metadata(tmp_path, {"title": "Philadelphia Housing"})
 
-        assert apply_catalog_human_titles(tmp_path) is True
+        assert apply_catalog_human_titles(tmp_path) == [tmp_path / "catalog.json"]
 
         catalog = json.loads((tmp_path / "catalog.json").read_text())
         assert catalog["title"] == "Philadelphia Housing"
@@ -69,7 +69,7 @@ class TestApplyCatalogHumanTitles:
         _catalog(tmp_path)
         _metadata(tmp_path, {"title": "   ", "description": ""})
 
-        assert apply_catalog_human_titles(tmp_path) is False
+        assert apply_catalog_human_titles(tmp_path) == []
 
         catalog = json.loads((tmp_path / "catalog.json").read_text())
         assert catalog["title"] == "Phl Housing Demo"
@@ -78,7 +78,7 @@ class TestApplyCatalogHumanTitles:
     def test_no_metadata_yaml_leaves_catalog_untouched(self, tmp_path: Path) -> None:
         _catalog(tmp_path)
 
-        assert apply_catalog_human_titles(tmp_path) is False
+        assert apply_catalog_human_titles(tmp_path) == []
 
         catalog = json.loads((tmp_path / "catalog.json").read_text())
         assert catalog["title"] == "Phl Housing Demo"
@@ -87,14 +87,14 @@ class TestApplyCatalogHumanTitles:
         _catalog(tmp_path)
         _metadata(tmp_path, {"title": "Philadelphia Housing"})
 
-        assert apply_catalog_human_titles(tmp_path) is True
-        assert apply_catalog_human_titles(tmp_path) is False
+        assert apply_catalog_human_titles(tmp_path) == [tmp_path / "catalog.json"]
+        assert apply_catalog_human_titles(tmp_path) == []
 
     def test_non_string_values_are_ignored(self, tmp_path: Path) -> None:
         _catalog(tmp_path)
         _metadata(tmp_path, {"title": 42, "description": ["a", "b"]})
 
-        assert apply_catalog_human_titles(tmp_path) is False
+        assert apply_catalog_human_titles(tmp_path) == []
 
         catalog = json.loads((tmp_path / "catalog.json").read_text())
         assert catalog["title"] == "Phl Housing Demo"
@@ -102,9 +102,9 @@ class TestApplyCatalogHumanTitles:
     def test_subcatalog_keeps_its_own_title(self, tmp_path: Path) -> None:
         """The root title must not overwrite a subcatalog title.
 
-        ``load_merged_metadata`` merges a parent file into a child, so a
-        subcatalog with no title of its own inherits the root one. The sweep
-        therefore touches the root ``catalog.json`` alone.
+        The sweep reads every ``catalog.json``. A subcatalog with no
+        ``metadata.yaml`` of its own keeps the title its path segment produced,
+        because ``title`` never inherits from a parent.
         """
         _catalog(tmp_path)
         _metadata(tmp_path, {"title": "Philadelphia Housing"})
@@ -129,17 +129,46 @@ class TestApplyCatalogHumanTitles:
         subcatalog = json.loads((sub / "catalog.json").read_text())
         assert subcatalog["title"] == "Zoning"
 
+    def test_subcatalog_takes_its_own_metadata_title(self, tmp_path: Path) -> None:
+        """A subcatalog reads the metadata.yaml in its own directory (#815)."""
+        _catalog(tmp_path)
+        _metadata(tmp_path, {"title": "Philadelphia Housing"})
+        sub = tmp_path / "zoning"
+        _catalog(sub, id="zoning", title="Zoning", description="Catalog: zoning")
+        _metadata(sub, {"title": "Zoning and Land Use", "description": "Base districts."})
+
+        assert apply_catalog_human_titles(tmp_path) == [
+            tmp_path / "catalog.json",
+            sub / "catalog.json",
+        ]
+
+        subcatalog = json.loads((sub / "catalog.json").read_text())
+        assert subcatalog["title"] == "Zoning and Land Use"
+        assert subcatalog["description"] == "Base districts."
+        assert json.loads((tmp_path / "catalog.json").read_text())["title"] == (
+            "Philadelphia Housing"
+        )
+
+    def test_dry_run_reports_without_writing(self, tmp_path: Path) -> None:
+        _catalog(tmp_path)
+        _metadata(tmp_path, {"title": "Philadelphia Housing"})
+
+        assert apply_catalog_human_titles(tmp_path, dry_run=True) == [tmp_path / "catalog.json"]
+
+        catalog = json.loads((tmp_path / "catalog.json").read_text())
+        assert catalog["title"] == "Phl Housing Demo"
+
     def test_missing_catalog_json_is_a_no_op(self, tmp_path: Path) -> None:
         _metadata(tmp_path, {"title": "Philadelphia Housing"})
 
-        assert apply_catalog_human_titles(tmp_path) is False
+        assert apply_catalog_human_titles(tmp_path) == []
 
     def test_unreadable_catalog_json_is_a_no_op(self, tmp_path: Path) -> None:
         tmp_path.mkdir(parents=True, exist_ok=True)
         (tmp_path / "catalog.json").write_text("{not json", encoding="utf-8")
         _metadata(tmp_path, {"title": "Philadelphia Housing"})
 
-        assert apply_catalog_human_titles(tmp_path) is False
+        assert apply_catalog_human_titles(tmp_path) == []
 
 
 @pytest.mark.unit
