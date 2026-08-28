@@ -6639,6 +6639,13 @@ def extract() -> None:
     help="Do not traverse folders for services-root URLs (default: recurse).",
 )
 @click.option(
+    "--output-crs",
+    type=str,
+    default="native",
+    help="CRS for extracted GeoParquet. 'native' keeps the service's source CRS "
+    "(default). Pass an EPSG code (e.g. EPSG:4326) to reproject.",
+)
+@click.option(
     "--workers",
     type=click.IntRange(min=1),
     default=3,
@@ -6750,6 +6757,7 @@ def extract_arcgis_cmd(
     username: str | None,
     password: str | None,
     no_recurse: bool,
+    output_crs: str,
     workers: int,
     retries: int,
     timeout: float,
@@ -6804,6 +6812,9 @@ def extract_arcgis_cmd(
 
         # Dry run to see what would be extracted
         portolan extract arcgis URL --dry-run
+
+        # Reproject the output to WGS84 instead of keeping the source CRS
+        portolan extract arcgis URL --output-crs EPSG:4326
 
         # Extract raw files only (no STAC catalog auto-init)
         portolan extract arcgis URL --raw
@@ -6911,6 +6922,7 @@ def extract_arcgis_cmd(
         recurse=not no_recurse,
         license=license_id,
         license_url=license_url,
+        output_crs=output_crs,
     )
 
     # Progress callback for text output

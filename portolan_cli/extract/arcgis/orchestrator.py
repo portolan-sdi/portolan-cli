@@ -255,6 +255,9 @@ class ExtractionOptions:
             license_url. Overrides any license URL found in the source's own
             license text (issue #686).
         license_url: URL of the license text.
+        output_crs: CRS for the extracted GeoParquet. "native" keeps the
+            service's source CRS (default). An EPSG code (e.g. "EPSG:4326")
+            reprojects the coordinates to that CRS (issue #802).
     """
 
     workers: int = 3
@@ -269,6 +272,68 @@ class ExtractionOptions:
     recurse: bool = True
     license: str | None = None
     license_url: str | None = None
+    output_crs: str = "native"
+
+
+def _is_wgs84_crs(crs: dict[str, object]) -> bool:
+    """Return True when the PROJJSON CRS is WGS84 (EPSG:4326 or OGC:CRS84).
+
+    A null CRS in GeoParquet already means CRS84, so a WGS84 output needs no
+    explicit CRS tag (issue #802).
+    """
+    from pyproj import CRS
+    from pyproj.exceptions import CRSError
+
+    try:
+        return CRS.from_json_dict(crs).to_epsg() == 4326
+    except (CRSError, KeyError, TypeError, ValueError):
+        # An unparseable CRS is not WGS84, so tag it rather than assume CRS84.
+        return False
+
+
+def _ensure_geoparquet_crs(output_path: Path, source_crs: dict[str, object] | None) -> None:
+    """Write the source CRS into the GeoParquet metadata when the writer drops it.
+
+    gpio.Table.write() emits ``crs: null`` even for a native extraction, so a file
+    with projected coordinates would claim WGS84 (issue #802). This restamps the
+    primary geometry column with ``source_crs`` and preserves the row groups.
+
+    Args:
+        output_path: The written GeoParquet file.
+        source_crs: PROJJSON CRS the extractor detected, or None when unknown.
+    """
+    if source_crs is None or _is_wgs84_crs(source_crs):
+        # No CRS to preserve, or WGS84 where the null tag is already correct.
+        return
+
+    import json
+
+    import pyarrow.parquet as pq
+
+    parquet_file = pq.ParquetFile(output_path)
+    schema = parquet_file.schema_arrow
+    metadata = schema.metadata or {}
+    geo_bytes = metadata.get(b"geo")
+    if geo_bytes is None:
+        return
+
+    geo = json.loads(geo_bytes)
+    primary = geo.get("primary_column")
+    column = geo.get("columns", {}).get(primary)
+    if column is None or column.get("crs") == source_crs:
+        # Already tagged with the source CRS; nothing to rewrite.
+        return
+
+    column["crs"] = source_crs
+    new_schema = schema.with_metadata({**metadata, b"geo": json.dumps(geo).encode("utf-8")})
+
+    # Parquet keeps its CRS in the footer, so a rewrite is the only way to change
+    # it. Copy the row groups verbatim to keep the covering statistics intact.
+    temp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    with pq.ParquetWriter(temp_path, new_schema, compression="zstd") as writer:
+        for row_group in range(parquet_file.num_row_groups):
+            writer.write_table(parquet_file.read_row_group(row_group))
+    temp_path.replace(output_path)
 
 
 def _extract_single_layer(
@@ -306,7 +371,24 @@ def _extract_single_layer(
         kwargs["max_workers"] = options.workers
     if options.token and "token" in sig.parameters:
         kwargs["token"] = options.token
+    # Keep the service's source CRS instead of the silent WGS84 reprojection that
+    # the GeoJSON path forces (issue #802). Older gpio versions without output_crs
+    # cannot preserve the CRS, so warn that the output stays WGS84.
+    if "output_crs" in sig.parameters:
+        kwargs["output_crs"] = options.output_crs
+    else:
+        from portolan_cli.output import warn
+
+        warn(
+            "Installed geoparquet-io does not support output CRS selection. "
+            f"Output uses WGS84 (EPSG:4326), not '{options.output_crs}'."
+        )
     table = gpio.extract_arcgis(layer_url, **kwargs)
+
+    # Capture the CRS the extractor detected before the write drops it. gpio.Table
+    # tags the native SR on the table but its writer emits crs: null, so a native
+    # extraction would declare WGS84 over projected coordinates (issue #802).
+    source_crs = getattr(table, "crs", None)
 
     # Apply Hilbert sorting if requested
     if options.sort_hilbert:
@@ -322,6 +404,9 @@ def _extract_single_layer(
 
     # Write to parquet
     table.write(str(output_path))
+
+    # Restore the source CRS that gpio's writer discarded (issue #802).
+    _ensure_geoparquet_crs(output_path, source_crs)
 
     duration = time.monotonic() - start_time
     # gpio.Table uses num_rows property instead of __len__
