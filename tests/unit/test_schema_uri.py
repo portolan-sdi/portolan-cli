@@ -82,3 +82,27 @@ class TestEnsurePortolanSchemaUri:
 
         assert ensure_portolan_schema_uri(doc) is True
         assert doc["stac_extensions"] == [PORTOLAN_SCHEMA_URI]
+
+    def test_keeps_a_newer_profile_version(self) -> None:
+        """A re-add must not stamp the bundled version over a newer release (issue #755)."""
+        newer = _bumped_minor(PORTOLAN_SCHEMA_URI)
+        doc: dict[str, object] = {"stac_extensions": [newer]}
+
+        assert ensure_portolan_schema_uri(doc) is False
+        assert doc["stac_extensions"] == [newer]
+
+    def test_keeps_a_newer_profile_version_and_collapses_duplicates(self) -> None:
+        newer = _bumped_minor(PORTOLAN_SCHEMA_URI)
+        other = "https://stac-extensions.github.io/table/v1.2.0/schema.json"
+        doc: dict[str, object] = {"stac_extensions": [newer, other, PORTOLAN_SCHEMA_URI]}
+
+        assert ensure_portolan_schema_uri(doc) is True
+        assert doc["stac_extensions"] == [newer, other]
+
+
+def _bumped_minor(uri: str) -> str:
+    """Return the profile URI one minor version above the given one."""
+    match = re.search(r"/v(\d+)\.(\d+)\.(\d+)/", uri)
+    assert match is not None
+    major, minor, patch = (int(match.group(i)) for i in (1, 2, 3))
+    return re.sub(r"/v\d+\.\d+\.\d+/", f"/v{major}.{minor + 1}.{patch}/", uri)
