@@ -28,6 +28,7 @@ JOURNEY_STEPS = (
 QUERY = EXAMPLE_DIR / "query.py"
 FIXTURE_SERVER = PROJECT_ROOT / "tests" / "docs" / "philadelphia_arcgis_server.py"
 FIXTURE_DIR = PROJECT_ROOT / "tests" / "fixtures" / "realdata" / "philadelphia-housing"
+CI_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
 
 EXPECTED_QUERY_OUTPUT = """\
 district  projects  units
@@ -183,6 +184,52 @@ def test_tutorial_names_catalog_options() -> None:
 
 
 @pytest.mark.unit
+def test_tutorial_shows_every_file_that_the_workflow_executes_or_copies() -> None:
+    """Readers can inspect every source file used by the documented workflow."""
+    tutorial = (EXAMPLE_DIR / "README.md").read_text()
+    visible_sources = (
+        *((source, "sh") for source in JOURNEY_STEPS),
+        (EXAMPLE, "sh"),
+        (QUERY, "python"),
+        *((source, "yaml") for source in sorted((EXAMPLE_DIR / "metadata").glob("*.yaml"))),
+    )
+
+    for source, language in visible_sources:
+        source_text = source.read_text().rstrip()
+        assert source_text, f"Visible source is empty: {source.name}"
+        fenced_source = f"```{language}\n{source_text}\n```"
+        assert fenced_source in tutorial, f"Tutorial hides {source.name}"
+
+
+@pytest.mark.unit
+def test_tutorial_uses_a_placeholder_contact() -> None:
+    """The public example does not publish a real personal or project email."""
+    tutorial = (EXAMPLE_DIR / "README.md").read_text()
+    metadata = "\n".join(
+        source.read_text() for source in sorted((EXAMPLE_DIR / "metadata").glob("*.yaml"))
+    )
+
+    for real_email in ("nlebovits@pm.me", "portolan@googlegroups.com"):
+        assert real_email not in tutorial
+        assert real_email not in metadata
+    assert tutorial.count("publisher@example.org") == 3
+    assert metadata.count("publisher@example.org") == 3
+
+
+@pytest.mark.unit
+def test_docs_ci_uses_anonymous_http_minio() -> None:
+    """The docs job does not send credentials to its plaintext test service."""
+    workflow = CI_WORKFLOW.read_text()
+    docs_job = workflow.partition("\n  docs:\n")[2].partition("\n  build:\n")[0]
+
+    assert docs_job
+    assert "mc anonymous set public local/portolan-docs" in docs_job
+    assert "AWS_ACCESS_KEY_ID" not in docs_job
+    assert "AWS_SECRET_ACCESS_KEY" not in docs_job
+    assert 'PORTOLAN_S3_USE_SSL: "false"' in docs_job
+
+
+@pytest.mark.unit
 def test_query_installs_spatial_before_loading_it() -> None:
     """The documented query works when DuckDB has an empty extension cache."""
     source = QUERY.read_text()
@@ -203,8 +250,8 @@ def test_example_builds_and_analyzes_a_philadelphia_catalog(tmp_path: Path) -> N
         assert f'"$example_dir/{step.name}"' in wrapper
 
     tutorial = (EXAMPLE_DIR / "README.md").read_text()
-    assert tutorial.index("## 3. Publish the catalog") < tutorial.index(
-        "## 4. Use the published catalog"
+    assert tutorial.index("## 3. Publish the Catalog") < tutorial.index(
+        "## 4. Use the Published Catalog"
     )
     assert "✓ Extracted 2/2 layers" in tutorial
     assert "✓ Added 2 files to 2 collections" in tutorial
