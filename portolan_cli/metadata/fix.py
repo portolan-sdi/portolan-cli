@@ -173,7 +173,8 @@ def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> lis
     - every item referenced by an item link gets a title in its properties;
     - every ``child``/``item`` link gets its target's title backfilled.
 
-    Existing human-authored titles/descriptions are preserved.
+    Existing human-authored titles/descriptions are preserved. A title in a
+    catalog's own ``metadata.yaml`` overrides the derived one (issue #815).
 
     Args:
         catalog_root: Root directory of the catalog.
@@ -182,7 +183,7 @@ def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> lis
     Returns:
         FixResults for each file that was (or would be) modified.
     """
-    from portolan_cli.catalog import ensure_link_titles
+    from portolan_cli.catalog import apply_catalog_human_titles, ensure_link_titles
     from portolan_cli.humanize import derive_title
 
     results: list[FixResult] = []
@@ -224,6 +225,20 @@ def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> lis
         # Repair item titles referenced by this collection's item links so the
         # link-title backfill below has a title to copy.
         results.extend(_repair_item_titles(stac_file, data, dry_run=dry_run))
+
+    # Issue #815: a title a human wrote in metadata.yaml wins over the derived
+    # one above. The sweep runs after the loop for that reason. A user who
+    # edits metadata.yaml repairs the catalog with `check --fix` and does not
+    # re-run `add` over the data.
+    for catalog_path in apply_catalog_human_titles(catalog_root, dry_run=dry_run):
+        results.append(
+            FixResult(
+                file_path=catalog_path,
+                action=FixAction.UPDATED,
+                success=True,
+                message="Applied the metadata.yaml title/description",
+            )
+        )
 
     # Backfill child/item link titles from their (now-titled) targets.
     if not dry_run:

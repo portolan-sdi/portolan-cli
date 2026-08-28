@@ -266,9 +266,13 @@ def add_external(
     collection_dir.mkdir(parents=True, exist_ok=True)
     _save_collection_with_links(collection, collection_dir, catalog_root, resolved_id)
 
-    # Issue #502: backfill the human-readable title onto the new child link.
-    from portolan_cli.catalog import ensure_link_titles
+    from portolan_cli.catalog import apply_catalog_human_titles, ensure_link_titles
 
+    # Issue #815: a catalog takes its own title and description from its
+    # metadata.yaml, the same way the add sweeps apply them.
+    apply_catalog_human_titles(catalog_root)
+
+    # Issue #502: backfill the human-readable title onto the new child link.
     ensure_link_titles(catalog_root)
 
     collection_path = collection_dir / "collection.json"

@@ -938,6 +938,93 @@ def ensure_link_titles(catalog_root: Path) -> bool:
     return changed_any
 
 
+#: metadata.yaml keys that a catalog copies onto its own catalog.json (#815).
+#: Kept apart from :data:`portolan_cli.config.NON_INHERITED_METADATA_KEYS`, which
+#: answers a different question. That constant names the keys a child never takes
+#: from a parent. This one names the keys a catalog publishes about itself.
+_CATALOG_HUMAN_FIELDS: tuple[str, ...] = ("title", "description")
+
+
+def _apply_human_fields(
+    catalog_path: Path,
+    metadata: dict[str, Any],
+    *,
+    dry_run: bool = False,
+) -> bool:
+    """Copy the human-authored fields of ``metadata`` onto one catalog.json.
+
+    Args:
+        catalog_path: Path of the ``catalog.json`` to update.
+        metadata: Metadata that belongs to the catalog at ``catalog_path``.
+        dry_run: If True, report the change without writing the file.
+
+    Returns:
+        True if the file was rewritten, or would be under ``dry_run``.
+    """
+    if not metadata:
+        return False
+
+    try:
+        catalog_data = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(catalog_data, dict):
+        return False
+
+    changed = False
+    for field in _CATALOG_HUMAN_FIELDS:
+        value = metadata.get(field)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        cleaned = value.strip()
+        if catalog_data.get(field) == cleaned:
+            continue
+        catalog_data[field] = cleaned
+        changed = True
+
+    if changed and not dry_run:
+        write_json_atomic(catalog_path, catalog_data)
+    return changed
+
+
+def apply_catalog_human_titles(catalog_root: Path, *, dry_run: bool = False) -> list[Path]:
+    """Apply each metadata.yaml title/description to its catalog.json (issue #815).
+
+    A collection takes its human-authored title and description from
+    ``metadata.yaml`` through :func:`portolan_cli.stac.apply_human_titles`. A
+    catalog took the value ``init`` wrote, so a title a human authored after
+    creation never reached ``catalog.json``. ``extract`` names the catalog after
+    its directory, which made that the published title.
+
+    Every ``catalog.json`` in the visible tree is treated the same way. Each one
+    reads the ``metadata.yaml`` in its own directory. A title never inherits (see
+    :data:`portolan_cli.config.NON_INHERITED_METADATA_KEYS`), so a root title
+    cannot rename a subcatalog below it.
+
+    Idempotent. A catalog that already carries the values is not rewritten. The
+    sweep only writes a value it finds. It never clears a field, so a title
+    removed from ``metadata.yaml`` stays on ``catalog.json`` until a human or
+    ``check --fix`` replaces it.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        dry_run: If True, report what would change without writing.
+
+    Returns:
+        The catalog.json paths that were modified, in sweep order.
+    """
+    from portolan_cli.config import load_merged_metadata
+
+    changed: list[Path] = []
+    for catalog_path in visible_stac_files(catalog_root):
+        if catalog_path.name != "catalog.json":
+            continue
+        metadata = load_merged_metadata(catalog_path.parent, catalog_root)
+        if _apply_human_fields(catalog_path, metadata, dry_run=dry_run):
+            changed.append(catalog_path)
+    return changed
+
+
 def ensure_schema_uris(catalog_root: Path) -> bool:
     """Declare the Portolan profile schema URI across a catalog tree (issue #654).
 

@@ -564,9 +564,17 @@ def _ensure_tabular_collection(
     # Update catalog links to include this collection
     _update_catalog_links(catalog_root, collection_id)
 
-    # Issue #502: backfill the human-readable title onto the new child link.
-    from portolan_cli.catalog import ensure_link_titles, ensure_schema_uris
+    from portolan_cli.catalog import (
+        apply_catalog_human_titles,
+        ensure_link_titles,
+        ensure_schema_uris,
+    )
 
+    # Issue #815: the root catalog takes its own title and description from the
+    # root metadata.yaml.
+    apply_catalog_human_titles(catalog_root)
+
+    # Issue #502: backfill the human-readable title onto the new child link.
     ensure_link_titles(catalog_root)
 
     # / issue #654: the same conformance artifacts finalize_items writes

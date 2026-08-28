@@ -44,7 +44,7 @@ from portolan_cli.licensing import (
     OTHER_LICENSE,
     license_gap,
 )
-from portolan_cli.metadata.fix import FixReport
+from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.output import detail, error, success, warn
 from portolan_cli.output import info as info_output
 from portolan_cli.query import ItemInfo
@@ -1845,6 +1845,7 @@ def _run_fix_and_repairs(
     Returns:
         The JSON ``fix`` section and whether a fix failed.
     """
+    from portolan_cli.catalog import apply_catalog_human_titles
     from portolan_cli.scan.check import resolve_catalog_root_for_check
     from portolan_cli.validation.fixers import apply_fixers
 
@@ -1852,16 +1853,35 @@ def _run_fix_and_repairs(
     applied: list[str] = []
     selected: list[str] = []
     skip_reasons: dict[str, list[str]] = {}
-    if run_metadata and findings:
+    title_results: list[FixResult] = []
+    if run_metadata:
         catalog_root = resolve_catalog_root_for_check(path) or path
-        skip = {"convert"} if run_geo_assets else set()
-        run = apply_fixers(catalog_root, findings, dry_run=dry_run, skip=skip)
-        fixer_report = run.report
-        # What the fixers *did*, not what the findings asked for: a fixer that
-        # ran and changed nothing is a skip with a reason, never an "Applied".
-        applied = run.applied
-        selected = run.selected
-        skip_reasons = run.skip_reasons
+        # Issue #815: a catalog publishes the title and description a human wrote
+        # in its own metadata.yaml. No rashid rule reports the drift, because
+        # rashid grades catalog.json alone and never reads metadata.yaml. The
+        # sweep therefore runs on its own, like the item-freshness pass below,
+        # and not through the finding-driven registry.
+        title_results = [
+            FixResult(
+                file_path=catalog_path,
+                action=FixAction.UPDATED,
+                success=True,
+                message="Applied the metadata.yaml title/description",
+            )
+            for catalog_path in apply_catalog_human_titles(catalog_root, dry_run=dry_run)
+        ]
+        if findings:
+            skip = {"convert"} if run_geo_assets else set()
+            run = apply_fixers(catalog_root, findings, dry_run=dry_run, skip=skip)
+            fixer_report = run.report
+            # What the fixers *did*, not what the findings asked for: a fixer
+            # that ran and changed nothing is a skip with a reason, never an
+            # "Applied".
+            applied = run.applied
+            selected = run.selected
+            skip_reasons = run.skip_reasons
+        if title_results:
+            fixer_report = FixReport(results=[*title_results, *fixer_report.results])
 
     legacy_data, legacy_failed = _run_legacy_fix_workflow(
         path=path,
