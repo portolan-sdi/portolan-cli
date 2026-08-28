@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, overload
+from typing import Any, Literal, NamedTuple, overload
 
 import pyarrow.parquet as pq
 from pyproj import CRS
@@ -149,6 +149,175 @@ def extract_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
         feature_count=feature_count,
         schema=schema,
     )
+
+
+class SpatialLayout(NamedTuple):
+    """What one Parquet footer says about a file's spatial layout.
+
+    Attributes:
+        is_geoparquet: True when the file declares GeoParquet ``geo`` metadata.
+        has_bbox_covering: True when the ``geo`` metadata names a
+            ``covering.bbox`` entry whose root column exists in the schema.
+    """
+
+    is_geoparquet: bool
+    has_bbox_covering: bool
+
+
+def read_spatial_layout(path: Path) -> SpatialLayout:
+    """Read a Parquet footer once and report both spatial-layout answers.
+
+    Reads only the footer, so the cost does not grow with the file. Callers
+    that need both answers must use this rather than calling
+    :func:`is_geoparquet` and :func:`has_bbox_covering_column` in turn, which
+    would open the file twice.
+
+    rashid resolves both PTL-DAT-006 and PTL-DAT-007 through the covering
+    column. It reads per-row-group extents from the column's min/max statistics
+    for PTL-DAT-007, and it reads row order from the same column for
+    PTL-DAT-006. A file without the column fails PTL-DAT-007 and leaves
+    PTL-DAT-006 unevaluated, so Portolan rewrites such a file on ``add``
+    (issue #805).
+
+    The answer says nothing about row order. A file that carries the column but
+    holds unordered rows still fails PTL-DAT-006, and ``add --force
+    --reconvert`` is what rewrites it.
+
+    Args:
+        path: Path to a Parquet file.
+
+    Returns:
+        The layout. Both fields are False for an unreadable file, and
+        ``has_bbox_covering`` is False for a plain Parquet file.
+    """
+    try:
+        parquet = pq.ParquetFile(path)
+    except Exception:  # noqa: BLE001 - an unreadable file is not a conformant one
+        return SpatialLayout(is_geoparquet=False, has_bbox_covering=False)
+
+    geo = _parse_geo_metadata(parquet.schema_arrow.metadata or {})
+    if not geo:
+        return SpatialLayout(is_geoparquet=False, has_bbox_covering=False)
+
+    primary = geo.get("primary_column", "geometry")
+    columns = geo.get("columns")
+    column_meta = columns.get(primary, {}) if isinstance(columns, dict) else {}
+    covering = column_meta.get("covering") if isinstance(column_meta, dict) else None
+    bbox_paths = covering.get("bbox") if isinstance(covering, dict) else None
+    if not isinstance(bbox_paths, dict):
+        return SpatialLayout(is_geoparquet=True, has_bbox_covering=False)
+
+    # The covering entry names the leaf paths of the struct. Its root must be a
+    # real column, or a reader has nothing to prune on.
+    names = set(parquet.schema_arrow.names)
+    covers = all(
+        isinstance(leaf, list) and leaf and leaf[0] in names for leaf in bbox_paths.values()
+    )
+    return SpatialLayout(is_geoparquet=True, has_bbox_covering=covers)
+
+
+def has_bbox_covering_column(path: Path) -> bool:
+    """Report whether a GeoParquet file declares a ``bbox`` covering column.
+
+    Thin wrapper over :func:`read_spatial_layout`. Use that function directly
+    when the caller also needs :func:`is_geoparquet`.
+
+    Args:
+        path: Path to a Parquet file.
+
+    Returns:
+        True when the file's ``geo`` metadata names a ``covering.bbox`` entry
+        for its primary geometry column, and that column exists in the schema.
+        False for a plain Parquet file with no ``geo`` metadata, and False for
+        an unreadable file.
+    """
+    return read_spatial_layout(path).has_bbox_covering
+
+
+def is_geoparquet(path: Path) -> bool:
+    """Report whether a Parquet file carries GeoParquet ``geo`` metadata.
+
+    A Parquet file without the key is tabular data, not a spatial table, so the
+    spatial optimizations do not apply to it.
+
+    Args:
+        path: Path to a Parquet file.
+
+    Returns:
+        True when the file declares GeoParquet metadata.
+    """
+    return read_spatial_layout(path).is_geoparquet
+
+
+class RewriteFidelity(NamedTuple):
+    """What a rewrite must not lose, read from one Parquet footer.
+
+    Attributes:
+        row_count: Number of rows in the file.
+        crs: The primary geometry column's declared CRS, as written.
+        columns: Every column name in the schema.
+    """
+
+    row_count: int
+    crs: Any
+    columns: frozenset[str]
+
+
+def read_rewrite_fidelity(path: Path) -> RewriteFidelity | None:
+    """Read what an in-place rewrite must carry over unchanged.
+
+    The rewrite replaces the operator's own file, so it needs a before-and-after
+    comparison to prove it lost nothing. geoparquet-io drops the CRS on every
+    write, which turns a projected GeoParquet into one that declares no CRS
+    (issue #805). A malformed geometry makes it fail outright.
+
+    Args:
+        path: Path to a Parquet file.
+
+    Returns:
+        The fidelity fields, or None when the file cannot be read.
+    """
+    try:
+        parquet = pq.ParquetFile(path)
+    except Exception:  # noqa: BLE001 - an unreadable file cannot be compared
+        return None
+
+    geo = _parse_geo_metadata(parquet.schema_arrow.metadata or {})
+    primary = geo.get("primary_column", "geometry")
+    columns = geo.get("columns")
+    column_meta = columns.get(primary, {}) if isinstance(columns, dict) else {}
+    crs = column_meta.get("crs") if isinstance(column_meta, dict) else None
+    return RewriteFidelity(
+        row_count=parquet.metadata.num_rows,
+        crs=crs,
+        columns=frozenset(parquet.schema_arrow.names),
+    )
+
+
+def read_extra_schema_metadata(path: Path) -> dict[bytes, bytes]:
+    """Read the schema key-value metadata a rewrite must carry over.
+
+    A GeoParquet rewrite runs the file through geoparquet-io, which writes a
+    fresh ``geo`` key and drops every other key. Publishers do put keys there:
+    geopandas writes ``pandas``, and provenance keys are common. This function
+    reads the footer so a rewrite can restore them (issue #805).
+
+    ``geo`` is excluded because the writer owns it. Restoring the old value
+    would contradict the columns the rewrite added.
+
+    Args:
+        path: Path to a Parquet file.
+
+    Returns:
+        Every schema metadata key except ``geo``. Empty for a file with no
+        extra keys, and empty for an unreadable file.
+    """
+    try:
+        parquet = pq.ParquetFile(path)
+    except Exception:  # noqa: BLE001 - an unreadable file has nothing to preserve
+        return {}
+    metadata = parquet.schema_arrow.metadata or {}
+    return {key: value for key, value in metadata.items() if key != b"geo"}
 
 
 def _parse_geo_metadata(metadata: dict[bytes, bytes]) -> dict[str, Any]:

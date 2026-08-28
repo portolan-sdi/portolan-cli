@@ -64,7 +64,14 @@ from portolan_cli.metadata.flatgeobuf import (
 )
 from portolan_cli.metadata.geoparquet import (
     GeoParquetMetadata,
+    RewriteFidelity,
+    SpatialLayout,
     extract_geoparquet_metadata,
+    has_bbox_covering_column,
+    is_geoparquet,
+    read_extra_schema_metadata,
+    read_rewrite_fidelity,
+    read_spatial_layout,
 )
 from portolan_cli.metadata.models import (
     FileMetadataState,
@@ -111,6 +118,13 @@ __all__ = [
     "extract_flatgeobuf_metadata",
     "extract_geoparquet_metadata",
     "extract_pmtiles_metadata",
+    "RewriteFidelity",
+    "SpatialLayout",
+    "has_bbox_covering_column",
+    "is_geoparquet",
+    "read_extra_schema_metadata",
+    "read_rewrite_fidelity",
+    "read_spatial_layout",
     "extract_tabular_metadata",
     # Statistics
     "BandStatistics",

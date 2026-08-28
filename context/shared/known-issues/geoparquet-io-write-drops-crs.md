@@ -1,0 +1,95 @@
+# geoparquet-io drops the CRS on write
+
+**Status:** fixed upstream. Portolan carries a stale pin, so it still hits it.
+**Upstream issue:** [geoparquet-io#625](https://github.com/geoparquet/geoparquet-io/issues/625), closed 2026-08-20 by
+[`ff02db8`](https://github.com/geoparquet/geoparquet-io/commit/ff02db82) ("Fix Table API dropping the source CRS between convert() and write()", PR #644).
+**Portolan pin:** git main `a23dafa`, which is 82 commits behind the fix.
+**Portolan issues:** #805 introduced the guard. #810 tracks the pin bump.
+
+Do not file a new upstream issue. #625 is the record, and it is fixed.
+
+## What happens
+
+`gpio.convert(<geoparquet>).write(<out>)` writes no `crs` key for the primary
+geometry column. The source's `crs` value does not reach the output.
+
+The key is absent, not `null`. The GeoParquet specification reads an absent
+`crs` as OGC:CRS84. A projected file therefore comes back labelled as
+longitude and latitude. The coordinates do not change. Only the label does.
+
+## Reproduction
+
+```python
+import json
+
+import geopandas as gpd
+import geoparquet_io as gpio
+import pyarrow.parquet as pq
+from shapely.geometry import Point
+
+
+def crs_of(path: str) -> object:
+    geo = json.loads((pq.ParquetFile(path).schema_arrow.metadata or {})[b"geo"])
+    return geo["columns"][geo["primary_column"]].get("crs")
+
+
+gdf = gpd.GeoDataFrame(
+    {"n": [1, 2]},
+    geometry=[Point(-8238310, 4970072), Point(-8237000, 4971000)],
+    crs="EPSG:3857",
+)
+gdf.to_parquet("in.parquet")
+print("source  :", crs_of("in.parquet"))   # full PROJJSON for EPSG:3857
+
+gpio.convert("in.parquet").write("out.parquet")
+print("gpio out:", crs_of("out.parquet"))  # None, and the key is absent
+```
+
+A GeoPackage source behaves the same way. The operations do not matter.
+`add_bbox()` and `sort_hilbert()` change nothing here.
+
+The CLI does not lose the CRS. `gpio convert in.parquet out.parquet` writes
+EPSG:3857. Only the Python Table API drops it, which is what Portolan calls.
+
+## Why Portolan cares
+
+Issue #805 makes `add` rewrite a GeoParquet in place to give it a bbox covering
+column. That rewrite replaces the operator's own file. Before #805 `add` copied
+a `.parquet` source through untouched, so this upstream bug never touched it.
+
+## What Portolan does
+
+`preparation._assert_rewrite_kept_everything` compares the source and the
+rewritten file before the swap. It compares the row count, the column set, and
+the declared CRS. `preparation._rewrite_or_keep` catches the failure, keeps the
+operator's file, and prints the reason:
+
+```console
+$ portolan add roads/data.parquet
+→ Rewriting data.parquet (11.1KB): it carries no bbox covering column
+⚠ Kept data.parquet as it is: it would lose the CRS it declared, because geoparquet-io writes none
+✓ Added 1 file to 1 collection
+```
+
+The file stays non-conformant. `portolan check` reports `PTL-DAT-007` on it.
+That is the honest outcome. Portolan does not write the CRS back into the
+rewritten copy, because repairing an upstream writer's output in our layer is
+the workaround this repo does not take.
+
+## How to clear it
+
+Issue #810 tracks this work. Bump the geoparquet-io pin. `uv lock --upgrade-package geoparquet-io` moves it
+to upstream main, and the reproduction above then prints the source CRS.
+
+That bump is not a drop-in. The 82 commits carry an unrelated behavior change:
+`add` of a Shapefile whose CRS reads as PROJJSON now fails with `PROJJSON CRS
+not supported. Convert to EPSG code or WKT string.` That breaks
+`tests/integration/test_bbox_validation.py::TestAntimeridianBboxIntegration::test_add_fails_loudly_when_projected_bbox_assumed_wgs84`.
+Handle the bump as its own change, with its own issue.
+
+Keep the guard when the pin moves. It gates a destructive in-place operation,
+and it is not a workaround for this one bug. The warning stops on its own once
+the CRS survives the write. One test asserts the current behavior:
+`test_a_projected_file_keeps_its_crs` expects `add` to keep the file. After the
+bump the rewrite succeeds and keeps the CRS, so that test must assert the new
+outcome.

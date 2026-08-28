@@ -4,3 +4,4 @@
 
 - [CLI Reference](cli.md)
 - [Python API Reference](python.md)
+- [Configuration Reference](configuration.md)
