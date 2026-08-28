@@ -323,3 +323,39 @@ def test_extract_arcgis_rejects_bad_id_before_extraction(monkeypatch: pytest.Mon
     assert result.exit_code == 1
     assert calls == []
     assert "Invalid catalog ID" in result.output
+
+
+@pytest.mark.unit
+def test_extract_arcgis_rejects_bad_id_before_imageserver_extraction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The raster path checks --id at the boundary too (issue #821).
+
+    An ImageServer URL dispatches to a different handler than the vector path,
+    so the check must sit before that branch, not inside it.
+    """
+    calls: list[str] = []
+
+    def _never_called(*args: object, **kwargs: object) -> None:
+        calls.append("imageserver")
+
+    monkeypatch.setattr(
+        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction_sync",
+        _never_called,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "extract",
+            "arcgis",
+            "https://example.com/arcgis/rest/services/x/ImageServer",
+            "--id",
+            "bad id",
+            "--auto",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert calls == []
+    assert "Invalid catalog ID" in result.output
