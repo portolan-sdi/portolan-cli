@@ -1,58 +1,46 @@
-/* Portolan Brand Colors */
+/* Portolan brand styles for the documentation site.
+
+   The values come from the brand kit in portolan-ops. See brand/brand.json
+   there. Four standing rules shape this file. Light mode only. Square
+   corners. Flat surfaces separated by rules, not by cards or shadows. No
+   gradients anywhere. */
+
 :root {
-  /* Brand palette */
-  --portolan-bg: #eaedf9;
-  --portolan-dark-text: #202a4f;
-  --portolan-slogan: #343e63;
+  /* Palette. These mirror brand.json and change only when it changes. */
   --portolan-primary: #4163cc;
-  --portolan-gradient-start: #395eca;
-  --portolan-gradient-end: #848bd8;
+  --portolan-primary-ink: #2d4aa8;
+  --portolan-surface: #fcfcfa;
+  --portolan-ink: #16170f;
+  --portolan-rule-soft: #d6d5ca;
 
-  /* Material theme overrides - Light mode */
-  --md-primary-fg-color: #4163cc;
-  --md-primary-fg-color--light: #5c7ee0;
-  --md-primary-fg-color--dark: #2e4dad;
-  --md-accent-fg-color: #395eca;
-  --md-accent-fg-color--transparent: rgba(57, 94, 202, 0.1);
+  /* Material overrides */
+  --md-primary-fg-color: var(--portolan-primary);
+  --md-primary-fg-color--light: var(--portolan-primary);
+  --md-primary-fg-color--dark: var(--portolan-primary-ink);
+  --md-accent-fg-color: var(--portolan-primary-ink);
+  --md-accent-fg-color--transparent: rgba(65, 99, 204, 0.1);
 
-  /* Header background */
-  --md-primary-bg-color: #ffffff;
-  --md-primary-bg-color--light: rgba(255, 255, 255, 0.7);
+  --md-primary-bg-color: var(--portolan-surface);
+  --md-primary-bg-color--light: rgba(252, 252, 250, 0.7);
 
-  /* Typography */
-  --md-text-color: #202a4f;
+  --md-default-bg-color: var(--portolan-surface);
+  --md-text-color: var(--portolan-ink);
+  --md-typeset-color: var(--portolan-ink);
 }
 
-/* Dark mode */
-[data-md-color-scheme="slate"] {
-  --md-primary-fg-color: #5c7ee0;
-  --md-primary-fg-color--light: #7a95f0;
-  --md-primary-fg-color--dark: #4163cc;
-  --md-accent-fg-color: #848bd8;
-  --md-accent-fg-color--transparent: rgba(132, 139, 216, 0.1);
-
-  /* Darker header for slate */
-  --md-primary-bg-color: #1e1e2e;
-  --md-primary-bg-color--light: rgba(30, 30, 46, 0.7);
-}
-
-/* Header styling */
+/* The header is a solid blue band. The mark and the text sit on it in cream. */
 .md-header {
-  background: linear-gradient(135deg, var(--portolan-gradient-start), var(--portolan-gradient-end));
+  background-color: var(--portolan-primary);
+  box-shadow: none;
+  border-bottom: 1px solid var(--portolan-ink);
 }
 
-.md-header[data-md-state="shadow"] {
-  box-shadow: 0 0 0.4rem rgba(0, 0, 0, 0.1);
-}
-
-/* Header text/icons are white on gradient */
 .md-header__title,
 .md-header__button,
 .md-header-nav__button {
-  color: white;
+  color: var(--portolan-surface);
 }
 
-/* Logo styling */
 .md-header__button.md-logo {
   padding: 0;
   margin: 0.2rem;
@@ -64,109 +52,114 @@
   width: auto;
 }
 
-/* Tabs styling (navigation tabs) */
 .md-tabs {
-  background: linear-gradient(135deg, var(--portolan-gradient-start), var(--portolan-gradient-end));
+  background-color: var(--portolan-primary);
 }
 
 .md-tabs__link {
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(252, 252, 250, 0.8);
 }
 
 .md-tabs__link:hover,
 .md-tabs__link--active {
-  color: white;
+  color: var(--portolan-surface);
 }
 
-/* Search bar on header */
+/* Search sits inside the band, so it takes a cream rule rather than a fill. */
 .md-search__form {
-  background-color: rgba(255, 255, 255, 0.15);
+  background-color: rgba(252, 252, 250, 0.15);
+  border-radius: 0;
 }
 
 .md-search__form:hover {
-  background-color: rgba(255, 255, 255, 0.25);
+  background-color: rgba(252, 252, 250, 0.25);
 }
 
 .md-search__input::placeholder {
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(252, 252, 250, 0.7);
 }
 
 .md-search__input {
-  color: white;
+  color: var(--portolan-surface);
 }
 
-/* H1 gradient text effect */
+/* Headings are ink. The gradient text effect is gone. */
 .md-typeset h1 {
-  background: linear-gradient(90deg, var(--portolan-gradient-start), var(--portolan-gradient-end));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  font-weight: 600;
+  color: var(--portolan-ink);
+  font-weight: 700;
+  letter-spacing: -0.015em;
 }
 
-/* Hero section styling for landing page */
 .md-typeset h1 + p > strong:first-child {
   font-size: 1.2rem;
-  color: var(--portolan-slogan);
+  color: var(--portolan-ink);
 }
 
-/* Button styling */
+/* Corners are square everywhere. */
+.md-typeset .md-button,
+.md-typeset code,
+.md-typeset pre,
+.md-typeset .grid.cards > ul > li,
+.md-typeset .grid.cards > ol > li,
+.md-typeset .grid > .card,
+.md-search__output,
+.md-search-result__meta {
+  border-radius: 0;
+}
+
 .md-typeset .md-button {
-  border-radius: 0.4rem;
   font-weight: 500;
   padding: 0.6rem 1.2rem;
   margin: 0.25rem;
 }
 
 .md-typeset .md-button--primary {
-  background: linear-gradient(135deg, var(--portolan-gradient-start), var(--portolan-gradient-end));
-  border: none;
-  color: white;
+  background-color: var(--portolan-primary);
+  border: 1px solid var(--portolan-primary);
+  color: var(--portolan-surface);
 }
 
 .md-typeset .md-button--primary:hover {
-  background: linear-gradient(135deg, var(--portolan-gradient-end), var(--portolan-gradient-start));
-  box-shadow: 0 4px 12px rgba(57, 94, 202, 0.3);
+  background-color: var(--portolan-primary-ink);
+  border-color: var(--portolan-primary-ink);
+  box-shadow: none;
 }
 
 .md-typeset .md-button:not(.md-button--primary) {
-  border: 2px solid var(--portolan-primary);
-  color: var(--portolan-primary);
+  border: 1px solid var(--portolan-ink);
+  color: var(--portolan-ink);
 }
 
 .md-typeset .md-button:not(.md-button--primary):hover {
-  background: var(--portolan-primary);
-  color: white;
+  background-color: var(--portolan-primary);
+  border-color: var(--portolan-primary);
+  color: var(--portolan-surface);
 }
 
-/* Card grid styling */
+/* Cards are bordered blocks, never raised ones. */
 .md-typeset .grid.cards > ul > li,
 .md-typeset .grid.cards > ol > li,
 .md-typeset .grid > .card {
-  border: 1px solid var(--md-default-fg-color--lightest);
-  border-radius: 0.4rem;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  border: 1px solid var(--portolan-ink);
+  transition: border-color 0.2s;
 }
 
 .md-typeset .grid.cards > ul > li:hover,
 .md-typeset .grid.cards > ol > li:hover,
 .md-typeset .grid > .card:hover {
   border-color: var(--portolan-primary);
-  box-shadow: 0 4px 12px rgba(57, 94, 202, 0.15);
+  box-shadow: none;
 }
 
-/* Icon styling in cards */
 .md-typeset .grid.cards .lg {
   font-size: 2rem;
   color: var(--portolan-primary);
 }
 
-/* Code block styling */
-.md-typeset code {
-  border-radius: 0.2em;
+.md-typeset pre {
+  border: 1px solid var(--portolan-rule-soft);
 }
 
-/* Admonition accent colors */
 .md-typeset .admonition.tip,
 .md-typeset details.tip {
   border-color: var(--portolan-primary);
@@ -177,16 +170,14 @@
   background-color: var(--md-accent-fg-color--transparent);
 }
 
-/* Footer styling */
 .md-footer {
-  background: var(--portolan-dark-text);
+  background-color: var(--portolan-ink);
 }
 
-/* Links */
 .md-typeset a {
   color: var(--portolan-primary);
 }
 
 .md-typeset a:hover {
-  color: var(--portolan-gradient-end);
+  color: var(--portolan-primary-ink);
 }
