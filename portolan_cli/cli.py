@@ -4026,6 +4026,9 @@ def push(
                         "failed_collections": all_result.failed_collections,
                         "total_files_uploaded": all_result.total_files_uploaded,
                         "total_versions_pushed": all_result.total_versions_pushed,
+                        "dry_run": all_result.dry_run,
+                        "total_would_push_files": all_result.total_would_push_files,
+                        "total_would_push_versions": all_result.total_would_push_versions,
                         "collection_errors": all_result.collection_errors,
                     },
                 )
