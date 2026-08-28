@@ -754,11 +754,20 @@ def generate_pmtiles_for_collection(
         # Track success to clean up partial files on any failure (Issue #385)
         # Using finally ensures cleanup even on KeyboardInterrupt/SystemExit
         generation_succeeded = False
+        # Record whether this invocation owns the output file. tippecanoe
+        # refuses to overwrite an existing tileset and exits without writing
+        # anything (exit code 104). The cleanup below must not delete a valid
+        # pre-existing file it did not create (Issue #814).
+        output_preexisting = False
         try:
             # Delete existing file if forcing regeneration
             # (tippecanoe requires this since it doesn't have a --force option)
             if force and pmtiles_path.exists():
                 pmtiles_path.unlink()
+
+            # After an optional force delete, a file that still exists belongs
+            # to an earlier run. This invocation must keep it on failure.
+            output_preexisting = pmtiles_path.exists()
 
             generate_pmtiles(
                 parquet_path,
@@ -793,12 +802,21 @@ def generate_pmtiles_for_collection(
 
         except PMTilesGenerationError as e:
             result.failed.append((parquet_path, str(e)))
+            # tippecanoe stops at the start when the tileset already exists.
+            # Nothing was written, so tell the user how to rebuild it (#814).
+            if output_preexisting and not force:
+                warn(
+                    f"{pmtiles_path.name} already exists and was kept. "
+                    "Pass --force-pmtiles to rebuild it."
+                )
         except Exception as e:
             result.failed.append((parquet_path, f"Unexpected error: {e}"))
         finally:
-            # Clean up partial output to prevent phantom assets (Issue #385)
+            # Clean up partial output to prevent phantom assets (Issue #385).
+            # Only remove a file this invocation created. A pre-existing tileset
+            # is valid data, so keep it on failure (Issue #814).
             # missing_ok=True avoids TOCTOU race condition
-            if not generation_succeeded and pmtiles_path.exists():
+            if not generation_succeeded and not output_preexisting and pmtiles_path.exists():
                 pmtiles_path.unlink(missing_ok=True)
                 warn(f"Cleaned up partial file after failure: {pmtiles_path.name}")
 

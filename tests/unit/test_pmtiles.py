@@ -920,6 +920,113 @@ class TestGeneratePMTilesForCollection:
         )
 
     @pytest.mark.unit
+    def test_keeps_preexisting_pmtiles_when_generation_fails(self, tmp_path: Path) -> None:
+        """A valid pre-existing PMTiles file survives a failed rebuild (Issue #814).
+
+        tippecanoe refuses to overwrite an existing tileset. It exits with code
+        104 and writes nothing. The cleanup handler treated the untouched file
+        as its own partial output and deleted it. This test locks the file in
+        place across a failed generation.
+        """
+        import os
+
+        from portolan_cli.viz.pmtiles import (
+            PMTilesGenerationError,
+            generate_pmtiles_for_collection,
+        )
+
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+
+        collection_json = {
+            "type": "Collection",
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                }
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+        (collection_dir / "data.parquet").write_bytes(b"PAR1")
+
+        # A valid tileset already exists. Make it older than the parquet so
+        # _should_generate returns True and the collection attempts a rebuild.
+        pmtiles_path = collection_dir / "data.pmtiles"
+        pmtiles_path.write_bytes(b"valid tileset")
+        os.utime(pmtiles_path, (1, 1))
+
+        # tippecanoe refuses to overwrite. It writes nothing and raises.
+        def mock_generate_refuses(*args: object, **kwargs: object) -> None:
+            raise PMTilesGenerationError(
+                "data.parquet",
+                RuntimeError("tippecanoe failed with exit code 104"),
+            )
+
+        mock_module = MagicMock()
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate_refuses):
+                    result = generate_pmtiles_for_collection(collection_dir, tmp_path)
+
+        assert len(result.failed) == 1
+
+        # KEY ASSERTION: the pre-existing tileset must survive (Issue #814).
+        assert pmtiles_path.exists(), (
+            "A pre-existing PMTiles file must survive a failed rebuild. "
+            "Exit code 104 means tippecanoe wrote nothing, so there is no "
+            "partial file to clean up."
+        )
+        assert pmtiles_path.read_bytes() == b"valid tileset"
+
+    @pytest.mark.unit
+    def test_failed_rebuild_suggests_force_pmtiles(self, tmp_path: Path) -> None:
+        """A refused overwrite tells the user to pass --force-pmtiles (Issue #814)."""
+        import os
+
+        from portolan_cli.viz.pmtiles import (
+            PMTilesGenerationError,
+            generate_pmtiles_for_collection,
+        )
+
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+
+        collection_json = {
+            "type": "Collection",
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                }
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+        (collection_dir / "data.parquet").write_bytes(b"PAR1")
+
+        pmtiles_path = collection_dir / "data.pmtiles"
+        pmtiles_path.write_bytes(b"valid tileset")
+        os.utime(pmtiles_path, (1, 1))
+
+        def mock_generate_refuses(*args: object, **kwargs: object) -> None:
+            raise PMTilesGenerationError(
+                "data.parquet",
+                RuntimeError("tippecanoe failed with exit code 104"),
+            )
+
+        mock_module = MagicMock()
+        with patch.dict("sys.modules", {"geoparquet_io.api.ops": mock_module}):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate_refuses):
+                    with patch("portolan_cli.viz.pmtiles.warn") as mock_warn:
+                        generate_pmtiles_for_collection(collection_dir, tmp_path)
+
+        messages = " ".join(str(call.args[0]) for call in mock_warn.call_args_list)
+        assert "--force-pmtiles" in messages
+        # The command must not claim it cleaned up a partial file.
+        assert "Cleaned up partial file" not in messages
+
+    @pytest.mark.unit
     def test_generated_thumbnail_tracked_in_versions(self, tmp_path: Path) -> None:
         """PMTiles and thumbnail land in ONE versions.json snapshot (Issue #519).
 
