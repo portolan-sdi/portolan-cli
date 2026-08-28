@@ -26,6 +26,7 @@ from portolan_cli.extract.arcgis.orchestrator import (
     _discover_and_filter_services,
     _ensure_geoparquet_crs,
     _extract_single_layer,
+    _is_wgs84_crs,
     _service_output_dir,
     _slugify,
     extract_arcgis_catalog,
@@ -1544,6 +1545,91 @@ def test_extract_single_layer_warns_when_gpio_lacks_output_crs(
     assert "WGS84" in capsys.readouterr().err
 
 
+def test_extract_single_layer_restamps_projected_source_crs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A native extraction with a projected table CRS ends up tagged with it.
+
+    This covers the capture-write-restamp chain in _extract_single_layer, not
+    the isolated helpers (issue #802).
+    """
+    from pyproj import CRS
+
+    rd_new = CRS.from_epsg(28992).to_json_dict()
+
+    def fake_extract_arcgis(
+        url: str, max_workers: int | None = None, output_crs: str | None = None
+    ) -> object:
+        class _T:
+            num_rows = 1
+            crs = rd_new
+
+            def add_bbox(self) -> _T:
+                return self
+
+            def write(self, path: str) -> None:
+                _write_geoparquet_with_null_crs(Path(path))
+
+        return _T()
+
+    fake_gpio = types.ModuleType("geoparquet_io")
+    fake_gpio.extract_arcgis = fake_extract_arcgis  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "geoparquet_io", fake_gpio)
+
+    out = tmp_path / "out.parquet"
+    layer = LayerInfo(id=0, name="L", layer_type="Feature Layer")
+    _extract_single_layer(
+        "https://x/rest/services/F/FeatureServer",
+        layer,
+        out,
+        ExtractionOptions(sort_hilbert=False),
+    )
+
+    stamped = _read_crs(out)
+    assert isinstance(stamped, dict)
+    assert stamped["id"] == {"authority": "EPSG", "code": 28992}
+
+
+def test_extract_single_layer_ignores_string_source_crs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A string table CRS must not reach the metadata, which needs PROJJSON.
+
+    gpio.Table.crs may return a string. A string CRS is not a valid PROJJSON
+    dict, so the writer's null tag stays (issue #802).
+    """
+
+    def fake_extract_arcgis(
+        url: str, max_workers: int | None = None, output_crs: str | None = None
+    ) -> object:
+        class _T:
+            num_rows = 1
+            crs = "EPSG:28992"
+
+            def add_bbox(self) -> _T:
+                return self
+
+            def write(self, path: str) -> None:
+                _write_geoparquet_with_null_crs(Path(path))
+
+        return _T()
+
+    fake_gpio = types.ModuleType("geoparquet_io")
+    fake_gpio.extract_arcgis = fake_extract_arcgis  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "geoparquet_io", fake_gpio)
+
+    out = tmp_path / "out.parquet"
+    layer = LayerInfo(id=0, name="L", layer_type="Feature Layer")
+    _extract_single_layer(
+        "https://x/rest/services/F/FeatureServer",
+        layer,
+        out,
+        ExtractionOptions(sort_hilbert=False),
+    )
+
+    assert _read_crs(out) is None
+
+
 # =============================================================================
 # _ensure_geoparquet_crs tests (issue #802)
 # =============================================================================
@@ -1614,3 +1700,36 @@ def test_ensure_geoparquet_crs_ignores_missing_crs(tmp_path: Path) -> None:
     _ensure_geoparquet_crs(path, None)
 
     assert path.read_bytes() == before
+
+
+def test_ensure_geoparquet_crs_leaves_crs84_null(tmp_path: Path) -> None:
+    """An OGC:CRS84 source CRS keeps the null tag, which already means CRS84."""
+    from pyproj import CRS
+
+    path = tmp_path / "crs84.parquet"
+    _write_geoparquet_with_null_crs(path)
+
+    _ensure_geoparquet_crs(path, CRS("OGC:CRS84").to_json_dict())
+
+    assert _read_crs(path) is None
+
+
+def test_is_wgs84_crs_matches_epsg_4326() -> None:
+    """_is_wgs84_crs must treat EPSG:4326 as the null-equivalent CRS."""
+    from pyproj import CRS
+
+    assert _is_wgs84_crs(CRS.from_epsg(4326).to_json_dict()) is True
+
+
+def test_is_wgs84_crs_matches_ogc_crs84() -> None:
+    """_is_wgs84_crs must treat OGC:CRS84 as the null-equivalent CRS."""
+    from pyproj import CRS
+
+    assert _is_wgs84_crs(CRS("OGC:CRS84").to_json_dict()) is True
+
+
+def test_is_wgs84_crs_rejects_projected_crs() -> None:
+    """_is_wgs84_crs must return False for a projected CRS."""
+    from pyproj import CRS
+
+    assert _is_wgs84_crs(CRS.from_epsg(28992).to_json_dict()) is False

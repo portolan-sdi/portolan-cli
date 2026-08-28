@@ -279,16 +279,18 @@ def _is_wgs84_crs(crs: dict[str, object]) -> bool:
     """Return True when the PROJJSON CRS is WGS84 (EPSG:4326 or OGC:CRS84).
 
     A null CRS in GeoParquet already means CRS84, so a WGS84 output needs no
-    explicit CRS tag (issue #802).
+    explicit CRS tag (issue #802). gpio tags a native-4326 GeoJSON extraction as
+    OGC:CRS84, whose ``to_epsg()`` is None, so this matches CRS84 as well.
     """
     from pyproj import CRS
     from pyproj.exceptions import CRSError
 
     try:
-        return CRS.from_json_dict(crs).to_epsg() == 4326
+        parsed = CRS.from_json_dict(crs)
     except (CRSError, KeyError, TypeError, ValueError):
         # An unparseable CRS is not WGS84, so tag it rather than assume CRS84.
         return False
+    return parsed.to_epsg() == 4326 or parsed == CRS("OGC:CRS84")
 
 
 def _ensure_geoparquet_crs(output_path: Path, source_crs: dict[str, object] | None) -> None:
@@ -388,7 +390,10 @@ def _extract_single_layer(
     # Capture the CRS the extractor detected before the write drops it. gpio.Table
     # tags the native SR on the table but its writer emits crs: null, so a native
     # extraction would declare WGS84 over projected coordinates (issue #802).
-    source_crs = getattr(table, "crs", None)
+    # gpio.Table.crs may return a dict, a string, or None. Only a PROJJSON dict
+    # restamps a valid CRS, so ignore the other forms.
+    captured_crs = getattr(table, "crs", None)
+    source_crs = captured_crs if isinstance(captured_crs, dict) else None
 
     # Apply Hilbert sorting if requested
     if options.sort_hilbert:
