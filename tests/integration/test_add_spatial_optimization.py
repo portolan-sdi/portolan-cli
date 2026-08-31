@@ -748,7 +748,6 @@ class TestAWgs84FileGainsItsCoveringColumn:
         """
         import geopandas as gpd
         import numpy as np
-        from shapely.geometry import Point
 
         root = tmp_path / "catalog"
         collection = root / "points"
@@ -756,12 +755,10 @@ class TestAWgs84FileGainsItsCoveringColumn:
         target = collection / "points.parquet"
         rng = np.random.default_rng(0)
         n = 100_000  # 512 partitions need 100 rows each to clear gpio's floor
+        # Vectorized: a Python loop of Point objects took tens of seconds.
         gpd.GeoDataFrame(
             {"id": range(n)},
-            geometry=[
-                Point(x, y)
-                for x, y in zip(rng.uniform(-180, 180, n), rng.uniform(-90, 90, n), strict=True)
-            ],
+            geometry=gpd.points_from_xy(rng.uniform(-180, 180, n), rng.uniform(-90, 90, n)),
             crs="EPSG:4326",
         ).to_parquet(target)
         _init(root)

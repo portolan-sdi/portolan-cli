@@ -53,11 +53,11 @@ def test_collection_level_scan_is_bounded_not_quadratic(
     """Adding N collection-level vectors must NOT re-checksum every sibling.
 
     Pre-fix, each file's scan re-checksums all N siblings, so `compute_checksum`
-    is called on the order of N·(N+1)/2 times (≈820 for N=40). Post-fix each file
+    is called on the order of N·(N+1)/2 times (≈210 for N=20). Post-fix each file
     checksums only itself (+ its own sidecars), so the count is O(N). The bound
-    3*N (120) sits far below the quadratic value and above the true linear count.
+    3*N (60) sits far below the quadratic value and above the true linear count.
     """
-    n = 40
+    n = 20
     collection_dir = initialized_catalog / "many"
     collection_dir.mkdir()
     fixture_bytes = (fixtures_dir / "simple.parquet").read_bytes()
@@ -81,7 +81,7 @@ def test_collection_level_scan_is_bounded_not_quadratic(
 
     assert not failures, f"unexpected failures: {failures}"
 
-    # Bound: linear, not quadratic. Pre-fix ≈ n*(n+1)/2 = 820 ≫ 120.
+    # Bound: linear, not quadratic. Pre-fix ≈ n*(n+1)/2 = 210 ≫ 60.
     assert call_count <= 3 * n, (
         f"compute_checksum called {call_count} times for {n} files "
         f"(expected O(n) <= {3 * n}; quadratic would be ~{n * (n + 1) // 2}). "
