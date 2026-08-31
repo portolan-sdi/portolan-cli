@@ -33,7 +33,7 @@ from portolan_cli.item import (
 )
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata.cog import extract_cog_metadata
-from portolan_cli.metadata.detection import versions_asset_key
+from portolan_cli.metadata.detection import versions_asset_key, versions_asset_lookup_keys
 from portolan_cli.models.collection import (
     CollectionModel,
     ExtentModel,
@@ -283,10 +283,12 @@ def _tracked_asset_key(
     Mirrors :func:`~portolan_cli.metadata.detection.find_versions_asset` so the
     reader and the writer agree on which entry belongs to a file. The
     collection-relative key is what ``add`` writes, the bare file name covers an
-    older versions.json, and the ``href`` sweep covers a nested layout.
+    older versions.json, and the ``href`` sweep covers a nested layout. A
+    collection-level file with the same name owns the bare key, so an item-level
+    asset skips the bare name and never binds to a foreign baseline (issue #709).
     """
     relative = versions_asset_key(file_path, collection_dir)
-    for key in (relative, file_path.name):
+    for key in versions_asset_lookup_keys(file_path, collection_dir):
         if key in assets:
             return key
     for key, asset in assets.items():

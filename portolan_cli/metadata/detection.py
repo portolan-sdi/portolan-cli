@@ -67,6 +67,25 @@ def versions_asset_key(file_path: Path, collection_dir: Path) -> str:
         return file_path.name
 
 
+def versions_asset_lookup_keys(file_path: Path, collection_dir: Path) -> tuple[str, ...]:
+    """The versions.json keys that can track ``file_path``, most authoritative first.
+
+    The collection-relative key is what ``add`` writes. The bare file name covers
+    a hand-written or older versions.json, and a nested item whose versions.json
+    keys by basename (a sub-catalog inside a collection).
+
+    Drop the bare file name only when a different file already sits at
+    ``collection_dir / file_path.name``. That file owns the bare collection-level
+    key, so an item-level asset with the same name must not fall back onto it and
+    read the wrong baseline (issue #709).
+    """
+    relative = versions_asset_key(file_path, collection_dir)
+    collision = collection_dir / file_path.name
+    if collision.exists() and collision.resolve() != file_path.resolve():
+        return (relative,)
+    return (relative, file_path.name)
+
+
 def find_versions_asset(
     assets: dict[str, Any],
     file_path: Path,
@@ -83,9 +102,13 @@ def find_versions_asset(
     keyed ``{item_id}/{filename}``, so the lookup never matched, every
     item-level asset read as STALE, and ``check --fix`` rewrote every item on
     every run.
+
+    The bare file name resolves only when no other file owns it. A collection-level
+    file with the same name owns the bare key, so an item-level asset never falls
+    back onto it and reads the wrong baseline.
     """
     relative = versions_asset_key(file_path, collection_dir)
-    for key in (relative, file_path.name):
+    for key in versions_asset_lookup_keys(file_path, collection_dir):
         entry = assets.get(key)
         if isinstance(entry, dict):
             return entry

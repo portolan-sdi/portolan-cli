@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from portolan_cli.metadata.detection import get_stored_metadata
+from portolan_cli.metadata.detection import find_versions_asset, get_stored_metadata
 from portolan_cli.metadata.models import MetadataStatus
 from portolan_cli.metadata.update import update_versions_tracking
 
@@ -132,20 +132,62 @@ class TestStoredMetadataLookup:
         assert stored is not None
         assert stored.source_mtime == 999.0
 
-    def test_still_reads_a_bare_key(self, tmp_path: Path) -> None:
-        """A hand-written or older versions.json may use the bare file name."""
+    def test_resolves_a_collection_level_bare_key(self, tmp_path: Path) -> None:
+        """A collection-level asset keys on its bare file name.
+
+        The data file sits in the collection directory, so ``relative`` holds no
+        path separator. The bare key resolves the entry.
+        """
         collection_dir = tmp_path / "rasters"
-        item_dir = collection_dir / ITEM_ID
+        collection_dir.mkdir(parents=True)
+        data_file = collection_dir / DATA_NAME
+        data_file.write_bytes(b"II*\x00")
+        assets = {DATA_NAME: {"sha256": STORED_SHA256, "mtime": STORED_MTIME}}
+
+        entry = find_versions_asset(assets, data_file, collection_dir)
+
+        assert entry is not None
+        assert entry["mtime"] == STORED_MTIME
+
+    def test_nested_item_resolves_a_bare_key_without_a_collision(self, tmp_path: Path) -> None:
+        """A nested item asset resolves the bare key when no file collides.
+
+        A sub-catalog inside a collection keys the item asset by basename. No
+        collection-level file shares the name, so the bare key stays valid.
+        """
+        collection_dir = tmp_path / "rasters"
+        item_dir = collection_dir / "2024" / ITEM_ID
         item_dir.mkdir(parents=True)
         data_file = item_dir / DATA_NAME
         data_file.write_bytes(b"II*\x00")
-        (item_dir / f"{ITEM_ID}.json").write_text(json.dumps(_item_json(ITEM_ID, DATA_NAME)))
-        (collection_dir / "versions.json").write_text(json.dumps(_versions_json(DATA_NAME)))
+        assets = {DATA_NAME: {"sha256": STORED_SHA256, "mtime": STORED_MTIME}}
 
-        stored = get_stored_metadata(data_file, collection_dir)
+        entry = find_versions_asset(assets, data_file, collection_dir)
 
-        assert stored is not None
-        assert stored.source_mtime == STORED_MTIME
+        assert entry is not None
+        assert entry["mtime"] == STORED_MTIME
+
+    def test_item_asset_ignores_a_colliding_bare_key(self, tmp_path: Path) -> None:
+        """An item-level asset never falls back onto a collection-level key.
+
+        The item data file and a collection-level asset share the file name
+        ``data.tif``. The versions.json holds only the bare key ``data.tif`` with
+        a foreign baseline. The item-level lookup uses ``{item_id}/data.tif``.
+        The bare key must not answer for it, or the wrong baseline drives a
+        spurious STALE (issue #709).
+        """
+        collision_name = "data.tif"
+        collection_dir = tmp_path / "rasters"
+        item_dir = collection_dir / ITEM_ID
+        item_dir.mkdir(parents=True)
+        (collection_dir / collision_name).write_bytes(b"COLLECTION")
+        data_file = item_dir / collision_name
+        data_file.write_bytes(b"II*\x00")
+        assets = {collision_name: {"sha256": "deadbeef", "mtime": 1.0}}
+
+        entry = find_versions_asset(assets, data_file, collection_dir)
+
+        assert entry is None
 
 
 class TestVersionsTrackingUpdate:
@@ -180,6 +222,33 @@ class TestVersionsTrackingUpdate:
 
         assets = json.loads(versions_path.read_text())["versions"][-1]["assets"]
         assert set(assets) == {f"{ITEM_ID}/{DATA_NAME}"}
+
+    def test_item_asset_never_overwrites_a_colliding_bare_key(self, tmp_path: Path) -> None:
+        """The writer skips a bare key when the asset is item-level.
+
+        The versions.json holds only a collection-level ``data.tif`` entry. The
+        item data file shares that name under ``{item_id}/data.tif``. The writer
+        must not treat the bare key as the item's entry. It raises KeyError and
+        leaves the foreign baseline unchanged (issue #709).
+        """
+        collision_name = "data.tif"
+        collection_dir = tmp_path / "rasters"
+        item_dir = collection_dir / ITEM_ID
+        item_dir.mkdir(parents=True)
+        (collection_dir / collision_name).write_bytes(b"COLLECTION")
+        data_file = item_dir / collision_name
+        data_file.write_bytes(b"II*\x00")
+        versions_path = collection_dir / "versions.json"
+        versions_path.write_text(
+            json.dumps(_versions_json(collision_name, source_mtime=1.0, mtime=1.0))
+        )
+
+        with pytest.raises(KeyError):
+            update_versions_tracking(data_file, versions_path)
+
+        entry = json.loads(versions_path.read_text())["versions"][-1]["assets"][collision_name]
+        assert entry["source_mtime"] == 1.0
+        assert entry["mtime"] == 1.0
 
 
 class TestTouchedButIdentical:
