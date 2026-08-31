@@ -29,18 +29,16 @@ It helps publishers:
 
 ## Installation
 
-*Portolan CLI is currently in a beta release, as breaking changes are expected for the time being.*
-
-Pass the prerelease flag so the installer selects the beta:
+*Portolan CLI is pre-1.0 software, as breaking changes are expected for the time being.*
 
 ```sh
-uv tool install portolan-cli --prerelease allow
+uv tool install portolan-cli
 ```
 
 Or with pip:
 
 ```sh
-pip install --pre portolan-cli
+pip install portolan-cli
 ```
 
 ## Documentation

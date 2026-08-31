@@ -250,21 +250,28 @@ this one context means adding a Python/OS never drops a required check),
 
 Workflow: `.github/workflows/release.yml`
 
-Triggered on push to `main` (after PR merge).
+Triggered on push to `main`, or by manual dispatch for recovery.
+
+The workflow does not run `cz bump`. A developer runs `cz bump --changelog` in a
+pull request. The workflow reacts to the resulting commit.
 
 **Process:**
 
-1. Check if conventional commits warrant a release
-2. `cz bump --changelog` — Bump version, update CHANGELOG.md
-3. Push version tag
-4. `uv build` — Build package
-5. Publish to PyPI (trusted publishing)
-6. Create GitHub Release
+1. Read the version from `pyproject.toml`
+2. Create the git tag and push it
+3. `uv build` — Build package
+4. Publish to PyPI (trusted publishing)
+5. Create GitHub Release
 
-**Skips if:**
+**Runs only if:**
 
-- No conventional commits since last release
-- Commit message starts with `bump:` (avoids infinite loop)
+- The head commit message starts with `bump:`, or
+- A maintainer dispatches the workflow manually
+
+**Skips a step if:**
+
+- The tag already exists (recovery mode skips tag creation)
+- The GitHub Release already exists (nothing to do)
 
 ---
 

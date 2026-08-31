@@ -177,7 +177,7 @@ follow conventional commits:
 |-------------|--------------|
 | `feat:` | Minor (0.x.0) |
 | `fix:` | Patch (0.0.x) |
-| `BREAKING CHANGE:` | Major (x.0.0) |
+| `BREAKING CHANGE:` | Minor (0.x.0), see the versioning policy below |
 | `docs:`, `refactor:`, `test:`, `chore:` | No release |
 
 To cut a release, open a PR that runs:
@@ -188,6 +188,15 @@ uv run cz bump --changelog
 When that PR merges, the release workflow detects the `bump:` commit, creates the
 git tag, builds the package, publishes to PyPI (trusted publishing), and creates a
 GitHub Release.
+
+### Versioning Policy
+
+The project is pre-1.0. Any minor release can break the interface. Pin an exact
+version if you need a stable interface.
+
+`major_version_zero = true` in `[tool.commitizen]` holds the major number at
+zero. A `BREAKING CHANGE:` commit therefore bumps the minor number. The major
+number moves to 1 only when a human decides the interface is stable.
 
 ## Code Standards
 

@@ -11,11 +11,11 @@ fields instead. Those catalogs are not conformant and never were (decision 1 in
 the rashid migration: acceptable pre-1.0). Saying so in one sentence beats
 leaving the operator to infer it from a PTL-CNF-001 on every object.
 
-The second is the ``portolan:styles`` manifest, written up to 1.0.0b0 and
+The second is the ``portolan:styles`` manifest, written up to 0.8.0 and
 removed from the spec in favor of the ``default`` asset role (issue #739).
 
 The third is the rest of the ``portolan:`` fields Portolan emitted through
-1.0.0b0, dropped when the spec confirmed it defines none (issue #654). That one
+0.8.0, dropped when the spec confirmed it defines none (issue #654). That one
 is deliberately blind to the schema URI: the catalogs carrying those fields are
 exactly the ones that also declare the URI, so gating on it would report
 nothing.

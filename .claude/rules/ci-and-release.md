@@ -43,7 +43,7 @@ fix(scope): fix bug               # Patch version bump
 docs(scope): update documentation
 refactor(scope): restructure code
 test(scope): add tests
-BREAKING CHANGE: ...              # Major version bump
+BREAKING CHANGE: ...              # Minor version bump (pre-1.0)
 ```
 
 ### Merge Policy
@@ -69,5 +69,9 @@ commit pushed to `main` and creates the tag itself, it is not tag-triggered. See
 2. Git tag created (e.g., `v0.3.0`)
 3. Package built and published to PyPI
 4. GitHub Release created
+
+**Versioning policy:** the project is pre-1.0. `major_version_zero = true` in
+`[tool.commitizen]` holds the major number at zero, so a `BREAKING CHANGE:`
+commit bumps the minor number.
 
 See `docs/contributing.md` for the full release process.
