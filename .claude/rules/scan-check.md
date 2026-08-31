@@ -57,7 +57,8 @@ flowchart TD
     STALE --> FIXM
     ORPHANED --> FIXM
     AUTO --> RECHK["re-check once, annotate_survivors"]
-    FIXM --> RECHK
+    FIXM --> POST["fixers.repair_written_items:<br/>links + checksum + mirror refresh"]
+    POST --> RECHK
     FIXG --> RECHK
     RECHK --> CREPORT
 ```
@@ -95,9 +96,12 @@ never saw, and `--fix` then said "already fresh" forever (issues #345, #384).
 `MetadataStatus` is FRESH / MISSING / STALE / BREAKING / ORPHANED.
 
 - **FRESH**: registered, mtime unchanged or heuristics equal. `--fix` skips it.
-- **MISSING**: registered in STAC but the file is gone, or an item dir whose data
-  file exists but `item.json` does not. `--fix` creates the item. Counts as an
-  ERROR.
+- **MISSING**: registered in STAC but the file is gone, or an item dir that holds
+  **no STAC Item at all** and whose data file matches the dir name. `--fix`
+  creates the item. Counts as an ERROR. A dir that already holds an Item is
+  covered by it, whatever that file is named — `add --item-id` names the file
+  after the id, not the dir, and asking only for `{dirname}.json` made `--fix`
+  write a second item for one data file (#709).
 - **STALE / BREAKING**: mtime changed and bbox/feature-count heuristics changed
   (STALE), or the schema fingerprint changed (BREAKING). `--fix` updates the item
   and versions tracking. BREAKING is an ERROR, STALE is part of the freshness
@@ -129,9 +133,36 @@ through the per-file item-JSON lookup, or it falsely reports MISSING. In
 Freshness uses a cheap gate before any expensive hashing. stored mtime is None
 means new. mtime unchanged means FRESH (fast path). mtime changed then compare
 schema fingerprint (BREAKING) and bbox/feature-count heuristics (STALE), and if
-those are equal it is touched-but-unchanged, so FRESH. The fast path requires
-mtime within tolerance **and** size unchanged, a fast `convert + mv` otherwise
-looks unchanged and gets wrongly skipped.
+those are equal it is touched-but-unchanged, so FRESH. Without a stored
+fingerprint the mtime change proves nothing, so the stored `sha256` decides it
+and BREAKING is off the table — the same tiebreaker both halves use (#512, #709).
+
+**Resolve the versions.json entry with `find_versions_asset`, never by bare
+filename.** `add` keys a collection-level asset by its file name and an
+item-level asset by `{item_id}/{filename}` (`finalization.py`), and it writes
+`mtime` where `--fix` writes `source_mtime`. Reading only `{filename}` and only
+`source_mtime` meant no item-level asset ever found its baseline, so every one
+of them was permanently STALE and `--fix` rewrote every item on every run
+(#709). The same helper backs `get_stored_metadata` and
+`update_versions_tracking`, so the reader and the writer cannot drift apart.
+
+## A pass that writes an item must leave it conformant
+
+The fixer registry is finding-driven, and the findings come from the check that
+ran *before* the freshness pass, so an item that pass writes never meets the
+registry. `cli._run_fix_and_repairs` therefore runs
+`fixers.repair_written_items` afterwards: the `links` and `checksum` sweeps plus
+an `items.parquet` refresh for the collections it touched. Without it, `--fix`
+published items with no structural links and no checksums, and a stale mirror,
+so the finding count went **up** (#709). Any new pass that writes an item JSON
+belongs behind the same call.
+
+`update_item_metadata` owns bbox, geometry and the raster `bands` array. It does
+**not** own `properties.datetime`, which records when the observation happened
+and cannot be read off the bytes. Keep whatever the item carries, including the
+`null` `add` writes without `--datetime`. Keep the href's existing spelling when
+it already resolves to the same file, or every run rewrites `./x.tif` to `x.tif`
+and the mirror drifts.
 
 ## scan `--fix` sanitizes names, it does NOT convert formats
 

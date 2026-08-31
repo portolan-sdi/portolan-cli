@@ -164,8 +164,14 @@ class TestUpdateItemMetadata:
         assert updated_item.description == "User Description"
 
     @pytest.mark.unit
-    def test_update_item_metadata_updates_datetime(self, tmp_path: Path) -> None:
-        """Test that update_item_metadata updates the datetime property."""
+    def test_update_item_metadata_keeps_the_recorded_datetime(self, tmp_path: Path) -> None:
+        """The refresh keeps the acquisition datetime the item already carries.
+
+        `datetime` records when the observation happened, which the refresh
+        cannot read off the bytes. Stamping the time of the run over it published
+        a fabricated acquisition date (#709). This test replaces one that
+        asserted the old behavior.
+        """
         collection_dir = tmp_path / "my-collection"
         collection_dir.mkdir()
 
@@ -176,23 +182,43 @@ class TestUpdateItemMetadata:
         data_file = collection_dir / "data.parquet"
         shutil.copy(source_file, data_file)
 
-        # Create item with old datetime
         item = create_item(
             item_id="data",
             data_path=data_file,
             collection_id="my-collection",
         )
-        # Modify the datetime to an old value
         item.properties["datetime"] = "2020-01-01T00:00:00+00:00"
         item_path = write_item_json(item, collection_dir)
 
-        # Update item metadata
         updated_item = update_item_metadata(item_path, data_file)
 
-        # Verify datetime was updated
-        new_datetime = updated_item.properties.get("datetime")
-        assert new_datetime is not None
-        assert new_datetime != "2020-01-01T00:00:00+00:00"
+        assert updated_item.properties.get("datetime") == "2020-01-01T00:00:00+00:00"
+
+    @pytest.mark.unit
+    def test_update_item_metadata_keeps_a_null_datetime(self, tmp_path: Path) -> None:
+        """`add` writes ``datetime: null`` without ``--datetime``. It survives."""
+        collection_dir = tmp_path / "my-collection"
+        collection_dir.mkdir()
+
+        source_file = REALDATA_FIXTURES / "open-buildings.parquet"
+        if not source_file.exists():
+            pytest.skip("Test fixture not available")
+
+        data_file = collection_dir / "data.parquet"
+        shutil.copy(source_file, data_file)
+
+        item = create_item(
+            item_id="data",
+            data_path=data_file,
+            collection_id="my-collection",
+        )
+        item.properties["datetime"] = None
+        item_path = write_item_json(item, collection_dir)
+
+        update_item_metadata(item_path, data_file)
+
+        on_disk = json.loads(item_path.read_text(encoding="utf-8"))
+        assert on_disk["properties"]["datetime"] is None
 
     @pytest.mark.unit
     def test_update_item_metadata_file_not_found(self, tmp_path: Path) -> None:

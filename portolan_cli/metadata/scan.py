@@ -193,6 +193,17 @@ def _scan_collection_child(
         _scan_item(item_json_path, child, collection_dir, registered, report)
         return
 
+    # `add --item-id` names the item file after the id, not after the directory,
+    # so the directory can hold a perfectly good item under another name. Asking
+    # only for `{directory name}.json` made the scan report the data file as
+    # MISSING, and `--fix` then wrote a second item for it (#709). Any STAC Item
+    # in the directory covers it.
+    named_items = _item_jsons_in(child)
+    if named_items:
+        for path in named_items:
+            _scan_item(path, child, collection_dir, registered, report)
+        return
+
     # Heuristic: a subdir is treated as an item-needing-JSON only if it
     # contains a data file whose stem matches the dir name (the convention
     # `add` writes). Otherwise the subdir is a stray container and its
@@ -217,6 +228,20 @@ def _scan_collection_child(
     # Any extra data files in an item-shaped dir that don't match the
     # expected stem are still orphans of the item.
     _emit_orphans(child, registered, report)
+
+
+def _item_jsons_in(directory: Path) -> list[Path]:
+    """Every STAC Item JSON directly inside ``directory``, in a stable order.
+
+    Identified by ``type: "Feature"`` rather than by file name, so a container
+    JSON or a schema file beside the item is never mistaken for one.
+    """
+    found: list[Path] = []
+    for path in sorted(directory.glob("*.json")):
+        data = _safe_read_json(path)
+        if isinstance(data, dict) and data.get("type") == "Feature":
+            found.append(path)
+    return found
 
 
 def _scan_item(
