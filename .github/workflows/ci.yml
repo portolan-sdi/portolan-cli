@@ -148,14 +148,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ['3.10', '3.11', '3.12', '3.13']
-        exclude:
-          # Reduce matrix size - test older Python only on Linux
-          - os: macos-latest
-            python-version: '3.10'
-          - os: windows-latest
-            python-version: '3.10'
+        # Anchor cells (suite: full) run the whole suite on every event: the
+        # newest interpreter on each OS, plus the ubuntu-3.11 coverage cell.
+        # The other cells run the unit lane on pull requests and the full
+        # suite on push to main, so an interpreter-specific integration break
+        # surfaces at merge instead of never. 3.10 runs on Linux only, as
+        # before.
+        include:
+          - {os: ubuntu-latest, python-version: '3.11', suite: full}
+          - {os: ubuntu-latest, python-version: '3.13', suite: full}
+          - {os: windows-latest, python-version: '3.13', suite: full}
+          - {os: macos-latest, python-version: '3.13', suite: full}
+          - {os: ubuntu-latest, python-version: '3.10', suite: unit}
+          - {os: ubuntu-latest, python-version: '3.12', suite: unit}
+          - {os: windows-latest, python-version: '3.11', suite: unit}
+          - {os: windows-latest, python-version: '3.12', suite: unit}
+          - {os: macos-latest, python-version: '3.11', suite: unit}
+          - {os: macos-latest, python-version: '3.12', suite: unit}
     env:
       # Prevent obstore from attempting EC2 metadata service calls
       # GitHub Actions runners aren't EC2 instances, so IMDS requests fail
@@ -209,14 +218,19 @@ jobs:
           HYPOTHESIS_PROFILE: ci
           MATRIX_OS: ${{ matrix.os }}
           MATRIX_PY: ${{ matrix.python-version }}
+          MATRIX_SUITE: ${{ matrix.suite }}
         shell: bash
         run: |
           cov_args=()
           if [ "$MATRIX_OS" = "ubuntu-latest" ] && [ "$MATRIX_PY" = "3.11" ]; then
             cov_args=(--cov=portolan_cli --cov-report=term-missing --cov-report=xml)
           fi
+          marker="not network and not slow and not benchmark"
+          if [ "$MATRIX_SUITE" = "unit" ] && [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            marker="unit and not network and not slow and not benchmark"
+          fi
           uv run pytest tests/ --ignore=tests/iceberg/ --tb=short \
-            -m "not network and not slow and not benchmark" \
+            -m "$marker" \
             -n logical --dist loadscope \
             --durations=25 --durations-min=1.0 \
             "${cov_args[@]}"

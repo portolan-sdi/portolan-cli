@@ -79,6 +79,11 @@ non-deterministic in CI — drift is still caught by the non-mutating
 - Python versions: 3.10, 3.11, 3.12, 3.13
 - Operating systems: Ubuntu, macOS, Windows
 - Excludes network, slow, and benchmark tests
+- Four anchor cells run the full suite on every event: ubuntu-3.11 (the
+  coverage cell), ubuntu-3.13, windows-3.13, and macos-3.13. The other six
+  cells run only unit tests on pull requests. Every cell runs the full suite
+  on push to main, so an interpreter-specific integration break surfaces at
+  merge.
 - Runs pytest with `-n logical`. The 4-vCPU runners report 2 physical cores,
   so `-n auto` started only 2 workers. The logical count starts 4.
 - Coverage runs only on the ubuntu-3.11 cell. That is the one cell that
