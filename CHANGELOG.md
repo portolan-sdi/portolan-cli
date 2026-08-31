@@ -1,73 +1,106 @@
-## Unreleased
-
-Notes for the next release. `cz bump` regenerates this file from the commit
-history, so this section is replaced by the generated entries at that point.
+## v1.0.0b0 (2026-08-31)
 
 ### BREAKING CHANGE
 
-- `check --json` reports a different payload. The `results` list is gone,
-  replaced by rashid's `findings`, each carrying a `PTL-*` rule id. The
-  envelope adds `mode`, `spec_version`, `validator` (name and version),
-  and `counts_by_remediation`. With `--fix`, a `fix` section reports the
-  `fixers` that ran, what they `applied`, and the `survivors` that outlived
-  the re-check. Consumers that read `results` must be updated.
-- `--strict` now affects only the exit code. It no longer promotes findings:
-  each keeps the severity the validator declares, so the same catalog produces
-  the same findings with and without the flag.
-- The reported `spec_version` is derived from the schemas rashid bundles rather
-  than hardcoded in the CLI. It is `0.1.0`; the CLI previously claimed `0.1.1`,
-  a version no shipped schema ever matched.
+- --strict now fails the exit code on warnings. It used
+to escalate a fixed subset of native rules to errors during validation;
+rashid owns rule severity, and per-rule escalation is expressible as
+`check.severity` in config.yaml.
+- check --json replaces `results` with rashid `findings`
+carrying PTL-* rule ids, and adds mode, spec_version, validator, and
+counts_by_remediation; --fix adds a fix section with fixers, applied, and
+survivors.
+- --strict now affects only the exit code. Findings keep the
+severity the validator declares.
+- the reported spec_version is derived from the schemas
+rashid bundles. It is 0.1.0; the CLI previously claimed 0.1.1.
+
+### Feat
+
+- **convert**: generate conforming GeoParquet by default (#808)
+- **spec**: mandate AGENTS.md (rel=agents) — enforce + generate it (#640)
+- emit rel=pmtiles collection link via the web-map-links extension (#586)
+- **extract**: add `portolan extract carto` for Carto SQL API sources (#492) (#535)
+- **check**: enforce tabular collection rules (RULE-0090–0094) (#481) (#533)
+- **wfs**: adopt gpio 1.3+ defaults (100K page_size, auto_tile) (#529) (#532)
+- **check**: re-optimize valid COGs via --force, parallelize conversion (#530) (#531)
+- **viz**: punchy data-aware matplotlib thumbnail floor (#518) (#525)
+- **extract**: ArcGIS folder recursion, folder URLs, token auth (#493) (#499)
+- **stac**: populate file:size and aggregate statistics on STAC assets (#501) (#517)
+- **bbox**: comprehensive bbox validation for inf/nan and anti-meridian (#516) (#520)
+- **extract**: extract styles from WMS/WFS and ESRI REST endpoints (#491)
+- **stac**: require human-readable titles and descriptions (#502) (#509)
+- **spec**: consolidate spec into CLI as single source of truth (#474)
+- **ci**: add CLI→Spec schema sync workflow (#472)
+- **partitioning**: support arbitrary Hive partition column names (#443) (#462)
 
 ### Fix
 
-- **license**: `portolan metadata validate` and `portolan check` now judge
-  license identifiers against one list, `rashid.api.SPDX_LICENSE_IDS`. The CLI
-  previously kept a 26-identifier subset, so it rejected real licenses such as
-  `EUPL-1.2` and `CC-BY-3.0` that `check` accepted. Three behavior changes
-  follow. `add` and `init` refuse a misspelled identifier such as `cc-by-4.0`
-  before writing anything, and name the official spelling. `LicenseRef-*` is no
-  longer accepted, because rashid's list holds none and PORTO-CORE-059 allows
-  only an SPDX identifier or `other`; use `other` with a `license_url` instead.
-  `other` without a license link is now reported by `metadata validate`, which
-  matches what `check` has always reported as PTL-LIC-002.
-- **stac**: every STAC and `versions.json` write goes through
-  `json_io.write_json_atomic`, so an interrupted write can no longer leave a
-  half-written `collection.json`. Every file now gets identical bytes: UTF-8,
-  two-space indent, no ASCII escaping, and a trailing newline. On a catalog
-  written by an older version, expect a one-time byte-level diff the first time
-  each file is rewritten. Non-ASCII text such as `Córdoba` is stored as the
-  literal character rather than an escape sequence.
-- **readme**: a foreign `rel="describedby"` link survives the README sweep. Only
-  the link resolving to the sibling `README.md` is normalized; a data dictionary
-  or methodology PDF is left alone and the README link is appended beside it.
-- **check**: `--fix` reports what it actually did. The `fix` payload carries
-  `selected`, `applied`, and `skipped`; `applied` names only fixers that changed
-  something, and every selected fixer that changed nothing carries a skip reason.
-  Skip reasons print at default verbosity, not just under `--verbose`. `SKIPPED`
-  results no longer count as fixes in `FixReport`.
-- **check**: a data file on disk that no manifest registers, and a registered
-  asset whose file is gone, are reported in a `workflow` section rather than as
-  conformance findings. The notice does not fail a default run; `--strict` fails
-  on it. `portolan add` clears it.
-- **check**: the `bbox` fixer repairs an extent from the asset it describes,
-  reading GeoParquet, COG, FlatGeobuf, and PMTiles and reprojecting to WGS84. An
-  ADR-0031 asset-only collection falls back to its own assets. An unreadable file
-  or unknown suffix skips with a reason, and an existing geometry is never
-  overwritten.
-- **check**: the `convert` fixer is registered but inert. It used to run a
-  conversion sweep from `--metadata --fix`, rewriting asset bytes the operator
-  never asked about and losing the geo-asset pass's worker and force settings. It
-  now reports the hand-off and leaves the bytes alone.
-- **check**: the `item_mirror` fixer requires `profile=cloud-optimized`, matching
-  the rule that selects it, and reports the same action in dry run as in a real
-  run.
-- **check**: selecting a composite fixer no longer also selects its members, so
-  `PTL-FIL-001` and `PTL-FIL-002` firing together run the README and AGENTS.md
-  repairs once instead of three times.
-- **check**: the `assets` fixer no longer writes `application/octet-stream` for
-  an extension it does not recognize.
-- **deps**: raise the `click` floor to `8.4`. `temporal.FlexibleDateTime`
-  subscripts `click.ParamType`, which 8.3.x cannot do.
+- **check**: --fix no longer rewrites untouched items or writes a second one (#841)
+- **docs**: use the canonical mark and bring the docs site onto the brand (#831)
+- apply the root metadata.yaml title to catalog.json (#815) (#829)
+- **bbox**: keep an antimeridian crossing in the measured extent
+- **bbox**: measure the collection extent from data, not the bbox rectangle
+- **viz**: render thumbnails from the GeoParquet, PMTiles as fallback
+- **convert**: repair shapefile encoding sidecars before conversion
+- **crs**: scope the WGS84 range guard and cover the add path
+- **crs**: fail fast when a bbox assumed WGS84 exceeds lon/lat range
+- **formats**: list GeoPackage layers from gpkg_contents, features only
+- **viz**: write loadable pmtiles:// style sources with the archive zoom range
+- **pmtiles**: make --force-pmtiles generate tiles and drop gpio-pmtiles (#782)
+- **ci**: skip mutation shards that hold no mutable code (#717)
+- **ci**: run the checks on every pull request, not only those onto main (#697)
+- **ci**: gate the nightly sweep on per-shard mutation baselines (#612) (#672)
+- **ci**: filter mutmut by dotted mutant names, not file paths (#612) (#671)
+- **ci**: repair mutation-testing baseline and bound the run (#612) (#664)
+- **test**: stabilize 1000-file versioning stress fixtures (#663)
+- **convert**: retry transient DuckDB interrupt; unflake nightly perf/slow jobs (#643)
+- **push**: report returned push failures as errors in JSON mode (#627)
+- **add**: scan collection-level assets in O(n), not O(n²) (#465) (#608)
+- lint linked collections/items, not just root catalog (#604) (#607)
+- check --metadata validates linked collections/items, not just the root (#543) (#605)
+- collection-level asset freshness — check reports STALE that --fix/add cannot clear (#512) (#606)
+- rm deletes the item dir by parent, not file stem (#602) (#603)
+- rm href-matches item-level assets in versions.json; drop dead remove_item (#589) (#601)
+- catalog-versions.json writer conforms to its own schema (#561) (#596)
+- **push**: upload intermediate catalogs and refresh metadata on --force (#496, #547, #552) (#553)
+- **readme**: prefix collection links with catalog dir name (#549) (#550)
+- **readme**: use metadata.yaml title/description in READMEs (#534) (#537)
+- **stac**: stop PMTiles 3857 from clobbering source CRS in proj:epsg (#488) (#528)
+- **extract**: anchor WFS per-layer timeout to execution start (#526) (#527)
+- **readme**: suppress technical-slug keyword badge wall (#515) (#524)
+- **viz**: track generated thumbnails in versions.json (#519) (#523)
+- **stac**: stop is_technical_name clobbering single-word titles (#513) (#522)
+- **extract**: enforce WFS timeout and show error details inline (#510)
+- **check**: tolerate remote/extension assets and unknown STAC extensions (#460)
+- **thumbnail**: apply plot-before-basemap fix to PMTiles path (#468)
+- **spec**: add complete spec content from portolan-spec (#475)
+- **benchmark**: use minimal valid TIFF/Parquet fixtures to avoid error paths (#467)
+- **deps**: upgrade starlette 1.0.0 → 1.2.1 (PYSEC-2026-161) (#466)
+- **ci**: separate security gate from notification (#457)
+
+### Refactor
+
+- **bbox**: split the measurement to stay under the complexity ceiling
+- rename the validation extraction seam from reis to rashid (#676)
+- rename the validation extraction seam from reis to rashid (#675)
+- group flat root modules into scan/ sync/ viz/ subpackages (#625) (#641)
+- **add**: extract finalization.py + split add_files into explicit phases (#624) (#639)
+- **add**: extract preparation.py (prepare_item + conversion routing) (#623) (#637)
+- **extract**: add common orchestrator base for arcgis/wfs/carto lifecycle (#622) (#636)
+- **extract**: hoist ExtractionProgress/emit_progress into extract/common/progress.py (#635)
+- **cli**: move post-add and check orchestration helpers into library (#620) (#628)
+- **cli**: collapse duplicated JSON envelope blocks into emit helpers (#619) (#626)
+- single-source the recognized-extension vocabulary (#558); drop dead .raquet (#487) (#593)
+- restore reis seam — main is un-committable (import-linter) (#594)
+- sweep "dataset" terminology and decompose the add pipeline (#560, #567) (#588)
+- **skills**: extract skills to external repository (#511)
+- **spec**: consolidate DECISIONS.md into CLI ADRs (#476)
+
+### Perf
+
+- **ci**: halve the CI test-matrix wall time (#845)
+- prune FileGDB subtrees during discovery traversal (#590) (#600)
 
 ## v1.0.0a0 (2026-06-03)
 

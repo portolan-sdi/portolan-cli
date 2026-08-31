@@ -4598,7 +4598,7 @@ wheels = [
 
 [[package]]
 name = "portolan-cli"
-version = "1.0.0a0"
+version = "1.0.0b0"
 source = { editable = "." }
 dependencies = [
     { name = "antimeridian" },
