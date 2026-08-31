@@ -195,7 +195,31 @@ jobs:
           command: uv sync --all-extras
 
       - name: Run tests (unit + integration, no network, no iceberg)
-        run: uv run pytest tests/ --ignore=tests/iceberg/ -v --tb=short -m "not network and not slow and not benchmark" -n auto --dist loadscope --cov=portolan_cli --cov-report=term-missing --cov-report=xml
+        # Speed decisions (see context/shared/documentation/ci.md):
+        # - `-n logical`: `-n auto` counts physical cores and started only 2
+        #   workers on the 4-vCPU ubuntu/windows runners. Logical count starts 4.
+        # - Coverage only on the one cell that uploads to Codecov. Branch
+        #   coverage on the other 9 cells cost 20-40% wall time and was
+        #   discarded.
+        # - HYPOTHESIS_PROFILE=ci selects the reduced deterministic profile
+        #   from tests/conftest.py. Nightly keeps the full default profile.
+        # - --durations=25 records the slowest tests so a slow-test regression
+        #   is visible in the log.
+        env:
+          HYPOTHESIS_PROFILE: ci
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_PY: ${{ matrix.python-version }}
+        shell: bash
+        run: |
+          cov_args=()
+          if [ "$MATRIX_OS" = "ubuntu-latest" ] && [ "$MATRIX_PY" = "3.11" ]; then
+            cov_args=(--cov=portolan_cli --cov-report=term-missing --cov-report=xml)
+          fi
+          uv run pytest tests/ --ignore=tests/iceberg/ --tb=short \
+            -m "not network and not slow and not benchmark" \
+            -n logical --dist loadscope \
+            --durations=25 --durations-min=1.0 \
+            "${cov_args[@]}"
 
       - name: Upload coverage reports to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'

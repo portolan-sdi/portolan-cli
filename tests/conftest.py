@@ -70,6 +70,23 @@ if _MUTMUT_ENV_KEY in os.environ:
     _root_logger.setLevel(_logging.WARNING)
 
 
+# CI selects a reduced, deterministic Hypothesis profile with
+# HYPOTHESIS_PROFILE=ci (set in .github/workflows/ci.yml). A PR run gets a fast
+# reproducible check. Nightly does not set the variable, so it keeps the
+# default profile with 100 randomized examples, and example exploration is not
+# lost. A test's own @settings(...) overrides these values.
+if _MUTMUT_ENV_KEY not in os.environ and os.environ.get("HYPOTHESIS_PROFILE") == "ci":
+    from hypothesis import settings as _ci_hypothesis_settings
+
+    _ci_hypothesis_settings.register_profile(
+        "ci",
+        max_examples=25,
+        derandomize=True,
+        print_blob=True,
+    )
+    _ci_hypothesis_settings.load_profile("ci")
+
+
 @contextmanager
 def cleared_environ(**overrides: str) -> Iterator[None]:
     """Clear os.environ for the block, preserving mutmut's bookkeeping var.

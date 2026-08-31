@@ -16,7 +16,7 @@ AI agents write most of the code. Human review doesn't scale to match AI output 
 | Tier | Trigger | Duration | Purpose |
 |------|---------|----------|---------|
 | **Tier 1** | prek hook | < 30s | Fast feedback loop for developers |
-| **Tier 2** | PR / push to main | 2-5 min | Comprehensive quality gates |
+| **Tier 2** | PR / push to main | 5-10 min | Comprehensive quality gates |
 | **Tier 3** | Nightly schedule | 10-30 min | Expensive checks, trend tracking |
 
 ---
@@ -79,8 +79,18 @@ non-deterministic in CI — drift is still caught by the non-mutating
 - Python versions: 3.10, 3.11, 3.12, 3.13
 - Operating systems: Ubuntu, macOS, Windows
 - Excludes network, slow, and benchmark tests
-- Coverage reporting to Codecov (the `codecov/patch` changed-line gate is a
-  required check — see [Branch protection](#branch-protection))
+- Runs pytest with `-n logical`. The 4-vCPU runners report 2 physical cores,
+  so `-n auto` started only 2 workers. The logical count starts 4.
+- Coverage runs only on the ubuntu-3.11 cell. That is the one cell that
+  uploads to Codecov (the `codecov/patch` changed-line gate is a required
+  check — see [Branch protection](#branch-protection)). The other 9 cells
+  skip coverage measurement, so platform-specific branches are not counted.
+- Hypothesis runs the reduced deterministic `ci` profile (25 examples,
+  derandomized), selected with `HYPOTHESIS_PROFILE=ci` and registered in
+  `tests/conftest.py`. Nightly runs the default profile with 100 randomized
+  examples, so example exploration continues there.
+- `--durations=25` prints the slowest tests in every run, so a slow-test
+  regression is visible in the log.
 
 #### `docs` — Documentation Build
 
