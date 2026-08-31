@@ -21,44 +21,6 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 
 
-@pytest.fixture
-def runner() -> CliRunner:
-    """Create a CLI test runner."""
-    return CliRunner()
-
-
-@pytest.fixture
-def initialized_catalog(tmp_path: Path) -> Path:
-    """Create an initialized Portolan catalog using CLI."""
-    result = CliRunner().invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
-    assert result.exit_code == 0, f"Init failed: {result.output}"
-    return tmp_path
-
-
-@pytest.fixture
-def large_geoparquet(initialized_catalog: Path) -> Path:
-    """Create a GeoParquet file large enough to trigger partitioning."""
-    import geopandas as gpd
-    import numpy as np
-    from shapely.geometry import Point
-
-    collection_dir = initialized_catalog / "points"
-    collection_dir.mkdir()
-
-    # Create 100k points - exceeds minimum (512 partitions * 100 rows = 51,200 minimum)
-    n = 100_000
-    gdf = gpd.GeoDataFrame(
-        {"id": range(n), "val": np.random.rand(n)},
-        geometry=[
-            Point(np.random.uniform(-180, 180), np.random.uniform(-90, 90)) for _ in range(n)
-        ],
-        crs="EPSG:4326",
-    )
-    parquet_path = collection_dir / "data.parquet"
-    gdf.to_parquet(parquet_path)
-    return parquet_path
-
-
 def _set_partitioning_config(catalog_root: Path, threshold_gb: float = 0.00001) -> None:
     """Enable partitioning with low threshold via direct config file manipulation."""
     config_path = catalog_root / ".portolan" / "config.yaml"
@@ -69,41 +31,73 @@ partitioning.threshold_gb: {threshold_gb}
     config_path.write_text(config_content)
 
 
+@pytest.fixture(scope="module")
+def partitioned_catalog(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
+    """Initialize a catalog, write 100k points, and run one partitioning `add`.
+
+    The build partitions the data into 512+ Hive directories and costs tens of
+    seconds. Every test in this module reads the result and does not change it,
+    so the fixture is module-scoped and the build runs one time. The CI runner
+    uses `--dist loadscope`, which keeps the module on one xdist worker, so the
+    fixture does not rebuild across workers.
+
+    Returns (catalog_root, collection_dir).
+    """
+    import geopandas as gpd
+    import numpy as np
+
+    catalog_root = tmp_path_factory.mktemp("partition-catalog")
+    result = CliRunner().invoke(
+        cli, ["init", str(catalog_root), "--auto", "--license", "CC-BY-4.0"]
+    )
+    assert result.exit_code == 0, f"Init failed: {result.output}"
+
+    collection_dir = catalog_root / "points"
+    collection_dir.mkdir()
+
+    # 100k points exceeds the partitioning minimum
+    # (512 partitions * 100 rows = 51,200). Vectorized construction with
+    # points_from_xy: a Python loop of shapely Point objects took tens of
+    # seconds per build.
+    n = 100_000
+    rng = np.random.default_rng(42)
+    gdf = gpd.GeoDataFrame(
+        {"id": range(n), "val": rng.random(n)},
+        geometry=gpd.points_from_xy(rng.uniform(-180, 180, n), rng.uniform(-90, 90, n)),
+        crs="EPSG:4326",
+    )
+    gdf.to_parquet(collection_dir / "data.parquet")
+
+    _set_partitioning_config(catalog_root)
+
+    result = CliRunner().invoke(
+        cli,
+        ["add", "--force", "--portolan-dir", str(catalog_root), str(collection_dir)],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, f"Add failed: {result.output}"
+    assert "Added" in result.output
+    return catalog_root, collection_dir
+
+
 @pytest.mark.integration
 class TestPartitionPathConsistency:
     """Tests for partition path consistency between filesystem and versions.json."""
 
     def test_versions_json_paths_match_hive_structure(
-        self, runner: CliRunner, initialized_catalog: Path, large_geoparquet: Path
+        self, partitioned_catalog: tuple[Path, Path]
     ) -> None:
         """versions.json paths should match actual Hive-style directory structure."""
-        # Enable partitioning with very low threshold via direct config
-        _set_partitioning_config(initialized_catalog, threshold_gb=0.00001)
+        _catalog_root, collection_dir = partitioned_catalog
 
-        # Add the file (should trigger partitioning)
-        result = runner.invoke(
-            cli,
-            [
-                "add",
-                "--force",
-                "--portolan-dir",
-                str(initialized_catalog),
-                str(large_geoparquet.parent),
-            ],
-            catch_exceptions=False,
-        )
-        assert result.exit_code == 0, f"Add failed: {result.output}"
-        assert "Added" in result.output
-
-        # Check versions.json
-        versions_path = large_geoparquet.parent / "versions.json"
+        versions_path = collection_dir / "versions.json"
         assert versions_path.exists(), "versions.json not created"
 
         versions_data = json.loads(versions_path.read_text())
         assets = versions_data["versions"][0]["assets"]
 
         # Get actual partition directories
-        partition_dirs = list(large_geoparquet.parent.glob("kdtree_cell=*"))
+        partition_dirs = list(collection_dir.glob("kdtree_cell=*"))
         assert len(partition_dirs) > 0, "No partition directories created"
 
         # Verify each partition directory has a corresponding entry in versions.json
@@ -121,27 +115,13 @@ class TestPartitionPathConsistency:
             )
 
     def test_glob_pattern_matches_actual_files(
-        self, runner: CliRunner, initialized_catalog: Path, large_geoparquet: Path
+        self, partitioned_catalog: tuple[Path, Path]
     ) -> None:
         """Glob pattern in collection.json should match actual partition files."""
-        # Enable partitioning via direct config
-        _set_partitioning_config(initialized_catalog, threshold_gb=0.00001)
-
-        # Add the file
-        result = runner.invoke(
-            cli,
-            [
-                "add",
-                "--force",
-                "--portolan-dir",
-                str(initialized_catalog),
-                str(large_geoparquet.parent),
-            ],
-        )
-        assert result.exit_code == 0, f"Add failed: {result.output}"
+        _catalog_root, collection_dir = partitioned_catalog
 
         # Check collection.json for glob asset
-        collection_path = large_geoparquet.parent / "collection.json"
+        collection_path = collection_dir / "collection.json"
         collection_data = json.loads(collection_path.read_text())
 
         # Find glob asset
@@ -160,78 +140,47 @@ class TestPartitionPathConsistency:
         assert href.endswith("/*.parquet"), f"Glob should match parquet files: {href}"
 
         # Verify glob actually matches files
-
-        collection_dir = large_geoparquet.parent
-        # Convert glob pattern to pathlib pattern
         pattern = href.lstrip("./")  # "kdtree_cell=*/*.parquet"
         matched_files = list(collection_dir.glob(pattern))
 
         assert len(matched_files) > 0, f"Glob pattern {pattern} matched no files"
 
-    def test_glob_excludes_non_parquet_files(
-        self, runner: CliRunner, initialized_catalog: Path, large_geoparquet: Path
-    ) -> None:
+    def test_glob_excludes_non_parquet_files(self, partitioned_catalog: tuple[Path, Path]) -> None:
         """Glob pattern should NOT match non-parquet files in partition directories."""
-        # Enable partitioning via direct config
-        _set_partitioning_config(initialized_catalog, threshold_gb=0.00001)
-
-        # Add the file
-        result = runner.invoke(
-            cli,
-            [
-                "add",
-                "--force",
-                "--portolan-dir",
-                str(initialized_catalog),
-                str(large_geoparquet.parent),
-            ],
-        )
-        assert result.exit_code == 0
+        _catalog_root, collection_dir = partitioned_catalog
 
         # Add a non-parquet file to a partition directory
-        partition_dirs = list(large_geoparquet.parent.glob("kdtree_cell=*"))
+        partition_dirs = list(collection_dir.glob("kdtree_cell=*"))
         assert len(partition_dirs) > 0
         decoy_file = partition_dirs[0] / "metadata.json"
         decoy_file.write_text('{"decoy": true}')
 
-        # Get glob pattern and verify it doesn't match the decoy
-        collection_dir = large_geoparquet.parent
-        pattern = "kdtree_cell=*/*.parquet"
-        matched_files = list(collection_dir.glob(pattern))
+        try:
+            # Get glob pattern and verify it doesn't match the decoy
+            pattern = "kdtree_cell=*/*.parquet"
+            matched_files = list(collection_dir.glob(pattern))
 
-        # Verify decoy is NOT in matches
-        matched_names = [f.name for f in matched_files]
-        assert "metadata.json" not in matched_names, "Glob incorrectly matched non-parquet file"
+            # Verify decoy is NOT in matches
+            matched_names = [f.name for f in matched_files]
+            assert "metadata.json" not in matched_names, "Glob incorrectly matched non-parquet file"
 
-        # All matches should be .parquet
-        for f in matched_files:
-            assert f.suffix == ".parquet", f"Non-parquet file matched: {f}"
+            # All matches should be .parquet
+            for f in matched_files:
+                assert f.suffix == ".parquet", f"Non-parquet file matched: {f}"
+        finally:
+            # The catalog fixture is module-scoped and shared. Remove the decoy
+            # so later tests see the exact `add` output.
+            decoy_file.unlink()
 
-    def test_duckdb_can_read_via_glob(
-        self, runner: CliRunner, initialized_catalog: Path, large_geoparquet: Path
-    ) -> None:
+    def test_duckdb_can_read_via_glob(self, partitioned_catalog: tuple[Path, Path]) -> None:
         """DuckDB should be able to read partitioned data via glob pattern."""
         pytest.importorskip("duckdb")
         import duckdb
 
-        # Enable partitioning via direct config
-        _set_partitioning_config(initialized_catalog, threshold_gb=0.00001)
-
-        # Add the file
-        result = runner.invoke(
-            cli,
-            [
-                "add",
-                "--force",
-                "--portolan-dir",
-                str(initialized_catalog),
-                str(large_geoparquet.parent),
-            ],
-        )
-        assert result.exit_code == 0, f"Add failed: {result.output}"
+        _catalog_root, collection_dir = partitioned_catalog
 
         # Read collection.json to get glob pattern
-        collection_path = large_geoparquet.parent / "collection.json"
+        collection_path = collection_dir / "collection.json"
         collection_data = json.loads(collection_path.read_text())
 
         # Find glob asset
@@ -244,7 +193,6 @@ class TestPartitionPathConsistency:
         assert glob_href is not None, "No glob asset found"
 
         # Convert to absolute path for DuckDB
-        collection_dir = large_geoparquet.parent
         glob_path = str(collection_dir / glob_href.lstrip("./"))
 
         # Query via DuckDB
@@ -261,29 +209,15 @@ class TestPushGlobTransformation:
     """Tests for partition:glob field transformation during push."""
 
     def test_push_dryrun_shows_correct_glob_url(
-        self, runner: CliRunner, initialized_catalog: Path, large_geoparquet: Path
+        self, partitioned_catalog: tuple[Path, Path]
     ) -> None:
         """Push dry-run should show correct glob URL transformation."""
-        # Enable partitioning via direct config
-        _set_partitioning_config(initialized_catalog, threshold_gb=0.00001)
-
-        # Add the file
-        result = runner.invoke(
-            cli,
-            [
-                "add",
-                "--force",
-                "--portolan-dir",
-                str(initialized_catalog),
-                str(large_geoparquet.parent),
-            ],
-        )
-        assert result.exit_code == 0
+        _catalog_root, collection_dir = partitioned_catalog
 
         # Verify transformation function works correctly
         from portolan_cli.sync.push import _transform_collection_glob_assets
 
-        collection_path = large_geoparquet.parent / "collection.json"
+        collection_path = collection_dir / "collection.json"
         content = collection_path.read_bytes()
 
         transformed = _transform_collection_glob_assets(content, "s3://bucket/catalog", "points")

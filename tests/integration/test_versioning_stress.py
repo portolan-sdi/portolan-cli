@@ -18,7 +18,7 @@ import json
 import os
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -152,62 +152,60 @@ def s3_bucket(moto_server: str) -> Generator[tuple[str, str], None, None]:
 # =============================================================================
 
 
+@pytest.fixture(scope="module")
+def single_file_add_versions(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> dict[str, Any]:
+    """Run one `add` of one file and return the parsed versions.json.
+
+    The `add` conversion dominates this module's runtime. The four tests in
+    TestAddPopulatesVersions assert different keys of the same result and do
+    not change it, so one CLI invocation serves all of them. The CI runner
+    uses `--dist loadscope`, which keeps the module on one xdist worker.
+    """
+    catalog_root = tmp_path_factory.mktemp("single-add-catalog")
+    result = CliRunner().invoke(
+        cli, ["init", str(catalog_root), "--auto", "--license", "CC-BY-4.0"]
+    )
+    assert result.exit_code == 0, f"Init failed: {result.output}"
+
+    collection_dir = catalog_root / "test-collection"
+    collection_dir.mkdir()
+    single_file = collection_dir / "file_0.geojson"
+    single_file.write_text(create_geojson(coords=(0.0, 0.0), props={"id": 0}))
+
+    result = CliRunner().invoke(cli, ["add", "--portolan-dir", str(catalog_root), str(single_file)])
+    assert result.exit_code == 0, f"Add failed: {result.output}"
+
+    versions_path = collection_dir / "versions.json"
+    assert versions_path.exists(), f"versions.json not created at {versions_path}"
+    data: dict[str, Any] = json.loads(versions_path.read_text())
+    return data
+
+
 class TestAddPopulatesVersions:
     """Verify `portolan add` creates properly-structured collection-level versions.json."""
 
     @pytest.mark.integration
     def test_add_single_file_creates_versions_json(
-        self, catalog_with_source_files: tuple[Path, Path], runner: CliRunner
+        self, single_file_add_versions: dict[str, Any]
     ) -> None:
         """versions.json exists after add (add.py:1174)."""
-        catalog_root, collection_dir = catalog_with_source_files
-        single_file = collection_dir / "file_0.geojson"
-
-        result = runner.invoke(
-            cli,
-            ["add", "--portolan-dir", str(catalog_root), str(single_file)],
-        )
-        assert result.exit_code == 0, f"Add failed: {result.output}"
-
-        versions_path = collection_dir / "versions.json"
-        assert versions_path.exists(), f"versions.json not created at {versions_path}"
+        # The shared fixture asserts existence; a parsed document proves it.
+        assert single_file_add_versions is not None
 
     @pytest.mark.integration
-    def test_add_populates_versions_array(
-        self, catalog_with_source_files: tuple[Path, Path], runner: CliRunner
-    ) -> None:
+    def test_add_populates_versions_array(self, single_file_add_versions: dict[str, Any]) -> None:
         """versions array is non-empty after add (add.py:1216)."""
-        catalog_root, collection_dir = catalog_with_source_files
-        single_file = collection_dir / "file_0.geojson"
-
-        result = runner.invoke(
-            cli,
-            ["add", "--portolan-dir", str(catalog_root), str(single_file)],
-        )
-        assert result.exit_code == 0, f"Add failed: {result.output}"
-
-        versions_path = collection_dir / "versions.json"
-        versions_data = json.loads(versions_path.read_text())
+        versions_data = single_file_add_versions
 
         assert "versions" in versions_data, "Missing 'versions' key"
         assert len(versions_data["versions"]) > 0, "versions array is empty"
 
     @pytest.mark.integration
-    def test_add_sets_current_version(
-        self, catalog_with_source_files: tuple[Path, Path], runner: CliRunner
-    ) -> None:
+    def test_add_sets_current_version(self, single_file_add_versions: dict[str, Any]) -> None:
         """current_version field is set (add.py:1187-1192)."""
-        catalog_root, collection_dir = catalog_with_source_files
-        single_file = collection_dir / "file_0.geojson"
-
-        result = runner.invoke(
-            cli,
-            ["add", "--portolan-dir", str(catalog_root), str(single_file)],
-        )
-        assert result.exit_code == 0, f"Add failed: {result.output}"
-
-        versions_path = collection_dir / "versions.json"
-        versions_data = json.loads(versions_path.read_text())
+        versions_data = single_file_add_versions
 
         assert versions_data.get("current_version") is not None, "current_version not set"
         assert versions_data["current_version"] == versions_data["versions"][-1]["version"], (
@@ -215,21 +213,9 @@ class TestAddPopulatesVersions:
         )
 
     @pytest.mark.integration
-    def test_add_includes_asset_metadata(
-        self, catalog_with_source_files: tuple[Path, Path], runner: CliRunner
-    ) -> None:
+    def test_add_includes_asset_metadata(self, single_file_add_versions: dict[str, Any]) -> None:
         """Assets have sha256, size_bytes, href (add.py:1208-1213)."""
-        catalog_root, collection_dir = catalog_with_source_files
-        single_file = collection_dir / "file_0.geojson"
-
-        result = runner.invoke(
-            cli,
-            ["add", "--portolan-dir", str(catalog_root), str(single_file)],
-        )
-        assert result.exit_code == 0, f"Add failed: {result.output}"
-
-        versions_path = collection_dir / "versions.json"
-        versions_data = json.loads(versions_path.read_text())
+        versions_data = single_file_add_versions
 
         latest_version = versions_data["versions"][-1]
         assert "assets" in latest_version, "Missing 'assets' in version"
@@ -246,10 +232,16 @@ class TestAddPopulatesVersions:
             )
 
     @pytest.mark.integration
+    @pytest.mark.slow
     def test_add_100_files_accumulates(
         self, catalog_with_many_files: tuple[Path, Path], runner: CliRunner
     ) -> None:
-        """Scale test: many files in one add (Issue #339 scenario)."""
+        """Scale test: many files in one add (Issue #339 scenario).
+
+        Marked slow: 100 conversions cost the most worker time in the PR test
+        job. The nightly slow tier runs it. The 10-file test below keeps the
+        accumulation path covered on every PR.
+        """
         catalog_root, collection_dir = catalog_with_many_files
 
         result = runner.invoke(
@@ -265,6 +257,29 @@ class TestAddPopulatesVersions:
         latest_version = versions_data["versions"][-1]
         asset_count = len(latest_version["assets"])
         assert asset_count >= 100, f"Only {asset_count} assets tracked, expected >= 100"
+
+    @pytest.mark.integration
+    def test_add_10_files_accumulates(self, initialized_catalog: Path, runner: CliRunner) -> None:
+        """PR-lane smoke test for multi-file accumulation (Issue #339 scenario)."""
+        collection_dir = initialized_catalog / "scale-smoke"
+        collection_dir.mkdir()
+        for i in range(10):
+            (collection_dir / f"file_{i:02d}.geojson").write_text(
+                create_geojson(coords=(float(i), float(i)), props={"id": i})
+            )
+
+        result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(initialized_catalog), str(collection_dir)],
+        )
+        assert result.exit_code == 0, f"Add failed: {result.output}"
+
+        versions_path = collection_dir / "versions.json"
+        versions_data = json.loads(versions_path.read_text())
+
+        latest_version = versions_data["versions"][-1]
+        asset_count = len(latest_version["assets"])
+        assert asset_count >= 10, f"Only {asset_count} assets tracked, expected >= 10"
 
 
 # =============================================================================
