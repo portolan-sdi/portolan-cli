@@ -49,13 +49,12 @@ the file carried is restored afterwards, `pandas` and publisher keys included.
 `add` compares the rewritten file against the source before it swaps them in.
 It checks the row count, the column set, and the declared CRS. It keeps your
 file and prints the reason when any of those would be lost. The file then
-stays non-conformant, and `check` reports it. A projected GeoParquet hits this
-today, because geoparquet-io writes no CRS:
+stays non-conformant, and `check` reports it. A projected GeoParquet keeps its
+CRS through the rewrite:
 
 ```console
 $ portolan add roads/data.parquet
 → Rewriting data.parquet (11.1KB): it carries no bbox covering column
-⚠ Kept data.parquet as it is: it would lose the CRS it declared, because geoparquet-io writes none
 ✓ Added 1 file to 1 collection
 ```
 

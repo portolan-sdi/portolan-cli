@@ -22,6 +22,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from click.testing import CliRunner
+from pyproj import CRS
 
 from portolan_cli.cli import cli
 
@@ -403,23 +404,19 @@ class TestPartialOptOutKeepsTheCopy:
 class TestTheRewriteNeverLosesData:
     """The rewrite replaces the operator's file, so it proves it lost nothing.
 
-    geoparquet-io writes no `crs` key. The GeoParquet specification reads an
-    absent `crs` as OGC:CRS84, so a projected file comes back labelled as
-    longitude and latitude. See
-    `context/shared/known-issues/geoparquet-io-write-drops-crs.md`, and issue
-    #810 for the pin bump that removes the bug.
+    ``preparation._assert_rewrite_kept_everything`` compares the row count, the
+    columns and the CRS before and after, and refuses the swap on any loss. The
+    gate guards a destructive operation against any cause. It is not tied to one
+    dependency bug.
+
+    geoparquet-io 1.4.0 fixed the Table API dropping the source CRS on write
+    (gpio#625). A projected file now keeps its CRS through the rewrite, so the
+    gate lets that swap through. See
+    ``context/shared/known-issues/geoparquet-io-write-drops-crs.md``.
     """
 
-    def test_a_projected_file_keeps_its_crs(self, tmp_path: Path) -> None:
-        """`add` keeps the file rather than relabel EPSG:3857 as WGS84.
-
-        This test asserts on an upstream bug, so it fails when the bug goes
-        away. Issue #810 bumps the geoparquet-io pin to a version that writes
-        the CRS. After that bump the guard stops firing, `add` rewrites the
-        file, and the byte comparison below fails. That failure is the pin
-        bump working. Replace the assertions with a check that the rewritten
-        file still declares EPSG:3857.
-        """
+    def test_a_projected_file_keeps_its_crs_through_the_rewrite(self, tmp_path: Path) -> None:
+        """`add` rewrites an EPSG:3857 file and leaves it in EPSG:3857."""
         import geopandas as gpd
         from shapely.geometry import Point
 
@@ -437,10 +434,37 @@ class TestTheRewriteNeverLosesData:
 
         output = _add(root, target)
 
-        assert target.read_bytes() == before
-        assert "Kept roads.parquet as it is" in output
-        assert "CRS" in output
+        # The rewrite ran and the gate let it through.
+        assert target.read_bytes() != before
+        assert "Kept roads.parquet as it is" not in output
+
+        # The file gained what the rewrite exists to add.
+        assert _covering(target) is not None
+        assert "bbox" in pq.ParquetFile(target).schema_arrow.names
+
+        # It kept what the gate protects.
         assert gpd.read_parquet(target).crs.to_epsg() == 3857
+        assert len(gpd.read_parquet(target)) == 2
+        assert "n" in pq.ParquetFile(target).schema_arrow.names
+
+    def test_the_scratch_file_is_gone_after_a_successful_rewrite(self, tmp_path: Path) -> None:
+        """An accepted swap leaves no hidden temporary behind."""
+        import geopandas as gpd
+        from shapely.geometry import Point
+
+        root = tmp_path / "catalog"
+        collection = root / "roads"
+        collection.mkdir(parents=True)
+        target = collection / "roads.parquet"
+        gpd.GeoDataFrame(
+            {"n": [1]}, geometry=[Point(-8238310, 4970072)], crs="EPSG:3857"
+        ).to_parquet(target)
+        _init(root)
+
+        _add(root, target)
+
+        assert list(collection.glob("*portolan-rewrite*")) == []
+        assert list(collection.glob("*.meta")) == []
 
     def test_a_file_geoparquet_io_cannot_read_is_kept(self, tmp_path: Path) -> None:
         """A malformed geometry must not turn `add` into a failure."""
@@ -476,21 +500,36 @@ class TestTheRewriteNeverLosesData:
         assert "Kept roads.parquet as it is" in output
 
     def test_the_scratch_file_is_gone_after_a_refused_rewrite(self, tmp_path: Path) -> None:
-        """A refused swap still cleans up after itself."""
-        import geopandas as gpd
-        from shapely.geometry import Point
+        """A refused swap still cleans up after itself.
 
+        The truncated WKB makes geoparquet-io raise, which is the refusal path
+        that survives the geoparquet-io 1.4.0 CRS fix.
+        """
         root = tmp_path / "catalog"
         collection = root / "roads"
         collection.mkdir(parents=True)
         target = collection / "roads.parquet"
-        gpd.GeoDataFrame(
-            {"n": [1]}, geometry=[Point(-8238310, 4970072)], crs="EPSG:3857"
-        ).to_parquet(target)
+        table = pa.table(
+            {
+                "geometry": pa.array([bytes.fromhex("0101000000000000000000")], type=pa.binary()),
+                "id": pa.array([1], type=pa.int64()),
+            }
+        )
+        geo = {
+            "version": "1.0.0",
+            "primary_column": "geometry",
+            "columns": {
+                "geometry": {"encoding": "WKB", "geometry_types": ["Point"], "bbox": [0, 0, 1, 1]}
+            },
+        }
+        pq.write_table(
+            table.cast(table.schema.with_metadata({b"geo": json.dumps(geo).encode()})), target
+        )
         _init(root)
 
-        _add(root, target)
+        output = _add(root, target)
 
+        assert "Kept roads.parquet as it is" in output
         assert list(collection.glob("*portolan-rewrite*")) == []
         assert list(collection.glob("*.meta")) == []
 
@@ -606,3 +645,65 @@ class TestTheGuardsCoverEveryRewritePath:
             output_module.warn = original  # type: ignore[assignment]
 
         assert len(shown) == 1, shown
+
+
+class TestAProjjsonCrsSurvivesAdd:
+    """A CRS with no authority code reaches `add` as PROJJSON (issue #810).
+
+    geoparquet-io 1.4.0 keeps the source CRS on write. An ESRI ``.prj`` such as
+    POSGAR 1994 carries no authority code, so pyproj renders it as a PROJJSON
+    dict rather than an ``EPSG:NNNN`` string. Portolan used to raise
+    ``PROJJSON CRS not supported`` on that value. pyproj reads PROJJSON, so the
+    CRS layer now takes the dict.
+    """
+
+    SHAPEFILE = FIXTURES / "scan" / "complete_shapefile"
+
+    def test_a_posgar_shapefile_publishes_a_lon_lat_extent(self, tmp_path: Path) -> None:
+        """`add` converts POSGAR meters and declares a WGS84 extent.
+
+        The data keeps its POSGAR coordinates. Only the STAC extent is WGS84,
+        which is what the specification requires.
+        """
+        root = tmp_path / "catalog"
+        collection = root / "boundaries"
+        collection.mkdir(parents=True)
+        for part in self.SHAPEFILE.iterdir():
+            shutil.copy(part, collection / part.name)
+        _init(root)
+
+        _add(root, collection / "radios_sample.shp")
+
+        written = collection / "radios_sample.parquet"
+        assert written.exists()
+
+        # The CRS reached the file as PROJJSON with no authority code. That is
+        # the value the old code refused.
+        geo = json.loads(pq.ParquetFile(written).schema_arrow.metadata[b"geo"])
+        crs = geo["columns"][geo["primary_column"]].get("crs")
+        assert isinstance(crs, dict), f"expected a PROJJSON dict, got {type(crs).__name__}"
+        assert "id" not in crs, "fixture must carry no authority code"
+        assert "POSGAR" in crs.get("name", "")
+
+        # The declared extent is lon/lat, not POSGAR meters.
+        extent = json.loads((collection / "collection.json").read_text())["extent"]
+        minx, miny, maxx, maxy = extent["spatial"]["bbox"][0][:4]
+        assert -180 <= minx <= 180 and -180 <= maxx <= 180, f"longitude out of range: {extent}"
+        assert -90 <= miny <= 90 and -90 <= maxy <= 90, f"latitude out of range: {extent}"
+
+    def test_the_projjson_crs_reaches_the_crs_layer_intact(self, tmp_path: Path) -> None:
+        """The dict CRS transforms rather than raising."""
+        from portolan_cli.crs import describe_crs, transform_bbox_to_wgs84
+
+        prj = (self.SHAPEFILE / "radios_sample.prj").read_text()
+        projjson = json.loads(CRS.from_user_input(prj).to_json())
+        assert "id" not in projjson, "fixture must have no authority code"
+
+        # A POSGAR easting/northing pair, in meters.
+        west, south, east, north = transform_bbox_to_wgs84(
+            (3400000.0, 6000000.0, 3410000.0, 6010000.0), projjson
+        )
+
+        assert -180 <= west <= 180 and -180 <= east <= 180
+        assert -90 <= south <= 90 and -90 <= north <= 90
+        assert "PROJJSON" not in describe_crs(projjson)

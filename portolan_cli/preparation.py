@@ -605,19 +605,20 @@ def _extract_bbox_wgs84(metadata: AllMetadata, data_path: Path | None = None) ->
         # PMTiles store bounds in WGS84 (4326), no transformation needed
         return list(metadata.bbox)  # type: ignore[arg-type]
 
-    # Other formats may need CRS transformation
+    # Other formats may need CRS transformation. The CRS is an EPSG/WKT string
+    # or a PROJJSON dict: GeoParquet stores a CRS with no authority code as
+    # PROJJSON, which is what an ESRI .prj such as POSGAR 1994 produces. pyproj
+    # reads both, so pass the value through rather than reject it (Issue #810).
     crs_raw = getattr(metadata, "crs", None)
-    if isinstance(crs_raw, dict):
-        raise ValueError("PROJJSON CRS not supported. Convert to EPSG code or WKT string.")
-    crs_str = crs_raw if isinstance(crs_raw, str) else None
+    source_crs = crs_raw if isinstance(crs_raw, (str, dict)) else None
 
     geometry_column = getattr(metadata, "geometry_column", None)
     if data_path is not None and geometry_column:
-        measured = measure_wgs84_bbox(data_path, geometry_column, crs_str)
+        measured = measure_wgs84_bbox(data_path, geometry_column, source_crs)
         if measured is not None:
             return list(measured)
 
-    return list(transform_bbox_to_wgs84(metadata.bbox, crs_str))  # type: ignore[arg-type]
+    return list(transform_bbox_to_wgs84(metadata.bbox, source_crs))  # type: ignore[arg-type]
 
 
 def _warn_if_source_newer(source_path: Path, output_path: Path) -> None:
@@ -1450,14 +1451,18 @@ def _assert_rewrite_kept_everything(
     """Refuse a rewrite that would replace good data with worse data.
 
     The rewrite overwrites the operator's own file, so it has to prove it lost
-    nothing before the swap. geoparquet-io drops the CRS on every write, so a
-    projected GeoParquet handed to ``add`` comes back declaring no CRS. The
-    next ``add`` then reports a CRS mismatch, and a file whose coordinates fall
-    inside the lon/lat range would be mislabeled as WGS84 instead.
+    nothing before the swap. A GeoParquet that comes back declaring no CRS
+    reads as OGC:CRS84 per the specification, so projected coordinates would be
+    mislabeled as longitude and latitude.
 
-    This is a gate on a destructive operation, not a repair. Portolan does not
-    put the CRS back. It keeps the operator's file and says why, and ``check``
-    still reports the missing covering column.
+    geoparquet-io 1.4.0 fixed the write that dropped the CRS (gpio#625), so
+    this gate is silent on the normal path. Keep it. It guards a destructive
+    operation against any cause, and it is not a workaround for one dependency
+    bug.
+
+    This is a gate, not a repair. Portolan does not put the CRS back. It keeps
+    the operator's file and says why, and ``check`` still reports the missing
+    covering column.
 
     Args:
         source: The file the rewrite would replace.
@@ -1483,9 +1488,7 @@ def _assert_rewrite_kept_everything(
         raise RewriteFidelityError(source.name, f"the columns {sorted(dropped)}")
 
     if before.crs is not None and after.crs is None:
-        raise RewriteFidelityError(
-            source.name, "the CRS it declared, because geoparquet-io writes none"
-        )
+        raise RewriteFidelityError(source.name, "the CRS it declared")
 
     # A written CRS that differs from the source is corruption, not a drop, and
     # relabels every coordinate in the file. Compare the meaning rather than the

@@ -92,16 +92,22 @@ add read a truncated file.
 **The swap is gated.** `_assert_rewrite_kept_everything` compares the source and
 the rewritten file on row count, column set, and declared CRS, and raises
 `RewriteFidelityError` when any is lost. `_rewrite_or_keep` catches that and any
-other rewrite failure, keeps the operator's file, and warns. This is not
-optional politeness: geoparquet-io writes **no `crs` key at all**, and the
-GeoParquet spec reads an absent `crs` as OGC:CRS84, so an ungated rewrite
-relabels projected data as lon/lat. Do **not** "fix" this by writing the CRS
-back into gpio's output — that is the patch-around-upstream this repo refuses.
-The real fix is upstream and already landed (geoparquet-io#625, `ff02db8`); our
-pin is 82 commits behind it, and bumping is its own change because those commits
-also start rejecting PROJJSON CRS on Shapefiles. See
-`context/shared/known-issues/geoparquet-io-write-drops-crs.md`. Keep the gate
-after the pin moves; it guards the destructive operation, not that one bug.
+other rewrite failure, keeps the operator's file, and warns.
+
+**Keep the gate.** It guards a destructive in-place operation against any cause,
+and it is not a workaround for one dependency bug. geoparquet-io used to write
+**no `crs` key at all**, and the GeoParquet spec reads an absent `crs` as
+OGC:CRS84, so an ungated rewrite relabelled projected data as lon/lat. That is
+fixed in geoparquet-io 1.4.0 (geoparquet-io#625, `ff02db8`), so the gate is now
+silent on the normal path. Do **not** "fix" a future writer bug by writing the
+CRS back into gpio's output — that is the patch-around-upstream this repo
+refuses. See `context/shared/known-issues/geoparquet-io-write-drops-crs.md`.
+
+The fix means gpio now hands Portolan the source CRS, including a PROJJSON dict
+when the CRS carries no authority code (an ESRI `.prj` such as POSGAR 1994).
+`portolan_cli/crs.py` takes `str | dict | None` everywhere, and `describe_crs`
+labels a dict for a message. Do not convert PROJJSON to EPSG in Portolan: a CRS
+without an authority has no EPSG code to find.
 
 ## Skip conversion for ALL cloud-native formats, not just .parquet
 

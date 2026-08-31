@@ -837,31 +837,45 @@ def _write_partitioned(table: Any, output_dir: Path, settings: VectorSettings) -
     resolution = _resolve_resolution(settings.spatial_index, settings.resolution)
     index_type = settings.spatial_index
 
+    # geoparquet-io 1.4.0 changed the Python API default for `hive` from True to
+    # False (gpio#661). Portolan needs the Hive layout: each partition directory
+    # becomes a STAC Item, and `partitioning.build_glob_pattern` matches
+    # `<scheme>_cell=*`. Pass both flags at every call so a later default change
+    # cannot alter the layout again. `keep_*_column` keeps partition pruning
+    # available to a reader, which `partitioning.partition_file` already does.
     if index_type == "h3":
         if resolution is None:
-            table.partition_by_h3(str(output_dir))
+            table.partition_by_h3(str(output_dir), hive=True, keep_h3_column=True)
         else:
-            table.partition_by_h3(str(output_dir), resolution=resolution)
+            table.partition_by_h3(
+                str(output_dir), resolution=resolution, hive=True, keep_h3_column=True
+            )
     elif index_type == "s2":
         if resolution is None:
-            table.partition_by_s2(str(output_dir))
+            table.partition_by_s2(str(output_dir), hive=True, keep_s2_column=True)
         else:
-            table.partition_by_s2(str(output_dir), level=resolution)
+            table.partition_by_s2(str(output_dir), level=resolution, hive=True, keep_s2_column=True)
     elif index_type == "quadkey":
         if resolution is None:
-            table.partition_by_quadkey(str(output_dir))
+            table.partition_by_quadkey(str(output_dir), hive=True, keep_quadkey_column=True)
         else:
-            table.partition_by_quadkey(str(output_dir), resolution=resolution)
+            table.partition_by_quadkey(
+                str(output_dir), resolution=resolution, hive=True, keep_quadkey_column=True
+            )
     elif index_type == "a5":
         if resolution is None:
-            table.partition_by_a5(str(output_dir))
+            table.partition_by_a5(str(output_dir), hive=True, keep_a5_column=True)
         else:
-            table.partition_by_a5(str(output_dir), resolution=resolution)
+            table.partition_by_a5(
+                str(output_dir), resolution=resolution, hive=True, keep_a5_column=True
+            )
     elif index_type == "kdtree":
         if resolution is None:
-            table.partition_by_kdtree(str(output_dir))
+            table.partition_by_kdtree(str(output_dir), hive=True, keep_kdtree_column=True)
         else:
-            table.partition_by_kdtree(str(output_dir), iterations=resolution)
+            table.partition_by_kdtree(
+                str(output_dir), iterations=resolution, hive=True, keep_kdtree_column=True
+            )
 
 
 def _convert_raster(source: Path, output_dir: Path, settings: CogSettings | None = None) -> Path:

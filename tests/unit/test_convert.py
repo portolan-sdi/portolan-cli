@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1888,7 +1889,39 @@ class TestVectorSettingsIntegration:
     def test_convert_file_passes_vector_settings(
         self, sample_geojson: Path, tmp_path: Path
     ) -> None:
-        """convert_file correctly passes VectorSettings to _convert_vector."""
+        """convert_file correctly passes VectorSettings to _convert_vector.
+
+        This uses h3 rather than s2. geoparquet-io 1.4.0 withdrew s2 because the
+        DuckDB ``geography`` community extension is not published for
+        ``duckdb>=1.5.2``. See
+        ``context/shared/known-issues/geoparquet-io-s2-unavailable.md``.
+        """
+        import pyarrow.parquet as pq
+
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        settings = VectorSettings(spatial_index="h3", resolution=8)
+        result = convert_file(sample_geojson, output_dir=tmp_path, vector_settings=settings)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+
+        table = pq.read_table(result.output)
+        assert "h3_cell" in table.schema.names
+
+    @pytest.mark.unit
+    @pytest.mark.xfail(
+        strict=False,
+        reason=(
+            "geoparquet-io 1.4.0 withdrew s2: the DuckDB 'geography' community "
+            "extension is not published for duckdb>=1.5.2 (geoparquet-io#778). "
+            "This test passes again once the extension returns, with no Portolan "
+            "change. See context/shared/known-issues/geoparquet-io-s2-unavailable.md"
+        ),
+    )
+    def test_convert_file_builds_an_s2_index(self, sample_geojson: Path, tmp_path: Path) -> None:
+        """Portolan still offers s2 and still writes an ``s2_cell`` column."""
         import pyarrow.parquet as pq
 
         from portolan_cli.conversion_config import VectorSettings
@@ -2207,3 +2240,75 @@ class TestApplyVectorSettingsSkipsGeometrylessTables:
         apply_vector_settings(_OldTable(), VectorSettings())
 
         assert calls == ["add_bbox", "sort_hilbert"]
+
+
+class TestPartitionedOutputStaysHive:
+    """`_write_partitioned` asks for the Hive layout at every call site.
+
+    geoparquet-io 1.4.0 flipped the Python API default for ``hive`` from True to
+    False (geoparquet-io#661). Portolan needs the directories: each one becomes
+    a STAC Item, and ``partitioning.build_glob_pattern`` matches
+    ``<scheme>_cell=*``. These tests read the keyword arguments rather than the
+    written files, so they hold whatever geoparquet-io defaults to next.
+    """
+
+    @staticmethod
+    def _spy(scheme: str) -> tuple[Any, dict[str, Any]]:
+        """Return a fake Table that records the partition call."""
+        seen: dict[str, Any] = {}
+
+        class _Spy:
+            def __getattr__(self, name: str) -> Any:
+                if not name.startswith("partition_by_"):
+                    raise AttributeError(name)
+
+                def _record(*args: Any, **kwargs: Any) -> None:
+                    seen["method"] = name
+                    seen["args"] = args
+                    seen.update(kwargs)
+
+                return _record
+
+        return _Spy(), seen
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("scheme", "keep_kwarg"),
+        [
+            ("h3", "keep_h3_column"),
+            ("s2", "keep_s2_column"),
+            ("quadkey", "keep_quadkey_column"),
+            ("a5", "keep_a5_column"),
+            ("kdtree", "keep_kdtree_column"),
+        ],
+    )
+    def test_every_scheme_asks_for_hive_directories(
+        self, scheme: str, keep_kwarg: str, tmp_path: Path
+    ) -> None:
+        """Each partition call passes `hive=True` and keeps the index column."""
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import _write_partitioned
+
+        table, seen = self._spy(scheme)
+        settings = VectorSettings(spatial_index=scheme, resolution="auto", partition=True)
+
+        _write_partitioned(table, tmp_path / "out", settings)
+
+        assert seen["method"] == f"partition_by_{scheme}"
+        assert seen["hive"] is True, f"{scheme} must request the Hive layout"
+        assert seen[keep_kwarg] is True, f"{scheme} must keep its index column"
+
+    @pytest.mark.unit
+    def test_an_explicit_resolution_still_asks_for_hive(self, tmp_path: Path) -> None:
+        """The explicit-resolution branch carries the same flags."""
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import _write_partitioned
+
+        table, seen = self._spy("h3")
+        settings = VectorSettings(spatial_index="h3", resolution=6, partition=True)
+
+        _write_partitioned(table, tmp_path / "out", settings)
+
+        assert seen["resolution"] == 6
+        assert seen["hive"] is True
+        assert seen["keep_h3_column"] is True

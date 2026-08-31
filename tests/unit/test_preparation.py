@@ -297,11 +297,25 @@ class TestScanItemAssetsSymlinks:
 class TestExtractBboxWgs84:
     """_extract_bbox_wgs84 CRS handling."""
 
-    def test_projjson_dict_crs_rejected(self) -> None:
+    def test_projjson_dict_crs_is_passed_through(self) -> None:
+        """A PROJJSON dict reaches the CRS layer rather than raising.
+
+        geoparquet-io 1.4.0 keeps the source CRS on write, so a CRS with no
+        authority code now arrives as a PROJJSON dict. pyproj reads PROJJSON
+        directly (Issue #810).
+        """
+        projjson = {"type": "ProjectedCRS", "name": "POSGAR 94 / Argentina 5"}
         meta = MagicMock()
-        meta.crs = {"type": "GeographicCRS"}  # PROJJSON dict
-        with pytest.raises(ValueError, match="PROJJSON"):
-            _extract_bbox_wgs84(meta)
+        meta.crs = projjson
+        meta.bbox = (5677585.0, 6132182.0, 5686964.0, 6140159.0)
+        meta.geometry_column = None
+        with patch(
+            "portolan_cli.preparation.transform_bbox_to_wgs84",
+            return_value=(-58.06, -34.94, -57.95, -34.87),
+        ) as transform:
+            result = _extract_bbox_wgs84(meta)
+        assert result == [-58.06, -34.94, -57.95, -34.87]
+        transform.assert_called_once_with(meta.bbox, projjson)
 
     def test_string_crs_transformed(self) -> None:
         meta = MagicMock()

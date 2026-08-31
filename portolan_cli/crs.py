@@ -53,9 +53,32 @@ WGS84 = CRS.from_epsg(4326)
 EDGE_SAMPLE_POINTS = 10
 
 
+def describe_crs(crs: str | dict[str, Any] | None) -> str:
+    """Return a short label for a CRS, for use in a message.
+
+    ``crs`` may be a PROJJSON dict. A dict holds the whole coordinate system
+    definition, so printing it whole makes an error unreadable. Name the CRS
+    instead, and fall back to a fixed label when it carries no name.
+
+    Args:
+        crs: CRS as an EPSG/WKT string, a PROJJSON dict, or None.
+
+    Returns:
+        A one-line label.
+    """
+    if crs is None:
+        return "no CRS"
+    if isinstance(crs, dict):
+        name = crs.get("name")
+        if isinstance(name, str) and name:
+            return name
+        return "a PROJJSON CRS"
+    return str(crs)
+
+
 def transform_bbox_to_wgs84(
     bbox: tuple[float, float, float, float],
-    source_crs: str | None,
+    source_crs: str | dict[str, Any] | None,
     *,
     allow_guess: bool = False,
 ) -> tuple[float, float, float, float]:
@@ -70,7 +93,9 @@ def transform_bbox_to_wgs84(
 
     Args:
         bbox: Bounding box as (minx, miny, maxx, maxy) in source CRS.
-        source_crs: Source CRS as EPSG code (e.g., "EPSG:32610") or WKT string.
+        source_crs: Source CRS as an EPSG code (e.g., "EPSG:32610"), a WKT
+                   string, or a PROJJSON dict. GeoParquet stores a CRS without
+                   an authority code as PROJJSON, which pyproj reads directly.
                    If None, returns bbox unchanged (assumed WGS84).
         allow_guess: If True, when a CRS mismatch is detected (e.g., declared
                     as projected CRS but coordinates appear to be WGS84), log a
@@ -99,11 +124,13 @@ def transform_bbox_to_wgs84(
         _reject_non_wgs84_magnitudes(bbox, "no CRS (assumed WGS84)", allow_guess)
         return bbox
 
+    label = describe_crs(source_crs)
+
     # Parse source CRS with specific exception handling
     try:
         src_crs = CRS.from_user_input(source_crs)
     except CRSError as e:
-        logger.warning("Could not parse CRS '%s': %s. Returning bbox unchanged.", source_crs, e)
+        logger.warning("Could not parse CRS '%s': %s. Returning bbox unchanged.", label, e)
         return bbox
     except TypeError as e:
         # CRS.from_user_input can raise TypeError for invalid input types
@@ -112,7 +139,7 @@ def transform_bbox_to_wgs84(
 
     # Check if already WGS84
     if _is_wgs84(src_crs):
-        _reject_non_wgs84_magnitudes(bbox, source_crs, allow_guess)
+        _reject_non_wgs84_magnitudes(bbox, label, allow_guess)
         return bbox
 
     # Check for CRS mismatch BEFORE attempting transformation
@@ -123,13 +150,13 @@ def transform_bbox_to_wgs84(
             logger.warning(
                 "CRS mismatch detected: %s declares %s but coordinates %s appear to be WGS84. "
                 "Returning bbox unchanged (treating as WGS84).",
-                source_crs,
-                source_crs,
+                label,
+                label,
                 bbox,
             )
             return bbox
         raise CRSMismatchError(
-            source_crs=source_crs,
+            source_crs=label,
             bbox=bbox,
             likely_actual_crs=mismatch.likely_actual_crs,
         )
@@ -142,7 +169,7 @@ def transform_bbox_to_wgs84(
         logger.warning(
             "CRS transformation failed for bbox %s from %s: %s. Returning bbox unchanged.",
             bbox,
-            source_crs,
+            label,
             e,
         )
         return bbox
@@ -249,7 +276,7 @@ def _transform_and_compute_bbox(
 
 def validate_bbox_crs(
     bbox: tuple[float, float, float, float],
-    crs: str | None,
+    crs: str | dict[str, Any] | None,
 ) -> CRSMismatchWarning | None:
     """Validate that bbox coordinates match declared CRS.
 
@@ -259,7 +286,8 @@ def validate_bbox_crs(
 
     Args:
         bbox: Bounding box as (minx, miny, maxx, maxy).
-        crs: Declared CRS as EPSG code or None.
+        crs: Declared CRS as an EPSG code, a WKT string, a PROJJSON dict,
+            or None.
 
     Returns:
         CRSMismatchWarning if mismatch detected, None otherwise.
@@ -283,11 +311,12 @@ def validate_bbox_crs(
 
     # CRS is projected - check if coordinates look like WGS84
     if is_likely_wgs84_bbox(bbox):
+        label = describe_crs(crs)
         return CRSMismatchWarning(
-            declared_crs=crs,
+            declared_crs=label,
             likely_actual_crs="EPSG:4326",
             message=(
-                f"CRS mismatch detected: file declares {crs} but coordinates "
+                f"CRS mismatch detected: file declares {label} but coordinates "
                 f"({bbox[0]:.2f}, {bbox[1]:.2f}, {bbox[2]:.2f}, {bbox[3]:.2f}) "
                 "appear to be WGS84 (EPSG:4326). This often happens when ArcGIS "
                 "services return WGS84 data but declare the original projection."
@@ -401,7 +430,7 @@ class _MeasuredBounds:
 def measure_wgs84_bbox(
     data_path: Path,
     geometry_column: str,
-    source_crs: str | None,
+    source_crs: str | dict[str, Any] | None,
 ) -> tuple[float, float, float, float] | None:
     """Measure a GeoParquet's WGS84 extent from its geometry, not its bbox.
 
@@ -425,7 +454,8 @@ def measure_wgs84_bbox(
     Args:
         data_path: GeoParquet file, or a directory of them (partitioned output).
         geometry_column: Name of the WKB geometry column to read.
-        source_crs: CRS of the stored coordinates (EPSG code, WKT, or None).
+        source_crs: CRS of the stored coordinates (EPSG code, WKT string,
+            PROJJSON dict, or None).
 
     Returns:
         ``(minx, miny, maxx, maxy)`` in WGS84, or None if not measurable.
@@ -434,8 +464,8 @@ def measure_wgs84_bbox(
         return None
     try:
         src = CRS.from_user_input(source_crs)
-    except CRSError:
-        logger.debug("Cannot measure bbox: unresolvable CRS %r", source_crs)
+    except (CRSError, TypeError):
+        logger.debug("Cannot measure bbox: unresolvable CRS %s", describe_crs(source_crs))
         return None
     if _is_wgs84(src):
         return None  # stored coordinates are already WGS84; nothing to measure
