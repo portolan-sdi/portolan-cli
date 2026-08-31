@@ -1,0 +1,41 @@
+# Thin caller — synced from portolan-sdi/portolan-ops (ci/pr-board.yml).
+# Edit it there. Local changes are overwritten on the next sync.
+#
+# Puts every pull request a person opens on the org project board. Bot pull
+# requests stay off it. The rule lives in portolan-ops, and norms/repos.md
+# there documents it. Nothing here sets a milestone or a label.
+name: Pull request board
+
+on:
+  # pull_request_target, not pull_request, because the board write needs an
+  # org secret and a fork pull request runs without one. The risk that
+  # normally comes with this trigger is checking out the contributor's
+  # branch. This workflow checks out nothing and runs no code from the pull
+  # request. It reads the author type and the pull request number, and calls
+  # one API.
+  pull_request_target: # zizmor: ignore[dangerous-triggers] no checkout, no PR code runs
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serial per pull request, and never cancelled: the add is cheap and a
+  # cancelled run leaves the pull request off the board with no warning.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  board:
+    # v1 is a moving major tag. A change to the rule reaches this repo when
+    # the tag moves, not when ops merges.
+    uses: portolan-sdi/portolan-ops/.github/workflows/reusable-pr-board.yml@v1
+    permissions:
+      contents: read
+    secrets:
+      # Named rather than inherited: the called workflow needs these two and
+      # nothing else, and an unconditional inherit hands it every secret the
+      # repo holds. Both are optional there, so a repo without them still
+      # runs and logs why the board add did not happen.
+      OPS_SYNC_APP_CLIENT_ID: ${{ secrets.OPS_SYNC_APP_CLIENT_ID }}
+      OPS_SYNC_APP_KEY: ${{ secrets.OPS_SYNC_APP_KEY }}
