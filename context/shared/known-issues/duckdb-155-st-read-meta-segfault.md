@@ -1,6 +1,7 @@
 # DuckDB 1.5.5 segfaults in ST_Read_Meta on malformed input
 
 **Status:** open upstream. Portolan pins `duckdb>=1.5.2,<1.5.5`.
+**Upstream issue:** [duckdb-spatial#860](https://github.com/duckdb/duckdb-spatial/issues/860), filed 2026-08-31.
 **Affected version:** duckdb 1.5.5 only. 1.5.1, 1.5.2, 1.5.3 and 1.5.4 are all fine.
 **Found by:** the geoparquet-io 1.4.0 bump (Portolan issue #810), which raised the DuckDB floor to `>=1.5.2` and let the resolver reach 1.5.5.
 
@@ -34,6 +35,11 @@ Result by version:
 | 1.5.3 | returns without error |
 | 1.5.4 | returns without error |
 | 1.5.5 | `SIGSEGV`, exit 139 |
+
+The spatial extension build changes with the DuckDB release: `b68b309` at
+1.5.4, `eb1e57c` at 1.5.5. Any file GDAL cannot open crashes, including an
+empty one. `ST_Read` raises `IOException` normally on the same file, so only
+`ST_Read_Meta` lacks the error path.
 
 ## Why Portolan cares
 
