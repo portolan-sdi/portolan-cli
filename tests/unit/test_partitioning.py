@@ -698,7 +698,7 @@ class TestGlobTransformationPartitionExtension:
 
     @pytest.mark.unit
     def test_transform_drops_the_legacy_field_it_finds(self) -> None:
-        """A collection published by 1.0.0b0 loses portolan:glob on the next push."""
+        """A collection published by 0.8.0 loses portolan:glob on the next push."""
         import json
 
         from portolan_cli.sync.push import _transform_collection_glob_assets

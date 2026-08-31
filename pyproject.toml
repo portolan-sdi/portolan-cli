@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "portolan-cli"
-version = "1.0.0b0"
+version = "0.8.0"
 description = "A CLI tool for managing cloud-native geospatial data"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -123,10 +123,13 @@ packages = ["portolan_cli"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "1.0.0b0"
+version = "0.8.0"
 version_files = ["pyproject.toml:^version"]
 tag_format = "v$version"
 update_changelog_on_bump = true
+# The project is pre-1.0. A breaking change bumps the minor number, so the
+# major number stays at zero until the interface settles.
+major_version_zero = true
 
 # ---------- testing ----------
 

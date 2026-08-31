@@ -35,7 +35,7 @@ PORTOLAN_SCHEMA_URI: str = (
 # The spec removed it (issue #739): a client filters assets on the ``style``
 # role to find the styles and on ``default`` to find the one to draw first, so
 # a manifest would be a second copy of the same fact. Portolan wrote it through
-# 1.0.0b0, which is why both the generator (viz.style) and `check`
+# 0.8.0, which is why both the generator (viz.style) and `check`
 # (validation.legacy) still name it — one to strip it, the other to report it.
 LEGACY_STYLE_MANIFEST_FIELD: str = "portolan:styles"
 
