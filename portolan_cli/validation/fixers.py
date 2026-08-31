@@ -918,6 +918,97 @@ FIXERS: dict[str, Fixer] = {
 _COMPOSED_OF: dict[str, tuple[str, ...]] = {"required_files": ("agents", "readme")}
 
 
+#: Repairs that must follow any pass which writes an item JSON.
+#:
+#: The registry is finding-driven, and the findings come from the check that ran
+#: *before* the freshness pass. An item that pass creates therefore never meets
+#: the registry: it lands with no structural links, no ``file:size`` and no
+#: ``file:checksum``, and its collection gains no ``rel="item"`` link, so
+#: ``--fix`` reported more defects than it started with (#709). Both keys name
+#: idempotent whole-catalog sweeps, so a second pass costs a re-scan rather than
+#: a double edit.
+POST_ITEM_WRITE_FIXERS: tuple[str, ...] = ("links", "checksum")
+
+
+def _collection_dir_of(path: Path, root: Path) -> Path | None:
+    """The nearest ancestor of ``path`` that holds a ``collection.json``."""
+    for ancestor in path.resolve().parents:
+        if (ancestor / "collection.json").exists():
+            return ancestor
+        if ancestor == root.resolve():
+            break
+    return None
+
+
+def _refresh_mirrors(root: Path, changed: Iterable[Path], *, dry_run: bool) -> list[FixResult]:
+    """Rewrite ``items.parquet`` for every collection whose items just changed.
+
+    The mirror is a copy of the items, so a pass that rewrites an item and
+    leaves the mirror alone creates the drift PTL-DAT-016 reports. Only
+    collections that already publish a mirror are touched, because creating one
+    where the operator never asked for it is ``add``'s decision, not a repair.
+    """
+    from portolan_cli.stac_parquet import generate_items_parquet, register_mirror_asset
+
+    collections = {
+        collection
+        for path in changed
+        if (collection := _collection_dir_of(path, root)) is not None
+        and (collection / _MIRROR_FILENAME).exists()
+    }
+    results: list[FixResult] = []
+    for collection in sorted(collections):
+        target = collection / _MIRROR_FILENAME
+        if dry_run:
+            results.append(
+                FixResult(target, FixAction.UPDATED, True, "Would refresh the items.parquet mirror")
+            )
+            continue
+        try:
+            generate_items_parquet(collection)
+            register_mirror_asset(collection)
+        except (ImportError, ValueError, OSError) as exc:
+            results.append(
+                FixResult(target, FixAction.SKIPPED, True, f"Cannot refresh the mirror: {exc}")
+            )
+            continue
+        results.append(
+            FixResult(target, FixAction.UPDATED, True, "Refreshed the items.parquet mirror")
+        )
+    return results
+
+
+def repair_written_items(
+    root: Path,
+    changed: Iterable[Path],
+    *,
+    dry_run: bool,
+) -> list[FixResult]:
+    """Bring items a freshness pass just wrote up to the same standard as the rest.
+
+    Args:
+        root: Catalog root to sweep.
+        changed: Paths the freshness pass created or updated. Only their
+            enclosing collections have their mirror refreshed.
+        dry_run: Report what would change and write nothing.
+
+    Returns:
+        One :class:`~portolan_cli.metadata.fix.FixResult` per repaired object. A
+        fixer that raises becomes one failed result, so a broken repair cannot
+        strand the others.
+    """
+    results: list[FixResult] = []
+    for key in POST_ITEM_WRITE_FIXERS:
+        try:
+            results.extend(FIXERS[key](root, dry_run))
+        except Exception as exc:  # noqa: BLE001 - one bad fixer must not strand the rest
+            results.append(
+                FixResult(root, FixAction.SKIPPED, False, f"Fixer '{key}' failed: {exc}")
+            )
+    results.extend(_refresh_mirrors(root, changed, dry_run=dry_run))
+    return results
+
+
 def auto_fixer_keys(findings: Iterable[Any]) -> list[str]:
     """The distinct fixer keys the AUTO findings call for, in execution order.
 

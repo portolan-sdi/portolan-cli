@@ -193,6 +193,17 @@ def _scan_collection_child(
         _scan_item(item_json_path, child, collection_dir, registered, report)
         return
 
+    # `add --item-id` names the item file after the id, not after the directory,
+    # so the directory can hold a perfectly good item under another name. Asking
+    # only for `{directory name}.json` made the scan report the data file as
+    # MISSING, and `--fix` then wrote a second item for it (#709). Any STAC Item
+    # in the directory covers it.
+    named_items = _item_jsons_in(child)
+    if named_items:
+        for path in named_items:
+            _scan_item(path, child, collection_dir, registered, report)
+        return
+
     # Heuristic: a subdir is treated as an item-needing-JSON only if it
     # contains a data file whose stem matches the dir name (the convention
     # `add` writes). Otherwise the subdir is a stray container and its
@@ -217,6 +228,28 @@ def _scan_collection_child(
     # Any extra data files in an item-shaped dir that don't match the
     # expected stem are still orphans of the item.
     _emit_orphans(child, registered, report)
+
+
+def _item_jsons_in(directory: Path) -> list[Path]:
+    """Every STAC Item JSON directly inside ``directory``, in a stable order.
+
+    Identified by content rather than by file name, so an item named after an
+    ``--item-id`` override still counts and a schema file never does.
+
+    Both `type: "Feature"` and a string `stac_version` are required, because the
+    STAC Item spec makes `stac_version` mandatory and plain GeoJSON has no such
+    field. `type` alone would let a hand-dropped `footprint.json` stand in for
+    the item, which would suppress the MISSING result for a data file that
+    really has no item and leave `--fix` nothing to create.
+    """
+    found: list[Path] = []
+    for path in sorted(directory.glob("*.json")):
+        data = _safe_read_json(path)
+        if not isinstance(data, dict) or data.get("type") != "Feature":
+            continue
+        if isinstance(data.get("stac_version"), str):
+            found.append(path)
+    return found
 
 
 def _scan_item(

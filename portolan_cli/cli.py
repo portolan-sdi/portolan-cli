@@ -1901,7 +1901,7 @@ def _run_fix_and_repairs(
         if title_results:
             fixer_report = FixReport(results=[*title_results, *fixer_report.results])
 
-    legacy_data, legacy_failed = _run_legacy_fix_workflow(
+    legacy_data, legacy_failed, written_items = _run_legacy_fix_workflow(
         path=path,
         run_metadata=run_metadata,
         run_geo_assets=run_geo_assets,
@@ -1912,6 +1912,18 @@ def _run_fix_and_repairs(
         force=force,
         workers=workers,
     )
+
+    # The registry above ran against findings from the pre-fix check, so it never
+    # saw an item the freshness pass has only just written. Repair those now, or
+    # `--fix` publishes an item with no links and no checksums and reports more
+    # defects than it started with (#709).
+    if run_metadata and written_items:
+        from portolan_cli.validation.fixers import repair_written_items
+
+        catalog_root = resolve_catalog_root_for_check(path) or path
+        repairs = repair_written_items(catalog_root, written_items, dry_run=dry_run)
+        if repairs:
+            fixer_report = FixReport(results=[*fixer_report.results, *repairs])
 
     if not use_json:
         _output_fix_human(
@@ -1944,14 +1956,16 @@ def _run_legacy_fix_workflow(
     verbose: bool,
     force: bool = False,
     workers: int | None = None,
-) -> tuple[dict[str, Any], bool]:
+) -> tuple[dict[str, Any], bool, list[Path]]:
     """Run item-freshness and geo-asset conversion, and render their results.
 
     Delegates the orchestration to ``check.run_fix_workflow`` and only wires up
     the progress callback and output rendering here.
 
     Returns:
-        The fix reports as JSON data and whether a fix failed.
+        The fix reports as JSON data, whether a fix failed, and the data files
+        whose items the freshness pass wrote. The caller repairs those items,
+        which the finding-driven registry ran too early to see (#709).
     """
     from portolan_cli.scan.check import run_fix_workflow
 
@@ -1994,12 +2008,19 @@ def _run_legacy_fix_workflow(
             dry_run=dry_run,
         )
 
+    written_items = [
+        result.file_path
+        for result in (metadata_fix_report.results if metadata_fix_report else [])
+        if result.success and result.action in (FixAction.CREATED, FixAction.UPDATED)
+    ]
+
     return (
         _fix_json_section(
             metadata_fix_report=metadata_fix_report,
             format_fix_report=format_fix_report,
         ),
         failed,
+        written_items,
     )
 
 

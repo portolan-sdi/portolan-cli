@@ -15,7 +15,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 import rasterio
@@ -33,6 +33,7 @@ from portolan_cli.item import (
 )
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata.cog import extract_cog_metadata
+from portolan_cli.metadata.detection import versions_asset_key, versions_asset_lookup_keys
 from portolan_cli.models.collection import (
     CollectionModel,
     ExtentModel,
@@ -105,16 +106,25 @@ def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
     item_data["bbox"] = bbox
     item_data["geometry"] = geometry
 
-    # Bump datetime, preserving every other property.
+    # `datetime` is the acquisition time of the observation, not the mtime of
+    # the file. The refresh cannot read it off the bytes, so it keeps whatever
+    # the item already carries. `add` writes `null` when the caller passes no
+    # `--datetime`, and stamping the time of the run over that null published a
+    # fabricated acquisition date (#709). An item with no `datetime` key at all
+    # gets the same `null` `add` would have written.
     properties = item_data.setdefault("properties", {})
-    properties["datetime"] = datetime.now(timezone.utc).isoformat()
+    properties.setdefault("datetime", None)
 
     # Refresh the data asset's href/type in place, leaving any human-authored
     # title and all other assets untouched.
     assets: dict[str, Any] = item_data.setdefault("assets", {})
     data_key = _find_data_asset_key(assets)
     data_asset = assets.setdefault(data_key, {})
-    data_asset["href"] = file_path.name
+    # Keep the href's existing spelling when it already names this file. `add`
+    # writes `./data.tif`, and rewriting that to `data.tif` changed the item on
+    # every run without changing where it points (#709).
+    if not _href_names(data_asset.get("href"), file_path):
+        data_asset["href"] = file_path.name
     # Keep the media type `add` registered. `add` derives it from the extension
     # registry, which gives a COG the `profile=cloud-optimized` suffix that
     # PORTO-CORE-026 makes a MUST; the local extension map here does not, so
@@ -261,6 +271,42 @@ def _merge_band(fresh: dict[str, Any], existing: dict[str, Any]) -> dict[str, An
         merged["name"] = name
 
     return merged
+
+
+def _tracked_asset_key(
+    assets: dict[str, Asset],
+    file_path: Path,
+    collection_dir: Path,
+) -> str | None:
+    """The versions.json key that tracks ``file_path``, or None.
+
+    Mirrors :func:`~portolan_cli.metadata.detection.find_versions_asset` so the
+    reader and the writer agree on which entry belongs to a file. The
+    collection-relative key is what ``add`` writes, the bare file name covers an
+    older versions.json, and the ``href`` sweep covers a nested layout. A
+    collection-level file with the same name owns the bare key, so an item-level
+    asset skips the bare name and never binds to a foreign baseline (issue #709).
+    """
+    relative = versions_asset_key(file_path, collection_dir)
+    for key in versions_asset_lookup_keys(file_path, collection_dir):
+        if key in assets:
+            return key
+    for key, asset in assets.items():
+        if asset.href and PurePath(asset.href).as_posix().endswith(relative):
+            return key
+    return None
+
+
+def _href_names(href: Any, file_path: Path) -> bool:
+    """Whether ``href`` already points at ``file_path``, whatever its spelling.
+
+    ``./data.tif`` and ``data.tif`` name the same file. Only a scheme-qualified
+    or absolute href names something else.
+    """
+    if not isinstance(href, str) or not href:
+        return False
+    resolved = (file_path.parent / href).resolve()
+    return resolved == file_path.resolve()
 
 
 def _find_data_asset_key(assets: dict[str, Any]) -> str:
@@ -447,10 +493,16 @@ def update_versions_tracking(file_path: Path, versions_path: Path) -> None:
 
     current_version = versions_file.versions[-1]
 
-    # Find the asset
-    asset_name = file_path.name
-    if asset_name not in current_version.assets:
-        raise KeyError(f"Asset not found in versions.json: {asset_name}")
+    # Find the asset. `add` keys an item-level asset `{item_id}/{filename}`, so
+    # the bare file name misses it, raises KeyError, and leaves the baseline
+    # unwritten. `_fix_single_file` discarded that error, so the item stayed
+    # STALE run after run (#709).
+    collection_dir = versions_path.parent
+    asset_name = _tracked_asset_key(current_version.assets, file_path, collection_dir)
+    if asset_name is None:
+        raise KeyError(
+            f"Asset not found in versions.json: {versions_asset_key(file_path, collection_dir)}"
+        )
 
     # Get current mtime from file
     current_mtime = file_path.stat().st_mtime

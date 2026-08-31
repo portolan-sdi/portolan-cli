@@ -14,8 +14,8 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from pathlib import Path
-from typing import TYPE_CHECKING
+from pathlib import Path, PurePath
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.metadata.cog import extract_cog_metadata
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
@@ -50,6 +50,88 @@ class StoredMetadata:
     sha256: str | None
     feature_count: int | None
     schema_fingerprint: str | None
+
+
+def versions_asset_key(file_path: Path, collection_dir: Path) -> str:
+    """The versions.json key ``add`` writes for an asset under a collection.
+
+    ``_batch_update_versions`` (finalization.py) keys a collection-level asset by
+    its bare file name and an item-level asset by ``{item_id}/{filename}``. Both
+    are the asset's path relative to the collection directory, so one expression
+    produces either. A path outside the collection has no key and falls back to
+    the file name.
+    """
+    try:
+        return PurePath(file_path.resolve().relative_to(collection_dir.resolve())).as_posix()
+    except ValueError:
+        return file_path.name
+
+
+def versions_asset_lookup_keys(file_path: Path, collection_dir: Path) -> tuple[str, ...]:
+    """The versions.json keys that can track ``file_path``, most authoritative first.
+
+    The collection-relative key is what ``add`` writes. The bare file name covers
+    a hand-written or older versions.json, and a nested item whose versions.json
+    keys by basename (a sub-catalog inside a collection).
+
+    Drop the bare file name only when a different file already sits at
+    ``collection_dir / file_path.name``. That file owns the bare collection-level
+    key, so an item-level asset with the same name must not fall back onto it and
+    read the wrong baseline (issue #709).
+    """
+    relative = versions_asset_key(file_path, collection_dir)
+    collision = collection_dir / file_path.name
+    if collision.exists() and collision.resolve() != file_path.resolve():
+        return (relative,)
+    return (relative, file_path.name)
+
+
+def find_versions_asset(
+    assets: dict[str, Any],
+    file_path: Path,
+    collection_dir: Path,
+) -> dict[str, Any] | None:
+    """The versions.json entry that tracks ``file_path``, or None.
+
+    Three lookups, in order of authority. The collection-relative key is what
+    ``add`` writes. The bare file name covers a hand-written or older
+    versions.json. The ``href`` sweep covers a nested layout, where the key an
+    item carries is not the whole path down from the collection.
+
+    Reading only the bare file name was the #709 defect. An item-level asset is
+    keyed ``{item_id}/{filename}``, so the lookup never matched, every
+    item-level asset read as STALE, and ``check --fix`` rewrote every item on
+    every run.
+
+    The bare file name resolves only when no other file owns it. A collection-level
+    file with the same name owns the bare key, so an item-level asset never falls
+    back onto it and reads the wrong baseline.
+    """
+    relative = versions_asset_key(file_path, collection_dir)
+    for key in versions_asset_lookup_keys(file_path, collection_dir):
+        entry = assets.get(key)
+        if isinstance(entry, dict):
+            return entry
+    for entry in assets.values():
+        if not isinstance(entry, dict):
+            continue
+        href = entry.get("href")
+        if isinstance(href, str) and PurePath(href).as_posix().endswith(relative):
+            return entry
+    return None
+
+
+def stored_baseline_mtime(entry: dict[str, Any]) -> float | None:
+    """The freshness baseline on a versions.json entry.
+
+    ``add`` records the asset's own mtime under ``mtime``, while
+    ``update_versions_tracking`` records it under ``source_mtime``. One entry may
+    carry either or both. ``_check_collection_level_asset`` (scan.py) already
+    reads them in this order for #512; the item path needs the same rule.
+    """
+    source_mtime = entry.get("source_mtime")
+    baseline = source_mtime if source_mtime is not None else entry.get("mtime")
+    return baseline if isinstance(baseline, (int, float)) else None
 
 
 def get_stored_metadata(
@@ -121,10 +203,9 @@ def get_stored_metadata(
 
             if current_version:
                 assets = current_version.get("assets", {})
-                asset_key = file_path.name
-                if asset_key in assets:
-                    asset_data = assets[asset_key]
-                    source_mtime = asset_data.get("source_mtime")
+                asset_data = find_versions_asset(assets, file_path, collection_dir)
+                if asset_data is not None:
+                    source_mtime = stored_baseline_mtime(asset_data)
                     sha256 = asset_data.get("sha256")
                     feature_count = asset_data.get("feature_count")
                     schema_fingerprint = asset_data.get("schema_fingerprint")
@@ -383,10 +464,29 @@ def check_file_metadata(
             message=f"Metadata is up to date ({reason})",
         )
 
+    # `add` persists no schema fingerprint for an item-level asset, so a moved
+    # mtime alone cannot prove a change. Settle it with the stored content hash,
+    # the same tiebreaker `_check_collection_level_asset` uses for #512. A
+    # byte-identical file (after a `git clone`, which resets mtimes) then reads
+    # FRESH rather than driving a rewrite that alters nothing (#709).
+    if (
+        stored.schema_fingerprint is None
+        and stored.sha256
+        and _content_matches(file_path, stored.sha256)
+    ):
+        return MetadataCheckResult(
+            file_path=file_path,
+            status=MetadataStatus.FRESH,
+            message="Metadata is up to date (content unchanged)",
+        )
+
     # Determine what changed
     changes = detect_changes(state)
 
-    if reason == "schema_changed":
+    # BREAKING needs a fingerprint to compare against. Without a baseline the
+    # mtime change is unexplained, not proof of a schema break, so it reports
+    # STALE rather than a blocking error.
+    if reason == "schema_changed" and stored.schema_fingerprint is not None:
         return MetadataCheckResult(
             file_path=file_path,
             status=MetadataStatus.BREAKING,
@@ -402,3 +502,15 @@ def check_file_metadata(
         changes=changes,
         fix_hint="Run 'portolan fix' to update STAC metadata",
     )
+
+
+def _content_matches(file_path: Path, stored_sha256: str) -> bool:
+    """True when the file's SHA-256 equals the checksum versions.json recorded."""
+    from portolan_cli.sync.checksums import compute_checksum
+
+    if not file_path.is_file():
+        return False
+    try:
+        return compute_checksum(file_path) == stored_sha256
+    except (ValueError, OSError):
+        return False
