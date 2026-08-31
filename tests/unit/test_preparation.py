@@ -535,7 +535,26 @@ class TestAssertRewriteKeptEverything:
 
     @pytest.mark.unit
     def test_it_refuses_a_lost_crs(self, tmp_path: Path) -> None:
-        """The upstream writer drops the CRS, so the swap must not happen."""
+        """A projected CRS that vanishes relabels every coordinate."""
+        from pyproj import CRS
+
+        from portolan_cli.errors import RewriteFidelityError
+        from portolan_cli.metadata import RewriteFidelity
+        from portolan_cli.preparation import _assert_rewrite_kept_everything
+
+        projected = CRS.from_epsg(3857).to_json_dict()
+        before = RewriteFidelity(row_count=10, crs=projected, columns=frozenset({"geometry"}))
+        after = RewriteFidelity(row_count=10, crs=None, columns=frozenset({"geometry", "bbox"}))
+
+        with (
+            patch("portolan_cli.preparation.read_rewrite_fidelity", return_value=after),
+            pytest.raises(RewriteFidelityError, match="CRS"),
+        ):
+            _assert_rewrite_kept_everything(tmp_path / "a.parquet", tmp_path / "b.parquet", before)
+
+    @pytest.mark.unit
+    def test_it_refuses_an_unparsable_lost_crs(self, tmp_path: Path) -> None:
+        """A CRS pyproj cannot read is not provably WGS84, so the gate holds."""
         from portolan_cli.errors import RewriteFidelityError
         from portolan_cli.metadata import RewriteFidelity
         from portolan_cli.preparation import _assert_rewrite_kept_everything
@@ -547,6 +566,28 @@ class TestAssertRewriteKeptEverything:
             patch("portolan_cli.preparation.read_rewrite_fidelity", return_value=after),
             pytest.raises(RewriteFidelityError, match="CRS"),
         ):
+            _assert_rewrite_kept_everything(tmp_path / "a.parquet", tmp_path / "b.parquet", before)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("epsg", [4326, "OGC:CRS84"])
+    def test_a_dropped_wgs84_crs_is_not_a_loss(self, tmp_path: Path, epsg: object) -> None:
+        """An absent ``crs`` means OGC:CRS84, so dropping WGS84 loses nothing.
+
+        geoparquet-io omits the key for WGS84 data. Treating that as a loss
+        refused the rewrite of every WGS84 file, so the file never gained its
+        bbox covering column. A partitioned ``add`` then rewrote each partition
+        on its own, which made a 100,000-row add take 248s rather than 11s.
+        """
+        from pyproj import CRS
+
+        from portolan_cli.metadata import RewriteFidelity
+        from portolan_cli.preparation import _assert_rewrite_kept_everything
+
+        wgs84 = CRS.from_user_input(epsg if isinstance(epsg, str) else 4326).to_json_dict()
+        before = RewriteFidelity(row_count=10, crs=wgs84, columns=frozenset({"geometry"}))
+        after = RewriteFidelity(row_count=10, crs=None, columns=frozenset({"geometry", "bbox"}))
+
+        with patch("portolan_cli.preparation.read_rewrite_fidelity", return_value=after):
             _assert_rewrite_kept_everything(tmp_path / "a.parquet", tmp_path / "b.parquet", before)
 
     @pytest.mark.unit

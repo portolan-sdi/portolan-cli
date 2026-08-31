@@ -30,7 +30,7 @@ from portolan_cli.collection_id import normalize_collection_id, validate_collect
 from portolan_cli.config import get_setting, load_merged_metadata
 from portolan_cli.conversion_config import VectorSettings, get_vector_settings
 from portolan_cli.convert import apply_vector_settings, run_with_transient_convert_retry
-from portolan_cli.crs import measure_wgs84_bbox, transform_bbox_to_wgs84
+from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
 from portolan_cli.errors import NoGeometryError, RewriteFidelityError
 from portolan_cli.formats import FormatType, detect_format, is_cloud_optimized_geotiff
 from portolan_cli.metadata import (
@@ -1445,6 +1445,29 @@ def _same_crs(before: Any, after: Any) -> bool:
         return False
 
 
+def _means_wgs84(crs: Any) -> bool:
+    """Report whether a GeoParquet ``crs`` value means WGS84.
+
+    GeoParquet reads an absent ``crs`` as OGC:CRS84, which is WGS84 with
+    longitude and latitude in that axis order. A writer that omits the key for
+    WGS84 data therefore loses no meaning, and geoparquet-io omits it.
+
+    Without this test the fidelity gate refuses every rewrite of a WGS84 file.
+    That is the common case, so the file never gains its bbox covering column,
+    and a partitioned add rewrites each partition on its own instead (#805).
+
+    Args:
+        crs: The source file's ``crs`` value, as PROJJSON or a string.
+
+    Returns:
+        True when the value describes WGS84 or CRS84.
+    """
+    try:
+        return _is_wgs84(CRS.from_user_input(crs))
+    except Exception:  # noqa: BLE001 - an unparsable CRS is not provably WGS84
+        return False
+
+
 def _assert_rewrite_kept_everything(
     source: Path, rewritten: Path, before: RewriteFidelity | None
 ) -> None:
@@ -1487,7 +1510,7 @@ def _assert_rewrite_kept_everything(
     if dropped:
         raise RewriteFidelityError(source.name, f"the columns {sorted(dropped)}")
 
-    if before.crs is not None and after.crs is None:
+    if before.crs is not None and after.crs is None and not _means_wgs84(before.crs):
         raise RewriteFidelityError(source.name, "the CRS it declared")
 
     # A written CRS that differs from the source is corruption, not a drop, and

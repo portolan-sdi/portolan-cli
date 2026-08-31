@@ -707,3 +707,74 @@ class TestAProjjsonCrsSurvivesAdd:
         assert -180 <= west <= 180 and -180 <= east <= 180
         assert -90 <= south <= 90 and -90 <= north <= 90
         assert "PROJJSON" not in describe_crs(projjson)
+
+
+class TestAWgs84FileGainsItsCoveringColumn:
+    """A WGS84 source must complete the rewrite, not be refused (#805).
+
+    geoparquet-io omits the ``crs`` key for WGS84 data. GeoParquet reads an
+    absent ``crs`` as OGC:CRS84, so nothing is lost. The fidelity gate used to
+    read that absence as a lost CRS and keep the file, which left every WGS84
+    file without a covering column. That is the common case, so the default
+    workflow failed at the thing #805 exists to fix.
+    """
+
+    def test_a_wgs84_parquet_is_rewritten(self, tmp_path: Path) -> None:
+        """`add` rewrites an EPSG:4326 file and adds the covering column."""
+        import geopandas as gpd
+        from shapely.geometry import Point
+
+        root = tmp_path / "catalog"
+        collection = root / "places"
+        collection.mkdir(parents=True)
+        target = collection / "places.parquet"
+        gpd.GeoDataFrame(
+            {"n": [1, 2]}, geometry=[Point(0.0, 0.0), Point(1.0, 1.0)], crs="EPSG:4326"
+        ).to_parquet(target)
+        _init(root)
+
+        output = _add(root, target)
+
+        assert "Kept places.parquet as it is" not in output
+        assert _covering(target) is not None
+        assert "bbox" in pq.ParquetFile(target).schema_arrow.names
+        assert len(gpd.read_parquet(target)) == 2
+
+    def test_a_partitioned_add_rewrites_the_source_once(self, tmp_path: Path) -> None:
+        """The source gains the column, so no partition needs its own rewrite.
+
+        A refused source rewrite made `add` rewrite every partition instead.
+        With 513 partitions that turned an 11s add into a 248s one.
+        """
+        import geopandas as gpd
+        import numpy as np
+        from shapely.geometry import Point
+
+        root = tmp_path / "catalog"
+        collection = root / "points"
+        collection.mkdir(parents=True)
+        target = collection / "points.parquet"
+        rng = np.random.default_rng(0)
+        n = 100_000  # 512 partitions need 100 rows each to clear gpio's floor
+        gpd.GeoDataFrame(
+            {"id": range(n)},
+            geometry=[
+                Point(x, y)
+                for x, y in zip(rng.uniform(-180, 180, n), rng.uniform(-90, 90, n), strict=True)
+            ],
+            crs="EPSG:4326",
+        ).to_parquet(target)
+        _init(root)
+        config = root / ".portolan" / "config.yaml"
+        config.write_text(
+            config.read_text() + "partitioning.enabled: true\npartitioning.threshold_gb: 0.00001\n"
+        )
+
+        output = _add(root, target)
+
+        # One rewrite, for the source. Not one per partition.
+        assert output.count("Rewriting") == 1, output
+        assert "Kept points.parquet as it is" not in output
+        partitions = list(collection.glob("kdtree_cell=*/*.parquet"))
+        assert partitions, "expected partitioned output"
+        assert _covering(partitions[0]) is not None
