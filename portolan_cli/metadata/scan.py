@@ -233,13 +233,21 @@ def _scan_collection_child(
 def _item_jsons_in(directory: Path) -> list[Path]:
     """Every STAC Item JSON directly inside ``directory``, in a stable order.
 
-    Identified by ``type: "Feature"`` rather than by file name, so a container
-    JSON or a schema file beside the item is never mistaken for one.
+    Identified by content rather than by file name, so an item named after an
+    ``--item-id`` override still counts and a schema file never does.
+
+    Both `type: "Feature"` and a string `stac_version` are required, because the
+    STAC Item spec makes `stac_version` mandatory and plain GeoJSON has no such
+    field. `type` alone would let a hand-dropped `footprint.json` stand in for
+    the item, which would suppress the MISSING result for a data file that
+    really has no item and leave `--fix` nothing to create.
     """
     found: list[Path] = []
     for path in sorted(directory.glob("*.json")):
         data = _safe_read_json(path)
-        if isinstance(data, dict) and data.get("type") == "Feature":
+        if not isinstance(data, dict) or data.get("type") != "Feature":
+            continue
+        if isinstance(data.get("stac_version"), str):
             found.append(path)
     return found
 

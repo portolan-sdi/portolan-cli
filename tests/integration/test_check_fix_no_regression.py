@@ -203,6 +203,37 @@ class TestNoFabricatedItem:
         ]
         assert needs_json == []
 
+    def test_plain_geojson_does_not_stand_in_for_the_item(
+        self, runner: CliRunner, tmp_path: Path, valid_rgb_cog: Path
+    ) -> None:
+        """A GeoJSON Feature is not a STAC Item, so it covers nothing.
+
+        Only `type: "Feature"` plus a string `stac_version` counts. Without the
+        second test a hand-dropped `footprint.json` would suppress the MISSING
+        result, and `--fix` would never create the item the data file needs.
+        """
+        root = _added_raster_catalog(runner, tmp_path / "cat", valid_rgb_cog)
+        item_dir = root / "imagery" / "rapidai4eo"
+        (item_dir / "rapidai4eo.json").unlink()
+        (item_dir / "footprint.json").write_text(
+            json.dumps(
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
+                    "properties": {},
+                }
+            )
+        )
+
+        report = scan_catalog_metadata(root)
+
+        missing = [
+            r
+            for r in report.filter_by_status(MetadataStatus.MISSING)
+            if "no rapidai4eo.json" in r.message
+        ]
+        assert len(missing) == 1
+
     def test_item_id_override_does_not_raise_the_error_count(
         self, runner: CliRunner, tmp_path: Path, valid_rgb_cog: Path
     ) -> None:
