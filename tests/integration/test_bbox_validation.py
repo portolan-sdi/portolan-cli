@@ -421,13 +421,19 @@ class TestAntimeridianBboxIntegration:
             if result.exit_code != 0:
                 assert "PRTLN-CNV004" in result.output or "mismatch" in result.output.lower()
             else:
-                item_files = list(collection_dir.glob("*.json"))
-                assert item_files, "expected an item to be written"
-                bboxes = [
-                    json.loads(f.read_text()).get("bbox")
-                    for f in item_files
-                    if json.loads(f.read_text()).get("bbox")
-                ]
-                assert bboxes and all(abs(b[0]) <= 180 and abs(b[1]) <= 90 for b in bboxes), (
+                # geoparquet-io 1.4.0 preserves the CRS, so `add` now takes this
+                # branch. An Item carries `bbox` at the top level. A Collection
+                # carries it under `extent.spatial.bbox`, so read both.
+                written = list(collection_dir.glob("*.json"))
+                assert written, "expected STAC metadata to be written"
+                bboxes: list[list[float]] = []
+                for f in written:
+                    doc = json.loads(f.read_text())
+                    if doc.get("bbox"):
+                        bboxes.append(doc["bbox"])
+                    for extent_bbox in doc.get("extent", {}).get("spatial", {}).get("bbox", []):
+                        bboxes.append(extent_bbox)
+                assert bboxes, f"no bbox found in {[f.name for f in written]}"
+                assert all(abs(b[0]) <= 180 and abs(b[1]) <= 90 for b in bboxes), (
                     f"projected coordinates published as degrees: {bboxes}"
                 )

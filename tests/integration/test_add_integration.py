@@ -77,16 +77,52 @@ class TestConvertVector:
         assert result.stat().st_size > 0
 
     @pytest.mark.integration
-    def test_convert_preserves_parquet(self, valid_points_parquet: Path, tmp_path: Path) -> None:
-        """convert_vector copies existing GeoParquet without conversion."""
+    def test_convert_preserves_conformant_parquet(
+        self, valid_points_parquet: Path, tmp_path: Path
+    ) -> None:
+        """convert_vector copies a GeoParquet that already carries the column.
+
+        Since #805 the copy is conditional. A file that already declares a bbox
+        covering column is copied byte for byte, so adding a large conformant
+        file stays cheap.
+        """
+        import geoparquet_io as gpio  # type: ignore[import-untyped]
+
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        source = source_dir / "points.parquet"
+        gpio.convert(str(valid_points_parquet)).add_bbox().sort_hilbert().write(str(source))
+
+        dest_dir = tmp_path / "output"
+        dest_dir.mkdir()
+
+        result = convert_vector(source, dest_dir)
+
+        assert result.read_bytes() == source.read_bytes()
+
+    @pytest.mark.integration
+    def test_convert_rewrites_parquet_without_a_covering_column(
+        self, valid_points_parquet: Path, tmp_path: Path
+    ) -> None:
+        """A GeoParquet with no covering column is rewritten, not copied (#805).
+
+        Copying it through produced a catalog that failed PTL-DAT-007 on its own
+        ``portolan check``.
+        """
+        import json
+
+        import pyarrow.parquet as pq
+
         dest_dir = tmp_path / "output"
         dest_dir.mkdir()
 
         result = convert_vector(valid_points_parquet, dest_dir)
 
-        assert result.exists()
-        # Should be roughly the same size (copy, not conversion)
-        assert abs(result.stat().st_size - valid_points_parquet.stat().st_size) < 100
+        parquet = pq.ParquetFile(result)
+        geo = json.loads((parquet.schema_arrow.metadata or {})[b"geo"].decode("utf-8"))
+        assert "bbox" in parquet.schema_arrow.names
+        assert geo["columns"][geo["primary_column"]]["covering"]["bbox"]
+        assert parquet.metadata.num_rows == pq.ParquetFile(valid_points_parquet).metadata.num_rows
 
     @pytest.mark.integration
     def test_convert_polygons(self, valid_polygons_geojson: Path, tmp_path: Path) -> None:

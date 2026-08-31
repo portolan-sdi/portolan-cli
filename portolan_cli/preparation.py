@@ -23,13 +23,15 @@ from pathlib import Path
 from typing import Any
 
 import pystac
+from pyproj import CRS
 
 from portolan_cli import extension_registry as _reg
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
 from portolan_cli.config import get_setting, load_merged_metadata
-from portolan_cli.convert import run_with_transient_convert_retry
-from portolan_cli.crs import measure_wgs84_bbox, transform_bbox_to_wgs84
-from portolan_cli.errors import NoGeometryError
+from portolan_cli.conversion_config import VectorSettings, get_vector_settings
+from portolan_cli.convert import apply_vector_settings, run_with_transient_convert_retry
+from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
+from portolan_cli.errors import NoGeometryError, RewriteFidelityError
 from portolan_cli.formats import FormatType, detect_format, is_cloud_optimized_geotiff
 from portolan_cli.metadata import (
     extract_band_statistics,
@@ -38,10 +40,13 @@ from portolan_cli.metadata import (
     extract_geoparquet_metadata,
     extract_parquet_statistics,
     extract_pmtiles_metadata,
+    read_extra_schema_metadata,
+    read_rewrite_fidelity,
+    read_spatial_layout,
 )
 from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.flatgeobuf import FlatGeobufMetadata
-from portolan_cli.metadata.geoparquet import GeoParquetMetadata
+from portolan_cli.metadata.geoparquet import GeoParquetMetadata, RewriteFidelity
 from portolan_cli.metadata.pmtiles import PMTilesMetadata
 from portolan_cli.metadata_yaml import (
     NodataMismatchError,
@@ -131,6 +136,34 @@ def _get_asset_role(path: Path) -> str:
     return _ROLE_MAP.get(path.suffix.lower(), "data")
 
 
+def _is_never_an_asset(file_path: Path) -> bool:
+    """Report whether a directory entry can never be a tracked asset.
+
+    Three entries qualify, and none of them depend on the item being scanned:
+
+    - A hidden file. Editors and tools leave them beside the data.
+    - A symlink. This check must precede any ``is_dir()`` branching, because
+      ``is_dir()`` follows symlinks, so a symlinked ``.gdb`` directory would
+      otherwise be checksummed as a container asset and escape the intended
+      item boundary.
+    - The scratch file of an in-place GeoParquet rewrite. The hidden test
+      already covers the name the current writer uses. A killed run of an
+      earlier version can leave a visible one, and tracking that as an asset
+      makes every later ``add`` read a truncated file (issue #805).
+
+    Args:
+        file_path: Directory entry to test.
+
+    Returns:
+        True when the scan must skip the entry.
+    """
+    if file_path.name.startswith("."):
+        return True
+    if file_path.is_symlink():
+        return True
+    return is_rewrite_temp(file_path)
+
+
 def _scan_item_assets(
     item_dir: Path,
     item_id: str,
@@ -179,13 +212,7 @@ def _scan_item_assets(
     primary_stem = primary_file.stem
 
     for file_path in item_dir.iterdir():
-        # Skip hidden files and symlinks unconditionally. The symlink check must
-        # precede is_dir()/is_file() branching below: is_dir() follows symlinks,
-        # so a symlinked .gdb directory would otherwise be checksummed as a
-        # container asset, escaping the intended item boundary.
-        if file_path.name.startswith("."):
-            continue
-        if file_path.is_symlink():
+        if _is_never_an_asset(file_path):
             continue
 
         # Issue #465: skip siblings that belong to OTHER items in this batch.
@@ -578,19 +605,20 @@ def _extract_bbox_wgs84(metadata: AllMetadata, data_path: Path | None = None) ->
         # PMTiles store bounds in WGS84 (4326), no transformation needed
         return list(metadata.bbox)  # type: ignore[arg-type]
 
-    # Other formats may need CRS transformation
+    # Other formats may need CRS transformation. The CRS is an EPSG/WKT string
+    # or a PROJJSON dict: GeoParquet stores a CRS with no authority code as
+    # PROJJSON, which is what an ESRI .prj such as POSGAR 1994 produces. pyproj
+    # reads both, so pass the value through rather than reject it (Issue #810).
     crs_raw = getattr(metadata, "crs", None)
-    if isinstance(crs_raw, dict):
-        raise ValueError("PROJJSON CRS not supported. Convert to EPSG code or WKT string.")
-    crs_str = crs_raw if isinstance(crs_raw, str) else None
+    source_crs = crs_raw if isinstance(crs_raw, (str, dict)) else None
 
     geometry_column = getattr(metadata, "geometry_column", None)
     if data_path is not None and geometry_column:
-        measured = measure_wgs84_bbox(data_path, geometry_column, crs_str)
+        measured = measure_wgs84_bbox(data_path, geometry_column, source_crs)
         if measured is not None:
             return list(measured)
 
-    return list(transform_bbox_to_wgs84(metadata.bbox, crs_str))  # type: ignore[arg-type]
+    return list(transform_bbox_to_wgs84(metadata.bbox, source_crs))  # type: ignore[arg-type]
 
 
 def _warn_if_source_newer(source_path: Path, output_path: Path) -> None:
@@ -652,6 +680,7 @@ def _convert_and_extract_metadata(
     item_dir: Path,
     format_type: FormatType,
     *,
+    catalog_root: Path | None = None,
     force: bool = False,
     reconvert: bool = False,
 ) -> tuple[Path, AllMetadata]:
@@ -668,6 +697,7 @@ def _convert_and_extract_metadata(
         path: Source file path.
         item_dir: Item directory for output.
         format_type: Detected format type.
+        catalog_root: Catalog root, for reading conversion settings.
         force: If True, bypass change detection (Issue #386).
         reconvert: If True, re-convert from source (requires force=True).
 
@@ -694,9 +724,10 @@ def _convert_and_extract_metadata(
             output_path = item_dir / f"{path.stem}.parquet"
             if force and not reconvert and output_path.exists():
                 _warn_if_source_newer(path, output_path)
+                _ensure_conforming_geoparquet(output_path, catalog_root)
                 metadata = extract_geoparquet_metadata(output_path)
             else:
-                output_path = convert_vector(path, item_dir)
+                output_path = convert_vector(path, item_dir, catalog_root, reconvert=reconvert)
                 metadata = extract_geoparquet_metadata(output_path)
     else:  # RASTER
         output_path = item_dir / f"{path.stem}.tif"
@@ -1002,7 +1033,12 @@ def prepare_item(
 
     # Step 3: Convert and extract metadata
     output_path, metadata = _convert_and_extract_metadata(
-        path, item_dir, format_type, force=force, reconvert=reconvert
+        path,
+        item_dir,
+        format_type,
+        catalog_root=catalog_root,
+        force=force,
+        reconvert=reconvert,
     )
 
     # Step 3b: Load metadata.yaml defaults (for temporal/nodata when source lacks them)
@@ -1123,12 +1159,122 @@ def prepare_item(
     )
 
 
-def convert_vector(source: Path, dest_dir: Path) -> Path:
+# Marks the temporary file `_rewrite_parquet_in_place` swaps in. `add` collects
+# a directory before it converts anything, so the marker keeps a file left by a
+# killed run out of the next run's source list (issue #805).
+REWRITE_TEMP_INFIX = ".portolan-rewrite"
+
+
+def is_rewrite_temp(path: Path) -> bool:
+    """Report whether a path is the scratch file of an in-place rewrite.
+
+    :func:`_rewrite_parquet_in_place` writes a hidden sibling and swaps it in.
+    A killed run skips the cleanup, so ``add`` must recognize a leftover and
+    refuse to ingest it as a source (issue #805).
+
+    Args:
+        path: Candidate file path.
+
+    Returns:
+        True when the file name carries the rewrite marker.
+    """
+    return REWRITE_TEMP_INFIX in path.name
+
+
+def _needs_spatial_rewrite(
+    source: Path, settings: VectorSettings, *, reconvert: bool = False
+) -> bool:
+    """Decide whether an existing Parquet file must be rewritten on ``add``.
+
+    ``add`` used to copy every ``.parquet`` source through untouched, which
+    produced a catalog that failed Portolan's own ``check``: the file carried
+    no bbox covering column, so it failed PTL-DAT-007 and left PTL-DAT-006
+    unevaluated (issue #805).
+
+    Three cases keep the copy:
+
+    - The file is tabular Parquet, with no ``geo`` metadata. ``add_bbox()``
+      needs a geometry column.
+    - ``add_bbox`` is off. The footer is the only thing this function can read
+      cheaply, so with the bbox column disabled there is nothing it can detect
+      and no outcome a rewrite would change. Rewriting anyway would repeat on
+      every ``add`` and report a reason the rewrite cannot fix.
+    - The file already declares a bbox covering column. Rewriting a large
+      conformant file would cost time and change nothing.
+
+    The footer says nothing about row order, so a file with the column but
+    unordered rows still fails PTL-DAT-006. ``reconvert`` is the operator's
+    answer to that, and to a sort-only configuration: ``add --force
+    --reconvert`` rewrites the file whatever its footer says.
+
+    Args:
+        source: Source Parquet file.
+        settings: Vector conversion settings.
+        reconvert: True when the operator asked to re-convert from source.
+
+    Returns:
+        True when the file must go through geoparquet-io again.
+    """
+    layout = read_spatial_layout(source)
+    if not layout.is_geoparquet:
+        return False
+    if reconvert:
+        return True
+    if not settings.add_bbox:
+        return False
+    return not layout.has_bbox_covering
+
+
+def _ensure_conforming_geoparquet(output_path: Path, catalog_root: Path | None) -> None:
+    """Add the bbox covering column to an output ``--force`` did not reconvert.
+
+    ``add --force`` skips conversion when the output already exists, because
+    ``--force`` means "ignore change detection", not "convert again"
+    (issue #386). For a single-file collection the output *is* the source, so
+    that skip used to hand back a file with no covering column and no warning.
+    The catalog then failed its own ``check`` on PTL-DAT-007, which is the
+    failure issue #805 set out to remove.
+
+    This runs the same footer test the conversion path runs, and rewrites the
+    file when it fails. Source bytes are untouched: the file is already the
+    catalog's own output.
+
+    Args:
+        output_path: Existing GeoParquet output.
+        catalog_root: Catalog root, for reading ``conversion.vector`` settings.
+            None uses the built-in defaults.
+    """
+    if output_path.suffix.lower() != ".parquet":
+        return
+
+    settings = get_vector_settings(catalog_root) if catalog_root else VectorSettings()
+    if not _needs_spatial_rewrite(output_path, settings):
+        return
+
+    _announce_rewrite(output_path, "it carries no bbox covering column")
+    _rewrite_or_keep(output_path, settings)
+
+
+def convert_vector(
+    source: Path,
+    dest_dir: Path,
+    catalog_root: Path | None = None,
+    *,
+    reconvert: bool = False,
+) -> Path:
     """Convert vector file to GeoParquet.
+
+    Applies the catalog's ``conversion.vector`` settings, which sort rows and
+    add a bbox covering column by default (issue #805). A ``.parquet`` source
+    is copied unless :func:`_needs_spatial_rewrite` says it must be rewritten.
 
     Args:
         source: Source vector file.
         dest_dir: Destination directory.
+        catalog_root: Catalog root, for reading ``conversion.vector`` settings.
+            None uses the built-in defaults.
+        reconvert: True when the operator asked to re-convert from source, which
+            rewrites a Parquet file whatever its footer already declares.
 
     Returns:
         Path to the output GeoParquet file.
@@ -1136,24 +1282,302 @@ def convert_vector(source: Path, dest_dir: Path) -> Path:
     import geoparquet_io as gpio  # type: ignore[import-untyped]
 
     output_path = dest_dir / f"{source.stem}.parquet"
+    settings = get_vector_settings(catalog_root) if catalog_root else VectorSettings()
 
     # Check if already GeoParquet
     if source.suffix.lower() == ".parquet":
-        # If source is already at the destination, no copy needed
-        if source.resolve() == output_path.resolve():
+        same_file = source.resolve() == output_path.resolve()
+        if not _needs_spatial_rewrite(source, settings, reconvert=reconvert):
+            if not same_file:
+                shutil.copy2(source, output_path)
             return output_path
-        shutil.copy2(source, output_path)
+
+        reason = "re-convert requested" if reconvert else "it carries no bbox covering column"
+        _announce_rewrite(source, reason)
+        if same_file:
+            # A single-file collection keeps its data where the operator put it,
+            # so there is no separate destination to write to. Write a sibling
+            # and swap it in, because geoparquet-io cannot write the file it
+            # reads.
+            _rewrite_or_keep(source, settings)
+        else:
+            # Copy first, then rewrite the copy. Converting straight into
+            # `output_path` would skip `_assert_rewrite_kept_everything`, so a
+            # `.parquet` source would silently lose its CRS on this path while
+            # the same file kept it on the path above.
+            shutil.copy2(source, output_path)
+            _rewrite_or_keep(output_path, settings)
         return output_path
 
-    # Convert using geoparquet-io fluent API. Wrapped in the shared retry so a
-    # transient DuckDB "Query interrupted" does not fail a bulk add (Issue #339
-    # nightly test_add_1000_files_* flake); this is the code path add uses.
-    run_with_transient_convert_retry(
-        lambda: gpio.convert(str(source)).write(str(output_path)),
-        source_name=source.name,
-    )
+    # A non-Parquet source. Convert with the geoparquet-io fluent API, wrapped
+    # in the shared retry so a transient DuckDB "Query interrupted" does not
+    # fail a bulk add (Issue #339 nightly test_add_1000_files_* flake); this is
+    # the code path add uses.
+    def _run() -> None:
+        table = apply_vector_settings(gpio.convert(str(source)), settings)
+        table.write(str(output_path))
+
+    run_with_transient_convert_retry(_run, source_name=source.name)
 
     return output_path
+
+
+# Above this size, the rewrite is slow enough that the operator should know why
+# `add` appears to stall, and should know it needs the free space. The rewrite
+# still runs: `add` produces conforming output without asking (issue #805).
+LARGE_REWRITE_WARN_BYTES = 1024 * 1024 * 1024
+
+
+def _announce_rewrite(source: Path, reason: str) -> None:
+    """Tell the operator a rewrite starts, and how much work it is.
+
+    The rewrite is a full geoparquet-io read, sort, and write, not the copy
+    this path used to do. It needs room for a second copy of the file while it
+    runs. A large file gets an explicit warning, because the read and the sort
+    take long enough to look like a hang.
+
+    Args:
+        source: The file about to be rewritten.
+        reason: Why the rewrite runs, in the operator's terms.
+    """
+    from portolan_cli.output import info as info_output
+    from portolan_cli.output import warn
+    from portolan_cli.utils import format_size
+
+    size_bytes = source.stat().st_size
+    size = format_size(size_bytes)
+    info_output(f"Rewriting {source.name} ({size}): {reason}")
+    if size_bytes >= LARGE_REWRITE_WARN_BYTES:
+        warn(
+            f"{source.name} is {size}. The rewrite reads, sorts, and writes the "
+            f"whole file, and needs {size} of free space while it runs. Set "
+            f"add_bbox: false in .portolan/config.yaml to skip it."
+        )
+
+
+def _rewrite_or_keep(source: Path, settings: VectorSettings) -> None:
+    """Rewrite a GeoParquet in place, or keep it and say why the rewrite failed.
+
+    ``add`` used to copy a ``.parquet`` source through untouched, so a file
+    geoparquet-io cannot read or cannot write faithfully still reached the
+    catalog. The rewrite must not turn that into a failed ``add``, and it must
+    not replace the operator's data with worse data (issue #805).
+
+    A file kept this way is still non-conformant, and ``check`` reports it. The
+    operator sees the reason on the spot rather than a stack trace.
+
+    Args:
+        source: GeoParquet file to rewrite.
+        settings: Vector conversion settings to apply.
+    """
+    from portolan_cli.output import warn
+
+    try:
+        _rewrite_parquet_in_place(source, settings)
+    except RewriteFidelityError as err:
+        warn(f"Kept {source.name} as it is: it would lose {err.lost}")
+    except Exception as err:  # noqa: BLE001 - a copy is better than a failed add
+        logger.warning("Rewrite of %s failed: %s", source, err, exc_info=True)
+        warn(f"Kept {source.name} as it is: geoparquet-io could not rewrite it ({err})")
+
+
+def _rewrite_parquet_in_place(source: Path, settings: VectorSettings) -> None:
+    """Rewrite a GeoParquet file with the vector settings applied.
+
+    Writes a sibling temporary file and swaps it in with :meth:`Path.replace`,
+    which is atomic within one filesystem. The source keeps its bytes if the
+    write raises, so a failed rewrite cannot destroy the operator's data.
+
+    The temporary file is a hidden sibling and carries
+    :data:`REWRITE_TEMP_INFIX` in its name. ``add`` collects the source
+    directory before it converts anything, and a hard kill skips the cleanup
+    below, so a leftover file would otherwise be collected as a source on the
+    next run. :func:`portolan_cli.add.is_rewrite_temp` skips it.
+
+    geoparquet-io writes a fresh ``geo`` key and drops every other schema
+    metadata key, so any extra key the source carried is restored afterwards.
+    That restore reads and rewrites the file a second time, so it runs only
+    when the source has such a key.
+
+    Args:
+        source: GeoParquet file to rewrite.
+        settings: Vector conversion settings to apply.
+    """
+    import geoparquet_io as gpio
+
+    temp_path = source.with_name(f".{source.stem}{REWRITE_TEMP_INFIX}.parquet")
+    preserved = read_extra_schema_metadata(source)
+    before = read_rewrite_fidelity(source)
+
+    def _run() -> None:
+        table = apply_vector_settings(gpio.convert(str(source)), settings)
+        table.write(str(temp_path))
+
+    try:
+        run_with_transient_convert_retry(_run, source_name=source.name)
+        if preserved:
+            _restore_schema_metadata(temp_path, preserved)
+        _assert_rewrite_kept_everything(source, temp_path, before)
+        temp_path.replace(source)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _same_crs(before: Any, after: Any) -> bool:
+    """Report whether two GeoParquet ``crs`` values mean the same thing.
+
+    The values are PROJJSON, and two encodings of one CRS can differ in text,
+    so pyproj decides equivalence. A value pyproj cannot parse falls back to
+    equality, which keeps an unreadable pair from passing as a match.
+
+    Args:
+        before: The source file's ``crs`` value.
+        after: The rewritten file's ``crs`` value.
+
+    Returns:
+        True when both describe the same CRS.
+    """
+    if before == after:
+        return True
+    try:
+        return bool(CRS.from_user_input(before) == CRS.from_user_input(after))
+    except Exception:  # noqa: BLE001 - an unparsable CRS is not a proven match
+        return False
+
+
+def _means_wgs84(crs: Any) -> bool:
+    """Report whether a GeoParquet ``crs`` value means WGS84.
+
+    GeoParquet reads an absent ``crs`` as OGC:CRS84, which is WGS84 with
+    longitude and latitude in that axis order. A writer that omits the key for
+    WGS84 data therefore loses no meaning, and geoparquet-io omits it.
+
+    Without this test the fidelity gate refuses every rewrite of a WGS84 file.
+    That is the common case, so the file never gains its bbox covering column,
+    and a partitioned add rewrites each partition on its own instead (#805).
+
+    Args:
+        crs: The source file's ``crs`` value, as PROJJSON or a string.
+
+    Returns:
+        True when the value describes WGS84 or CRS84.
+    """
+    try:
+        return _is_wgs84(CRS.from_user_input(crs))
+    except Exception:  # noqa: BLE001 - an unparsable CRS is not provably WGS84
+        return False
+
+
+def _assert_rewrite_kept_everything(
+    source: Path, rewritten: Path, before: RewriteFidelity | None
+) -> None:
+    """Refuse a rewrite that would replace good data with worse data.
+
+    The rewrite overwrites the operator's own file, so it has to prove it lost
+    nothing before the swap. A GeoParquet that comes back declaring no CRS
+    reads as OGC:CRS84 per the specification, so projected coordinates would be
+    mislabeled as longitude and latitude.
+
+    geoparquet-io 1.4.0 fixed the write that dropped the CRS (gpio#625), so
+    this gate is silent on the normal path. Keep it. It guards a destructive
+    operation against any cause, and it is not a workaround for one dependency
+    bug.
+
+    This is a gate, not a repair. Portolan does not put the CRS back. It keeps
+    the operator's file and says why, and ``check`` still reports the missing
+    covering column.
+
+    Args:
+        source: The file the rewrite would replace.
+        rewritten: The candidate replacement.
+        before: The source's fidelity fields, read before the rewrite ran.
+
+    Raises:
+        RewriteFidelityError: When the rewrite loses rows, columns, or the CRS.
+    """
+    if before is None:
+        return
+    after = read_rewrite_fidelity(rewritten)
+    if after is None:
+        raise RewriteFidelityError(source.name, "the ability to be read back")
+
+    if after.row_count != before.row_count:
+        raise RewriteFidelityError(
+            source.name, f"rows: {before.row_count} became {after.row_count}"
+        )
+
+    dropped = before.columns - after.columns
+    if dropped:
+        raise RewriteFidelityError(source.name, f"the columns {sorted(dropped)}")
+
+    if before.crs is not None and after.crs is None and not _means_wgs84(before.crs):
+        raise RewriteFidelityError(source.name, "the CRS it declared")
+
+    # A written CRS that differs from the source is corruption, not a drop, and
+    # relabels every coordinate in the file. Compare the meaning rather than the
+    # PROJJSON text, because an equivalent CRS can serialize two ways.
+    if before.crs is not None and after.crs is not None and not _same_crs(before.crs, after.crs):
+        raise RewriteFidelityError(source.name, "its CRS, which the rewrite changed")
+
+
+def _writer_compression(reader: Any) -> str:
+    """Name the compression to rewrite a file with, as ParquetWriter spells it.
+
+    ``ParquetFile`` reports an uncompressed column as ``UNCOMPRESSED``, which
+    ``ParquetWriter`` rejects: it spells the same thing ``none``. Reading the
+    codec back without this translation raises ``Unsupported compression:
+    uncompressed`` and loses the rewrite.
+
+    Reads column 0 of the first row group. Portolan writes one codec for the
+    whole file, so one column answers for all of them.
+
+    Args:
+        reader: An open :class:`pyarrow.parquet.ParquetFile` with row groups.
+
+    Returns:
+        A compression name ``ParquetWriter`` accepts.
+    """
+    codec = reader.metadata.row_group(0).column(0).compression.lower()
+    return "none" if codec == "uncompressed" else codec
+
+
+def _restore_schema_metadata(path: Path, preserved: dict[bytes, bytes]) -> None:
+    """Put the source's extra schema metadata back on a rewritten file.
+
+    geoparquet-io owns the ``geo`` key and writes its own, so ``preserved``
+    must already exclude it. Every other key the publisher set is restored:
+    geopandas writes ``pandas``, and provenance keys are common (issue #805).
+
+    Copies row group by row group so memory does not scale with the file, and
+    keeps the compression geoparquet-io chose.
+
+    Args:
+        path: Rewritten Parquet file to amend, in place.
+        preserved: Schema metadata keys to restore.
+    """
+    import pyarrow.parquet as pq
+
+    amended = path.with_name(f"{path.name}.meta")
+
+    try:
+        reader = pq.ParquetFile(path)
+        try:
+            schema = reader.schema_arrow
+            # The writer's own keys win. Only keys it dropped come back.
+            merged = {**preserved, **(schema.metadata or {})}
+            groups = reader.num_row_groups
+            compression = _writer_compression(reader) if groups else "snappy"
+            with pq.ParquetWriter(
+                amended, schema.with_metadata(merged), compression=compression
+            ) as writer:
+                for index in range(groups):
+                    writer.write_table(reader.read_row_group(index))
+        finally:
+            # Windows cannot replace a file that is still open.
+            reader.close()
+        amended.replace(path)
+    finally:
+        amended.unlink(missing_ok=True)
 
 
 def convert_tabular(source: Path, dest_dir: Path) -> Path:

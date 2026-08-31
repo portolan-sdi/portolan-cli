@@ -1066,13 +1066,23 @@ class TestConvertFixer:
         assert [r.action for r in results] == [FixAction.SKIPPED]
 
     def test_the_skip_names_the_pass_that_owns_conversion(self, tmp_path: Path) -> None:
+        """The skip names both commands that do repair a file.
+
+        `convert` is selected by PTL-DAT-003, which the geo-asset pass owns, and
+        by PTL-DAT-006 and PTL-DAT-007, which it does not: those two fire on a
+        file that is already cloud-native, so the geo-asset pass skips it. Since
+        #805 `add --force --reconvert` rewrites that file, so the message names
+        it rather than leaving the operator with no route.
+        """
         _tiny_catalog(tmp_path)
 
         results = FIXERS["convert"](tmp_path, False)
 
         assert results[0].message == (
             "Conversion runs in the geo-asset pass; re-run `portolan check --fix` "
-            "without --metadata"
+            "without --metadata. A GeoParquet that is already cloud-native but "
+            "unsorted or missing its bbox covering column is rewritten by "
+            "`portolan add --force --reconvert`"
         )
 
 

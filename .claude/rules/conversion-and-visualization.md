@@ -37,6 +37,78 @@ reimplement geometry or raster math.
   metadata). When you suspect that, pin/verify the upstream version and document
   in `context/shared/known-issues/`, do not patch around it in our layer.
 
+## Vector conversion writes conforming GeoParquet by default (#805)
+
+`VectorSettings` defaults to `sort="hilbert"` and `add_bbox=True`, and
+`convert.apply_vector_settings` is the one place that applies them. rashid reads
+**both** `PTL-DAT-006` (row order) and `PTL-DAT-007` (per-row-group statistics)
+through the bbox covering column, so dropping `add_bbox` fails one rule and
+silently leaves the other unevaluated. Keep the two defaults together.
+
+Three writers must stay in agreement, and they have drifted before:
+`preparation.convert_vector` (single-file `add`), `convert._convert_vector`
+(multilayer `add`), and `extract/arcgis/orchestrator` (which builds its own
+table). WFS and Carto delegate to `geoparquet-io` helpers that already do both.
+When you change the layout, grep for every `add_bbox(` call and apply it to all
+of them. Every one of them must first test `convert.has_geometry`: a CSV of
+records and an ArcGIS **Table** layer both read as a table with
+`geometry_column = None`, and `add_bbox()` / `sort_hilbert()` raise a DuckDB
+binder error on one.
+
+A `.parquet` handed to `add` is no longer copied blindly.
+`preparation._needs_spatial_rewrite` reads the footer once through
+`metadata.read_spatial_layout` (O(1)) and rewrites the file only when it is
+GeoParquet **and** `add_bbox` is on **and** the file carries no covering
+column. That last conjunct matters: with `add_bbox: false` the footer shows
+nothing the rewrite could change, so rewriting would repeat on every `add` and
+report a reason it cannot fix. A tabular Parquet has no `geo` key and must
+never reach `add_bbox()`.
+
+The footer says nothing about row order, so `--force --reconvert` forces the
+rewrite anyway. That is the documented repair both for a file that has the
+column but is unsorted and for a sort-only configuration, and
+`docs/reference/configuration.md` and the `convert` fixer's decline message
+name it.
+
+**`--force` alone must still produce a conforming file.** `--force` skips
+conversion when the output exists (issue #386), and for a single-file
+collection the output *is* the source, so that skip once returned a file with
+no covering column and no warning — the exact failure #805 removes. The skip
+branch now calls `_ensure_conforming_geoparquet`, which runs the same footer
+test. If you add another early return to `_convert_and_extract_metadata`, carry
+that call with it.
+
+When the source is its own destination, `_rewrite_parquet_in_place` writes a
+sibling and swaps it in with `Path.replace`, so a failed write cannot destroy
+the operator's data. Two consequences to preserve: geoparquet-io writes a fresh
+`geo` key and **drops every other schema metadata key**, so the helper restores
+them (geopandas writes `pandas`, publishers write provenance keys); and the
+scratch file carries `REWRITE_TEMP_INFIX`, because `add` reads the collection
+directory before conversion starts and a killed run leaves one behind. Both
+`add._collect_files_for_add` and `preparation._scan_item_assets` skip it via
+`is_rewrite_temp` — a leftover that gets tracked as an asset makes every later
+add read a truncated file.
+
+**The swap is gated.** `_assert_rewrite_kept_everything` compares the source and
+the rewritten file on row count, column set, and declared CRS, and raises
+`RewriteFidelityError` when any is lost. `_rewrite_or_keep` catches that and any
+other rewrite failure, keeps the operator's file, and warns.
+
+**Keep the gate.** It guards a destructive in-place operation against any cause,
+and it is not a workaround for one dependency bug. geoparquet-io used to write
+**no `crs` key at all**, and the GeoParquet spec reads an absent `crs` as
+OGC:CRS84, so an ungated rewrite relabelled projected data as lon/lat. That is
+fixed in geoparquet-io 1.4.0 (geoparquet-io#625, `ff02db8`), so the gate is now
+silent on the normal path. Do **not** "fix" a future writer bug by writing the
+CRS back into gpio's output — that is the patch-around-upstream this repo
+refuses. See `context/shared/known-issues/geoparquet-io-write-drops-crs.md`.
+
+The fix means gpio now hands Portolan the source CRS, including a PROJJSON dict
+when the CRS carries no authority code (an ESRI `.prj` such as POSGAR 1994).
+`portolan_cli/crs.py` takes `str | dict | None` everywhere, and `describe_crs`
+labels a dict for a message. Do not convert PROJJSON to EPSG in Portolan: a CRS
+without an authority has no EPSG code to find.
+
 ## Skip conversion for ALL cloud-native formats, not just .parquet
 
 The public entry point is `convert_file()` in `convert.py`, which calls

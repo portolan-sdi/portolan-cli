@@ -253,3 +253,6 @@ See `context/shared/known-issues/` for tracked issues. Key ones:
 | [PySTAC absolute paths](context/shared/known-issues/pystac-absolute-paths.md) | Leaks local paths in output; use manual JSON construction |
 | [DuckDB "Query interrupted" transient](context/shared/known-issues/duckdb-query-interrupted-transient.md) | Rare (~1/1000) transient interrupt during bulk conversion; bounded retry in `_convert_vector` |
 | [ESRI GDB rasters](context/shared/known-issues/esri-gdb-rasters.md) | Unreadable without GDAL and undetected; `.gdb` routes to the vector pipeline |
+| [geoparquet-io drops CRS on write](context/shared/known-issues/geoparquet-io-write-drops-crs.md) | Resolved in geoparquet-io 1.4.0. The rewrite fidelity gate stays, because it guards a destructive operation |
+| [DuckDB 1.5.5 ST_Read_Meta segfault](context/shared/known-issues/duckdb-155-st-read-meta-segfault.md) | Kills the process on malformed vector input, with no catchable error; pinned to `duckdb<1.5.5` |
+| [geoparquet-io S2 unavailable](context/shared/known-issues/geoparquet-io-s2-unavailable.md) | `add s2` and `partition s2` stop with an explanation. The DuckDB `geography` extension is not published for `duckdb>=1.5.2`. Use `a5` |

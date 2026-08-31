@@ -73,6 +73,7 @@ nav:
     - Overview: reference/index.md
     - CLI Reference: reference/cli.md
     - Python API Reference: reference/python.md
+    - Configuration Reference: reference/configuration.md
   - Contributing: contributing.md
   - Changelog: changelog.md
 
