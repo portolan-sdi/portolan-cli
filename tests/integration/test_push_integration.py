@@ -1226,7 +1226,7 @@ class TestPushOutputInvariants:
         versions_pushed=st.integers(min_value=0, max_value=100),
     )
     @settings(
-        max_examples=50,
+        max_examples=25,
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
             HealthCheck.differing_executors,

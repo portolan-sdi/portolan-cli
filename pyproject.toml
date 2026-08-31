@@ -138,7 +138,7 @@ asyncio_default_fixture_loop_scope = "function"
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
-addopts = "-v --tb=short --cov=portolan_cli --cov-report=term-missing --cov-fail-under=0"
+addopts = "--tb=short"
 markers = [
     "unit: Fast, isolated, no I/O (< 100ms each)",
     "integration: Multi-component, may touch filesystem",
@@ -272,8 +272,8 @@ also_copy = [
   ".mutation-shards.json",
 ]
 # The stats/baseline run must mirror the fast CI test job, not the whole suite:
-# - --no-cov: pyproject's addopts inject --cov, whose instrumentation conflicts
-# with mutmut's; without this the stats phase is unreliable.
+# - --no-cov: keeps coverage instrumentation off even when a caller or config
+# adds --cov (it conflicts with mutmut's); addopts no longer injects it.
 # - --tb=short: a stats-phase failure must show WHERE it broke.
 # - marker filter: exclude network/slow/benchmark/e2e (mutation of portolan_cli
 # is validated by the fast, offline suite; e2e needs Docker, network needs a
