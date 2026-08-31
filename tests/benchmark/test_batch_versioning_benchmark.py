@@ -22,6 +22,8 @@ def benchmark_catalog(tmp_path: Path) -> Path:
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("version: 1\n")
+    # add_files rejects a collection with no license (issue #842).
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
     catalog_data = {
         "type": "Catalog",
