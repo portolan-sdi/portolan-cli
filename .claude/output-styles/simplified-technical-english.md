@@ -7,7 +7,7 @@ Write all issue bodies, pull request bodies, commit message bodies, and lasting
 code comments in Simplified Technical English (ASD-STE100). Apply these rules to
 every sentence.
 
-VOICE.md governs public-facing copy such as the website, announcements, and
+norms/prose.md governs public-facing copy such as the website, announcements, and
 docs. These rules govern development writing. Follow these for issues and pull
 requests.
 
