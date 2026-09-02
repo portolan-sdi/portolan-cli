@@ -1,13 +1,13 @@
 <!-- ops-sync:begin — synced from portolan-sdi/portolan-ops. Edit there, not here. -->
-# Portolan Agent Norms
+# Portolan agent norms
 
 These rules apply to AI agents working in any portolan-sdi repo. Every downstream repo carries this text verbatim as a synced block at the top of its own `AGENTS.md`. Repo-specific instructions live below the block and override the canonical rules in that repo only.
 
 Claude Code does not read `AGENTS.md`. Each repo carries a one-line `CLAUDE.md` that imports it instead. Put repo-specific instructions in `AGENTS.md`, never in `CLAUDE.md`, which the sync overwrites.
 
-## Ground Rules
+## Ground rules
 
-The [portolan-spec](https://github.com/portolan-sdi/portolan-spec) repo is ground truth for the Portolan standard. The CLI, validator, registry, and every other tool implement the spec. They are downstream of it. Never describe the CLI as the source of truth. Propose spec changes in portolan-spec.
+The [portolan-spec](https://github.com/portolan-sdi/portolan-spec) repo is ground truth for the Portolan specification. The CLI, `rashid`, the registry, and every other tool implement the specification. They are downstream of it. Never describe the CLI as the source of truth. Propose spec changes in portolan-spec.
 
 Before documenting any command, flag, or API, verify it exists in the shipped tool. A fabricated example persists beyond the session that wrote it.
 
@@ -17,7 +17,7 @@ Never bypass pre-commit hooks or CI gates. Green means green.
 
 Write commits in conventional form. Squash-merge makes the pull request title become the commit message.
 
-## Pull Requests and Issues
+## Pull requests and issues
 
 Write every issue and pull request in two layers. The human layer comes first: what is wrong or missing, why it matters, and what should happen instead. Someone who did not follow your investigation should understand it in about a minute. The agent layer comes after: evidence, implementation detail, constraints, edge cases, and verification.
 
@@ -42,31 +42,31 @@ That check matches words and punctuation. It cannot see tone, padding, or prose 
 
 ## Documentation
 
-Agents writing or restructuring documentation follow two exemplars named in [norms/docs.md](https://github.com/portolan-sdi/portolan-ops/blob/main/norms/docs.md). [obstore](https://github.com/developmentseed/obstore) demonstrates a concise, human-readable README that delegates to good docs elsewhere. [scaffold-docs-skill](https://github.com/dbreunig/scaffold-docs-skill) shows how to build docs that have a clear human-facing surface, maintain examples via tests so they never drift, and auto-generate API docs instead of duplicating them. Both keep documentation maintainable and robust. Draft top-down with human review between layers. Do not draft a README from a generic template or from memory.
+Agents writing or restructuring documentation follow two exemplars named in [norms/docs.md](https://github.com/portolan-sdi/portolan-ops/blob/main/norms/docs.md). [obstore](https://github.com/developmentseed/obstore) demonstrates a concise, human-readable README that delegates to good docs elsewhere. [scaffold-docs-skill](https://github.com/dbreunig/scaffold-docs-skill) shows how to build docs that have a clear human-facing surface, maintain examples via tests so they never drift, and auto-generate API docs instead of duplicating them. Both keep documentation maintainable and current. Draft top-down with human review between layers. Do not draft a README from a generic template or from memory.
 
-Three rules apply to every docs change. Use title-case headings without emoji. Use absolute dates like "in July 2026", never "recently". Command examples must have been actually run against the shipped tool.
+Three rules apply to every docs change. Use sentence-case headings without emoji. Use absolute dates like "in July 2026", never "recently". Command examples must have been actually run against the shipped tool.
 
-## Voice and Messaging
+## Voice and messaging
 
-Every written artifact follows [VOICE.md](https://github.com/portolan-sdi/portolan-ops/blob/main/VOICE.md). This includes READMEs, PR and issue bodies, commit message bodies, docs, and lasting code comments. Apply it while drafting, not as cleanup.
+Every written artifact follows the prose rules in [norms/prose.md](https://github.com/portolan-sdi/portolan-ops/blob/main/norms/prose.md). Vale checks Markdown and website copy. The writing hook checks development prose. Apply the rules while drafting, not as cleanup.
 
-Before drafting substantial public copy like a README, a docs page, or an announcement, fetch and read [VOICE.md](https://github.com/portolan-sdi/portolan-ops/blob/main/VOICE.md) and [copy/messaging.md](https://github.com/portolan-sdi/portolan-ops/blob/main/copy/messaging.md) in full. If you cannot fetch them, say so and stop. Write from the actual files, not from memory.
+Before drafting substantial public copy like a README, a docs page, or an announcement, fetch and read [norms/prose.md](https://github.com/portolan-sdi/portolan-ops/blob/main/norms/prose.md) and [copy/messaging.md](https://github.com/portolan-sdi/portolan-ops/blob/main/copy/messaging.md) in full. If you cannot fetch them, say so and stop. Write from the actual files, not from memory.
 
 How Portolan is described comes from [copy/messaging.md](https://github.com/portolan-sdi/portolan-ops/blob/main/copy/messaging.md) alone.
 
-## Org-Wide Facts
+## Org-wide facts
 
 The canonical homepage is https://www.portolan-sdi.org/. Canonical URLs live in [copy/urls.md](https://github.com/portolan-sdi/portolan-ops/blob/main/copy/urls.md). Do not hardcode variants.
 
 Community discussion happens in the [Portolan Google Group](https://groups.google.com/g/portolan) and the [Portolan channel](https://cloudnativegeo.slack.com/archives/C0A1JBH9529) in Cloud-Native Geo Slack. Planning lives in [org-level GitHub projects](https://github.com/orgs/portolan-sdi/projects/1).
 
-## Contribution Rules
+## Contribution rules
 
 The [AI policy](https://github.com/portolan-sdi/portolan-ops/blob/main/policies/AI_POLICY.md) applies to every contribution. An agent may draft the diff and the pull request body. A human must read, understand, and approve both before review is requested. Agents never open PRs, post comments, or take action in shared spaces without human approval.
 
 Follow the [contributing guide](https://github.com/portolan-sdi/portolan-ops/blob/main/policies/CONTRIBUTING.md) and the [code of conduct](https://github.com/portolan-sdi/portolan-ops/blob/main/policies/CODE_OF_CONDUCT.md).
 
-## Sync Discipline
+## Sync discipline
 
 Files between `ops-sync` markers are synced from [portolan-ops](https://github.com/portolan-sdi/portolan-ops). They are overwritten on every sync run. To change one, edit it in portolan-ops, never in place.
 
