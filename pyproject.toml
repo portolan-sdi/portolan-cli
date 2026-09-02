@@ -27,7 +27,7 @@ classifiers = [
 ]
 dependencies = [
     "antimeridian>=0.3.11", # RFC 7946 compliant antimeridian handling for STAC bbox
-    "click>=8.4,<8.5", # PYSEC-2026-2132 fix; 8.4 makes ParamType generic (temporal.FlexibleDateTime subscripts it)
+    "click>=8.4,<8.6", # PYSEC-2026-2132 fix; 8.4 makes ParamType generic (temporal.FlexibleDateTime subscripts it)
     "defusedxml>=0.7.1", # Safe XML parsing (XXE protection) for CSW/ISO 19139 metadata
     "duckdb>=1.5.2,<1.5.6", # 1.5.5 segfaults in ST_Read_Meta on malformed input; see known-issues
     "geopandas>=0.14.0", # Reads GeoParquet for the thumbnail floor, which every collection needs (Issue #683)
