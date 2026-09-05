@@ -106,7 +106,7 @@ class TestPruneJsonOutputContract:
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             assert "Would delete" not in result.output
-            # A second, unparseable envelope would raise json.JSONDecodeError here.
+            # A second, unparsable envelope would raise json.JSONDecodeError here.
             envelope = json.loads(result.output)
             assert envelope["success"] is True
             assert envelope["data"]["prune"]["pruned"] == 1

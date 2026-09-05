@@ -50,10 +50,12 @@ def test_build_and_delete_plan_against_memory_store(tmp_path: Path) -> None:
     assert deleted == 2
     assert errors == []
 
-    remaining = {
-        str(meta["path"]) for batch in obs.list(store, prefix="cat") for meta in batch
+    remaining = {str(meta["path"]) for batch in obs.list(store, prefix="cat") for meta in batch}
+    assert remaining == {
+        "cat/live/versions.json",
+        "cat/live/a.parquet",
+        "cat/live/orphan_asset.parquet",
     }
-    assert remaining == {"cat/live/versions.json", "cat/live/a.parquet", "cat/live/orphan_asset.parquet"}
 
 
 @pytest.mark.integration
