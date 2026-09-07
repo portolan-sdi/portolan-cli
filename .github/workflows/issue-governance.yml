@@ -1,15 +1,14 @@
 # Thin caller — synced from portolan-sdi/portolan-ops (ci/issue-governance.yml).
 # Edit it there. Local changes are overwritten on the next sync.
 #
-# Puts every issue on the org project board, gives a new issue the Backlog
-# milestone when it arrives without one, and removes labels outside the
-# canonical set. The set and the rules live in portolan-ops, and norms/repos.md
-# there documents both. Nothing here decides priority.
+# Puts every issue on the org project board. It removes labels and milestones
+# outside their canonical sets. The sets and rules live in portolan-ops, and
+# norms/repos.md documents both. Nothing here decides priority.
 name: Issue governance
 
 on:
   issues:
-    types: [opened, edited, labeled]
+    types: [opened, reopened, transferred, edited, labeled, milestoned]
 
 permissions:
   contents: read

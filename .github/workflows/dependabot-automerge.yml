@@ -3,7 +3,10 @@
 name: Dependabot auto-merge
 
 on:
-  pull_request:
+  # Dependabot pull_request runs receive a read-only token. This trusted-base
+  # event keeps the requested write permissions. The workflow checks out no
+  # pull request code.
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
 
 permissions:
   contents: read

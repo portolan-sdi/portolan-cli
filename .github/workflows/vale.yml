@@ -1,0 +1,30 @@
+# Thin caller — synced from portolan-sdi/portolan-ops (ci/vale.yml).
+# Edit it there. Local changes are overwritten on the next sync.
+#
+# Vale checks the prose in this repo against the org rules. The rules and
+# their reasons live in portolan-ops norms/prose.md.
+#
+# Pull requests may keep old errors, but they may not add new ones.
+name: Vale
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prose:
+    # v1 is a moving major tag. A change to a rule reaches this repo when
+    # the tag moves, not when ops merges.
+    uses: portolan-sdi/portolan-ops/.github/workflows/reusable-vale.yml@v1
+    permissions:
+      contents: read
+    with:
+      fail-on: new-errors
