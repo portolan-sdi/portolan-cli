@@ -3864,6 +3864,137 @@ def _prepare_push_concurrency(
     return effective_file, effective_chunk
 
 
+def _run_prune(
+    catalog_path: Path,
+    destination: str,
+    profile: str | None,
+    region: str | None,
+    *,
+    dry_run: bool,
+    skip_confirm: bool,
+    use_json: bool,
+) -> dict[str, Any]:
+    """Compute and, once confirmed, apply a --prune plan. Returns data for the JSON envelope."""
+    from portolan_cli.sync.prune import build_prune_plan, delete_prune_plan, print_prune_plan
+    from portolan_cli.sync.push import discover_collections
+    from portolan_cli.sync.upload import setup_store
+
+    local_collections = discover_collections(catalog_path)
+    if not local_collections:
+        message = "Refusing to prune: no local collections found under the catalog root."
+        if not use_json:
+            warn(message)
+        return {"would_prune": 0, "refused": 0, "pruned": 0, "skipped_reason": message}
+
+    store, prefix = setup_store(destination, profile=profile, region=region)
+    plan = build_prune_plan(store, prefix, catalog_path, local_collections)
+
+    if not use_json:
+        print_prune_plan(plan)
+
+    result: dict[str, Any] = {
+        "would_prune": plan.delete_count,
+        "refused": plan.refuse_count,
+        "pruned": 0,
+    }
+
+    if plan.delete_count == 0 or dry_run:
+        return result
+
+    if not skip_confirm:
+        if use_json or not click.confirm(
+            f"Delete {plan.delete_count} remote object(s)?", default=False
+        ):
+            if not use_json:
+                warn("Skipping deletion. Re-run with --yes to confirm non-interactively.")
+            result["skipped_reason"] = "confirmation required (use --yes)"
+            return result
+
+    deleted, errors = delete_prune_plan(store, plan)
+    result["pruned"] = deleted
+    if errors:
+        result["errors"] = errors
+        if not use_json:
+            for message in errors:
+                warn(message)
+    if not use_json:
+        success(f"Pruned {deleted} remote object(s)")
+    return result
+
+
+def _push_all_collections_command(
+    catalog_path: Path,
+    resolved_destination: str,
+    resolved_profile: str | None,
+    resolved_region: str | None,
+    *,
+    force: bool,
+    dry_run: bool,
+    workers: int | None,
+    effective_file_conc: int,
+    effective_chunk_conc: int,
+    max_connections: int | None,
+    adaptive: bool,
+    verbose: bool,
+    use_json: bool,
+    prune: bool,
+    prune_yes: bool,
+) -> None:
+    """Push every collection in the catalog, then apply --prune if requested."""
+    from portolan_cli.sync.push import push_all_collections
+
+    try:
+        all_result = push_all_collections(
+            catalog_root=catalog_path,
+            destination=resolved_destination,
+            force=force,
+            dry_run=dry_run,
+            profile=resolved_profile,
+            region=resolved_region,
+            workers=workers,
+            file_concurrency=effective_file_conc,
+            chunk_concurrency=effective_chunk_conc,
+            max_connections=max_connections,
+            adaptive=adaptive,
+            verbose=verbose,
+            json_mode=use_json,
+        )
+
+        envelope_data: dict[str, Any] = {
+            "total_collections": all_result.total_collections,
+            "successful_collections": all_result.successful_collections,
+            "failed_collections": all_result.failed_collections,
+            "total_files_uploaded": all_result.total_files_uploaded,
+            "total_versions_pushed": all_result.total_versions_pushed,
+            "dry_run": all_result.dry_run,
+            "total_would_push_files": all_result.total_would_push_files,
+            "total_would_push_versions": all_result.total_would_push_versions,
+            "collection_errors": all_result.collection_errors,
+        }
+        # Terminal output for the push itself is handled by push_all_collections()
+
+        if prune and all_result.success:
+            envelope_data["prune"] = _run_prune(
+                catalog_path,
+                resolved_destination,
+                resolved_profile,
+                resolved_region,
+                dry_run=dry_run,
+                skip_confirm=prune_yes,
+                use_json=use_json,
+            )
+
+        if use_json:
+            output_json_envelope(success_envelope("push", envelope_data))
+
+        if not all_result.success:
+            raise SystemExit(1)
+
+    except Exception as err:
+        emit_error("push", type(err).__name__, str(err), use_json=use_json)
+        raise SystemExit(1) from err
+
+
 @cli.command()
 @click.argument("destination", required=False, default=None)
 @click.option(
@@ -3881,7 +4012,23 @@ def _prepare_push_concurrency(
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Show what would be pushed without uploading. Note: skips remote state check (no network I/O), so conflicts won't be detected.",
+    help="Show what would be pushed without uploading. Skips the remote conflict "
+    "check, so a plain push does no network I/O and won't detect conflicts. "
+    "With --prune, this command still lists remote objects to preview deletions.",
+)
+@click.option(
+    "--prune",
+    is_flag=True,
+    help="After pushing, delete remote objects under collection prefixes no "
+    "longer present locally. Never deletes objects under a prefix still used "
+    "locally. Requires --collection to be omitted. See --yes.",
+)
+@click.option(
+    "--yes",
+    "-y",
+    "prune_yes",
+    is_flag=True,
+    help="Skip the confirmation prompt before --prune deletes anything.",
 )
 @click.option(
     "--profile",
@@ -3950,6 +4097,8 @@ def push(
     collection: str | None,
     force: bool,
     dry_run: bool,
+    prune: bool,
+    prune_yes: bool,
     profile: str | None,
     catalog_path: Path | None,
     workers: int | None,
@@ -3982,12 +4131,24 @@ def push(
         # Push all collections
         portolan push s3://mybucket/catalog
         portolan push --dry-run  # Uses configured remote
+
+        # Push all collections, then delete orphaned remote objects
+        portolan push s3://mybucket/catalog --prune
     """
     import asyncio
 
-    from portolan_cli.sync.push import PushConflictError, push_all_collections, push_async
+    from portolan_cli.sync.push import PushConflictError, push_async
 
     use_json = should_output_json(ctx, json_output)
+
+    if prune and collection is not None:
+        emit_error(
+            "push",
+            "UsageError",
+            "--prune reconciles the whole catalog and cannot be combined with --collection.",
+            use_json=use_json,
+        )
+        raise SystemExit(1)
 
     # Git-style: find catalog root from anywhere within the catalog
     # Use explicit --catalog if provided, otherwise auto-detect
@@ -4021,49 +4182,24 @@ def push(
 
     # If no collection specified, push all collections
     if collection is None:
-        try:
-            all_result = push_all_collections(
-                catalog_root=catalog_path,
-                destination=resolved_destination,
-                force=force,
-                dry_run=dry_run,
-                profile=resolved_profile,
-                region=resolved_region,
-                workers=workers,
-                file_concurrency=effective_file_conc,
-                chunk_concurrency=effective_chunk_conc,
-                max_connections=max_connections,
-                adaptive=adaptive,
-                verbose=verbose,
-                json_mode=use_json,
-            )
-
-            if use_json:
-                envelope = success_envelope(
-                    "push",
-                    {
-                        "total_collections": all_result.total_collections,
-                        "successful_collections": all_result.successful_collections,
-                        "failed_collections": all_result.failed_collections,
-                        "total_files_uploaded": all_result.total_files_uploaded,
-                        "total_versions_pushed": all_result.total_versions_pushed,
-                        "dry_run": all_result.dry_run,
-                        "total_would_push_files": all_result.total_would_push_files,
-                        "total_would_push_versions": all_result.total_would_push_versions,
-                        "collection_errors": all_result.collection_errors,
-                    },
-                )
-                output_json_envelope(envelope)
-            # Terminal output is handled by push_all_collections()
-
-            if not all_result.success:
-                raise SystemExit(1)
-
-            return
-
-        except Exception as err:
-            emit_error("push", type(err).__name__, str(err), use_json=use_json)
-            raise SystemExit(1) from err
+        _push_all_collections_command(
+            catalog_path,
+            resolved_destination,
+            resolved_profile,
+            resolved_region,
+            force=force,
+            dry_run=dry_run,
+            workers=workers,
+            effective_file_conc=effective_file_conc,
+            effective_chunk_conc=effective_chunk_conc,
+            max_connections=max_connections,
+            adaptive=adaptive,
+            verbose=verbose,
+            use_json=use_json,
+            prune=prune,
+            prune_yes=prune_yes,
+        )
+        return
 
     try:
         # Use async push for single-collection push (concurrent uploads)
