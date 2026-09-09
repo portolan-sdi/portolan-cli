@@ -1,6 +1,6 @@
 """Plain-Parquet (tabular) metadata extraction.
 
-A tabular asset is a Parquet file with no ``geo`` metadata key. The spec's
+A tabular asset is a Parquet file with no ``geo`` footer key. The spec's
 Tabular Data section asks such a collection to document its columns with the
 STAC table extension and to populate ``extent.temporal`` when the data carries
 a time dimension (rashid PTL-DAT-015, issue #749).
@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from portolan_cli.parquet_metadata import read_geo_metadata
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
@@ -61,7 +62,7 @@ def extract_tabular_metadata(path: Path) -> TabularMetadata | None:
         parquet = pq.ParquetFile(path)
     except Exception:  # noqa: BLE001 - unreadable Parquet: the format checks own it
         return None
-    if (parquet.schema_arrow.metadata or {}).get(b"geo") is not None:
+    if read_geo_metadata(path) is not None:
         return None
 
     return TabularMetadata(
