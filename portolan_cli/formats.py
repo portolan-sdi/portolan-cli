@@ -124,8 +124,10 @@ def is_valid_parquet(path: Path) -> bool:
 def is_geoparquet(path: Path) -> bool:
     """Check if a Parquet file has GeoParquet metadata.
 
-    GeoParquet files have a 'geo' key in their schema metadata that contains
-    geospatial column information.
+    GeoParquet files have a 'geo' key in their footer key-value metadata that
+    contains geospatial column information. The read goes through
+    ``parquet_metadata``, which reads the raw footer. Reading the Arrow schema
+    instead misses a ``geo`` key the writer appended at close (issue #864).
 
     Args:
         path: Path to the Parquet file.
@@ -135,23 +137,9 @@ def is_geoparquet(path: Path) -> bool:
         Note: Returns False for both non-geo Parquet AND invalid/corrupted files.
         Use is_valid_parquet() first if you need to distinguish these cases.
     """
-    try:
-        import pyarrow.parquet as pq
-    except ImportError:
-        logger.warning(
-            "pyarrow not installed; cannot detect GeoParquet metadata. "
-            "Install with: pip install pyarrow"
-        )
-        return False
+    from portolan_cli.parquet_metadata import read_geo_metadata
 
-    try:
-        metadata = pq.read_metadata(str(path))
-        schema_metadata = metadata.schema.to_arrow_schema().metadata or {}
-        # GeoParquet files have 'geo' key in schema metadata
-        return b"geo" in schema_metadata
-    except Exception:
-        logger.exception("Failed to read Parquet metadata from %s", path)
-        return False
+    return read_geo_metadata(path) is not None
 
 
 def is_cloud_optimized_geotiff(path: Path, *, quiet: bool = True) -> bool:

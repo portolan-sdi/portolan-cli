@@ -874,19 +874,13 @@ def _read_geoparquet_bounds(gpq_path: Path) -> tuple[float, float, float, float]
     Returns:
         Tuple of (minx, miny, maxx, maxy) or None if empty/unavailable.
     """
-    try:
-        import pyarrow.parquet as pq
-    except ImportError:
-        logger.debug("pyarrow not available")
-        return None
+    from portolan_cli.parquet_metadata import read_geo_metadata
 
     try:
-        pq_file = pq.ParquetFile(gpq_path)
-
-        # Try to get bbox from GeoParquet metadata (O(1), no geometry parsing)
-        schema_meta = pq_file.schema_arrow.metadata or {}
-        geo_meta_bytes = schema_meta.get(b"geo", b"{}")
-        geo_meta = json.loads(geo_meta_bytes.decode("utf-8"))
+        # Try to get bbox from GeoParquet metadata (O(1), no geometry parsing).
+        # The read goes through the raw footer: the Arrow schema hides a ``geo``
+        # key the writer appended at close (issue #864).
+        geo_meta = read_geo_metadata(gpq_path) or {}
 
         # GeoParquet spec: columns.<geom_col>.bbox = [minx, miny, maxx, maxy]
         # Validate for inf/nan values (issue #516) - CRS may not be WGS84

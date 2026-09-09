@@ -179,8 +179,11 @@ scan-before-import). Shapefile renames move all sidecars together with rollback.
 - A FileGDB `.gdb` directory is one asset, yielded whole and not recursed into.
 - Shapefile sidecars (`.dbf`/`.shx`/`.prj`/...) are tracked then skipped, never
   imported directly. An incomplete shapefile (missing `.dbf`/`.shx`) is an ERROR.
-- A `.parquet` with no `geo` schema-metadata key is tabular, not GeoParquet, skip
+- A `.parquet` with no `geo` footer key is tabular, not GeoParquet, skip
   it as `TABULAR_DATA`/`NOT_GEOSPATIAL` (the spec derives tabular from a geometry-less Parquet).
+  Read the key through `parquet_metadata.read_geo_metadata`, never off the Arrow
+  schema: pyarrow rebuilds that schema from the `ARROW:schema` blob and hides a
+  `geo` key the writer appended at close (issue #864).
 - An image under 1 MiB is a thumbnail, larger images are raster data.
 - Catalogs reach 25k+ item dirs. Any per-directory or per-asset check must be
   O(n), the `_check_mixed_structure` O(n^2) bug hung for minutes on 27k dirs.

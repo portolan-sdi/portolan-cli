@@ -674,50 +674,49 @@ class TestPmtilesBoundsExtraction:
 class TestGeoparquetMetadataBounds:
     """Tests for GeoParquet metadata-based bbox reading (Issue #423 Performance)."""
 
+    @staticmethod
+    def _write_parquet_with_geo(path: Path, geo_metadata: dict) -> Path:
+        """Write a Parquet file that declares ``geo_metadata`` in its footer."""
+        import json
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        table = pa.table({"geometry": pa.array([b""], pa.binary())})
+        schema = table.schema.with_metadata({b"geo": json.dumps(geo_metadata).encode("utf-8")})
+        pq.write_table(table.cast(schema), str(path))
+        return path
+
     @pytest.mark.unit
     def test_read_bounds_from_metadata(self, tmp_path: Path) -> None:
         """_read_geoparquet_bounds extracts bbox from GeoParquet metadata (O(1))."""
-        import json
-        from unittest.mock import MagicMock, patch
-
         from portolan_cli.viz.thumbnail import _read_geoparquet_bounds
 
-        gpq_path = tmp_path / "test.parquet"
+        gpq_path = self._write_parquet_with_geo(
+            tmp_path / "test.parquet",
+            {"columns": {"geometry": {"bbox": [-60.5, -32.5, -60.0, -32.0]}}},
+        )
 
-        # Mock ParquetFile with geo metadata containing bbox
-        mock_pq_file = MagicMock()
-        geo_metadata = {"columns": {"geometry": {"bbox": [-60.5, -32.5, -60.0, -32.0]}}}
-        mock_pq_file.schema_arrow.metadata = {b"geo": json.dumps(geo_metadata).encode("utf-8")}
-
-        with patch("pyarrow.parquet.ParquetFile", return_value=mock_pq_file):
-            bounds = _read_geoparquet_bounds(gpq_path)
-
-        assert bounds == (-60.5, -32.5, -60.0, -32.0)
+        assert _read_geoparquet_bounds(gpq_path) == (-60.5, -32.5, -60.0, -32.0)
 
     @pytest.mark.unit
     def test_read_bounds_fallback_when_no_metadata(self, tmp_path: Path) -> None:
         """_read_geoparquet_bounds falls back to data read when no bbox in metadata."""
-        import json
         from unittest.mock import MagicMock, patch
 
         from portolan_cli.viz.thumbnail import _read_geoparquet_bounds
 
-        gpq_path = tmp_path / "test.parquet"
-
-        # Mock ParquetFile with geo metadata but NO bbox
-        mock_pq_file = MagicMock()
-        geo_metadata = {"columns": {"geometry": {}}}  # No bbox
-        mock_pq_file.schema_arrow.metadata = {b"geo": json.dumps(geo_metadata).encode("utf-8")}
+        gpq_path = self._write_parquet_with_geo(
+            tmp_path / "test.parquet",
+            {"columns": {"geometry": {}}},  # No bbox
+        )
 
         # Mock fallback geopandas read
         mock_gdf = MagicMock()
         mock_gdf.empty = False
         mock_gdf.total_bounds = [-61.0, -33.0, -59.0, -31.0]
 
-        with (
-            patch("pyarrow.parquet.ParquetFile", return_value=mock_pq_file),
-            patch("geopandas.read_parquet", return_value=mock_gdf),
-        ):
+        with patch("geopandas.read_parquet", return_value=mock_gdf):
             bounds = _read_geoparquet_bounds(gpq_path)
 
         assert bounds == (-61.0, -33.0, -59.0, -31.0)

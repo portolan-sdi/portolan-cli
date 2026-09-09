@@ -71,9 +71,10 @@ THUMBNAIL_MAX_SIZE: int = _reg.THUMBNAIL_MAX_SIZE
 def is_geoparquet(path: Path) -> bool:
     """Check if a Parquet file is GeoParquet by peeking at metadata.
 
-    This is a fast check that only reads the Parquet footer (O(1) metadata read),
-    not the actual data. It looks for the 'geo' key in the schema metadata which
-    is required by the GeoParquet specification.
+    This re-exports ``formats.is_geoparquet`` so the scanner and the format
+    detector cannot disagree about the same file. The scanner kept its own copy
+    until issue #864, and the copy read the Arrow schema, which hides a ``geo``
+    key the writer appended at close.
 
     Args:
         path: Path to the Parquet file.
@@ -82,26 +83,9 @@ def is_geoparquet(path: Path) -> bool:
         True if the file has GeoParquet metadata, False otherwise.
         Returns False on any read errors (file not found, invalid format, etc.).
     """
-    try:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
+    from portolan_cli.formats import is_geoparquet as _is_geoparquet
 
-        # Only read schema metadata, not data — this is fast (reads footer only)
-        schema = pq.read_schema(path)
-
-        # GeoParquet requires a 'geo' key in schema metadata
-        if schema.metadata is None:
-            return False
-
-        return b"geo" in schema.metadata
-
-    except (OSError, ValueError, pa.lib.ArrowInvalid):
-        # File not found, not valid parquet, corrupted, etc. means not GeoParquet
-        return False
-    except Exception:
-        # Catch-all for unexpected pyarrow errors, but re-raise system-exiting
-        # exceptions (KeyboardInterrupt, SystemExit are BaseException, not Exception)
-        return False
+    return _is_geoparquet(path)
 
 
 class FileCategory(Enum):
