@@ -695,6 +695,28 @@ class TestGeoparquetMetadataBounds:
         assert bounds == (-60.5, -32.5, -60.0, -32.0)
 
     @pytest.mark.unit
+    def test_read_bounds_from_3d_metadata(self, tmp_path: Path) -> None:
+        """Reduces a 6-element 3D bbox to 2D rather than keeping minz (issue #854)."""
+        import json
+        from unittest.mock import MagicMock, patch
+
+        from portolan_cli.viz.thumbnail import _read_geoparquet_bounds
+
+        gpq_path = tmp_path / "test_3d.parquet"
+
+        # Distinct z values, so a slice of the first four cannot pass by coincidence.
+        mock_pq_file = MagicMock()
+        geo_metadata = {
+            "columns": {"geometry": {"bbox": [-60.5, -32.5, 120.0, -60.0, -32.0, 480.0]}}
+        }
+        mock_pq_file.schema_arrow.metadata = {b"geo": json.dumps(geo_metadata).encode("utf-8")}
+
+        with patch("pyarrow.parquet.ParquetFile", return_value=mock_pq_file):
+            bounds = _read_geoparquet_bounds(gpq_path)
+
+        assert bounds == (-60.5, -32.5, -60.0, -32.0)
+
+    @pytest.mark.unit
     def test_read_bounds_fallback_when_no_metadata(self, tmp_path: Path) -> None:
         """_read_geoparquet_bounds falls back to data read when no bbox in metadata."""
         import json
