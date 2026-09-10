@@ -31,8 +31,16 @@ This page is generated from the shipped Click command tree.
 - `portolan pull`
 - `portolan push`
 - `portolan readme`
+- `portolan registry`
+- `portolan registry fetch`
+- `portolan registry list`
 - `portolan rm`
 - `portolan scan`
+- `portolan server`
+- `portolan server geoserver`
+- `portolan server geoserver plan`
+- `portolan server geoserver publish`
+- `portolan server geoserver sync`
 - `portolan skills`
 - `portolan skills list`
 - `portolan skills show`

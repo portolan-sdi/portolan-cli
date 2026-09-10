@@ -8604,3 +8604,360 @@ def skills_show_cmd(ctx: click.Context, name: str, json_output: bool) -> None:
         "skills show", {"name": name, "content": None, "url": SKILLS_REPO}, use_json=use_json
     ):
         click.echo(get_install_instructions())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Registry Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.group("registry")
+def registry_cmd() -> None:
+    """Inspect and fetch catalogs from the Portolan registry."""
+
+
+def _registry_catalog_entries(
+    registry_url: str | None,
+    catalog_id: tuple[str, ...],
+    include_stale: bool,
+    limit: int | None,
+) -> Any:
+    from portolan_cli.server.registry import DEFAULT_REGISTRY_URL, load_registry_entries
+
+    return load_registry_entries(
+        registry_url or DEFAULT_REGISTRY_URL,
+        catalog_ids=set(catalog_id) if catalog_id else None,
+        include_stale=include_stale,
+        limit=limit,
+    )
+
+
+@registry_cmd.command("list")
+@click.option("--registry-url", default=None, help="Portolan registry export URL.")
+@click.option("--catalog-id", multiple=True, help="Only show this registry catalog id.")
+@click.option("--include-stale", is_flag=True, help="Include stale registry entries.")
+@click.option("--limit", type=int, default=None, help="Maximum registry entries to show.")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def registry_list_cmd(
+    ctx: click.Context,
+    registry_url: str | None,
+    catalog_id: tuple[str, ...],
+    include_stale: bool,
+    limit: int | None,
+    json_output: bool,
+) -> None:
+    """List published catalog entries from the Portolan registry."""
+    use_json = should_output_json(ctx, json_output)
+    entries = _registry_catalog_entries(registry_url, catalog_id, include_stale, limit)
+    payload = [
+        {"id": entry.id, "url": entry.url, "title": entry.title, "status": entry.status}
+        for entry in entries
+    ]
+    if emit_success("registry list", {"catalogs": payload}, use_json=use_json):
+        return
+
+    click.echo(f"{'Catalog':<28} {'Status':<10} URL")
+    click.echo("-" * 88)
+    for entry in entries:
+        status = entry.status or "-"
+        click.echo(f"{entry.id:<28} {status:<10} {entry.url}")
+
+
+@registry_cmd.command("fetch")
+@click.argument("catalog_id", required=False)
+@click.option("--registry-url", default=None, help="Portolan registry export URL.")
+@click.option(
+    "--output",
+    "output_dir",
+    type=click.Path(path_type=Path),
+    default=Path("registry_catalogs"),
+    help="Directory that will receive the catalog snapshot.",
+)
+@click.option("--all", "fetch_all", is_flag=True, help="Fetch all registry catalog entries.")
+@click.option("--include-stale", is_flag=True, help="Allow stale registry entries.")
+@click.option("--path-only", is_flag=True, help="Print only the downloaded catalog path.")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def registry_fetch_cmd(
+    ctx: click.Context,
+    catalog_id: str | None,
+    registry_url: str | None,
+    output_dir: Path,
+    fetch_all: bool,
+    include_stale: bool,
+    path_only: bool,
+    json_output: bool,
+) -> None:
+    """Fetch registry catalogs for local server commands."""
+    from portolan_cli.server.registry import download_registry_catalog
+
+    use_json = should_output_json(ctx, json_output)
+    if fetch_all and catalog_id is not None:
+        raise click.ClickException("Use either CATALOG_ID or --all, not both.")
+    if not fetch_all and catalog_id is None:
+        raise click.ClickException("Provide CATALOG_ID or use --all.")
+    if fetch_all:
+        catalog_ids: tuple[str, ...] = ()
+    else:
+        if catalog_id is None:
+            raise click.ClickException("Provide CATALOG_ID or use --all.")
+        catalog_ids = (catalog_id,)
+    entries = _registry_catalog_entries(
+        registry_url,
+        catalog_ids,
+        include_stale,
+        limit=None,
+    )
+    if not entries:
+        if fetch_all:
+            raise click.ClickException("No catalogs found in registry.")
+        raise click.ClickException(f"Catalog not found in registry: {catalog_id}")
+    fetched = [(entry, download_registry_catalog(entry.url, output_dir)) for entry in entries]
+    if path_only:
+        for _entry, catalog_root in fetched:
+            click.echo(catalog_root)
+        return
+    if emit_success(
+        "registry fetch",
+        {
+            "catalogs": [
+                {
+                    "id": entry.id,
+                    "url": entry.url,
+                    "path": str(catalog_root),
+                }
+                for entry, catalog_root in fetched
+            ],
+        },
+        use_json=use_json,
+    ):
+        return
+    for entry, catalog_root in fetched:
+        success(f"Fetched {entry.id} to {catalog_root}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Server Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.group()
+def server() -> None:
+    """Publish a Portolan catalog to geospatial servers."""
+
+
+@server.group()
+def geoserver() -> None:
+    """Publish a Portolan catalog to GeoServer."""
+
+
+def _resolve_geoserver_provider(
+    catalog_root: Path | None,
+    url: str | None,
+    user: str | None,
+    password: str | None,
+    workspace: str | None,
+) -> Any:
+    """Build the GeoServer provider from CLI and environment settings."""
+    from portolan_cli.config import get_setting
+    from portolan_cli.server.providers.geoserver.client import GeoServerClient
+    from portolan_cli.server.providers.geoserver.planner import GeoServerProvider
+
+    resolved_url = get_setting("geoserver_url", cli_value=url, catalog_path=catalog_root)
+    resolved_user = get_setting("geoserver_user", cli_value=user, catalog_path=catalog_root)
+    resolved_password = get_setting(
+        "geoserver_password", cli_value=password, catalog_path=catalog_root
+    )
+    resolved_workspace = get_setting(
+        "geoserver_workspace", cli_value=workspace, catalog_path=catalog_root
+    )
+    missing = [
+        flag
+        for flag, value in (
+            ("--url", resolved_url),
+            ("--user", resolved_user),
+            ("--password", resolved_password),
+        )
+        if value is None
+    ]
+    if missing:
+        raise click.ClickException(f"Missing GeoServer connection option(s): {', '.join(missing)}")
+    client = GeoServerClient(str(resolved_url), str(resolved_user), str(resolved_password))
+    return GeoServerProvider(
+        client=client, workspace=str(resolved_workspace) if resolved_workspace else None
+    )
+
+
+def _resolve_geoserver_client(url: str | None, user: str | None, password: str | None) -> Any:
+    """Build a GeoServer client from CLI and environment settings."""
+    from portolan_cli.config import get_setting
+    from portolan_cli.server.providers.geoserver.client import GeoServerClient
+
+    resolved_url = get_setting("geoserver_url", cli_value=url)
+    resolved_user = get_setting("geoserver_user", cli_value=user)
+    resolved_password = get_setting("geoserver_password", cli_value=password)
+    missing = [
+        flag
+        for flag, value in (
+            ("--url", resolved_url),
+            ("--user", resolved_user),
+            ("--password", resolved_password),
+        )
+        if value is None
+    ]
+    if missing:
+        raise click.ClickException(f"Missing GeoServer connection option(s): {', '.join(missing)}")
+    return GeoServerClient(str(resolved_url), str(resolved_user), str(resolved_password))
+
+
+def _render_geoserver_plan(plan: Any) -> None:
+    """Render a GeoServer plan in text mode."""
+    click.echo("Portolan -> GeoServer plan")
+    click.echo("")
+    click.echo(f"Workspace: {plan.workspace}")
+    click.echo("")
+    click.echo(f"{'Collection':<28} {'Format':<12} Action")
+    click.echo("-" * 56)
+    for entry in plan.entries:
+        format_name = entry.format.value if entry.format else "-"
+        suffix = f" ({entry.reason})" if entry.reason else ""
+        click.echo(f"{entry.collection:<28} {format_name:<12} {entry.action.value}{suffix}")
+    click.echo("")
+    for action, count in plan.counts().items():
+        click.echo(f"{action:<12} {count}")
+
+
+@geoserver.command("plan")
+@click.argument("catalog_root_arg", required=False, type=click.Path(path_type=Path))
+@click.option("--url", default=None, help="GeoServer REST base URL.")
+@click.option("--user", default=None, help="GeoServer REST user.")
+@click.option("--password", default=None, help="GeoServer REST password.")
+@click.option("--workspace", default=None, help="GeoServer workspace name.")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def geoserver_plan_cmd(
+    ctx: click.Context,
+    catalog_root_arg: Path | None,
+    url: str | None,
+    user: str | None,
+    password: str | None,
+    workspace: str | None,
+    json_output: bool,
+) -> None:
+    """Show GeoServer resources that would be created."""
+    use_json = should_output_json(ctx, json_output)
+    catalog_root = catalog_root_arg or require_catalog_root(
+        use_json=use_json, command_name="server geoserver plan"
+    )
+    provider = _resolve_geoserver_provider(catalog_root, url, user, password, workspace)
+    plan = provider.plan(catalog_root)
+    if emit_success(
+        "server geoserver plan",
+        {
+            "workspace": plan.workspace,
+            "entries": [
+                {
+                    "collection": entry.collection,
+                    "format": entry.format.value if entry.format else None,
+                    "action": entry.action.value,
+                    "reason": entry.reason,
+                }
+                for entry in plan.entries
+            ],
+            "counts": plan.counts(),
+        },
+        use_json=use_json,
+    ):
+        return
+    _render_geoserver_plan(plan)
+
+
+@geoserver.command("publish")
+@click.argument("catalog_root_arg", required=False, type=click.Path(path_type=Path))
+@click.option("--url", default=None, help="GeoServer REST base URL.")
+@click.option("--user", default=None, help="GeoServer REST user.")
+@click.option("--password", default=None, help="GeoServer REST password.")
+@click.option("--workspace", default=None, help="GeoServer workspace name.")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def geoserver_publish_cmd(
+    ctx: click.Context,
+    catalog_root_arg: Path | None,
+    url: str | None,
+    user: str | None,
+    password: str | None,
+    workspace: str | None,
+    json_output: bool,
+) -> None:
+    """Publish GeoParquet and COG resources to GeoServer."""
+    use_json = should_output_json(ctx, json_output)
+    catalog_root = catalog_root_arg or require_catalog_root(
+        use_json=use_json, command_name="server geoserver publish"
+    )
+    provider = _resolve_geoserver_provider(catalog_root, url, user, password, workspace)
+    result = provider.publish(catalog_root)
+    if emit_success(
+        "server geoserver publish",
+        {
+            "workspace": result.workspace,
+            "published": result.published,
+            "skipped": result.skipped,
+            "errors": result.errors,
+        },
+        use_json=use_json,
+    ):
+        return
+    info_output("Publishing Portolan catalog to GeoServer")
+    info_output(f"Workspace: {result.workspace}")
+    success(f"Published {result.published} collections.")
+    if result.skipped:
+        warn(f"Skipped {result.skipped} collections.")
+    for err in result.errors:
+        error(err)
+    if result.errors:
+        raise SystemExit(1)
+
+
+@geoserver.command("sync")
+@click.argument("catalog_root_arg", required=False, type=click.Path(path_type=Path))
+@click.option("--url", default=None, help="GeoServer REST base URL.")
+@click.option("--user", default=None, help="GeoServer REST user.")
+@click.option("--password", default=None, help="GeoServer REST password.")
+@click.option("--workspace", default=None, help="GeoServer workspace name.")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def geoserver_sync_cmd(
+    ctx: click.Context,
+    catalog_root_arg: Path | None,
+    url: str | None,
+    user: str | None,
+    password: str | None,
+    workspace: str | None,
+    json_output: bool,
+) -> None:
+    """Reconcile GeoServer with the current catalog without pruning."""
+    use_json = should_output_json(ctx, json_output)
+    catalog_root = catalog_root_arg or require_catalog_root(
+        use_json=use_json, command_name="server geoserver sync"
+    )
+    provider = _resolve_geoserver_provider(catalog_root, url, user, password, workspace)
+    result = provider.sync(catalog_root)
+    if emit_success(
+        "server geoserver sync",
+        {
+            "workspace": result.workspace,
+            "published": result.published,
+            "skipped": result.skipped,
+            "errors": result.errors,
+        },
+        use_json=use_json,
+    ):
+        return
+    success(f"Synchronized {result.published} collections.")
+    if result.skipped:
+        warn(f"Skipped {result.skipped} collections.")
+    for err in result.errors:
+        error(err)
+    if result.errors:
+        raise SystemExit(1)

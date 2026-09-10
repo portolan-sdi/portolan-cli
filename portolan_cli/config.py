@@ -41,6 +41,9 @@ SENSITIVE_SETTINGS: frozenset[str] = frozenset(
         "aws_profile",
         "profile",
         "region",
+        "geoserver_url",
+        "geoserver_user",
+        "geoserver_password",
         "s3_endpoint",
         "s3_use_ssl",
     }
@@ -72,6 +75,10 @@ KNOWN_SETTINGS: frozenset[str] = frozenset(
         "pmtiles.attribution",  # Attribution HTML for tiles
         "pmtiles.src_crs",  # Override source CRS if metadata is incorrect
         "push.exclude",  # Glob patterns to exclude from metadata sync (Issue #426)
+        "geoserver_url",  # GeoServer endpoint; sensitive, use env or CLI
+        "geoserver_user",  # GeoServer user; sensitive, use env or CLI
+        "geoserver_password",  # GeoServer password; sensitive, use env or CLI
+        "geoserver_workspace",  # GeoServer workspace name
         "tabular.enabled",  # Track non-geo tabular data as collection assets (Issue #432)
         "tabular.convert",  # Convert CSV/TSV/Excel to Parquet (default: true)
     }

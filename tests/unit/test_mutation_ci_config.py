@@ -69,3 +69,11 @@ def test_mutmut_excludes_static_source_scans() -> None:
 
     marker_expression = mutmut_args[mutmut_args.index("-m") + 1]
     assert "not source_scan" in marker_expression
+
+
+def test_mutmut_copies_checked_in_reference_pages() -> None:
+    """Reference freshness tests must see generated docs inside mutants/."""
+    config = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    also_copy = set(config["tool"]["mutmut"]["also_copy"])
+
+    assert "docs/reference/" in also_copy
