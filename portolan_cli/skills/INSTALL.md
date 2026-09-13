@@ -7,7 +7,7 @@ claude plugin marketplace add portolan-sdi/portolan-skills
 claude plugin install portolan
 ```
 
-Skills become available under the `portolan:` prefix: `portolan:git-backed-catalog`, `portolan:portolan-bootstrap`, `portolan:portolan-cli`, `portolan:portolan-consume`, `portolan:portolan-migrate`, `portolan:portolan-thumbnails`, `portolan:reading-portolan`, `portolan:register-catalog`, `portolan:report-catalog-issue`, and `portolan:sourcecoop`.
+Skills become available under the `portolan:` prefix: `portolan:git-backed-catalog`, `portolan:portolan-bootstrap`, `portolan:portolan-cli`, `portolan:portolan-migrate`, `portolan:portolan-thumbnails`, `portolan:reading-portolan`, `portolan:register-catalog`, `portolan:report-catalog-issue`, and `portolan:sourcecoop`.
 
 ### Claude Code (Web / Cowork)
 
@@ -25,8 +25,6 @@ gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
   --path skills/portolan-bootstrap --consent
 gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
   --path skills/portolan-cli --consent
-gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
-  --path skills/portolan-consume --consent
 gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
   --path skills/portolan-migrate --consent
 gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
