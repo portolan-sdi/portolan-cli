@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
@@ -12,6 +11,9 @@ from rashid.model import Severity
 
 from portolan_cli.validation import run_check
 from portolan_cli.validation.config import load_public_url, load_rules_config
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

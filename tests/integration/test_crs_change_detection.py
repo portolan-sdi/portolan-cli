@@ -98,7 +98,7 @@ class TestCRSChangeDetection:
         assert gdf.crs.to_epsg() == 3857, f"Expected EPSG:3857, got {gdf.crs}"
 
         # Capture original mtime before reprojection
-        orig_mtime = os.path.getmtime(parquet_path)
+        orig_mtime = Path(parquet_path).stat().st_mtime
 
         # Reproject to EPSG:4326
         gdf_4326 = gdf.to_crs("EPSG:4326")
@@ -145,7 +145,7 @@ class TestCRSChangeDetection:
         assert len(added) == 1
 
         # Reproject the file
-        orig_mtime = os.path.getmtime(parquet_path)
+        orig_mtime = Path(parquet_path).stat().st_mtime
         gdf = gpd.read_parquet(parquet_path)
         gdf_4326 = gdf.to_crs("EPSG:4326")
         gdf_4326.to_parquet(parquet_path)
@@ -188,7 +188,7 @@ class TestCRSChangeDetection:
         assert initial_sha256 is not None, "Asset should have sha256"
 
         # Reproject the file
-        orig_mtime = os.path.getmtime(parquet_path)
+        orig_mtime = Path(parquet_path).stat().st_mtime
         gdf = gpd.read_parquet(parquet_path)
         gdf_4326 = gdf.to_crs("EPSG:4326")
         gdf_4326.to_parquet(parquet_path)

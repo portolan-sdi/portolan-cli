@@ -14,16 +14,11 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-
-if TYPE_CHECKING:
-    pass
-
 
 # =============================================================================
 # Fixtures

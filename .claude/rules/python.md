@@ -23,12 +23,12 @@ detail("Processing chunk 3/10...")         # Dimmed text
 
 ## Code Quality
 
-- **ruff**, Linting and formatting
+- **ruff**, Linting, formatting, complexity (`C901`), security (`S`), and
+  docstrings (`D`). Ruff replaced xenon, radon, and bandit in September 2026.
 - **mypy**, Type checking (`strict = true`)
 - **vulture**, Dead code detection
-- **xenon**, Complexity monitoring (max C function, B module, A average)
-- **pylint**, Duplicate code detection (R0801 only, `--fail-under=9.5`)
-- **bandit**, Security scanning
+- **jscpd**, Duplicate code detection, gated against `.jscpd-baseline.json`.
+  The gate fails only when a commit adds a clone that the baseline does not hold.
 - **pip-audit**, Dependency vulnerabilities
 
 All code must have type annotations (`mypy --strict`). The CLI is a thin Click layer, all logic lives in the library.
@@ -63,6 +63,23 @@ All code must have type annotations (`mypy --strict`). The CLI is a thin Click l
   (only `backends.protocol` under `TYPE_CHECKING`), `backends.iceberg` must not
   import `cli`, and utility/leaf modules stay independent. Check
   `[tool.importlinter]` before adding any cross-module import.
-- **Ruff rule sets**: E/W (pycodestyle), F (pyflakes), I (isort), B (bugbear),
-  C4 (comprehensions), UP (pyupgrade). Line length 100, double quotes (ruff
-  format applies both).
+- **Ruff rule sets**: see `select` in `[tool.ruff.lint]`. It holds 37 groups.
+  Read the comment on each one before you suppress it. Line length 100, double
+  quotes (ruff format applies both).
+- **Complexity ceiling is `C901` at 15.** Ruff counts every decision point in a
+  function, and a nested function adds to the function that holds it. When the
+  rule fires, extract the reporting code first. That is the largest win in this
+  repo, because a command interleaves the work with the report of the work.
+- **Fix a rule category in the config, not at each site.** `ignore`,
+  `per-file-ignores`, `builtins-ignorelist`, and `extend-ignore-names` are the
+  knobs. Each entry carries the reason it exists. Add a `# noqa` only when the
+  finding is a false positive that no config knob covers.
+- **Security rules come from `S` (flake8-bandit).** Write `# noqa: Sxxx`, not
+  `# nosec Bxxx`. The old `# nosec` comments do nothing now.
+- **`PLC0415` (import-outside-top-level) stays off, and this was measured.**
+  The tree holds 440 function-level imports. 88 of them break a real import
+  cycle. About 10 more defer a heavy third-party import that costs 0.16s to
+  0.33s each against a 1.0s `portolan --help`. The rule cannot tell those apart
+  from the 274 that buy nothing. Enabling it buys tidier imports for about 98
+  permanent suppressions. Move an import to the top of the module when you
+  touch it and nothing needs it lazy. Do not select the rule.

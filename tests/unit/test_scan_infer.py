@@ -5,7 +5,7 @@ Tests collection inference from filename patterns.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -16,6 +16,9 @@ from portolan_cli.scan.infer import (
     find_common_prefix,
     infer_collections,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.mark.unit

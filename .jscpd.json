@@ -1,0 +1,11 @@
+{
+  "minTokens": 50,
+  "ignore": [
+    "**/tests/fixtures/**",
+    "**/.venv/**",
+    "**/mutants/**"
+  ],
+  "reporters": ["console"],
+  "absolute": true,
+  "failOnEmpty": true
+}

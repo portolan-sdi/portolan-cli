@@ -11,7 +11,6 @@ to cloud-native formats. Per Issue #209:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,10 +21,6 @@ from portolan_cli.scan.check import (
     get_legacy_files_to_remove,
     remove_legacy_files,
 )
-
-if TYPE_CHECKING:
-    pass
-
 
 # =============================================================================
 # Fixtures
@@ -517,4 +512,3 @@ class TestRemoveLegacyHypothesis:
     # - Arbitrary file extensions
     # - Various sidecar combinations
     # - Race conditions (file deleted between check and removal)
-    pass

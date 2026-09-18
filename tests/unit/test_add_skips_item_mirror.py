@@ -10,11 +10,14 @@ discovery skips the name outright.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.add import _collect_files_for_add
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _touch_parquet(path: Path) -> None:

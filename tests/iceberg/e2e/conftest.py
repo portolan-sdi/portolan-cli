@@ -4,6 +4,8 @@ Session-scoped Docker lifecycle: starts docker-compose before tests,
 tears down after. Provides REST catalog and MinIO S3 client fixtures.
 """
 
+from __future__ import annotations
+
 import subprocess
 import time
 from pathlib import Path

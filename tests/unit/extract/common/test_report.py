@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -13,6 +13,9 @@ from portolan_cli.extract.common.report import (
     load_report,
     save_report,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.mark.unit

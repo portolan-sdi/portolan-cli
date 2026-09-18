@@ -9,7 +9,6 @@ Tests the configuration system including:
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
 
@@ -18,7 +17,7 @@ import pytest
 from tests.conftest import cleared_environ
 
 if TYPE_CHECKING:
-    pass
+    from pathlib import Path
 
 
 class TestLoadConfig:

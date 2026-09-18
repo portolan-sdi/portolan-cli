@@ -20,6 +20,8 @@ import sys
 import time
 from typing import TYPE_CHECKING
 
+from typing_extensions import Self
+
 if TYPE_CHECKING:
     from types import TracebackType
 
@@ -72,7 +74,7 @@ class UploadProgressReporter:
         self._progress: Progress | None = None
         self._task_id: TaskID | None = None
 
-    def __enter__(self) -> UploadProgressReporter:
+    def __enter__(self) -> Self:
         """Enter the context and start progress display."""
         self._start_time = time.perf_counter()
 

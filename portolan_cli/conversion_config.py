@@ -28,10 +28,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.config import load_config
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -164,8 +166,8 @@ def get_conversion_overrides(catalog_path: Path) -> ConversionOverrides:
 # COG Settings (Issue #279)
 # =============================================================================
 
-# Valid compression algorithms supported by rio-cogeo
-# See: rio_cogeo.profiles.cog_profiles
+# The compression algorithms that rio-cogeo accepts. The module
+# rio_cogeo.profiles holds the profile table that these names index.
 VALID_COG_COMPRESSIONS: frozenset[str] = frozenset(
     {
         "DEFLATE",
@@ -273,7 +275,7 @@ def derive_cog_defaults(source: Path) -> tuple[int, str]:
         logger.debug("Could not inspect %s for COG defaults (%s); using fallback", source, exc)
         return FALLBACK_PREDICTOR, FALLBACK_RESAMPLING
 
-    if dtype.startswith("float") or dtype.startswith("complex"):
+    if dtype.startswith(("float", "complex")):
         return 3, "average"
     if dtype == "uint8" and band_count >= 3:
         return 1, FALLBACK_RESAMPLING
@@ -439,10 +441,7 @@ def get_cog_settings(catalog_path: Path) -> CogSettings:
 
     # Parse individual settings with type validation
     compression = cog.get("compression")
-    if isinstance(compression, str):
-        compression = compression.upper()
-    else:
-        compression = "DEFLATE"
+    compression = compression.upper() if isinstance(compression, str) else "DEFLATE"
 
     quality = cog.get("quality")
     if not isinstance(quality, int):
@@ -666,10 +665,7 @@ def get_vector_settings(catalog_path: Path) -> VectorSettings:
 
     # Parse spatial_index
     spatial_index = vector.get("spatial_index")
-    if not isinstance(spatial_index, str):
-        spatial_index = "none"
-    else:
-        spatial_index = spatial_index.lower()
+    spatial_index = "none" if not isinstance(spatial_index, str) else spatial_index.lower()
 
     # Parse resolution
     resolution: int | str = vector.get("resolution", "auto")
@@ -687,10 +683,7 @@ def get_vector_settings(catalog_path: Path) -> VectorSettings:
     # Parse sort. A missing or non-string value keeps the default rather than
     # disabling the optimization (issue #805).
     sort = vector.get("sort")
-    if not isinstance(sort, str):
-        sort = DEFAULT_SORT
-    else:
-        sort = sort.lower()
+    sort = DEFAULT_SORT if not isinstance(sort, str) else sort.lower()
 
     # Parse add_bbox
     add_bbox = vector.get("add_bbox")

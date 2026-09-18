@@ -7,15 +7,13 @@ Tests file-level, collection-level, and catalog-level info display.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
 
 if TYPE_CHECKING:
-    pass
-
+    from pathlib import Path
 
 # =============================================================================
 # Fixtures

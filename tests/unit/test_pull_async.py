@@ -17,8 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -27,6 +26,9 @@ from portolan_cli.sync.pull import (
     PullResult,
     pull_async,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # =============================================================================
 # Test Fixtures

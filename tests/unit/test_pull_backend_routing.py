@@ -6,11 +6,14 @@ provides a pull method (generic protocol dispatch).
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture

@@ -5,7 +5,7 @@ Default to null (open interval), mark provisional, flag in check.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -27,24 +27,24 @@ class TestParseFlexibleDatetime:
         assert result == datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
 
     def test_parses_iso_without_z(self) -> None:
-        """Should parse ISO 8601 without Z suffix."""
+        """Should parse ISO 8601 without Z suffix as UTC."""
         result = parse_flexible_datetime("2024-01-15T10:30:00")
-        assert result.year == 2024
-        assert result.month == 1
-        assert result.day == 15
+        assert result == datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
 
     def test_parses_date_only(self) -> None:
-        """Should parse date-only format."""
+        """Should parse date-only format as UTC midnight."""
         result = parse_flexible_datetime("2024-01-15")
-        assert result.year == 2024
-        assert result.month == 1
-        assert result.day == 15
+        assert result == datetime(2024, 1, 15, 0, 0, 0, tzinfo=timezone.utc)
 
     def test_parses_space_separated(self) -> None:
-        """Should parse space-separated datetime."""
+        """Should parse space-separated datetime as UTC."""
         result = parse_flexible_datetime("2024-01-15 10:30:00")
-        assert result.year == 2024
-        assert result.hour == 10
+        assert result == datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+
+    def test_preserves_explicit_offset(self) -> None:
+        """Should keep an explicit UTC offset instead of forcing UTC."""
+        result = parse_flexible_datetime("2024-01-15T10:30:00+02:00")
+        assert result == datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone(timedelta(hours=2)))
 
     def test_returns_none_for_empty_string(self) -> None:
         """Should return None for empty string."""

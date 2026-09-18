@@ -7,7 +7,7 @@ combines STAC extension metadata update and remote STAC metadata upload.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pystac
@@ -17,6 +17,9 @@ from portolan_cli.backends.iceberg.stac_generator import (
     STAC_ICEBERG_EXTENSION,
     STAC_TABLE_EXTENSION,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture

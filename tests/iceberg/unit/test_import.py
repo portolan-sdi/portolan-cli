@@ -1,5 +1,7 @@
 """Basic import tests to verify iceberg backend package structure."""
 
+from __future__ import annotations
+
 import pytest
 
 
@@ -23,8 +25,8 @@ def test_import_iceberg_version():
 @pytest.mark.unit
 def test_import_dependencies():
     """Verify core dependencies are importable."""
-    import pyarrow
+    import pyarrow as pa
     import pyiceberg
 
-    assert pyarrow is not None
+    assert pa is not None
     assert pyiceberg is not None

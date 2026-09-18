@@ -11,7 +11,6 @@ which report the tighter, correct box.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -20,6 +19,8 @@ from portolan_cli.crs import measure_wgs84_bbox, transform_bbox_to_wgs84
 from portolan_cli.preparation import _extract_bbox_wgs84
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import geopandas as gpd
 
 pytestmark = pytest.mark.unit

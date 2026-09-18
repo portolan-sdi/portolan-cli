@@ -26,7 +26,6 @@ from __future__ import annotations
 import json
 import shutil
 from collections import Counter
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -153,9 +152,8 @@ def _build_catalog(root: Path) -> None:
             {
                 "tract_id": ["001", "002"],
                 "population": [5000, 7500],
-                "surveyed_at": pa.array(
-                    [datetime(2020, 4, 1), datetime(2020, 9, 30)],
-                    pa.timestamp("us"),
+                "surveyed_at": pa.array(["2020-04-01", "2020-09-30"], pa.string()).cast(
+                    pa.timestamp("us")
                 ),
             }
         ),

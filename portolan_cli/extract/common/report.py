@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.json_io import write_json_atomic
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass

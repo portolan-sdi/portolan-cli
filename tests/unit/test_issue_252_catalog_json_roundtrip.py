@@ -199,13 +199,15 @@ class TestPushUploadsCatalogJson:
         async def mock_get_async(store: Any, key: str) -> bytes:
             raise FileNotFoundError("Not found")
 
-        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async):
-            with patch("portolan_cli.sync.push.obs.get_async", side_effect=mock_get_async):
-                result = push(
-                    catalog_root=full_catalog,
-                    collection="test-collection",
-                    destination="s3://test-bucket/test-prefix",
-                )
+        with (
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
+            patch("portolan_cli.sync.push.obs.get_async", side_effect=mock_get_async),
+        ):
+            result = push(
+                catalog_root=full_catalog,
+                collection="test-collection",
+                destination="s3://test-bucket/test-prefix",
+            )
 
         # Verify catalog.json WAS uploaded by per-collection push
         catalog_json_keys = [k for k in uploaded_keys if k.endswith("catalog.json")]
@@ -232,17 +234,17 @@ class TestPushUploadsCatalogJson:
             # Sync version for _upload_catalog_json helper
             uploaded_keys.append(key)
 
-        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async):
-            with patch("portolan_cli.sync.push.obs.put", side_effect=mock_put_sync):
-                with patch(
-                    "portolan_cli.sync.push.obs.get_async", new_callable=AsyncMock
-                ) as mock_get:
-                    mock_get.side_effect = FileNotFoundError("Not found")
+        with (
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
+            patch("portolan_cli.sync.push.obs.put", side_effect=mock_put_sync),
+            patch("portolan_cli.sync.push.obs.get_async", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_get.side_effect = FileNotFoundError("Not found")
 
-                    result = push_all_collections(
-                        catalog_root=full_catalog,
-                        destination="s3://test-bucket/test-prefix",
-                    )
+            result = push_all_collections(
+                catalog_root=full_catalog,
+                destination="s3://test-bucket/test-prefix",
+            )
 
         # Verify catalog.json was uploaded at least once (could be 2x: by push + push_all)
         catalog_json_keys = [k for k in uploaded_keys if k.endswith("catalog.json")]
@@ -271,17 +273,17 @@ class TestPushUploadsCatalogJson:
             else:
                 uploaded_content[key] = bytes(data) if not isinstance(data, bytes) else data
 
-        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async):
-            with patch("portolan_cli.sync.push.obs.put", side_effect=mock_put_sync):
-                with patch(
-                    "portolan_cli.sync.push.obs.get_async", new_callable=AsyncMock
-                ) as mock_get:
-                    mock_get.side_effect = FileNotFoundError("Not found")
+        with (
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
+            patch("portolan_cli.sync.push.obs.put", side_effect=mock_put_sync),
+            patch("portolan_cli.sync.push.obs.get_async", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_get.side_effect = FileNotFoundError("Not found")
 
-                    push_all_collections(
-                        catalog_root=full_catalog,
-                        destination="s3://test-bucket/test-prefix",
-                    )
+            push_all_collections(
+                catalog_root=full_catalog,
+                destination="s3://test-bucket/test-prefix",
+            )
 
         # Verify content matches
         local_content = (full_catalog / "catalog.json").read_bytes()
@@ -307,15 +309,17 @@ class TestPushUploadsCollectionJson:
         async def mock_put_async(store: Any, key: str, data: Any, **kwargs: Any) -> None:
             uploaded_keys.append(key)
 
-        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async):
-            with patch("portolan_cli.sync.push.obs.get_async", new_callable=AsyncMock) as mock_get:
-                mock_get.side_effect = FileNotFoundError("Not found")
+        with (
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
+            patch("portolan_cli.sync.push.obs.get_async", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_get.side_effect = FileNotFoundError("Not found")
 
-                result = push(
-                    catalog_root=full_catalog,
-                    collection="test-collection",
-                    destination="s3://test-bucket/test-prefix",
-                )
+            result = push(
+                catalog_root=full_catalog,
+                collection="test-collection",
+                destination="s3://test-bucket/test-prefix",
+            )
 
         # Verify collection.json was uploaded
         collection_json_keys = [k for k in uploaded_keys if k.endswith("collection.json")]
@@ -348,15 +352,17 @@ class TestPushUploadsItemStacFiles:
         async def mock_put_async(store: Any, key: str, data: Any, **kwargs: Any) -> None:
             uploaded_keys.append(key)
 
-        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async):
-            with patch("portolan_cli.sync.push.obs.get_async", new_callable=AsyncMock) as mock_get:
-                mock_get.side_effect = FileNotFoundError("Not found")
+        with (
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
+            patch("portolan_cli.sync.push.obs.get_async", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_get.side_effect = FileNotFoundError("Not found")
 
-                result = push(
-                    catalog_root=full_catalog,
-                    collection="test-collection",
-                    destination="s3://test-bucket/test-prefix",
-                )
+            result = push(
+                catalog_root=full_catalog,
+                collection="test-collection",
+                destination="s3://test-bucket/test-prefix",
+            )
 
         # Verify test-item.json was uploaded (Portolan naming: {item_id}.json)
         item_json_keys = [k for k in uploaded_keys if k.endswith("test-item.json")]
@@ -391,15 +397,17 @@ class TestPushManifestLastOrdering:
         async def mock_put_async(store: Any, key: str, data: Any, **kwargs: Any) -> None:
             upload_order.append(key)
 
-        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async):
-            with patch("portolan_cli.sync.push.obs.get_async", new_callable=AsyncMock) as mock_get:
-                mock_get.side_effect = FileNotFoundError("Not found")
+        with (
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
+            patch("portolan_cli.sync.push.obs.get_async", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_get.side_effect = FileNotFoundError("Not found")
 
-                push(
-                    catalog_root=full_catalog,
-                    collection="test-collection",
-                    destination="s3://test-bucket/test-prefix",
-                )
+            push(
+                catalog_root=full_catalog,
+                collection="test-collection",
+                destination="s3://test-bucket/test-prefix",
+            )
 
         # Find indices
         def find_index(suffix: str) -> int:
@@ -452,15 +460,17 @@ class TestPushUploadsAllFiles:
         async def mock_put_async(store: Any, key: str, data: Any, **kwargs: Any) -> None:
             uploaded_keys.add(key)
 
-        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async):
-            with patch("portolan_cli.sync.push.obs.get_async", new_callable=AsyncMock) as mock_get:
-                mock_get.side_effect = FileNotFoundError("Not found")
+        with (
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
+            patch("portolan_cli.sync.push.obs.get_async", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_get.side_effect = FileNotFoundError("Not found")
 
-                push(
-                    catalog_root=full_catalog,
-                    collection="test-collection",
-                    destination="s3://test-bucket/test-prefix",
-                )
+            push(
+                catalog_root=full_catalog,
+                collection="test-collection",
+                destination="s3://test-bucket/test-prefix",
+            )
 
         # Per-collection push uploads complete STAC structure for standalone use
         expected_files = {
@@ -488,17 +498,17 @@ class TestPushUploadsAllFiles:
             # Sync version for _push_all_upload_catalog helper
             uploaded_keys.add(key)
 
-        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async):
-            with patch("portolan_cli.sync.push.obs.put", side_effect=mock_put_sync):
-                with patch(
-                    "portolan_cli.sync.push.obs.get_async", new_callable=AsyncMock
-                ) as mock_get:
-                    mock_get.side_effect = FileNotFoundError("Not found")
+        with (
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
+            patch("portolan_cli.sync.push.obs.put", side_effect=mock_put_sync),
+            patch("portolan_cli.sync.push.obs.get_async", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_get.side_effect = FileNotFoundError("Not found")
 
-                    push_all_collections(
-                        catalog_root=full_catalog,
-                        destination="s3://test-bucket/test-prefix",
-                    )
+            push_all_collections(
+                catalog_root=full_catalog,
+                destination="s3://test-bucket/test-prefix",
+            )
 
         # push_all_collections uploads everything including catalog.json
         expected_files = {

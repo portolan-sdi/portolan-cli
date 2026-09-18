@@ -6,11 +6,14 @@ These establish performance baselines. Add real benchmarks as features mature.
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.catalog import Catalog
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.mark.benchmark

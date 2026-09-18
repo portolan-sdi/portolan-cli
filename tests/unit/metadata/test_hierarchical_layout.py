@@ -14,14 +14,16 @@ These tests pin the hierarchical layout on both readers.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from portolan_cli.metadata.detection import find_versions_asset, get_stored_metadata
 from portolan_cli.metadata.models import MetadataStatus
 from portolan_cli.metadata.update import update_versions_tracking
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

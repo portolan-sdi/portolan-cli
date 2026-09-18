@@ -18,7 +18,6 @@ Test categories:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -30,8 +29,7 @@ from portolan_cli.sync.push import UploadMetrics
 from tests.conftest import cleared_environ
 
 if TYPE_CHECKING:
-    pass
-
+    from pathlib import Path
 
 # =============================================================================
 # Test fixtures
@@ -705,13 +703,15 @@ class TestEtagOptimisticLocking:
                             "Remote changed during push, re-run push to try again"
                         )
 
-                        with patch("portolan_cli.sync.push._cleanup_uploaded_assets"):
-                            with pytest.raises(PushConflictError) as exc_info:
-                                push(
-                                    catalog_root=local_catalog,
-                                    collection="test",
-                                    destination="s3://mybucket/catalog",
-                                )
+                        with (
+                            patch("portolan_cli.sync.push._cleanup_uploaded_assets"),
+                            pytest.raises(PushConflictError) as exc_info,
+                        ):
+                            push(
+                                catalog_root=local_catalog,
+                                collection="test",
+                                destination="s3://mybucket/catalog",
+                            )
 
                         assert "Remote changed during push" in str(exc_info.value)
 
@@ -741,33 +741,35 @@ class TestManifestLastOrdering:
 
         def track_versions(*args, **kwargs):
             call_order.append("versions")
-            return None
+            return
 
         with patch(
             "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (None, None)
 
-            with patch(
-                "portolan_cli.sync.push._upload_assets_async",
-                new_callable=AsyncMock,
-                side_effect=track_assets,
-            ):
-                with patch(
+            with (
+                patch(
+                    "portolan_cli.sync.push._upload_assets_async",
+                    new_callable=AsyncMock,
+                    side_effect=track_assets,
+                ),
+                patch(
                     "portolan_cli.sync.push._upload_stac_files_async",
                     new_callable=AsyncMock,
                     side_effect=track_stac,
-                ):
-                    with patch(
-                        "portolan_cli.sync.push._upload_versions_json_async",
-                        new_callable=AsyncMock,
-                        side_effect=track_versions,
-                    ):
-                        push(
-                            catalog_root=local_catalog,
-                            collection="test",
-                            destination="s3://mybucket/catalog",
-                        )
+                ),
+                patch(
+                    "portolan_cli.sync.push._upload_versions_json_async",
+                    new_callable=AsyncMock,
+                    side_effect=track_versions,
+                ),
+            ):
+                push(
+                    catalog_root=local_catalog,
+                    collection="test",
+                    destination="s3://mybucket/catalog",
+                )
 
         assert call_order == ["assets", "stac", "versions"], (
             f"Expected assets -> stac -> versions, got: {call_order}"
@@ -1498,15 +1500,17 @@ class TestOrphanCleanup:
                     ) as mock_upload_versions:
                         mock_upload_versions.side_effect = PushConflictError("Etag mismatch")
 
-                        with patch(
-                            "portolan_cli.sync.push._cleanup_uploaded_assets"
-                        ) as mock_cleanup:
-                            with pytest.raises(PushConflictError):
-                                push(
-                                    catalog_root=local_catalog,
-                                    collection="test",
-                                    destination="s3://mybucket/catalog",
-                                )
+                        with (
+                            patch(
+                                "portolan_cli.sync.push._cleanup_uploaded_assets"
+                            ) as mock_cleanup,
+                            pytest.raises(PushConflictError),
+                        ):
+                            push(
+                                catalog_root=local_catalog,
+                                collection="test",
+                                destination="s3://mybucket/catalog",
+                            )
 
         mock_cleanup.assert_called_once()
 
@@ -1606,15 +1610,17 @@ class TestMultiCloudStoreSetup:
         """setup_store should use AWS credentials from environment."""
         from portolan_cli.sync.upload import setup_store
 
-        with cleared_environ(
-            AWS_ACCESS_KEY_ID="env_access_key",
-            AWS_SECRET_ACCESS_KEY="env_secret_key",
-            AWS_REGION="eu-west-1",
+        with (
+            cleared_environ(
+                AWS_ACCESS_KEY_ID="env_access_key",
+                AWS_SECRET_ACCESS_KEY="env_secret_key",
+                AWS_REGION="eu-west-1",
+            ),
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3,
         ):
-            with patch("portolan_cli.sync.upload.S3Store") as mock_s3:
-                mock_s3.return_value = MagicMock()
+            mock_s3.return_value = MagicMock()
 
-                store, prefix = setup_store("s3://mybucket/prefix")
+            store, prefix = setup_store("s3://mybucket/prefix")
 
         mock_s3.assert_called_once_with(
             "mybucket",
@@ -1628,15 +1634,17 @@ class TestMultiCloudStoreSetup:
         """setup_store should fallback to AWS_DEFAULT_REGION if AWS_REGION not set."""
         from portolan_cli.sync.upload import setup_store
 
-        with cleared_environ(
-            AWS_ACCESS_KEY_ID="key",
-            AWS_SECRET_ACCESS_KEY="secret",
-            AWS_DEFAULT_REGION="ap-southeast-1",
+        with (
+            cleared_environ(
+                AWS_ACCESS_KEY_ID="key",
+                AWS_SECRET_ACCESS_KEY="secret",
+                AWS_DEFAULT_REGION="ap-southeast-1",
+            ),
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3,
         ):
-            with patch("portolan_cli.sync.upload.S3Store") as mock_s3:
-                mock_s3.return_value = MagicMock()
+            mock_s3.return_value = MagicMock()
 
-                setup_store("s3://mybucket/prefix")
+            setup_store("s3://mybucket/prefix")
 
         call_kwargs = mock_s3.call_args[1]
         assert call_kwargs["region"] == "ap-southeast-1"
@@ -1646,14 +1654,16 @@ class TestMultiCloudStoreSetup:
         """setup_store should work without region (uses AWS SDK defaults)."""
         from portolan_cli.sync.upload import setup_store
 
-        with cleared_environ(
-            AWS_ACCESS_KEY_ID="key",
-            AWS_SECRET_ACCESS_KEY="secret",
+        with (
+            cleared_environ(
+                AWS_ACCESS_KEY_ID="key",
+                AWS_SECRET_ACCESS_KEY="secret",
+            ),
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3,
         ):
-            with patch("portolan_cli.sync.upload.S3Store") as mock_s3:
-                mock_s3.return_value = MagicMock()
+            mock_s3.return_value = MagicMock()
 
-                setup_store("s3://mybucket/data")
+            setup_store("s3://mybucket/data")
 
         call_kwargs = mock_s3.call_args[1]
         assert "region" not in call_kwargs
@@ -2331,18 +2341,20 @@ class TestDryRunNetworkIsolation:
         """
         from portolan_cli.sync.push import push
 
-        with patch(
-            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
-        ) as mock_fetch:
-            with patch("portolan_cli.sync.push.setup_store") as mock_setup:
-                mock_setup.return_value = (MagicMock(), "prefix")
+        with (
+            patch(
+                "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
+            ) as mock_fetch,
+            patch("portolan_cli.sync.push.setup_store") as mock_setup,
+        ):
+            mock_setup.return_value = (MagicMock(), "prefix")
 
-                result = push(
-                    catalog_root=local_catalog,
-                    collection="test",
-                    destination="s3://mybucket/catalog",
-                    dry_run=True,
-                )
+            result = push(
+                catalog_root=local_catalog,
+                collection="test",
+                destination="s3://mybucket/catalog",
+                dry_run=True,
+            )
 
         # Neither network operation should be called
         mock_fetch.assert_not_called()
@@ -2369,16 +2381,16 @@ class TestDryRunNetworkIsolation:
         """push(dry_run=True) should report files that would be uploaded."""
         from portolan_cli.sync.push import push
 
-        with patch("portolan_cli.sync.push.setup_store"):
-            with patch(
-                "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
-            ):
-                result = push(
-                    catalog_root=local_catalog,
-                    collection="test",
-                    destination="s3://mybucket/catalog",
-                    dry_run=True,
-                )
+        with (
+            patch("portolan_cli.sync.push.setup_store"),
+            patch("portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock),
+        ):
+            result = push(
+                catalog_root=local_catalog,
+                collection="test",
+                destination="s3://mybucket/catalog",
+                dry_run=True,
+            )
 
         assert result.success is True
         assert result.files_uploaded == 0  # dry-run never uploads
@@ -2391,19 +2403,19 @@ class TestDryRunNetworkIsolation:
         """push(dry_run=True) must not call _upload_assets."""
         from portolan_cli.sync.push import push
 
-        with patch("portolan_cli.sync.push.setup_store"):
-            with patch(
-                "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
-            ):
-                with patch(
-                    "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
-                ) as mock_upload:
-                    push(
-                        catalog_root=local_catalog,
-                        collection="test",
-                        destination="s3://mybucket/catalog",
-                        dry_run=True,
-                    )
+        with (
+            patch("portolan_cli.sync.push.setup_store"),
+            patch("portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock),
+            patch(
+                "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
+            ) as mock_upload,
+        ):
+            push(
+                catalog_root=local_catalog,
+                collection="test",
+                destination="s3://mybucket/catalog",
+                dry_run=True,
+            )
 
         mock_upload.assert_not_called()
 
@@ -2412,26 +2424,28 @@ class TestDryRunNetworkIsolation:
         """Non-dry-run push must still call _fetch_remote_versions (sanity check)."""
         from portolan_cli.sync.push import push
 
-        with patch(
-            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
-        ) as mock_fetch:
-            with patch("portolan_cli.sync.push.setup_store") as mock_setup:
-                mock_fetch.return_value = (None, None)
-                mock_setup.return_value = (MagicMock(), "prefix")
+        with (
+            patch(
+                "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
+            ) as mock_fetch,
+            patch("portolan_cli.sync.push.setup_store") as mock_setup,
+        ):
+            mock_fetch.return_value = (None, None)
+            mock_setup.return_value = (MagicMock(), "prefix")
 
+            with patch(
+                "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
+            ) as mock_upload:
+                mock_upload.return_value = (1, [], ["key"], UploadMetrics())
                 with patch(
-                    "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
-                ) as mock_upload:
-                    mock_upload.return_value = (1, [], ["key"], UploadMetrics())
-                    with patch(
-                        "portolan_cli.sync.push._upload_versions_json_async", new_callable=AsyncMock
-                    ):
-                        push(
-                            catalog_root=local_catalog,
-                            collection="test",
-                            destination="s3://mybucket/catalog",
-                            dry_run=False,
-                        )
+                    "portolan_cli.sync.push._upload_versions_json_async", new_callable=AsyncMock
+                ):
+                    push(
+                        catalog_root=local_catalog,
+                        collection="test",
+                        destination="s3://mybucket/catalog",
+                        dry_run=False,
+                    )
 
         # Regular push MUST call both setup and fetch
         mock_setup.assert_called_once()
@@ -2478,17 +2492,17 @@ class TestDryRunNetworkIsolation:
         (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
         # NOTE: We deliberately do NOT create the asset file
 
-        with patch("portolan_cli.sync.push.setup_store"):
-            with patch(
-                "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
-            ):
-                # Should NOT raise - dry-run is forgiving
-                result = push(
-                    catalog_root=catalog_dir,
-                    collection="test",
-                    destination="s3://mybucket/catalog",
-                    dry_run=True,
-                )
+        with (
+            patch("portolan_cli.sync.push.setup_store"),
+            patch("portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock),
+        ):
+            # Should NOT raise - dry-run is forgiving
+            result = push(
+                catalog_root=catalog_dir,
+                collection="test",
+                destination="s3://mybucket/catalog",
+                dry_run=True,
+            )
 
         # Dry-run should succeed but record the error
         assert result.success is True

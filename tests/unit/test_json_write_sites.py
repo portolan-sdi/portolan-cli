@@ -55,13 +55,15 @@ def in_place_json_writes(tree: ast.AST) -> list[int]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        if _is_json_attr(node.func, "dump") and len(node.args) >= 2:
-            lines.append(node.lineno)
-        elif (
-            isinstance(node.func, ast.Attribute)
-            and node.func.attr == "write_text"
-            and node.args
-            and _contains_json_dumps(node.args[0])
+        if (
+            _is_json_attr(node.func, "dump")
+            and len(node.args) >= 2
+            or (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "write_text"
+                and node.args
+                and _contains_json_dumps(node.args[0])
+            )
         ):
             lines.append(node.lineno)
     return sorted(lines)

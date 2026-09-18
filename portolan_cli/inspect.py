@@ -12,14 +12,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.formats import FormatType, detect_format
 from portolan_cli.metadata.cog import extract_cog_metadata
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
 from portolan_cli.stac_parquet import count_items
 from portolan_cli.versions import read_versions
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass
@@ -238,10 +240,9 @@ def inspect_file(path: Path, *, catalog_root: Path | None = None) -> FileInfo:
 
     if format_type == FormatType.VECTOR:
         return _inspect_geoparquet(path, catalog_root=catalog_root)
-    elif format_type == FormatType.RASTER:
+    if format_type == FormatType.RASTER:
         return _inspect_cog(path, catalog_root=catalog_root)
-    else:
-        raise ValueError(f"Unsupported file format: {path.suffix}")
+    raise ValueError(f"Unsupported file format: {path.suffix}")
 
 
 def _inspect_geoparquet(path: Path, *, catalog_root: Path | None = None) -> FileInfo:
@@ -356,7 +357,7 @@ def _lookup_version(path: Path, catalog_root: Path) -> str | None:
     # Determine item_id from path (parent directory name)
     item_id = path.parent.name if path.parent != catalog_root else ""
 
-    for asset_name, _asset in current_version_obj.assets.items():
+    for asset_name in current_version_obj.assets:
         # Check item-scoped key format (new format)
         if item_id and asset_name == f"{item_id}/{filename}":
             return f"v{versions_file.current_version}"

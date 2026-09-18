@@ -12,7 +12,6 @@ Following TDD: tests written before implementation.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -27,7 +26,7 @@ from portolan_cli.extract.arcgis.report import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

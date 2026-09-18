@@ -11,11 +11,14 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.json_io import write_json_atomic, write_text_atomic
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

@@ -6,6 +6,7 @@ data in Iceberg tables and version metadata in snapshot summary properties.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -46,10 +47,10 @@ class IcebergBackend:
 
     def __init__(self, catalog: Catalog | None = None, catalog_root: Path | None = None) -> None:
         self._catalog: Catalog = catalog if catalog is not None else create_catalog(catalog_root)
-        try:
+        # Namespace creation is idempotent. An existing namespace is the
+        # expected case on every run after the first.
+        with contextlib.suppress(Exception):
             self._catalog.create_namespace(NAMESPACE)
-        except Exception:  # nosec B110 - namespace may already exist, idempotent init
-            pass
 
     def _validate_collection(self, collection: str) -> str:
         """Validate and sanitize collection name."""
@@ -127,10 +128,11 @@ class IcebergBackend:
             table = self._catalog.load_table(table_id)
         except NoSuchTableError:
             return []
-        versions = []
-        for snap in table.snapshots():
-            if snap.summary and "portolake.version" in snap.summary.additional_properties:
-                versions.append(snapshot_to_version(snap))
+        versions = [
+            snapshot_to_version(snap)
+            for snap in table.snapshots()
+            if snap.summary and "portolake.version" in snap.summary.additional_properties
+        ]
         return sorted(versions, key=lambda v: v.created)
 
     def publish(
@@ -272,10 +274,11 @@ class IcebergBackend:
         except NoSuchTableError:
             return []
 
-        versioned_snapshots = []
-        for snap in table.snapshots():
-            if snap.summary and "portolake.version" in snap.summary.additional_properties:
-                versioned_snapshots.append(snap)
+        versioned_snapshots = [
+            snap
+            for snap in table.snapshots()
+            if snap.summary and "portolake.version" in snap.summary.additional_properties
+        ]
         versioned_snapshots.sort(key=lambda s: s.timestamp_ms)
 
         if len(versioned_snapshots) <= keep:
@@ -479,7 +482,7 @@ class IcebergBackend:
 
         downloaded = 0
         failed = 0
-        for _asset_key, asset in version.assets.items():
+        for asset in version.assets.values():
             source = f"{remote_url}/{asset.href}"
             dest = local_root / Path(asset.href)
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -532,18 +535,14 @@ def _read_parquet_assets(assets: dict[str, str]) -> pa.Table | None:
     for path_str in assets.values():
         path = Path(path_str)
         if path.exists() and path.suffix == ".parquet":
-            try:
+            # Skip an invalid or unreadable Parquet file.
+            with contextlib.suppress(Exception):
                 tables.append(pq.read_table(path))
-            except Exception:  # nosec B110 - skip invalid/unreadable parquet files
-                pass
 
     if not tables:
         return None
 
-    if len(tables) == 1:
-        result = tables[0]
-    else:
-        result = pa.concat_tables(tables, promote_options="default")
+    result = tables[0] if len(tables) == 1 else pa.concat_tables(tables, promote_options="default")
 
     # Add spatial columns (geohash + bbox) if geometry is present
     return add_spatial_columns(result)

@@ -104,21 +104,22 @@ def seed_metadata_yaml(
     content = _format_metadata_yaml(metadata, extracted.source_type)
 
     # Write to temp file in same directory (ensures same filesystem for rename)
-    temp_fd, temp_path = tempfile.mkstemp(
+    temp_fd, temp_name = tempfile.mkstemp(
         dir=metadata_path.parent,
         prefix=".metadata_yaml_",
         suffix=".tmp",
     )
+    temp_path = Path(temp_name)
     try:
         os.write(temp_fd, content.encode("utf-8"))
         os.close(temp_fd)
         # Atomic rename (on POSIX systems)
-        os.replace(temp_path, metadata_path)
+        temp_path.replace(metadata_path)
     except Exception:
         # Clean up temp file on failure
         os.close(temp_fd) if not os.get_inheritable(temp_fd) else None
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
+        if temp_path.exists():
+            temp_path.unlink()
         raise
 
     logger.debug("Seeded metadata.yaml from %s", extracted.source_type)

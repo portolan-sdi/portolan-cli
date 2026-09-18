@@ -10,11 +10,13 @@ Provides git-like status output showing:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.sync.checksums import compute_checksum
 from portolan_cli.versions import VersionsFile, read_versions
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass
@@ -63,10 +65,9 @@ class CollectionStatus:
 
         if local_parts > remote_parts:
             return "ahead"
-        elif local_parts < remote_parts:
+        if local_parts < remote_parts:
             return "behind"
-        else:
-            return "diverged"
+        return "diverged"
 
     @staticmethod
     def _parse_version(version: str) -> tuple[int, int, int]:

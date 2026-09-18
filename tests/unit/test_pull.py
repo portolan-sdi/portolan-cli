@@ -15,14 +15,10 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-if TYPE_CHECKING:
-    pass
-
 
 # =============================================================================
 # Test Fixtures
@@ -789,19 +785,21 @@ class TestPullOperation:
         data_file = catalog_with_versions / "test-collection" / "data.parquet"
         data_file.write_bytes(b"modified content - will be overwritten")
 
-        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
-            with patch("portolan_cli.sync.pull._download_assets_async") as mock_download:
-                from portolan_cli.versions import _parse_versions_file
+        with (
+            patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
+            patch("portolan_cli.sync.pull._download_assets_async") as mock_download,
+        ):
+            from portolan_cli.versions import _parse_versions_file
 
-                mock_fetch.return_value = _parse_versions_file(remote_versions_data)
-                mock_download.return_value = (1, 0)  # 1 downloaded, 0 failed
+            mock_fetch.return_value = _parse_versions_file(remote_versions_data)
+            mock_download.return_value = (1, 0)  # 1 downloaded, 0 failed
 
-                result = pull(
-                    remote_url="s3://bucket/catalog",
-                    local_root=catalog_with_versions,
-                    collection="test-collection",
-                    force=True,
-                )
+            result = pull(
+                remote_url="s3://bucket/catalog",
+                local_root=catalog_with_versions,
+                collection="test-collection",
+                force=True,
+            )
 
         assert result.success is True
         mock_download.assert_called_once()
@@ -818,14 +816,16 @@ class TestPullOperation:
         """
         from portolan_cli.sync.pull import pull
 
-        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
-            with patch("portolan_cli.sync.pull._download_assets_async") as mock_download:
-                result = pull(
-                    remote_url="s3://bucket/catalog",
-                    local_root=catalog_with_versions,
-                    collection="test-collection",
-                    dry_run=True,
-                )
+        with (
+            patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
+            patch("portolan_cli.sync.pull._download_assets_async") as mock_download,
+        ):
+            result = pull(
+                remote_url="s3://bucket/catalog",
+                local_root=catalog_with_versions,
+                collection="test-collection",
+                dry_run=True,
+            )
 
         # dry-run must not call either network function
         mock_fetch.assert_not_called()
@@ -860,18 +860,20 @@ class TestPullOperation:
             ],
         }
 
-        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
-            with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
-                from portolan_cli.versions import _parse_versions_file
+        with (
+            patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
+            patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum,
+        ):
+            from portolan_cli.versions import _parse_versions_file
 
-                mock_fetch.return_value = _parse_versions_file(same_versions_data)
-                mock_checksum.return_value = "abc123"
+            mock_fetch.return_value = _parse_versions_file(same_versions_data)
+            mock_checksum.return_value = "abc123"
 
-                result = pull(
-                    remote_url="s3://bucket/catalog",
-                    local_root=catalog_with_versions,
-                    collection="test-collection",
-                )
+            result = pull(
+                remote_url="s3://bucket/catalog",
+                local_root=catalog_with_versions,
+                collection="test-collection",
+            )
 
         assert result.success is True
         assert result.up_to_date is True
@@ -884,20 +886,22 @@ class TestPullOperation:
         """Pull should update local versions.json after successful download."""
         from portolan_cli.sync.pull import pull
 
-        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
-            with patch("portolan_cli.sync.pull._download_assets_async") as mock_download:
-                with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
-                    from portolan_cli.versions import _parse_versions_file
+        with (
+            patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
+            patch("portolan_cli.sync.pull._download_assets_async") as mock_download,
+            patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum,
+        ):
+            from portolan_cli.versions import _parse_versions_file
 
-                    mock_fetch.return_value = _parse_versions_file(remote_versions_data)
-                    mock_download.return_value = (1, 0)
-                    mock_checksum.return_value = "abc123"
+            mock_fetch.return_value = _parse_versions_file(remote_versions_data)
+            mock_download.return_value = (1, 0)
+            mock_checksum.return_value = "abc123"
 
-                    result = pull(
-                        remote_url="s3://bucket/catalog",
-                        local_root=catalog_with_versions,
-                        collection="test-collection",
-                    )
+            result = pull(
+                remote_url="s3://bucket/catalog",
+                local_root=catalog_with_versions,
+                collection="test-collection",
+            )
 
         assert result.success is True
 
@@ -978,20 +982,22 @@ class TestErrorHandling:
         """Pull should handle download failures gracefully."""
         from portolan_cli.sync.pull import pull
 
-        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
-            with patch("portolan_cli.sync.pull._download_assets_async") as mock_download:
-                with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
-                    from portolan_cli.versions import _parse_versions_file
+        with (
+            patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
+            patch("portolan_cli.sync.pull._download_assets_async") as mock_download,
+            patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum,
+        ):
+            from portolan_cli.versions import _parse_versions_file
 
-                    mock_fetch.return_value = _parse_versions_file(remote_versions_data)
-                    mock_download.return_value = (0, 1)  # 0 downloaded, 1 failed
-                    mock_checksum.return_value = "abc123"
+            mock_fetch.return_value = _parse_versions_file(remote_versions_data)
+            mock_download.return_value = (0, 1)  # 0 downloaded, 1 failed
+            mock_checksum.return_value = "abc123"
 
-                    result = pull(
-                        remote_url="s3://bucket/catalog",
-                        local_root=catalog_with_versions,
-                        collection="test-collection",
-                    )
+            result = pull(
+                remote_url="s3://bucket/catalog",
+                local_root=catalog_with_versions,
+                collection="test-collection",
+            )
 
         assert result.success is False
 
@@ -1016,23 +1022,25 @@ class TestErrorHandling:
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
 
-        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
-            with patch("portolan_cli.sync.pull._download_assets_async") as mock_download:
-                from portolan_cli.versions import VersionsFile
+        with (
+            patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
+            patch("portolan_cli.sync.pull._download_assets_async") as mock_download,
+        ):
+            from portolan_cli.versions import VersionsFile
 
-                mock_fetch.return_value = VersionsFile(
-                    spec_version="1.0.0",
-                    current_version="1.0.0",
-                    versions=[],
-                )
-                mock_download.return_value = (0, 0)
+            mock_fetch.return_value = VersionsFile(
+                spec_version="1.0.0",
+                current_version="1.0.0",
+                versions=[],
+            )
+            mock_download.return_value = (0, 0)
 
-                # Should work - creates local structure
-                result = pull(
-                    remote_url="s3://bucket/catalog",
-                    local_root=empty_dir,
-                    collection="test-collection",
-                )
+            # Should work - creates local structure
+            result = pull(
+                remote_url="s3://bucket/catalog",
+                local_root=empty_dir,
+                collection="test-collection",
+            )
 
         assert result.success is True
 
@@ -1847,17 +1855,19 @@ class TestDryRunNetworkIsolation:
         from portolan_cli.sync.pull import pull
         from portolan_cli.versions import _parse_versions_file
 
-        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
-            with patch("portolan_cli.sync.pull._download_assets_async") as mock_download:
-                mock_fetch.return_value = _parse_versions_file(remote_versions_data)
-                mock_download.return_value = (1, 0)
+        with (
+            patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
+            patch("portolan_cli.sync.pull._download_assets_async") as mock_download,
+        ):
+            mock_fetch.return_value = _parse_versions_file(remote_versions_data)
+            mock_download.return_value = (1, 0)
 
-                pull(
-                    remote_url="s3://bucket/catalog",
-                    local_root=catalog_with_versions,
-                    collection="test-collection",
-                    dry_run=False,
-                )
+            pull(
+                remote_url="s3://bucket/catalog",
+                local_root=catalog_with_versions,
+                collection="test-collection",
+                dry_run=False,
+            )
 
         # Regular pull MUST make the network call
         mock_fetch.assert_called_once()

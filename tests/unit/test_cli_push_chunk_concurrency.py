@@ -55,7 +55,7 @@ class TestPushChunkConcurrencyFlag:
     ) -> None:
         """push command accepts --chunk-concurrency flag."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             mock_push_all.return_value = PushAllResult(
                 success=True,
@@ -79,7 +79,7 @@ class TestPushChunkConcurrencyFlag:
     ) -> None:
         """--chunk-concurrency value is passed to push_all_collections."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             mock_push_all.return_value = PushAllResult(
                 success=True,
@@ -105,7 +105,7 @@ class TestPushChunkConcurrencyFlag:
     ) -> None:
         """--chunk-concurrency defaults to 4 when not specified."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             mock_push_all.return_value = PushAllResult(
                 success=True,
@@ -128,7 +128,7 @@ class TestPushChunkConcurrencyFlag:
     def test_chunk_concurrency_rejects_zero(self, runner: CliRunner, tmp_path: Path) -> None:
         """--chunk-concurrency rejects 0 (must be >= 1)."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             result = runner.invoke(cli, ["push", "--catalog", ".", "--chunk-concurrency", "0"])
 
@@ -139,7 +139,7 @@ class TestPushChunkConcurrencyFlag:
     def test_chunk_concurrency_rejects_negative(self, runner: CliRunner, tmp_path: Path) -> None:
         """--chunk-concurrency rejects negative values."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             result = runner.invoke(cli, ["push", "--catalog", ".", "--chunk-concurrency", "-1"])
 
@@ -154,7 +154,7 @@ class TestPushChunkConcurrencyFlag:
         from unittest.mock import AsyncMock
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             # Create an AsyncMock that returns the result
             mock_push_async.return_value = PushResult(
@@ -206,7 +206,7 @@ class TestConcurrencyInteraction:
     ) -> None:
         """Both --concurrency and --chunk-concurrency can be set together."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             mock_push_all.return_value = PushAllResult(
                 success=True,
@@ -244,7 +244,7 @@ class TestConcurrencyInteraction:
     ) -> None:
         """High concurrency values (> 100 connections) show a warning."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             mock_push_all.return_value = PushAllResult(
                 success=True,

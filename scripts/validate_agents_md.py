@@ -21,7 +21,7 @@ import ast
 import re
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Repo-specific instructions live in AGENTS.md. CLAUDE.md only imports it,
@@ -156,11 +156,12 @@ def validate_file_paths(claude_md: str, root: Path) -> ValidationResult:
 
         # Check if path exists relative to project root
         full_path = root / path_str
-        if not full_path.exists():
-            # Also check if it's a relative path from common locations
-            # Skip paths that are clearly examples or templates
-            if not any(x in path_str for x in ["example", "template", "your_", "my_"]):
-                missing_paths.append(path_str)
+        # Also check if it's a relative path from common locations
+        # Skip paths that are clearly examples or templates
+        if not full_path.exists() and not any(
+            x in path_str for x in ["example", "template", "your_", "my_"]
+        ):
+            missing_paths.append(path_str)
 
     if missing_paths:
         # Group by type for cleaner output
@@ -328,8 +329,8 @@ def extract_pytest_markers_from_pyproject(root: Path) -> dict[str, str]:
 
     try:
         content = pyproject_path.read_text()
-        # Parse markers = [...] section
-        # Format: "unit: Fast, isolated, no I/O (< 100ms each)"
+        # Read the markers array from pyproject.toml. Each entry names the
+        # marker, then gives the description after a colon.
         marker_pattern = r"markers\s*=\s*\[(.*?)\]"
         match = re.search(marker_pattern, content, re.DOTALL)
 
@@ -433,10 +434,12 @@ def validate_code_examples(claude_md: str, root: Path) -> ValidationResult:
             continue
 
         defined_names = _extract_defined_names(source_file)
-        for imp in imports:
-            # Skip private imports; only warn for submodules (not top-level package)
-            if imp not in defined_names and not imp.startswith("_") and "." in module_path:
-                invalid_imports.append(f"Import may not exist: {imp} from {module_path}")
+        # Skip private imports; only warn for submodules (not top-level package)
+        invalid_imports.extend(
+            f"Import may not exist: {imp} from {module_path}"
+            for imp in imports
+            if imp not in defined_names and not imp.startswith("_") and "." in module_path
+        )
 
     if invalid_imports:
         result.warnings.append(
@@ -481,7 +484,7 @@ def extract_freshness_markers(claude_md: str) -> list[FreshnessMarker]:
         line_number = claude_md[: match.start()].count("\n") + 1
 
         try:
-            last_verified = datetime.strptime(date_str, "%Y-%m-%d")
+            last_verified = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
             markers.append(
                 FreshnessMarker(
                     section=section, last_verified=last_verified, line_number=line_number
@@ -493,12 +496,12 @@ def extract_freshness_markers(claude_md: str) -> list[FreshnessMarker]:
     return markers
 
 
-def validate_freshness(claude_md: str, root: Path, stale_days: int = 30) -> ValidationResult:
+def validate_freshness(claude_md: str, _root: Path, stale_days: int = 30) -> ValidationResult:
     """Check that freshness markers aren't too old (warning only)."""
     result = ValidationResult(validator="Freshness")
 
     markers = extract_freshness_markers(claude_md)
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
 
     stale_sections: list[str] = []
     for marker in markers:

@@ -5,8 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from portolan_cli.constants import (
     MTIME_TOLERANCE_SECONDS,
@@ -18,6 +17,10 @@ from portolan_cli.sync.checksums import compute_checksum, compute_dir_checksum
 from portolan_cli.versions import (
     read_versions,
 )
+
+if TYPE_CHECKING:
+    from datetime import datetime
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +112,7 @@ def list_items(
             # Determine format from assets
             format_type = FormatType.UNKNOWN
             asset_paths: list[str] = []
-            for _asset_key, asset in item_data.get("assets", {}).items():
+            for asset in item_data.get("assets", {}).values():
                 href = asset.get("href", "")
                 asset_paths.append(href)
                 if href.endswith(".parquet"):

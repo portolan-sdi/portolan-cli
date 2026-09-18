@@ -9,7 +9,6 @@ See GitHub issue #282 for the upload metrics feature.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,8 +22,7 @@ from portolan_cli.sync.push import (
 )
 
 if TYPE_CHECKING:
-    pass
-
+    from pathlib import Path
 
 # =============================================================================
 # Formatting Tests

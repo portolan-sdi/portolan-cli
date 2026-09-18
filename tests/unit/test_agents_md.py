@@ -7,7 +7,7 @@ repair ``portolan_cli.metadata.fix.repair_agents_md`` (RULE-0080/0081).
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -22,6 +22,9 @@ from portolan_cli.agents_md import (
     find_agents_link,
     scaffold_content,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

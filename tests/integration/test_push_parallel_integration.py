@@ -16,7 +16,7 @@ import asyncio
 import json
 import os
 import threading
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -29,6 +29,9 @@ from portolan_cli.sync.push import (
     get_default_workers,
     push_all_collections,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # Remote URL for tests - set via env var (Issue #356: sensitive settings)
 TEST_REMOTE = "s3://test/catalog"

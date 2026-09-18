@@ -451,9 +451,7 @@ def _extract_layers_parallel(
         def _tracked_task(layer_index: int, layer: LayerInfo, slug: str) -> LayerResult:
             with start_lock:
                 started_at[layer_index] = time.monotonic()
-            return _extract_layer_task(
-                url, layer, output_dir, options, negotiated_version, layer_index, total, slug
-            )
+            return _extract_layer_task(url, layer, output_dir, options, negotiated_version, slug)
 
         def _deadline(future: Future[LayerResult]) -> float | None:
             """Return the execution deadline for a future, or None if unstarted."""
@@ -545,8 +543,6 @@ def _extract_layer_task(
     output_dir: Path,
     options: ExtractionOptions,
     negotiated_version: str,
-    layer_index: int,
-    total_layers: int,
     layer_slug: str,
 ) -> LayerResult:
     """Extract a single layer (task for parallel execution).
@@ -606,36 +602,35 @@ def _extract_layer_task(
             error=None,
             attempts=result.attempts,
         )
-    else:
-        error_msg = str(result.error) if result.error else "Unknown error"
-        # Detect empty layers (0 features) and mark as "empty" instead of "failed"
-        # See Issue #450: Graceful handling of empty WFS layers
-        if _is_empty_layer_error(error_msg):
-            logger.warning("Layer %s is empty (0 features), skipping", layer.name)
-            return LayerResult(
-                id=layer.id,
-                name=layer.name,
-                status="empty",
-                features=0,
-                size_bytes=0,
-                duration_seconds=0.0,
-                output_path=None,
-                warnings=["Layer has no features"],
-                error=error_msg,
-                attempts=result.attempts,
-            )
+    error_msg = str(result.error) if result.error else "Unknown error"
+    # Detect empty layers (0 features) and mark as "empty" instead of "failed"
+    # See Issue #450: Graceful handling of empty WFS layers
+    if _is_empty_layer_error(error_msg):
+        logger.warning("Layer %s is empty (0 features), skipping", layer.name)
         return LayerResult(
             id=layer.id,
             name=layer.name,
-            status="failed",
-            features=None,
-            size_bytes=None,
-            duration_seconds=None,
+            status="empty",
+            features=0,
+            size_bytes=0,
+            duration_seconds=0.0,
             output_path=None,
-            warnings=[],
+            warnings=["Layer has no features"],
             error=error_msg,
             attempts=result.attempts,
         )
+    return LayerResult(
+        id=layer.id,
+        name=layer.name,
+        status="failed",
+        features=None,
+        size_bytes=None,
+        duration_seconds=None,
+        output_path=None,
+        warnings=[],
+        error=error_msg,
+        attempts=result.attempts,
+    )
 
 
 def extract_wfs_catalog(
@@ -769,8 +764,6 @@ def extract_wfs_catalog(
                 output_dir,
                 options,
                 negotiated_version,
-                i,
-                total,
                 layer_slugs[layer.id],
             )
             extracted_results.append(result)

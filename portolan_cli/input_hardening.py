@@ -62,10 +62,7 @@ def validate_safe_path(path: Path, base_dir: Path | None = None) -> Path:
         base_resolved = base_dir.resolve()
         # If path is relative, join with base_dir before resolving
         # If path is absolute, resolve() will use it as-is
-        if not path.is_absolute():
-            resolved = (base_resolved / path).resolve()
-        else:
-            resolved = path.resolve()
+        resolved = (base_resolved / path).resolve() if not path.is_absolute() else path.resolve()
     except (OSError, RuntimeError) as e:
         raise InputValidationError(f"Cannot resolve path {path}: {e}") from e
 

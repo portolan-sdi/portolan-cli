@@ -15,14 +15,10 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from portolan_cli.config import get_ignored_files
 from portolan_cli.formats import FORMAT_DISPLAY_NAMES, FormatType, _detect_json_type
 from portolan_cli.versions import read_versions
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -165,11 +161,7 @@ def _is_ignored(filename: str, item_id: str, ignored_patterns: list[str]) -> boo
         return True
 
     # Check against ignored patterns
-    for pattern in ignored_patterns:
-        if fnmatch.fnmatch(filename, pattern):
-            return True
-
-    return False
+    return any(fnmatch.fnmatch(filename, pattern) for pattern in ignored_patterns)
 
 
 def _get_format_display_name(filename: str, file_path: Path | None = None) -> str:
@@ -227,7 +219,6 @@ def _get_tracked_assets(versions_path: Path) -> set[str]:
 def _scan_item_directory(
     item_dir: Path,
     collection_id: str,
-    versions_path: Path,
     tracked_assets: set[str],
     ignored_patterns: list[str],
 ) -> ItemInfo:
@@ -236,7 +227,6 @@ def _scan_item_directory(
     Args:
         item_dir: Path to the item directory.
         collection_id: ID of the parent collection.
-        versions_path: Path to versions.json.
         tracked_assets: Dict of tracked asset keys to metadata.
         ignored_patterns: List of glob patterns to ignore.
 
@@ -266,10 +256,7 @@ def _scan_item_directory(
             # Determine status based on versions.json presence
             # Simplified logic: file exists + in versions.json = TRACKED
             # Modified detection (hash comparison) deferred to future enhancement
-            if asset_key in tracked_assets:
-                status = AssetStatus.TRACKED
-            else:
-                status = AssetStatus.UNTRACKED
+            status = AssetStatus.TRACKED if asset_key in tracked_assets else AssetStatus.UNTRACKED
 
             # Get file size
             try:
@@ -342,7 +329,6 @@ def _scan_collection_directory(
             item_info = _scan_item_directory(
                 entry,
                 collection_id,
-                versions_path,
                 tracked_assets,
                 ignored_patterns,
             )

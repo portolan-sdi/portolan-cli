@@ -77,14 +77,11 @@ def export_schema_csv(schema: SchemaModel, path: Path) -> Path:
     else:  # COG
         fieldnames = ["name", "data_type", "nodata", "description", "unit"]
 
-    with open(path, "w", newline="", encoding="utf-8") as f:
+    with Path(path).open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         for col in schema.columns:
-            if hasattr(col, "to_dict"):
-                row = col.to_dict()
-            else:
-                row = dict(col)
+            row = col.to_dict() if hasattr(col, "to_dict") else dict(col)
             writer.writerow(row)
 
     # Write sidecar metadata

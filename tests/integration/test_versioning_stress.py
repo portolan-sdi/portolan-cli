@@ -17,7 +17,6 @@ import hashlib
 import json
 import os
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
@@ -28,6 +27,7 @@ from portolan_cli.cli import cli
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+    from pathlib import Path
 
 # Remote URL for tests - set via env var (Issue #356: sensitive settings)
 TEST_REMOTE = "s3://fake-bucket/catalog"

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
@@ -21,6 +21,9 @@ from portolan_cli.conversion_config import (
     VALID_SPATIAL_INDEXES,
     VectorSettings,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def _command_names(command: click.Command, prefix: str = "") -> list[str]:

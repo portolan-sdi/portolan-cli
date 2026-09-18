@@ -4,6 +4,8 @@ This module re-exports report classes from the common module
 for backwards compatibility.
 """
 
+from __future__ import annotations
+
 from portolan_cli.extract.common.report import (
     ExtractionReport,
     ExtractionSummary,

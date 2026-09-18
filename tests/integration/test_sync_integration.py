@@ -11,11 +11,14 @@ These tests verify:
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture

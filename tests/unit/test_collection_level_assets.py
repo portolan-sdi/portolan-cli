@@ -3,6 +3,8 @@
 Issue #250: portolan add creates incorrect asset paths for collection-level assets.
 """
 
+from __future__ import annotations
+
 import json
 
 import pytest

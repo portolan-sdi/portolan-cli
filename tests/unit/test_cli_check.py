@@ -9,9 +9,7 @@ test asserts on are ones it introduces itself.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -20,6 +18,10 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from portolan_cli.cli import cli
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
 
 # =============================================================================
 # Shared fixtures

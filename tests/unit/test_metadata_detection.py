@@ -14,13 +14,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
-
-if TYPE_CHECKING:
-    pass
-
 
 # =============================================================================
 # Fixtures for Detection Tests
@@ -534,7 +530,6 @@ class TestCheckFileMetadata:
         valid_points_parquet: Path,
     ) -> None:
         """check_file_metadata returns FRESH status when metadata is up to date."""
-        import os
         import shutil
 
         from portolan_cli.metadata.detection import check_file_metadata
@@ -549,7 +544,7 @@ class TestCheckFileMetadata:
         # Update the versions.json to match current file mtime
         versions_path = collection_dir / "versions.json"
         versions_data = json.loads(versions_path.read_text())
-        current_mtime = os.stat(parquet_path).st_mtime
+        current_mtime = Path(parquet_path).stat().st_mtime
         versions_data["versions"][0]["assets"]["parcels.parquet"]["source_mtime"] = current_mtime
         versions_path.write_text(json.dumps(versions_data, indent=2))
 

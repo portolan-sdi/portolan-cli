@@ -15,7 +15,7 @@ location, so it is correct regardless of how ``add`` derived the item id.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -28,6 +28,9 @@ from portolan_cli.versions import (
     read_versions,
     write_versions,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _catalog_with_assets(tmp_path: Path, asset_keys: list[str]) -> tuple[Path, Path]:

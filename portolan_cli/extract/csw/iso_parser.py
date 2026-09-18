@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import defusedxml.ElementTree as ET
 
 if TYPE_CHECKING:
-    from xml.etree.ElementTree import Element  # nosec B405 - type hints only
+    from xml.etree.ElementTree import Element  # type hints only
 
 from portolan_cli.extract.csw.models import ISOMetadata
 
@@ -32,8 +32,6 @@ NAMESPACES = {
 
 class ISOParseError(Exception):
     """Raised when ISO 19139 XML parsing fails."""
-
-    pass
 
 
 def parse_iso19139(xml_content: str) -> ISOMetadata:
@@ -223,9 +221,12 @@ def _get_license_text(md: Element) -> str | None:
     ):
         for other in constraint.findall(".//gmd:otherConstraints/gmx:Anchor", NAMESPACES):
             href = other.get(f"{{{NAMESPACES['xlink']}}}href", "")
-            if "creativecommons.org" in href or "opensource.org" in href:
-                if other.text and other.text.strip():
-                    return other.text.strip()
+            if (
+                ("creativecommons.org" in href or "opensource.org" in href)
+                and other.text
+                and other.text.strip()
+            ):
+                return other.text.strip()
 
     return None
 

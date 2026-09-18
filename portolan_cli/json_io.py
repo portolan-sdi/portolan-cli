@@ -11,6 +11,7 @@ without dragging ``click``/``rich``/``config`` into a leaf module.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -19,7 +20,7 @@ from typing import Any
 
 
 def write_json_atomic(path: Path, data: Any) -> None:
-    """Serialize ``data`` to ``path`` as JSON, atomically.
+    r"""Serialize ``data`` to ``path`` as JSON, atomically.
 
     Writes to a temporary file in the destination's own directory and then
     ``os.replace``s it into position, so readers observe either the previous
@@ -53,21 +54,20 @@ def write_text_atomic(path: Path, content: str) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    fd, tmp_path = tempfile.mkstemp(
+    fd, tmp_name = tempfile.mkstemp(
         dir=path.parent,
         prefix=f".{path.name}.",
         suffix=".tmp",
     )
+    tmp_path = Path(tmp_name)
     try:
         # newline="" disables platform newline translation: without it Windows
         # writes \r\n, and catalogs stop being byte-identical across platforms.
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(content)
         # Atomic rename (POSIX guarantees atomicity for same-filesystem renames).
-        os.replace(tmp_path, path)
+        tmp_path.replace(path)
     except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        with contextlib.suppress(OSError):
+            tmp_path.unlink()
         raise

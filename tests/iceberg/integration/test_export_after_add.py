@@ -4,6 +4,8 @@ Verifies that exported GeoParquet matches original data and excludes
 derived columns (geohash, bbox).
 """
 
+from __future__ import annotations
+
 import pyarrow.parquet as pq
 import pytest
 

@@ -21,9 +21,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from portolan_cli import extension_registry as _reg
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # =============================================================================
 # Extension Mappings (DERIVED from extension_registry — the single source,
@@ -159,10 +162,7 @@ def _is_in_junk_dir(path: Path) -> bool:
     Uses case-insensitive matching to handle Windows/macOS filesystems
     where __PYCACHE__ or .GIT are valid directory names.
     """
-    for part in path.parts:
-        if part.lower() in JUNK_DIRS:
-            return True
-    return False
+    return any(part.lower() in JUNK_DIRS for part in path.parts)
 
 
 def _classify_by_extension(
@@ -307,13 +307,12 @@ def classify_file(
                 SkipReasonType.NOT_GEOSPATIAL,
                 f"Small image file ({size_bytes} bytes) - likely a thumbnail",
             )
-        else:
-            # Large image - might be a raster, but not our known formats
-            return (
-                FileCategory.UNKNOWN,
-                SkipReasonType.UNKNOWN_FORMAT,
-                "Large image file - unknown if geospatial raster",
-            )
+        # Large image - might be a raster, but not our known formats
+        return (
+            FileCategory.UNKNOWN,
+            SkipReasonType.UNKNOWN_FORMAT,
+            "Large image file - unknown if geospatial raster",
+        )
 
     # Unknown extension
     return (

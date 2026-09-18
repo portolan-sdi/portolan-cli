@@ -52,7 +52,7 @@ class TestPushWorkersFlag:
     ) -> None:
         """push command accepts --workers flag."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             mock_push_all.return_value = PushAllResult(
                 success=True,
@@ -76,7 +76,7 @@ class TestPushWorkersFlag:
     ) -> None:
         """push command accepts -w shorthand for --workers."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             mock_push_all.return_value = PushAllResult(
                 success=True,
@@ -99,7 +99,7 @@ class TestPushWorkersFlag:
     ) -> None:
         """--workers value is passed to push_all_collections."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             mock_push_all.return_value = PushAllResult(
                 success=True,
@@ -126,7 +126,7 @@ class TestPushWorkersFlag:
     ) -> None:
         """--workers defaults to None (auto-detect) when not specified."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             mock_push_all.return_value = PushAllResult(
                 success=True,
@@ -153,7 +153,7 @@ class TestPushWorkersFlag:
     ) -> None:
         """--concurrency is passed to push_async() for file-level parallelism."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             mock_push.return_value = PushResult(
                 success=True,
@@ -179,7 +179,7 @@ class TestPushWorkersFlag:
     def test_workers_requires_positive_integer(self, runner: CliRunner, tmp_path: Path) -> None:
         """--workers requires a positive integer value (>= 1)."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             # Negative value should fail with IntRange validation
             result = runner.invoke(cli, ["push", "--workers", "-1"])
@@ -202,7 +202,7 @@ class TestPushWorkersFlag:
     ) -> None:
         """--workers 1 explicitly requests sequential execution."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1", "col2"])
+            _setup_catalog_with_collections(Path(), ["col1", "col2"])
 
             mock_push_all.return_value = PushAllResult(
                 success=True,

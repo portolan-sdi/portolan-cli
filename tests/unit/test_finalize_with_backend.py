@@ -7,13 +7,16 @@ Iceberg installation is required.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from portolan_cli.add import PreparedItem, _finalize_with_backend
 from portolan_cli.formats import FormatType
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

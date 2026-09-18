@@ -1,5 +1,7 @@
 """Shared test fixtures for iceberg backend tests."""
 
+from __future__ import annotations
+
 import sys
 
 import pyarrow as pa
@@ -24,11 +26,9 @@ def iceberg_catalog(tmp_path):
     warehouse_uri = (tmp_path / "warehouse").as_uri()
     return load_catalog(
         "test",
-        **{
-            "type": "sql",
-            "uri": f"sqlite:///{tmp_path}/catalog.db",
-            "warehouse": warehouse_uri,
-        },
+        type="sql",
+        uri=f"sqlite:///{tmp_path}/catalog.db",
+        warehouse=warehouse_uri,
     )
 
 

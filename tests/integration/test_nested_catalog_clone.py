@@ -6,11 +6,13 @@ nested catalog structures where collections are organized under subcatalogs.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestNestedCatalogCloneIntegration:
@@ -146,9 +148,9 @@ class TestNestedCatalogCloneIntegration:
         def mock_fetch(remote_url: str, **kwargs: Any) -> dict[str, Any]:
             if "amsterdam" in remote_url:
                 return amsterdam_catalog
-            elif "netherlands" in remote_url:
+            if "netherlands" in remote_url:
                 return netherlands_catalog
-            elif "europe" in remote_url:
+            if "europe" in remote_url:
                 return europe_catalog
             return root_catalog
 

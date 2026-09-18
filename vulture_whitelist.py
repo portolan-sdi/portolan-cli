@@ -1,6 +1,11 @@
-# Vulture whitelist for false positives
-# https://github.com/jendrikseipp/vulture#whitelisting
-# ruff: noqa: F841
+"""Vulture whitelist for false positives.
+
+Vulture reads this file as source. Each name here is used at runtime through
+a path vulture cannot follow. See
+https://github.com/jendrikseipp/vulture#whitelisting.
+"""
+
+from __future__ import annotations
 
 # Abstract method parameters are intentionally unused in base class
 # These are used by concrete implementations

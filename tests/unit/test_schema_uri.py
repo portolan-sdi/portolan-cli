@@ -33,7 +33,7 @@ class TestSchemaUriConstant:
         """The CLI cannot drift from the validator: it reads the version off it."""
         newest = max(bundled_schema_versions())
 
-        assert PORTOLAN_SPEC_VERSION == newest.removeprefix("v")
+        assert newest.removeprefix("v") == PORTOLAN_SPEC_VERSION
 
     def test_spec_version_is_a_bare_semver_triple(self) -> None:
         """No leading ``v``: the URI template and the JSON payload both want digits."""

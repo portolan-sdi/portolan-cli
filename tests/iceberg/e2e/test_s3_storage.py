@@ -4,6 +4,8 @@ Verifies that Iceberg data and metadata files are correctly stored
 in MinIO S3-compatible storage after publishing through the REST catalog.
 """
 
+from __future__ import annotations
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest

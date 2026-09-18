@@ -102,9 +102,11 @@ def _check_changes_reference_assets(versions_data: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     for i, version in enumerate(versions_data.get("versions", [])):
         assets = set(version.get("assets", {}).keys())
-        for change in version.get("changes", []):
-            if change not in assets:
-                errors.append(f"version[{i}].changes references '{change}' which is not in assets")
+        errors.extend(
+            f"version[{i}].changes references '{change}' which is not in assets"
+            for change in version.get("changes", [])
+            if change not in assets
+        )
     return errors
 
 

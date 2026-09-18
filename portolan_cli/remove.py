@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import shutil
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.discovery import get_sidecars
@@ -12,6 +12,9 @@ from portolan_cli.versions import (
     Version,
     read_versions,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 

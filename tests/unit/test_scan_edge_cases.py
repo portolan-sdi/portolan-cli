@@ -1,10 +1,15 @@
 """Tests for scan edge case detection (nested catalogs)."""
 
-from pathlib import Path
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.scan.detect import detect_stac_catalogs
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

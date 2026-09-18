@@ -13,12 +13,15 @@ correct answer:
 from __future__ import annotations
 
 import re
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.metadata.cog import COGMetadata, extract_cog_metadata, extract_schema_from_cog
 from portolan_cli.models.schema import BandSchema, SchemaModel
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def bands_of(schema: SchemaModel) -> list[BandSchema]:
@@ -451,7 +454,7 @@ class TestCOGMetadataEdgeCases:
         """
         import numpy as np
         import rasterio
-        from rasterio.crs import CRS as RasterioCRS
+        from rasterio.crs import CRS
         from rasterio.transform import from_bounds
 
         custom_wkt = """PROJCS["Custom_CRS",
@@ -465,7 +468,7 @@ class TestCOGMetadataEdgeCases:
             PARAMETER["false_northing",0],
             UNIT["Meter",1]]"""
 
-        crs = RasterioCRS.from_wkt(custom_wkt)
+        crs = CRS.from_wkt(custom_wkt)
         assert crs.to_epsg() is None, "fixture CRS must have no EPSG code"
 
         path = tmp_path / "custom_crs.tif"
@@ -491,7 +494,7 @@ class TestCOGMetadataEdgeCases:
         """extract_schema_from_cog takes the same WKT fallback."""
         import numpy as np
         import rasterio
-        from rasterio.crs import CRS as RasterioCRS
+        from rasterio.crs import CRS
         from rasterio.transform import from_bounds
 
         custom_wkt = """PROJCS["Custom_CRS",
@@ -505,7 +508,7 @@ class TestCOGMetadataEdgeCases:
             PARAMETER["false_northing",0],
             UNIT["Meter",1]]"""
 
-        crs = RasterioCRS.from_wkt(custom_wkt)
+        crs = CRS.from_wkt(custom_wkt)
         assert crs.to_epsg() is None, "fixture CRS must have no EPSG code"
 
         path = tmp_path / "custom_crs_schema.tif"

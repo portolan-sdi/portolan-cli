@@ -22,10 +22,11 @@ Example usage for plugin authors:
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, runtime_checkable
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from portolan_cli.versions import Version
 
 

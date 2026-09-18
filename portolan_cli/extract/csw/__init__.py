@@ -7,6 +7,8 @@ Primary entry point:
     fetch_metadata_for_layer: Fetch metadata from a layer's metadataUrls
 """
 
+from __future__ import annotations
+
 from portolan_cli.extract.csw.client import (
     detect_metadata_url_type,
     fetch_metadata_for_layer,

@@ -4,6 +4,8 @@ Verifies that `portolan add` with the iceberg backend adds geohash and
 bbox columns to the Iceberg table when the input has geometry.
 """
 
+from __future__ import annotations
+
 import pytest
 
 from tests.iceberg.integration.conftest import (

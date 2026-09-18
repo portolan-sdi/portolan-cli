@@ -250,28 +250,27 @@ def detect_hive_partitions(root: Path) -> list[SpecialFormat]:
         # Check each subdirectory name for Hive pattern
         for dirname in dirnames:
             partition_info = is_hive_partition_dir(dirname)
-            if partition_info:
-                # Found a Hive partition - the parent is the data root
-                if current not in partition_roots:
-                    partition_roots.add(current)
+            # Found a Hive partition - the parent is the data root
+            if partition_info and current not in partition_roots:
+                partition_roots.add(current)
 
-                    # Collect partition keys
-                    keys: list[str] = []
-                    for d in dirnames:
-                        info = is_hive_partition_dir(d)
-                        if info:
-                            keys.append(info[0])
+                # Collect partition keys
+                keys: list[str] = []
+                for d in dirnames:
+                    info = is_hive_partition_dir(d)
+                    if info:
+                        keys.append(info[0])
 
-                    results.append(
-                        SpecialFormat(
-                            path=current,
-                            relative_path=_get_relative_path(current, root),
-                            format_type="hive_partition",
-                            details={
-                                "partition_keys": sorted(set(keys)),
-                            },
-                        )
+                results.append(
+                    SpecialFormat(
+                        path=current,
+                        relative_path=_get_relative_path(current, root),
+                        format_type="hive_partition",
+                        details={
+                            "partition_keys": sorted(set(keys)),
+                        },
                     )
+                )
 
     return results
 

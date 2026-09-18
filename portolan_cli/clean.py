@@ -21,9 +21,12 @@ from __future__ import annotations
 
 import json
 import shutil
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from portolan_cli.constants import PORTOLAN_DIR
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def is_stac_metadata(path: Path) -> bool:
@@ -103,13 +106,9 @@ def collect_files_to_remove(catalog_root: Path) -> tuple[list[Path], list[Path]]
         if PORTOLAN_DIR in path.parts:
             continue
 
-        if path.is_file():
-            # Check for STAC metadata
-            if is_stac_metadata(path):
-                files_to_remove.append(path)
-            # Check for versions.json
-            elif is_versions_json(path):
-                files_to_remove.append(path)
+        # Check for STAC metadata
+        if path.is_file() and (is_stac_metadata(path) or is_versions_json(path)):
+            files_to_remove.append(path)
 
     # Sort files for deterministic output
     files_to_remove.sort()
@@ -144,16 +143,15 @@ def remove_empty_directories(catalog_root: Path, removed_files: list[Path]) -> l
     sorted_dirs = sorted(parent_dirs, key=lambda p: len(p.parts), reverse=True)
 
     for dir_path in sorted_dirs:
-        if dir_path.exists() and dir_path.is_dir():
-            # Check if directory is empty using lazy iteration (no list allocation)
-            if next(dir_path.iterdir(), None) is None:
-                try:
-                    dir_path.rmdir()
-                except OSError:
-                    # On Windows, rmdir fails if the directory is the process CWD.
-                    # This is a best-effort cleanup, so skip and continue.
-                    continue
-                directories_removed.append(dir_path)
+        # Check if directory is empty using lazy iteration (no list allocation)
+        if dir_path.is_dir() and next(dir_path.iterdir(), None) is None:
+            try:
+                dir_path.rmdir()
+            except OSError:
+                # On Windows, rmdir fails if the directory is the process CWD.
+                # This is a best-effort cleanup, so skip and continue.
+                continue
+            directories_removed.append(dir_path)
 
     return directories_removed
 
@@ -182,9 +180,8 @@ def clean_catalog(
     files_to_remove_set = set(files_to_remove)
     data_files = 0
     for path in catalog_root.rglob("*"):
-        if path.is_file() and PORTOLAN_DIR not in path.parts:
-            if path not in files_to_remove_set:
-                data_files += 1
+        if path.is_file() and PORTOLAN_DIR not in path.parts and path not in files_to_remove_set:
+            data_files += 1
 
     if dry_run:
         return files_to_remove, directories_to_remove, data_files

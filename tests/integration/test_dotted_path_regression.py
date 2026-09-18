@@ -12,6 +12,8 @@ Issue #731 is the same bug reached through the default path argument. Passing
 argument, so absolutizing before the heuristic runs is what keeps it away.
 """
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
 
@@ -295,7 +297,7 @@ class TestInitCatalogReturnValue:
         working_dir.mkdir()
         monkeypatch.chdir(working_dir)
 
-        catalog_file, _warnings = init_catalog(Path("."), license_id="CC-BY-4.0")
+        catalog_file, _warnings = init_catalog(Path(), license_id="CC-BY-4.0")
 
         assert catalog_file.is_absolute(), f"catalog_file must be absolute, got {catalog_file}"
         assert catalog_file == working_dir.resolve() / "catalog.json"

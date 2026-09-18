@@ -21,12 +21,11 @@ def format_size(size_bytes: int) -> str:
     """
     if size_bytes < 1024:
         return f"{size_bytes}B"
-    elif size_bytes < 1024 * 1024:
+    if size_bytes < 1024 * 1024:
         return f"{size_bytes / 1024:.1f}KB"
-    elif size_bytes < 1024 * 1024 * 1024:
+    if size_bytes < 1024 * 1024 * 1024:
         return f"{size_bytes / (1024 * 1024):.1f}MB"
-    else:
-        return f"{size_bytes / (1024 * 1024 * 1024):.1f}GB"
+    return f"{size_bytes / (1024 * 1024 * 1024):.1f}GB"
 
 
 def href_root(path: Path) -> str:
@@ -56,7 +55,7 @@ def href_root(path: Path) -> str:
 
 
 def relative_href(from_dir: PurePath, to_file: PurePath) -> str:
-    """The POSIX href from a directory to a STAC file.
+    r"""The POSIX href from a directory to a STAC file.
 
     A STAC href is a relative URL reference, so its separator is ``/`` on every
     platform. ``os.path.relpath`` returns the *native* one, and on Windows that

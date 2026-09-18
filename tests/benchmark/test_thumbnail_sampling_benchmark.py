@@ -9,11 +9,14 @@ which is the property that makes a cheaper read acceptable.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 #: Rows in the synthetic layer. Large enough that the cap bites at 100_000,
 #: small enough to build in a second.

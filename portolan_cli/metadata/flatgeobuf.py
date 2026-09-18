@@ -9,12 +9,14 @@ FlatGeobuf files are collection-level assets when added to a catalog.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyogrio  # type: ignore[import-untyped]
 from pyproj import CRS
 from pyproj.exceptions import CRSError
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass

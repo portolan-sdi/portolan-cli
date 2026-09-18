@@ -16,10 +16,13 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from portolan_cli.formats import FormatType, detect_format
 from portolan_cli.scan.detect import is_filegdb
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # Pattern for valid collection IDs (supports path syntax):
 # - Start with lowercase letter or number (year-based organization like 2020/)
@@ -36,8 +39,6 @@ INVALID_CHAR_PATTERN: re.Pattern[str] = re.compile(r"[^a-z0-9_/-]")
 
 class CollectionIdError(ValueError):
     """Raised when a collection ID cannot be normalized."""
-
-    pass
 
 
 def validate_collection_id(collection_id: str) -> tuple[bool, str | None]:

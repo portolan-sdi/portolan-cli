@@ -240,8 +240,8 @@ class TestCliConcurrencyFlagCatalogWide:
     ) -> None:
         """--concurrency is passed to push_all_collections for catalog-wide push."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_valid_catalog(Path("."))
-            _create_collection(Path("."), "col1")
+            _setup_valid_catalog(Path())
+            _create_collection(Path(), "col1")
 
             mock_push_all.return_value = PushAllResult(
                 success=True,
@@ -266,8 +266,8 @@ class TestCliConcurrencyFlagCatalogWide:
     ) -> None:
         """Default --concurrency (8 per Issue #344) is passed to push_all_collections."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_valid_catalog(Path("."))
-            _create_collection(Path("."), "col1")
+            _setup_valid_catalog(Path())
+            _create_collection(Path(), "col1")
 
             mock_push_all.return_value = PushAllResult(
                 success=True,
@@ -293,8 +293,8 @@ class TestCliConcurrencyFlagCatalogWide:
     ) -> None:
         """--concurrency is passed to pull_all_collections for catalog-wide pull."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_valid_catalog(Path("."))
-            _create_collection(Path("."), "col1")
+            _setup_valid_catalog(Path())
+            _create_collection(Path(), "col1")
 
             mock_pull_all.return_value = PullAllResult(
                 success=True,
@@ -319,8 +319,8 @@ class TestCliConcurrencyFlagCatalogWide:
     ) -> None:
         """Default --concurrency (50) is passed to pull_all_collections."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_valid_catalog(Path("."))
-            _create_collection(Path("."), "col1")
+            _setup_valid_catalog(Path())
+            _create_collection(Path(), "col1")
 
             mock_pull_all.return_value = PullAllResult(
                 success=True,
@@ -420,8 +420,8 @@ class TestCombinedConcurrencyParameters:
     ) -> None:
         """CLI push passes both --workers and --concurrency."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_valid_catalog(Path("."))
-            _create_collection(Path("."), "col1")
+            _setup_valid_catalog(Path())
+            _create_collection(Path(), "col1")
 
             mock_push_all.return_value = PushAllResult(
                 success=True,
@@ -450,8 +450,8 @@ class TestCombinedConcurrencyParameters:
     ) -> None:
         """CLI pull passes both --workers and --concurrency."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_valid_catalog(Path("."))
-            _create_collection(Path("."), "col1")
+            _setup_valid_catalog(Path())
+            _create_collection(Path(), "col1")
 
             mock_pull_all.return_value = PullAllResult(
                 success=True,

@@ -13,6 +13,8 @@ To add a new source format (e.g., QGIS QML):
 3. Only write parsing logic for the new format
 """
 
+from __future__ import annotations
+
 from portolan_cli.extract.common.converters.base import (
     esri_color_to_hex,
     esri_color_to_opacity,

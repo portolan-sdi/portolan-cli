@@ -4,6 +4,8 @@ This module re-exports retry utilities from the common module
 for backwards compatibility.
 """
 
+from __future__ import annotations
+
 from portolan_cli.extract.common.retry import (
     RetryConfig,
     RetryError,

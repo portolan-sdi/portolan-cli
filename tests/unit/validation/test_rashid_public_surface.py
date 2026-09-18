@@ -28,9 +28,13 @@ def _rashid_modules(tree: ast.AST) -> list[str]:
             modules.extend(
                 alias.name for alias in node.names if alias.name.split(".")[0] == "rashid"
             )
-        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            if node.module.split(".")[0] == "rashid":
-                modules.append(node.module)
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.level == 0
+            and node.module
+            and node.module.split(".")[0] == "rashid"
+        ):
+            modules.append(node.module)
     return modules
 
 

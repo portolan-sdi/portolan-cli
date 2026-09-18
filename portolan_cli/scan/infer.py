@@ -148,7 +148,7 @@ def detect_pattern_marker(names: list[str]) -> tuple[str, str] | None:
     stems = [_get_stem(name) for name in names]
 
     # Check each marker pattern
-    for _marker, (pattern_type, pattern) in MARKER_PATTERNS.items():
+    for pattern_type, pattern in MARKER_PATTERNS.values():
         bases: set[str] = set()
         match_count = 0
 
@@ -178,7 +178,7 @@ def _infer_from_markers(
 
     # Find the matching pattern
     pattern_info = None
-    for _marker, (ptype, pattern) in MARKER_PATTERNS.items():
+    for ptype, pattern in MARKER_PATTERNS.values():
         if ptype == pattern_type:
             pattern_info = pattern
             break

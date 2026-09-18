@@ -39,6 +39,8 @@ Check data structures:
 Metadata includes: bbox, CRS, schema/bands, feature/pixel count.
 """
 
+from __future__ import annotations
+
 from portolan_cli.metadata.cog import (
     COGMetadata,
     extract_cog_metadata,

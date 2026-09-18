@@ -6,9 +6,14 @@ These tests verify that Portolan correctly:
 3. Creates leaf collections (collection.json at data directories)
 """
 
-from pathlib import Path
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestInferNestedCollectionId:

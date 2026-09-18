@@ -3,12 +3,17 @@
 Issue #203: Add progress printing for file-level operations.
 """
 
-from pathlib import Path
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture

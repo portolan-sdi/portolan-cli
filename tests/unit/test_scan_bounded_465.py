@@ -13,13 +13,16 @@ fix over-skipping and dropping legitimate non-geo companion assets.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
 import portolan_cli.add as add_mod
 from portolan_cli.add import _batch_sibling_names, add_files
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 

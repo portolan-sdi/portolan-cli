@@ -110,7 +110,7 @@ def extract_pmtiles_metadata(path: Path) -> PMTilesMetadata:
         raise FileNotFoundError(f"PMTiles file not found: {path}")
 
     try:
-        with open(path, "rb") as f:
+        with Path(path).open("rb") as f:
             reader = Reader(MmapSource(f))  # type: ignore[no-untyped-call]
             header = reader.header()  # type: ignore[no-untyped-call]
             metadata = reader.metadata()  # type: ignore[no-untyped-call]

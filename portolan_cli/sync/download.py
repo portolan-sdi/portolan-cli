@@ -20,8 +20,8 @@ Basic Usage:
     valid, hint = check_credentials("s3://mybucket/path")
     if not valid:
         print(hint)
-        return
 
+Return:
     # Download a single file
     result = download_file(
         source="s3://mybucket/data.parquet",
@@ -79,6 +79,10 @@ from portolan_cli.sync.upload import (
 # Type alias for all supported object stores (same as upload.py)
 ObjectStore = S3Store | GCSStore | AzureStore | HTTPStore | LocalStore | MemoryStore
 
+# One download result: the path, the error if the download failed, and the byte
+# count.
+DownloadResultFuture = Future[tuple[Path, Exception | None, int]]
+
 
 # =============================================================================
 # Exceptions
@@ -88,13 +92,9 @@ ObjectStore = S3Store | GCSStore | AzureStore | HTTPStore | LocalStore | MemoryS
 class DownloadIntegrityError(Exception):
     """Raised when downloaded file fails integrity verification."""
 
-    pass
-
 
 class PathTraversalError(ValueError):
     """Raised when a remote key contains path traversal attempt."""
-
-    pass
 
 
 # =============================================================================
@@ -195,9 +195,8 @@ def _get_local_path_for_file(
         # Destination is a directory, use filename from source
         filename = source_prefix.rsplit("/", 1)[-1] if "/" in source_prefix else source_prefix
         return destination / filename
-    else:
-        # Destination is the exact file path
-        return destination
+    # Destination is the exact file path
+    return destination
 
 
 # =============================================================================
@@ -244,9 +243,8 @@ def _download_one_file(
         # Stream download to file with cleanup on failure
         try:
             response = obs.get(store, remote_key)
-            with open(local_path, "wb") as f:
-                for chunk in response:
-                    f.write(chunk)
+            with Path(local_path).open("wb") as f:
+                f.writelines(response)
         except Exception:
             # Clean up partial file on any download failure
             if local_path.exists():
@@ -365,9 +363,8 @@ def download_file(
 
         # Stream download to file with cleanup on failure
         try:
-            with open(local_path, "wb") as f:
-                for chunk in response:
-                    f.write(chunk)
+            with Path(local_path).open("wb") as f:
+                f.writelines(response)
         except Exception:
             # Clean up partial file on any download failure
             if local_path.exists():
@@ -510,9 +507,6 @@ def _execute_parallel_downloads(
 
     if not files_to_download:
         return results
-
-    # Type alias for download result future
-    DownloadResultFuture = Future[tuple[Path, Exception | None, int]]
 
     if fail_fast:
         # For fail_fast mode, submit futures incrementally to ensure we can stop

@@ -5,7 +5,7 @@ TDD tests for Wave 3: CLI-facing orchestrator that wraps extract_imageserver().
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,6 +14,9 @@ from portolan_cli.extract.arcgis.imageserver.orchestrator import (
     ImageServerCLIOptions,
     run_imageserver_extraction,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

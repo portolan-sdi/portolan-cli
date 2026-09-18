@@ -59,7 +59,7 @@ def create_collection(
     extent = _extract_extent_from_file(data_path, timestamp=now)
 
     # Create collection with extracted metadata
-    collection = CollectionModel(
+    return CollectionModel(
         id=collection_id,
         description=description,
         extent=extent,
@@ -68,8 +68,6 @@ def create_collection(
         created=now,
         updated=now,
     )
-
-    return collection
 
 
 def _extract_extent_from_file(
@@ -96,11 +94,8 @@ def _extract_extent_from_file(
         from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
 
         gp_metadata = extract_geoparquet_metadata(path)
-        if gp_metadata.bbox:
-            bbox = [list(gp_metadata.bbox)]
-        else:
-            # Default to global extent if no bbox
-            bbox = [[-180.0, -90.0, 180.0, 90.0]]
+        # Default to global extent if no bbox
+        bbox = [list(gp_metadata.bbox)] if gp_metadata.bbox else [[-180.0, -90.0, 180.0, 90.0]]
     elif suffix in (".tif", ".tiff"):
         from portolan_cli.metadata.cog import extract_cog_metadata
 
@@ -175,7 +170,7 @@ def read_collection_json(path: Path) -> CollectionModel:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
-    with open(path, encoding="utf-8") as f:
+    with Path(path).open(encoding="utf-8") as f:
         data = json.load(f)
 
     return CollectionModel.from_dict(data)
@@ -196,7 +191,7 @@ def read_schema_json(path: Path) -> SchemaModel:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
-    with open(path, encoding="utf-8") as f:
+    with Path(path).open(encoding="utf-8") as f:
         data = json.load(f)
 
     return SchemaModel.from_dict(data)
@@ -220,7 +215,7 @@ def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
         return []
 
     try:
-        with open(catalog_path, encoding="utf-8") as f:
+        with Path(catalog_path).open(encoding="utf-8") as f:
             catalog_data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return []
@@ -250,7 +245,7 @@ def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
             continue
 
         try:
-            with open(collection_path, encoding="utf-8") as f:
+            with Path(collection_path).open(encoding="utf-8") as f:
                 collection_data = json.load(f)
 
             # Extract bbox from extent
@@ -318,7 +313,7 @@ def _get_metadata_yaml_bbox(collection_dir: Path) -> list[float] | None:
     try:
         import yaml
 
-        with open(metadata_path, encoding="utf-8") as f:
+        with Path(metadata_path).open(encoding="utf-8") as f:
             metadata = yaml.safe_load(f) or {}
 
         # Check for explicit bbox in metadata.yaml

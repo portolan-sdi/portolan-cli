@@ -20,13 +20,16 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
-from click.testing import CliRunner
 
 from portolan_cli.cli import cli
 
 from .conftest import MINIMAL_GEOJSON
+
+if TYPE_CHECKING:
+    from click.testing import CliRunner
 
 
 class TestReadmeQuickStart:
@@ -228,7 +231,7 @@ class TestReadmeCommonCommands:
         so we test with 'backend' which can be stored in config.yaml.
         """
         # Save original cwd
-        original_cwd = os.getcwd()
+        original_cwd = Path.cwd()
         try:
             # Change to catalog directory for config commands
             os.chdir(catalog_with_minimal_data)

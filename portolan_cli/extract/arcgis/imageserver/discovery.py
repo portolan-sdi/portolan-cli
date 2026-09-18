@@ -33,8 +33,6 @@ class ImageServerDiscoveryError(Exception):
     - ArcGIS returns an error response (e.g., authentication required)
     """
 
-    pass
-
 
 @dataclass
 class ImageServerMetadata:
@@ -207,7 +205,7 @@ async def _fetch_json(url: str, timeout: float) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.get(request_url)
             response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+            return cast("dict[str, Any]", response.json())
     except httpx.HTTPStatusError as e:
         msg = f"Failed to fetch from {url}: HTTP {e.response.status_code}"
         raise ImageServerDiscoveryError(msg) from e
@@ -225,7 +223,7 @@ async def _fetch_json(url: str, timeout: float) -> dict[str, Any]:
         raise ImageServerDiscoveryError(msg) from e
 
 
-def _check_arcgis_error(data: dict[str, Any], url: str) -> None:
+def _check_arcgis_error(data: dict[str, Any]) -> None:
     """Check for ArcGIS error response and raise if found.
 
     ArcGIS returns errors as JSON with an 'error' key containing
@@ -233,7 +231,6 @@ def _check_arcgis_error(data: dict[str, Any], url: str) -> None:
 
     Args:
         data: Parsed JSON response
-        url: Original URL (for error message)
 
     Raises:
         ImageServerDiscoveryError: If response contains an error
@@ -291,7 +288,7 @@ def parse_imageserver_response(data: dict[str, Any]) -> ImageServerMetadata:
             response contains an error
     """
     # Check for ArcGIS error response
-    _check_arcgis_error(data, "<parsed response>")
+    _check_arcgis_error(data)
 
     # Validate required fields
     _validate_required_fields(data, "<parsed response>")

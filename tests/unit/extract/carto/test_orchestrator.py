@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -21,6 +20,9 @@ from portolan_cli.extract.carto.orchestrator import (
     extract_carto_catalog,
 )
 from portolan_cli.extract.common.report import LayerResult, save_report
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 

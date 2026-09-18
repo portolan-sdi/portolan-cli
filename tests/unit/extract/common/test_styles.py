@@ -6,8 +6,7 @@ Tests the high-level API for extracting styles from WMS and ESRI endpoints.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -18,6 +17,9 @@ from portolan_cli.extract.common.styles import (
     extract_esri_style,
     extract_wms_style,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

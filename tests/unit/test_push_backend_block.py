@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # Remote URL for tests - set via env var (Issue #356: sensitive settings)
 TEST_REMOTE = "gs://test-bucket/catalog"

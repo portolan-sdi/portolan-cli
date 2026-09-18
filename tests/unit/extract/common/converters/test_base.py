@@ -320,7 +320,6 @@ class TestMapboxStyleBuilder:
         layer = make_fill_layer("fill", "data", "#ff0000", 0.5)
         style = make_mapbox_style(
             name="Test Style",
-            source_layer="data",
             layers=[layer],
         )
         assert style["version"] == 8
@@ -334,7 +333,6 @@ class TestMapboxStyleBuilder:
         layer = make_fill_layer("fill", "data", "#ff0000", 0.5)
         style = make_mapbox_style(
             name="Test",
-            source_layer="data",
             layers=[layer],
             pmtiles_url="../data.pmtiles",
         )
@@ -346,7 +344,6 @@ class TestMapboxStyleBuilder:
         outline = make_line_layer("outline", "data", "#000000", 1)
         style = make_mapbox_style(
             name="Multi-layer",
-            source_layer="data",
             layers=[fill, outline],
         )
         assert len(style["layers"]) == 2

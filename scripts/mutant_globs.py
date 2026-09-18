@@ -38,8 +38,11 @@ input file has mutants); 1 = no paths given.
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Sequence
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 # Every name mutmut mangles starts with one of these (function: ``x_name``,
 # method: ``xǁClassǁname``), so this suffix selects a module's mutants without
@@ -62,14 +65,12 @@ def mutant_glob(path: str | PurePosixPath) -> str:
         raise ValueError(f"not a Python source file: {path}")
 
     module = ".".join(pure.with_suffix("").parts)
-    if module.startswith("src."):
-        module = module[len("src.") :]
+    module = module.removeprefix("src.")
     # mutmut rewrites ``pkg.__init__.x_f`` to ``pkg.x_f``, so a package's
     # ``__init__`` mutants live under the bare package name.
     if module == "__init__":
         raise ValueError(f"cannot derive a module name from: {path}")
-    if module.endswith(".__init__"):
-        module = module[: -len(".__init__")]
+    module = module.removesuffix(".__init__")
 
     return f"{module}.{_MANGLE_GLOB}"
 

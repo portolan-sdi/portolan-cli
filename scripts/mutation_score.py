@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Score a mutmut run against the ``.mutation-baseline`` floor.
+r"""Score a mutmut run against the ``.mutation-baseline`` floor.
 
 Both mutation jobs share this module so the parse-and-enforce logic lives in one
 tested place instead of duplicated shell: the nightly sweep and the PR-scoped
@@ -43,9 +43,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 _STAT_KEYS = ("killed", "survived", "no_tests", "timeout", "suspicious")
 

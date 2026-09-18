@@ -17,15 +17,13 @@ Test categories:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 if TYPE_CHECKING:
-    pass
-
+    from pathlib import Path
 
 # =============================================================================
 # Test Fixtures
@@ -1177,7 +1175,7 @@ class TestListRemoteCollectionsNestedCatalogs:
         def mock_fetch(remote_url: str, **kwargs: Any) -> dict[str, Any]:
             if remote_url.endswith("/catalog"):
                 return root_catalog
-            elif "climate" in remote_url:
+            if "climate" in remote_url:
                 return climate_catalog
             raise ValueError(f"Unexpected URL: {remote_url}")
 
@@ -1223,10 +1221,9 @@ class TestListRemoteCollectionsNestedCatalogs:
             call_count["n"] += 1
             if "netherlands" in remote_url:
                 return netherlands_catalog
-            elif "europe" in remote_url:
+            if "europe" in remote_url:
                 return europe_catalog
-            else:
-                return root_catalog
+            return root_catalog
 
         with patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch):
             collections = list_remote_collections("s3://bucket/catalog")
@@ -1363,7 +1360,7 @@ class TestListRemoteCollectionsNestedCatalogs:
 
             if url.endswith("/b") or "/b/" in url:
                 return b_catalog
-            elif url.endswith("/a") or "/a/" in url:
+            if url.endswith("/a") or "/a/" in url:
                 return a_catalog
             return root_catalog
 

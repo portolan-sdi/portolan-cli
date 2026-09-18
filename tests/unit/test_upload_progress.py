@@ -12,12 +12,15 @@ from __future__ import annotations
 
 import sys
 import time
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from portolan_cli.sync.upload_progress import UploadProgressReporter
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 @pytest.fixture
@@ -219,9 +222,9 @@ class TestRichProgressPath:
         with (
             patch("rich.progress.Progress") as progress_cls,
             patch("sys.stdout.isatty", return_value=False),
+            UploadProgressReporter(total_files=5, total_bytes=100),
         ):
-            with UploadProgressReporter(total_files=5, total_bytes=100):
-                pass
+            pass
 
         progress_cls.assert_not_called()
 
@@ -303,9 +306,8 @@ class TestExit:
     def test_exception_details_reach_the_progress_bar(self, tty_progress: MagicMock) -> None:
         """Rich needs the live exception triple to tear the display down cleanly."""
         error = RuntimeError("upload failed")
-        with pytest.raises(RuntimeError):
-            with UploadProgressReporter(total_files=1, total_bytes=10):
-                raise error
+        with pytest.raises(RuntimeError), UploadProgressReporter(total_files=1, total_bytes=10):
+            raise error
 
         exit_args = tty_progress.return_value.__exit__.call_args.args
         assert exit_args[0] is RuntimeError

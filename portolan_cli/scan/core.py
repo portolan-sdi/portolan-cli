@@ -27,7 +27,6 @@ from __future__ import annotations
 import os
 import re
 from collections import defaultdict
-from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -35,9 +34,16 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     # Type alias for progress callback
+    from collections.abc import Callable, Iterator
+
+    from portolan_cli.scan.fix import ProposedFix
+    from portolan_cli.scan.infer import CollectionSuggestion
+
     ProgressCallback = Callable[[], None]
 
 # Import new types from scan modules
+import contextlib
+
 from portolan_cli.collection_id import (
     CollectionIdError,
     normalize_collection_id,
@@ -69,8 +75,6 @@ from portolan_cli.scan.detect import (
     is_filegdb,
     is_hive_partition_dir,
 )
-from portolan_cli.scan.fix import ProposedFix
-from portolan_cli.scan.infer import CollectionSuggestion
 
 # =============================================================================
 # Constants
@@ -525,9 +529,9 @@ def _get_format_info(path: Path, ext: str) -> FormatInfo:
         return get_cloud_native_status(path)
     except (FileNotFoundError, IsADirectoryError):
         # Return a fallback for edge cases
-        from portolan_cli.formats import FormatInfo as FI
+        from portolan_cli.formats import FormatInfo as RuntimeFormatInfo
 
-        return FI(
+        return RuntimeFormatInfo(
             status=CloudNativeStatus.CLOUD_NATIVE,
             display_name=ext.upper().lstrip(".") if ext else "Unknown",
             target_format=None,
@@ -933,14 +937,14 @@ def _finalize_multi_asset_checks(ctx: _ScanContext) -> None:
     # Check for duplicate basenames WITHIN the same directory only.
     # Files with same name in sibling directories (e.g., 2010/radios.parquet and
     # 2022/radios.parquet) are intentional organization, not duplicates.
-    for _basename, paths in ctx.basenames.items():
+    for paths in ctx.basenames.values():
         if len(paths) > 1:
             # Group by parent directory
             by_dir: dict[Path, list[Path]] = defaultdict(list)
             for p in paths:
                 by_dir[p.parent].append(p)
             # Only warn about directories with multiple files of same basename
-            for _dir_path, same_dir_paths in by_dir.items():
+            for same_dir_paths in by_dir.values():
                 if len(same_dir_paths) > 1:
                     names = ", ".join(p.name for p in same_dir_paths)
                     ctx.issues.append(
@@ -1025,10 +1029,8 @@ def _get_dir_size(path: Path) -> int:
     try:
         for entry in os.scandir(path):
             if entry.is_file(follow_symlinks=False):
-                try:
+                with contextlib.suppress(OSError):
                     total += entry.stat(follow_symlinks=False).st_size
-                except OSError:
-                    pass
     except OSError:
         pass
     return total
@@ -1067,6 +1069,77 @@ def _gather_filegdb_metadata(path: Path) -> dict[str, Any]:
     }
 
 
+def _walk_entry(
+    ctx: _ScanContext,
+    entry: os.DirEntry[str],
+    dirs_to_process: list[Path],
+) -> Iterator[tuple[Path, int]]:
+    """Handle one directory entry found by the walk.
+
+    Yields the entry when it is a file or a FileGDB. Appends it to
+    dirs_to_process when it is a directory the walk must descend into. Yields
+    nothing for a hidden entry, a skipped symlink, or an entry that cannot be
+    read.
+
+    Args:
+        ctx: Scan context. The function appends an issue to it on a stat failure.
+        entry: Directory entry from os.scandir.
+        dirs_to_process: List that collects the subdirectories to walk next.
+
+    Yields:
+        Tuples of (path, size in bytes).
+    """
+    options = ctx.options
+    if not options.include_hidden and _is_hidden(entry.name):
+        return
+
+    path = Path(entry.path)
+    try:
+        is_symlink = entry.is_symlink()
+        is_dir = entry.is_dir(follow_symlinks=options.follow_symlinks)
+        is_file = entry.is_file(follow_symlinks=options.follow_symlinks)
+    except OSError:
+        return
+
+    if is_symlink:
+        if not options.follow_symlinks:
+            return
+        if _check_symlink_loop(ctx, path, is_directory=is_dir):
+            return
+        if _check_broken_symlink(ctx, path, is_symlink, is_file, is_dir):
+            return
+
+    if is_dir:
+        # A FileGDB is a directory, but it is one asset. Yield it whole and do
+        # not descend into it.
+        if is_filegdb(path):
+            yield (path, _get_dir_size(path))
+        else:
+            dirs_to_process.append(path)
+        return
+
+    if not is_file:
+        return
+
+    try:
+        size = entry.stat(follow_symlinks=options.follow_symlinks).st_size
+    except OSError as e:
+        # A stat can fail on a race or on a permission change. Report it and
+        # continue the walk.
+        ctx.issues.append(
+            ScanIssue(
+                path=path,
+                relative_path=_get_relative_path(path, ctx.root),
+                issue_type=IssueType.PERMISSION_DENIED,
+                severity=Severity.WARNING,
+                message=f"Cannot read file: {e}",
+                suggestion="Check file permissions or if file still exists",
+            )
+        )
+        return
+    yield (path, size)
+
+
 def _discover_files(
     ctx: _ScanContext,
 ) -> Iterator[tuple[Path, int]]:
@@ -1080,10 +1153,7 @@ def _discover_files(
 
     # Calculate effective max depth
     effective_max_depth: int | None
-    if not options.recursive:
-        effective_max_depth = 0
-    else:
-        effective_max_depth = options.max_depth
+    effective_max_depth = 0 if not options.recursive else options.max_depth
 
     def _walk_with_depth(start: Path, current_depth: int = 0) -> Iterator[tuple[Path, int]]:
         """Walk directory with depth tracking."""
@@ -1111,63 +1181,10 @@ def _discover_files(
             )
             return
 
-        dirs_to_process = []
+        dirs_to_process: list[Path] = []
 
         for entry in entries:
-            name = entry.name
-
-            # Skip hidden if not included
-            if not options.include_hidden and _is_hidden(name):
-                continue
-
-            path = Path(entry.path)
-
-            try:
-                is_symlink = entry.is_symlink()
-                is_dir = entry.is_dir(follow_symlinks=options.follow_symlinks)
-                is_file = entry.is_file(follow_symlinks=options.follow_symlinks)
-            except OSError:
-                continue
-
-            # Handle symlinks
-            if is_symlink and not options.follow_symlinks:
-                continue
-
-            # Check for symlink loops when following (only for directories)
-            if is_symlink and options.follow_symlinks:
-                if _check_symlink_loop(ctx, path, is_directory=is_dir):
-                    continue
-
-                # Check for broken symlinks (target doesn't exist)
-                if _check_broken_symlink(ctx, path, is_symlink, is_file, is_dir):
-                    continue
-
-            if is_dir:
-                # Check if directory is a FileGDB - treat as single asset, don't recurse
-                if is_filegdb(path):
-                    # Yield FileGDB directory as a single file with total size
-                    size = _get_dir_size(path)
-                    yield (path, size)
-                else:
-                    # Queue regular directory for later processing
-                    dirs_to_process.append(path)
-            elif is_file:
-                try:
-                    size = entry.stat(follow_symlinks=options.follow_symlinks).st_size
-                    yield (path, size)
-                except OSError as e:
-                    # Emit warning for stat failures (e.g., race conditions, permission issues)
-                    ctx.issues.append(
-                        ScanIssue(
-                            path=path,
-                            relative_path=_get_relative_path(path, root),
-                            issue_type=IssueType.PERMISSION_DENIED,
-                            severity=Severity.WARNING,
-                            message=f"Cannot read file: {e}",
-                            suggestion="Check file permissions or if file still exists",
-                        )
-                    )
-                    continue
+            yield from _walk_entry(ctx, entry, dirs_to_process)
 
         # Process subdirectories (if recursive)
         if options.recursive:

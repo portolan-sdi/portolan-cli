@@ -6,7 +6,7 @@ with harvested service metadata (Wave 3B).
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -18,6 +18,9 @@ from portolan_cli.extract.arcgis.imageserver.report import (
     ImageServerMetadataExtracted,
     TileResult,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = [pytest.mark.integration]
 
@@ -343,31 +346,33 @@ class TestImageServerExtractionSeeding:
         mock_metadata.license_info = None
         mock_metadata.access_information = None
 
-        with patch(
-            "portolan_cli.extract.arcgis.imageserver.extractor.discover_imageserver",
-            new_callable=AsyncMock,
-            return_value=mock_metadata,
-        ):
-            with patch(
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.extractor.discover_imageserver",
+                new_callable=AsyncMock,
+                return_value=mock_metadata,
+            ),
+            patch(
                 "portolan_cli.extract.arcgis.imageserver.extractor._extract_all_tiles",
                 new_callable=AsyncMock,
-            ) as mock_extract:
-                # Mock successful extraction with minimal results
-                from portolan_cli.extract.arcgis.imageserver.extractor import _ProcessingStats
+            ) as mock_extract,
+        ):
+            # Mock successful extraction with minimal results
+            from portolan_cli.extract.arcgis.imageserver.extractor import _ProcessingStats
 
-                mock_stats = _ProcessingStats()
-                mock_stats.tiles_downloaded = 0
-                mock_stats.tile_results = []
-                mock_extract.return_value = mock_stats
+            mock_stats = _ProcessingStats()
+            mock_stats.tiles_downloaded = 0
+            mock_stats.tile_results = []
+            mock_extract.return_value = mock_stats
 
-                # Skip catalog init for this test
-                config = ExtractionConfig(dry_run=False, raw=True)
+            # Skip catalog init for this test
+            config = ExtractionConfig(dry_run=False, raw=True)
 
-                await extract_imageserver(
-                    url="https://services.arcgis.com/test/ImageServer",
-                    output_dir=output_dir,
-                    config=config,
-                )
+            await extract_imageserver(
+                url="https://services.arcgis.com/test/ImageServer",
+                output_dir=output_dir,
+                config=config,
+            )
 
         # Verify metadata.yaml was created
         metadata_path = output_dir / ".portolan" / "metadata.yaml"
@@ -416,29 +421,31 @@ class TestImageServerExtractionSeeding:
         mock_metadata.license_info = None
         mock_metadata.access_information = None
 
-        with patch(
-            "portolan_cli.extract.arcgis.imageserver.extractor.discover_imageserver",
-            new_callable=AsyncMock,
-            return_value=mock_metadata,
-        ):
-            with patch(
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.extractor.discover_imageserver",
+                new_callable=AsyncMock,
+                return_value=mock_metadata,
+            ),
+            patch(
                 "portolan_cli.extract.arcgis.imageserver.extractor._extract_all_tiles",
                 new_callable=AsyncMock,
-            ) as mock_extract:
-                from portolan_cli.extract.arcgis.imageserver.extractor import _ProcessingStats
+            ) as mock_extract,
+        ):
+            from portolan_cli.extract.arcgis.imageserver.extractor import _ProcessingStats
 
-                mock_stats = _ProcessingStats()
-                mock_stats.tiles_downloaded = 0
-                mock_stats.tile_results = []
-                mock_extract.return_value = mock_stats
+            mock_stats = _ProcessingStats()
+            mock_stats.tiles_downloaded = 0
+            mock_stats.tile_results = []
+            mock_extract.return_value = mock_stats
 
-                config = ExtractionConfig(dry_run=False, raw=True)
+            config = ExtractionConfig(dry_run=False, raw=True)
 
-                await extract_imageserver(
-                    url="https://services.arcgis.com/new/ImageServer",
-                    output_dir=output_dir,
-                    config=config,
-                )
+            await extract_imageserver(
+                url="https://services.arcgis.com/new/ImageServer",
+                output_dir=output_dir,
+                config=config,
+            )
 
         # metadata.yaml should be unchanged
         content = yaml.safe_load(metadata_path.read_text())
@@ -474,29 +481,31 @@ class TestImageServerExtractionSeeding:
         mock_metadata.license_info = None
         mock_metadata.access_information = None
 
-        with patch(
-            "portolan_cli.extract.arcgis.imageserver.extractor.discover_imageserver",
-            new_callable=AsyncMock,
-            return_value=mock_metadata,
-        ):
-            with patch(
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.extractor.discover_imageserver",
+                new_callable=AsyncMock,
+                return_value=mock_metadata,
+            ),
+            patch(
                 "portolan_cli.extract.arcgis.imageserver.extractor._extract_all_tiles",
                 new_callable=AsyncMock,
-            ) as mock_extract:
-                from portolan_cli.extract.arcgis.imageserver.extractor import _ProcessingStats
+            ) as mock_extract,
+        ):
+            from portolan_cli.extract.arcgis.imageserver.extractor import _ProcessingStats
 
-                mock_stats = _ProcessingStats()
-                mock_stats.tiles_downloaded = 0
-                mock_stats.tile_results = []
-                mock_extract.return_value = mock_stats
+            mock_stats = _ProcessingStats()
+            mock_stats.tiles_downloaded = 0
+            mock_stats.tile_results = []
+            mock_extract.return_value = mock_stats
 
-                config = ExtractionConfig(dry_run=False, raw=True)
+            config = ExtractionConfig(dry_run=False, raw=True)
 
-                await extract_imageserver(
-                    url="https://elevation.arcgis.com/DEM/ImageServer",
-                    output_dir=output_dir,
-                    config=config,
-                )
+            await extract_imageserver(
+                url="https://elevation.arcgis.com/DEM/ImageServer",
+                output_dir=output_dir,
+                config=config,
+            )
 
         metadata_path = output_dir / ".portolan" / "metadata.yaml"
         content = yaml.safe_load(metadata_path.read_text())

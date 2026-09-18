@@ -6,9 +6,12 @@ These tests verify end-to-end conversion using real geospatial data files.
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # =============================================================================
 # Task 7.7: Full Convert Workflow Integration Tests

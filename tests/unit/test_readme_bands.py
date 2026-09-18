@@ -10,10 +10,12 @@ the item walk that reaches it, and the columns that drop when unpopulated.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # Band shape the CLI actually writes: name + data_type from metadata/cog.py,
 # statistics merged in by preparation.py.

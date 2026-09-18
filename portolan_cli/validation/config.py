@@ -20,10 +20,12 @@ rather than the environment (the sensitive-setting rule does not apply).
 from __future__ import annotations
 
 import warnings
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rashid.config import RulesConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 #: Config block replaced by ``check:``. Its keys named native ``RULE-*`` rules
 #: that no longer exist, so there is nothing to translate —.

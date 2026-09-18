@@ -3,6 +3,8 @@
 Issue #203: Add progress printing for file-level operations.
 """
 
+from __future__ import annotations
+
 from io import StringIO
 from pathlib import Path
 

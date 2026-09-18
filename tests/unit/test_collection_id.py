@@ -9,7 +9,7 @@ Per portolan-spec/structure.md, collection IDs SHOULD:
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -18,6 +18,9 @@ from portolan_cli.collection_id import (
     normalize_collection_id,
     validate_collection_id,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

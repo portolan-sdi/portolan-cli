@@ -8,7 +8,7 @@ root README.md and versions.json were being skipped.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,6 +17,9 @@ from portolan_cli.sync.push import (
     PushResult,
     push_all_collections,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

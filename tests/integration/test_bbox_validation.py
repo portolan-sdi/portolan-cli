@@ -431,8 +431,7 @@ class TestAntimeridianBboxIntegration:
                     doc = json.loads(f.read_text())
                     if doc.get("bbox"):
                         bboxes.append(doc["bbox"])
-                    for extent_bbox in doc.get("extent", {}).get("spatial", {}).get("bbox", []):
-                        bboxes.append(extent_bbox)
+                    bboxes.extend(doc.get("extent", {}).get("spatial", {}).get("bbox", []))
                 assert bboxes, f"no bbox found in {[f.name for f in written]}"
                 assert all(abs(b[0]) <= 180 and abs(b[1]) <= 90 for b in bboxes), (
                     f"projected coordinates published as degrees: {bboxes}"

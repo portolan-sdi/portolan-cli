@@ -7,10 +7,11 @@ bodies) to keep the module lightweight and avoid circular imports.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from portolan_cli.backends.protocol import SchemaFingerprint, VersioningBackend
     from portolan_cli.versions import Version
 

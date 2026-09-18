@@ -12,7 +12,6 @@ cannot be tested (e.g., installation commands) are marked with
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -22,6 +21,7 @@ from portolan_cli.cli import cli
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 
 # =============================================================================

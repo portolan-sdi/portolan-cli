@@ -54,6 +54,7 @@ def extract_installation_section(readme: str) -> str:
 
 
 def main() -> int:
+    """Run the skills README sync from the command line."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--update", action="store_true", help="Write changes to file")
     parser.add_argument("--check", action="store_true", help="CI mode: exit 1 if stale")

@@ -8,15 +8,17 @@ import subprocess
 import sys
 import threading
 from collections import Counter
-from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pyarrow.parquet as pq
 import pytest
 
 from .philadelphia_arcgis_server import create_server
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 README = PROJECT_ROOT / "README.md"
@@ -138,12 +140,14 @@ def _run_query(catalog_url: str) -> subprocess.CompletedProcess[str]:
 def _collection(catalog_dir: Path, collection_id: str) -> dict[str, Any]:
     """Read one generated STAC Collection."""
     value = json.loads(_read_text(catalog_dir / collection_id / "collection.json"))
-    return cast(dict[str, Any], value)
+    return cast("dict[str, Any]", value)
 
 
 def _requests(request_log: Path) -> list[dict[str, Any]]:
     """Read the ArcGIS fixture server request log."""
-    return [cast(dict[str, Any], json.loads(line)) for line in _read_text(request_log).splitlines()]
+    return [
+        cast("dict[str, Any]", json.loads(line)) for line in _read_text(request_log).splitlines()
+    ]
 
 
 @pytest.mark.unit
@@ -260,7 +264,7 @@ def test_example_subprocess_forces_utf8_stdio(
     """The Windows test process can emit and capture tutorial symbols."""
 
     def capture_run(_command: object, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        environment = cast(dict[str, str], kwargs["env"])
+        environment = cast("dict[str, str]", kwargs["env"])
         assert environment["PYTHONIOENCODING"] == "utf-8"
         assert kwargs["encoding"] == "utf-8"
         assert "text" not in kwargs

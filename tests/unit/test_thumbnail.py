@@ -6,14 +6,13 @@ Tests vector thumbnail generation from PMTiles and GeoParquet sources.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 if TYPE_CHECKING:
-    pass
+    from pathlib import Path
 
 # =============================================================================
 # Phase 1: ThumbnailConfig Tests
@@ -192,7 +191,6 @@ class TestBasemapOrdering:
         from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geometries
 
         output_path = tmp_path / "test.jpg"
-        bounds = (-122.5, 37.5, -122.0, 38.0)  # San Francisco area
         geometries = [
             {
                 "type": "Polygon",
@@ -200,6 +198,7 @@ class TestBasemapOrdering:
             }
         ]
         config = ThumbnailConfig(basemap_provider="CartoDB.Positron")
+        bounds = (-122.5, 37.5, -122.0, 38.0)  # SF Bay area
 
         # Track axis state when add_basemap is called
         captured_xlim: tuple[float, float] | None = None
@@ -207,7 +206,6 @@ class TestBasemapOrdering:
 
         def capture_axis_state(
             ax: MagicMock,
-            bounds: tuple[float, float, float, float],
             *args: object,
             **kwargs: object,
         ) -> None:
@@ -470,11 +468,10 @@ class TestAddBasemap:
         from portolan_cli.viz.thumbnail import add_basemap
 
         mock_ax = MagicMock()
-        bounds = (-122.5, 37.5, -122.0, 38.0)  # SF Bay area
 
         mock_ctx = MagicMock()
         with patch("portolan_cli.viz.thumbnail._ensure_contextily", return_value=mock_ctx):
-            add_basemap(mock_ax, bounds, "CartoDB.Positron", opacity=1.0, zoom_adjust=0)
+            add_basemap(mock_ax, "CartoDB.Positron", opacity=1.0, zoom_adjust=0)
 
             mock_ctx.add_basemap.assert_called_once()
             call_kwargs = mock_ctx.add_basemap.call_args[1]
@@ -486,11 +483,10 @@ class TestAddBasemap:
         from portolan_cli.viz.thumbnail import add_basemap
 
         mock_ax = MagicMock()
-        bounds = (-122.5, 37.5, -122.0, 38.0)
 
         mock_ctx = MagicMock()
         with patch("portolan_cli.viz.thumbnail._ensure_contextily", return_value=mock_ctx):
-            add_basemap(mock_ax, bounds, "none", opacity=1.0, zoom_adjust=0)
+            add_basemap(mock_ax, "none", opacity=1.0, zoom_adjust=0)
 
             mock_ctx.add_basemap.assert_not_called()
 
@@ -500,11 +496,10 @@ class TestAddBasemap:
         from portolan_cli.viz.thumbnail import add_basemap
 
         mock_ax = MagicMock()
-        bounds = (-122.5, 37.5, -122.0, 38.0)
 
         with patch("portolan_cli.viz.thumbnail._ensure_contextily", return_value=None):
             # Should not raise, just skip basemap
-            add_basemap(mock_ax, bounds, "CartoDB.Positron", opacity=1.0, zoom_adjust=0)
+            add_basemap(mock_ax, "CartoDB.Positron", opacity=1.0, zoom_adjust=0)
 
 
 # =============================================================================
@@ -1193,12 +1188,12 @@ class TestThumbnailRendersVisibleGeometry:
         if kind == "sparse_points":
             geoms = [Point(x, x) for x in range(-50, 50, 5)]
         elif kind == "dense_lines":
-            geoms = [LineString([(i, 0), (i + 1, 10)]) for i in range(0, 200)]
+            geoms = [LineString([(i, 0), (i + 1, 10)]) for i in range(200)]
         elif kind == "many_polygons":
             geoms = [
                 Polygon([(i, j), (i + 0.8, j), (i + 0.8, j + 0.8), (i, j + 0.8)])
-                for i in range(0, 20)
-                for j in range(0, 20)
+                for i in range(20)
+                for j in range(20)
             ]
         else:  # giant_polygon: one hemisphere-spanning sliver (the provincia case)
             geoms = [Polygon([(-65, -90), (-63, -90), (-63, -20), (-65, -20)])]
@@ -1234,10 +1229,10 @@ class TestThumbnailRendersVisibleGeometry:
         # 50 polygons (dominant) bottom-left, 16 points top-right (minority).
         polys = [
             Polygon([(i, j), (i + 0.8, j), (i + 0.8, j + 0.8), (i, j + 0.8)])
-            for i in range(0, 10)
-            for j in range(0, 5)
+            for i in range(10)
+            for j in range(5)
         ]
-        points = [Point(88 + dx, 88 + dy) for dx in range(0, 4) for dy in range(0, 4)]
+        points = [Point(88 + dx, 88 + dy) for dx in range(4) for dy in range(4)]
         gpq_path = self._write_gdf([*polys, *points], tmp_path, "mixed")
 
         config = ThumbnailConfig(basemap_provider="none")  # no network

@@ -82,8 +82,7 @@ jobs:
         # ONE rule source: CI runs the SAME hooks developers run locally
         # (prek.toml), not a re-listing of each tool with its own drifting args.
         # This covers ruff, ruff-format, mypy, import-linter, codespell, vulture,
-        # xenon, pylint-duplicate, bandit, deptry,
-        # actionlint, zizmor, and the builtin file hooks.
+        # jscpd, deptry, actionlint, zizmor, and the builtin file hooks.
         #
         # SKIP:
         # - no-commit-to-branch: meaningless in CI and fails on push-to-main

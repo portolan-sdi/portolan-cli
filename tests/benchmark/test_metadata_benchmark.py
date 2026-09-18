@@ -5,11 +5,14 @@ Establishes performance baselines for GeoParquet and COG metadata extraction.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.metadata import extract_cog_metadata, extract_geoparquet_metadata
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.mark.benchmark

@@ -14,16 +14,20 @@ import hashlib
 import json
 import os
 import uuid
-from collections.abc import Generator
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
-# Import moto - will skip tests if not installed
+# Skip the whole module when moto or boto3 is absent. The import of
+# ThreadedMotoServer must follow the skip, because it fails without moto.
 moto = pytest.importorskip("moto")
 boto3 = pytest.importorskip("boto3")
 
 from moto.server import ThreadedMotoServer  # noqa: E402
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+    from pathlib import Path
 
 # =============================================================================
 # Fixtures

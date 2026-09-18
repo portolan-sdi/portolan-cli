@@ -43,9 +43,11 @@ def test_s3_endpoint_settings_read_environment() -> None:
 @pytest.mark.parametrize("value", ["", "sometimes", "1"])
 def test_s3_endpoint_settings_reject_invalid_ssl_values(value: str) -> None:
     """Endpoint settings reject ambiguous TLS values."""
-    with patch.dict("os.environ", {"PORTOLAN_S3_USE_SSL": value}, clear=True):
-        with pytest.raises(ValueError, match="PORTOLAN_S3_USE_SSL"):
-            resolve_s3_endpoint_settings()
+    with (
+        patch.dict("os.environ", {"PORTOLAN_S3_USE_SSL": value}, clear=True),
+        pytest.raises(ValueError, match="PORTOLAN_S3_USE_SSL"),
+    ):
+        resolve_s3_endpoint_settings()
 
 
 def test_object_store_uses_environment_endpoint() -> None:
@@ -95,15 +97,15 @@ def test_object_store_rejects_credentials_over_http(
             "portolan_cli.sync.upload._resolve_s3_credentials",
             return_value=resolved_credentials,
         ),
+        pytest.raises(InsecureS3EndpointError) as exc_info,
     ):
-        with pytest.raises(InsecureS3EndpointError) as exc_info:
-            _setup_store_and_kwargs(
-                "s3://example-bucket",
-                profile=None,
-                chunk_concurrency=4,
-                s3_endpoint="minio.example.test:9000",
-                s3_use_ssl=False,
-            )
+        _setup_store_and_kwargs(
+            "s3://example-bucket",
+            profile=None,
+            chunk_concurrency=4,
+            s3_endpoint="minio.example.test:9000",
+            s3_use_ssl=False,
+        )
 
     assert exc_info.value.code == "PRTLN-CFG003"
     assert exc_info.value.context == {"endpoint": "minio.example.test:9000"}

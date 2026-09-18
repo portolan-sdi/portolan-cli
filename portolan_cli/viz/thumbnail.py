@@ -446,7 +446,7 @@ def _read_pmtiles_geometries(
     all_lons: list[float] = []
     all_lats: list[float] = []
 
-    with open(pmtiles_path, "rb") as f:
+    with Path(pmtiles_path).open("rb") as f:
         reader: Any = Reader(MmapSource(f))  # type: ignore[no-untyped-call]
         header: dict[str, Any] = reader.header()
         min_zoom = header.get("min_zoom", 0) or 0
@@ -590,8 +590,10 @@ def _frame_bounds(
     max_aspect: float = 2.5,
     margin: float = 0.05,
 ) -> tuple[float, float, float, float]:
-    """Frame a bbox for a square thumbnail: pad, give degenerate extents a box,
-    and bound the limit aspect ratio (#518).
+    """Frame a bbox for a square thumbnail.
+
+    The function pads the extent, gives a degenerate extent a box, and bounds
+    the limit aspect ratio (#518).
 
     Two real jobs and one caveat:
 
@@ -686,9 +688,9 @@ def _add_polygon_patches(coords: list[Any], patches: list[Any], mpl_polygon_cls:
 
 def _add_multipolygon_patches(coords: list[Any], patches: list[Any], mpl_polygon_cls: type) -> None:
     """Add multipolygon patches from coordinates."""
-    for polygon in coords:
-        if polygon and polygon[0]:
-            patches.append(mpl_polygon_cls(polygon[0], closed=True))
+    patches.extend(
+        mpl_polygon_cls(polygon[0], closed=True) for polygon in coords if polygon and polygon[0]
+    )
 
 
 def _plot_points(
@@ -837,7 +839,6 @@ def _render_geometries(
     if bounds is not None and config.basemap_provider != "none":
         add_basemap(
             ax,
-            bounds,
             config.basemap_provider,
             config.basemap_opacity,
             config.basemap_zoom_adjust,
@@ -1142,7 +1143,6 @@ def _render_geoparquet(
             crs_str = str(source_crs) if source_crs is not None else "EPSG:4326"
             add_basemap(
                 ax,
-                full_bounds,
                 config.basemap_provider,
                 config.basemap_opacity,
                 config.basemap_zoom_adjust,
@@ -1171,7 +1171,6 @@ def _render_geoparquet(
 
 def add_basemap(
     ax: Axes,
-    bounds: tuple[float, float, float, float],
     provider: str,
     opacity: float = 1.0,
     zoom_adjust: int = 0,
@@ -1181,7 +1180,6 @@ def add_basemap(
 
     Args:
         ax: Matplotlib Axes object.
-        bounds: Bounding box (minx, miny, maxx, maxy).
         provider: Contextily provider name (e.g., 'CartoDB.Positron').
             Pass 'none' to skip basemap.
         opacity: Basemap opacity 0.0-1.0.

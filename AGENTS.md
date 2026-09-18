@@ -145,8 +145,9 @@ uv run ruff format .                    # Format
 uv run mypy portolan_cli                # Type check
 uv run deptry .                         # Check dependencies (unused, missing, transitive)
 uv run vulture portolan_cli tests       # Dead code
-uv run xenon --max-absolute=C portolan_cli  # Complexity
-uv run pylint --disable=all --enable=duplicate-code portolan_cli/  # Duplicate code
+uvx jscpd@5.2.1 portolan_cli tests \
+  --baseline .jscpd-baseline.json \
+  --fail-on-new-clones 0            # Duplicate code
 
 # Iceberg backend development
 uv sync --extra iceberg --extra dev     # Install with iceberg deps
@@ -228,7 +229,7 @@ Always research before implementing:
 - **ALL** non-obvious decisions are recorded where they apply (see `.claude/rules/documentation.md`)
 - **NO** new dependencies without discussion
 
-<!-- freshness: last-verified: 2026-08-31 -->
+<!-- freshness: last-verified: 2026-09-18 -->
 ## Design Principles
 
 | Principle | Meaning |

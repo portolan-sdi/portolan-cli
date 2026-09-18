@@ -9,13 +9,16 @@ absolute href, a missing ``type`` — would surface here.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
 from rashid import Severity, validate
 
 from portolan_cli.cli import cli
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.integration
 

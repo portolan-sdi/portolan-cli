@@ -11,7 +11,7 @@ any client walking ``child`` links remotely. These tests pin the fix.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,6 +23,9 @@ from portolan_cli.sync.push import (
     push,
     push_all_collections,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

@@ -385,9 +385,11 @@ class TestConvertVectorRetriesTransientInterrupt:
             calls["n"] += 1
             raise ValueError("No CRS found")
 
-        with patch.object(gpio, "convert", fake_convert):
-            with pytest.raises(ValueError, match="No CRS found"):
-                convert_vector(tmp_path / "in.geojson", tmp_path)
+        with (
+            patch.object(gpio, "convert", fake_convert),
+            pytest.raises(ValueError, match="No CRS found"),
+        ):
+            convert_vector(tmp_path / "in.geojson", tmp_path)
 
         assert calls["n"] == 1
 

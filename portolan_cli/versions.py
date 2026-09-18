@@ -365,10 +365,16 @@ def add_version(
     # Early return if nothing changed (no new/modified assets and no removals)
     # This prevents creating no-op versions when re-adding unchanged files
     # BUT: allow versions when metadata indicates explicit request (message, breaking, schema)
-    if not changes and not removed and versions_file.versions:
-        # Only skip if truly a no-op: no message, not breaking, no schema change
-        if not message and not breaking and not schema:
-            return versions_file
+    # Only skip if truly a no-op: no message, not breaking, no schema change
+    if (
+        not changes
+        and not removed
+        and versions_file.versions
+        and not message
+        and not breaking
+        and not schema
+    ):
+        return versions_file
 
     new_version = Version(
         version=version,
@@ -454,10 +460,9 @@ def _increment_version(version: str) -> str:
         if len(prerelease_parts) == 2 and prerelease_parts[1].isdigit():
             prerelease_parts[1] = str(int(prerelease_parts[1]) + 1)
             return f"{base}-{'.'.join(prerelease_parts)}"
-        else:
-            # No numeric suffix: 1.0.0-beta → 1.0.0-beta.1
-            # Preserve the prerelease tag by appending .1
-            return f"{base}-{prerelease}.1"
+        # No numeric suffix: 1.0.0-beta → 1.0.0-beta.1
+        # Preserve the prerelease tag by appending .1
+        return f"{base}-{prerelease}.1"
 
     # Standard semver: increment patch
     parts = version.split(".")
@@ -517,7 +522,7 @@ def _compute_sha256(path: Path) -> str:
     Chunked to avoid loading large PMTiles/thumbnail files fully into memory.
     """
     hasher = hashlib.sha256()
-    with open(path, "rb") as f:
+    with Path(path).open("rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
             hasher.update(chunk)
     return hasher.hexdigest()

@@ -28,6 +28,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from typing_extensions import Self
+
 if TYPE_CHECKING:
     from types import TracebackType
 
@@ -136,7 +138,7 @@ class AddProgressReporter:
         self._task_id: TaskID | None = None
         self._lock = threading.Lock()  # Thread-safety for parallel workers
 
-    def __enter__(self) -> AddProgressReporter:
+    def __enter__(self) -> Self:
         """Enter the context and start progress display."""
         self._start_time = time.perf_counter()
 

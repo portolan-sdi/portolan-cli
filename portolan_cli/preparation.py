@@ -16,11 +16,9 @@ from __future__ import annotations
 
 import logging
 import shutil
-from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pystac
 from pyproj import CRS
@@ -68,6 +66,10 @@ from portolan_cli.sync.checksums import (
     file_fields_from,
 )
 from portolan_cli.viz.style import enrich_cog_assets
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +180,7 @@ def _scan_item_assets(
         FileGDB directories (.gdb) are treated as single container assets (Issue #174).
         Skips: non-FileGDB directories, symlinks, hidden files, STAC structural files.
 
-        Args:
+    Args:
             item_dir: Path to the item directory (where files are).
             item_id: Item identifier (for skipping item.json).
             primary_file: Path to the primary data file (gets "data" key).
@@ -192,7 +194,7 @@ def _scan_item_assets(
                 ``prepare_item``. Loose companions (not in this set) are kept per
     . Ignored for item-level (subdirectory) scans.
 
-        Returns:
+    Returns:
             Tuple of (stac_assets, asset_files, asset_paths):
             - stac_assets: Dict mapping asset key to pystac.Asset
             - asset_files: Dict mapping filename to (path, checksum, size) tuples
@@ -279,12 +281,9 @@ def _scan_item_assets(
         # and we need ../ to reach the files. Otherwise, files are already in
         # the item subdirectory.
         #
-        if assets_colocated:
-            # Assets and item JSON are in the same directory
-            asset_href = file_path.name
-        else:
-            # Item JSON will be in a subdirectory, need to go up one level
-            asset_href = f"../{file_path.name}"
+        # Assets colocated with the item JSON use a bare name. Otherwise the
+        # item JSON sits one directory down, so the href goes up one level.
+        asset_href = file_path.name if assets_colocated else f"../{file_path.name}"
 
         stac_assets[asset_key] = pystac.Asset(
             href=asset_href,
@@ -342,7 +341,7 @@ class PreparedItem:
     partition_metadata: dict[str, object] | None = None
 
 
-def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
+def _pre_validate_geometry(path: Path) -> None:
     """Pre-validate that a file has valid geometry BEFORE any filesystem operations.
 
     Issue #163: Failed add operations should be atomic. This function checks for
@@ -351,7 +350,6 @@ def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
 
     Args:
         path: Path to the source file.
-        format_type: Detected format type (VECTOR or RASTER).
 
     Raises:
         ValueError: If the file has no valid geometry/features.
@@ -375,7 +373,7 @@ def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
 
         try:
             # Per RFC 7946: GeoJSON MUST be encoded as UTF-8
-            with open(path, encoding="utf-8") as f:
+            with Path(path).open(encoding="utf-8") as f:
                 data = json.load(f)
 
             # Check for features
@@ -445,7 +443,6 @@ def _derive_item_id_and_asset_level(
     path: Path,
     collection_dir: Path,
     item_id: str | None,
-    format_type: FormatType | None = None,
 ) -> tuple[str, bool]:
     """Derive item ID and detect if asset is collection-level.
 
@@ -453,8 +450,6 @@ def _derive_item_id_and_asset_level(
         path: Path to the asset file.
         collection_dir: Collection directory path.
         item_id: Optional explicit item ID.
-        format_type: Optional format type for Hive partition handling.
-            Vector formats in Hive partitions become collection-level assets.
 
     Returns:
         Tuple of (item_id, is_collection_level_asset).
@@ -470,9 +465,8 @@ def _derive_item_id_and_asset_level(
 
     Note:
         Per Issue #443: Files in Hive partition directories (key=value) are
-        handled specially to avoid duplicate item IDs. Vector formats become
-        collection-level assets; other formats derive unique IDs from the
-        partition values.
+        handled specially to avoid duplicate item IDs. The item ID comes from
+        the partition values, and the format type does not change the result.
     """
     from portolan_cli.scan.detect import is_hive_partition_dir
 
@@ -658,16 +652,15 @@ def _handle_cloud_native_vector(
             # Re-extract metadata from existing, warn if source newer
             _warn_if_source_newer(source_path, output_path)
             return extract_fn(output_path)
-        elif force and reconvert:
+        if force and reconvert:
             # Re-copy from source
             shutil.copy2(source_path, output_path)
             return extract_fn(output_path)
-        else:
-            # No force — raise error to prevent accidental overwrite
-            raise FileExistsError(
-                f"File already exists: {output_path}. "
-                "Rename the source file or remove the existing file."
-            )
+        # No force — raise error to prevent accidental overwrite
+        raise FileExistsError(
+            f"File already exists: {output_path}. "
+            "Rename the source file or remove the existing file."
+        )
 
     # Output doesn't exist or same file — copy if needed
     if not same_file:
@@ -778,9 +771,9 @@ def _extract_statistics_best_effort(
             band_stats = extract_band_statistics(output_path, mode=mode)  # type: ignore[arg-type]
         else:
             parquet_stats = extract_parquet_statistics(output_path)
-    except Exception:  # nosec B110 - stats extraction is optional, failure is non-fatal
-        # Statistics extraction failed - continue without stats
-        pass
+    except Exception:
+        # Statistics are optional. Continue without them and record why.
+        logger.debug("Statistics extraction failed for %s", output_path, exc_info=True)
     return band_stats, parquet_stats
 
 
@@ -848,10 +841,7 @@ def _fix_collection_level_asset_hrefs(
 
         # Fix asset key: "data" → file stem for uniqueness across collection
         # e.g., "data" with href "./census.parquet" → key "census"
-        if key == "data":
-            fixed_key = Path(href).stem
-        else:
-            fixed_key = key
+        fixed_key = Path(href).stem if key == "data" else key
 
         fixed_assets[fixed_key] = pystac.Asset(
             href=fixed_href,
@@ -937,9 +927,7 @@ def _apply_nodata_defaults_to_bands(
         return
 
     # Get current nodatavals from metadata extraction
-    current_nodatavals = (
-        metadata.nodatavals if metadata.nodatavals else tuple(None for _ in range(len(bands)))
-    )
+    current_nodatavals = metadata.nodatavals or tuple(None for _ in range(len(bands)))
 
     # Apply defaults with strict checking (raises NodataMismatchError on mismatch)
     try:
@@ -953,10 +941,13 @@ def _apply_nodata_defaults_to_bands(
 
     # Update bands with defaults where extraction returned None
     for i, band in enumerate(bands):
-        if i < len(updated_nodatavals) and updated_nodatavals[i] is not None:
-            # Only set if band doesn't already have nodata
-            if "nodata" not in band or band.get("nodata") is None:
-                band["nodata"] = updated_nodatavals[i]
+        # Only set if band doesn't already have nodata
+        if (
+            i < len(updated_nodatavals)
+            and updated_nodatavals[i] is not None
+            and band.get("nodata") is None
+        ):
+            band["nodata"] = updated_nodatavals[i]
 
 
 def prepare_item(
@@ -1010,7 +1001,7 @@ def prepare_item(
     if format_type == FormatType.UNKNOWN:
         raise ValueError(f"Unsupported format: {path.suffix}")
 
-    _pre_validate_geometry(path, format_type)
+    _pre_validate_geometry(path)
 
     # Step 2: Set up paths
     collection_dir = catalog_root / Path(*collection_id.split("/"))
@@ -1018,7 +1009,6 @@ def prepare_item(
         path=path,
         collection_dir=collection_dir,
         item_id=item_id,
-        format_type=format_type,  # Issue #443: Handle Hive partitions
     )
     item_dir = path.parent
 
@@ -1711,5 +1701,5 @@ def _generate_raster_thumbnail(cog_path: Path, catalog_root: Path, format_type: 
             max_size=settings.thumbnail_max_size,
             quality=settings.thumbnail_quality,
         )
-    except Exception as e:  # nosec B110 - thumbnail is optional, failure is non-fatal
+    except Exception as e:  # the thumbnail is optional, so a failure is not fatal
         logger.warning("Thumbnail generation failed for %s: %s", cog_path.name, e)

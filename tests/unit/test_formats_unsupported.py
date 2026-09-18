@@ -6,7 +6,7 @@ are correctly classified as UNSUPPORTED per spec 002-cloud-native-warnings User 
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -14,6 +14,9 @@ from portolan_cli.formats import (
     CloudNativeStatus,
     get_cloud_native_status,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestUnsupportedFormatDetection:

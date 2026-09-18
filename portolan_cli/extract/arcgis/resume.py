@@ -4,6 +4,8 @@ This module re-exports resume utilities from the common module
 for backwards compatibility.
 """
 
+from __future__ import annotations
+
 from portolan_cli.extract.common.resume import (
     ResumeState,
     get_resume_state,

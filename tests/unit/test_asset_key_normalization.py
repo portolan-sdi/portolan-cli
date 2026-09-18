@@ -16,11 +16,14 @@ metadata files still gets stable keys.
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.add import _scan_item_assets
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture

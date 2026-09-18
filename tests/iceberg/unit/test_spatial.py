@@ -4,6 +4,8 @@ Tests for geohash precision detection, geohash column computation,
 and bbox column computation.
 """
 
+from __future__ import annotations
+
 import struct
 
 import pyarrow as pa

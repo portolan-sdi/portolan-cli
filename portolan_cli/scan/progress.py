@@ -22,6 +22,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from typing_extensions import Self
+
 if TYPE_CHECKING:
     from types import TracebackType
 
@@ -70,7 +72,7 @@ def count_directories(
     visited: set[tuple[int, int]] = set()
     if follow_symlinks:
         try:
-            root_stat = os.stat(root, follow_symlinks=True)
+            root_stat = root.stat(follow_symlinks=True)
             visited.add((root_stat.st_dev, root_stat.st_ino))
         except OSError:
             pass
@@ -95,7 +97,7 @@ def count_directories(
                             # Check for symlink loops when following symlinks
                             if follow_symlinks:
                                 try:
-                                    entry_stat = os.stat(entry.path, follow_symlinks=True)
+                                    entry_stat = entry.stat(follow_symlinks=True)
                                     inode_key = (entry_stat.st_dev, entry_stat.st_ino)
                                     if inode_key in visited:
                                         continue  # Skip already-visited directory
@@ -151,7 +153,7 @@ class ScanProgressReporter:
         self._progress: Progress | None = None
         self._task_id: TaskID | None = None
 
-    def __enter__(self) -> ScanProgressReporter:
+    def __enter__(self) -> Self:
         """Enter the context and start progress display."""
         self._start_time = time.perf_counter()
 

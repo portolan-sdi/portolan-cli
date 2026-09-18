@@ -158,15 +158,13 @@ def _get_table_id(table: Table) -> str:
 def _get_partition_spec(table: Table) -> list[dict[str, str]]:
     """Extract partition spec as a list of field descriptors."""
     spec = table.spec()
-    result = []
-    for field in spec.fields:
-        result.append(
-            {
-                "field": table.schema().find_field(field.source_id).name,
-                "transform": str(field.transform),
-            }
-        )
-    return result
+    return [
+        {
+            "field": table.schema().find_field(field.source_id).name,
+            "transform": str(field.transform),
+        }
+        for field in spec.fields
+    ]
 
 
 def generate_collection_metadata(table: Table) -> dict[str, Any]:

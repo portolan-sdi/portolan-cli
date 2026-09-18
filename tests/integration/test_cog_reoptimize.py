@@ -16,12 +16,15 @@ not raster math.
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
 import rasterio
 from rasterio.transform import from_bounds
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _make_cog_without_overviews(path: Path, size: int = 1500) -> Path:

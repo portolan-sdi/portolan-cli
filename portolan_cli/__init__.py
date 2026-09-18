@@ -1,5 +1,7 @@
 """Portolan CLI - Publish and manage cloud-native geospatial data catalogs."""
 
+from __future__ import annotations
+
 from portolan_cli.catalog import Catalog, CatalogExistsError
 from portolan_cli.cli import cli
 from portolan_cli.formats import FormatType, detect_format

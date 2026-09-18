@@ -6,7 +6,7 @@ Property-based tests to verify edge cases and invariants.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -16,6 +16,9 @@ from hypothesis import strategies as st
 
 from portolan_cli.cli import cli
 from portolan_cli.config import DEFAULT_IGNORED_FILES
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture
@@ -127,7 +130,7 @@ class TestListStatusHypothesis:
         """Any file in an item directory should appear in list output."""
         # Skip if names would conflict with reserved names
         assume(collection_name not in {"catalog", ".portolan"})
-        assume(item_name not in {"collection"})
+        assume(item_name != "collection")
         # Skip STAC metadata filenames - these are intentionally excluded from list output
         # by _STAC_METADATA_FILES in catalog_list.py (they're catalog infrastructure, not assets)
         assume(filename not in {"item.json", "collection.json", "catalog.json", "versions.json"})

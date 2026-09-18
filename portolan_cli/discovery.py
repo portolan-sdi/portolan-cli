@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from portolan_cli.constants import (
     GEOSPATIAL_EXTENSIONS,
     SIDECAR_PATTERNS,
 )
 from portolan_cli.scan.detect import is_filegdb
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 

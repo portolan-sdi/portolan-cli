@@ -510,37 +510,36 @@ class TestPropertyBasedScanResult:
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            issues = []
-            for _ in range(error_count):
-                issues.append(
-                    ScanIssue(
-                        path=tmp_path / "error",
-                        relative_path="error",
-                        issue_type=IssueType.ZERO_BYTE_FILE,
-                        severity=Severity.ERROR,
-                        message="Error",
-                    )
+            issues = [
+                ScanIssue(
+                    path=tmp_path / "error",
+                    relative_path="error",
+                    issue_type=IssueType.ZERO_BYTE_FILE,
+                    severity=Severity.ERROR,
+                    message="Error",
                 )
-            for _ in range(warning_count):
-                issues.append(
-                    ScanIssue(
-                        path=tmp_path / "warning",
-                        relative_path="warning",
-                        issue_type=IssueType.LONG_PATH,
-                        severity=Severity.WARNING,
-                        message="Warning",
-                    )
+                for _ in range(error_count)
+            ]
+            issues.extend(
+                ScanIssue(
+                    path=tmp_path / "warning",
+                    relative_path="warning",
+                    issue_type=IssueType.LONG_PATH,
+                    severity=Severity.WARNING,
+                    message="Warning",
                 )
-            for _ in range(info_count):
-                issues.append(
-                    ScanIssue(
-                        path=tmp_path / "info",
-                        relative_path="info",
-                        issue_type=IssueType.MIXED_FORMATS,
-                        severity=Severity.INFO,
-                        message="Info",
-                    )
+                for _ in range(warning_count)
+            )
+            issues.extend(
+                ScanIssue(
+                    path=tmp_path / "info",
+                    relative_path="info",
+                    issue_type=IssueType.MIXED_FORMATS,
+                    severity=Severity.INFO,
+                    message="Info",
                 )
+                for _ in range(info_count)
+            )
 
             result = ScanResult(
                 root=tmp_path,
@@ -680,7 +679,6 @@ class TestScanIntegrationEdgeCases:
     def test_permission_denied_handling(self, tmp_path: Path) -> None:
         """Permission denied errors should be reported as issues."""
         # This test may be skipped on Windows or when running as root
-        import os
 
         restricted_dir = tmp_path / "restricted"
         restricted_dir.mkdir()
@@ -689,7 +687,7 @@ class TestScanIntegrationEdgeCases:
         # Remove read permission
         original_mode = restricted_dir.stat().st_mode
         try:
-            os.chmod(restricted_dir, 0o000)
+            Path(restricted_dir).chmod(0o000)
             result = scan_directory(tmp_path)
 
             # Should have permission denied issue (or not depending on permissions)
@@ -698,7 +696,7 @@ class TestScanIntegrationEdgeCases:
             _ = [i for i in result.issues if i.issue_type == IssueType.PERMISSION_DENIED]
         finally:
             # Restore permissions
-            os.chmod(restricted_dir, original_mode)
+            Path(restricted_dir).chmod(original_mode)
 
     def test_empty_directory_scan(self, tmp_path: Path) -> None:
         """Empty directory should return empty result."""

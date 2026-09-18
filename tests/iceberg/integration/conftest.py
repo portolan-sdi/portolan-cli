@@ -4,9 +4,11 @@ These fixtures create full portolan catalogs with the iceberg backend
 configured, using SQLite + local filesystem (no Docker, no cloud).
 """
 
+from __future__ import annotations
+
 import json
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -14,6 +16,9 @@ from click.testing import CliRunner
 from pyiceberg.catalog import load_catalog
 
 from portolan_cli.cli import cli
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _SKIP_WINDOWS = pytest.mark.skipif(
     sys.platform == "win32",
@@ -106,11 +111,9 @@ def load_test_catalog(catalog_root: Path):
     """
     return load_catalog(
         "portolake",
-        **{
-            "type": "sql",
-            "uri": f"sqlite:///{catalog_root}/.portolan/iceberg.db",
-            "warehouse": (catalog_root / ".portolan" / "warehouse").as_uri(),
-        },
+        type="sql",
+        uri=f"sqlite:///{catalog_root}/.portolan/iceberg.db",
+        warehouse=(catalog_root / ".portolan" / "warehouse").as_uri(),
     )
 
 
@@ -139,9 +142,8 @@ def place_geojson_in_collection(
 def invoke_add(runner: CliRunner, catalog_root: Path, file_path: Path) -> object:
     """Invoke `portolan add` with the iceberg backend, isolated from external config."""
     with patch("portolan_cli.backends.iceberg.config._get_external_config", return_value=None):
-        result = runner.invoke(
+        return runner.invoke(
             cli,
             ["add", "--portolan-dir", str(catalog_root), str(file_path)],
             catch_exceptions=False,
         )
-    return result

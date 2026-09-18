@@ -7,13 +7,9 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
-
-if TYPE_CHECKING:
-    pass
 
 # Import will fail until we implement the module - that's expected in TDD
 pytestmark = pytest.mark.unit

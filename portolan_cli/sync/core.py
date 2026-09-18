@@ -19,7 +19,7 @@ import json
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from portolan_cli.catalog import CatalogState, detect_state, init_catalog
 from portolan_cli.output import detail, error, info, success, warn
@@ -29,10 +29,6 @@ from portolan_cli.sync.download import download_file
 from portolan_cli.sync.pull import PullError, PullResult, pull
 from portolan_cli.sync.push import PushConflictError, PushResult, push_async
 
-if TYPE_CHECKING:
-    pass
-
-
 # =============================================================================
 # Exceptions
 # =============================================================================
@@ -40,8 +36,6 @@ if TYPE_CHECKING:
 
 class SyncError(Exception):
     """Base exception for sync operations."""
-
-    pass
 
 
 # =============================================================================
@@ -145,7 +139,7 @@ def _fetch_remote_catalog_json(
             raise CloneError(f"Failed to fetch remote catalog.json: {error_msgs}")
 
         # Parse the downloaded file
-        with open(tmp_path, encoding="utf-8") as f:
+        with Path(tmp_path).open(encoding="utf-8") as f:
             data: dict[str, Any] = json.load(f)
             return data
 
@@ -213,8 +207,7 @@ def _resolve_href(base_url: str, href: str) -> str:
     base = base_url.rstrip("/")
 
     # Handle "./" prefix
-    if href.startswith("./"):
-        href = href[2:]
+    href = href.removeprefix("./")
 
     # Handle "../" prefix
     while href.startswith("../"):
@@ -241,7 +234,7 @@ def _extract_catalog_url_from_href(base_url: str, href: str) -> str:
     # Remove the catalog.json suffix to get the catalog directory
     if full_url.endswith("/catalog.json"):
         return full_url[: -len("/catalog.json")]
-    elif full_url.endswith("catalog.json"):
+    if full_url.endswith("catalog.json"):
         return full_url[: -len("catalog.json")].rstrip("/")
 
     return full_url
@@ -261,6 +254,12 @@ def _list_remote_collections_recursive(
     Internal recursive helper for list_remote_collections.
 
     Args:
+        remote_url: URL of the catalog to read at this level.
+        profile: Named credential profile for the object store. None uses the
+            default credentials.
+        max_depth: Maximum number of catalog levels to descend.
+        current_depth: Depth of this call. The walk stops at ``max_depth``.
+        visited_urls: URLs already read. The set stops a circular reference.
         path_prefix: The accumulated path from the root catalog to this point.
             Used to construct full collection paths like "climate/hittekaart".
     """
@@ -355,8 +354,7 @@ def _extract_subcatalog_dir_from_href(href: str) -> str:
     href = href.rstrip("/")
 
     # Handle relative paths
-    if href.startswith("./"):
-        href = href[2:]
+    href = href.removeprefix("./")
 
     # Get the last path component (subcatalog directory name)
     if "/" in href:
@@ -781,8 +779,6 @@ class CloneResult:
 
 class CloneError(Exception):
     """Exception raised when clone fails."""
-
-    pass
 
 
 def clone(

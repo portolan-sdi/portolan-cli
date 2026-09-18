@@ -10,7 +10,7 @@ Tests the full workflow:
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -25,6 +25,9 @@ from portolan_cli.schema import (
     import_schema_parquet,
     is_breaking,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestSchemaJsonRoundtrip:

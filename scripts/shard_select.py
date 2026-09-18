@@ -35,9 +35,12 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
 from hashlib import blake2b
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def shard_of(path: str | PurePosixPath, num_shards: int) -> int:

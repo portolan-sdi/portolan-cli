@@ -6,13 +6,14 @@ current snapshot as a single GeoParquet file.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from pyiceberg.table import Table
 
 # Columns added by portolake spatial processing — exclude from export

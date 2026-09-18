@@ -32,14 +32,16 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rashid import validate
 from rashid.data.reader import LocalOnlyReader
-from rashid.model import Report
 
 from portolan_cli.validation.config import load_public_url, load_rules_config
 from portolan_cli.validation.legacy import detect_legacy_notes
+
+if TYPE_CHECKING:
+    from rashid.model import Report
 
 #: A structural/schema validator maps one object's raw JSON to schema errors.
 #: Injected by tests to keep them offline and independent of schema churn.

@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -27,9 +26,6 @@ from portolan_cli.add import (
 from portolan_cli.formats import FormatType
 from portolan_cli.sync.checksums import compute_dir_size
 from portolan_cli.versions import read_versions
-
-if TYPE_CHECKING:
-    pass
 
 
 @pytest.fixture
@@ -243,7 +239,7 @@ class TestAdd:
                 geometry_type="Point",
                 geometry_column="geometry",  # Required for table extension
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=lambda: {},
+                to_stac_properties=dict,
             )
             mock_checksum.return_value = "xyz789"
 
@@ -299,7 +295,7 @@ class TestAdd:
                 geometry_type="Point",
                 geometry_column="geometry",  # Required for table extension
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=lambda: {},
+                to_stac_properties=dict,
             )
             mock_checksum.return_value = "new123"
 
@@ -632,7 +628,7 @@ class TestAddMissingBbox:
                 geometry_type="Point",
                 geometry_column="geometry",  # Required for table extension
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=lambda: {},
+                to_stac_properties=dict,
             )
             mock_checksum.return_value = "xyz789"
 
@@ -1250,7 +1246,7 @@ class TestMultiAssetAdd:
                 geometry_type="Point",
                 geometry_column="geometry",  # Required for table extension
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=lambda: {},
+                to_stac_properties=dict,
             )
             mock_checksum.return_value = "xyz789"
 
@@ -1298,7 +1294,7 @@ class TestMultiAssetAdd:
                 geometry_type="Point",
                 geometry_column="geometry",  # Required for table extension
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=lambda: {},
+                to_stac_properties=dict,
             )
             mock_checksum.return_value = "xyz789"
 
@@ -1345,7 +1341,7 @@ class TestMultiAssetAdd:
                 geometry_type="Point",
                 geometry_column="geometry",  # Required for table extension
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=lambda: {},
+                to_stac_properties=dict,
             )
             mock_checksum.return_value = "xyz789"
 

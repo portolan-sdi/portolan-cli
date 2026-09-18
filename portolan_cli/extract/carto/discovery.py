@@ -93,7 +93,7 @@ def normalize_sql_api_url(url: str) -> str:
     path = parsed.path.rstrip("/")
     base = urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
 
-    if path.endswith("/api/v2/sql") or path.endswith("/api/v1/sql"):
+    if path.endswith(("/api/v2/sql", "/api/v1/sql")):
         return base
     if path == "":
         return f"{base}/api/v2/sql"
@@ -179,7 +179,7 @@ def table_has_geometry(
     """
     # table_name is quoted as a SQL identifier (quote_table_identifier); identifiers
     # cannot be bound parameters, so quoting is the correct injection defense.
-    query = f"SELECT * FROM {quote_table_identifier(table_name)} LIMIT 0"  # nosec B608
+    query = f"SELECT * FROM {quote_table_identifier(table_name)} LIMIT 0"  # noqa: S608
     data = carto_sql_request(sql_api_url, query, api_key=api_key, timeout=timeout)
     fields = data.get("fields", {})
     if not isinstance(fields, dict):

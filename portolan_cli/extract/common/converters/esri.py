@@ -40,8 +40,6 @@ logger = logging.getLogger(__name__)
 class ESRIConverterError(Exception):
     """Error during ESRI renderer conversion."""
 
-    pass
-
 
 def _symbol_to_layer_type(symbol: dict[str, Any] | None) -> str:
     """Determine Mapbox GL layer type from ESRI symbol type."""
@@ -107,11 +105,8 @@ def _parse_circle_symbol(
 
     # Check for unsupported marker styles
     style = symbol.get("style", "esriSMSCircle")
-    if style != "esriSMSCircle":
-        if warnings is not None:
-            warnings.append(
-                f"Marker style '{style}' not directly supported; falling back to circle."
-            )
+    if style != "esriSMSCircle" and warnings is not None:
+        warnings.append(f"Marker style '{style}' not directly supported; falling back to circle.")
 
     color = symbol.get("color", [128, 128, 128, 255])
     circle_color = esri_color_to_hex(color)
@@ -209,7 +204,6 @@ def parse_simple_renderer(
 
     return make_mapbox_style(
         name="Simple Style",
-        source_layer=source_layer,
         layers=[layer],
     )
 
@@ -240,7 +234,6 @@ def parse_uniquevalue_renderer(
             warnings.append("UniqueValue renderer has no value infos; using default.")
         return make_mapbox_style(
             name="Empty UniqueValue Style",
-            source_layer=source_layer,
             layers=[make_fill_layer("layer-0", source_layer, "#888888", 0.5)],
         )
 
@@ -287,7 +280,6 @@ def parse_uniquevalue_renderer(
 
     return make_mapbox_style(
         name="Categorical Style",
-        source_layer=source_layer,
         layers=[layer],
     )
 
@@ -398,7 +390,6 @@ def parse_classbreaks_renderer(
             warnings.append("ClassBreaks renderer has no break infos; using default.")
         return make_mapbox_style(
             name="Empty ClassBreaks Style",
-            source_layer=source_layer,
             layers=[make_fill_layer("layer-0", source_layer, "#888888", 0.5)],
         )
 
@@ -418,7 +409,6 @@ def parse_classbreaks_renderer(
 
     return make_mapbox_style(
         name="Graduated Style",
-        source_layer=source_layer,
         layers=[layer],
     )
 

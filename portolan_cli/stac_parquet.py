@@ -28,8 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rashid.catalog import is_absolute_href
 
@@ -37,6 +36,9 @@ from portolan_cli.constants import ROLE_COLLECTION_MIRROR
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import info, warn
 from portolan_cli.sync.checksums import file_fields
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # Constants
 PARQUET_FILENAME = "items.parquet"
