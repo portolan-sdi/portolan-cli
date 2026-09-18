@@ -888,17 +888,18 @@ def _read_geoparquet_bounds(gpq_path: Path) -> tuple[float, float, float, float]
         geo_meta_bytes = schema_meta.get(b"geo", b"{}")
         geo_meta = json.loads(geo_meta_bytes.decode("utf-8"))
 
-        # GeoParquet spec: columns.<geom_col>.bbox = [minx, miny, maxx, maxy]
+        # GeoParquet spec: columns.<geom_col>.bbox is [minx, miny, maxx, maxy] in 2D and
+        # [minx, miny, minz, maxx, maxy, maxz] in 3D, so to_2d_bbox does the reduction.
         # Validate for inf/nan values (issue #516) - CRS may not be WGS84
-        from portolan_cli.bbox import is_finite_bbox
+        from portolan_cli.bbox import is_finite_bbox, to_2d_bbox
 
         columns = geo_meta.get("columns", {})
         for col_meta in columns.values():
             bbox = col_meta.get("bbox")
             if bbox and len(bbox) >= 4:
-                bbox_list = [bbox[0], bbox[1], bbox[2], bbox[3]]
+                bbox_list = to_2d_bbox(bbox)
                 if is_finite_bbox(bbox_list):
-                    return (bbox[0], bbox[1], bbox[2], bbox[3])
+                    return (bbox_list[0], bbox_list[1], bbox_list[2], bbox_list[3])
                 logger.warning("Invalid bbox in GeoParquet metadata (inf/nan): %s", bbox_list)
 
         # No bbox in metadata — fall back to reading data

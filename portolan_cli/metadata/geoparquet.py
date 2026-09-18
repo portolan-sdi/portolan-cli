@@ -343,14 +343,14 @@ def _extract_bbox(column_meta: dict[str, Any]) -> tuple[float, float, float, flo
     """
     import logging
 
-    from portolan_cli.bbox import is_finite_bbox
+    from portolan_cli.bbox import is_finite_bbox, to_2d_bbox
 
     logger = logging.getLogger(__name__)
 
     bbox = column_meta.get("bbox")
     if bbox and len(bbox) >= 4:
         try:
-            bbox_list = [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
+            bbox_list = to_2d_bbox([float(value) for value in bbox])
         except (ValueError, TypeError):
             # Non-numeric/malformed bbox entries - log and treat as missing
             logger.warning("Malformed bbox in GeoParquet metadata (non-numeric): %s", bbox)

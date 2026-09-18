@@ -397,6 +397,37 @@ class TestGeoParquetMetadataEdgeCases:
         assert metadata.bbox is None
 
     @pytest.mark.unit
+    def test_extract_bbox_3d_drops_z(self, tmp_path: Path) -> None:
+        """Reduces a 6-element 3D bbox to 2D, keeping indices 0, 1, 3, 4 (issue #854)."""
+        import json
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        # The EPSG:25830 LineString Z layer reported in issue #854. A 3D column bbox is
+        # ordered [minx, miny, minz, maxx, maxy, maxz].
+        geo_meta = {
+            "version": "1.1.0",
+            "primary_column": "geometry",
+            "columns": {
+                "geometry": {
+                    "encoding": "WKB",
+                    "bbox": [432354.7795, 4464047.5647, 0.0, 453777.9097, 4492718.5693, 0.0],
+                }
+            },
+        }
+
+        table = pa.table({"geometry": [b"\x00"] * 3})
+        path = tmp_path / "bbox_3d.parquet"
+
+        schema_with_meta = table.schema.with_metadata({b"geo": json.dumps(geo_meta).encode()})
+        table_with_meta = table.cast(schema_with_meta)
+        pq.write_table(table_with_meta, path)
+
+        metadata = extract_geoparquet_metadata(path)
+        assert metadata.bbox == (432354.7795, 4464047.5647, 453777.9097, 4492718.5693)
+
+    @pytest.mark.unit
     def test_extract_geometry_type_fallback(self, tmp_path: Path) -> None:
         """Falls back to geometry_type field when geometry_types is empty."""
         import json
