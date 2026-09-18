@@ -323,7 +323,7 @@ one complex function cannot move an average. Split the function when `C901`
 reports it. Extract the reporting code first, then the loop body.
 
 `xenon` and `radon` ran this gate before. Ruff replaced them in September 2026.
-The `S` rules replaced `bandit` at the same time. One tool now walks the source
+The `S` rules also replaced `bandit`. One tool now walks the source
 tree once.
 
 ---
