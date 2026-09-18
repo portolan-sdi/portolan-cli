@@ -62,7 +62,9 @@ GeoParquet **and** `add_bbox` is on **and** the file carries no covering
 column. That last conjunct matters: with `add_bbox: false` the footer shows
 nothing the rewrite could change, so rewriting would repeat on every `add` and
 report a reason it cannot fix. A tabular Parquet has no `geo` key and must
-never reach `add_bbox()`.
+never reach `add_bbox()`. Every `geo` read goes through
+`parquet_metadata.read_geo_metadata` / `read_kv_metadata`, which read the raw
+footer through geoparquet-io (issue #864).
 
 The footer says nothing about row order, so `--force --reconvert` forces the
 rewrite anyway. That is the documented repair both for a file that has the
