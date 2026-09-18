@@ -26,9 +26,12 @@ from __future__ import annotations
 
 import logging
 from importlib.metadata import EntryPoint, entry_points
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from portolan_cli.backends.protocol import DriftReport, SchemaFingerprint, VersioningBackend
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 __all__ = ["DriftReport", "SchemaFingerprint", "VersioningBackend", "get_backend"]
 
@@ -49,6 +52,8 @@ def get_backend(name: str = "file", catalog_root: Path | None = None) -> Version
     Args:
         name: Backend name. "file" for built-in, "iceberg" for Iceberg
             (requires [iceberg] extra), or a plugin name.
+        catalog_root: Catalog root the backend reads and writes. None lets the
+            backend resolve the root itself.
 
     Returns:
         VersioningBackend instance.
@@ -103,6 +108,8 @@ def _load_plugin_backend(
     Args:
         ep: Entry point object with load() method.
         name: Backend name for error messages.
+        catalog_root: Catalog root passed to the plugin constructor. None lets
+            the plugin resolve the root itself.
 
     Returns:
         Validated VersioningBackend instance.

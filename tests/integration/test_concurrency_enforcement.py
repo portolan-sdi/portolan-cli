@@ -225,7 +225,7 @@ class TestConnectionFootprintAccuracy:
 
         # At threshold - borderline
         assert calculate_connection_footprint(10, 10, workers=1) == 100
-        assert 100 <= MAX_SAFE_CONNECTIONS
+        assert MAX_SAFE_CONNECTIONS >= 100
 
         # Over threshold - warning needed
         assert calculate_connection_footprint(50, 4, workers=1) > MAX_SAFE_CONNECTIONS

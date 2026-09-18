@@ -4,6 +4,8 @@ These tests verify that publish() writes actual Parquet data into Iceberg tables
 not just metadata. The Iceberg table schema is dynamic (inferred from the data).
 """
 
+from __future__ import annotations
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest

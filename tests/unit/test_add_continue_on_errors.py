@@ -13,8 +13,8 @@ Expected behavior:
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -27,6 +27,9 @@ from portolan_cli.add import (
 )
 from portolan_cli.cli import cli
 from portolan_cli.formats import FormatType
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 
 @pytest.fixture
@@ -231,13 +234,15 @@ class TestAddFilesContinuesOnErrors:
         ) -> ItemInfo:
             raise ValueError(f"Error processing {path.name}")
 
-        with patch("portolan_cli.add.prepare_item", side_effect=mock_add):
-            with patch("portolan_cli.add.is_current", return_value=False):
-                added, skipped, failures = add_files(
-                    paths=[tmp_path / "collection"],
-                    catalog_root=tmp_path,
-                    collection_id="collection",
-                )
+        with (
+            patch("portolan_cli.add.prepare_item", side_effect=mock_add),
+            patch("portolan_cli.add.is_current", return_value=False),
+        ):
+            added, skipped, failures = add_files(
+                paths=[tmp_path / "collection"],
+                catalog_root=tmp_path,
+                collection_id="collection",
+            )
 
         # All 3 should fail
         assert len(added) == 0

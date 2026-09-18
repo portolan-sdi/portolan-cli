@@ -10,7 +10,7 @@ Phase 3 will register.
 
 from __future__ import annotations
 
-from types import ModuleType
+from typing import TYPE_CHECKING
 
 import pytest
 from rashid import data, live, runner, schema, structural
@@ -23,6 +23,9 @@ from portolan_cli.validation.remediation import (
     Remediation,
     remediation_for,
 )
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 pytestmark = pytest.mark.unit
 

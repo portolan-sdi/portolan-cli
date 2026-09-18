@@ -63,17 +63,6 @@ hooks = [
 ]
 
 [[repos]]
-repo = "https://github.com/rubik/xenon"
-rev = "v0.9.3"
-hooks = [
-  {
-    id = "xenon",
-    args = ["--max-absolute=C", "--max-modules=B", "--max-average=A", "portolan_cli/"],
-    pass_filenames = false,
-  },
-]
-
-[[repos]]
 repo = "https://github.com/commitizen-tools/commitizen"
 rev = "v4.1.0"
 hooks = [
@@ -192,7 +181,7 @@ hooks = [
   # These moved out of ci.yml's lint/dead-code/security jobs so there is ONE
   # rule source: CI runs `prek run --all-files` (see .github/workflows/ci.yml
   # `quality` job) instead of re-invoking each tool with its own drifting args.
-  # Config lives in pyproject.toml ([tool.codespell], [tool.bandit]).
+  # Config lives in pyproject.toml ([tool.codespell]).
   {
     id = "codespell",
     name = "spell check",
@@ -201,20 +190,25 @@ hooks = [
     args = ["portolan_cli", "tests", "docs"],
     pass_filenames = false,
   },
+  # Duplication is gated against a committed baseline, not a percentage. The
+  # repo carries 977 known clones. The gate fails only when a commit adds one.
+  # Pay the baseline down with `jscpd --update-baseline` after a real dedup.
+  #
+  # This replaces a pylint R0801 hook that could not fail: pylint scores a run
+  # as 10 - (findings / statements) * 10, so 93 duplicate blocks over 23908
+  # statements scored 9.96 against a --fail-under=9.5 floor. That gate needed
+  # ~1195 duplicate blocks to trip. jscpd also reads tests/, which the pylint
+  # hook never scanned, and finishes in 0.2s against pylint's 25.8s.
+  #
+  # `failOnEmpty` in .jscpd.json guards the new gate against the old one's
+  # failure mode. A run that matches no file must fail loudly, not pass
+  # silently.
   {
-    id = "bandit",
-    name = "bandit security scan",
-    entry = "uv run bandit -r portolan_cli -c pyproject.toml",
+    id = "jscpd",
+    name = "duplicate code (jscpd, baseline-gated)",
+    entry = "uvx jscpd@5.2.1 portolan_cli tests --baseline .jscpd-baseline.json --fail-on-new-clones 0",
     language = "system",
-    types = ["python"],
-    pass_filenames = false,
-  },
-  {
-    id = "pylint-duplicate",
-    name = "duplicate code (pylint R0801)",
-    entry = "uv run pylint --disable=all --enable=duplicate-code --fail-under=9.5 portolan_cli/",
-    language = "system",
-    types = ["python"],
+    files = { glob = ["portolan_cli/**/*.py", "tests/**/*.py", ".jscpd.json", ".jscpd-baseline.json"] },
     pass_filenames = false,
   },
 

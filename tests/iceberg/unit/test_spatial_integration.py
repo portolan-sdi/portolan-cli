@@ -4,6 +4,8 @@ Tests that publish() adds geohash and bbox columns when the data
 contains a geometry column, and creates partitioned Iceberg tables.
 """
 
+from __future__ import annotations
+
 import struct
 
 import pyarrow as pa

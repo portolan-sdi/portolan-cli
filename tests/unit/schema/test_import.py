@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -16,6 +16,9 @@ from portolan_cli.schema.import_ import (
     import_schema_json,
     import_schema_parquet,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestImportSchemaJson:

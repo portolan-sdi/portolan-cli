@@ -9,8 +9,7 @@ itself.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from rashid.model import Finding, Report, Severity
@@ -23,6 +22,9 @@ from portolan_cli.validation.report import (
     build_fix_payload,
 )
 from portolan_cli.validation.runner import CheckOutcome, LiveHint, WorkflowNotice
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

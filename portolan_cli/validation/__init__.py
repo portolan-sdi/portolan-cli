@@ -32,6 +32,8 @@ existing ``from portolan_cli.validation import ...`` call sites:
 - validate_config_value(): Validate config values
 """
 
+from __future__ import annotations
+
 from portolan_cli.input_hardening import (
     InputValidationError,
     validate_catalog_id,

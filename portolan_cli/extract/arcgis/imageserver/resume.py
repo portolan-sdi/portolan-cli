@@ -22,12 +22,18 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.json_io import write_json_atomic
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 logger = logging.getLogger(__name__)
+
+# A tile coordinate may be negative, but its magnitude is capped. A range of
+# 100 million by 100 million covers any tiling scheme the extractor meets.
+MAX_COORD = 100_000
 
 
 @dataclass
@@ -71,12 +77,9 @@ def should_process_tile(x: int, y: int, state: ImageServerResumeState | None) ->
         # No resume state = fresh extraction, process everything
         return True
 
-    if (x, y) in state.succeeded_tiles:
-        # Already succeeded, skip
-        return False
-
-    # Either failed (retry) or new (process)
-    return True
+    # A tile already recorded as succeeded is skipped. Anything else either
+    # failed and needs a retry, or is new and needs processing.
+    return (x, y) not in state.succeeded_tiles
 
 
 def load_resume_state(
@@ -129,9 +132,6 @@ def _validate_tile_coordinate(coord: tuple[int, int]) -> bool:
         True if coordinate is valid, False otherwise.
     """
     x, y = coord
-    # Allow negative coordinates but cap magnitude
-    # (100M x 100M coordinate range covers any reasonable tiling scheme)
-    MAX_COORD = 100000
     return -MAX_COORD <= x <= MAX_COORD and -MAX_COORD <= y <= MAX_COORD
 
 

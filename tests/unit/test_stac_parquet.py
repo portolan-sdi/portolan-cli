@@ -8,9 +8,12 @@ orchestration with no item-count threshold.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # =============================================================================
 # Fixtures
@@ -1542,17 +1545,19 @@ class TestGenerateParquetMirrors:
         from portolan_cli.stac_parquet import generate_parquet_mirrors
 
         catalog_root = collection_with_items.parent
-        with patch(
-            "portolan_cli.stac_parquet.generate_items_parquet",
-            side_effect=RuntimeError("boom"),
+        with (
+            patch(
+                "portolan_cli.stac_parquet.generate_items_parquet",
+                side_effect=RuntimeError("boom"),
+            ),
+            pytest.raises(RuntimeError, match="boom"),
         ):
-            with pytest.raises(RuntimeError, match="boom"):
-                generate_parquet_mirrors(
-                    catalog_root,
-                    {"landsat"},
-                    generate_parquet=True,
-                    verbose=False,
-                )
+            generate_parquet_mirrors(
+                catalog_root,
+                {"landsat"},
+                generate_parquet=True,
+                verbose=False,
+            )
 
     @pytest.mark.unit
     def test_auto_failure_warns_not_raises(self, collection_with_items: Path) -> None:

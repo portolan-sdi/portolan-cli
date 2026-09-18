@@ -11,10 +11,12 @@ from __future__ import annotations
 import json
 import shutil
 import time
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # Skip entire module if tippecanoe not available
 pytestmark = [

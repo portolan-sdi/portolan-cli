@@ -10,12 +10,15 @@ Tests the full workflow:
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture
@@ -406,7 +409,7 @@ class TestMergePreservesPartitionMetadata:
 
         # Hand-author asset metadata
         collection_json = json.loads((collection_dir / "collection.json").read_text())
-        for _asset_key, asset in collection_json.get("assets", {}).items():
+        for asset in collection_json.get("assets", {}).values():
             if "*" in asset.get("href", ""):
                 asset["title"] = "Contour Lines by Feature"
                 asset["description"] = "Partitioned contour data for each feature polygon."

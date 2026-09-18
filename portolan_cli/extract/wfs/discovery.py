@@ -11,7 +11,7 @@ Key functions:
 from __future__ import annotations
 
 import json
-import xml.etree.ElementTree as ET  # nosec B405 - only using ParseError, not parsing
+import xml.etree.ElementTree as ET  # only for ParseError, this module parses with defusedxml
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,8 +20,6 @@ import requests  # type: ignore[import-untyped]
 
 class WFSDiscoveryError(Exception):
     """Raised when WFS discovery fails."""
-
-    pass
 
 
 @dataclass

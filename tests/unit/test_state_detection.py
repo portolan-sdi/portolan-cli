@@ -12,11 +12,14 @@ config.yaml alone is now sufficient for MANAGED state.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.catalog import CatalogState, detect_state
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestCatalogStateEnum:

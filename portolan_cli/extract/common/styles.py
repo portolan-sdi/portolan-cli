@@ -29,8 +29,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
@@ -42,13 +41,14 @@ from portolan_cli.extract.common.converters.sld import (
 )
 from portolan_cli.json_io import write_json_atomic
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 logger = logging.getLogger(__name__)
 
 
 class StyleExtractionError(Exception):
     """Error during style extraction from remote service."""
-
-    pass
 
 
 @dataclass

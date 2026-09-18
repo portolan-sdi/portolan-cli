@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -145,10 +148,56 @@ def is_valid_bbox(bbox: list[float], *, wgs84_only: bool = True) -> bool:
         return False
 
     # Check latitude ordering (south must be <= north)
-    if south > north:
-        return False
+    return not south > north
 
-    return True
+
+def _reason_non_finite(bbox: list[float]) -> str | None:
+    """Return the reason a bbox holds a NaN or an infinite value, or None.
+
+    Args:
+        bbox: Bounding box to check.
+
+    Returns:
+        String that names the bad coordinate, or None when all values are finite.
+    """
+    west, south, east, north = to_2d_bbox(bbox)
+    for name, val in [("west", west), ("south", south), ("east", east), ("north", north)]:
+        if math.isnan(val):
+            return f"{name} is NaN"
+        if math.isinf(val):
+            return f"{name} is infinite ({val})"
+
+    # A 6-element bbox carries elevation values after the first four. Check
+    # those too, so a poisoned Z value does not pass (issue #516).
+    for i in range(4, len(bbox)):
+        if math.isnan(bbox[i]):
+            return f"elevation coordinate at index {i} is NaN"
+        if math.isinf(bbox[i]):
+            return f"elevation coordinate at index {i} is infinite ({bbox[i]})"
+    return None
+
+
+def _reason_out_of_wgs84_range(bbox: list[float]) -> str | None:
+    """Return the reason a bbox falls outside the WGS84 ranges, or None.
+
+    Args:
+        bbox: Bounding box to check.
+
+    Returns:
+        String that names the bad coordinate, or None when the bbox is in range.
+    """
+    west, south, east, north = to_2d_bbox(bbox)
+    if not (LON_MIN <= west <= LON_MAX):
+        return f"west longitude {west} out of range [{LON_MIN}, {LON_MAX}]"
+    if not (LON_MIN <= east <= LON_MAX):
+        return f"east longitude {east} out of range [{LON_MIN}, {LON_MAX}]"
+    if not (LAT_MIN <= south <= LAT_MAX):
+        return f"south latitude {south} out of range [{LAT_MIN}, {LAT_MAX}]"
+    if not (LAT_MIN <= north <= LAT_MAX):
+        return f"north latitude {north} out of range [{LAT_MIN}, {LAT_MAX}]"
+    if south > north:
+        return f"south ({south}) > north ({north})"
+    return None
 
 
 def get_bbox_validation_reason(bbox: list[float], *, wgs84_only: bool = True) -> str | None:
@@ -165,46 +214,21 @@ def get_bbox_validation_reason(bbox: list[float], *, wgs84_only: bool = True) ->
     if len(bbox) not in (4, 6):
         return f"wrong element count: {len(bbox)} (expected 4 or 6)"
 
-    # Reduce to 2D so east/north come from the correct indices for both 4- and
-    # 6-element bboxes; the elevation coordinates are validated separately below
-    # (issue #592, issue #516).
-    west, south, east, north = to_2d_bbox(bbox)
+    # The helpers reduce to 2D, so east and north come from the correct indices
+    # for both a 4-element and a 6-element bbox (issue #592, issue #516).
+    non_finite = _reason_non_finite(bbox)
+    if non_finite is not None:
+        return non_finite
 
-    # Check for non-finite values (universal for all CRS)
-    for name, val in [("west", west), ("south", south), ("east", east), ("north", north)]:
-        if math.isnan(val):
-            return f"{name} is NaN"
-        if math.isinf(val):
-            return f"{name} is infinite ({val})"
-
-    # 6-element (3D) bboxes carry elevation values beyond the first four;
-    # validate their finiteness too so poisoned Z values are caught (issue #516).
-    for i in range(4, len(bbox)):
-        if math.isnan(bbox[i]):
-            return f"elevation coordinate at index {i} is NaN"
-        if math.isinf(bbox[i]):
-            return f"elevation coordinate at index {i} is infinite ({bbox[i]})"
-
-    # Reject "effectively infinite" sentinel coordinates: finite, but far beyond
-    # any real-world magnitude in any CRS (e.g. ±1.79e308). Applied universally
-    # so poison is caught even for projected bboxes (wgs84_only=False) (#516).
+    # Reject an "effectively infinite" sentinel coordinate. The value is finite,
+    # but far beyond any real-world magnitude in any CRS, such as 1.79e308. This
+    # check runs for a projected bbox too, so poison never passes (issue #516).
     for i, val in enumerate(bbox):
         if abs(val) > MAX_SANE_COORD:
             return f"coordinate at index {i} ({val}) exceeds sane magnitude"
 
-    # WGS84-specific checks
     if wgs84_only:
-        if not (LON_MIN <= west <= LON_MAX):
-            return f"west longitude {west} out of range [{LON_MIN}, {LON_MAX}]"
-        if not (LON_MIN <= east <= LON_MAX):
-            return f"east longitude {east} out of range [{LON_MIN}, {LON_MAX}]"
-        if not (LAT_MIN <= south <= LAT_MAX):
-            return f"south latitude {south} out of range [{LAT_MIN}, {LAT_MAX}]"
-        if not (LAT_MIN <= north <= LAT_MAX):
-            return f"north latitude {north} out of range [{LAT_MIN}, {LAT_MAX}]"
-
-        if south > north:
-            return f"south ({south}) > north ({north})"
+        return _reason_out_of_wgs84_range(bbox)
 
     return None
 

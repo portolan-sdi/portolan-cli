@@ -160,9 +160,8 @@ class PhiladelphiaArcGISServer(ThreadingHTTPServer):
     def record(self, path: str, query: dict[str, list[str]], status: int) -> None:
         """Append one request to the JSON Lines audit log."""
         entry = json.dumps({"path": path, "query": query, "status": status}, sort_keys=True)
-        with self.log_lock:
-            with self.request_log.open("a", encoding="utf-8") as stream:
-                stream.write(f"{entry}\n")
+        with self.log_lock, self.request_log.open("a", encoding="utf-8") as stream:
+            stream.write(f"{entry}\n")
 
     def should_fail_once(self, path: str, query: dict[str, list[str]]) -> bool:
         """Inject one retryable failure into the third affordable-housing page."""
@@ -182,7 +181,7 @@ class PhiladelphiaArcGISHandler(BaseHTTPRequestHandler):
 
     server: PhiladelphiaArcGISServer
 
-    def log_message(self, format: str, *args: object) -> None:
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - BaseHTTPRequestHandler API
         """Disable stderr access logs; tests use the structured request log."""
 
     def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:

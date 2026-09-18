@@ -7,11 +7,14 @@ referenced by a ``rel="describedby"`` markdown link (PTL-FIL-003).
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.readme import ensure_readmes, readme_link_gap
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

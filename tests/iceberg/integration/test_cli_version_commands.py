@@ -4,10 +4,12 @@ Tests rollback, prune, list, and current commands through the full
 CLI pipeline with the iceberg backend.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
-from click.testing import CliRunner
 
 from portolan_cli.cli import cli
 from tests.iceberg.integration.conftest import (
@@ -17,6 +19,9 @@ from tests.iceberg.integration.conftest import (
     load_test_catalog,
     place_geojson_in_collection,
 )
+
+if TYPE_CHECKING:
+    from click.testing import CliRunner
 
 
 def _invoke_version_cmd(runner: CliRunner, catalog_root, args: list[str]):

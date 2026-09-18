@@ -18,6 +18,7 @@ Functions:
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import re
 import shutil
@@ -253,10 +254,7 @@ def _needs_rename(path: Path) -> bool:
         return True
 
     # Check for long path
-    if len(str(path)) > LONG_PATH_THRESHOLD:
-        return True
-
-    return False
+    return len(str(path)) > LONG_PATH_THRESHOLD
 
 
 def _compute_short_hash(text: str, length: int = 8) -> str:
@@ -295,10 +293,7 @@ def _find_sidecars(shp_path: Path) -> list[Path]:
 
     for ext in SHAPEFILE_ALL_SIDECARS:
         # Handle compound extension .shp.xml specially
-        if ext == ".shp.xml":
-            sidecar = parent / f"{stem}.shp.xml"
-        else:
-            sidecar = parent / f"{stem}{ext}"
+        sidecar = parent / f"{stem}.shp.xml" if ext == ".shp.xml" else parent / f"{stem}{ext}"
         if sidecar.exists():
             sidecars.append(sidecar)
 
@@ -420,9 +415,8 @@ def _apply_rename(
     try:
         # Use os.rename for atomic operation on same filesystem
         # This avoids TOCTOU race condition between exists() check and move
-        import os
 
-        os.rename(str(old_path), str(new_path))
+        Path(str(old_path)).rename(str(new_path))
         return True
     except FileExistsError:
         # Target already exists (collision)
@@ -455,8 +449,6 @@ def _apply_shapefile_rename(
     Returns:
         True if all renames succeeded, False if any collision or error.
     """
-    import os
-
     new_stem = new_shp_path.stem
     new_parent = new_shp_path.parent
 
@@ -483,7 +475,7 @@ def _apply_shapefile_rename(
 
     for old_path, new_path in renames:
         try:
-            os.rename(str(old_path), str(new_path))
+            Path(str(old_path)).rename(str(new_path))
             completed.append((old_path, new_path))
         except FileExistsError:
             # Collision detected - rollback
@@ -514,15 +506,11 @@ def _rollback_renames(completed: list[tuple[Path, Path]]) -> None:
     Args:
         completed: List of (original_path, new_path) tuples to rollback.
     """
-    import os
-
     for old_path, new_path in reversed(completed):
-        try:
-            os.rename(str(new_path), str(old_path))
-        except OSError:
-            # Best effort - can't do much if rollback fails
-            # In production, this should log the error
-            pass
+        # Best effort. A failed rollback leaves the rename in place, and the
+        # caller already reports the original failure.
+        with contextlib.suppress(OSError):
+            Path(str(new_path)).rename(str(old_path))
 
 
 # =============================================================================
@@ -583,12 +571,11 @@ def _apply_directory_rename(old_path: Path, new_path: Path) -> bool:
     Returns:
         True if rename succeeded, False if collision or error.
     """
-    import os
     import uuid
 
     try:
         # Use os.rename for atomic operation on same filesystem
-        os.rename(str(old_path), str(new_path))
+        Path(str(old_path)).rename(str(new_path))
         return True
     except FileExistsError:
         # Check if this is a case-only rename (e.g., MyDir/ -> mydir/)
@@ -599,18 +586,16 @@ def _apply_directory_rename(old_path: Path, new_path: Path) -> bool:
             temp_path = old_path.parent / temp_name
             try:
                 # Step 1: Rename to temporary name
-                os.rename(str(old_path), str(temp_path))
+                Path(str(old_path)).rename(str(temp_path))
                 try:
                     # Step 2: Rename from temp to final target
                     # Use os.replace to handle the final rename atomically
-                    os.replace(str(temp_path), str(new_path))
+                    temp_path.replace(new_path)
                     return True
                 except OSError:
-                    # Rollback: restore original name
-                    try:
-                        os.rename(str(temp_path), str(old_path))
-                    except OSError:
-                        pass  # Best effort rollback
+                    # Rollback: restore original name. Best effort.
+                    with contextlib.suppress(OSError):
+                        Path(str(temp_path)).rename(str(old_path))
                     return False
             except OSError:
                 return False

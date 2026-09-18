@@ -10,13 +10,16 @@ See GitHub Issue #75 and #103.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.config import save_config
 from portolan_cli.formats import CloudNativeStatus
 from portolan_cli.scan.check import check_directory
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestCheckWithConversionConfig:

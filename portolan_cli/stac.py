@@ -12,10 +12,8 @@ Key conventions:
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from enum import Enum
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pystac
@@ -28,6 +26,9 @@ from portolan_cli.providers import derive_provenance, resolve_providers
 from portolan_cli.utils import href_root
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+    from pathlib import Path
+
     from portolan_cli.metadata.tabular import TabularMetadata
 
 # Any versioned Portolan profile URI, not just the current one: matching the
@@ -161,15 +162,13 @@ def create_collection(
         temporal=pystac.TemporalExtent(intervals=[temporal_interval]),
     )
 
-    collection = pystac.Collection(
+    return pystac.Collection(
         id=collection_id,
         description=description,
         extent=extent,
         title=title,
         license=license,
     )
-
-    return collection
 
 
 def create_item(
@@ -367,8 +366,8 @@ def _merge_asset(
         href=new.href,  # Machine-derivable: always update
         media_type=new.media_type,  # Machine-derivable: always update
         roles=new.roles,  # Machine-derivable: always update
-        title=existing.title if existing.title else new.title,
-        description=existing.description if existing.description else new.description,
+        title=existing.title or new.title,
+        description=existing.description or new.description,
     )
 
     # Merge extra_fields
@@ -891,9 +890,12 @@ def update_collection_temporal_extent(
     if item_datetime is None:
         return  # Provisional items don't affect temporal extent
 
-    # Normalize to UTC-aware to avoid naive/aware comparison errors
+    # Normalize to UTC-aware to avoid naive/aware comparison errors.
+    # ensure_utc_aware returns None only for a None input, and the guard above
+    # already returned for that case. The check narrows the type for mypy.
     item_dt = ensure_utc_aware(item_datetime)
-    assert item_dt is not None  # nosec B101 - type narrowing for mypy, runtime checked above
+    if item_dt is None:
+        return
 
     # Get current interval
     current_interval = collection.extent.temporal.intervals[0]
@@ -1094,10 +1096,9 @@ def add_table_extension(
         merge_strategy: How to handle conflicts with existing metadata.
     """
     # KEEP strategy: don't modify existing table extension fields
-    if merge_strategy == MergeStrategy.KEEP:
-        if "table:row_count" in collection.extra_fields:
-            # Already has table extension, don't overwrite
-            return
+    if merge_strategy == MergeStrategy.KEEP and "table:row_count" in collection.extra_fields:
+        # Already has table extension, don't overwrite
+        return
 
     # Set row count (machine-derivable: always update in SMART/OVERWRITE)
     if hasattr(metadata, "feature_count") and metadata.feature_count is not None:
@@ -1882,9 +1883,7 @@ def is_technical_name(text: str | None) -> bool:
     if not re.search(r"[A-Z]", text[1:]) and len(text) < 20:
         has_digit = any(char.isdigit() for char in text)
         starts_capitalized = text[:1].isupper()
-        if has_digit or not starts_capitalized:
-            return True
-        return False
+        return bool(has_digit or not starts_capitalized)
 
     return False
 

@@ -14,8 +14,10 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # Tolerance for floating-point bbox comparisons (approx 0.1mm at equator)
 BBOX_TOLERANCE = 1e-9
@@ -153,13 +155,10 @@ class FileMetadataState:
         # Feature count is the next signal. Same new-file logic applies.
         if self.stored_feature_count is None:
             return self.current_feature_count is not None
-        if (
+        return bool(
             self.current_feature_count is not None
             and self.current_feature_count != self.stored_feature_count
-        ):
-            return True
-
-        return False
+        )
 
     @property
     def schema_changed(self) -> bool:

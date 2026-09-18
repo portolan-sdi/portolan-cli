@@ -7,6 +7,8 @@ Metadata.yaml is the human enrichment layer. This extends
 it to support "data defaults" for when auto-extraction fails.
 """
 
+from __future__ import annotations
+
 import pytest
 
 from portolan_cli.metadata_yaml import (

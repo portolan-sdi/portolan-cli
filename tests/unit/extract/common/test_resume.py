@@ -19,12 +19,12 @@ from portolan_cli.extract.common.resume import (
 pytestmark = pytest.mark.unit
 
 
-def _make_layer_result(id: int, name: str, status: str) -> LayerResult:
+def _make_layer_result(layer_id: int, name: str, status: str) -> LayerResult:
     """Helper to create a LayerResult."""
     # Empty layers have 0 features but no output file
     if status == "empty":
         return LayerResult(
-            id=id,
+            id=layer_id,
             name=name,
             status=status,
             features=0,
@@ -36,7 +36,7 @@ def _make_layer_result(id: int, name: str, status: str) -> LayerResult:
             attempts=1,
         )
     return LayerResult(
-        id=id,
+        id=layer_id,
         name=name,
         status=status,
         features=100 if status == "success" else None,

@@ -25,14 +25,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 if TYPE_CHECKING:
-    pass
+    from pathlib import Path
 
 
 @dataclass
@@ -56,6 +55,10 @@ class SchemaValidationResult:
 DEFAULT_THRESHOLD_GB = 2.0
 DEFAULT_TARGET_ROWS = 120_000
 DEFAULT_STRATEGY = "kdtree"
+
+# The directory walk stops at this depth. The cap prevents unbounded recursion
+# through a symlink loop or a deeply nested tree.
+MAX_PARTITION_DEPTH = 20
 
 # Partition column names by strategy
 PARTITION_COLUMNS = {
@@ -496,9 +499,6 @@ def detect_partitioning(directory: Path) -> dict[str, Any] | None:
     partition_keys: list[str] = []
     all_partition_dirs: list[Path] = []
 
-    # Max depth to prevent unbounded recursion (symlink loops, deeply nested structures)
-    MAX_PARTITION_DEPTH = 20
-
     def _scan_level(current_dir: Path, depth: int = 0) -> None:
         """Recursively scan for Hive partition directories."""
         if depth >= MAX_PARTITION_DEPTH:
@@ -668,8 +668,10 @@ def _describe_schema_diff(
 
     # Fields with different types
     common_fields = set(fields1.keys()) & set(fields2.keys())
-    for field in sorted(common_fields):
-        if fields1[field] != fields2[field]:
-            diffs.append(f"Column '{field}' type mismatch: {fields1[field]} vs {fields2[field]}")
+    diffs.extend(
+        f"Column '{field}' type mismatch: {fields1[field]} vs {fields2[field]}"
+        for field in sorted(common_fields)
+        if fields1[field] != fields2[field]
+    )
 
     return "; ".join(diffs) if diffs else "Unknown schema difference"

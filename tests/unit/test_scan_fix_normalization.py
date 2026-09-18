@@ -12,13 +12,16 @@ Test Strategy:
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from portolan_cli.scan.fix import _compute_safe_rename, _sanitize_filename
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.mark.unit

@@ -4,6 +4,8 @@ Phase 3: table:* fields (STAC Table Extension) from Iceberg schema.
 Phase 4: iceberg:* fields (STAC Iceberg Extension) from catalog/table state.
 """
 
+from __future__ import annotations
+
 import struct
 from unittest.mock import MagicMock
 

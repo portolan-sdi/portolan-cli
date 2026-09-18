@@ -10,7 +10,7 @@ Tests fix mode implementations including:
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from hypothesis import given, settings
@@ -27,6 +27,9 @@ from portolan_cli.scan.fix import (
     _sanitize_filename,
     _transliterate_to_ascii,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # =============================================================================
 # Transliteration Tests
@@ -404,7 +407,7 @@ class TestPropertyBasedSanitization:
     def test_valid_names_minimally_changed(self, name: str) -> None:
         """Valid filenames should be minimally changed."""
         # Skip if name starts with invalid chars
-        if name.startswith("-") or name.startswith("_"):
+        if name.startswith(("-", "_")):
             return
         result = _sanitize_filename(name)
         # Extension should be preserved

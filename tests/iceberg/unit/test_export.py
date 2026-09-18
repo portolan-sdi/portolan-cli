@@ -1,5 +1,7 @@
 """Tests for static GeoParquet export from Iceberg snapshots (Phase 6)."""
 
+from __future__ import annotations
+
 import struct
 
 import pyarrow as pa

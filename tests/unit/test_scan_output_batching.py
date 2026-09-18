@@ -69,11 +69,13 @@ def capture_output(result: ScanResult, *, show_all: bool = False) -> str:
     def fake_echo(msg: str = "", **kwargs: object) -> None:  # type: ignore[misc]
         lines.append(str(msg))
 
-    with patch("portolan_cli.cli.warn", side_effect=lambda m: lines.append(m)):
-        with patch("portolan_cli.cli.error", side_effect=lambda m: lines.append(m)):
-            with patch("portolan_cli.cli.info_output", side_effect=lambda m: lines.append(m)):
-                with patch("portolan_cli.cli.detail", side_effect=lambda m: lines.append(m)):
-                    _print_issues_with_fixability(result, show_all=show_all)
+    with (
+        patch("portolan_cli.cli.warn", side_effect=lambda m: lines.append(m)),
+        patch("portolan_cli.cli.error", side_effect=lambda m: lines.append(m)),
+        patch("portolan_cli.cli.info_output", side_effect=lambda m: lines.append(m)),
+        patch("portolan_cli.cli.detail", side_effect=lambda m: lines.append(m)),
+    ):
+        _print_issues_with_fixability(result, show_all=show_all)
 
     return "\n".join(lines)
 

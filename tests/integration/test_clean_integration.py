@@ -198,7 +198,7 @@ class TestCleanFromSubdirectory:
             # to avoid Windows path resolution issues with relative paths.
             import os
 
-            original_cwd = os.getcwd()
+            original_cwd = Path.cwd()
             try:
                 os.chdir(str(collection_dir))
                 result = runner.invoke(cli, ["clean"])
@@ -229,7 +229,7 @@ class TestCleanFromSubdirectory:
             # Run clean from deep subdirectory using absolute path for os.chdir
             import os
 
-            original_cwd = os.getcwd()
+            original_cwd = Path.cwd()
             try:
                 os.chdir(str(deep_dir))
                 result = runner.invoke(cli, ["clean"])

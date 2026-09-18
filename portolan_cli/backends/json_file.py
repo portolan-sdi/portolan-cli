@@ -159,6 +159,8 @@ class JsonFileBackend:
             schema: Schema fingerprint for change detection (CRITICAL #1).
             breaking: Whether this is a breaking change.
             message: Human-readable description of the change (MAJOR #6).
+            removed: Asset names that this version drops. None means no asset
+                is removed.
             version: Explicit version string. If None, auto-compute next version.
 
         Returns:
@@ -180,7 +182,7 @@ class JsonFileBackend:
             )
 
         # Use explicit version if provided, otherwise auto-compute
-        next_version = version if version else self._compute_next_version(versions_file, breaking)
+        next_version = version or self._compute_next_version(versions_file, breaking)
 
         # Build asset objects with checksums
         asset_objects: dict[str, Asset] = {}
@@ -246,8 +248,7 @@ class JsonFileBackend:
 
         if breaking:
             return f"{major + 1}.0.0"
-        else:
-            return f"{major}.{minor + 1}.0"
+        return f"{major}.{minor + 1}.0"
 
     def rollback(self, collection: str, target_version: str) -> Version:
         """Rollback to a previous version.

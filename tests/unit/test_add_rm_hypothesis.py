@@ -1218,7 +1218,7 @@ class TestMultiAssetProperties:
         # Structural files and link targets that must never be tracked as assets.
         # AGENTS.md is referenced via a rel="agents" link, not an asset.
         expected = {"catalog.json", "collection.json", "versions.json", "AGENTS.md"}
-        assert IGNORED_FILES == frozenset(expected)
+        assert frozenset(expected) == IGNORED_FILES
 
     @pytest.mark.unit
     @given(
@@ -1260,7 +1260,7 @@ class TestMultiAssetProperties:
             )
 
             # No hidden files should be in results
-            for filename in asset_files.keys():
+            for filename in asset_files:
                 assert not filename.startswith("."), f"Hidden file {filename} included"
 
     @pytest.mark.unit
@@ -1290,7 +1290,7 @@ class TestMultiAssetProperties:
             )
 
             # No structural files should be in results
-            for filename in asset_files.keys():
+            for filename in asset_files:
                 assert filename not in IGNORED_FILES, f"Structural {filename} included"
 
             # But regular files should be
@@ -1681,7 +1681,6 @@ class TestPreValidationAtomicityProperties:
         import json
 
         from portolan_cli.add import _pre_validate_geometry
-        from portolan_cli.formats import FormatType
 
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
@@ -1695,7 +1694,7 @@ class TestPreValidationAtomicityProperties:
 
             # Pre-validation should fail
             try:
-                _pre_validate_geometry(invalid_geojson, FormatType.VECTOR)
+                _pre_validate_geometry(invalid_geojson)
                 raise AssertionError("Expected ValueError")
             except ValueError:
                 pass

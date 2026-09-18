@@ -6,9 +6,9 @@ from __future__ import annotations
 # Required for headless CI environments (Windows/Linux without display).
 # Conditional: matplotlib is in the [thumbnails] extra, not needed for all tests.
 try:
-    import matplotlib
+    import matplotlib as mpl
 
-    matplotlib.use("Agg")
+    mpl.use("Agg")
 except ModuleNotFoundError:
     pass  # Iceberg tests don't need matplotlib
 

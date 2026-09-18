@@ -41,7 +41,7 @@ class TestHrefRoot:
         working_dir.mkdir()
         monkeypatch.chdir(working_dir)
 
-        assert href_root(Path(".")) == f"{working_dir.resolve()}/"
+        assert href_root(Path()) == f"{working_dir.resolve()}/"
 
     @pytest.mark.unit
     def test_preserves_a_dotted_final_component(self, tmp_path: Path) -> None:

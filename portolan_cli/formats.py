@@ -185,6 +185,82 @@ def is_cloud_optimized_geotiff(path: Path, *, quiet: bool = True) -> bool:
         return False
 
 
+def _status_by_content(path: Path, extension: str) -> FormatInfo | None:
+    """Classify a file whose extension alone does not give the status.
+
+    A .parquet file may or may not carry geo metadata. A .tif file may or may
+    not be a COG. A .json file may or may not be GeoJSON. Each case reads the
+    file to decide.
+
+    Args:
+        path: Path to the file to classify.
+        extension: Lowercase file extension, with the leading dot.
+
+    Returns:
+        FormatInfo for a content-inspected extension, or None for any other
+        extension.
+    """
+    if extension == ".parquet":
+        if not is_valid_parquet(path):
+            return FormatInfo(
+                status=CloudNativeStatus.UNSUPPORTED,
+                display_name="Corrupted Parquet",
+                target_format=None,
+                error_message="File has .parquet extension but is not a valid Parquet file",
+            )
+        if is_geoparquet(path):
+            return FormatInfo(
+                status=CloudNativeStatus.CLOUD_NATIVE,
+                display_name="GeoParquet",
+                target_format=None,
+                error_message=None,
+            )
+        # Plain Parquet is cloud-native too. It is not geo-aware.
+        return FormatInfo(
+            status=CloudNativeStatus.CLOUD_NATIVE,
+            display_name="Parquet",
+            target_format=None,
+            error_message=None,
+        )
+
+    if extension in (".tif", ".tiff"):
+        if is_cloud_optimized_geotiff(path):
+            return FormatInfo(
+                status=CloudNativeStatus.CLOUD_NATIVE,
+                display_name="COG",
+                target_format=None,
+                error_message=None,
+            )
+        # A TIFF that is not a COG converts to one.
+        return FormatInfo(
+            status=CloudNativeStatus.CONVERTIBLE,
+            display_name="TIFF",
+            target_format="COG",
+            error_message=None,
+        )
+
+    if extension == ".json":
+        if _detect_json_type(path) == FormatType.VECTOR:
+            return FormatInfo(
+                status=CloudNativeStatus.CONVERTIBLE,
+                display_name="GeoJSON",
+                target_format="GeoParquet",
+                error_message=None,
+            )
+        return FormatInfo(
+            status=CloudNativeStatus.UNSUPPORTED,
+            display_name="JSON",
+            target_format=None,
+            error_message=(
+                "JSON file does not appear to be GeoJSON. "
+                "Rename to .geojson if it contains geospatial data, "
+                "or use a supported format."
+            ),
+        )
+
+    return None
+
+
 def get_cloud_native_status(path: Path) -> FormatInfo:
     """Determine cloud-native status and format info for a file.
 
@@ -237,47 +313,9 @@ def get_cloud_native_status(path: Path) -> FormatInfo:
             error_message=None,
         )
 
-    # Check Parquet files - need content inspection for geo metadata
-    if extension == ".parquet":
-        # First check if the file is a valid Parquet (not corrupted)
-        if not is_valid_parquet(path):
-            return FormatInfo(
-                status=CloudNativeStatus.UNSUPPORTED,
-                display_name="Corrupted Parquet",
-                target_format=None,
-                error_message="File has .parquet extension but is not a valid Parquet file",
-            )
-        if is_geoparquet(path):
-            return FormatInfo(
-                status=CloudNativeStatus.CLOUD_NATIVE,
-                display_name="GeoParquet",
-                target_format=None,
-                error_message=None,
-            )
-        # Plain Parquet is also cloud-native (just not geo-aware)
-        return FormatInfo(
-            status=CloudNativeStatus.CLOUD_NATIVE,
-            display_name="Parquet",
-            target_format=None,
-            error_message=None,
-        )
-
-    # Check TIFF files - need content inspection for COG validation
-    if extension in (".tif", ".tiff"):
-        if is_cloud_optimized_geotiff(path):
-            return FormatInfo(
-                status=CloudNativeStatus.CLOUD_NATIVE,
-                display_name="COG",
-                target_format=None,
-                error_message=None,
-            )
-        # Non-COG TIFF is convertible
-        return FormatInfo(
-            status=CloudNativeStatus.CONVERTIBLE,
-            display_name="TIFF",
-            target_format="COG",
-            error_message=None,
-        )
+    content_info = _status_by_content(path, extension)
+    if content_info is not None:
+        return content_info
 
     # Check for unsupported formats (before convertible to catch .laz)
     if extension in UNSUPPORTED_EXTENSIONS:
@@ -311,27 +349,6 @@ def get_cloud_native_status(path: Path) -> FormatInfo:
             display_name=display_name,
             target_format="COG",
             error_message=None,
-        )
-
-    # Check for .json files (might be GeoJSON)
-    if extension == ".json":
-        if _detect_json_type(path) == FormatType.VECTOR:
-            return FormatInfo(
-                status=CloudNativeStatus.CONVERTIBLE,
-                display_name="GeoJSON",
-                target_format="GeoParquet",
-                error_message=None,
-            )
-        # .json file doesn't appear to be GeoJSON - provide clear message
-        return FormatInfo(
-            status=CloudNativeStatus.UNSUPPORTED,
-            display_name="JSON",
-            target_format=None,
-            error_message=(
-                "JSON file does not appear to be GeoJSON. "
-                "Rename to .geojson if it contains geospatial data, "
-                "or use a supported format."
-            ),
         )
 
     # Unknown format - treat as unsupported
@@ -398,15 +415,14 @@ def get_effective_status(
         return info
 
     # Check path-based preserve first (highest precedence)
-    if overrides.paths_preserve and root is not None:
-        if overrides.should_preserve(path, root=root):
-            # Override to CLOUD_NATIVE (preserve)
-            return FormatInfo(
-                status=CloudNativeStatus.CLOUD_NATIVE,
-                display_name=info.display_name,
-                target_format=None,
-                error_message=None,
-            )
+    if overrides.paths_preserve and root is not None and overrides.should_preserve(path, root=root):
+        # Override to CLOUD_NATIVE (preserve)
+        return FormatInfo(
+            status=CloudNativeStatus.CLOUD_NATIVE,
+            display_name=info.display_name,
+            target_format=None,
+            error_message=None,
+        )
 
     # Check extension-based preserve
     if overrides.should_preserve(path):
@@ -533,10 +549,9 @@ def list_layers(path: Path) -> list[str] | None:
     extension = path.suffix.lower()
 
     # Single-layer formats return None
-    if extension not in MULTILAYER_EXTENSIONS:
-        # Also check for directory-based formats
-        if not (path.is_dir() and extension == ".gdb"):
-            return None
+    # Also check for directory-based formats
+    if extension not in MULTILAYER_EXTENSIONS and not (path.is_dir() and extension == ".gdb"):
+        return None
 
     # A GeoPackage declares its own layers: gpkg_contents is spec-mandated and
     # names each table's data_type. Reading it directly returns only feature
@@ -546,7 +561,7 @@ def list_layers(path: Path) -> list[str] | None:
     if extension == ".gpkg":
         feature_layers = _gpkg_feature_layers(path)
         if feature_layers is not None:
-            return feature_layers if feature_layers else None
+            return feature_layers or None
 
     # Delegate to geoparquet-io for both GeoPackage and FileGDB
     try:
@@ -563,7 +578,7 @@ def list_layers(path: Path) -> list[str] | None:
             and not layer.startswith("fd")  # feature dataset containers
             or "_" in layer  # but keep fd1_lyr1 style names
         ]
-        return feature_layers if feature_layers else None
+        return feature_layers or None
     except Exception as e:
         logger.error("Failed to list layers in %s: %s", path, e)
         return None
@@ -652,7 +667,7 @@ def _detect_json_type(path: Path) -> FormatType:
     )
     try:
         # Read only first 8KB to avoid OOM on large files
-        with open(path, encoding="utf-8") as f:
+        with Path(path).open(encoding="utf-8") as f:
             prefix = f.read(8192)
             # STAC metadata has stac_version - NOT GeoJSON
             if "stac_version" in prefix:

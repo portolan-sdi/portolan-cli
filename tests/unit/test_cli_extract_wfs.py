@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-from portolan_cli.extract.common.report import ExtractionReport
 from portolan_cli.extract.wfs.orchestrator import (
     ExtractionOptions,
     _build_dry_run_report,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
+    from portolan_cli.extract.common.report import ExtractionReport
 
 
 def _make_capturing_fake(

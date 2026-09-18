@@ -17,9 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -171,6 +169,9 @@ from portolan_cli.sync.checksums import compute_checksum, file_fields
 from portolan_cli.viz.style import enrich_cog_assets
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from datetime import datetime
+
     from portolan_cli.versions import Version
 
 logger = logging.getLogger(__name__)
@@ -358,9 +359,8 @@ def _maybe_partition_large_file(
         or 120_000
     )
 
-    # Create partition output directory (same level as original file)
-    # Original: collection/data.parquet
-    # Partitioned: collection/kdtree_cell=001/data.parquet, etc.
+    # The partition directories sit beside the original file. A file at
+    # collection/data.parquet becomes collection/kdtree_cell=001/data.parquet.
     partition_output_dir = primary_parquet.parent
 
     # Partition the file FIRST, before any cleanup
@@ -654,10 +654,7 @@ def _update_versions(
             # For collection-level assets (Issue #250), use filename only.
             # Both backends prepend collection/ when building the href,
             # so do NOT include collection_id here to avoid doubling.
-            if is_collection_level_asset:
-                asset_key = filename
-            else:
-                asset_key = f"{item_id}/{filename}"
+            asset_key = filename if is_collection_level_asset else f"{item_id}/{filename}"
             assets[asset_key] = str(file_path)
     elif output_path is not None and checksum is not None:
         # Legacy single-file mode (backward compatibility)
@@ -874,10 +871,7 @@ def _collect_files_for_add(
     files_to_process: list[tuple[Path, str]] = []
 
     for path in paths:
-        if path.is_dir():
-            files = iter_files_with_sidecars(path)
-        else:
-            files = [path] + get_sidecars(path)
+        files = iter_files_with_sidecars(path) if path.is_dir() else [path] + get_sidecars(path)
 
         for file_path in files:
             # Resolve symlinks to track the real file
@@ -1259,7 +1253,6 @@ def add_files(
     collection_id: str | None = None,
     item_id: str | None = None,
     item_datetime: datetime | None = None,
-    verbose: bool = False,
     on_progress: Callable[[Path], None] | None = None,
     workers: int = 1,
     json_mode: bool = False,
@@ -1268,7 +1261,7 @@ def add_files(
     skip_partitioning: bool = False,
     merge_strategy: MergeStrategy = MergeStrategy.SMART,
 ) -> tuple[list[ItemInfo], list[Path], list[AddFailure]]:
-    """Add files to a Portolan catalog.
+    r"""Add files to a Portolan catalog.
 
     This is the main entry point for the `portolan add` command.
     Handles single files, directories, and sidecar auto-detection.
@@ -1300,7 +1293,6 @@ def add_files(
             (no '/', '\\', '.', or '..').
         item_datetime: Optional acquisition/creation datetime.
             If None, defaults to current time but marks item as provisional.
-        verbose: If True, return skipped files info.
         on_progress: Optional callback invoked before processing each geo file.
             Receives the file path being processed. Use for progress display.
         workers: Number of parallel workers for metadata extraction.
@@ -1308,6 +1300,10 @@ def add_files(
         json_mode: If True, suppress progress bar output.
         force: If True, bypass change detection and re-process all files.
         reconvert: If True, re-convert from source files (requires force=True).
+        skip_partitioning: If True, skip partitioning even when a file exceeds
+            the size threshold.
+        merge_strategy: How to reconcile an existing item's metadata with the
+            values this run detects. See ``MergeStrategy`` in ``stac.py``.
 
     Returns:
         Tuple of (added_items, skipped_paths, failures).
@@ -1395,7 +1391,7 @@ def _collection_aoi_bbox(collection_dir: Path) -> list[float]:
     """
     collection_json = collection_dir / "collection.json"
     if collection_json.exists():
-        with open(collection_json, encoding="utf-8") as f:
+        with Path(collection_json).open(encoding="utf-8") as f:
             bboxes = json.load(f).get("extent", {}).get("spatial", {}).get("bbox", [])
         if bboxes and isinstance(bboxes[0], list):
             return [float(v) for v in bboxes[0]]
@@ -1456,7 +1452,6 @@ def _process_deferred_non_geo_files(
                     catalog_root=catalog_root,
                     collection_id=coll_id,
                     item_id=resolved_item_id,
-                    asset_path=dest_path,
                 )
 
                 # Track for statistics recomputation
@@ -1636,7 +1631,6 @@ def _update_item_with_asset(
     catalog_root: Path,
     collection_id: str,
     item_id: str,
-    asset_path: Path,
 ) -> None:
     """Update a STAC item to include a new asset file.
 
@@ -1647,7 +1641,6 @@ def _update_item_with_asset(
         catalog_root: Root directory of the catalog.
         collection_id: Collection identifier.
         item_id: Item identifier.
-        asset_path: Path to the new asset file.
     """
     collection_dir = catalog_root / collection_id
     item_dir = collection_dir / item_id
@@ -1658,7 +1651,7 @@ def _update_item_with_asset(
         return
 
     # Load existing item
-    with open(item_json_path, encoding="utf-8") as f:
+    with Path(item_json_path).open(encoding="utf-8") as f:
         item_data = json.load(f)
 
     # Find the primary data file by checking existing assets first (Issue #190).
@@ -1668,7 +1661,7 @@ def _update_item_with_asset(
 
     # First: Check existing assets for one with "data" role
     existing_assets = item_data.get("assets", {})
-    for _asset_key, asset_info in existing_assets.items():
+    for asset_info in existing_assets.values():
         roles = asset_info.get("roles", [])
         if "data" in roles:
             # Found existing primary asset - use its href
@@ -1759,7 +1752,7 @@ def _update_collection_with_asset(
         return
 
     # Load existing collection
-    with open(collection_json_path, encoding="utf-8") as f:
+    with Path(collection_json_path).open(encoding="utf-8") as f:
         collection_data = json.load(f)
 
     # Add asset to collection

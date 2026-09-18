@@ -12,12 +12,12 @@ including :func:`strip_removed_fields`.
 
 from __future__ import annotations
 
+import contextlib
 import json
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.agents_md import visible_stac_files
 from portolan_cli.constants import LEGACY_MANAGED_FIELD, REMOVED_PORTOLAN_FIELDS
@@ -32,6 +32,9 @@ from portolan_cli.metadata.update import (
     update_item_metadata,
     update_versions_tracking,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class FixAction(Enum):
@@ -230,15 +233,15 @@ def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> lis
     # one above. The sweep runs after the loop for that reason. A user who
     # edits metadata.yaml repairs the catalog with `check --fix` and does not
     # re-run `add` over the data.
-    for catalog_path in apply_catalog_human_titles(catalog_root, dry_run=dry_run):
-        results.append(
-            FixResult(
-                file_path=catalog_path,
-                action=FixAction.UPDATED,
-                success=True,
-                message="Applied the metadata.yaml title/description",
-            )
+    results.extend(
+        FixResult(
+            file_path=catalog_path,
+            action=FixAction.UPDATED,
+            success=True,
+            message="Applied the metadata.yaml title/description",
         )
+        for catalog_path in apply_catalog_human_titles(catalog_root, dry_run=dry_run)
+    )
 
     # Backfill child/item link titles from their (now-titled) targets.
     if not dry_run:
@@ -601,7 +604,7 @@ def _fix_single_file(
                 message="Created STAC item",
             )
 
-        elif status in (MetadataStatus.STALE, MetadataStatus.BREAKING):
+        if status in (MetadataStatus.STALE, MetadataStatus.BREAKING):
             # Item.json sits next to the data file in the hierarchical layout
             # produced by `add` ({item_dir}/{item_id}.json). Per
             # only this layout is supported — the legacy flat sibling-JSON
@@ -625,10 +628,8 @@ def _fix_single_file(
 
             versions_path = collection_dir / "versions.json"
             if versions_path.exists():
-                try:
+                with contextlib.suppress(KeyError, FileNotFoundError):
                     update_versions_tracking(file_path, versions_path)
-                except (KeyError, FileNotFoundError):
-                    pass
 
             action_desc = "Updated STAC item"
             if status == MetadataStatus.BREAKING:
@@ -641,7 +642,7 @@ def _fix_single_file(
                 message=action_desc,
             )
 
-        elif status == MetadataStatus.ORPHANED:
+        if status == MetadataStatus.ORPHANED:
             return FixResult(
                 file_path=file_path,
                 action=FixAction.SKIPPED,
@@ -653,13 +654,12 @@ def _fix_single_file(
                 ),
             )
 
-        else:
-            return FixResult(
-                file_path=file_path,
-                action=FixAction.SKIPPED,
-                success=True,
-                message=f"Unknown status: {status}",
-            )
+        return FixResult(
+            file_path=file_path,
+            action=FixAction.SKIPPED,
+            success=True,
+            message=f"Unknown status: {status}",
+        )
 
     except Exception as e:
         action = FixAction.CREATED if status == MetadataStatus.MISSING else FixAction.UPDATED

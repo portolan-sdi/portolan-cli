@@ -19,8 +19,8 @@ Basic Usage:
     valid, hint = check_credentials("s3://mybucket/path")
     if not valid:
         print(hint)
-        return
 
+Return:
     # Upload a single file
     result = upload_file(
         source=Path("data.parquet"),
@@ -73,6 +73,10 @@ from portolan_cli.output import detail, error, info, success
 
 # Type alias for all supported object stores
 ObjectStore = S3Store | GCSStore | AzureStore | HTTPStore | LocalStore | MemoryStore
+
+# One upload result: the path, the error if the upload failed, and the byte
+# count.
+UploadResultFuture = Future[tuple[Path, Exception | None, int]]
 
 # =============================================================================
 # Data Classes
@@ -130,14 +134,14 @@ def parse_object_store_url(url: str) -> tuple[str, str]:
         prefix = parts[1].rstrip("/") if len(parts) > 1 else ""
         return f"s3://{bucket}", prefix
 
-    elif url.startswith("gs://"):
+    if url.startswith("gs://"):
         parts = url[5:].split("/", 1)
         bucket = parts[0]
         # Strip trailing slashes to prevent double-slash in path construction (issue #144)
         prefix = parts[1].rstrip("/") if len(parts) > 1 else ""
         return f"gs://{bucket}", prefix
 
-    elif url.startswith("az://"):
+    if url.startswith("az://"):
         # Azure: az://account/container/path
         parts = url[5:].split("/", 2)
         if len(parts) < 2:
@@ -147,12 +151,11 @@ def parse_object_store_url(url: str) -> tuple[str, str]:
         prefix = parts[2].rstrip("/") if len(parts) > 2 else ""
         return f"az://{account}/{container}", prefix
 
-    elif url.startswith(("https://", "http://")):
+    if url.startswith(("https://", "http://")):
         # HTTP stores - return as-is
         return url, ""
 
-    else:
-        raise ValueError(f"Unsupported URL scheme: {url}")
+    raise ValueError(f"Unsupported URL scheme: {url}")
 
 
 # =============================================================================
@@ -261,19 +264,18 @@ def _check_s3_credentials(profile: str | None = None) -> tuple[bool, str]:
         access_key, secret_key, _, _ = _load_aws_credentials_from_profile(profile)
         if access_key and secret_key:
             return True, ""
-        else:
-            hints = []
-            hints.append(f"AWS profile '{profile}' not found or incomplete.")
-            hints.append("")
-            hints.append("Ensure your ~/.aws/credentials file has this profile:")
-            hints.append(f"  [{profile}]")
-            hints.append("  aws_access_key_id = YOUR_ACCESS_KEY")
-            hints.append("  aws_secret_access_key = YOUR_SECRET_KEY")
-            hints.append("")
-            hints.append("Or use environment variables instead:")
-            hints.append("  export AWS_ACCESS_KEY_ID=your_access_key")
-            hints.append("  export AWS_SECRET_ACCESS_KEY=your_secret_key")
-            return False, "\n".join(hints)
+        hints = []
+        hints.append(f"AWS profile '{profile}' not found or incomplete.")
+        hints.append("")
+        hints.append("Ensure your ~/.aws/credentials file has this profile:")
+        hints.append(f"  [{profile}]")
+        hints.append("  aws_access_key_id = YOUR_ACCESS_KEY")
+        hints.append("  aws_secret_access_key = YOUR_SECRET_KEY")
+        hints.append("")
+        hints.append("Or use environment variables instead:")
+        hints.append("  export AWS_ACCESS_KEY_ID=your_access_key")
+        hints.append("  export AWS_SECRET_ACCESS_KEY=your_secret_key")
+        return False, "\n".join(hints)
 
     # Check environment variables first
     access_key = os.environ.get("AWS_ACCESS_KEY_ID")
@@ -314,14 +316,14 @@ def _check_gcs_credentials() -> tuple[bool, str]:
     """
     # Check for application default credentials file
     gcloud_creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if gcloud_creds and os.path.exists(gcloud_creds):
+    if gcloud_creds and Path(gcloud_creds).exists():
         return True, ""
 
     # Check for service account path (alias)
     sa_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT") or os.environ.get(
         "GOOGLE_SERVICE_ACCOUNT_PATH"
     )
-    if sa_path and os.path.exists(sa_path):
+    if sa_path and Path(sa_path).exists():
         return True, ""
 
     # Check for inline service account key JSON
@@ -377,7 +379,7 @@ def _check_azure_credentials() -> tuple[bool, str]:
 
     # Check for federated token (workload identity)
     federated_token = os.environ.get("AZURE_FEDERATED_TOKEN_FILE")
-    if federated_token and os.path.exists(federated_token):
+    if federated_token and Path(federated_token).exists():
         return True, ""
 
     hints = []
@@ -407,13 +409,12 @@ def check_credentials(destination: str, profile: str | None = None) -> tuple[boo
     """
     if destination.startswith("s3://"):
         return _check_s3_credentials(profile)
-    elif destination.startswith("gs://"):
+    if destination.startswith("gs://"):
         return _check_gcs_credentials()
-    elif destination.startswith("az://"):
+    if destination.startswith("az://"):
         return _check_azure_credentials()
-    else:
-        # HTTP or other - assume ok
-        return True, ""
+    # HTTP or other - assume ok
+    return True, ""
 
 
 # =============================================================================
@@ -642,9 +643,8 @@ def _get_target_key(source: Path, prefix: str, is_dir_destination: bool) -> str:
     if is_dir_destination:
         # Destination is a directory, append filename
         return f"{prefix}/{source.name}".strip("/")
-    else:
-        # Destination is the exact key
-        return prefix.strip("/")
+    # Destination is the exact key
+    return prefix.strip("/")
 
 
 # =============================================================================
@@ -799,10 +799,7 @@ def _find_files_to_upload(source: Path, pattern: str | None) -> list[Path]:
     Returns:
         List of file paths to upload
     """
-    if pattern:
-        files = list(source.rglob(pattern))
-    else:
-        files = list(source.rglob("*"))
+    files = list(source.rglob(pattern)) if pattern else list(source.rglob("*"))
     return [f for f in files if f.is_file()]
 
 
@@ -847,9 +844,6 @@ def _execute_parallel_uploads(
         List of (file_path, error_or_none, bytes_uploaded) tuples
     """
     results: list[tuple[Path, Exception | None, int]] = []
-
-    # Type alias for upload result future
-    UploadResultFuture = Future[tuple[Path, Exception | None, int]]
 
     if fail_fast:
         # For fail_fast mode, submit futures incrementally to ensure we can stop

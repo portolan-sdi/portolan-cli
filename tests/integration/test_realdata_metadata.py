@@ -6,11 +6,16 @@ production data. They do NOT test geometry validity (upstream's job).
 See context/shared/documentation/test-fixtures.md for fixture details.
 """
 
-from pathlib import Path
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestAntimeridian:

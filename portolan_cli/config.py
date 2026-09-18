@@ -27,10 +27,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # Sensitive settings that must NOT be stored in config.yaml (Issue #356)
 # These get pushed to remote storage and would expose credentials/infra details.
@@ -345,6 +347,89 @@ def _get_env_var_name(key: str) -> str:
     return f"PORTOLAN_{normalized.upper()}"
 
 
+def _env_setting(key: str) -> str | None:
+    """Read a setting from the environment, through the key or an alias.
+
+    An empty string counts as unset.
+
+    Args:
+        key: Setting key, such as "remote" or "aws_profile".
+
+    Returns:
+        The non-empty environment value, or None.
+    """
+    env_value = os.environ.get(_get_env_var_name(key))
+    if env_value:
+        return env_value
+    # An alias gives a second name. "aws_profile" aliases to "profile", so
+    # PORTOLAN_PROFILE also sets it.
+    for alias in SETTING_ALIASES.get(key, []):
+        alias_value = os.environ.get(_get_env_var_name(alias))
+        if alias_value:
+            return alias_value
+    return None
+
+
+def _get_nested(cfg: dict[str, Any], key: str) -> Any | None:
+    """Walk a nested config dict for a dotted key such as "pmtiles.src_crs".
+
+    Args:
+        cfg: Config dict to read.
+        key: Dotted key.
+
+    Returns:
+        The value at that path, or None when any part is missing.
+    """
+    current: Any = cfg
+    for part in key.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def _get_with_aliases(cfg: dict[str, Any], key: str) -> Any | None:
+    """Read a key from a config dict, through the key, a dotted path, or an alias.
+
+    Args:
+        cfg: Config dict to read.
+        key: Setting key.
+
+    Returns:
+        The value, or None when the key and every alias are absent.
+    """
+    if key in cfg:
+        return cfg[key]
+    if "." in key:
+        nested_val = _get_nested(cfg, key)
+        if nested_val is not None:
+            return nested_val
+    for alias in SETTING_ALIASES.get(key, []):
+        if alias in cfg:
+            return cfg[alias]
+    return None
+
+
+def _check_sensitive_in_config(cfg: dict[str, Any], key: str) -> None:
+    """Reject a sensitive setting that a config file holds.
+
+    Args:
+        cfg: Config dict to check.
+        key: Setting key.
+
+    Raises:
+        ValueError: If the key or an alias names a sensitive setting in the file.
+    """
+    if key in SENSITIVE_SETTINGS and (
+        key in cfg or any(a in cfg for a in SETTING_ALIASES.get(key, []))
+    ):
+        env_var_name = _get_env_var_name(key)
+        raise ValueError(
+            f"'{key}' found in config.yaml but sensitive settings cannot be read from "
+            f"config files. Use environment variable {env_var_name} or .env file."
+        )
+
+
 def get_setting(
     key: str,
     cli_value: Any | None = None,
@@ -377,57 +462,13 @@ def get_setting(
         return cli_value
 
     # 2. Environment variable (skip empty strings)
-    # Check primary env var and alias-derived env vars
-    env_var = _get_env_var_name(key)
-    env_value = os.environ.get(env_var)
-    if env_value:  # Non-empty string
+    env_value = _env_setting(key)
+    if env_value is not None:
         return env_value
-    # Check aliases (e.g., aws_profile aliases to profile, so check PORTOLAN_PROFILE)
-    for alias in SETTING_ALIASES.get(key, []):
-        alias_env_var = _get_env_var_name(alias)
-        alias_env_value = os.environ.get(alias_env_var)
-        if alias_env_value:
-            return alias_env_value
 
     # If no catalog path, can't check file-based config
     if catalog_path is None:
         return None
-
-    # Helper to traverse nested dicts for dotted keys like "pmtiles.src_crs"
-    def _get_nested(cfg: dict[str, Any], k: str) -> Any | None:
-        parts = k.split(".")
-        current: Any = cfg
-        for part in parts:
-            if not isinstance(current, dict) or part not in current:
-                return None
-            current = current[part]
-        return current
-
-    # Helper to check key and its aliases in a config dict
-    def _get_with_aliases(cfg: dict[str, Any], k: str) -> Any | None:
-        # Try direct key lookup first (flat key)
-        if k in cfg:
-            return cfg[k]
-        # Try nested traversal for dotted keys
-        if "." in k:
-            nested_val = _get_nested(cfg, k)
-            if nested_val is not None:
-                return nested_val
-        # Check aliases (e.g., aws_profile -> profile)
-        for alias in SETTING_ALIASES.get(k, []):
-            if alias in cfg:
-                return cfg[alias]
-        return None
-
-    # Helper to check if sensitive key exists in config and raise error
-    def _check_sensitive_in_config(cfg: dict[str, Any], k: str) -> None:
-        if k in SENSITIVE_SETTINGS:
-            if k in cfg or any(a in cfg for a in SETTING_ALIASES.get(k, [])):
-                env_var_name = _get_env_var_name(k)
-                raise ValueError(
-                    f"'{k}' found in config.yaml but sensitive settings cannot be read from "
-                    f"config files. Use environment variable {env_var_name} or .env file."
-                )
 
     # 3. Hierarchical .portolan/ config
     if collection_path is not None:
@@ -836,11 +877,10 @@ def load_merged_config(
                     if isinstance(legacy_config, dict):
                         # Merge: hierarchy config overrides legacy
                         # First apply legacy, then hierarchy on top
-                        result: dict[str, Any] = {}
                         # Start with root-level settings (excluding collections:)
-                        for key, value in root_config.items():
-                            if key != "collections":
-                                result[key] = value
+                        result: dict[str, Any] = {
+                            key: value for key, value in root_config.items() if key != "collections"
+                        }
                         # Apply legacy collection config
                         result = _deep_merge(result, legacy_config)
                         # Apply hierarchical folder configs (takes precedence)
@@ -957,20 +997,19 @@ def check_sensitive_settings_in_config(catalog_path: Path) -> list[str]:
         List of sensitive setting names found in config.yaml.
     """
     config = load_config(catalog_path)
-    found = []
 
     # Check top-level sensitive settings
-    for key in SENSITIVE_SETTINGS:
-        if key in config:
-            found.append(key)
+    found = [key for key in SENSITIVE_SETTINGS if key in config]
 
     # Check collection-level sensitive settings
     collections = config.get("collections", {})
     for collection_name, collection_conf in collections.items():
         if isinstance(collection_conf, dict):
-            for key in SENSITIVE_SETTINGS:
-                if key in collection_conf:
-                    found.append(f"collections.{collection_name}.{key}")
+            found.extend(
+                f"collections.{collection_name}.{key}"
+                for key in SENSITIVE_SETTINGS
+                if key in collection_conf
+            )
 
     return found
 

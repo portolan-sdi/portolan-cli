@@ -7,8 +7,7 @@ the --workers flag for catalog-wide pull operations.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,6 +16,9 @@ from portolan_cli.sync.pull import (
     PullResult,
     pull_all_collections,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # Mark all tests in this module as unit tests
 pytestmark = pytest.mark.unit

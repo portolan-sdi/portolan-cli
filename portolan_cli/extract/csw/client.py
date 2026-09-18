@@ -74,7 +74,7 @@ def detect_metadata_url_type(url: str) -> str:
         return "xml"
 
     # HTML page
-    if url_lower.endswith(".html") or url_lower.endswith(".htm"):
+    if url_lower.endswith((".html", ".htm")):
         return "html"
 
     # GeoNetwork REST API

@@ -8,12 +8,15 @@ way ``apply_human_titles`` already does for a collection.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 import yaml
 
 from portolan_cli.catalog import apply_catalog_human_titles
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _catalog(root: Path, **overrides: object) -> None:

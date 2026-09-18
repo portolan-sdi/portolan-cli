@@ -7,12 +7,14 @@ Extracts bbox, CRS, dimensions, bands, and resolution.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 import rasterio
 
 from portolan_cli.models.schema import BandSchema, SchemaModel
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass
@@ -121,10 +123,7 @@ def extract_cog_metadata(path: Path) -> COGMetadata:
         crs = None
         if src.crs:
             epsg = src.crs.to_epsg()
-            if epsg:
-                crs = f"EPSG:{epsg}"
-            else:
-                crs = src.crs.to_wkt()
+            crs = f"EPSG:{epsg}" if epsg else src.crs.to_wkt()
 
         # Extract bbox from bounds
         bbox = (
@@ -139,7 +138,7 @@ def extract_cog_metadata(path: Path) -> COGMetadata:
 
         # Extract per-band nodata values
         # src.nodatavals returns a tuple with one value per band
-        nodatavals = src.nodatavals if src.nodatavals else None
+        nodatavals = src.nodatavals or None
 
         # Extract affine transform as GDAL GeoTransform format
         # GDAL format: (origin_x, pixel_width, rotation_x, origin_y, rotation_y, pixel_height)
@@ -216,15 +215,12 @@ def extract_schema_from_cog(
         # Extract CRS as schema-level spatial metadata
         if src.crs:
             epsg = src.crs.to_epsg()
-            if epsg:
-                crs_value = f"EPSG:{epsg}"
-            else:
-                crs_value = src.crs.to_wkt()
+            crs_value = f"EPSG:{epsg}" if epsg else src.crs.to_wkt()
         else:
             warnings.append("Raster has no CRS defined. Consider adding CRS metadata.")
 
         # Get per-band nodata values (fallback to uniform nodata if not available)
-        nodatavals = src.nodatavals if src.nodatavals else None
+        nodatavals = src.nodatavals or None
 
         # Build BandSchema for each band
         bands: list[BandSchema] = []

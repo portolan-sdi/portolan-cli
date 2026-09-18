@@ -9,7 +9,7 @@ Tests for:
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -27,6 +27,9 @@ from portolan_cli.models.collection import (
     TemporalExtent,
 )
 from portolan_cli.models.item import AssetModel, ItemModel
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestValidateCollectionExtent:

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import shutil
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -26,6 +26,9 @@ from portolan_cli.add import (
     list_items,
 )
 from portolan_cli.formats import FormatType
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture

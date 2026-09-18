@@ -9,9 +9,12 @@ Used by both WFS and ArcGIS extraction backends to populate collection-level
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from portolan_cli.stac import is_technical_name as _is_technical_name
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _select_best_description(
@@ -41,10 +44,9 @@ def _select_best_description(
         return title
 
     # If title is better than abstract (even if both are technical), prefer title
-    if title and (not abstract or _is_technical_name(abstract)):
-        # Title with spaces/dashes is better than underscore-only abstract
-        if " " in title or "-" in title:
-            return title
+    # Title with spaces/dashes is better than underscore-only abstract
+    if title and (not abstract or _is_technical_name(abstract)) and (" " in title or "-" in title):
+        return title
 
     return abstract
 

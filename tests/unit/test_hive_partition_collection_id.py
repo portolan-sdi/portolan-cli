@@ -9,10 +9,13 @@ The fix: strip any `key=value/` path segments when inferring collection ID.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from portolan_cli.scan.core import _infer_collection_id_from_relative_path
 from portolan_cli.scan.detect import is_hive_partition_dir
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestIsHivePartitionDir:
@@ -224,7 +227,6 @@ class TestDeriveItemIdHivePartitions:
         This is the common case for kdtree partitioning and should work as before.
         """
         from portolan_cli.add import _derive_item_id_and_asset_level
-        from portolan_cli.formats import FormatType
 
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir()
@@ -237,7 +239,6 @@ class TestDeriveItemIdHivePartitions:
             path=parquet_file,
             collection_dir=collection_dir,
             item_id=None,
-            format_type=FormatType.VECTOR,
         )
 
         # Single-level partition: use parent dir name, NOT collection-level
@@ -251,7 +252,6 @@ class TestDeriveItemIdHivePartitions:
         must NOT both get item_id="month=01" (that would be a duplicate).
         """
         from portolan_cli.add import _derive_item_id_and_asset_level
-        from portolan_cli.formats import FormatType
 
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir()
@@ -271,14 +271,12 @@ class TestDeriveItemIdHivePartitions:
             path=file1,
             collection_dir=collection_dir,
             item_id=None,
-            format_type=FormatType.VECTOR,
         )
 
         item_id_2, is_coll_2 = _derive_item_id_and_asset_level(
             path=file2,
             collection_dir=collection_dir,
             item_id=None,
-            format_type=FormatType.VECTOR,
         )
 
         # Both should be item-level (not collection-level)
@@ -335,7 +333,6 @@ class TestDeriveItemIdHivePartitions:
             path=data_file,
             collection_dir=collection_dir,
             item_id=None,
-            format_type=None,  # Unknown format
         )
 
         # Single-level partition: uses parent dir name
@@ -345,7 +342,6 @@ class TestDeriveItemIdHivePartitions:
     def test_explicit_item_id_overrides_hive_logic(self, tmp_path: Path) -> None:
         """Explicit item_id takes precedence over Hive partition detection."""
         from portolan_cli.add import _derive_item_id_and_asset_level
-        from portolan_cli.formats import FormatType
 
         collection_dir = tmp_path / "collection"
         partition_dir = collection_dir / "year=2023"
@@ -357,7 +353,6 @@ class TestDeriveItemIdHivePartitions:
             path=data_file,
             collection_dir=collection_dir,
             item_id="explicit-id",  # User-provided
-            format_type=FormatType.VECTOR,
         )
 
         # Explicit ID used regardless of Hive detection
@@ -367,7 +362,6 @@ class TestDeriveItemIdHivePartitions:
     def test_non_hive_path_unchanged(self, tmp_path: Path) -> None:
         """Paths without Hive partitions work as before."""
         from portolan_cli.add import _derive_item_id_and_asset_level
-        from portolan_cli.formats import FormatType
 
         collection_dir = tmp_path / "collection"
         item_dir = collection_dir / "my_item"
@@ -379,7 +373,6 @@ class TestDeriveItemIdHivePartitions:
             path=data_file,
             collection_dir=collection_dir,
             item_id=None,
-            format_type=FormatType.VECTOR,
         )
 
         # Regular directory structure unchanged

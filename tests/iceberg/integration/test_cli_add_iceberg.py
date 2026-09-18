@@ -4,6 +4,8 @@ Tests the full CLI pipeline: add_cmd -> add_files -> finalize_items ->
 IcebergBackend.publish(), using SQLite + local filesystem.
 """
 
+from __future__ import annotations
+
 import json
 
 import pytest

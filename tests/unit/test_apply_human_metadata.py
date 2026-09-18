@@ -8,13 +8,16 @@ the collection still lacks.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 import yaml
 
 from portolan_cli.finalization import apply_human_metadata
 from portolan_cli.stac import DEFAULT_LICENSE, create_collection
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

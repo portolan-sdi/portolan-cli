@@ -93,6 +93,7 @@ def format_args(ids: list[str]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the ignore-list check from the command line."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--path",
@@ -108,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        today = datetime.date.today()
+        today = datetime.datetime.now(datetime.timezone.utc).date()
         if args.json:
             active = [e for e in parse_entries(args.path) if today <= e.expires]
             payload = [

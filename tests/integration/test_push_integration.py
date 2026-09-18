@@ -11,13 +11,16 @@ These tests verify:
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from click.testing import CliRunner
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture
@@ -1815,7 +1818,7 @@ class TestPushAssetDiffingIntegration:
         async def mock_put(store, path, data, **kwargs):
             """Mock put that accepts any keyword arguments."""
             uploaded_assets.append(path)
-            return None
+            return
 
         with patch(
             "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock

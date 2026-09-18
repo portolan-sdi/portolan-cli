@@ -26,8 +26,7 @@ import json
 import logging
 import shutil
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.constants import ROLE_VISUAL
 from portolan_cli.errors import PortolanError
@@ -51,6 +50,9 @@ from portolan_cli.viz.thumbnail import (
     get_thumbnail_config,
     thumbnail_path_for,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -157,11 +159,11 @@ def check_pmtiles_available() -> None:
             create_pmtiles,
         )
     except ImportError as e:
-        raise PMTilesNotAvailableError() from e
+        raise PMTilesNotAvailableError from e
 
     # Check for tippecanoe
     if shutil.which("tippecanoe") is None:
-        raise TippecanoeNotFoundError()
+        raise TippecanoeNotFoundError
 
 
 def _find_geoparquet_assets(collection_path: Path) -> list[tuple[str, Path]]:
@@ -201,8 +203,7 @@ def _find_geoparquet_assets(collection_path: Path) -> list[tuple[str, Path]]:
 
         if is_geoparquet:
             # Resolve href relative to collection
-            if href.startswith("./"):
-                href = href[2:]
+            href = href.removeprefix("./")
             asset_path = collection_path / href
             if asset_path.exists():
                 geoparquet_assets.append((key, asset_path))
@@ -571,9 +572,7 @@ def add_pmtiles_link_to_collection(
         write_json_atomic(collection_json_path, data)
 
 
-def _backfill_skipped_assets(
-    collection_path: Path, asset_key: str, pmtiles_path: Path, catalog_root: Path
-) -> None:
+def _backfill_skipped_assets(collection_path: Path, pmtiles_path: Path, catalog_root: Path) -> None:
     """Track an up-to-date PMTiles and its thumbnail if not already tracked.
 
     Runs on the skip path to heal catalogs whose artifacts were generated before
@@ -724,7 +723,7 @@ def generate_pmtiles_for_collection(
             pmtiles_href = f"./{pmtiles_path.name}"
 
         # Determine layer name (Issue #13)
-        layer_name = layer if layer else parquet_path.stem
+        layer_name = layer or parquet_path.stem
 
         # Compute collection-relative PMTiles path for style source URLs
         try:
@@ -747,7 +746,7 @@ def generate_pmtiles_for_collection(
             )
             # Backfill versions.json for artifacts generated before this tracking
             # existed (the original #519 bug state), idempotently.
-            _backfill_skipped_assets(collection_path, asset_key, pmtiles_path, catalog_root)
+            _backfill_skipped_assets(collection_path, pmtiles_path, catalog_root)
             result.skipped.append(pmtiles_path)
             continue
 

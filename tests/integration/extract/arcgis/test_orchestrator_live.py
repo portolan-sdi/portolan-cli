@@ -8,7 +8,7 @@ Run with: uv run pytest tests/integration/extract/arcgis/ -m network
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 import pytest
@@ -20,7 +20,11 @@ from portolan_cli.extract.arcgis.orchestrator import (
     extract_arcgis_catalog,
     list_services,
 )
-from portolan_cli.extract.common.progress import ExtractionProgress
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from portolan_cli.extract.common.progress import ExtractionProgress
 
 # Philadelphia's public ArcGIS services (stable, open data)
 # See: https://services.arcgis.com/fLeGjb7u4uXqeF9q/ArcGIS/rest/services

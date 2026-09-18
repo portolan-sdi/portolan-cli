@@ -63,7 +63,7 @@ def _read_sidecar_meta(path: Path) -> dict[str, Any]:
     """
     meta_path = path.with_suffix(path.suffix + ".meta.json")
     if meta_path.exists():
-        with open(meta_path, encoding="utf-8") as f:
+        with Path(meta_path).open(encoding="utf-8") as f:
             result: dict[str, Any] = json.load(f)
             return result
     return {}
@@ -85,7 +85,7 @@ def import_schema_json(path: Path) -> SchemaModel:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
-    with open(path, encoding="utf-8") as f:
+    with Path(path).open(encoding="utf-8") as f:
         data = json.load(f)
 
     return SchemaModel.from_dict(data)
@@ -130,7 +130,7 @@ def import_schema_csv(
 
     columns: list[ColumnSchema | BandSchema | dict[str, Any]] = []
 
-    with open(path, newline="", encoding="utf-8") as f:
+    with Path(path).open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row_num, row in enumerate(reader, start=2):  # start=2 for 1-indexed + header
             try:

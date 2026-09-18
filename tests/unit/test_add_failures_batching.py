@@ -37,9 +37,11 @@ def capture_batched_output(failures: list[AddFailure]) -> str:
 
     lines: list[str] = []
 
-    with patch("portolan_cli.cli.error", side_effect=lambda m: lines.append(m)):
-        with patch("portolan_cli.cli.detail", side_effect=lambda m: lines.append(m)):
-            _print_add_failures_batched(failures)
+    with (
+        patch("portolan_cli.cli.error", side_effect=lambda m: lines.append(m)),
+        patch("portolan_cli.cli.detail", side_effect=lambda m: lines.append(m)),
+    ):
+        _print_add_failures_batched(failures)
 
     return "\n".join(lines)
 

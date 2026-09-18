@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
+
+if TYPE_CHECKING:
+    from portolan_cli.extract.arcgis.auth import ArcGISCredentials
 
 
 @pytest.mark.unit
@@ -99,7 +104,6 @@ def test_list_services_threads_no_recurse_and_token(monkeypatch: pytest.MonkeyPa
 @pytest.mark.unit
 def test_password_resolved_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """--username with ARCGIS_PASSWORD env (no --password on argv) reaches resolve_token."""
-    from portolan_cli.extract.arcgis.auth import ArcGISCredentials
     from portolan_cli.extract.arcgis.discovery import ServiceInfo
     from portolan_cli.extract.arcgis.orchestrator import ServicesRootDiscoveryResult
 

@@ -7,6 +7,8 @@ Tests parsing of Mapbox GL styles for thumbnail rendering, including:
 - Edge cases (missing fields, no fill layer, etc.)
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import pytest

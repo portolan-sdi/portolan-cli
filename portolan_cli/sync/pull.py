@@ -25,6 +25,7 @@ Async Migration (Wave 2A):
 from __future__ import annotations
 
 import asyncio
+import logging
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,6 +49,8 @@ from portolan_cli.versions import (
     read_versions,
     write_versions,
 )
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from obstore.store import (
@@ -73,8 +76,6 @@ DEFAULT_CONCURRENCY = get_default_concurrency()
 
 class PullError(Exception):
     """Base exception for pull operations."""
-
-    pass
 
 
 # =============================================================================
@@ -213,11 +214,14 @@ def detect_uncommitted_changes(
         # Fast path: check mtime and size first
         # Only works if we have recorded mtime; otherwise fall through to checksum
         stat = local_path.stat()
-        if asset.mtime is not None:
-            # Compare with small tolerance for floating point mtime
-            if abs(stat.st_mtime - asset.mtime) < 0.001 and stat.st_size == asset.size_bytes:
-                # Fast path: mtime and size match, file unchanged
-                continue
+        # Compare with small tolerance for floating point mtime
+        if (
+            asset.mtime is not None
+            and abs(stat.st_mtime - asset.mtime) < 0.001
+            and stat.st_size == asset.size_bytes
+        ):
+            # Fast path: mtime and size match, file unchanged
+            continue
 
         # Slow path: compute checksum (either mtime not recorded or mtime/size changed)
         actual_checksum = compute_checksum(local_path)
@@ -334,9 +338,7 @@ def diff_versions(
     # - Files with different checksums
     files_to_download = []
     for name, remote_asset in remote_assets.items():
-        if name not in local_assets:
-            files_to_download.append(name)
-        elif local_assets[name] != remote_asset["sha256"]:
+        if name not in local_assets or local_assets[name] != remote_asset["sha256"]:
             files_to_download.append(name)
 
     return VersionDiff(
@@ -796,10 +798,7 @@ async def _download_assets_async(
 
             # Construct remote_key by joining prefix and href
             # Strip leading/trailing slashes for proper normalization
-            if prefix:
-                remote_key = f"{prefix.strip('/')}/{href.lstrip('/')}"
-            else:
-                remote_key = href.lstrip("/")
+            remote_key = f"{prefix.strip('/')}/{href.lstrip('/')}" if prefix else href.lstrip("/")
 
             async with semaphore:
                 # Check circuit breaker AFTER acquiring semaphore (execution time, not scheduling time)
@@ -909,7 +908,6 @@ async def _populate_missing_file_sizes(
     Returns:
         Number of file sizes populated.
     """
-
     collection_dir = local_root / collection
     collection_json = collection_dir / "collection.json"
 
@@ -961,8 +959,9 @@ async def _enrich_file_sizes_safe(
         )
         if sizes_populated > 0 and verbose:
             detail(f"Populated file:size for {sizes_populated} asset(s)")
-    except Exception:  # noqa: BLE001 # nosec B110 - Non-fatal: file sizes are nice-to-have
-        pass
+    except Exception:
+        # File sizes are optional. Record why the enrichment stopped.
+        logger.debug("Could not populate file:size for %s", collection, exc_info=True)
 
 
 async def _process_stac_file_sizes(
@@ -1272,6 +1271,65 @@ def pull(
 # =============================================================================
 
 
+def _report_one_pull_result(
+    result: object,
+    coll: str,
+    index: int,
+    total: int,
+    collection_errors: dict[str, list[str]],
+) -> int | None:
+    """Print the outcome of one collection pull and record any errors.
+
+    Args:
+        result: One entry from asyncio.gather. It is an exception, or a tuple of
+            (collection, PullResult or None, error message or None).
+        coll: Collection name the entry belongs to.
+        index: Zero-based position of the entry.
+        total: Number of collections in the run.
+        collection_errors: Error map. The function adds a key on a failure.
+
+    Returns:
+        The number of files downloaded, or None when the pull failed.
+    """
+    prefix = f"[{index + 1}/{total}]"
+
+    if isinstance(result, BaseException):
+        error(f"{prefix} Failed {coll}: {result}")
+        collection_errors[coll] = [str(result)]
+        return None
+
+    if not isinstance(result, tuple):
+        error(f"{prefix} Failed {coll}: Unknown error")
+        collection_errors[coll] = ["Unknown error"]
+        return None
+
+    coll, pull_result, err_msg = result
+    if err_msg:
+        error(f"{prefix} Failed {coll}: {err_msg}")
+        collection_errors[coll] = [err_msg]
+        return None
+
+    if pull_result is None:
+        error(f"{prefix} Failed {coll}: Unknown error")
+        collection_errors[coll] = ["Unknown error"]
+        return None
+
+    if pull_result.success:
+        if pull_result.up_to_date:
+            success(f"{prefix} {coll}: Already up to date")
+        else:
+            success(f"{prefix} Pulled {coll}: {pull_result.files_downloaded} file(s)")
+        return int(pull_result.files_downloaded)
+
+    if pull_result.uncommitted_changes:
+        errors_list = [f"Uncommitted changes: {', '.join(pull_result.uncommitted_changes)}"]
+    else:
+        errors_list = ["Pull failed"]
+    error(f"{prefix} Failed {coll}: {', '.join(errors_list)}")
+    collection_errors[coll] = errors_list
+    return None
+
+
 async def pull_all_collections_async(
     remote_url: str,
     local_root: Path,
@@ -1383,42 +1441,13 @@ async def pull_all_collections_async(
     tasks = [pull_one(coll) for coll in collections]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Process results
     for i, result in enumerate(results):
-        if isinstance(result, BaseException):
-            coll = collections[i]
-            error(f"[{i + 1}/{total}] Failed {coll}: {result}")
+        files = _report_one_pull_result(result, collections[i], i, total, collection_errors)
+        if files is None:
             failed += 1
-            collection_errors[coll] = [str(result)]
-        elif isinstance(result, tuple):
-            coll, pull_result, err_msg = result
-            if err_msg:
-                error(f"[{i + 1}/{total}] Failed {coll}: {err_msg}")
-                failed += 1
-                collection_errors[coll] = [err_msg]
-            elif pull_result and pull_result.success:
-                files = pull_result.files_downloaded
-                if pull_result.up_to_date:
-                    success(f"[{i + 1}/{total}] {coll}: Already up to date")
-                else:
-                    success(f"[{i + 1}/{total}] Pulled {coll}: {files} file(s)")
-                successful += 1
-                total_files += files
-            elif pull_result:
-                errors_list = []
-                if pull_result.uncommitted_changes:
-                    errors_list.append(
-                        f"Uncommitted changes: {', '.join(pull_result.uncommitted_changes)}"
-                    )
-                else:
-                    errors_list.append("Pull failed")
-                error(f"[{i + 1}/{total}] Failed {coll}: {', '.join(errors_list)}")
-                failed += 1
-                collection_errors[coll] = errors_list
-            else:
-                error(f"[{i + 1}/{total}] Failed {coll}: Unknown error")
-                failed += 1
-                collection_errors[coll] = ["Unknown error"]
+        else:
+            successful += 1
+            total_files += files
 
     # Summary report
     with output_section():

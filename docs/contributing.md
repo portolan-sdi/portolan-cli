@@ -106,8 +106,7 @@ job. That single job covers:
 - **mypy** — type checking (strict)
 - **import-linter** — architecture contracts
 - **codespell** — spelling
-- **vulture** / **xenon** / **pylint** — dead code, complexity, duplication
-- **bandit** — security scanning
+- **vulture** / **jscpd** — dead code, duplication
 - **deptry** — dependency hygiene
 - **actionlint** / **zizmor** — GitHub Actions workflow linting + supply-chain audit
 

@@ -1,5 +1,7 @@
 """Tests for IcebergBackend implementation."""
 
+from __future__ import annotations
+
 import sys
 
 import pyarrow as pa

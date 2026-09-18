@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 from pathlib import Path
@@ -66,7 +67,7 @@ def compute_checksum(path: Path) -> str:
         raise ValueError(f"Not a regular file: {path} (resolves to {resolved})")
 
     sha256 = hashlib.sha256()
-    with open(resolved, "rb") as f:
+    with Path(resolved).open("rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
             sha256.update(chunk)
     return sha256.hexdigest()
@@ -189,10 +190,8 @@ def compute_dir_size(path: Path) -> int:
     try:
         for fpath in resolved.rglob("*"):
             if fpath.is_file():
-                try:
+                with contextlib.suppress(OSError):
                     total_size += fpath.stat().st_size
-                except OSError:
-                    pass
     except OSError as exc:
         raise ValueError(f"Cannot read directory contents: {path}") from exc
 

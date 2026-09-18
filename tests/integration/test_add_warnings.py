@@ -7,7 +7,7 @@ data based on their cloud-native status per spec 002-cloud-native-warnings.
 from __future__ import annotations
 
 import io
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -16,6 +16,9 @@ from portolan_cli.formats import (
     CloudNativeStatus,
     get_cloud_native_status,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestCloudNativeNoWarnings:

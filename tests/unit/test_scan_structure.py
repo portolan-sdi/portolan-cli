@@ -52,7 +52,7 @@ class TestValidNestedStructure:
 
         # Check for structure-related issues
         structure_issues = [
-            i for i in result.issues if i.issue_type in (IssueType.MIXED_FLAT_MULTIITEM,)
+            i for i in result.issues if i.issue_type == IssueType.MIXED_FLAT_MULTIITEM
         ]
         # Should have no structural issues - data is only at leaf directories
         assert len(structure_issues) == 0

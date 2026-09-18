@@ -316,15 +316,19 @@ class TestCsvGeometryDetection:
         empty_csv.write_text("")
 
         with caplog.at_level(logging.WARNING):
-            try:
-                added, skipped, failures = add_files(
-                    paths=[empty_csv],
-                    catalog_root=initialized_catalog,
-                    collection_id="collection",
-                )
-            except Exception:
-                # If it errors, that's also acceptable for empty files
-                pass
+            added, skipped, failures = add_files(
+                paths=[empty_csv],
+                catalog_root=initialized_catalog,
+                collection_id="collection",
+            )
+
+        # An empty CSV carries no geometry, so the default configuration
+        # reports it as a failure instead of raising.
+        assert added == []
+        assert skipped == []
+        assert len(failures) == 1
+        assert failures[0].path == empty_csv
+        assert "Tabular data support is disabled" in failures[0].error
 
     @pytest.mark.unit
     def test_csv_with_wkt_geometry_is_processed(
@@ -928,7 +932,6 @@ class TestCopyNonGeoToItemDir:
     @pytest.mark.unit
     def test_preserves_file_metadata(self, tmp_path: Path) -> None:
         """_copy_non_geo_to_item_dir should preserve file metadata (uses copy2)."""
-        import os
         import time
 
         # Create source file with specific content
@@ -938,7 +941,7 @@ class TestCopyNonGeoToItemDir:
         source_file.write_text("name,value\ntest,100\n")
 
         # Get original mtime
-        original_mtime = os.path.getmtime(source_file)
+        original_mtime = Path(source_file).stat().st_mtime
 
         # Wait a bit to ensure time difference
         time.sleep(0.1)
@@ -951,7 +954,7 @@ class TestCopyNonGeoToItemDir:
         result = _copy_non_geo_to_item_dir(source_file, item_dir)
 
         # mtime should be preserved (within tolerance)
-        copied_mtime = os.path.getmtime(result)
+        copied_mtime = Path(result).stat().st_mtime
         assert abs(copied_mtime - original_mtime) < 1.0, "File metadata not preserved"
 
 
@@ -1026,7 +1029,6 @@ class TestUpdateItemWithAsset:
             catalog_root=catalog_root,
             collection_id=collection_id,
             item_id=item_id,
-            asset_path=new_asset,
         )
 
         # Verify item.json was updated
@@ -1056,7 +1058,6 @@ class TestUpdateItemWithAsset:
                 catalog_root=catalog_root,
                 collection_id=collection_id,
                 item_id=item_id,
-                asset_path=asset_path,
             )
 
         # Should log warning about missing item.json
@@ -1096,7 +1097,6 @@ class TestUpdateItemWithAsset:
                 catalog_root=catalog_root,
                 collection_id=collection_id,
                 item_id=item_id,
-                asset_path=item_dir / "metadata.csv",
             )
 
         # Should log warning about no primary file
@@ -1248,17 +1248,19 @@ class TestAddFilesCodePaths:
             )
         )
 
-        with patch("portolan_cli.add.prepare_item") as mock_add:
-            with patch("portolan_cli.add.is_current", return_value=True):
-                added, skipped, failures = add_files(
-                    paths=[geojson],
-                    catalog_root=initialized_catalog,
-                    collection_id="collection",
-                )
+        with (
+            patch("portolan_cli.add.prepare_item") as mock_add,
+            patch("portolan_cli.add.is_current", return_value=True),
+        ):
+            added, skipped, failures = add_files(
+                paths=[geojson],
+                catalog_root=initialized_catalog,
+                collection_id="collection",
+            )
 
-                # Should NOT call add for unchanged files
-                assert not mock_add.called
-                assert geojson in skipped
+            # Should NOT call add for unchanged files
+            assert not mock_add.called
+            assert geojson in skipped
 
     @pytest.mark.unit
     def test_collection_id_resolution(self, initialized_catalog: Path, tmp_path: Path) -> None:
@@ -1287,23 +1289,23 @@ class TestAddFilesCodePaths:
         with (
             patch("portolan_cli.add.prepare_item") as mock_add,
             patch("portolan_cli.add.finalize_items") as mock_finalize,
-        ):
-            with patch(
+            patch(
                 "portolan_cli.add.infer_nested_collection_id",
                 return_value="my-collection",
-            ) as mock_infer:
-                mock_add.return_value = MagicMock(item_id="data", collection_id="my-collection")
-                mock_finalize.return_value = []
+            ) as mock_infer,
+        ):
+            mock_add.return_value = MagicMock(item_id="data", collection_id="my-collection")
+            mock_finalize.return_value = []
 
-                # Don't pass collection_id - should be inferred
-                added, skipped, failures = add_files(
-                    paths=[geojson],
-                    catalog_root=initialized_catalog,
-                    collection_id=None,
-                )
+            # Don't pass collection_id - should be inferred
+            added, skipped, failures = add_files(
+                paths=[geojson],
+                catalog_root=initialized_catalog,
+                collection_id=None,
+            )
 
-                # Should have inferred collection_id using nested inference
-                mock_infer.assert_called_once()
+            # Should have inferred collection_id using nested inference
+            mock_infer.assert_called_once()
 
     @pytest.mark.unit
     def test_deferred_non_geo_processing_with_geo_file(
@@ -1398,11 +1400,10 @@ class TestAddFilesCodePaths:
             """Simulate add: success for geojson, geometry error for csv."""
             if path.suffix.lower() == ".geojson":
                 return MagicMock(item_id="data", collection_id="collection")
-            elif path.suffix.lower() == ".csv":
+            if path.suffix.lower() == ".csv":
                 raise click.ClickException("Could not detect geometry columns in CSV file")
-            else:
-                # Skip other files (like parquet) - they shouldn't be in source_dir
-                raise ValueError(f"Unexpected file type: {path}")
+            # Skip other files (like parquet) - they shouldn't be in source_dir
+            raise ValueError(f"Unexpected file type: {path}")
 
         # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (

@@ -7,11 +7,14 @@ from child collections.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.readme import aggregate_catalog_extent, generate_catalog_readme
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestAggregateCatalogExtent:

@@ -425,7 +425,7 @@ class TestUpdateItemMetadata:
         statistics = bands[0]["statistics"]
         # The full set formats.md requires, describing the uint8 file. Every
         # value sits inside the type's range, not the int16 raster's 302..1015.
-        assert REQUIRED_BAND_STATISTICS <= statistics.keys()
+        assert statistics.keys() >= REQUIRED_BAND_STATISTICS
         assert 0 <= statistics["minimum"] <= statistics["maximum"] <= 255
         assert 0 <= statistics["mean"] <= 255
 
@@ -456,7 +456,7 @@ class TestUpdateItemMetadata:
         assert bands[0]["name"] == "red"
         assert bands[0]["description"] == "Surface reflectance, hand authored"
         assert bands[0]["data_type"] == "uint8"
-        assert REQUIRED_BAND_STATISTICS <= bands[0]["statistics"].keys()
+        assert bands[0]["statistics"].keys() >= REQUIRED_BAND_STATISTICS
 
     @pytest.mark.unit
     @pytest.mark.realdata
@@ -511,7 +511,7 @@ class TestUpdateItemMetadata:
         update_item_metadata(item_path, data_file)
 
         statistics = _read_bands(item_path)[0]["statistics"]
-        assert REQUIRED_BAND_STATISTICS <= statistics.keys()
+        assert statistics.keys() >= REQUIRED_BAND_STATISTICS
         assert statistics["minimum"] != STALE_BAND_1_STATISTICS["minimum"]
         assert statistics["maximum"] <= 255
 
@@ -566,7 +566,7 @@ class TestUpdateItemMetadata:
 
         band = _read_bands(item_path)[0]
         assert band["data_type"] == "uint8"
-        assert REQUIRED_BAND_STATISTICS <= band["statistics"].keys()
+        assert band["statistics"].keys() >= REQUIRED_BAND_STATISTICS
         assert 0 <= band["statistics"]["minimum"] <= band["statistics"]["maximum"] <= 255
 
     @pytest.mark.unit

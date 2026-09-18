@@ -9,14 +9,19 @@ Note: aws_profile is a sensitive setting and cannot be set in config.yaml (Issue
 Use PORTOLAN_PROFILE or PORTOLAN_AWS_PROFILE env vars instead.
 """
 
+from __future__ import annotations
+
 import os
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # Remote URL for tests - set via env var (Issue #356: sensitive settings)
 TEST_REMOTE = "s3://test-bucket/test-catalog"

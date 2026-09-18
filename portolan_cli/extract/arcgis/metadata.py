@@ -157,7 +157,7 @@ def _extract_string(data: dict[str, Any], key: str) -> str | None:
         return None
 
     stripped = value.strip()
-    return stripped if stripped else None
+    return stripped or None
 
 
 def _extract_keywords(document_info: dict[str, Any]) -> list[str] | None:
@@ -185,4 +185,4 @@ def _extract_keywords(document_info: dict[str, Any]) -> list[str] | None:
     # Filter out empty strings
     keywords = [kw for kw in keywords if kw]
 
-    return keywords if keywords else None
+    return keywords or None

@@ -305,7 +305,6 @@ def make_symbol_layer(
 
 def make_mapbox_style(
     name: str,
-    source_layer: str,
     layers: list[dict[str, Any]],
     pmtiles_url: str | None = None,
     min_zoom: int | None = None,
@@ -315,7 +314,6 @@ def make_mapbox_style(
 
     Args:
         name: Style name (appears in style["name"]).
-        source_layer: Default source layer name.
         layers: List of layer dicts (from make_*_layer functions).
         pmtiles_url: Optional PMTiles URL for the source. A bare path is
             written with the ``pmtiles://`` scheme so MapLibre can load it

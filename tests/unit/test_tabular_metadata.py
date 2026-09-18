@@ -9,8 +9,7 @@ temporal extent without overwriting one that is already set.
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -19,12 +18,24 @@ import pytest
 from portolan_cli.metadata.tabular import extract_tabular_metadata
 from portolan_cli.stac import document_tabular_table, set_temporal_extent
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 TABLE_EXTENSION = "https://stac-extensions.github.io/table/v1.2.0/schema.json"
 
 
 def _write(path: Path, table: pa.Table) -> Path:
     pq.write_table(table, path)
     return path
+
+
+def _naive_timestamps(values: list[str]) -> pa.Array:
+    """Build a timezone-naive timestamp column from ISO date strings.
+
+    A bare Parquet timestamp carries no zone. The extractor must promote it to
+    UTC, so the fixture keeps the column naive on purpose.
+    """
+    return pa.array(values, pa.string()).cast(pa.timestamp("us"))
 
 
 class TestExtractTabularMetadata:
@@ -90,12 +101,7 @@ class TestTemporalInterval:
         source = _write(
             tmp_path / "census.parquet",
             pa.table(
-                {
-                    "surveyed_at": pa.array(
-                        [datetime(2020, 9, 30), datetime(2020, 4, 1), datetime(2020, 6, 15)],
-                        pa.timestamp("us"),
-                    )
-                }
+                {"surveyed_at": _naive_timestamps(["2020-09-30", "2020-04-01", "2020-06-15"])}
             ),
         )
 
@@ -130,8 +136,8 @@ class TestTemporalInterval:
             tmp_path / "census.parquet",
             pa.table(
                 {
-                    "opened": pa.array([datetime(2020, 4, 1)], pa.timestamp("us")),
-                    "closed": pa.array([datetime(2023, 8, 9)], pa.timestamp("us")),
+                    "opened": _naive_timestamps(["2020-04-01"]),
+                    "closed": _naive_timestamps(["2023-08-09"]),
                 }
             ),
         )
@@ -150,9 +156,8 @@ class TestTemporalInterval:
             tmp_path / "census.parquet",
             pa.table(
                 {
-                    "surveyed_at": pa.array(
-                        [datetime(2020, 4, 1, 12, 0)],
-                        pa.timestamp("us", tz="America/New_York"),
+                    "surveyed_at": pa.array(["2020-04-01T12:00:00-04:00"], pa.string()).cast(
+                        pa.timestamp("us", tz="America/New_York")
                     )
                 }
             ),

@@ -20,11 +20,13 @@ import asyncio
 import sys
 import threading
 import time
-from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Generic, TypeVar
 
+from typing_extensions import Self
+
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Coroutine
     from types import TracebackType
 
     from rich.progress import Progress, TaskID
@@ -231,8 +233,6 @@ class AdaptiveConcurrencyManager:
 class CircuitBreakerError(Exception):
     """Raised when circuit breaker trips due to consecutive failures."""
 
-    pass
-
 
 @dataclass
 class CircuitBreaker:
@@ -413,7 +413,6 @@ class AsyncIOExecutor(Generic[T]):
         total = len(items)
         completed = 0
         completed_lock = asyncio.Lock()
-        results: list[AsyncExecutionResult[T]] = []
 
         async def execute_one(item: str) -> AsyncExecutionResult[T]:
             """Execute operation on a single item with concurrency control."""
@@ -486,9 +485,7 @@ class AsyncIOExecutor(Generic[T]):
 
         # Execute all items concurrently with bounded concurrency
         tasks = [execute_with_callback(item) for item in items]
-        results = await asyncio.gather(*tasks, return_exceptions=False)
-
-        return results
+        return await asyncio.gather(*tasks, return_exceptions=False)
 
 
 # =============================================================================
@@ -544,7 +541,7 @@ class AsyncProgressReporter:
         self._task_id: TaskID | None = None
         self._lock = threading.Lock()
 
-    async def __aenter__(self) -> AsyncProgressReporter:
+    async def __aenter__(self) -> Self:
         """Enter the async context and start progress display."""
         self._start_time = time.perf_counter()
 

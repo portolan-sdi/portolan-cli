@@ -26,8 +26,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.config import load_config
 from portolan_cli.constants import (
@@ -40,6 +39,9 @@ from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import info
 from portolan_cli.stac_parquet import stamp_file_fields, sync_file_extension
 from portolan_cli.utils import get_dict, get_list
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -461,10 +463,7 @@ def enrich_cog_asset_with_style(
         asset: A pystac.Asset object for a COG file.
         catalog_path: Optional catalog path for loading style config.
     """
-    if catalog_path:
-        config = get_raster_style_config(catalog_path)
-    else:
-        config = RasterStyleConfig()
+    config = get_raster_style_config(catalog_path) if catalog_path else RasterStyleConfig()
 
     style_props = build_raster_style(config)
 

@@ -162,7 +162,7 @@ def get_stored_metadata(
         return None
 
     try:
-        with open(item_path, encoding="utf-8") as f:
+        with Path(item_path).open(encoding="utf-8") as f:
             item_data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
@@ -184,7 +184,7 @@ def get_stored_metadata(
     versions_path = collection_dir / "versions.json"
     if versions_path.exists():
         try:
-            with open(versions_path, encoding="utf-8") as f:
+            with Path(versions_path).open(encoding="utf-8") as f:
                 versions_data = json.load(f)
 
             # Find asset entry in current version (use current_version field)
@@ -258,7 +258,7 @@ def get_current_metadata(file_path: Path) -> FileMetadataState:
             stored_schema_fingerprint=None,
         )
 
-    elif suffix in (".tif", ".tiff"):
+    if suffix in (".tif", ".tiff"):
         # Extract COG metadata
         cog_metadata = extract_cog_metadata(file_path)
         pixel_count = (
@@ -281,8 +281,7 @@ def get_current_metadata(file_path: Path) -> FileMetadataState:
             stored_schema_fingerprint=None,
         )
 
-    else:
-        raise ValueError(f"Unsupported format: {suffix}")
+    raise ValueError(f"Unsupported format: {suffix}")
 
 
 def compute_schema_fingerprint(
@@ -311,7 +310,7 @@ def compute_schema_fingerprint(
         schema_str = str(pf.schema_arrow)
         return hashlib.sha256(schema_str.encode()).hexdigest()[:16]
 
-    elif suffix in (".tif", ".tiff"):
+    if suffix in (".tif", ".tiff"):
         # Use provided metadata if available, otherwise extract
         if cog_metadata is None:
             cog_metadata = extract_cog_metadata(file_path)
@@ -323,11 +322,10 @@ def compute_schema_fingerprint(
         schema_str = "|".join(schema_parts)
         return hashlib.sha256(schema_str.encode()).hexdigest()[:16]
 
-    else:
-        # For unknown formats, hash the first 1KB
-        with open(file_path, "rb") as f:
-            content = f.read(1024)
-        return hashlib.sha256(content).hexdigest()[:16]
+    # For unknown formats, hash the first 1KB
+    with Path(file_path).open("rb") as f:
+        content = f.read(1024)
+    return hashlib.sha256(content).hexdigest()[:16]
 
 
 def is_stale(state: FileMetadataState) -> tuple[bool, str]:
@@ -387,15 +385,19 @@ def detect_changes(state: FileMetadataState) -> list[str]:
     # Check bbox with tolerance-aware comparison
     from portolan_cli.metadata.models import BBOX_TOLERANCE, _bboxes_equal
 
-    if state.stored_bbox is None and state.current_bbox is not None:
-        changes.append("bbox")
-    elif not _bboxes_equal(state.stored_bbox, state.current_bbox, BBOX_TOLERANCE):
+    if (
+        state.stored_bbox is None
+        and state.current_bbox is not None
+        or not _bboxes_equal(state.stored_bbox, state.current_bbox, BBOX_TOLERANCE)
+    ):
         changes.append("bbox")
 
     # Check feature count
-    if state.stored_feature_count is None and state.current_feature_count is not None:
-        changes.append("feature_count")
-    elif state.current_feature_count != state.stored_feature_count:
+    if (
+        state.stored_feature_count is None
+        and state.current_feature_count is not None
+        or state.current_feature_count != state.stored_feature_count
+    ):
         changes.append("feature_count")
 
     # Check schema

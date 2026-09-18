@@ -29,6 +29,7 @@ Typical usage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -62,8 +63,6 @@ from portolan_cli.output import detail, error, info, success, warn
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    from portolan_cli.extract.arcgis.imageserver.discovery import ImageServerMetadata
 
 
 @dataclass
@@ -105,8 +104,6 @@ RESUME_SAVE_INTERVAL = 10  # Save resume state every N tiles
 
 class ImageServerExtractionError(Exception):
     """Error during ImageServer extraction."""
-
-    pass
 
 
 class RateLimitError(ImageServerExtractionError):
@@ -206,18 +203,12 @@ def _validate_tiff(data: bytes) -> bool:
     return header in (TIFF_MAGIC_LE, TIFF_MAGIC_BE, BIGTIFF_MAGIC_LE, BIGTIFF_MAGIC_BE)
 
 
-def _build_export_url(
-    service_url: str,
-    tile: TileSpec,
-    *,
-    pixel_type: str = "U8",
-) -> str:
+def _build_export_url(service_url: str, tile: TileSpec) -> str:
     """Build exportImage URL for a tile.
 
     Args:
         service_url: ImageServer base URL.
         tile: Tile specification with bbox and dimensions.
-        pixel_type: Pixel type for format selection.
 
     Returns:
         Full exportImage URL with parameters.
@@ -240,8 +231,6 @@ async def download_tile(
     tile: TileSpec,
     output_path: Path,
     client: httpx.AsyncClient,
-    *,
-    pixel_type: str = "U8",
 ) -> int:
     """Download a single tile via exportImage API.
 
@@ -250,7 +239,6 @@ async def download_tile(
         tile: Tile specification.
         output_path: Path to write the downloaded TIFF.
         client: Async HTTP client for connection pooling.
-        pixel_type: Pixel type for format selection.
 
     Returns:
         Number of bytes downloaded.
@@ -259,7 +247,7 @@ async def download_tile(
         ImageServerExtractionError: On HTTP or I/O errors.
         RateLimitError: On HTTP 429 response.
     """
-    export_url = _build_export_url(url, tile, pixel_type=pixel_type)
+    export_url = _build_export_url(url, tile)
 
     try:
         response = await client.get(export_url)
@@ -276,7 +264,7 @@ async def download_tile(
         content = response.content
         if not _validate_tiff(content):
             # Check if it's an HTML error page
-            if content.startswith(b"<!") or content.startswith(b"<html"):
+            if content.startswith((b"<!", b"<html")):
                 msg = f"Server returned HTML instead of TIFF for tile {tile.get_id()}"
             # Check if it's a JSON error response from ArcGIS
             elif content.startswith(b"{"):
@@ -595,7 +583,6 @@ async def _process_tile(
     output_dir: Path,
     config: ExtractionConfig,
     client: httpx.AsyncClient,
-    metadata: ImageServerMetadata,
     semaphore: asyncio.Semaphore,
     rate_limit_lock: asyncio.Lock,
     last_request_time: dict[str, float],
@@ -612,7 +599,6 @@ async def _process_tile(
         output_dir: Output directory.
         config: Extraction configuration.
         client: HTTP client.
-        metadata: Service metadata.
         semaphore: Concurrency limiter.
         rate_limit_lock: Lock for rate limiting coordination.
         last_request_time: Shared dict tracking last request time per slot.
@@ -658,7 +644,6 @@ async def _process_tile(
                         tile=tile,
                         output_path=raw_path,
                         client=client,
-                        pixel_type=metadata.pixel_type,
                     )
 
                     # Convert to COG using config settings
@@ -743,10 +728,9 @@ async def _process_tile(
         finally:
             # Clean up raw file on any exit (success or failure)
             if raw_path.exists():
-                try:
+                # Best effort cleanup.
+                with contextlib.suppress(OSError):
                     raw_path.unlink()
-                except OSError:
-                    pass  # Best effort cleanup
 
 
 def _setup_extraction_dirs(output_dir: Path, collection_name: str = "tiles") -> tuple[Path, Path]:
@@ -888,7 +872,6 @@ async def _extract_all_tiles(
     url: str,
     output_dir: Path,
     config: ExtractionConfig,
-    metadata: ImageServerMetadata,
     resume_state: ImageServerResumeState,
     resume_path: Path,
     on_progress: Callable[[TileProgress], None] | None = None,
@@ -901,7 +884,6 @@ async def _extract_all_tiles(
         url: Service URL.
         output_dir: Output directory.
         config: Extraction config.
-        metadata: Service metadata.
         resume_state: Resume state to update.
         resume_path: Path to save resume state.
         on_progress: Optional progress callback (matches FeatureServer pattern).
@@ -923,7 +905,6 @@ async def _extract_all_tiles(
                 output_dir=output_dir,
                 config=config,
                 client=client,
-                metadata=metadata,
                 semaphore=semaphore,
                 rate_limit_lock=rate_limit_lock,
                 last_request_time=last_request_time,
@@ -942,7 +923,6 @@ async def _extract_all_tiles(
                 resume_state=resume_state,
                 index=i,
                 total=len(tiles),
-                output_dir=output_dir,
                 duration=result.duration_seconds,
                 error_msg=result.error_msg,
                 attempts=result.attempts,
@@ -967,7 +947,6 @@ def _update_stats_and_state(
     resume_state: ImageServerResumeState,
     index: int,
     total: int,
-    output_dir: Path,
     duration: float,
     error_msg: str | None,
     attempts: int,
@@ -984,7 +963,6 @@ def _update_stats_and_state(
         resume_state: Resume state to update.
         index: Current tile index.
         total: Total tiles to process.
-        output_dir: Output directory for computing relative paths.
         duration: Processing duration in seconds.
         error_msg: Error message if failed.
         attempts: Number of attempts.
@@ -1199,7 +1177,6 @@ async def extract_imageserver(
         url,
         output_dir,
         config,
-        metadata,
         resume_state,
         resume_path,
         on_progress=on_progress,

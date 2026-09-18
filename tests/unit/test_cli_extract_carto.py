@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
@@ -13,7 +12,12 @@ from portolan_cli.extract.carto.orchestrator import (
     ExtractionOptions,
     _build_dry_run_report,
 )
-from portolan_cli.extract.common.report import ExtractionReport
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
+    from portolan_cli.extract.common.report import ExtractionReport
 
 pytestmark = [pytest.mark.unit]
 

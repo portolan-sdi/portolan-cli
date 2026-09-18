@@ -40,12 +40,14 @@ import logging
 import math
 import re
 from datetime import date, datetime, timezone
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.config import load_merged_metadata
 from portolan_cli.licensing import OTHER_LICENSE, license_gap
 from portolan_cli.providers import HOST_ROLE, PROVIDER_ROLES
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -125,18 +127,16 @@ def _validate_authors(authors: Any) -> list[str]:
 
         # Validate ORCID format if present
         orcid = author.get("orcid")
-        if orcid and str(orcid).strip():
-            if not ORCID_PATTERN.match(str(orcid)):
-                errors.append(
-                    f"Author entry {i} has invalid ORCID format: '{orcid}'. "
-                    f"ORCIDs should be like '0000-0001-2345-6789'"
-                )
+        if orcid and str(orcid).strip() and not ORCID_PATTERN.match(str(orcid)):
+            errors.append(
+                f"Author entry {i} has invalid ORCID format: '{orcid}'. "
+                f"ORCIDs should be like '0000-0001-2345-6789'"
+            )
 
         # Validate email format if present
         email = author.get("email")
-        if email and str(email).strip():
-            if not EMAIL_PATTERN.match(str(email)):
-                errors.append(f"Author entry {i} has invalid email format: '{email}'")
+        if email and str(email).strip() and not EMAIL_PATTERN.match(str(email)):
+            errors.append(f"Author entry {i} has invalid email format: '{email}'")
 
     return errors
 
@@ -326,13 +326,12 @@ def _validate_provider_roles(roles: Any, index: int) -> list[str]:
     if not isinstance(roles, list):
         return [f"Field 'providers[{index}].roles' must be a list"]
 
-    errors: list[str] = []
-    for role in roles:
-        if not isinstance(role, str) or role not in PROVIDER_ROLES:
-            errors.append(
-                f"Field 'providers[{index}].roles' has unknown role '{role}'. "
-                f"Use one of {', '.join(PROVIDER_ROLES)}"
-            )
+    errors: list[str] = [
+        f"Field 'providers[{index}].roles' has unknown role '{role}'. "
+        f"Use one of {', '.join(PROVIDER_ROLES)}"
+        for role in roles
+        if not isinstance(role, str) or role not in PROVIDER_ROLES
+    ]
     return errors
 
 
@@ -416,11 +415,8 @@ def _validate_doi(metadata: dict[str, Any]) -> list[str]:
     errors: list[str] = []
 
     doi = metadata.get("doi")
-    if doi and str(doi).strip():
-        if not DOI_PATTERN.match(str(doi)):
-            errors.append(
-                f"Invalid DOI format: '{doi}'. DOIs should be like '10.5281/zenodo.1234567'"
-            )
+    if doi and str(doi).strip() and not DOI_PATTERN.match(str(doi)):
+        errors.append(f"Invalid DOI format: '{doi}'. DOIs should be like '10.5281/zenodo.1234567'")
 
     return errors
 
@@ -668,8 +664,8 @@ def generate_metadata_template(*, license_id: str = "", license_url: str = "") -
     )
 
     # Substituted rather than interpolated: an f-string over the whole template
-    # reads to bandit as string-built SQL (B608), and a nosec here would blunt a
-    # check that catches the real thing elsewhere in the tree.
+    # reads to the S608 rule as string-built SQL. A suppression here would blunt
+    # a check that catches the real thing elsewhere in the tree.
     return _TEMPLATE.replace("__LICENSE_LINE__", license_line).replace(
         "__LICENSE_URL_LINE__", license_url_line
     )
@@ -841,8 +837,6 @@ def apply_temporal_defaults(
 class NodataMismatchError(ValueError):
     """Raised when per-band nodata list length doesn't match band count."""
 
-    pass
-
 
 def apply_raster_nodata_defaults(
     defaults: dict[str, Any],
@@ -887,12 +881,11 @@ def apply_raster_nodata_defaults(
         )
         if strict:
             raise NodataMismatchError(msg)
-        else:
-            logger.warning(
-                "%s Padding with last value (%s) for remaining bands.",
-                msg,
-                default_nodata[-1] if default_nodata else "None",
-            )
+        logger.warning(
+            "%s Padding with last value (%s) for remaining bands.",
+            msg,
+            default_nodata[-1] if default_nodata else "None",
+        )
 
     # Handle None input
     if nodatavals is None:

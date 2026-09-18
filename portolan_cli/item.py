@@ -77,7 +77,7 @@ def create_item(
     }
 
     # Create item
-    item = ItemModel(
+    return ItemModel(
         id=item_id,
         geometry=geometry,
         bbox=bbox,
@@ -87,8 +87,6 @@ def create_item(
         title=title,
         description=description,
     )
-
-    return item
 
 
 def _extract_geometry_from_file(
@@ -107,11 +105,8 @@ def _extract_geometry_from_file(
 
     if suffix in (".parquet", ".geoparquet"):
         gp_metadata = extract_geoparquet_metadata(path)
-        if gp_metadata.bbox:
-            bbox = list(gp_metadata.bbox)
-        else:
-            # Default to global extent
-            bbox = [-180.0, -90.0, 180.0, 90.0]
+        # Default to global extent
+        bbox = list(gp_metadata.bbox) if gp_metadata.bbox else [-180.0, -90.0, 180.0, 90.0]
     elif suffix in (".tif", ".tiff"):
         from portolan_cli.metadata.cog import extract_cog_metadata
 
@@ -204,7 +199,7 @@ def read_item_json(path: Path) -> ItemModel:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
-    with open(path, encoding="utf-8") as f:
+    with Path(path).open(encoding="utf-8") as f:
         data = json.load(f)
 
     return ItemModel.from_dict(data)

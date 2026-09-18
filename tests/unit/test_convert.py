@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from typing_extensions import Self
 
 # =============================================================================
 # Phase 1: ConversionStatus Enum Tests
@@ -869,7 +870,7 @@ class TestConvertDirectoryPoolFallback:
             def __init__(self, *args: object, **kwargs: object) -> None:
                 pass
 
-            def __enter__(self) -> _BrokenPool:
+            def __enter__(self) -> Self:
                 return self
 
             def __exit__(self, *args: object) -> bool:
@@ -936,7 +937,7 @@ class TestConvertDirectoryPoolFallback:
             def __init__(self, *args: object, **kwargs: object) -> None:
                 self._n = 0
 
-            def __enter__(self) -> _PartialPool:
+            def __enter__(self) -> Self:
                 return self
 
             def __exit__(self, *args: object) -> bool:
@@ -944,8 +945,7 @@ class TestConvertDirectoryPoolFallback:
 
             def submit(self, _fn: object, source: Path, **_kw: object) -> _Future:
                 self._n += 1
-                fut = _Future(source, ok=self._n == 1)
-                return fut
+                return _Future(source, ok=self._n == 1)
 
         monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _PartialPool)
         # as_completed must yield the futures; identity keeps submission order.
@@ -1304,7 +1304,7 @@ class TestConvertFileEdgeCases:
         output_dir.mkdir()
 
         try:
-            os.chmod(output_dir, 0o444)  # Read-only
+            Path(output_dir).chmod(0o444)  # Read-only
 
             result = convert_file(geojson, output_dir=output_dir)
 
@@ -1315,7 +1315,7 @@ class TestConvertFileEdgeCases:
             # (exact wording varies by OS)
         finally:
             # Restore permissions for cleanup
-            os.chmod(output_dir, 0o755)
+            Path(output_dir).chmod(0o755)
 
     @pytest.mark.unit
     def test_output_file_already_exists_cloud_native(

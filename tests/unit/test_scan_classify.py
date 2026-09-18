@@ -5,7 +5,7 @@ Tests file classification into 10 categories and skip reason generation.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -17,6 +17,9 @@ from portolan_cli.scan.classify import (
     classify_file,
     get_skip_reason,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.mark.unit
@@ -378,14 +381,14 @@ class TestClassifyFileEdgeCases:
         # Try to classify a nonexistent image file
         # The classify_file should handle OSError and default to size 0
         # which would make it a thumbnail
-        try:
-            category, skip_type, skip_msg = classify_file(nonexistent)
-            # If it doesn't raise, it should be UNKNOWN since file doesn't exist
-            # But actually the OSError path in classify_file is for stat() failures
-            # on existing files. Let me verify behavior.
-        except FileNotFoundError:
-            # This is expected - the file doesn't exist
-            pass
+        # stat() fails on a missing file, so the size falls back to 0. An image
+        # under the thumbnail threshold is a thumbnail, so the call returns a
+        # classification instead of raising.
+        category, skip_type, skip_msg = classify_file(nonexistent)
+
+        assert category == FileCategory.THUMBNAIL
+        assert skip_type == SkipReasonType.NOT_GEOSPATIAL
+        assert skip_msg == "Small image file (0 bytes) - likely a thumbnail"
 
     def test_webp_classified_as_thumbnail(self, tmp_path: Path) -> None:
         """WebP image files are classified appropriately."""

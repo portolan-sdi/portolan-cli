@@ -47,7 +47,8 @@ def parse_flexible_datetime(value: str | None) -> datetime | None:
         value: Datetime string or None.
 
     Returns:
-        Parsed datetime or None if input is empty/None.
+        A timezone-aware datetime, or None if the input is empty or None. An
+        input without an offset reads as UTC.
 
     Raises:
         ValueError: If format is invalid.
@@ -57,22 +58,24 @@ def parse_flexible_datetime(value: str | None) -> datetime | None:
 
     value = value.strip()
 
-    # Try formats in order of specificity
-    formats = [
-        "%Y-%m-%dT%H:%M:%SZ",  # ISO with Z
-        "%Y-%m-%dT%H:%M:%S%z",  # ISO with timezone
-        "%Y-%m-%dT%H:%M:%S",  # ISO without TZ
+    # An explicit offset wins, because the caller stated the zone. "%z" also
+    # accepts a "Z" suffix from Python 3.7 on, so it covers both ISO spellings.
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S%z")
+    except ValueError:
+        pass
+
+    # The remaining formats carry no zone. STAC requires an RFC 3339 timestamp
+    # with an offset, so a naive result reads as UTC. Without this the CLI
+    # published a naive datetime for "--datetime 2024-01-15", and a later
+    # comparison against an aware datetime raised TypeError.
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S",  # ISO without a zone
         "%Y-%m-%d %H:%M:%S",  # Space-separated
         "%Y-%m-%d",  # Date only
-    ]
-
-    for fmt in formats:
+    ):
         try:
-            dt = datetime.strptime(value, fmt)
-            # Add UTC timezone if missing and format had Z
-            if fmt.endswith("Z") and dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt
+            return datetime.strptime(value, fmt).replace(tzinfo=timezone.utc)
         except ValueError:
             continue
 

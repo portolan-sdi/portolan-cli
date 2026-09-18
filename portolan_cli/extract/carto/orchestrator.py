@@ -134,7 +134,7 @@ def _build_table_query_url(sql_api_url: str, table_name: str) -> str:
     href — but the table name is still quoted as a SQL identifier so the link is a
     valid, copy-pasteable Carto query.
     """
-    query = f"SELECT * FROM {quote_table_identifier(table_name)}"  # nosec B608
+    query = f"SELECT * FROM {quote_table_identifier(table_name)}"  # noqa: S608
     return f"{sql_api_url}?{urlencode({'q': query})}"
 
 

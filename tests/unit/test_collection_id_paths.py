@@ -1,5 +1,7 @@
 """Tests for collection ID path syntax (nested catalogs)."""
 
+from __future__ import annotations
+
 import pytest
 
 from portolan_cli.collection_id import (

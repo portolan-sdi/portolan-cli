@@ -469,7 +469,7 @@ class TestCleanFromSubdirectory:
             # Change to subdirectory and run clean
             import os
 
-            original_cwd = os.getcwd()
+            original_cwd = Path.cwd()
             try:
                 os.chdir(subdir)
                 result = runner.invoke(cli, ["clean"])

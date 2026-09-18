@@ -419,20 +419,22 @@ class TestExtractWithRawFlag:
             shutil.copy(fixture_src, output_path)
             return (100, output_path.stat().st_size, 1.0)
 
-        with patch(
-            "portolan_cli.extract.arcgis.orchestrator._extract_single_layer",
-            side_effect=mock_extract_side_effect,
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator._extract_single_layer",
+                side_effect=mock_extract_side_effect,
+            ),
+            patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
         ):
-            with patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover:
-                mock_discover.return_value = ServiceDiscoveryResult(
-                    layers=[LayerInfo(id=0, name="TestLayer", layer_type="Feature Layer")],
-                )
+            mock_discover.return_value = ServiceDiscoveryResult(
+                layers=[LayerInfo(id=0, name="TestLayer", layer_type="Feature Layer")],
+            )
 
-                extract_arcgis_catalog(
-                    url="https://example.com/arcgis/rest/services/Test/FeatureServer",
-                    output_dir=output_dir,
-                    options=ExtractionOptions(dry_run=False, raw=True),
-                )
+            extract_arcgis_catalog(
+                url="https://example.com/arcgis/rest/services/Test/FeatureServer",
+                output_dir=output_dir,
+                options=ExtractionOptions(dry_run=False, raw=True),
+            )
 
         # Should NOT have catalog.json (raw mode)
         assert not (output_dir / "catalog.json").exists(), "raw mode should not create catalog"
@@ -463,20 +465,22 @@ class TestExtractWithRawFlag:
             shutil.copy(fixture_src, output_path)
             return (100, output_path.stat().st_size, 1.0)
 
-        with patch(
-            "portolan_cli.extract.arcgis.orchestrator._extract_single_layer",
-            side_effect=mock_extract_side_effect,
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator._extract_single_layer",
+                side_effect=mock_extract_side_effect,
+            ),
+            patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
         ):
-            with patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover:
-                mock_discover.return_value = ServiceDiscoveryResult(
-                    layers=[LayerInfo(id=0, name="TestLayer", layer_type="Feature Layer")],
-                )
+            mock_discover.return_value = ServiceDiscoveryResult(
+                layers=[LayerInfo(id=0, name="TestLayer", layer_type="Feature Layer")],
+            )
 
-                extract_arcgis_catalog(
-                    url="https://example.com/arcgis/rest/services/Test/FeatureServer",
-                    output_dir=output_dir,
-                    options=ExtractionOptions(dry_run=False, raw=False, license="CC-BY-4.0"),
-                )
+            extract_arcgis_catalog(
+                url="https://example.com/arcgis/rest/services/Test/FeatureServer",
+                output_dir=output_dir,
+                options=ExtractionOptions(dry_run=False, raw=False, license="CC-BY-4.0"),
+            )
 
         # Should have catalog.json (default behavior)
         assert (output_dir / "catalog.json").exists(), "default extraction should create catalog"

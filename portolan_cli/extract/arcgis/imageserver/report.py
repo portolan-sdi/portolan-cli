@@ -17,12 +17,13 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.json_io import write_json_atomic
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from portolan_cli.extract.arcgis.imageserver.discovery import ImageServerMetadata
     from portolan_cli.metadata_extraction import ExtractedMetadata
 

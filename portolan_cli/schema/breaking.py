@@ -30,7 +30,7 @@ from typing import Any
 from portolan_cli.models.schema import BandSchema, ColumnSchema, SchemaModel
 
 
-def _nodata_equals(a: float | int | None, b: float | int | None) -> bool:
+def _nodata_equals(a: float | None, b: float | None) -> bool:
     """Compare nodata values, handling NaN correctly.
 
     In Python, float('nan') != float('nan') is always True.
@@ -40,9 +40,8 @@ def _nodata_equals(a: float | int | None, b: float | int | None) -> bool:
         return True
     if a is None or b is None:
         return False
-    if isinstance(a, float) and isinstance(b, float):
-        if math.isnan(a) and math.isnan(b):
-            return True
+    if isinstance(a, float) and isinstance(b, float) and math.isnan(a) and math.isnan(b):
+        return True
     return a == b
 
 

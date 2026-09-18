@@ -9,7 +9,7 @@ Tests the full workflow integration of STAC extensions:
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pystac
 import pytest
@@ -26,6 +26,9 @@ from portolan_cli.stac import (
     create_collection,
     create_item,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestGeoParquetTableExtension:

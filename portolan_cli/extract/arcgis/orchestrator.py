@@ -572,7 +572,7 @@ def _extract_one_layer(
         layer,
         output_path,
         options,
-        on_retry=lambda attempt, err: None,
+        on_retry=lambda _attempt, _err: None,
     )
 
     if result.success:
@@ -1230,7 +1230,7 @@ def _extract_services_root(
             layer,
             output_path,
             options,
-            on_retry=lambda attempt, err: None,  # Silent retries
+            on_retry=lambda _attempt, _err: None,  # Silent retries
         )
 
         if result.success:

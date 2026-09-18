@@ -5,11 +5,14 @@ Stats enabled by default, configurable via .portolan/config.yaml
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.config import KNOWN_SETTINGS, get_setting
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestStatisticsConfigSettings:

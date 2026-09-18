@@ -18,7 +18,6 @@ Test fixtures are in tests/fixtures/scan/:
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -1511,7 +1510,7 @@ class TestPermissionEdgeCases:
         subdir = tmp_path / "no_exec"
         subdir.mkdir()
         (subdir / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
-        os.chmod(subdir, 0o644)  # Read/write but no execute
+        Path(subdir).chmod(0o644)  # Read/write but no execute
 
         try:
             result = scan_directory(tmp_path)
@@ -1524,7 +1523,7 @@ class TestPermissionEdgeCases:
             # Path contains either the directory or file path
             assert "no_exec" in str(perm_issues[0].path)
         finally:
-            os.chmod(subdir, 0o755)
+            Path(subdir).chmod(0o755)
 
     def test_scan_stat_oserror_emits_warning(self, tmp_path: Path) -> None:
         """When entry.stat() raises OSError, emit a warning instead of silent skip.

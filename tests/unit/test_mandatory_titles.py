@@ -8,7 +8,7 @@ rashid, which owns its tests.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -16,6 +16,9 @@ from portolan_cli.catalog import ensure_link_titles
 from portolan_cli.metadata.fix import repair_titles_and_links
 from portolan_cli.metadata_yaml import _validate_title_description
 from portolan_cli.stac import apply_human_titles, create_collection
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _write(path: Path, data: dict[str, object]) -> None:

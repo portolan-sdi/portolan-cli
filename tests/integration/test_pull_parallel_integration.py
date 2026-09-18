@@ -6,11 +6,14 @@ Tests the pull_all_collections() function with real filesystem operations.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.sync.pull import pull_all_collections
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration

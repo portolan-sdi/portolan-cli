@@ -12,7 +12,7 @@ Tests verify:
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -20,6 +20,9 @@ import yaml
 
 from portolan_cli.constants import TODO_MARKER
 from portolan_cli.extract.arcgis.discovery import LayerInfo, ServiceDiscoveryResult
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # Valid test URL that passes URL parser validation
 TEST_FEATURE_SERVER_URL = (

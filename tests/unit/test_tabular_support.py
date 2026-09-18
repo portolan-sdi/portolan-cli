@@ -14,7 +14,6 @@ Design decisions tested:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pyarrow as pa
@@ -28,7 +27,7 @@ from portolan_cli.scan.classify import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from pathlib import Path
 
 
 @pytest.mark.unit
@@ -1149,15 +1148,12 @@ class TestMalformedInputHandling:
         header_only = tmp_path / "headers.csv"
         header_only.write_text("id,name,value\n")
 
-        try:
-            output = convert_tabular(header_only, tmp_path)
-            # If it succeeds, verify output is valid Parquet
-            if output.exists():
-                table = pq.read_table(output)
-                assert table.num_rows == 0
-        except Exception:
-            # If gpio doesn't handle this, that's acceptable
-            pass
+        output = convert_tabular(header_only, tmp_path)
+
+        # The header names the columns, so the conversion writes a valid
+        # Parquet file that holds no rows.
+        assert output.exists()
+        assert pq.read_table(output).num_rows == 0
 
     def test_invalid_parquet_returns_false_for_is_geoparquet(self, tmp_path: Path) -> None:
         """Invalid Parquet file should return False for is_geoparquet, not crash."""
@@ -1179,12 +1175,12 @@ class TestMalformedInputHandling:
         binary_csv = tmp_path / "binary.csv"
         binary_csv.write_bytes(b"\x00\x01\x02\x03\x04\x05")
 
-        # gpio will likely fail, but it shouldn't crash the whole process
-        try:
-            convert_tabular(binary_csv, tmp_path)
-        except Exception:
-            # Expected to fail, just verify it doesn't crash Python
-            pass
+        # The bytes hold no delimiter, so the reader sees one column of text.
+        # The conversion writes a Parquet file rather than crashing the process.
+        output = convert_tabular(binary_csv, tmp_path)
+
+        assert output.exists()
+        assert output.suffix == ".parquet"
 
 
 @pytest.mark.unit

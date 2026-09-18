@@ -7,11 +7,14 @@ not a bare digest; rashid's PTL-AST-004 rejects anything else.
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.sync.checksums import file_fields, file_fields_from, multihash_sha256
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

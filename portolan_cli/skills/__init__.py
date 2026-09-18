@@ -25,6 +25,6 @@ def list_skills() -> list[str]:
     return []
 
 
-def get_skill(name: str) -> str | None:
-    """Return None - skills are in external repo."""
+def get_skill(_name: str) -> str | None:
+    """Return None. The skills live in an external repo, so the name is ignored."""
     return None

@@ -16,9 +16,7 @@ from __future__ import annotations
 
 import logging
 import shutil
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, PARQUET_EXTENSION, SIDECAR_PATTERNS
@@ -40,6 +38,9 @@ from portolan_cli.formats import (
 from portolan_cli.scan.detect import is_filegdb
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
     from portolan_cli.metadata.fix import FixReport
 
 logger = logging.getLogger(__name__)
@@ -507,9 +508,8 @@ def _scan_for_files(path: Path) -> list[Path]:
         ext = item.suffix.lower()
         if ext in CHECK_EXTENSIONS:
             # For parquet, check if it's GeoParquet
-            if ext == PARQUET_EXTENSION:
-                if not is_geoparquet(item):
-                    continue
+            if ext == PARQUET_EXTENSION and not is_geoparquet(item):
+                continue
             files.append(item)
     files.sort()
     return files

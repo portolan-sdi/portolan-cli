@@ -20,7 +20,7 @@ The layout under test throughout:
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -33,6 +33,9 @@ from portolan_cli.versions import (
     read_versions,
     write_versions,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

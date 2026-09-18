@@ -4,6 +4,8 @@ These tests exercise IcebergBackend.publish/list/rollback/prune
 against a real Iceberg REST catalog server with S3 storage.
 """
 
+from __future__ import annotations
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest

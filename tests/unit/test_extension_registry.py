@@ -223,36 +223,36 @@ class TestModulesUseRegistry:
     def test_formats_module(self) -> None:
         from portolan_cli import formats
 
-        assert formats.CLOUD_NATIVE_EXTENSIONS == reg.cloud_native_extensions()
-        assert formats.CONVERTIBLE_VECTOR_EXTENSIONS == reg.convertible_extensions("GeoParquet")
-        assert formats.CONVERTIBLE_RASTER_EXTENSIONS == reg.convertible_extensions("COG")
-        assert formats.UNSUPPORTED_EXTENSIONS == reg.unsupported_extensions()
-        assert formats.VECTOR_EXTENSIONS == reg.extensions_where(routes_as="vector")
-        assert formats.RASTER_EXTENSIONS == reg.extensions_where(routes_as="raster")
-        assert formats.MULTILAYER_EXTENSIONS == reg.extensions_where(is_multilayer=True)
-        assert formats.FORMAT_DISPLAY_NAMES == reg.field_map("display_name")
-        assert formats.UNSUPPORTED_ERROR_MESSAGES == reg.field_map("unsupported_message")
+        assert reg.cloud_native_extensions() == formats.CLOUD_NATIVE_EXTENSIONS
+        assert reg.convertible_extensions("GeoParquet") == formats.CONVERTIBLE_VECTOR_EXTENSIONS
+        assert reg.convertible_extensions("COG") == formats.CONVERTIBLE_RASTER_EXTENSIONS
+        assert reg.unsupported_extensions() == formats.UNSUPPORTED_EXTENSIONS
+        assert reg.extensions_where(routes_as="vector") == formats.VECTOR_EXTENSIONS
+        assert reg.extensions_where(routes_as="raster") == formats.RASTER_EXTENSIONS
+        assert reg.extensions_where(is_multilayer=True) == formats.MULTILAYER_EXTENSIONS
+        assert reg.field_map("display_name") == formats.FORMAT_DISPLAY_NAMES
+        assert reg.field_map("unsupported_message") == formats.UNSUPPORTED_ERROR_MESSAGES
 
     def test_constants_module(self) -> None:
         from portolan_cli import constants
 
-        assert constants.GEOSPATIAL_EXTENSIONS == reg.extensions_where(is_geospatial=True)
-        assert constants.TABULAR_EXTENSIONS == reg.extensions_where(is_tabular=True)
-        assert constants.SIDECAR_PATTERNS == {k: list(v) for k, v in reg.SIDECAR_OF.items()}
+        assert reg.extensions_where(is_geospatial=True) == constants.GEOSPATIAL_EXTENSIONS
+        assert reg.extensions_where(is_tabular=True) == constants.TABULAR_EXTENSIONS
+        assert {k: list(v) for k, v in reg.SIDECAR_OF.items()} == constants.SIDECAR_PATTERNS
 
     def test_scan_classify_module(self) -> None:
         from portolan_cli.scan import classify as scan_classify
 
-        assert scan_classify.GEO_ASSET_EXTENSIONS == reg.extensions_where(scan_category="geo_asset")
-        assert scan_classify.SIDECAR_EXTENSIONS == reg.extensions_where(
-            scan_category="known_sidecar"
+        assert reg.extensions_where(scan_category="geo_asset") == scan_classify.GEO_ASSET_EXTENSIONS
+        assert (
+            reg.extensions_where(scan_category="known_sidecar") == scan_classify.SIDECAR_EXTENSIONS
         )
-        assert scan_classify.TABULAR_EXTENSIONS == reg.extensions_where(is_tabular=True)
-        assert scan_classify.IMAGE_EXTENSIONS == reg.extensions_where(scan_category="thumbnail")
+        assert reg.extensions_where(is_tabular=True) == scan_classify.TABULAR_EXTENSIONS
+        assert reg.extensions_where(scan_category="thumbnail") == scan_classify.IMAGE_EXTENSIONS
         assert scan_classify.JUNK_DIRS == reg.JUNK_DIRS
 
     def test_add_module(self) -> None:
         from portolan_cli import add
 
-        assert add._MEDIA_TYPE_MAP == reg.field_map("media_type")
-        assert add._ROLE_MAP == reg.field_map("role")
+        assert reg.field_map("media_type") == add._MEDIA_TYPE_MAP
+        assert reg.field_map("role") == add._ROLE_MAP

@@ -19,10 +19,6 @@ import re
 import sys
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +182,7 @@ def fetch_docs(library: str) -> str | None:
         logger.warning("gitingest not installed, skipping doc fetch")
         return None
     except Exception as e:
-        logger.warning(f"Failed to fetch docs for {library}: {e}")
+        logger.warning("Failed to fetch docs for %s: %s", library, e)
         return None
 
 

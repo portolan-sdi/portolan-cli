@@ -30,6 +30,7 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 from pathlib import Path, PurePosixPath
@@ -54,12 +55,11 @@ def _format_size(size_bytes: int) -> str:
     """Format file size in human-readable format."""
     if size_bytes < 1024:
         return f"{size_bytes} B"
-    elif size_bytes < 1024 * 1024:
+    if size_bytes < 1024 * 1024:
         return f"{size_bytes / 1024:.1f} KB"
-    elif size_bytes < 1024 * 1024 * 1024:
+    if size_bytes < 1024 * 1024 * 1024:
         return f"{size_bytes / (1024 * 1024):.1f} MB"
-    else:
-        return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+    return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
 
 
 def _detect_format(assets: dict[str, Any]) -> str | None:
@@ -83,13 +83,13 @@ def _detect_format(assets: dict[str, Any]) -> str | None:
 def _generate_code_example(data_format: str | None, sample_href: str = "data.parquet") -> str:
     """Generate code example based on data format."""
     if data_format == "geoparquet":
-        return f'''```python
+        return f"""```python
 import geopandas as gpd
 
 gdf = gpd.read_parquet("{sample_href}")
 print(gdf.head())
-```'''
-    elif data_format == "cog":
+```"""
+    if data_format == "cog":
         return """```python
 import rasterio
 
@@ -97,22 +97,21 @@ with rasterio.open("image.tif") as src:
     data = src.read(1)
     print(f"Shape: {data.shape}, CRS: {src.crs}")
 ```"""
-    elif data_format == "geojson":
+    if data_format == "geojson":
         return """```python
 import geopandas as gpd
 
 gdf = gpd.read_file("data.geojson")
 print(gdf.head())
 ```"""
-    elif data_format == "geopackage":
+    if data_format == "geopackage":
         return """```python
 import geopandas as gpd
 
 gdf = gpd.read_file("data.gpkg")
 print(gdf.head())
 ```"""
-    else:
-        return ""
+    return ""
 
 
 # =============================================================================
@@ -440,10 +439,7 @@ def _add_authors_section(sections: list[str], metadata: dict[str, Any]) -> None:
         affiliation = author.get("affiliation")
 
         # Build author line
-        if orcid:
-            author_text = f"[{name}](https://orcid.org/{orcid})"
-        else:
-            author_text = name
+        author_text = f"[{name}](https://orcid.org/{orcid})" if orcid else name
 
         if affiliation:
             author_text = f"{author_text} ({affiliation})"
@@ -500,9 +496,7 @@ def _is_meaningful_keyword(keyword: str) -> bool:
     if ":" in text:
         return False
     # Short alphanumeric codes (FACC: AP010, DB120, BH020, CA010).
-    if len(text) <= 8 and re.fullmatch(r"[A-Za-z]{1,3}\d{1,4}[A-Za-z0-9]*", text):
-        return False
-    return True
+    return not (len(text) <= 8 and re.fullmatch(r"[A-Za-z]{1,3}\d{1,4}[A-Za-z0-9]*", text))
 
 
 def _add_keywords_section(sections: list[str], metadata: dict[str, Any]) -> None:
@@ -597,8 +591,7 @@ def _add_citation_section(sections: list[str], metadata: dict[str, Any]) -> None
 
     if related_dois:
         sections.append("**Related DOIs**:")
-        for rdoi in related_dois:
-            sections.append(f"- [{rdoi}](https://doi.org/{rdoi})")
+        sections.extend(f"- [{rdoi}](https://doi.org/{rdoi})" for rdoi in related_dois)
         sections.append("")
 
 
@@ -763,7 +756,7 @@ def _collection_relative_href(href: str, item_dir: str) -> str:
     """
     if not href or "://" in href or href.startswith("/"):
         return href
-    cleaned = href[2:] if href.startswith("./") else href
+    cleaned = href.removeprefix("./")
     if not item_dir or item_dir == ".":
         return cleaned
     return f"{item_dir}/{cleaned}"
@@ -873,8 +866,8 @@ def _extract_collection_extent(
     intervals = temporal.get("interval", [])
     start, end = None, None
     if intervals and len(intervals) > 0 and len(intervals[0]) >= 2:
-        start = intervals[0][0] if intervals[0][0] else None
-        end = intervals[0][1] if intervals[0][1] else None
+        start = intervals[0][0] or None
+        end = intervals[0][1] or None
 
     return bbox, start, end
 
@@ -1074,10 +1067,8 @@ def generate_catalog_readme(catalog_path: Path) -> str:
     catalog_json = catalog_path / "catalog.json"
     catalog: dict[str, Any] = {}
     if catalog_json.exists():
-        try:
+        with contextlib.suppress(json.JSONDecodeError, OSError):
             catalog = json.loads(catalog_json.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
 
     # Load merged metadata
     metadata = load_merged_metadata(catalog_path, catalog_path)

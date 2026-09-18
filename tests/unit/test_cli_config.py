@@ -150,7 +150,7 @@ class TestConfigGet:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Use non-sensitive key for testing config read
-            save_config(Path("."), {"backend": "iceberg"})
+            save_config(Path(), {"backend": "iceberg"})
 
             result = runner.invoke(cli, ["config", "get", "backend"])
 
@@ -164,7 +164,7 @@ class TestConfigGet:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            save_config(Path("."), {"backend": "iceberg"})
+            save_config(Path(), {"backend": "iceberg"})
 
             result = runner.invoke(cli, ["config", "get", "backend"])
 
@@ -179,7 +179,7 @@ class TestConfigGet:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            save_config(Path("."), {"remote": "s3://from-config/"})
+            save_config(Path(), {"remote": "s3://from-config/"})
 
             with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://from-env/"}):
                 result = runner.invoke(cli, ["config", "get", "remote"])
@@ -218,7 +218,7 @@ class TestConfigGet:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            save_config(Path("."), {"backend": "iceberg"})
+            save_config(Path(), {"backend": "iceberg"})
 
             result = runner.invoke(cli, ["--format", "json", "config", "get", "backend"])
 
@@ -246,7 +246,7 @@ class TestConfigList:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            save_config(Path("."), {"backend": "iceberg", "statistics.enabled": True})
+            save_config(Path(), {"backend": "iceberg", "statistics.enabled": True})
 
             result = runner.invoke(cli, ["config", "list"])
 
@@ -261,7 +261,7 @@ class TestConfigList:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            save_config(Path("."), {"backend": "iceberg"})
+            save_config(Path(), {"backend": "iceberg"})
 
             with mock.patch.dict(os.environ, {"PORTOLAN_STATISTICS_ENABLED": "true"}):
                 result = runner.invoke(cli, ["config", "list"])
@@ -278,7 +278,7 @@ class TestConfigList:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            save_config(Path("."), {"backend": "iceberg"})
+            save_config(Path(), {"backend": "iceberg"})
 
             result = runner.invoke(cli, ["--format", "json", "config", "list"])
 
@@ -318,7 +318,7 @@ class TestConfigList:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(
-                Path("."),
+                Path(),
                 {"collections": {"demo": {"backend": "iceberg"}}},
             )
 
@@ -343,7 +343,7 @@ class TestConfigUnset:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            save_config(Path("."), {"remote": "s3://bucket/"})
+            save_config(Path(), {"remote": "s3://bucket/"})
 
             result = runner.invoke(cli, ["config", "unset", "remote"])
 
@@ -381,7 +381,7 @@ class TestConfigUnset:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            save_config(Path("."), {"remote": "s3://bucket/"})
+            save_config(Path(), {"remote": "s3://bucket/"})
 
             result = runner.invoke(cli, ["--format", "json", "config", "unset", "remote"])
 
@@ -400,7 +400,7 @@ class TestConfigUnset:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(
-                Path("."),
+                Path(),
                 {"collections": {"demographics": {"remote": "s3://collection/"}}},
             )
 
@@ -460,7 +460,7 @@ class TestConfigErrorMessages:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(
-                Path("."),
+                Path(),
                 {"collections": {"demo": {"backend": "iceberg"}}},
             )
 
@@ -509,7 +509,7 @@ class TestConfigErrorMessages:
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Use non-sensitive key (backend) to create collection config
             save_config(
-                Path("."),
+                Path(),
                 {"collections": {"demo": {"backend": "iceberg"}}},
             )
 
@@ -569,7 +569,7 @@ class TestConfigErrorMessages:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             save_config(
-                Path("."),
+                Path(),
                 {"collections": {"demo": {"remote": "s3://col/"}}},
             )
 

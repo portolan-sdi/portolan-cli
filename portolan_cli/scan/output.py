@@ -282,8 +282,7 @@ def format_collection_suggestion(
 
     # List files (truncated if needed)
     files_to_show = suggestion.files[:max_files]
-    for f in files_to_show:
-        lines.append(f"    - {f.name}")
+    lines.extend(f"    - {f.name}" for f in files_to_show)
 
     # Show truncation message
     if file_count > max_files:
@@ -499,12 +498,11 @@ def _format_size(size_bytes: int | None) -> str:
 
     if size_bytes < 1024:
         return f"{size_bytes} B"
-    elif size_bytes < 1024 * 1024:
+    if size_bytes < 1024 * 1024:
         return f"{size_bytes / 1024:.1f} KB"
-    elif size_bytes < 1024 * 1024 * 1024:
+    if size_bytes < 1024 * 1024 * 1024:
         return f"{size_bytes / (1024 * 1024):.1f} MB"
-    else:
-        return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+    return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
 
 
 # =============================================================================
@@ -594,14 +592,14 @@ def _parse_issue_location(relative_path: str) -> tuple[str, str]:
     Returns:
         Tuple of (directory_path, filename) for tree grouping.
     """
-    rel_path = Path(relative_path) if relative_path else Path(".")
+    rel_path = Path(relative_path) if relative_path else Path()
     rel_str = str(rel_path)
 
     # Root directory issue
     if rel_str in (".", ""):
         return ".", "."
     # File directly in root
-    if rel_path.parent == Path("."):
+    if rel_path.parent == Path():
         return ".", rel_str
     # File in subdirectory
     return str(rel_path.parent), rel_path.name
@@ -842,15 +840,15 @@ def format_scan_output(
     if result.collection_suggestions:
         lines.append("")
         lines.append("Suggested collections:")
-        for suggestion in result.collection_suggestions:
-            lines.append(format_collection_suggestion(suggestion))
+        lines.extend(
+            format_collection_suggestion(suggestion) for suggestion in result.collection_suggestions
+        )
 
     steps = generate_next_steps(result)
     if steps:
         lines.append("")
         lines.append("Next steps:")
-        for step in steps:
-            lines.append(f"  \u2192 {step}")
+        lines.extend(f"  \u2192 {step}" for step in steps)
 
     return "\n".join(lines)
 
@@ -947,9 +945,7 @@ def format_file_entry(file: ScannedFile) -> str:
     parts.append(f"({format_name})")
 
     # Add collection ID if nested
-    if collection_id and "/" in collection_id:
-        parts.append(f"→ {collection_id}")
-    elif collection_id:
+    if collection_id and "/" in collection_id or collection_id:
         parts.append(f"→ {collection_id}")
 
     return " ".join(parts)
@@ -971,7 +967,7 @@ def group_files_by_collection(
 
     for file in files:
         collection_id = _get_collection_id(file)
-        key = collection_id if collection_id else "(uncategorized)"
+        key = collection_id or "(uncategorized)"
         grouped[key].append(file)
 
     return dict(grouped)
@@ -1061,9 +1057,7 @@ def detect_structure_pattern(result: ScanResult) -> StructurePattern:
         pattern_type = "multiple_collections"
 
     # Generate suggested commands
-    commands = []
-    for cid in collection_list:
-        commands.append(f"portolan add {cid}")
+    commands = [f"portolan add {cid}" for cid in collection_list]
 
     return StructurePattern(
         pattern_type=pattern_type,
@@ -1109,8 +1103,8 @@ def generate_structure_recommendation(result: ScanResult) -> str:
     if pattern.suggested_commands:
         lines.append("")
         lines.append("Suggested commands:")
-        for cmd in pattern.suggested_commands[:5]:  # Limit to 5
-            lines.append(f"  $ {cmd}")
+        # Limit to 5
+        lines.extend(f"  $ {cmd}" for cmd in pattern.suggested_commands[:5])
         if len(pattern.suggested_commands) > 5:
             remaining = len(pattern.suggested_commands) - 5
             lines.append(f"  ... and {remaining} more")
@@ -1289,19 +1283,17 @@ def format_fix_commands_json(result: ScanResult) -> list[dict[str, Any]]:
     Returns:
         List of structured command dictionaries.
     """
-    commands: list[dict[str, Any]] = []
-
     # Add commands for each detected collection
     pattern = detect_structure_pattern(result)
-    for collection_id in pattern.collections:
-        commands.append(
-            {
-                "command": "add",
-                "args": [collection_id],
-                "options": {},
-                "reason": "Collection detected, needs tracking",
-            }
-        )
+    commands: list[dict[str, Any]] = [
+        {
+            "command": "add",
+            "args": [collection_id],
+            "options": {},
+            "reason": "Collection detected, needs tracking",
+        }
+        for collection_id in pattern.collections
+    ]
 
     # Add fix commands for issues that can be auto-fixed
     # Deduplicate by DIRECTORY - one scan --fix per unique directory
@@ -1426,7 +1418,6 @@ def format_enhanced_summary(
     if steps:
         lines.append("")
         lines.append("Next steps:")
-        for step in steps:
-            lines.append(f"  → {step}")
+        lines.extend(f"  → {step}" for step in steps)
 
     return "\n".join(lines)

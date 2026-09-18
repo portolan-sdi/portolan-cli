@@ -270,9 +270,12 @@ def _find_geoparquet(collection_path: Path, data: dict[str, Any]) -> Path | None
         for asset in item.get("assets", {}).values():
             href = str(asset.get("href", "")).removeprefix("./")
             candidate = item_json.parent / href
-            if candidate.suffix.lower() == ".parquet" and candidate.exists():
-                if is_geoparquet(candidate):
-                    return candidate
+            if (
+                candidate.suffix.lower() == ".parquet"
+                and candidate.exists()
+                and is_geoparquet(candidate)
+            ):
+                return candidate
     return None
 
 

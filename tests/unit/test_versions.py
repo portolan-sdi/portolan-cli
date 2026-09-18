@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -24,7 +23,7 @@ from portolan_cli.versions import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from pathlib import Path
 
 
 def _sha256(data: str) -> str:

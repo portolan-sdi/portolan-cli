@@ -13,13 +13,13 @@ Actual conversion is delegated to geoparquet-io and rio-cogeo.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
 from portolan_cli.conversion_config import (
@@ -46,6 +46,9 @@ from portolan_cli.viz.thumbnail import (
     get_thumbnail_config,
     thumbnail_path_for,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -290,10 +293,8 @@ def generate_cog_thumbnail(
     except Exception as e:
         logger.debug("Could not generate thumbnail for %s: %s", cog_path, e)
         if thumb_path.exists():
-            try:
+            with contextlib.suppress(OSError):
                 thumb_path.unlink()
-            except OSError:
-                pass
         return None
 
     logger.debug("Generated thumbnail %s (%dx%d)", thumb_path.name, out_w, out_h)
@@ -425,7 +426,7 @@ def convert_file(
         return early_exit
 
     # Determine output directory and format type
-    out_dir = output_dir if output_dir else source.parent
+    out_dir = output_dir or source.parent
     format_type = detect_format(source)
 
     # Load COG settings: explicit arg > catalog config > defaults
@@ -762,7 +763,7 @@ def apply_vector_settings(table: Any, settings: VectorSettings) -> Any:
 
     # Add spatial index column if specified
     if settings.spatial_index != "none":
-        resolution = _resolve_resolution(settings.spatial_index, settings.resolution)
+        resolution = _resolve_resolution(settings.resolution)
         table = _add_spatial_index(table, settings.spatial_index, resolution)
 
     # Apply sorting
@@ -770,7 +771,7 @@ def apply_vector_settings(table: Any, settings: VectorSettings) -> Any:
         table = table.sort_hilbert()
     elif settings.sort == "quadkey":
         # sort_quadkey needs resolution; use quadkey default (13) if not set
-        sort_resolution = _resolve_resolution("quadkey", settings.resolution)
+        sort_resolution = _resolve_resolution(settings.resolution)
         if sort_resolution is None:
             table = table.sort_quadkey()
         else:
@@ -779,11 +780,10 @@ def apply_vector_settings(table: Any, settings: VectorSettings) -> Any:
     return table
 
 
-def _resolve_resolution(index_type: str, resolution: int | str) -> int | None:
+def _resolve_resolution(resolution: int | str) -> int | None:
     """Resolve resolution value for a spatial index type.
 
     Args:
-        index_type: Spatial index type (h3, s2, quadkey, a5, kdtree).
         resolution: Either "auto" or explicit int.
 
     Returns:
@@ -810,20 +810,19 @@ def _add_spatial_index(table: Any, index_type: str, resolution: int | None) -> A
     """
     if index_type == "h3":
         return table.add_h3() if resolution is None else table.add_h3(resolution=resolution)
-    elif index_type == "s2":
+    if index_type == "s2":
         return table.add_s2() if resolution is None else table.add_s2(level=resolution)
-    elif index_type == "quadkey":
+    if index_type == "quadkey":
         return (
             table.add_quadkey() if resolution is None else table.add_quadkey(resolution=resolution)
         )
-    elif index_type == "a5":
+    if index_type == "a5":
         return table.add_a5() if resolution is None else table.add_a5(resolution=resolution)
-    elif index_type == "kdtree":
+    if index_type == "kdtree":
         return table.add_kdtree() if resolution is None else table.add_kdtree(iterations=resolution)
-    else:
-        raise ValueError(
-            f"Unknown spatial index type: '{index_type}'. Valid types: h3, s2, quadkey, a5, kdtree"
-        )
+    raise ValueError(
+        f"Unknown spatial index type: '{index_type}'. Valid types: h3, s2, quadkey, a5, kdtree"
+    )
 
 
 def _write_partitioned(table: Any, output_dir: Path, settings: VectorSettings) -> None:
@@ -834,7 +833,7 @@ def _write_partitioned(table: Any, output_dir: Path, settings: VectorSettings) -
         output_dir: Output directory for partitioned files.
         settings: Vector settings with partition strategy.
     """
-    resolution = _resolve_resolution(settings.spatial_index, settings.resolution)
+    resolution = _resolve_resolution(settings.resolution)
     index_type = settings.spatial_index
 
     # geoparquet-io 1.4.0 changed the Python API default for `hive` from True to
@@ -960,7 +959,7 @@ def _convert_raster(source: Path, output_dir: Path, settings: CogSettings | None
             str(temp_path),
             profile,
             quiet=True,
-            overview_resampling=cast(ResamplingMethod, settings.resampling),
+            overview_resampling=cast("ResamplingMethod", settings.resampling),
         )
 
         # Atomic replace
@@ -1165,7 +1164,7 @@ def _convert_files_serial(
     """
     results: list[ConversionResult] = []
     for file_path in files:
-        file_output_dir = output_dir if output_dir else file_path.parent
+        file_output_dir = output_dir or file_path.parent
         result = convert_file(
             file_path,
             output_dir=file_output_dir,
@@ -1229,7 +1228,7 @@ def _convert_files_parallel(
                 executor.submit(
                     convert_file,
                     file_path,
-                    output_dir=output_dir if output_dir else file_path.parent,
+                    output_dir=output_dir or file_path.parent,
                     catalog_path=catalog_path,
                     cog_settings=cog_settings,
                     vector_settings=vector_settings,
@@ -1276,8 +1275,7 @@ def _convert_files_parallel(
             force=force,
             on_progress=on_progress,
         )
-        for file_path, result in zip(remaining, serial_results, strict=True):
-            completed[file_path] = result
+        completed.update(dict(zip(remaining, serial_results, strict=True)))
 
     # Preserve the caller's input order regardless of completion order.
     return [completed[file_path] for file_path in files]

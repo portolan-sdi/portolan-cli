@@ -11,6 +11,8 @@ backends (ArcGIS, WFS, etc.):
 - resume: Resume state for interrupted extractions
 """
 
+from __future__ import annotations
+
 from portolan_cli.extract.common.filters import (
     apply_unified_filter,
     filter_layers,

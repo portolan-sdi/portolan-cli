@@ -4,11 +4,16 @@ Discover_collections()
 must find collections at any depth, not just direct subdirectories.
 """
 
-from pathlib import Path
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.sync.push import discover_collections
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture

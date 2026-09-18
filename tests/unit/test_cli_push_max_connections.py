@@ -53,7 +53,7 @@ class TestPushMaxConnectionsFlag:
     ) -> None:
         """push command accepts --max-connections flag."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             mock_push_all.return_value = PushAllResult(
                 success=True,
@@ -76,7 +76,7 @@ class TestPushMaxConnectionsFlag:
     ) -> None:
         """--max-connections value is passed to push_all_collections."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             mock_push_all.return_value = PushAllResult(
                 success=True,
@@ -99,7 +99,7 @@ class TestPushMaxConnectionsFlag:
     def test_max_connections_rejects_too_low(self, runner: CliRunner, tmp_path: Path) -> None:
         """--max-connections rejects values below 1."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1"])
+            _setup_catalog_with_collections(Path(), ["col1"])
 
             result = runner.invoke(cli, ["push", "--catalog", ".", "--max-connections", "0"])
 
@@ -192,7 +192,7 @@ class TestMaxConnectionsWithWorkers:
     ) -> None:
         """--max-connections is divided across workers."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            _setup_catalog_with_collections(Path("."), ["col1", "col2", "col3", "col4"])
+            _setup_catalog_with_collections(Path(), ["col1", "col2", "col3", "col4"])
 
             mock_push_all.return_value = PushAllResult(
                 success=True,

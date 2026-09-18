@@ -19,9 +19,8 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.metadata.detection import (
     check_file_metadata,
@@ -36,6 +35,9 @@ from portolan_cli.metadata.models import (
     MetadataStatus,
 )
 from portolan_cli.sync.checksums import compute_checksum
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _DATA_EXTENSIONS = frozenset(
     {
@@ -472,7 +474,7 @@ def _href(asset: Any) -> str | None:
     href = asset.get("href")
     if not isinstance(href, str):
         return None
-    return href[2:] if href.startswith("./") else href
+    return href.removeprefix("./")
 
 
 _URI_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
@@ -523,7 +525,7 @@ def _is_non_local_asset(asset: Any) -> bool:
 
 def _safe_read_json(path: Path) -> dict[str, Any] | None:
     try:
-        with open(path, encoding="utf-8") as f:
+        with Path(path).open(encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return None

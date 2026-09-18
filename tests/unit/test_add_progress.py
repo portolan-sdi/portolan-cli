@@ -10,11 +10,14 @@ Tests verify:
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.add_progress import AddProgressReporter, count_files
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.mark.unit
@@ -190,11 +193,10 @@ class TestAddProgressIntegration:
                 reporter.advance()
 
         # Use 10 threads, each advancing 100 times
-        with reporter:
-            with ThreadPoolExecutor(max_workers=10) as executor:
-                futures = [executor.submit(advance_many, 100) for _ in range(10)]
-                for f in futures:
-                    f.result()
+        with reporter, ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(advance_many, 100) for _ in range(10)]
+            for f in futures:
+                f.result()
 
         # All 1000 advances should be counted correctly
         assert reporter.files_processed == total

@@ -37,8 +37,6 @@ logger = logging.getLogger(__name__)
 class ArcGISDiscoveryError(Exception):
     """Error during ArcGIS service/layer discovery."""
 
-    pass
-
 
 @dataclass(frozen=True)
 class LayerInfo:
@@ -208,27 +206,26 @@ def discover_layers(
     data = _fetch_json(url, timeout=timeout)
 
     # Extract layers
-    layers: list[LayerInfo] = []
 
-    for layer_data in data.get("layers", []):
-        layers.append(
-            LayerInfo(
-                id=layer_data["id"],
-                name=layer_data["name"],
-                layer_type=layer_data.get("type", "Feature Layer"),
-            )
+    layers: list[LayerInfo] = [
+        LayerInfo(
+            id=layer_data["id"],
+            name=layer_data["name"],
+            layer_type=layer_data.get("type", "Feature Layer"),
         )
+        for layer_data in data.get("layers", [])
+    ]
 
     # Include tables if requested
     if include_tables:
-        for table_data in data.get("tables", []):
-            layers.append(
-                LayerInfo(
-                    id=table_data["id"],
-                    name=table_data["name"],
-                    layer_type=table_data.get("type", "Table"),
-                )
+        layers.extend(
+            LayerInfo(
+                id=table_data["id"],
+                name=table_data["name"],
+                layer_type=table_data.get("type", "Table"),
             )
+            for table_data in data.get("tables", [])
+        )
 
     # Extract service-level metadata
     document_info = data.get("documentInfo", {})
@@ -376,8 +373,7 @@ def discover_services_recursive(
             continue
         visited.append(folder)
         services.extend(_build_service_list(folder_data, service_types))
-        for sub in folder_data.get("folders", []):
-            queue.append((f"{folder}/{sub}", depth + 1))
+        queue.extend((f"{folder}/{sub}", depth + 1) for sub in folder_data.get("folders", []))
 
     traversal = FolderTraversal(visited=visited, skipped=skipped, service_count=len(services))
     return services, traversal

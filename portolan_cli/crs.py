@@ -224,10 +224,9 @@ def _is_wgs84(crs: CRS) -> bool:
 
     # Check for CRS84 by name (pyproj recognizes it)
     crs_name = crs.name.lower() if crs.name else ""
-    if "crs84" in crs_name or "wgs 84" in crs_name or "wgs84" in crs_name:
-        # Verify it's actually a geographic CRS (not just a name match)
-        if crs.is_geographic:
-            return True
+    # Verify it's actually a geographic CRS (not just a name match)
+    if ("crs84" in crs_name or "wgs 84" in crs_name or "wgs84" in crs_name) and crs.is_geographic:
+        return True
 
     # Also check by comparing CRS objects (handles WKT inputs)
     return crs.equals(WGS84)
@@ -352,10 +351,7 @@ def is_likely_wgs84_bbox(bbox: tuple[float, float, float, float]) -> bool:
 
     # Check longitude bounds (x coordinates must be -180 to 180)
     # Note: for antimeridian crossing, minx > maxx is valid
-    if not (-180.0 <= minx <= 180.0 and -180.0 <= maxx <= 180.0):
-        return False
-
-    return True
+    return -180.0 <= minx <= 180.0 and -180.0 <= maxx <= 180.0
 
 
 def _sample_bbox_edges(

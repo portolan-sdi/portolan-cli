@@ -13,12 +13,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow.parquet as pq
 import rasterio
 from rasterio import Statistics as RasterioStats
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _serialize_stat_value(value: Any) -> Any:

@@ -6,7 +6,7 @@ Tests recursive file iteration for adding directories as collections.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,6 +16,9 @@ from portolan_cli.add import (
     iter_geospatial_files,
 )
 from portolan_cli.formats import FormatType
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestIterGeospatialFiles:
@@ -171,7 +174,7 @@ class TestAddDirectory:
                 geometry_type="Point",
                 geometry_column="geometry",  # Required for table extension
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=lambda: {},
+                to_stac_properties=dict,
             )
             mock_checksum.return_value = "abc"
 
@@ -245,7 +248,7 @@ class TestAddDirectory:
                 geometry_type="Point",
                 geometry_column="geometry",  # Required for table extension
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=lambda: {},
+                to_stac_properties=dict,
             )
             mock_meta_r.return_value = MagicMock(
                 bbox=(0, 0, 1, 1),
@@ -253,7 +256,7 @@ class TestAddDirectory:
                 width=64,
                 height=64,
                 band_count=1,
-                to_stac_properties=lambda: {},
+                to_stac_properties=dict,
             )
             mock_checksum.return_value = "abc"
 
@@ -325,7 +328,7 @@ class TestAddDirectory:
                 geometry_type="Point",
                 geometry_column="geometry",  # Required for table extension
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=lambda: {},
+                to_stac_properties=dict,
             )
             mock_checksum.return_value = "abc"
 

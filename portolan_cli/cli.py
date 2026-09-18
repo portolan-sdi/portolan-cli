@@ -9,16 +9,20 @@ from __future__ import annotations
 import json
 import os
 import sys
-from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from datetime import datetime
+
     from portolan_cli.backends.protocol import VersioningBackend
+    from portolan_cli.convert import ConversionResult
     from portolan_cli.extract.arcgis.report import ExtractionReport
     from portolan_cli.extract.arcgis.url_parser import ParsedArcGISURL
+    from portolan_cli.extract.common.progress import ExtractionProgress
+    from portolan_cli.query import ItemInfo
     from portolan_cli.sync.pull import PullResult
 
 import click
@@ -33,7 +37,6 @@ from portolan_cli.catalog_list import (
     list_catalog_contents,
 )
 from portolan_cli.collection_id import resolve_collection_id
-from portolan_cli.convert import ConversionResult
 from portolan_cli.discovery import get_sidecars
 from portolan_cli.emit import emit_error, emit_success
 from portolan_cli.errors import MissingLicenseError
@@ -47,7 +50,6 @@ from portolan_cli.licensing import (
 from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.output import detail, error, success, warn
 from portolan_cli.output import info as info_output
-from portolan_cli.query import ItemInfo
 from portolan_cli.remove import remove_files
 from portolan_cli.scan.core import (
     IssueType,
@@ -354,7 +356,50 @@ def cli(ctx: click.Context, output_format: str) -> None:
     # Note: .env loading moved to individual commands after catalog path resolution
     # to ensure correct .env is loaded when --catalog/--portolan-dir is used.
     # See load_dotenv_and_warn_sensitive() helper.
-    pass
+
+
+def _prompt_init_metadata(
+    title: str | None,
+    description: str | None,
+    license_id: str | None,
+    license_url: str | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Ask the user for the catalog metadata the flags did not supply.
+
+    A value that came from a flag is kept. The function runs only in
+    interactive mode, so --auto and --json never reach it.
+
+    Args:
+        title: Catalog title, or None to prompt.
+        description: Catalog description, or None to prompt.
+        license_id: SPDX identifier, or None to prompt.
+        license_url: URL of the license text, or None to prompt when the
+            identifier is "other".
+
+    Returns:
+        Tuple of (title, description, license_id, license_url).
+    """
+    if title is None:
+        title_input = click.prompt(
+            "Catalog title (optional, press Enter to skip)",
+            default="",
+            show_default=False,
+        )
+        if title_input:
+            title = title_input
+
+    if description is None:
+        description = click.prompt(
+            "Catalog description",
+            default="A Portolan-managed STAC catalog",
+        )
+
+    if license_id is None:
+        license_id = click.prompt("License (SPDX identifier, or 'other')")
+    if license_id.strip() == OTHER_LICENSE and license_url is None:
+        license_url = click.prompt("URL of the license text")
+
+    return title, description, license_id, license_url
 
 
 @cli.command()
@@ -434,7 +479,7 @@ def init(
     logo: str | None,
     logo_title: str | None,
 ) -> None:
-    """Initialize a new Portolan catalog.
+    r"""Initialize a new Portolan catalog.
 
     Creates a catalog.json at the root level and a .portolan directory with
     management files (config.yaml, metadata.yaml). Also creates versions.json at
@@ -467,7 +512,6 @@ def init(
         portolan init --backend iceberg --license CC0-1.0
         portolan init --auto --license CC-BY-4.0 --logo brand.png
     """
-
     from portolan_cli.catalog import CatalogState, detect_state, init_catalog
     from portolan_cli.errors import (
         CatalogAlreadyExistsError,
@@ -480,25 +524,9 @@ def init(
 
     # Interactive prompting (unless --auto or JSON mode)
     if not auto_mode and not use_json:
-        if title is None:
-            title_input = click.prompt(
-                "Catalog title (optional, press Enter to skip)",
-                default="",
-                show_default=False,
-            )
-            if title_input:
-                title = title_input
-
-        if description is None:
-            description = click.prompt(
-                "Catalog description",
-                default="A Portolan-managed STAC catalog",
-            )
-
-        if license_id is None:
-            license_id = click.prompt("License (SPDX identifier, or 'other')")
-        if license_id.strip() == OTHER_LICENSE and license_url is None:
-            license_url = click.prompt("URL of the license text")
+        title, description, license_id, license_url = _prompt_init_metadata(
+            title, description, license_id, license_url
+        )
 
     # Only gate the license on a directory that can actually become a catalog. An
     # existing catalog is the more fundamental problem and --license cannot fix it,
@@ -593,10 +621,9 @@ def _get_format_display_name(format_type: Any) -> str:
 
     if format_type == FormatType.VECTOR:
         return "GeoParquet"
-    elif format_type == FormatType.RASTER:
+    if format_type == FormatType.RASTER:
         return "COG"
-    else:
-        return "Unknown"
+    return "Unknown"
 
 
 def _get_asset_format_display_name(asset_href: str) -> str:
@@ -778,7 +805,7 @@ def list_cmd(
     tracked_only: bool,
     untracked_only: bool,
 ) -> None:
-    """List all files in the catalog with tracking status.
+    r"""List all files in the catalog with tracking status.
 
     Git-style behavior: automatically finds the catalog root by walking up
     from the current directory. Works from any subdirectory within a catalog.
@@ -914,7 +941,7 @@ def status_cmd(
     offline: bool,
     json_output: bool,
 ) -> None:
-    """Show local vs remote version state for collections.
+    r"""Show local vs remote version state for collections.
 
     Git-style status showing version sync state, modified files, and
     untracked files for each collection in the catalog.
@@ -948,10 +975,7 @@ def status_cmd(
     # Discover collections
     from portolan_cli.sync.push import discover_collections
 
-    if collection:
-        collections = [collection]
-    else:
-        collections = discover_collections(catalog_path)
+    collections = [collection] if collection else discover_collections(catalog_path)
 
     if not collections:
         if not emit_success("status", {"collections": []}, use_json=use_json):
@@ -1016,9 +1040,13 @@ def _output_status_human(statuses: list[CollectionStatus]) -> None:
                 detail(f"    {f}")
 
         # Clean state message
-        if not status.modified_files and not status.deleted_files and not status.untracked_files:
-            if status.local_version:
-                success("  No local changes")
+        if (
+            not status.modified_files
+            and not status.deleted_files
+            and not status.untracked_files
+            and status.local_version
+        ):
+            success("  No local changes")
 
         info_output("")
 
@@ -1045,7 +1073,7 @@ def info_cmd(
     catalog_path: Path,
     json_output: bool,
 ) -> None:
-    """Show information about a file, collection, or catalog.
+    r"""Show information about a file, collection, or catalog.
 
     TARGET can be:
     - A file path (e.g., demographics/census.parquet) - shows file metadata
@@ -1377,7 +1405,6 @@ def check(
     - Neither: Both (default)
 
     Examples:
-
         portolan check                        # Validate all (metadata + geo-assets)
 
         portolan check --metadata             # Validate the catalog only
@@ -2021,6 +2048,26 @@ def _print_check_fix_preview(report: Any) -> None:
         detail(f"  {f.relative_path} ({f.display_name}) -> {f.target_format}")
 
 
+def _print_legacy_removal_results(removal: Any, *, verbose: bool = False) -> None:
+    """Print the outcome of the legacy-file removal step.
+
+    Args:
+        removal: LegacyRemovalReport, or None when the step did not run.
+        verbose: If True, name every removed file.
+    """
+    if removal is None:
+        return
+    if removal.success_count > 0:
+        success(f"Removed {removal.success_count} legacy file(s)")
+        if verbose:
+            for removed_path in removal.removed:
+                detail(f"  {removed_path.name}")
+    if removal.error_count > 0:
+        error(f"Failed to remove {removal.error_count} file(s)")
+        for failed_path, err_msg in removal.errors.items():
+            error(f"  {failed_path.name}: {err_msg}")
+
+
 def _print_check_fix_results(report: Any, *, verbose: bool = False) -> None:
     """Print conversion results.
 
@@ -2057,18 +2104,7 @@ def _print_check_fix_results(report: Any, *, verbose: bool = False) -> None:
         elif verbose and r.status == ConversionStatus.SKIPPED:
             detail(f"  {r.source.name} (skipped - already cloud-native)")
 
-    # Print legacy removal results if present
-    removal = report.legacy_removal_report
-    if removal is not None:
-        if removal.success_count > 0:
-            success(f"Removed {removal.success_count} legacy file(s)")
-            if verbose:
-                for removed_path in removal.removed:
-                    detail(f"  {removed_path.name}")
-        if removal.error_count > 0:
-            error(f"Failed to remove {removal.error_count} file(s)")
-            for failed_path, err_msg in removal.errors.items():
-                error(f"  {failed_path.name}: {err_msg}")
+    _print_legacy_removal_results(report.legacy_removal_report, verbose=verbose)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2207,7 +2243,7 @@ def scan(
     dry_run: bool,
     strict: bool,
 ) -> None:
-    """Scan a directory for geospatial files and potential issues.
+    r"""Scan a directory for geospatial files and potential issues.
 
     Discovers files by extension, validates shapefile completeness,
     and reports issues that may cause problems during import.
@@ -2224,7 +2260,6 @@ def scan(
         Use --dry-run to preview changes without applying.
 
     Examples:
-
         portolan scan                         # Scan current directory
 
         portolan scan --json                  # JSON output in current directory
@@ -2608,6 +2643,11 @@ def _print_scan_summary_enhanced(
     _print_next_steps(result)
 
 
+# Scan issues group by their type and message. Issues that share both batch
+# into one line.
+_GroupKey = tuple[IssueType, str]
+
+
 def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False) -> None:
     """Print issues grouped by severity and IssueType with fixability labels.
 
@@ -2639,10 +2679,9 @@ def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False)
         # Group by (IssueType, message) so issues with the same problem description
         # batch together, while distinct messages get separate groups.
         # Preserves insertion order (Python 3.7+).
-        GroupKey = tuple[IssueType, str]
-        groups: dict[GroupKey, list[ScanIssue]] = {}
+        groups: dict[_GroupKey, list[ScanIssue]] = {}
         for issue in severity_issues:
-            key: GroupKey = (issue.issue_type, issue.message)
+            key: _GroupKey = (issue.issue_type, issue.message)
             groups.setdefault(key, []).append(issue)
 
         for (issue_type, _message), group in groups.items():
@@ -3221,7 +3260,7 @@ def add_cmd(
     reconvert: bool,
     merge_strategy: str,
 ) -> None:
-    """Track files in the catalog.
+    r"""Track files in the catalog.
 
     Accepts multiple paths like git add. Each path is processed independently
     with automatic collection inference based on directory structure.
@@ -3352,7 +3391,6 @@ def add_cmd(
                 collection_id=None,
                 item_id=item_id,
                 item_datetime=item_datetime,
-                verbose=verbose,
                 on_progress=on_file_progress,
                 workers=workers,
                 json_mode=use_json,
@@ -3504,7 +3542,7 @@ def add_external_cmd(
     catalog_path: Path | None,
     force: bool,
 ) -> None:
-    """Register remote data as a collection WITHOUT downloading or converting it.
+    r"""Register remote data as a collection WITHOUT downloading or converting it.
 
     The external counterpart to 'portolan add'. Some valuable data sources are
     already published cloud-natively at a remote location and should be
@@ -3694,7 +3732,7 @@ def rm_cmd(
     verbose: bool,
     catalog_path: Path | None,
 ) -> None:
-    """Remove files from tracking.
+    r"""Remove files from tracking.
 
     By default, removes the file from disk AND untracks it from the catalog.
     Requires --force for destructive operations (deleting files).
@@ -3864,6 +3902,89 @@ def _prepare_push_concurrency(
     return effective_file, effective_chunk
 
 
+def _report_push_all_result(all_result: Any, *, use_json: bool) -> None:
+    """Report the outcome of a push that covered every collection.
+
+    push_all_collections already wrote the terminal output, so this adds the
+    JSON envelope and the exit code.
+
+    Args:
+        all_result: PushAllResult from push_all_collections.
+        use_json: If True, emit a JSON envelope.
+
+    Raises:
+        SystemExit: If any collection failed.
+    """
+    if use_json:
+        envelope = success_envelope(
+            "push",
+            {
+                "total_collections": all_result.total_collections,
+                "successful_collections": all_result.successful_collections,
+                "failed_collections": all_result.failed_collections,
+                "total_files_uploaded": all_result.total_files_uploaded,
+                "total_versions_pushed": all_result.total_versions_pushed,
+                "dry_run": all_result.dry_run,
+                "total_would_push_files": all_result.total_would_push_files,
+                "total_would_push_versions": all_result.total_would_push_versions,
+                "collection_errors": all_result.collection_errors,
+            },
+        )
+        output_json_envelope(envelope)
+
+    if not all_result.success:
+        raise SystemExit(1)
+
+
+def _report_push_result(result: Any, *, dry_run: bool, use_json: bool) -> None:
+    """Report the outcome of a single-collection push.
+
+    Args:
+        result: PushResult from push_async.
+        dry_run: If True, the run wrote nothing.
+        use_json: If True, emit a JSON envelope.
+
+    Raises:
+        SystemExit: If the push failed.
+    """
+    if not result.success:
+        # Route a returned failure through the error path, so JSON mode reports
+        # success=false and exits non-zero. It never emits a success envelope.
+        err_msgs = result.errors or ["Push failed"]
+        if use_json:
+            envelope = error_envelope(
+                "push",
+                [ErrorDetail(type="PushError", message=msg) for msg in err_msgs],
+            )
+            output_json_envelope(envelope)
+        else:
+            for err_msg in err_msgs:
+                error(err_msg)
+        raise SystemExit(1)
+
+    if emit_success(
+        "push",
+        {
+            "files_uploaded": result.files_uploaded,
+            "versions_pushed": result.versions_pushed,
+            "conflicts": result.conflicts,
+            "errors": result.errors,
+        },
+        use_json=use_json,
+    ):
+        return
+
+    if result.versions_pushed > 0:
+        success(f"Pushed {result.versions_pushed} version(s), {result.files_uploaded} file(s)")
+    elif dry_run:
+        # push.py already printed what a real run would do.
+        info_output("[DRY RUN] Complete - no files were uploaded")
+    elif result.files_uploaded == 0:
+        info_output("Nothing to push - local and remote are in sync")
+    # A metadata-only sync uploads files without a version bump. push_async
+    # already reported "Synced N metadata file(s)" for it (#816).
+
+
 @cli.command()
 @click.argument("destination", required=False, default=None)
 @click.option(
@@ -3958,7 +4079,7 @@ def push(
     max_connections: int | None,
     adaptive: bool,
 ) -> None:
-    """Push local catalog changes to cloud object storage.
+    r"""Push local catalog changes to cloud object storage.
 
     Git-style behavior: automatically finds the catalog root by walking up
     from the current directory. Works from any subdirectory within a catalog.
@@ -4038,27 +4159,7 @@ def push(
                 json_mode=use_json,
             )
 
-            if use_json:
-                envelope = success_envelope(
-                    "push",
-                    {
-                        "total_collections": all_result.total_collections,
-                        "successful_collections": all_result.successful_collections,
-                        "failed_collections": all_result.failed_collections,
-                        "total_files_uploaded": all_result.total_files_uploaded,
-                        "total_versions_pushed": all_result.total_versions_pushed,
-                        "dry_run": all_result.dry_run,
-                        "total_would_push_files": all_result.total_would_push_files,
-                        "total_would_push_versions": all_result.total_would_push_versions,
-                        "collection_errors": all_result.collection_errors,
-                    },
-                )
-                output_json_envelope(envelope)
-            # Terminal output is handled by push_all_collections()
-
-            if not all_result.success:
-                raise SystemExit(1)
-
+            _report_push_all_result(all_result, use_json=use_json)
             return
 
         except Exception as err:
@@ -4084,42 +4185,7 @@ def push(
             )
         )
 
-        if not result.success:
-            # Route returned failures through the error path so JSON mode reports
-            # success=false and exits non-zero (never a success envelope).
-            err_msgs = result.errors or ["Push failed"]
-            if use_json:
-                envelope = error_envelope(
-                    "push",
-                    [ErrorDetail(type="PushError", message=msg) for msg in err_msgs],
-                )
-                output_json_envelope(envelope)
-            else:
-                for err_msg in err_msgs:
-                    error(err_msg)
-            raise SystemExit(1)
-
-        if not emit_success(
-            "push",
-            {
-                "files_uploaded": result.files_uploaded,
-                "versions_pushed": result.versions_pushed,
-                "conflicts": result.conflicts,
-                "errors": result.errors,
-            },
-            use_json=use_json,
-        ):
-            if result.versions_pushed > 0:
-                success(
-                    f"Pushed {result.versions_pushed} version(s), {result.files_uploaded} file(s)"
-                )
-            elif dry_run:
-                # Dry-run mode: push.py already printed what would be done
-                info_output("[DRY RUN] Complete - no files were uploaded")
-            elif result.files_uploaded == 0:
-                info_output("Nothing to push - local and remote are in sync")
-            # A metadata-only sync (files_uploaded > 0, no version bump) already
-            # reported "Synced N metadata file(s)" from push_async (#816).
+        _report_push_result(result, dry_run=dry_run, use_json=use_json)
 
     except PushConflictError as err:
         if use_json:
@@ -4297,7 +4363,7 @@ def pull_command(
     workers: int | None,
     concurrency: int,
 ) -> None:
-    """Pull updates from a remote catalog.
+    r"""Pull updates from a remote catalog.
 
     Git-style behavior: automatically finds the catalog root by walking up
     from the current directory. Works from any subdirectory within a catalog.
@@ -4499,7 +4565,7 @@ def sync(
     profile: str | None,
     catalog_path: Path | None,
 ) -> None:
-    """Sync local catalog with remote storage (pull + push).
+    r"""Sync local catalog with remote storage (pull + push).
 
     Orchestrates a full sync workflow: Pull -> Init -> Scan -> Check -> Push.
     This is the recommended way to keep a local catalog in sync with remote.
@@ -4633,7 +4699,7 @@ def clone(
     collection: str | None,
     profile: str | None,
 ) -> None:
-    """Clone a remote catalog to a local directory.
+    r"""Clone a remote catalog to a local directory.
 
     This is essentially "pull to an empty directory" with guardrails.
     Creates the target directory and pulls collections from remote storage.
@@ -4743,7 +4809,7 @@ def clone(
 
 @cli.group()
 def config() -> None:
-    """Manage catalog configuration.
+    r"""Manage catalog configuration.
 
     Configuration is stored in .portolan/config.yaml and follows this precedence:
 
@@ -4779,7 +4845,7 @@ def config() -> None:
 def config_set(
     ctx: click.Context, json_output: bool, key: str, value: str, collection: str | None
 ) -> None:
-    """Set a configuration value.
+    r"""Set a configuration value.
 
     KEY is the setting name (e.g., backend, statistics.enabled).
     VALUE is the value to set.
@@ -4850,7 +4916,7 @@ def config_set(
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def config_get(ctx: click.Context, json_output: bool, key: str, collection: str | None) -> None:
-    """Get a configuration value.
+    r"""Get a configuration value.
 
     Shows the resolved value and its source (env, catalog, collection, or not set).
 
@@ -4920,7 +4986,7 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def config_list(ctx: click.Context, json_output: bool, collection: str | None) -> None:
-    """List all configuration settings.
+    r"""List all configuration settings.
 
     Shows all settings with their values and sources.
 
@@ -4985,7 +5051,7 @@ def config_list(ctx: click.Context, json_output: bool, collection: str | None) -
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def config_unset(ctx: click.Context, json_output: bool, key: str, collection: str | None) -> None:
-    """Remove a configuration value.
+    r"""Remove a configuration value.
 
     Removes the setting from the config file. Does not affect environment variables.
 
@@ -5074,7 +5140,7 @@ def _print_clean_preview(
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def clean(ctx: click.Context, json_output: bool, dry_run: bool) -> None:
-    """Remove all Portolan metadata while preserving data files.
+    r"""Remove all Portolan metadata while preserving data files.
 
     Removes catalog.json, collection.json, item.json (STAC metadata),
     versions.json, and the .portolan/ directory. Preserves all data files
@@ -5168,7 +5234,7 @@ def clean(ctx: click.Context, json_output: bool, dry_run: bool) -> None:
 
 @cli.group()
 def metadata() -> None:
-    """Manage catalog metadata for README generation.
+    r"""Manage catalog metadata for README generation.
 
     metadata.yaml files supplement STAC with human-enrichable fields like
     titles, descriptions, contact info, and citations. These files can exist
@@ -5205,7 +5271,7 @@ def metadata_init(
     force: bool,
     no_recursive: bool,
 ) -> None:
-    """Generate a metadata.yaml template.
+    r"""Generate a metadata.yaml template.
 
     Creates .portolan/metadata.yaml files at all STAC levels (catalogs,
     subcatalogs, collections) by default. Skips items (item.json directories)
@@ -5309,7 +5375,7 @@ def metadata_validate(
     path: str | None,
     no_recursive: bool,
 ) -> None:
-    """Validate metadata.yaml against schema.
+    r"""Validate metadata.yaml against schema.
 
     Validates all .portolan/metadata.yaml files in the catalog tree by default.
     Checks for:
@@ -5381,20 +5447,18 @@ def metadata_validate(
             )
             output_json_envelope(envelope)
             raise SystemExit(1)
-        else:
-            envelope = success_envelope(
-                "metadata validate",
-                {"valid": True, "errors": [], "path": str(path or ".")},
-            )
-            output_json_envelope(envelope)
+        envelope = success_envelope(
+            "metadata validate",
+            {"valid": True, "errors": [], "path": str(path or ".")},
+        )
+        output_json_envelope(envelope)
     else:
         if errors:
             error(f"Validation failed with {len(errors)} error(s):")
             for validation_err in errors:
                 detail(f"  - {validation_err}")
             raise SystemExit(1)
-        else:
-            success("Metadata is valid")
+        success("Metadata is valid")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5590,6 +5654,101 @@ def _should_process_directory(dirpath: Path, catalog_path: Path) -> bool:
     return (dirpath / "catalog.json").exists() or (dirpath / "collection.json").exists()
 
 
+def _report_metadata_init(
+    created_paths: list[str],
+    skipped_paths: list[str],
+    permission_errors: list[str],
+    *,
+    use_json: bool,
+) -> None:
+    """Report what a recursive metadata init created, skipped, and could not write.
+
+    Args:
+        created_paths: Catalog-relative paths the run wrote.
+        skipped_paths: Catalog-relative paths that already held a file.
+        permission_errors: Catalog-relative paths the run could not write.
+        use_json: If True, emit a JSON envelope instead of terminal output.
+    """
+    if emit_success(
+        "metadata init",
+        {
+            "mode": "recursive",
+            "created": created_paths,
+            "skipped": skipped_paths,
+            "permission_errors": permission_errors,
+            "count": len(created_paths),
+        },
+        use_json=use_json,
+    ):
+        return
+
+    if created_paths:
+        success(f"Created {len(created_paths)} metadata.yaml template(s)")
+        for path in created_paths:
+            detail(f"  {path}")
+    if skipped_paths:
+        info_output(f"Skipped {len(skipped_paths)} existing file(s)")
+    if permission_errors:
+        warn(f"Permission denied for {len(permission_errors)} location(s)")
+        for path in permission_errors:
+            detail(f"  {path}")
+    if not created_paths and not skipped_paths and not permission_errors:
+        warn("No catalogs or collections found")
+
+
+def _report_readme_recursive(
+    generated_paths: list[str],
+    stale_paths: list[str],
+    *,
+    use_json: bool,
+    check: bool,
+) -> None:
+    """Report what a recursive readme run generated or found stale.
+
+    Args:
+        generated_paths: Catalog-relative paths the run wrote or verified.
+        stale_paths: Catalog-relative paths whose README is out of date.
+        use_json: If True, emit a JSON envelope instead of terminal output.
+        check: If True, the run only checked freshness.
+
+    Raises:
+        SystemExit: In check mode, when any README is stale.
+    """
+    if use_json:
+        if check:
+            envelope = success_envelope(
+                "readme",
+                {
+                    "fresh": len(stale_paths) == 0,
+                    "checked": generated_paths + stale_paths,
+                    "stale": stale_paths,
+                },
+            )
+        else:
+            envelope = success_envelope(
+                "readme",
+                {"generated": generated_paths, "count": len(generated_paths)},
+            )
+        output_json_envelope(envelope)
+        if check and stale_paths:
+            raise SystemExit(1)
+        return
+
+    if not check:
+        success(f"Generated {len(generated_paths)} README(s)")
+        for path in generated_paths:
+            detail(f"  {path}")
+        return
+
+    if stale_paths:
+        error(f"{len(stale_paths)} README(s) are stale:")
+        for path in stale_paths:
+            detail(f"  {path}")
+        info_output("Run 'portolan readme' to regenerate")
+        raise SystemExit(1)
+    success(f"All {len(generated_paths)} README(s) are up-to-date")
+
+
 def _metadata_init_recursive(
     catalog_path: Path,
     start_path: str | None,
@@ -5664,30 +5823,7 @@ def _metadata_init_recursive(
         rel_path = str(dirpath.relative_to(catalog_path) / ".portolan/metadata.yaml")
         _process_dir(dirpath, rel_path)
 
-    # Output results
-    if not emit_success(
-        "metadata init",
-        {
-            "mode": "recursive",
-            "created": created_paths,
-            "skipped": skipped_paths,
-            "permission_errors": permission_errors,
-            "count": len(created_paths),
-        },
-        use_json=use_json,
-    ):
-        if created_paths:
-            success(f"Created {len(created_paths)} metadata.yaml template(s)")
-            for p in created_paths:
-                detail(f"  {p}")
-        if skipped_paths:
-            info_output(f"Skipped {len(skipped_paths)} existing file(s)")
-        if permission_errors:
-            warn(f"Permission denied for {len(permission_errors)} location(s)")
-            for p in permission_errors:
-                detail(f"  {p}")
-        if not created_paths and not skipped_paths and not permission_errors:
-            warn("No catalogs or collections found")
+    _report_metadata_init(created_paths, skipped_paths, permission_errors, use_json=use_json)
 
 
 def _validate_metadata_at_path(dirpath: Path, rel_path: str, catalog_path: Path) -> dict[str, Any]:
@@ -5920,39 +6056,7 @@ def _readme_recursive(
         stale_paths.remove("README.md")
         stale_paths.insert(0, "README.md")
 
-    # Output results
-    if use_json:
-        if check:
-            envelope = success_envelope(
-                "readme",
-                {
-                    "fresh": len(stale_paths) == 0,
-                    "checked": generated_paths + stale_paths,
-                    "stale": stale_paths,
-                },
-            )
-        else:
-            envelope = success_envelope(
-                "readme",
-                {"generated": generated_paths, "count": len(generated_paths)},
-            )
-        output_json_envelope(envelope)
-        if check and stale_paths:
-            raise SystemExit(1)
-    else:
-        if check:
-            if stale_paths:
-                error(f"{len(stale_paths)} README(s) are stale:")
-                for p in stale_paths:
-                    detail(f"  {p}")
-                info_output("Run 'portolan readme' to regenerate")
-                raise SystemExit(1)
-            else:
-                success(f"All {len(generated_paths)} README(s) are up-to-date")
-        else:
-            success(f"Generated {len(generated_paths)} README(s)")
-            for p in generated_paths:
-                detail(f"  {p}")
+    _report_readme_recursive(generated_paths, stale_paths, use_json=use_json, check=check)
 
 
 @cli.command()
@@ -5987,7 +6091,7 @@ def readme(
     no_recursive: bool,
     verbose: bool,
 ) -> None:
-    """Generate README.md from STAC metadata and metadata.yaml.
+    r"""Generate README.md from STAC metadata and metadata.yaml.
 
     Generates READMEs for the catalog and all collections by default. The README
     is a pure output - always generated from STAC (machine-extracted metadata)
@@ -6005,7 +6109,6 @@ def readme(
         portolan readme demographics --no-recursive  # Only for collection
         portolan readme --stdout --no-recursive      # Print single README
     """
-
     use_json = should_output_json(ctx, json_output)
 
     # Find catalog root
@@ -6094,7 +6197,7 @@ def logo_cmd(
     title: str | None,
     json_output: bool,
 ) -> None:
-    """Publish SOURCE as the catalog logo.
+    r"""Publish SOURCE as the catalog logo.
 
     Copies the image to _assets/ beside the root catalog.json and writes a
     rel="icon" link pointing at it. A registry lists many catalogs side by side,
@@ -6277,7 +6380,6 @@ def _validate_collection_name_cli(
 
 
 def _handle_imageserver_extraction(
-    ctx: click.Context,
     url: str,
     output_dir: Path,
     catalog_id: str | None,
@@ -6287,7 +6389,6 @@ def _handle_imageserver_extraction(
     compression: str | None,
     max_concurrent: int,
     timeout: float,
-    retries: int,
     resume: bool,
     dry_run: bool,
     json_output: bool,
@@ -6415,6 +6516,85 @@ def _output_extract_error(
         output_json_envelope(envelope)
     else:
         error(message)
+
+
+def _make_extract_progress_callback(
+    *,
+    skipped_message: str = "  ↪ Skipped (already extracted)",
+) -> Callable[[ExtractionProgress], None]:
+    """Build the text-mode progress callback that every extract command shares."""
+    from portolan_cli.output import detail, info, warn
+
+    def on_progress(progress: ExtractionProgress) -> None:
+        if progress.status == "starting":
+            info(f"[{progress.layer_index + 1}/{progress.total_layers}] {progress.layer_name}")
+        elif progress.status == "success":
+            detail("  ✓ Success")
+        elif progress.status == "failed":
+            # Issue #504: show the error inline instead of "Failed" alone.
+            warn(f"  ✗ Failed: {progress.error}" if progress.error else "  ✗ Failed")
+        elif progress.status == "skipped":
+            detail(skipped_message)
+
+    return on_progress
+
+
+def _parse_extract_bbox(
+    bbox: str | None,
+    *,
+    url: str,
+    use_json: bool,
+    command: str,
+) -> tuple[float, float, float, float] | None:
+    """Parse the --bbox option. Stop the command when the value is not valid."""
+    if not bbox:
+        return None
+    try:
+        parts = [float(x.strip()) for x in bbox.split(",")]
+    except ValueError as e:
+        _output_extract_error(use_json, "InvalidBBoxError", str(e), url, command=command)
+        raise SystemExit(1) from None
+    if len(parts) != 4:
+        _output_extract_error(
+            use_json,
+            "InvalidBBoxError",
+            "bbox must have 4 values: minx,miny,maxx,maxy",
+            url,
+            command=command,
+        )
+        raise SystemExit(1)
+    return (parts[0], parts[1], parts[2], parts[3])
+
+
+def _confirm_extraction(
+    *,
+    url: str,
+    output_dir: Path,
+    include: list[str] | None,
+    exclude: list[str] | None,
+    filter_label: str,
+    line: Callable[[str], None],
+    sub_line: Callable[[str], None],
+    auto: bool,
+    dry_run: bool,
+    use_json: bool,
+) -> None:
+    """Show the extraction plan and ask the user to confirm it.
+
+    The prompt runs only in interactive text mode. `line` and `sub_line` select
+    the output channel, because the ArcGIS command writes with `click.echo` and
+    the other commands write with `output.py`.
+    """
+    if auto or dry_run or use_json:
+        return
+    line(f"Extract from: {url}")
+    line(f"Output to: {output_dir}")
+    if include:
+        sub_line(f"{filter_label}: {', '.join(include)}")
+    if exclude:
+        sub_line(f"Exclude: {', '.join(exclude)}")
+    if not click.confirm("Continue?", default=True):
+        raise SystemExit(0)
 
 
 def _check_extract_catalog_id(
@@ -6630,7 +6810,7 @@ def _output_extract_result(
 
 @cli.group()
 def extract() -> None:
-    """Extract data from external sources into Portolan catalogs.
+    r"""Extract data from external sources into Portolan catalogs.
 
     Convert data from ArcGIS services, APIs, or other sources into
     well-structured Portolan catalogs with STAC metadata.
@@ -6847,7 +7027,7 @@ def extract_arcgis_cmd(
     max_concurrent: int,
     collection_name: str | None,
 ) -> None:
-    """Extract data from ArcGIS FeatureServer/MapServer/ImageServer.
+    r"""Extract data from ArcGIS FeatureServer/MapServer/ImageServer.
 
     Downloads layers from an ArcGIS REST service and creates a Portolan
     catalog with GeoParquet files (vector) or COG files (raster) and STAC metadata.
@@ -6904,8 +7084,6 @@ def extract_arcgis_cmd(
         extract_arcgis_catalog,
     )
     from portolan_cli.extract.arcgis.url_parser import ArcGISURLType, parse_arcgis_url
-    from portolan_cli.extract.common.progress import ExtractionProgress
-    from portolan_cli.output import detail, info, warn
 
     use_json = should_output_json(ctx, json_output)
 
@@ -6972,7 +7150,6 @@ def extract_arcgis_cmd(
             )
             raise SystemExit(1)
         _handle_imageserver_extraction(
-            ctx=ctx,
             url=url,
             output_dir=output_dir,
             catalog_id=catalog_id,
@@ -6982,7 +7159,6 @@ def extract_arcgis_cmd(
             compression=compression,
             max_concurrent=max_concurrent,
             timeout=timeout,
-            retries=retries,
             resume=resume,
             dry_run=dry_run,
             json_output=use_json,
@@ -7014,31 +7190,20 @@ def extract_arcgis_cmd(
         output_crs=output_crs,
     )
 
-    # Progress callback for text output
-    def on_progress(progress: ExtractionProgress) -> None:
-        if progress.status == "starting":
-            info(f"[{progress.layer_index + 1}/{progress.total_layers}] {progress.layer_name}")
-        elif progress.status == "success":
-            detail("  ✓ Success")
-        elif progress.status == "failed":
-            # Issue #504: Show error details inline instead of just "Failed"
-            if progress.error:
-                warn(f"  ✗ Failed: {progress.error}")
-            else:
-                warn("  ✗ Failed")
-        elif progress.status == "skipped":
-            detail("  ↪ Skipped (already extracted)")
+    on_progress = _make_extract_progress_callback()
 
-    # Confirmation prompt for large extractions
-    if not auto and not dry_run and not use_json:
-        click.echo(f"Extract from: {url}")
-        click.echo(f"Output to: {output_dir}")
-        if layer_include:
-            click.echo(f"Layer filter: {', '.join(layer_include)}")
-        if layer_exclude:
-            click.echo(f"Exclude: {', '.join(layer_exclude)}")
-        if not click.confirm("Continue?", default=True):
-            raise SystemExit(0)
+    _confirm_extraction(
+        url=url,
+        output_dir=output_dir,
+        include=layer_include,
+        exclude=layer_exclude,
+        filter_label="Layer filter",
+        line=click.echo,
+        sub_line=click.echo,
+        auto=auto,
+        dry_run=dry_run,
+        use_json=use_json,
+    )
 
     try:
         report = extract_arcgis_catalog(
@@ -7211,7 +7376,7 @@ def extract_wfs_cmd(
     auto: bool,
     raw: bool,
 ) -> None:
-    """Extract data from WFS (Web Feature Service) endpoints.
+    r"""Extract data from WFS (Web Feature Service) endpoints.
 
     Downloads layers from a WFS service and creates a Portolan catalog
     with GeoParquet files and STAC metadata.
@@ -7249,12 +7414,11 @@ def extract_wfs_cmd(
         # Extract 4 layers in parallel with 5-minute timeout per layer
         portolan extract wfs URL --workers 4 --timeout 300
     """
-    from portolan_cli.extract.common.progress import ExtractionProgress
     from portolan_cli.extract.wfs.orchestrator import (
         ExtractionOptions,
         extract_wfs_catalog,
     )
-    from portolan_cli.output import detail, info, warn
+    from portolan_cli.output import detail, info
 
     use_json = should_output_json(ctx, json_output)
 
@@ -7266,24 +7430,7 @@ def extract_wfs_cmd(
     if output_dir is None:
         output_dir = Path("wfs_extract")
 
-    # Parse bbox if provided
-    bbox_tuple: tuple[float, float, float, float] | None = None
-    if bbox:
-        try:
-            parts = [float(x.strip()) for x in bbox.split(",")]
-            if len(parts) != 4:
-                _output_extract_error(
-                    use_json,
-                    "InvalidBBoxError",
-                    "bbox must have 4 values: minx,miny,maxx,maxy",
-                    url,
-                    command="extract-wfs",
-                )
-                raise SystemExit(1)
-            bbox_tuple = (parts[0], parts[1], parts[2], parts[3])
-        except ValueError as e:
-            _output_extract_error(use_json, "InvalidBBoxError", str(e), url, command="extract-wfs")
-            raise SystemExit(1) from None
+    bbox_tuple = _parse_extract_bbox(bbox, url=url, use_json=use_json, command="extract-wfs")
 
     # Build filter lists
     layer_include = _parse_filter_patterns(layers)
@@ -7308,31 +7455,20 @@ def extract_wfs_cmd(
         license_url=license_url,
     )
 
-    # Progress callback for text output
-    def on_progress(progress: ExtractionProgress) -> None:
-        if progress.status == "starting":
-            info(f"[{progress.layer_index + 1}/{progress.total_layers}] {progress.layer_name}")
-        elif progress.status == "success":
-            detail("  ✓ Success")
-        elif progress.status == "failed":
-            # Issue #504: Show error details inline instead of just "Failed"
-            if progress.error:
-                warn(f"  ✗ Failed: {progress.error}")
-            else:
-                warn("  ✗ Failed")
-        elif progress.status == "skipped":
-            detail("  ↪ Skipped (already extracted)")
+    on_progress = _make_extract_progress_callback()
 
-    # Confirmation prompt
-    if not auto and not dry_run and not use_json:
-        info(f"Extract from: {url}")
-        info(f"Output to: {output_dir}")
-        if layer_include:
-            detail(f"Layer filter: {', '.join(layer_include)}")
-        if layer_exclude:
-            detail(f"Exclude: {', '.join(layer_exclude)}")
-        if not click.confirm("Continue?", default=True):
-            raise SystemExit(0)
+    _confirm_extraction(
+        url=url,
+        output_dir=output_dir,
+        include=layer_include,
+        exclude=layer_exclude,
+        filter_label="Layer filter",
+        line=info,
+        sub_line=detail,
+        auto=auto,
+        dry_run=dry_run,
+        use_json=use_json,
+    )
 
     try:
         report = extract_wfs_catalog(
@@ -7500,7 +7636,7 @@ def extract_carto_cmd(
     auto: bool,
     raw: bool,
 ) -> None:
-    """Extract tables from a Carto SQL API account.
+    r"""Extract tables from a Carto SQL API account.
 
     Downloads tables from a Carto account and creates a Portolan catalog with
     STAC metadata. Tables are discovered via CDB_UserTables(). Spatial tables
@@ -7532,8 +7668,7 @@ def extract_carto_cmd(
         ExtractionOptions,
         extract_carto_catalog,
     )
-    from portolan_cli.extract.common.progress import ExtractionProgress
-    from portolan_cli.output import detail, info, warn
+    from portolan_cli.output import detail, info
 
     use_json = should_output_json(ctx, json_output)
 
@@ -7544,25 +7679,7 @@ def extract_carto_cmd(
     if output_dir is None:
         output_dir = Path("carto_extract")
 
-    bbox_tuple: tuple[float, float, float, float] | None = None
-    if bbox:
-        try:
-            parts = [float(x.strip()) for x in bbox.split(",")]
-            if len(parts) != 4:
-                _output_extract_error(
-                    use_json,
-                    "InvalidBBoxError",
-                    "bbox must have 4 values: minx,miny,maxx,maxy",
-                    url,
-                    command="extract-carto",
-                )
-                raise SystemExit(1)
-            bbox_tuple = (parts[0], parts[1], parts[2], parts[3])
-        except ValueError as e:
-            _output_extract_error(
-                use_json, "InvalidBBoxError", str(e), url, command="extract-carto"
-            )
-            raise SystemExit(1) from None
+    bbox_tuple = _parse_extract_bbox(bbox, url=url, use_json=use_json, command="extract-carto")
 
     table_include = _parse_filter_patterns(tables)
     table_exclude = _parse_filter_patterns(exclude_tables)
@@ -7585,28 +7702,20 @@ def extract_carto_cmd(
         license_url=license_url,
     )
 
-    def on_progress(progress: ExtractionProgress) -> None:
-        if progress.status == "starting":
-            info(f"[{progress.layer_index + 1}/{progress.total_layers}] {progress.layer_name}")
-        elif progress.status == "success":
-            detail("  ✓ Success")
-        elif progress.status == "failed":
-            if progress.error:
-                warn(f"  ✗ Failed: {progress.error}")
-            else:
-                warn("  ✗ Failed")
-        elif progress.status == "skipped":
-            detail("  ↪ Skipped")
+    on_progress = _make_extract_progress_callback(skipped_message="  ↪ Skipped")
 
-    if not auto and not dry_run and not use_json:
-        info(f"Extract from: {url}")
-        info(f"Output to: {output_dir}")
-        if table_include:
-            detail(f"Table filter: {', '.join(table_include)}")
-        if table_exclude:
-            detail(f"Exclude: {', '.join(table_exclude)}")
-        if not click.confirm("Continue?", default=True):
-            raise SystemExit(0)
+    _confirm_extraction(
+        url=url,
+        output_dir=output_dir,
+        include=table_include,
+        exclude=table_exclude,
+        filter_label="Table filter",
+        line=info,
+        sub_line=detail,
+        auto=auto,
+        dry_run=dry_run,
+        use_json=use_json,
+    )
 
     try:
         report = extract_carto_catalog(
@@ -7681,7 +7790,7 @@ def partition(
     preview: bool,
     verbose: bool,
 ) -> None:
-    """Partition a large GeoParquet file for better query performance.
+    r"""Partition a large GeoParquet file for better query performance.
 
     Splits a GeoParquet file into spatially-organized partitions using
     geoparquet-io. Per OGC best practices, files over 2GB should be partitioned.
@@ -7811,7 +7920,7 @@ def _require_iceberg_backend(
 
 @cli.group()
 def version() -> None:
-    """Version management commands.
+    r"""Version management commands.
 
     Works with any versioning backend (file, iceberg). Backend is auto-detected
     from catalog configuration.
@@ -7842,7 +7951,7 @@ def current(
     catalog_path: Path | None,
     json_output: bool,
 ) -> None:
-    """Show the current version of a collection.
+    r"""Show the current version of a collection.
 
     Works with any versioning backend (auto-detected from config).
 
@@ -7902,7 +8011,7 @@ def version_list_cmd(
     catalog_path: Path | None,
     json_output: bool,
 ) -> None:
-    """List all versions of a collection.
+    r"""List all versions of a collection.
 
     Works with any versioning backend (auto-detected from config).
 
@@ -8035,7 +8144,7 @@ def bump(
     catalog_path: Path | None,
     json_output: bool,
 ) -> None:
-    """Create a new version from current file state.
+    r"""Create a new version from current file state.
 
     Detects modified files by comparing checksums, computes new checksums,
     and creates a new version entry in versions.json.
@@ -8095,10 +8204,13 @@ def bump(
         return
 
     # Show what will be versioned and get confirmation
-    if not use_json and not yes:
-        if not _bump_show_changes(collection, new_version, current_version, modified, deleted):
-            info_output("Aborted")
-            return
+    if (
+        not use_json
+        and not yes
+        and not _bump_show_changes(collection, new_version, current_version, modified, deleted)
+    ):
+        info_output("Aborted")
+        return
 
     # Compute checksums for modified files
     assets: dict[str, str] = {}
@@ -8159,7 +8271,7 @@ def rollback(
     catalog_path: Path | None,
     json_output: bool,
 ) -> None:
-    """Rollback a collection to a previous version.
+    r"""Rollback a collection to a previous version.
 
     Uses Iceberg's native snapshot management to set the current snapshot
     pointer back to TARGET_VERSION. No data is copied — this is instant.
@@ -8226,7 +8338,7 @@ def prune(
     catalog_path: Path | None,
     json_output: bool,
 ) -> None:
-    """Remove old versions, keeping the N most recent.
+    r"""Remove old versions, keeping the N most recent.
 
     \b
     Examples:
@@ -8484,7 +8596,7 @@ def stac_geoparquet(
     dry_run: bool,
     json_output: bool,
 ) -> None:
-    """Generate items.parquet for efficient STAC queries.
+    r"""Generate items.parquet for efficient STAC queries.
 
     Creates a GeoParquet file containing all items in a collection,
     enabling fast spatial/temporal queries without N HTTP requests.

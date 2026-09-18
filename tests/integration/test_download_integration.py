@@ -219,21 +219,23 @@ class TestDryRun:
 
         nested_dir = download_test_dir / "nested"
 
-        with patch("portolan_cli.sync.download.obs") as mock_obs:
-            with patch("portolan_cli.sync.upload.S3Store"):
-                # Mock list to return files
-                mock_obs.list.return_value = [
-                    [
-                        {"path": "data/file1.parquet", "size": 100},
-                        {"path": "data/file2.parquet", "size": 200},
-                    ]
+        with (
+            patch("portolan_cli.sync.download.obs") as mock_obs,
+            patch("portolan_cli.sync.upload.S3Store"),
+        ):
+            # Mock list to return files
+            mock_obs.list.return_value = [
+                [
+                    {"path": "data/file1.parquet", "size": 100},
+                    {"path": "data/file2.parquet", "size": 200},
                 ]
+            ]
 
-                result = download_directory(
-                    source="s3://bucket/data/",
-                    destination=nested_dir,
-                    dry_run=True,
-                )
+            result = download_directory(
+                source="s3://bucket/data/",
+                destination=nested_dir,
+                dry_run=True,
+            )
 
         assert result.success is True
         assert result.files_downloaded == 0
@@ -277,15 +279,17 @@ class TestErrorHandling:
 
         from portolan_cli.sync.download import download_directory
 
-        with patch("portolan_cli.sync.download.obs") as mock_obs:
-            with patch("portolan_cli.sync.upload.S3Store"):
-                # Mock list to return empty
-                mock_obs.list.return_value = [[]]
+        with (
+            patch("portolan_cli.sync.download.obs") as mock_obs,
+            patch("portolan_cli.sync.upload.S3Store"),
+        ):
+            # Mock list to return empty
+            mock_obs.list.return_value = [[]]
 
-                result = download_directory(
-                    source="s3://bucket/empty/",
-                    destination=download_test_dir,
-                )
+            result = download_directory(
+                source="s3://bucket/empty/",
+                destination=download_test_dir,
+            )
 
         assert result.success is True
         assert result.files_downloaded == 0

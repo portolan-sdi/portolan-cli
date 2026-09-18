@@ -22,13 +22,17 @@ Usage:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import defusedxml.ElementTree as ET
 
 if TYPE_CHECKING:
-    from xml.etree.ElementTree import Element  # nosec B405 - type annotation only
+    from xml.etree.ElementTree import Element  # type annotation only
+
+import contextlib
 
 from portolan_cli.extract.common.converters.base import (
     make_circle_layer,
@@ -44,8 +48,6 @@ logger = logging.getLogger(__name__)
 
 class SLDConverterError(Exception):
     """Error during SLD conversion."""
-
-    pass
 
 
 # XML namespaces used in SLD
@@ -225,10 +227,8 @@ def parse_polygon_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
 
         fill_opacity = _get_css_parameter(fill, "fill-opacity")
         if fill_opacity:
-            try:
+            with contextlib.suppress(ValueError):
                 result["fill_opacity"] = float(fill_opacity)
-            except ValueError:
-                pass
 
     # Extract Stroke (SLD 1.0 or SE)
     stroke = _find_with_ns(root, ".//sld:Stroke")
@@ -241,10 +241,8 @@ def parse_polygon_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
 
         stroke_width = _get_css_parameter(stroke, "stroke-width")
         if stroke_width:
-            try:
+            with contextlib.suppress(ValueError):
                 result["stroke_width"] = float(stroke_width)
-            except ValueError:
-                pass
 
     return result
 
@@ -301,10 +299,8 @@ def parse_point_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
     if size_elem is None:
         size_elem = _find_with_ns(root, ".//se:Size")
     if size_elem is not None and size_elem.text:
-        try:
+        with contextlib.suppress(ValueError):
             result["size"] = float(size_elem.text)
-        except ValueError:
-            pass
 
     return result
 
@@ -342,17 +338,13 @@ def parse_line_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
 
         width = _get_css_parameter(stroke, "stroke-width")
         if width:
-            try:
+            with contextlib.suppress(ValueError):
                 result["line_width"] = float(width)
-            except ValueError:
-                pass
 
         opacity = _get_css_parameter(stroke, "stroke-opacity")
         if opacity:
-            try:
+            with contextlib.suppress(ValueError):
                 result["line_opacity"] = float(opacity)
-            except ValueError:
-                pass
 
     return result
 
@@ -389,12 +381,11 @@ def _sld_anchor_to_mapbox(anchor_x: float, anchor_y: float) -> str:
     # Combine into Mapbox anchor name
     if h and v:
         return f"{v}-{h}"
-    elif h:
+    if h:
         return h
-    elif v:
+    if v:
         return v
-    else:
-        return "center"
+    return "center"
 
 
 def _parse_text_label(root: Element) -> list[str]:
@@ -422,14 +413,12 @@ def _parse_text_font(root: Element) -> tuple[float, list[str]]:
 
     font_size = _get_css_parameter(font, "font-size")
     if font_size:
-        try:
+        with contextlib.suppress(ValueError):
             text_size = float(font_size)
-        except ValueError:
-            pass
 
     font_family = _get_css_parameter(font, "font-family")
     if font_family:
-        logger.debug(f"Font '{font_family}' mapped to Noto Sans Regular")
+        logger.debug("Font '%s' mapped to Noto Sans Regular", font_family)
 
     return text_size, text_font
 
@@ -458,10 +447,8 @@ def _parse_text_halo(root: Element) -> tuple[str | None, float | None]:
     halo_width: float | None = None
     radius = _find_sld_or_se(halo, "Radius")
     if radius is not None and radius.text:
-        try:
+        with contextlib.suppress(ValueError):
             halo_width = float(radius.text)
-        except ValueError:
-            pass
 
     halo_color: str | None = None
     halo_fill = _find_sld_or_se(halo, "Fill")
@@ -486,15 +473,11 @@ def _parse_text_anchor(root: Element) -> str:
 
     anchor_x, anchor_y = 0.5, 0.5
     if anchor_x_elem is not None and anchor_x_elem.text:
-        try:
+        with contextlib.suppress(ValueError):
             anchor_x = float(anchor_x_elem.text)
-        except ValueError:
-            pass
     if anchor_y_elem is not None and anchor_y_elem.text:
-        try:
+        with contextlib.suppress(ValueError):
             anchor_y = float(anchor_y_elem.text)
-        except ValueError:
-            pass
 
     return _sld_anchor_to_mapbox(anchor_x, anchor_y)
 
@@ -718,6 +701,125 @@ def _build_categorical_line(
     ]
 
 
+@dataclass
+class _CategoricalCases:
+    """The per-value style cases that filtered SLD rules produce.
+
+    Each list holds (filter value, style value) pairs. Which lists carry data
+    depends on the geometry type.
+    """
+
+    field: str | None = None
+    text_symbolizer: Element | None = None
+    color: list[tuple[Any, str]] = dataclasses.field(default_factory=list)
+    opacity: list[tuple[Any, float]] = dataclasses.field(default_factory=list)
+    stroke_color: list[tuple[Any, str | None]] = dataclasses.field(default_factory=list)
+    stroke_width: list[tuple[Any, float | None]] = dataclasses.field(default_factory=list)
+    size: list[tuple[Any, float]] = dataclasses.field(default_factory=list)
+    line_width: list[tuple[Any, float]] = dataclasses.field(default_factory=list)
+
+
+def _collect_rule_cases(
+    rule: Element,
+    geom_type: str,
+    cases: _CategoricalCases,
+    warnings: list[str],
+) -> None:
+    """Read one SLD rule into the collected cases.
+
+    Args:
+        rule: SLD Rule element.
+        geom_type: One of "polygon", "point", or "line".
+        cases: Collected cases. The function appends to it.
+        warnings: Warning list. The function appends to it.
+    """
+    # A TextSymbolizer may sit on a filtered rule or an unfiltered one.
+    rule_text_sym = _find_symbolizer(rule, "Text")
+    if rule_text_sym is not None:
+        cases.text_symbolizer = rule_text_sym
+
+    filter_elem = _find_with_ns(rule, "ogc:Filter")
+    if filter_elem is None:
+        return
+    try:
+        rule_field, value = parse_filter_to_value(filter_elem)
+    except SLDConverterError:
+        return
+    if cases.field is None:
+        cases.field = rule_field
+
+    symbolizer_type = {"polygon": "Polygon", "point": "Point", "line": "Line"}.get(geom_type)
+    symbolizer = _find_symbolizer(rule, symbolizer_type) if symbolizer_type else None
+    if symbolizer is None:
+        return
+
+    if geom_type == "polygon":
+        props = parse_polygon_symbolizer(symbolizer)
+        cases.color.append((value, props["fill_color"]))
+        cases.opacity.append((value, props["fill_opacity"]))
+        cases.stroke_color.append((value, props.get("stroke_color")))
+        cases.stroke_width.append((value, props.get("stroke_width")))
+    elif geom_type == "point":
+        props = parse_point_symbolizer(symbolizer)
+        cases.color.append((value, props["fill_color"]))
+        cases.size.append((value, props["size"]))
+        if props.get("warning"):
+            warnings.append(props["warning"])
+    elif geom_type == "line":
+        props = parse_line_symbolizer(symbolizer)
+        cases.color.append((value, props["line_color"]))
+        cases.opacity.append((value, props["line_opacity"]))
+        cases.line_width.append((value, props["line_width"]))
+
+
+def _build_categorical_geom_layers(
+    cases: _CategoricalCases,
+    field_name: str,
+    geom_type: str,
+    source_layer: str,
+    warnings: list[str],
+) -> tuple[list[dict[str, Any]], str]:
+    """Build the geometry layers for one geometry type.
+
+    Args:
+        cases: Collected cases.
+        field_name: Name of the attribute the rules filter on.
+        geom_type: One of "polygon", "point", or "line".
+        source_layer: Vector source layer name.
+        warnings: Warning list. The function appends to it.
+
+    Returns:
+        Tuple of (layers, geometry layer id). The id is "" for an unknown
+        geometry type.
+    """
+    if geom_type == "polygon":
+        return (
+            _build_categorical_fill(
+                field_name,
+                cases.color,
+                cases.opacity,
+                cases.stroke_color,
+                cases.stroke_width,
+                source_layer,
+                warnings,
+            ),
+            "categorical-fill",
+        )
+    if geom_type == "point":
+        return (
+            _build_categorical_circle(field_name, cases.color, cases.size, source_layer),
+            "categorical-circle",
+        )
+    if geom_type == "line":
+        return (
+            _build_categorical_line(
+                field_name, cases.color, cases.opacity, cases.line_width, source_layer
+            ),
+            "categorical-line",
+        )
+    return ([], "")
+
+
 def _build_categorical_layers(
     rules: list[Element],
     geom_type: str,
@@ -725,82 +827,17 @@ def _build_categorical_layers(
     warnings: list[str],
 ) -> list[dict[str, Any]]:
     """Build layers for categorical (filtered) SLD rules."""
-    field: str | None = None
-    color_cases: list[tuple[Any, str]] = []
-    opacity_cases: list[tuple[Any, float]] = []
-    stroke_color_cases: list[tuple[Any, str | None]] = []
-    stroke_width_cases: list[tuple[Any, float | None]] = []
-    size_cases: list[tuple[Any, float]] = []
-    line_width_cases: list[tuple[Any, float]] = []
-
-    # Track TextSymbolizer from rules (may be in filtered or unfiltered rules)
-    text_symbolizer: Element | None = None
-
+    cases = _CategoricalCases()
     for rule in rules:
-        filter_elem = _find_with_ns(rule, "ogc:Filter")
+        _collect_rule_cases(rule, geom_type, cases, warnings)
 
-        # Check for TextSymbolizer in any rule (filtered or not)
-        rule_text_sym = _find_symbolizer(rule, "Text")
-        if rule_text_sym is not None:
-            text_symbolizer = rule_text_sym
-
-        if filter_elem is None:
-            continue
-        try:
-            rule_field, value = parse_filter_to_value(filter_elem)
-            if field is None:
-                field = rule_field
-        except SLDConverterError:
-            continue
-
-        symbolizer_type = {"polygon": "Polygon", "point": "Point", "line": "Line"}.get(geom_type)
-        symbolizer = _find_symbolizer(rule, symbolizer_type) if symbolizer_type else None
-        if symbolizer is None:
-            continue
-
-        if geom_type == "polygon":
-            props = parse_polygon_symbolizer(symbolizer)
-            color_cases.append((value, props["fill_color"]))
-            opacity_cases.append((value, props["fill_opacity"]))
-            stroke_color_cases.append((value, props.get("stroke_color")))
-            stroke_width_cases.append((value, props.get("stroke_width")))
-        elif geom_type == "point":
-            props = parse_point_symbolizer(symbolizer)
-            color_cases.append((value, props["fill_color"]))
-            size_cases.append((value, props["size"]))
-            if props.get("warning"):
-                warnings.append(props["warning"])
-        elif geom_type == "line":
-            props = parse_line_symbolizer(symbolizer)
-            color_cases.append((value, props["line_color"]))
-            opacity_cases.append((value, props["line_opacity"]))
-            line_width_cases.append((value, props["line_width"]))
-
-    if not field or not color_cases:
+    if not cases.field or not cases.color:
         return []
 
-    layers: list[dict[str, Any]] = []
-    geom_layer_id: str = ""
-
-    if geom_type == "polygon":
-        geom_layer_id = "categorical-fill"
-        layers = _build_categorical_fill(
-            field,
-            color_cases,
-            opacity_cases,
-            stroke_color_cases,
-            stroke_width_cases,
-            source_layer,
-            warnings,
-        )
-    elif geom_type == "point":
-        geom_layer_id = "categorical-circle"
-        layers = _build_categorical_circle(field, color_cases, size_cases, source_layer)
-    elif geom_type == "line":
-        geom_layer_id = "categorical-line"
-        layers = _build_categorical_line(
-            field, color_cases, opacity_cases, line_width_cases, source_layer
-        )
+    layers, geom_layer_id = _build_categorical_geom_layers(
+        cases, cases.field, geom_type, source_layer, warnings
+    )
+    text_symbolizer = cases.text_symbolizer
 
     # Add label layer if TextSymbolizer was found
     if text_symbolizer is not None and layers:
@@ -961,7 +998,7 @@ def convert_sld(
     if not layers:
         raise SLDConverterError("No valid symbolizers found in SLD rules")
 
-    style = make_mapbox_style(style_name, source_layer, layers)
+    style = make_mapbox_style(style_name, layers)
 
     if return_warnings:
         return style, warnings

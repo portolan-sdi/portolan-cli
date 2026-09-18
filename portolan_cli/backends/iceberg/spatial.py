@@ -78,9 +78,7 @@ def compute_bbox_columns(table: pa.Table) -> pa.Table:
     table = table.append_column("bbox_xmin", pa.array(bounds[:, 0], type=pa.float64()))
     table = table.append_column("bbox_ymin", pa.array(bounds[:, 1], type=pa.float64()))
     table = table.append_column("bbox_xmax", pa.array(bounds[:, 2], type=pa.float64()))
-    table = table.append_column("bbox_ymax", pa.array(bounds[:, 3], type=pa.float64()))
-
-    return table
+    return table.append_column("bbox_ymax", pa.array(bounds[:, 3], type=pa.float64()))
 
 
 def add_spatial_columns(table: pa.Table, precision: int | None = None) -> pa.Table:
@@ -101,6 +99,4 @@ def add_spatial_columns(table: pa.Table, precision: int | None = None) -> pa.Tab
     # Add geohash column (use default precision 4 for small data,
     # detected precision for larger ones)
     geohash_precision = precision if precision is not None else 4
-    table = compute_geohash_column(table, precision=geohash_precision)
-
-    return table
+    return compute_geohash_column(table, precision=geohash_precision)

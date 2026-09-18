@@ -8,14 +8,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Literal, NamedTuple, overload
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, overload
 
 import pyarrow.parquet as pq
 from pyproj import CRS
 from pyproj.exceptions import CRSError
 
 from portolan_cli.models.schema import ColumnSchema, SchemaModel
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass

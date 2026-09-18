@@ -10,7 +10,6 @@ Tests verify:
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
@@ -21,7 +20,7 @@ from portolan_cli.scan.core import ScanOptions, scan_directory
 from portolan_cli.scan.progress import ScanProgressReporter, count_directories
 
 if TYPE_CHECKING:
-    pass
+    from pathlib import Path
 
 
 @pytest.fixture

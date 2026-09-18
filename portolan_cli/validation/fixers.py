@@ -196,8 +196,9 @@ def _expected_structural_links(node: Node, graph: CatalogGraph) -> list[tuple[st
         enclosing = _enclosing_collection(node, graph)
         if enclosing is not None:
             expected.append(("collection", enclosing))
-    for child in graph.children_of(node):
-        expected.append(("item" if child.kind == "item" else "child", child))
+    expected.extend(
+        ("item" if child.kind == "item" else "child", child) for child in graph.children_of(node)
+    )
     return expected
 
 
@@ -869,7 +870,7 @@ def _fix_pmtiles(root: Path, dry_run: bool) -> list[FixResult]:
     return repair_pmtiles_links(root, dry_run=dry_run)
 
 
-def _fix_convert(root: Path, dry_run: bool) -> list[FixResult]:
+def _fix_convert(root: Path, _dry_run: bool) -> list[FixResult]:
     """Registered but deliberately inert: conversion belongs to the geo-asset pass.
 
     PTL-DAT-003 names this key, so the registry must carry it. Running a

@@ -37,7 +37,7 @@ class TestCloneCLIIntegration:
         from portolan_cli.cli import clone
 
         # Change to tmp_path to avoid cluttering the repo
-        original_cwd = os.getcwd()
+        original_cwd = Path.cwd()
         os.chdir(tmp_path)
 
         try:
@@ -155,7 +155,7 @@ class TestCloneCLIIntegration:
         target = tmp_path / "empty_target"
         target.mkdir()
 
-        original_cwd = os.getcwd()
+        original_cwd = Path.cwd()
         os.chdir(target)
 
         try:

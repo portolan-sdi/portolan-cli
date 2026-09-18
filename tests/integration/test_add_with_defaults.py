@@ -4,15 +4,19 @@ These tests verify that defaults from metadata.yaml are applied during
 `portolan add` when source files lack certain metadata.
 """
 
+from __future__ import annotations
+
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _data_asset_bands(item: dict[str, Any]) -> list[dict[str, Any]]:

@@ -20,7 +20,7 @@ import ast
 import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Repo-specific instructions live in AGENTS.md. CLAUDE.md only imports it,
@@ -90,8 +90,7 @@ def generate_known_issues(root: Path) -> str:
         return "No known issues documented."
 
     lines = ["| Issue | Impact |", "|-------|--------|"]
-    for issue in issues:
-        lines.append(f"| [{issue.name}]({issue.path}) | {issue.impact} |")
+    lines.extend(f"| [{issue.name}]({issue.path}) | {issue.impact} |" for issue in issues)
 
     return "\n".join(lines)
 
@@ -172,18 +171,20 @@ def extract_cli_commands(root: Path) -> list[CLICommand]:
 
                 # Check decorators for @cli.command() or @cli.group()
                 for decorator in node.decorator_list:
-                    if isinstance(decorator, ast.Call):
-                        if isinstance(decorator.func, ast.Attribute):
-                            if decorator.func.attr in ("command", "group"):
-                                # Check for explicit name argument
-                                if decorator.args:
-                                    arg = decorator.args[0]
-                                    if isinstance(arg, ast.Constant):
-                                        command_name = str(arg.value)
-                                else:
-                                    # Use function name
-                                    fn_name = node.name.replace("_cmd", "")
-                                    command_name = fn_name.replace("_", "-")
+                    if (
+                        isinstance(decorator, ast.Call)
+                        and isinstance(decorator.func, ast.Attribute)
+                        and decorator.func.attr in ("command", "group")
+                    ):
+                        # Check for explicit name argument
+                        if decorator.args:
+                            arg = decorator.args[0]
+                            if isinstance(arg, ast.Constant):
+                                command_name = str(arg.value)
+                        else:
+                            # Use function name
+                            fn_name = node.name.replace("_cmd", "")
+                            command_name = fn_name.replace("_", "-")
 
                 if command_name:
                     docstring = ast.get_docstring(node)
@@ -260,7 +261,7 @@ def update_generated_section(claude_md: str, section_name: str, new_content: str
 def add_freshness_marker(section_header: str, date: str | None = None) -> str:
     """Generate a freshness marker for a section."""
     if date is None:
-        date = datetime.now().strftime("%Y-%m-%d")
+        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return f"<!-- freshness: last-verified: {date} -->\n{section_header}"
 
 
@@ -277,6 +278,7 @@ GENERATORS = {
 
 
 def main() -> int:
+    """Run the generator from the command line."""
     parser = argparse.ArgumentParser(description="Generate auto-updated sections for AGENTS.md")
     parser.add_argument(
         "--section",

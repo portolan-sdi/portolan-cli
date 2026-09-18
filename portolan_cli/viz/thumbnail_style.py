@@ -68,9 +68,9 @@ def parse_match_expression(
 
     field_name = get_expr[1]
 
-    # Remaining items are value/color pairs followed by default
-    # ["match", ["get", "x"], val1, c1, val2, c2, default]
-    #                         ^--- expr[2:]
+    # A match expression lists the operator, the field expression, then the
+    # value/color pairs, then the default color. Slice expr[2:] to get the
+    # pairs and the default.
     pairs_and_default = expr[2:]
     if len(pairs_and_default) < 2:
         return None
@@ -104,7 +104,7 @@ def load_thumbnail_style(style_path: Path) -> ThumbnailStyle | None:
         ThumbnailStyle if a fill layer was found and parsed, None otherwise.
     """
     try:
-        with open(style_path, encoding="utf-8") as f:
+        with Path(style_path).open(encoding="utf-8") as f:
             style = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         logger.debug("Failed to load style %s: %s", style_path, e)
@@ -142,8 +142,9 @@ def load_thumbnail_style(style_path: Path) -> ThumbnailStyle | None:
             # Not a match expression we understand (e.g., interpolate)
             # Try to extract a reasonable default
             if len(fill_color_expr) > 0 and fill_color_expr[0] == "interpolate":
-                # For interpolate, use the first color as default
-                # Format: ["interpolate", ["linear"], ["get", "x"], stop1, color1, ...]
+                # An interpolate expression lists the operator, the
+                # interpolation type, the field expression, then stop/color
+                # pairs. Take the first color as the default.
                 fill_color = _extract_first_color_from_interpolate(fill_color_expr)
             else:
                 fill_color = "#3388ff"
@@ -217,9 +218,7 @@ def resolve_colors_for_gdf(
     # (GDF values might be strings, color_map keys might be from JSON)
     str_color_map = {str(k): v for k, v in style.color_map.items()}
 
-    colors = values.astype(str).map(str_color_map).fillna(default)
-
-    return colors
+    return values.astype(str).map(str_color_map).fillna(default)
 
 
 def _find_column_case_insensitive(

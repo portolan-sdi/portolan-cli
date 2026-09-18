@@ -8,10 +8,13 @@ to geoparquet-io—these tests verify that delegation will work.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pyarrow.parquet as pq
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestGpioConversion:

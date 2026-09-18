@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path, PurePath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pystac
 from pystac.layout import AsIsLayoutStrategy
@@ -36,7 +36,6 @@ from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata import extract_geoparquet_metadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
-from portolan_cli.preparation import PreparedItem
 from portolan_cli.query import ItemInfo
 from portolan_cli.stac import (
     DEFAULT_LICENSE,
@@ -66,6 +65,9 @@ from portolan_cli.versions import (
     read_versions,
     write_versions,
 )
+
+if TYPE_CHECKING:
+    from portolan_cli.preparation import PreparedItem
 
 logger = logging.getLogger(__name__)
 
@@ -553,7 +555,7 @@ def _collect_parquet_metadata_from_disk(
         # but STAC asset hrefs always use forward slashes)
         relative_path = parquet_file.relative_to(collection_dir).as_posix()
         if relative_path not in tracked_hrefs:
-            logger.debug(f"Skipping untracked parquet file: {relative_path}")
+            logger.debug("Skipping untracked parquet file: %s", relative_path)
             continue
 
         try:
@@ -561,7 +563,7 @@ def _collect_parquet_metadata_from_disk(
             metadata_list.append(meta)
         except Exception as e:
             # Log but don't fail - file might be corrupted or not a valid parquet
-            logger.warning(f"Could not read metadata from {parquet_file}: {e}")
+            logger.warning("Could not read metadata from %s: %s", parquet_file, e)
 
     return metadata_list
 
@@ -650,7 +652,7 @@ def _ensure_partition_metadata(
         partition_columns = [k["name"] for k in partition_keys]
         file_count = detected.get("partition:file_count", 0)
 
-        logger.debug(f"Auto-detected Hive partitions in {collection_dir}: {partition_columns}")
+        logger.debug("Auto-detected Hive partitions in %s: %s", collection_dir, partition_columns)
 
         # Create glob asset for bulk access (Issue #443)
         # Only add if not already present (avoid duplicates on re-add)
@@ -674,8 +676,8 @@ def _ensure_partition_metadata(
                 # Key is occupied by non-glob asset - use alternate key
                 glob_asset_key = "partitioned_data_glob"
                 logger.debug(
-                    f"Key 'partitioned_data' occupied by non-glob asset, "
-                    f"using '{glob_asset_key}' instead"
+                    "Key 'partitioned_data' occupied by non-glob asset, using '%s' instead",
+                    glob_asset_key,
                 )
 
             glob_asset = pystac.Asset(
@@ -686,7 +688,7 @@ def _ensure_partition_metadata(
                 description=f"Glob pattern for {file_count} partitioned files",
             )
             collection.assets[glob_asset_key] = glob_asset
-            logger.debug(f"Added glob asset with pattern: {glob_pattern}")
+            logger.debug("Added glob asset with pattern: %s", glob_pattern)
 
         # Validate schema consistency for auto-detected partitions
         validation = validate_partition_schemas(collection_dir)
@@ -856,10 +858,7 @@ def _finalize_with_backend(
     assets: dict[str, str] = {}
     for p in items:
         for filename, (file_path, _checksum, _size) in p.asset_files.items():
-            if p.is_collection_level_asset:
-                asset_key = filename
-            else:
-                asset_key = f"{p.item_id}/{filename}"
+            asset_key = filename if p.is_collection_level_asset else f"{p.item_id}/{filename}"
             assets[asset_key] = str(file_path)
     publish_version(collection_id, assets=assets, catalog_root=catalog_root)
 
@@ -1135,7 +1134,7 @@ def _finalize_collection(
             collection_id=p.collection_id,
             format_type=p.format_type,
             bbox=p.bbox,
-            asset_paths=[str(path) for _name, (path, _checksum, _size) in p.asset_files.items()],
+            asset_paths=[str(path) for (path, _checksum, _size) in p.asset_files.values()],
         )
         for p in items
     ]

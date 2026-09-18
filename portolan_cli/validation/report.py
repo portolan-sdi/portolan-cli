@@ -45,14 +45,17 @@ pass that ran:
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from importlib.metadata import version
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.constants import PORTOLAN_SPEC_VERSION
-from portolan_cli.metadata.fix import FixReport
 from portolan_cli.validation.remediation import Bucket, remediation_for
-from portolan_cli.validation.runner import CheckOutcome
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from portolan_cli.metadata.fix import FixReport
+    from portolan_cli.validation.runner import CheckOutcome
 
 VALIDATOR_NAME = "rashid"
 

@@ -18,12 +18,15 @@ level functions group per module, so one worker builds the catalog one time.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.integration
 
@@ -127,7 +130,7 @@ def test_glob_pattern_matches_actual_files(
 
     # Find glob asset
     glob_asset = None
-    for _key, asset in collection_data.get("assets", {}).items():
+    for asset in collection_data.get("assets", {}).values():
         if "*" in asset.get("href", ""):
             glob_asset = asset
             break

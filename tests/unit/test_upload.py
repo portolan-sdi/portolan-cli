@@ -453,10 +453,12 @@ class TestCheckCredentials:
         """Missing S3 credentials should return helpful hints."""
         from portolan_cli.sync.upload import check_credentials
 
-        with cleared_environ():
-            with patch("portolan_cli.sync.upload._load_aws_credentials_from_profile") as mock_load:
-                mock_load.return_value = (None, None, None, None)
-                valid, hint = check_credentials("s3://mybucket/path")
+        with (
+            cleared_environ(),
+            patch("portolan_cli.sync.upload._load_aws_credentials_from_profile") as mock_load,
+        ):
+            mock_load.return_value = (None, None, None, None)
+            valid, hint = check_credentials("s3://mybucket/path")
 
         assert valid is False
         assert "AWS_ACCESS_KEY_ID" in hint
@@ -663,24 +665,26 @@ class TestUploadFile:
         """Single file upload should succeed and return result."""
         from portolan_cli.sync.upload import upload_file
 
-        with patch("portolan_cli.sync.upload.obs") as mock_obs:
-            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
-                mock_store = MagicMock()
-                mock_s3_store.return_value = mock_store
+        with (
+            patch("portolan_cli.sync.upload.obs") as mock_obs,
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            mock_store = MagicMock()
+            mock_s3_store.return_value = mock_store
 
-                with patch.dict(
-                    os.environ,
-                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-                ):
-                    result = upload_file(
-                        source=temp_file,
-                        destination="s3://mybucket/data.parquet",
-                    )
+            with patch.dict(
+                os.environ,
+                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+            ):
+                result = upload_file(
+                    source=temp_file,
+                    destination="s3://mybucket/data.parquet",
+                )
 
-                assert result.success is True
-                assert result.files_uploaded == 1
-                assert result.files_failed == 0
-                mock_obs.put.assert_called_once()
+            assert result.success is True
+            assert result.files_uploaded == 1
+            assert result.files_failed == 0
+            mock_obs.put.assert_called_once()
 
     @pytest.mark.unit
     def test_upload_file_dry_run(self, temp_file: Path) -> None:
@@ -714,101 +718,109 @@ class TestUploadFile:
         """Custom S3 endpoint (MinIO) should be passed to store."""
         from portolan_cli.sync.upload import upload_file
 
-        with patch("portolan_cli.sync.upload.obs"):
-            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
-                mock_store = MagicMock()
-                mock_s3_store.return_value = mock_store
+        with (
+            patch("portolan_cli.sync.upload.obs"),
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            mock_store = MagicMock()
+            mock_s3_store.return_value = mock_store
 
-                with patch.dict(
-                    os.environ,
-                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-                ):
-                    upload_file(
-                        source=temp_file,
-                        destination="s3://mybucket/data.parquet",
-                        s3_endpoint="minio.example.com:9000",
-                        s3_region="us-east-1",
-                    )
+            with patch.dict(
+                os.environ,
+                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+            ):
+                upload_file(
+                    source=temp_file,
+                    destination="s3://mybucket/data.parquet",
+                    s3_endpoint="minio.example.com:9000",
+                    s3_region="us-east-1",
+                )
 
-                # Verify endpoint was passed to S3Store
-                call_kwargs = mock_s3_store.call_args[1]
-                assert "endpoint" in call_kwargs
-                assert "minio.example.com:9000" in call_kwargs["endpoint"]
+            # Verify endpoint was passed to S3Store
+            call_kwargs = mock_s3_store.call_args[1]
+            assert "endpoint" in call_kwargs
+            assert "minio.example.com:9000" in call_kwargs["endpoint"]
 
     @pytest.mark.unit
     def test_upload_file_strips_existing_scheme_from_endpoint(self, temp_file: Path) -> None:
         """S3 endpoint with existing scheme should not double-prepend protocol."""
         from portolan_cli.sync.upload import upload_file
 
-        with patch("portolan_cli.sync.upload.obs"):
-            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
-                mock_store = MagicMock()
-                mock_s3_store.return_value = mock_store
+        with (
+            patch("portolan_cli.sync.upload.obs"),
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            mock_store = MagicMock()
+            mock_s3_store.return_value = mock_store
 
-                with patch.dict(
-                    os.environ,
-                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-                ):
-                    # Pass endpoint with scheme already included
-                    upload_file(
-                        source=temp_file,
-                        destination="s3://mybucket/data.parquet",
-                        s3_endpoint="https://minio.example.com:9000",
-                        s3_region="us-east-1",
-                    )
+            with patch.dict(
+                os.environ,
+                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+            ):
+                # Pass endpoint with scheme already included
+                upload_file(
+                    source=temp_file,
+                    destination="s3://mybucket/data.parquet",
+                    s3_endpoint="https://minio.example.com:9000",
+                    s3_region="us-east-1",
+                )
 
-                # Verify the endpoint doesn't have double protocol (https://https://)
-                call_kwargs = mock_s3_store.call_args[1]
-                endpoint = call_kwargs["endpoint"]
-                assert endpoint == "https://minio.example.com:9000"
-                assert "https://https://" not in endpoint
+            # Verify the endpoint doesn't have double protocol (https://https://)
+            call_kwargs = mock_s3_store.call_args[1]
+            endpoint = call_kwargs["endpoint"]
+            assert endpoint == "https://minio.example.com:9000"
+            assert "https://https://" not in endpoint
 
     @pytest.mark.unit
     def test_upload_file_preserves_target_key(self, temp_file: Path) -> None:
         """Upload should use exact destination key when not ending with /."""
         from portolan_cli.sync.upload import upload_file
 
-        with patch("portolan_cli.sync.upload.obs") as mock_obs:
-            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
-                mock_store = MagicMock()
-                mock_s3_store.return_value = mock_store
+        with (
+            patch("portolan_cli.sync.upload.obs") as mock_obs,
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            mock_store = MagicMock()
+            mock_s3_store.return_value = mock_store
 
-                with patch.dict(
-                    os.environ,
-                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-                ):
-                    upload_file(
-                        source=temp_file,
-                        destination="s3://mybucket/custom/key.parquet",
-                    )
+            with patch.dict(
+                os.environ,
+                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+            ):
+                upload_file(
+                    source=temp_file,
+                    destination="s3://mybucket/custom/key.parquet",
+                )
 
-                # Verify the target key in obs.put call
-                call_args = mock_obs.put.call_args
-                target_key = call_args[0][1]  # Second positional arg
-                assert target_key == "custom/key.parquet"
+            # Verify the target key in obs.put call
+            call_args = mock_obs.put.call_args
+            target_key = call_args[0][1]  # Second positional arg
+            assert target_key == "custom/key.parquet"
 
     @pytest.mark.unit
     def test_upload_file_appends_filename_to_dir(self, temp_file: Path) -> None:
         """Upload to directory (ending with /) should append filename."""
         from portolan_cli.sync.upload import upload_file
 
-        with patch("portolan_cli.sync.upload.obs") as mock_obs:
-            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
-                mock_store = MagicMock()
-                mock_s3_store.return_value = mock_store
+        with (
+            patch("portolan_cli.sync.upload.obs") as mock_obs,
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            mock_store = MagicMock()
+            mock_s3_store.return_value = mock_store
 
-                with patch.dict(
-                    os.environ,
-                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-                ):
-                    upload_file(
-                        source=temp_file,
-                        destination="s3://mybucket/data/",
-                    )
+            with patch.dict(
+                os.environ,
+                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+            ):
+                upload_file(
+                    source=temp_file,
+                    destination="s3://mybucket/data/",
+                )
 
-                call_args = mock_obs.put.call_args
-                target_key = call_args[0][1]
-                assert target_key.endswith(temp_file.name)
+            call_args = mock_obs.put.call_args
+            target_key = call_args[0][1]
+            assert target_key.endswith(temp_file.name)
 
 
 # =============================================================================
@@ -824,47 +836,51 @@ class TestUploadDirectory:
         """Directory upload should upload all files."""
         from portolan_cli.sync.upload import upload_directory
 
-        with patch("portolan_cli.sync.upload.obs") as mock_obs:
-            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
-                mock_store = MagicMock()
-                mock_s3_store.return_value = mock_store
+        with (
+            patch("portolan_cli.sync.upload.obs") as mock_obs,
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            mock_store = MagicMock()
+            mock_s3_store.return_value = mock_store
 
-                with patch.dict(
-                    os.environ,
-                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-                ):
-                    result = upload_directory(
-                        source=temp_dir_with_files,
-                        destination="s3://mybucket/data/",
-                    )
+            with patch.dict(
+                os.environ,
+                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+            ):
+                result = upload_directory(
+                    source=temp_dir_with_files,
+                    destination="s3://mybucket/data/",
+                )
 
-                assert result.success is True
-                assert result.files_uploaded == 4  # 3 parquet + 1 txt
-                assert mock_obs.put.call_count == 4
+            assert result.success is True
+            assert result.files_uploaded == 4  # 3 parquet + 1 txt
+            assert mock_obs.put.call_count == 4
 
     @pytest.mark.unit
     def test_upload_directory_with_pattern(self, temp_dir_with_files: Path) -> None:
         """Directory upload with pattern should filter files."""
         from portolan_cli.sync.upload import upload_directory
 
-        with patch("portolan_cli.sync.upload.obs") as mock_obs:
-            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
-                mock_store = MagicMock()
-                mock_s3_store.return_value = mock_store
+        with (
+            patch("portolan_cli.sync.upload.obs") as mock_obs,
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            mock_store = MagicMock()
+            mock_s3_store.return_value = mock_store
 
-                with patch.dict(
-                    os.environ,
-                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-                ):
-                    result = upload_directory(
-                        source=temp_dir_with_files,
-                        destination="s3://mybucket/data/",
-                        pattern="*.parquet",
-                    )
+            with patch.dict(
+                os.environ,
+                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+            ):
+                result = upload_directory(
+                    source=temp_dir_with_files,
+                    destination="s3://mybucket/data/",
+                    pattern="*.parquet",
+                )
 
-                assert result.success is True
-                assert result.files_uploaded == 3  # Only parquet files
-                assert mock_obs.put.call_count == 3
+            assert result.success is True
+            assert result.files_uploaded == 3  # Only parquet files
+            assert mock_obs.put.call_count == 3
 
     @pytest.mark.unit
     def test_upload_directory_dry_run(self, temp_dir_with_files: Path) -> None:
@@ -910,29 +926,31 @@ class TestUploadDirectory:
             _ = (args, kwargs)
             raise OSError("Upload failed")
 
-        with patch("portolan_cli.sync.upload.obs") as mock_obs:
-            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
-                mock_store = MagicMock()
-                mock_s3_store.return_value = mock_store
-                mock_obs.put.side_effect = mock_put_fails_first
+        with (
+            patch("portolan_cli.sync.upload.obs") as mock_obs,
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            mock_store = MagicMock()
+            mock_s3_store.return_value = mock_store
+            mock_obs.put.side_effect = mock_put_fails_first
 
-                with patch.dict(
-                    os.environ,
-                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-                ):
-                    result = upload_directory(
-                        source=temp_dir_with_files,
-                        destination="s3://mybucket/data/",
-                        fail_fast=True,
-                        max_files=1,  # Single worker to test sequential fail_fast
-                    )
+            with patch.dict(
+                os.environ,
+                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+            ):
+                result = upload_directory(
+                    source=temp_dir_with_files,
+                    destination="s3://mybucket/data/",
+                    fail_fast=True,
+                    max_files=1,  # Single worker to test sequential fail_fast
+                )
 
-                assert result.success is False
-                assert result.files_failed >= 1
-                # With max_files=1 and fail_fast=True, should stop before processing all files
-                # The fixture creates 4 files, so we verify we stopped early
-                total_files = 4
-                assert mock_obs.put.call_count < total_files
+            assert result.success is False
+            assert result.files_failed >= 1
+            # With max_files=1 and fail_fast=True, should stop before processing all files
+            # The fixture creates 4 files, so we verify we stopped early
+            total_files = 4
+            assert mock_obs.put.call_count < total_files
 
     @pytest.mark.unit
     def test_upload_directory_fail_fast_false(self, temp_dir_with_files: Path) -> None:
@@ -944,25 +962,27 @@ class TestUploadDirectory:
             _ = (args, kwargs)
             raise OSError("Upload failed")
 
-        with patch("portolan_cli.sync.upload.obs") as mock_obs:
-            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
-                mock_store = MagicMock()
-                mock_s3_store.return_value = mock_store
-                mock_obs.put.side_effect = mock_put_fails_all
+        with (
+            patch("portolan_cli.sync.upload.obs") as mock_obs,
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            mock_store = MagicMock()
+            mock_s3_store.return_value = mock_store
+            mock_obs.put.side_effect = mock_put_fails_all
 
-                with patch.dict(
-                    os.environ,
-                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-                ):
-                    result = upload_directory(
-                        source=temp_dir_with_files,
-                        destination="s3://mybucket/data/",
-                        fail_fast=False,
-                    )
+            with patch.dict(
+                os.environ,
+                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+            ):
+                result = upload_directory(
+                    source=temp_dir_with_files,
+                    destination="s3://mybucket/data/",
+                    fail_fast=False,
+                )
 
-                assert result.success is False
-                assert result.files_failed == 4  # All files failed
-                assert len(result.errors) == 4
+            assert result.success is False
+            assert result.files_failed == 4  # All files failed
+            assert len(result.errors) == 4
 
     @pytest.mark.unit
     def test_upload_directory_preserves_structure(self, temp_dir_with_files: Path) -> None:
@@ -974,20 +994,22 @@ class TestUploadDirectory:
         def capture_target_key(store: object, key: str, source: object, **kwargs: object) -> None:
             target_keys.append(key)
 
-        with patch("portolan_cli.sync.upload.obs") as mock_obs:
-            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
-                mock_store = MagicMock()
-                mock_s3_store.return_value = mock_store
-                mock_obs.put.side_effect = capture_target_key
+        with (
+            patch("portolan_cli.sync.upload.obs") as mock_obs,
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            mock_store = MagicMock()
+            mock_s3_store.return_value = mock_store
+            mock_obs.put.side_effect = capture_target_key
 
-                with patch.dict(
-                    os.environ,
-                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-                ):
-                    upload_directory(
-                        source=temp_dir_with_files,
-                        destination="s3://mybucket/output/",
-                    )
+            with patch.dict(
+                os.environ,
+                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+            ):
+                upload_directory(
+                    source=temp_dir_with_files,
+                    destination="s3://mybucket/output/",
+                )
 
         # Check that nested structure is preserved
         nested_keys = [k for k in target_keys if "nested" in k]
@@ -1249,16 +1271,18 @@ class TestOutputIntegration:
         """Upload should use portolan_cli.output for logging."""
         from portolan_cli.sync.upload import upload_file
 
-        with patch("portolan_cli.sync.upload.obs"):
-            with patch("portolan_cli.sync.upload.S3Store"):
-                with patch.dict(
-                    os.environ,
-                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-                ):
-                    upload_file(
-                        source=temp_file,
-                        destination="s3://mybucket/data.parquet",
-                    )
+        with (
+            patch("portolan_cli.sync.upload.obs"),
+            patch("portolan_cli.sync.upload.S3Store"),
+            patch.dict(
+                os.environ,
+                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+            ),
+        ):
+            upload_file(
+                source=temp_file,
+                destination="s3://mybucket/data.parquet",
+            )
 
         # The output module uses click.echo which writes to stdout/stderr
         # Capture output to mark capsys as used (vulture)

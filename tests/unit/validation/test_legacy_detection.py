@@ -9,8 +9,7 @@ generation lets `check` say what actually happened and what to run.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -21,6 +20,9 @@ from portolan_cli.validation.legacy import (
     detect_removed_fields,
     detect_style_manifest,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

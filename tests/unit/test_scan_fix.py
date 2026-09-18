@@ -12,7 +12,7 @@ Test Strategy:
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -23,6 +23,9 @@ from portolan_cli.scan.fix import (
     apply_safe_fixes,
     preview_fix,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.mark.unit

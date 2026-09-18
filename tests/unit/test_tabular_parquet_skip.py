@@ -18,7 +18,6 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
@@ -30,9 +29,6 @@ from hypothesis import strategies as st
 from portolan_cli.add import add_files
 from portolan_cli.constants import TABULAR_EXTENSIONS
 from portolan_cli.errors import NoGeometryError
-
-if TYPE_CHECKING:
-    pass
 
 
 @pytest.fixture
@@ -226,15 +222,12 @@ class TestTabularParquetWithGeoAsset:
                 "The tabular parquet should be tracked as a non-geospatial asset."
             )
 
-            # Verify the tracked asset path points to the parquet file
+            # Verify the update targets the item that holds the parquet.
+            # _update_item_with_asset re-scans that item directory for assets.
             update_call_kwargs = mock_update_item.call_args.kwargs
-            tracked_path = update_call_kwargs.get("asset_path")
-            assert tracked_path is not None, (
-                "asset_path should be passed to _update_item_with_asset"
-            )
-            assert "census-data.parquet" in str(tracked_path), (
-                f"Expected census-data.parquet to be tracked, got: {tracked_path}"
-            )
+            assert update_call_kwargs["collection_id"] == "collection"
+            assert update_call_kwargs["item_id"] == "item"
+            assert (item_dir / "census-data.parquet").exists()
 
 
 class TestMixedParquetDirectory:

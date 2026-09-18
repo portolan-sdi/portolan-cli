@@ -5,6 +5,8 @@ These tests verify that the backend is importable and discoverable
 via get_backend("iceberg").
 """
 
+from __future__ import annotations
+
 import pytest
 
 

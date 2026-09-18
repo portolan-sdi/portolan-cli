@@ -26,14 +26,16 @@ The detectors are independent, and a catalog can trip any, all, or none.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.constants import (
     LEGACY_STYLE_MANIFEST_FIELD,
     PORTOLAN_SCHEMA_URI,
     REMOVED_PORTOLAN_FIELDS,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 #: Custom fields whose presence dates a catalog. Every ``portolan:`` field
 #: Portolan ever wrote qualifies: the spec defines none of them, so a catalog

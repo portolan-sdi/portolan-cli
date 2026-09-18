@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
@@ -33,8 +32,7 @@ from portolan_cli.async_utils import (
 )
 
 if TYPE_CHECKING:
-    pass
-
+    from pathlib import Path
 
 # =============================================================================
 # Test fixtures
@@ -471,18 +469,18 @@ class TestPushAsyncConcurrency:
             async with upload_lock:
                 upload_times.append(time.perf_counter() - start)
 
-        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put):
-            with patch("portolan_cli.sync.push.obs.get_async", return_value=None):
-                with patch(
-                    "portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)
-                ):
-                    result = await push_async(
-                        catalog_root=async_catalog,
-                        collection="test",
-                        destination="s3://test-bucket/catalog",
-                        concurrency=5,
-                        json_mode=True,
-                    )
+        with (
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put),
+            patch("portolan_cli.sync.push.obs.get_async", return_value=None),
+            patch("portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)),
+        ):
+            result = await push_async(
+                catalog_root=async_catalog,
+                collection="test",
+                destination="s3://test-bucket/catalog",
+                concurrency=5,
+                json_mode=True,
+            )
 
         # With concurrency, total time should be less than sequential
         # (10 files * 0.01s each = 0.1s sequential vs ~0.02s concurrent with 5 workers)
@@ -510,17 +508,17 @@ class TestPushAsyncConcurrency:
 
         concurrency_limit = 10
 
-        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put):
-            with patch(
-                "portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)
-            ):
-                await push_async(
-                    catalog_root=many_files_catalog,
-                    collection="test",
-                    destination="s3://test-bucket/catalog",
-                    concurrency=concurrency_limit,
-                    json_mode=True,
-                )
+        with (
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put),
+            patch("portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)),
+        ):
+            await push_async(
+                catalog_root=many_files_catalog,
+                collection="test",
+                destination="s3://test-bucket/catalog",
+                concurrency=concurrency_limit,
+                json_mode=True,
+            )
 
         # Verify concurrency was limited
         assert max_concurrent <= concurrency_limit
@@ -541,17 +539,17 @@ class TestPushAsyncConcurrency:
                 raise Exception("SlowDown: Rate limit exceeded")
             await asyncio.sleep(0.001)
 
-        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_with_rate_limit):
-            with patch(
-                "portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)
-            ):
-                result = await push_async(
-                    catalog_root=async_catalog,
-                    collection="test",
-                    destination="s3://test-bucket/catalog",
-                    concurrency=50,
-                    json_mode=True,
-                )
+        with (
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_with_rate_limit),
+            patch("portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)),
+        ):
+            result = await push_async(
+                catalog_root=async_catalog,
+                collection="test",
+                destination="s3://test-bucket/catalog",
+                concurrency=50,
+                json_mode=True,
+            )
 
         # Should have some errors from rate limiting
         assert len(result.errors) >= 0  # TDD: verify actual behavior once implemented
@@ -564,17 +562,17 @@ class TestPushAsyncConcurrency:
         async def mock_put_always_fails(store: Any, key: str, content: Any, **kwargs: Any) -> None:
             raise ConnectionError("Network unavailable")
 
-        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_always_fails):
-            with patch(
-                "portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)
-            ):
-                result = await push_async(
-                    catalog_root=async_catalog,
-                    collection="test",
-                    destination="s3://test-bucket/catalog",
-                    concurrency=50,
-                    json_mode=True,
-                )
+        with (
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_always_fails),
+            patch("portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)),
+        ):
+            result = await push_async(
+                catalog_root=async_catalog,
+                collection="test",
+                destination="s3://test-bucket/catalog",
+                concurrency=50,
+                json_mode=True,
+            )
 
         # Should fail due to circuit breaker or accumulated errors
         assert not result.success

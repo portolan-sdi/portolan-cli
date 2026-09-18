@@ -11,9 +11,12 @@ These tests verify that:
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestVectorFixturesExist:
@@ -243,9 +246,8 @@ class TestRasterFixturesInvalid:
         from rasterio.errors import RasterioIOError
 
         # Opening might work, but reading should fail
-        with pytest.raises(RasterioIOError):
-            with rasterio.open(invalid_truncated_tif) as src:
-                src.read()  # This should fail on truncated file
+        with pytest.raises(RasterioIOError), rasterio.open(invalid_truncated_tif) as src:
+            src.read()  # This should fail on truncated file
 
 
 class TestEdgeCaseFixtures:

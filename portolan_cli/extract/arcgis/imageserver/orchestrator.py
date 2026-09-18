@@ -26,9 +26,7 @@ Typical usage from CLI:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from portolan_cli.extract.arcgis.imageserver.extractor import (
@@ -39,6 +37,9 @@ from portolan_cli.extract.arcgis.imageserver.extractor import (
 from portolan_cli.output import detail, error, info, success
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
     from portolan_cli.extract.arcgis.imageserver.report import ImageServerExtractionReport
 
 

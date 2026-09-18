@@ -94,16 +94,18 @@ jobs:
             echo "$AUDIT_OUTPUT"
           fi
 
-      - name: Also run bandit for code security
-        id: bandit
+      - name: Also run the ruff security rules for code security
+        id: code-security
         continue-on-error: true
         run: |
-          # Bandit checks our code, not dependencies
-          uv run bandit -r portolan_cli -c pyproject.toml -f json -o bandit-report.json || true
-          if [ -f bandit-report.json ]; then
-            ISSUE_COUNT=$(jq '.results | length' bandit-report.json)
+          # The S rules check our code, not the dependencies. The quality job
+          # gates them on every commit. This report keeps the nightly artifact.
+          uv run ruff check --select S --output-format json \
+            -o ruff-security-report.json portolan_cli || true
+          if [ -f ruff-security-report.json ]; then
+            ISSUE_COUNT=$(jq 'length' ruff-security-report.json)
             if [ "$ISSUE_COUNT" -gt 0 ]; then
-              echo "::warning::Bandit found $ISSUE_COUNT issues"
+              echo "::warning::The ruff S rules found $ISSUE_COUNT issues"
             fi
           fi
 
@@ -114,7 +116,7 @@ jobs:
           path: |
             /tmp/runtime-deps.txt
             /tmp/pip-audit-report.json
-            bandit-report.json
+            ruff-security-report.json
           retention-days: 30
         if: always()
 

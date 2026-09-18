@@ -8,6 +8,7 @@ Primary API (v2):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import sys
@@ -40,10 +41,9 @@ if sys.platform == "win32":
 
     def _unlock_file(f: Any) -> None:
         """Unlock file on Windows using msvcrt."""
-        try:
+        # The unlock fails when the file was never locked.
+        with contextlib.suppress(OSError):
             msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
-        except OSError:
-            pass  # May fail if not locked
 
 else:
     import fcntl
@@ -192,9 +192,8 @@ def find_catalog_root(
         depth += 1
 
     # Check the root directory itself (only if within depth limit)
-    if depth < MAX_CATALOG_SEARCH_DEPTH:
-        if _is_catalog_root(current):
-            return current
+    if depth < MAX_CATALOG_SEARCH_DEPTH and _is_catalog_root(current):
+        return current
 
     return None
 
@@ -441,11 +440,8 @@ def _resolve_catalog_identity(
     warnings: list[str] = []
     derived_id = catalog_id is None
 
-    if catalog_id is None:
-        # path is already resolved, so path.name is the real directory name.
-        catalog_id = _sanitize_id(path.name)
-    else:
-        catalog_id = validate_catalog_id(catalog_id)
+    # path is already resolved, so path.name is the real directory name.
+    catalog_id = _sanitize_id(path.name) if catalog_id is None else validate_catalog_id(catalog_id)
 
     # A derived id that names a workflow step rather than the data is the failure
     # in issue #821. Warn only when the id was derived. An explicit id is the
@@ -465,6 +461,101 @@ def _resolve_catalog_identity(
         warnings.append(f"Derived catalog title '{title}' from {source}")
 
     return catalog_id, title, warnings
+
+
+def _check_init_preconditions(
+    path: Path,
+    *,
+    backend: str,
+    logo: str | Path | None,
+) -> None:
+    """Reject an init that cannot succeed, before anything is written.
+
+    A rejected backend or logo must not leave a half-built catalog behind. Each
+    check runs before the first write, so the directory stays in FRESH state.
+
+    Args:
+        path: Resolved catalog directory.
+        backend: Versioning backend name.
+        logo: Local path to a catalog logo, or None.
+
+    Raises:
+        CatalogAlreadyExistsError: If the directory is in MANAGED state.
+        UnmanagedStacCatalogError: If the directory is in UNMANAGED_STAC state.
+        CatalogInitError: If the backend is not available.
+        LogoError: If the logo is a URL, missing, or of an unpermitted media type.
+    """
+    from portolan_cli.errors import UnmanagedStacCatalogError
+
+    state = detect_state(path)
+    if state == CatalogState.MANAGED:
+        raise CatalogAlreadyExistsError(str(path))
+    if state == CatalogState.UNMANAGED_STAC:
+        raise UnmanagedStacCatalogError(str(path))
+
+    if logo is not None:
+        from portolan_cli.logo import validate_logo_source
+
+        validate_logo_source(logo)
+
+    if backend != "file":
+        from portolan_cli.backends import get_backend
+
+        try:
+            get_backend(backend)
+        except ValueError as e:
+            raise CatalogInitError(str(e)) from e
+
+
+def _write_conformance_files(
+    path: Path,
+    catalog_file: Path,
+    *,
+    logo: str | Path | None,
+    logo_title: str | None,
+) -> list[str]:
+    """Write the files a catalog needs to conform, and copy the logo.
+
+    AGENTS.md carries the rel="agents" link (rashid PTL-FIL-002). README.md
+    carries the rel="describedby" link (issue #654). Both are written at init,
+    so a new catalog conforms before anything is added to it. The logo is
+    optional (PORTO-CORE-074).
+
+    Args:
+        path: Resolved catalog directory.
+        catalog_file: Path to catalog.json, which already exists.
+        logo: Local path to a catalog logo, or None.
+        logo_title: Accessible label for the logo link.
+
+    Returns:
+        Warnings raised while the logo was copied.
+
+    Raises:
+        CatalogInitError: If any write fails.
+    """
+    from portolan_cli.agents_md import ensure_agents_md
+    from portolan_cli.readme import ensure_readmes
+
+    try:
+        ensure_agents_md(catalog_file)
+    except OSError as e:
+        raise CatalogInitError(f"Cannot write AGENTS.md: {e}") from e
+
+    try:
+        ensure_schema_uris(path)
+        ensure_readmes(path)
+    except OSError as e:
+        raise CatalogInitError(f"Cannot write catalog conformance files: {e}") from e
+
+    if logo is None:
+        return []
+
+    from portolan_cli.logo import set_catalog_logo
+
+    try:
+        return list(set_catalog_logo(path, logo, title=logo_title).warnings)
+    except OSError as e:
+        raise CatalogInitError(f"Cannot write catalog logo: {e}") from e
 
 
 def init_catalog(
@@ -541,8 +632,6 @@ def init_catalog(
     """
     import pystac
 
-    from portolan_cli.errors import UnmanagedStacCatalogError
-
     # Ensure path exists. Resolve first: the path argument defaults to "." and
     # every downstream write, including pystac's, then depends on the working
     # directory. pystac's normalize_hrefs drops the trailing slash when it
@@ -561,29 +650,7 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot create directory: {e}") from e
 
-    # Check state and raise appropriate errors
-    state = detect_state(path)
-    if state == CatalogState.MANAGED:
-        raise CatalogAlreadyExistsError(str(path))
-    if state == CatalogState.UNMANAGED_STAC:
-        raise UnmanagedStacCatalogError(str(path))
-
-    # Validate the logo before creating any files, for the same reason the
-    # backend is checked here: a rejected image must not leave a half-built
-    # catalog behind. The copy itself happens once catalog.json exists.
-    if logo is not None:
-        from portolan_cli.logo import validate_logo_source
-
-        validate_logo_source(logo)
-
-    # Validate non-file backends are available before creating any files
-    if backend != "file":
-        from portolan_cli.backends import get_backend
-
-        try:
-            get_backend(backend)
-        except ValueError as e:
-            raise CatalogInitError(str(e)) from e
+    _check_init_preconditions(path, backend=backend, logo=logo)
 
     warnings: list[str] = list(identity_warnings)
 
@@ -642,37 +709,8 @@ def init_catalog(
     # carried the violation and the conformance gate (which runs init + add)
     # never saw it.
 
-    # Step 4b: AGENTS.md - scaffold the AI/agent guide and add its rel="agents"
-    # link (rashid PTL-FIL-002). Emitting it here keeps freshly-created catalogs
-    # schema-valid without a follow-up `check --fix`.
-    from portolan_cli.agents_md import ensure_agents_md
-
-    try:
-        ensure_agents_md(catalog_file)
-    except OSError as e:
-        raise CatalogInitError(f"Cannot write AGENTS.md: {e}") from e
-
-    # Step 4c: declare the Portolan profile schema URI and scaffold README.md
-    # with its rel="describedby" link (issue #654), so a catalog conforms the
-    # moment it is created, before anything is added to it.
-    from portolan_cli.readme import ensure_readmes
-
-    try:
-        ensure_schema_uris(path)
-        ensure_readmes(path)
-    except OSError as e:
-        raise CatalogInitError(f"Cannot write catalog conformance files: {e}") from e
-
-    # Step 4c-bis: catalog logo. Optional (PORTO-CORE-074), so it runs only when
-    # the caller supplied one. Validated above, so the only failure left here is
-    # the filesystem itself.
-    if logo is not None:
-        from portolan_cli.logo import set_catalog_logo
-
-        try:
-            warnings.extend(set_catalog_logo(path, logo, title=logo_title).warnings)
-        except OSError as e:
-            raise CatalogInitError(f"Cannot write catalog logo: {e}") from e
+    # Steps 4b to 4c-bis: AGENTS.md, the schema URI, README.md, and the logo.
+    warnings.extend(_write_conformance_files(path, catalog_file, logo=logo, logo_title=logo_title))
 
     # Step 4d: metadata.yaml - seed the license the human supplied. Every collection
     # inherits it through the hierarchical merge, so the gate in add_files passes
@@ -1191,7 +1229,6 @@ def update_catalog_versions(
         CatalogVersionsCorruptedError: If catalog versions.json is invalid JSON
             or has invalid structure.
     """
-
     from portolan_cli.output import warn
 
     versions_path = catalog_root / "versions.json"
@@ -1262,8 +1299,6 @@ def update_catalog_versions(
 
 class CatalogVersionsCorruptedError(Exception):
     """Raised when catalog-level versions.json is corrupted."""
-
-    pass
 
 
 # Re-export add_files for STAC-aligned imports (ADR terminology)

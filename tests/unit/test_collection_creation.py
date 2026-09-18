@@ -10,7 +10,7 @@ Tests cover:
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -22,6 +22,9 @@ from portolan_cli.models.collection import (
 )
 from portolan_cli.models.schema import ColumnSchema, SchemaModel
 from portolan_cli.stac import STAC_VERSION
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestCollectionCreation:

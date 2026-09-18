@@ -6,7 +6,7 @@ including layer filtering, extraction, and catalog initialization.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -18,6 +18,9 @@ from portolan_cli.extract.wfs.orchestrator import (
     _slugify,
     extract_wfs_catalog,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 

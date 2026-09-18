@@ -6,6 +6,8 @@ correctly when multiple threads publish simultaneously.
 Marked as e2e_slow -- runs only in nightly CI.
 """
 
+from __future__ import annotations
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest

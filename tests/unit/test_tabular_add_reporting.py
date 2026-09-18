@@ -13,7 +13,7 @@ despite writing no item JSON, so tabular follows the same path.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -22,6 +22,9 @@ from click.testing import CliRunner
 
 from portolan_cli import cli
 from portolan_cli.add import add_files
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 
