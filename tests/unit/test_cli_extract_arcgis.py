@@ -359,3 +359,80 @@ def test_extract_arcgis_rejects_bad_id_before_imageserver_extraction(
     assert result.exit_code == 1
     assert calls == []
     assert "Invalid catalog ID" in result.output
+
+
+@pytest.mark.unit
+def test_extract_arcgis_passes_retries_to_imageserver_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--retries` reaches the raster path (issue #870).
+
+    Before the fix the CLI accepted the flag and dropped it, so every tile
+    got the default three attempts.
+    """
+    from portolan_cli.extract.arcgis.imageserver.orchestrator import ImageServerCLIOptions
+
+    captured: list[ImageServerCLIOptions] = []
+
+    def _capture(url: str, output_dir: object, options: ImageServerCLIOptions) -> tuple[int, None]:
+        captured.append(options)
+        return 0, None
+
+    monkeypatch.setattr(
+        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction_sync",
+        _capture,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "extract",
+            "arcgis",
+            "https://example.com/arcgis/rest/services/x/ImageServer",
+            "--retries",
+            "5",
+            "--auto",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(captured) == 1
+    assert captured[0].max_retries == 5
+
+
+@pytest.mark.unit
+def test_extract_arcgis_passes_license_to_imageserver_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--license` and `--license-url` reach the raster path (issue #870)."""
+    from portolan_cli.extract.arcgis.imageserver.orchestrator import ImageServerCLIOptions
+
+    captured: list[ImageServerCLIOptions] = []
+
+    def _capture(url: str, output_dir: object, options: ImageServerCLIOptions) -> tuple[int, None]:
+        captured.append(options)
+        return 0, None
+
+    monkeypatch.setattr(
+        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction_sync",
+        _capture,
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "extract",
+            "arcgis",
+            "https://example.com/arcgis/rest/services/x/ImageServer",
+            "--license",
+            "other",
+            "--license-url",
+            "https://example.com/terms.html",
+            "--auto",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(captured) == 1
+    assert captured[0].license == "other"
+    assert captured[0].license_url == "https://example.com/terms.html"

@@ -190,3 +190,166 @@ class TestRunImageServerExtraction:
         # Verify bbox was passed
         call_kwargs = mock_extract.call_args.kwargs
         assert call_kwargs["bbox"] == (-122.0, 37.0, -121.0, 38.0)
+
+
+class TestRetriesAndFailureHint:
+    """Retries reach the extractor and failures print a next step (issue #870)."""
+
+    def test_max_retries_default(self) -> None:
+        assert ImageServerCLIOptions().max_retries == 3
+
+    @pytest.mark.asyncio
+    async def test_max_retries_passed_to_extraction_config(self, tmp_path: Path) -> None:
+        mock_result = MagicMock()
+        mock_result.tiles_downloaded = 1
+        mock_result.tiles_failed = 0
+        mock_result.tiles_skipped = 0
+        mock_result.total_bytes = 10
+        mock_extract = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
+            mock_extract,
+        ):
+            await run_imageserver_extraction(
+                url="https://example.com/rest/services/Test/ImageServer",
+                output_dir=tmp_path,
+                options=ImageServerCLIOptions(max_retries=5),
+            )
+
+        config = mock_extract.call_args.kwargs["config"]
+        assert config.max_retries == 5
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_prints_resume_hint(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        mock_result = MagicMock()
+        mock_result.tiles_downloaded = 7
+        mock_result.tiles_failed = 5
+        mock_result.tiles_skipped = 0
+        mock_result.total_bytes = 10
+        mock_extract = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
+            mock_extract,
+        ):
+            exit_code, _ = await run_imageserver_extraction(
+                url="https://example.com/rest/services/Test/ImageServer",
+                output_dir=tmp_path,
+                options=ImageServerCLIOptions(),
+            )
+
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "Re-run the same command with --resume to retry the 5 failed tiles." in captured.err
+        assert "lower --tile-size or --max-concurrent" in captured.err
+
+    @pytest.mark.asyncio
+    async def test_all_failed_prints_resume_hint(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        mock_result = MagicMock()
+        mock_result.tiles_downloaded = 0
+        mock_result.tiles_failed = 3
+        mock_result.tiles_skipped = 0
+        mock_result.total_bytes = 0
+        mock_extract = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
+            mock_extract,
+        ):
+            exit_code, _ = await run_imageserver_extraction(
+                url="https://example.com/rest/services/Test/ImageServer",
+                output_dir=tmp_path,
+                options=ImageServerCLIOptions(),
+            )
+
+        assert exit_code == 1
+        captured = capsys.readouterr()
+        assert "Re-run the same command with --resume to retry the 3 failed tiles." in captured.err
+
+    @pytest.mark.asyncio
+    async def test_success_prints_no_hint(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        mock_result = MagicMock()
+        mock_result.tiles_downloaded = 3
+        mock_result.tiles_failed = 0
+        mock_result.tiles_skipped = 0
+        mock_result.total_bytes = 30
+        mock_extract = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
+            mock_extract,
+        ):
+            await run_imageserver_extraction(
+                url="https://example.com/rest/services/Test/ImageServer",
+                output_dir=tmp_path,
+                options=ImageServerCLIOptions(),
+            )
+
+        assert "--resume" not in capsys.readouterr().err
+
+
+class TestLicenseOptions:
+    """--license and --license-url reach the extractor (issue #870)."""
+
+    def test_license_defaults_to_none(self) -> None:
+        options = ImageServerCLIOptions()
+        assert options.license is None
+        assert options.license_url is None
+
+    @pytest.mark.asyncio
+    async def test_license_options_passed_to_extractor(self, tmp_path: Path) -> None:
+        mock_result = MagicMock()
+        mock_result.tiles_downloaded = 1
+        mock_result.tiles_failed = 0
+        mock_result.tiles_skipped = 0
+        mock_result.total_bytes = 10
+        mock_extract = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
+            mock_extract,
+        ):
+            await run_imageserver_extraction(
+                url="https://example.com/rest/services/Test/ImageServer",
+                output_dir=tmp_path,
+                options=ImageServerCLIOptions(
+                    license="other", license_url="https://example.com/terms.html"
+                ),
+            )
+
+        call_kwargs = mock_extract.call_args.kwargs
+        assert call_kwargs["license_id"] == "other"
+        assert call_kwargs["license_url"] == "https://example.com/terms.html"
+
+    @pytest.mark.asyncio
+    async def test_missing_license_error_returns_exit_code_1(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from portolan_cli.errors import MissingLicenseError
+
+        mock_extract = AsyncMock(
+            side_effect=MissingLicenseError(
+                "this extraction", "the source publishes no license URL to link to"
+            )
+        )
+
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
+            mock_extract,
+        ):
+            exit_code, report = await run_imageserver_extraction(
+                url="https://example.com/rest/services/Test/ImageServer",
+                output_dir=tmp_path,
+                options=ImageServerCLIOptions(),
+            )
+
+        assert exit_code == 1
+        assert report is None
+        assert "No usable license for this extraction" in capsys.readouterr().err

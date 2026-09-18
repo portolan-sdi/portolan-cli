@@ -54,6 +54,7 @@ dependencies = [
     "rio-cogeo>=5.0.0", # COG creation/validation (includes rasterio)
     "rashid>=0.1.5,<0.2.0", # Conformance validator behind `portolan check`; ships its own STAC + Portolan profile schemas, so validation runs offline. 0.1.5 is the floor for the catalog-logo rules PTL-LNK-007/008/009 (PORTO-CORE-074..077) and for PTL-AST-006, whose absence in 0.1.4 let a wrong COG media type mask PTL-COL-004 and PTL-MIR-001. The conformance gate asserts all four, so this is a hard floor, not a preference
     "typing_extensions>=4.0.0; python_version < '3.11'",
+    "lerc>=4.0.1", # Decodes the LERC tiles that hosted tiled imagery layers cache. GDAL 3.12 fails on LERC2 version 6 with "MRF: Error decoding Lerc", so `extract arcgis` cannot read a TilesOnly ImageServer without it (Issue #870). The wheel ships binaries for Windows x64, macOS, and Linux x86-64, so tilecache.py imports it lazily and explains the failure on other platforms
 ]
 
 [project.scripts]
@@ -233,7 +234,8 @@ skips = [] # Add specific checks to skip if needed, e.g., ["B101"]
 # French words from Belgian ISO 19139 test fixture (tests/fixtures/csw/belgium_buildings_iso19139.xml)
 # "BU" is the INSPIRE theme code for Buildings (used in test fixtures)
 # "disjointness" is a real set-theory term (codespell wants "disjointedness")
-ignore-words-list = "nd,bu,ue,adresse,projet,environnement,copie,explicite,connexion,objets,visibles,issus,fonction,mesures,informations,disjointness"
+# "lod" is the ArcGIS tile cache term for a level of detail (the tileInfo "lods" array)
+ignore-words-list = "nd,bu,ue,adresse,projet,environnement,copie,explicite,connexion,objets,visibles,issus,fonction,mesures,informations,disjointness,lod"
 
 # ---------- dead code ----------
 
