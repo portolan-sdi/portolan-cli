@@ -69,6 +69,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Examples: examples.md
+  - Registry And Server: server.md
   - Reference:
     - Overview: reference/index.md
     - CLI Reference: reference/cli.md

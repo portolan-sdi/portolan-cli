@@ -205,6 +205,7 @@ context/shared/plans/
 catalog.json
 !tests/fixtures/**/catalog.json
 versions.json
+registry_catalogs/
 
 # PyPI configuration file
 .pypirc
