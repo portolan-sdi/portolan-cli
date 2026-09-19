@@ -25,6 +25,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # The pymdownx.snippets directive. A built page must never show it.
 SNIPPET_DIRECTIVE = "--8<--"
 
+# The sync in portolan-ops owns this file. It declares every brand
+# token on `:root`.
+BRAND_TOKENS = PROJECT_ROOT / "docs/assets/stylesheets/_brand-vars.css"
+
+# This repository owns this file. It maps the brand tokens onto the
+# Material surface.
+SITE_STYLES = PROJECT_ROOT / "docs/assets/stylesheets/extra.css"
+
+# A literal color value. The brand kit is the one home for these.
+LITERAL_COLOR = re.compile(r"#[0-9a-fA-F]{3,8}\b|rgba?\(")
+
 
 @pytest.fixture(scope="session")
 def built_site() -> Path:
@@ -179,3 +190,83 @@ def test_the_built_pages_carry_no_dark_mode(built_site: Path) -> None:
     page = _page(built_site, "index.html")
 
     assert 'data-md-color-scheme="slate"' not in page
+
+
+def _declared_brand_tokens() -> set[str]:
+    """Return every token that the synced brand stylesheet declares."""
+    source = BRAND_TOKENS.read_text(encoding="utf-8")
+    return set(re.findall(r"^\s*(--[a-z0-9-]+):", source, re.MULTILINE))
+
+
+def _brand_tokens_the_stylesheet_reads() -> set[str]:
+    """Return every brand token that extra.css reads."""
+    source = SITE_STYLES.read_text(encoding="utf-8")
+    return set(re.findall(r"var\((--(?:palette|color)-[a-z0-9-]+)\)", source))
+
+
+def test_the_stylesheet_restates_no_brand_value() -> None:
+    """extra.css holds no hex value and no rgba() call.
+
+    The brand kit in portolan-ops is the one home for a color. A restated
+    value drifts from its source and nothing reports the drift.
+    """
+    found = LITERAL_COLOR.findall(SITE_STYLES.read_text(encoding="utf-8"))
+
+    assert found == [], f"extra.css restates a color: {found}"
+
+
+def test_every_brand_token_the_stylesheet_reads_exists() -> None:
+    """Each brand token that extra.css reads exists in the synced file.
+
+    CSS resolves an undefined custom property to nothing. A rename in
+    portolan-ops therefore removes a color and the build stays green.
+    """
+    missing = _brand_tokens_the_stylesheet_reads() - _declared_brand_tokens()
+
+    assert missing == set(), f"The brand kit declares no {sorted(missing)}."
+
+
+def test_the_pages_load_the_brand_tokens_before_the_overrides(
+    built_site: Path,
+) -> None:
+    """The brand stylesheet loads before extra.css.
+
+    `_brand-vars.css` declares the tokens and extra.css reads them. The
+    reverse order leaves the Material overrides unresolved.
+    """
+    page = _page(built_site, "index.html")
+
+    tokens = page.find("assets/stylesheets/_brand-vars.css")
+    overrides = page.find("assets/stylesheets/extra.css")
+
+    assert tokens != -1, "The page loads no _brand-vars.css."
+    assert overrides != -1, "The page loads no extra.css."
+    assert tokens < overrides, "extra.css loads before the brand tokens."
+
+
+def test_the_pages_request_the_brand_typefaces(built_site: Path) -> None:
+    """The page requests Hanken Grotesk and JetBrains Mono.
+
+    Material fills an absent `theme.font` with Roboto. The site then
+    renders in a typeface that the brand kit does not name.
+    """
+    page = _page(built_site, "index.html")
+
+    assert "Hanken+Grotesk" in page
+    assert "JetBrains+Mono" in page
+    assert "Roboto" not in page
+
+
+def test_the_mark_and_the_favicon_come_from_the_sync(built_site: Path) -> None:
+    """The header mark and the favicon point at the synced files.
+
+    The header is a solid blue band, so the mark on it is cream. The
+    favicon sits on a browser tab, so it is blue.
+    """
+    page = _page(built_site, "index.html")
+
+    assert "assets/images/portolan-logomark-fcfcfa.svg" in page
+    assert "assets/images/portolan-logomark-4163cc.svg" in page
+
+    for gone in ("icon-white.svg", "icon.svg", "favicon.ico", "logo.svg"):
+        assert gone not in page, f"The page still points at {gone}."

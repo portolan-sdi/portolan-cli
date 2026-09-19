@@ -190,8 +190,22 @@ portolan-cli/
 └── .github/workflows/     # CI/CD pipelines
 ```
 
-`docs/` is public (mkdocs); `context/` is internal AI-oriented context. See
+`docs/` is public (Zensical); `context/` is internal AI-oriented context. See
 `.claude/rules/documentation.md` for the full distinction and where to file things.
+
+## Synced brand files
+
+The sync in portolan-ops owns these four files. They carry no `ops-sync` marker,
+because a CSS file and an SVG file cannot hold a Markdown comment in a place
+that a reader sees. Do not edit them here. Edit the source in portolan-ops and
+let the sync run.
+
+- `docs/assets/stylesheets/_brand-vars.css`
+- `docs/assets/images/portolan-logomark-4163cc.svg`
+- `docs/assets/images/portolan-logomark-fcfcfa.svg`
+- `docs/assets/images/portolan-logo-horizontal-light.svg`
+
+`context/shared/documentation/branding.md` records how the site applies them.
 
 ## Before Writing Code
 

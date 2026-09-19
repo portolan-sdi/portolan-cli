@@ -12,11 +12,11 @@ social media, Slack, or Discord.
 
 ## Files Available
 
-- **Mark (vector)**: `docs/assets/images/icon.svg`
-- **Mark on a dark ground**: `docs/assets/images/icon-white.svg`
-- **Horizontal lockup**: `docs/assets/images/logo.svg`
+- **Mark (vector)**: `docs/assets/images/portolan-logomark-4163cc.svg`
+- **Mark on a dark ground**: `docs/assets/images/portolan-logomark-fcfcfa.svg`
+- **Horizontal lockup**: `docs/assets/images/portolan-logo-horizontal-light.svg`
 - **Mark (square raster)**: `docs/assets/images/logo.png` (1000x1000)
-- **Favicon**: `docs/assets/images/favicon.ico` (16, 32, and 48 px)
+- **Favicon**: `docs/assets/images/favicon.ico` (16, 32, and 48 px). The site points `theme.favicon` at the SVG mark instead. Keep this file for a manual upload.
 - **Social card**: `docs/assets/images/social-card.png` (3500x1440)
 
 ## Brand Values

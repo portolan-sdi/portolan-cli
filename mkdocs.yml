@@ -11,13 +11,21 @@ theme:
   # Zensical builds this site. `classic` keeps the Material 9
   # markup, so every `.md-*` selector in extra.css still applies.
   variant: classic
-  logo: assets/images/icon-white.svg
-  favicon: assets/images/favicon.ico
+  # The header is a solid blue band, so the mark on it is cream. The
+  # favicon sits on a browser tab, so it is blue. The sync in
+  # portolan-ops owns both files.
+  logo: assets/images/portolan-logomark-fcfcfa.svg
+  favicon: assets/images/portolan-logomark-4163cc.svg
   # Light mode only. The brand kit carries no dark theme and no toggle.
   palette:
     scheme: default
     primary: custom
     accent: custom
+  # Google Fonts serves both families. Hanken Grotesk sets prose and
+  # headlines. JetBrains Mono sets code, labels, data, and paths.
+  font:
+    text: Hanken Grotesk
+    code: JetBrains Mono
   features:
     - navigation.top
     - navigation.tabs
@@ -28,6 +36,10 @@ theme:
     - content.code.annotate
 
 extra_css:
+  # Order is load-bearing. `_brand-vars.css` declares the tokens on
+  # `:root` and `extra.css` reads them. The sync in portolan-ops owns
+  # the first file.
+  - assets/stylesheets/_brand-vars.css
   - assets/stylesheets/extra.css
 
 extra:
@@ -91,6 +103,3 @@ nav:
     - Configuration Reference: reference/configuration.md
   - Contributing: contributing.md
   - Changelog: changelog.md
-
-not_in_nav: |
-  /BRANDING.md
