@@ -39,13 +39,18 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --extra docs
+        # tests/docs/test_site_build.py needs pytest, which lives in the
+        # dev extra. It verifies the output that this job deploys.
+        run: uv sync --extra docs --extra dev
 
       - name: Check generated reference
         run: uv run python scripts/generate_reference_docs.py --check
 
       - name: Build documentation
-        run: uv run mkdocs build --strict
+        run: uv run zensical build --strict --clean
+
+      - name: Verify the built site
+        run: uv run pytest tests/docs/test_site_build.py -v
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

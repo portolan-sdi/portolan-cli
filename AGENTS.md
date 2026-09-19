@@ -159,8 +159,9 @@ uv run cz commit                        # Interactive commit
 uv run cz bump --dry-run                # Preview version bump
 
 # Docs
-uv run mkdocs serve                     # Local docs server
-uv run mkdocs build                     # Build docs
+uv run zensical serve                   # Local docs server
+uv run zensical build --strict --clean  # Build docs
+uv run pytest tests/docs/test_site_build.py  # Verify the built site
 ```
 
 ## Project Structure

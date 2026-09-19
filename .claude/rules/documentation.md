@@ -21,7 +21,7 @@ When documenting CLI commands:
 
 ## docs/ vs context/ distinction
 
-- **`docs/`**, Public-facing, human-readable documentation (tutorials, visual guides, user-oriented). Built with mkdocs and published.
+- **`docs/`**, Public-facing, human-readable documentation (tutorials, visual guides, user-oriented). Built with Zensical and published.
 - **`context/`**, Internal, AI-oriented context (maintainer rationale, known issues, CI and tooling notes). Dense, structured, co-located with development. NOT published.
 
 Do NOT put architectural plans or design documents in `docs/`. Working plans are
@@ -69,7 +69,7 @@ drift away from it.
 
 | Audience | Location | Purpose |
 |----------|----------|---------|
-| **Humans** | `docs/` (mkdocs) | *How to use*, tutorials, visual guides |
+| **Humans** | `docs/` (Zensical) | *How to use*, tutorials, visual guides |
 | **AI agents** | Docstrings, AGENTS.md, `.claude/rules/` | *How to modify*, dense, structured, co-located with code |
 
 ### Validating AI Guidance
