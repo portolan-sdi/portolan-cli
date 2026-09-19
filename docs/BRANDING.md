@@ -56,7 +56,7 @@ Set the repository description to the brand messaging:
 Build the documentation locally:
 
 ```bash
-uv run mkdocs serve
+uv run zensical serve
 ```
 
 Then open http://127.0.0.1:8000 in a browser.

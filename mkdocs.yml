@@ -8,6 +8,9 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  # Zensical builds this site. `classic` keeps the Material 9
+  # markup, so every `.md-*` selector in extra.css still applies.
+  variant: classic
   logo: assets/images/icon-white.svg
   favicon: assets/images/favicon.ico
   # Light mode only. The brand kit carries no dark theme and no toggle.
@@ -34,6 +37,9 @@ extra:
       name: Portolan CLI on GitHub
 
 plugins:
+  # Zensical builds the search index natively. It still reads this
+  # entry. Keep it, because MkDocs drops search when the `plugins` key
+  # exists and omits it. That keeps the rollback leg complete.
   - search
   - mkdocstrings:
       handlers:
@@ -47,10 +53,12 @@ plugins:
             members_order: source
             docstring_style: google
 
+# This list is exhaustive on purpose. Both builders replace their
+# default set when this key exists. Add an extension here before you
+# use its syntax in a page.
 markdown_extensions:
   - admonition
   - attr_list
-  - mkdocs-click  # Must come after attr_list for correct rendering
   - md_in_html
   - pymdownx.superfences
   - pymdownx.tabbed:
@@ -65,6 +73,13 @@ markdown_extensions:
   - tables
   - toc:
       permalink: true
+
+# Zensical validates links and anchors by default. State the level so
+# MkDocs, which defaults anchors to `info`, reports the same problems.
+validation:
+  links:
+    not_found: warn
+    anchors: warn
 
 nav:
   - Home: index.md
