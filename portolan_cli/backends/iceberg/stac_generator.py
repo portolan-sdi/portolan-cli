@@ -17,12 +17,16 @@ from pyiceberg.types import (
     DateType,
     DoubleType,
     FloatType,
+    GeographyType,
+    GeometryType,
     IntegerType,
     LongType,
     StringType,
     TimestampType,
     TimestamptzType,
 )
+
+from portolan_cli.constants import ICEBERG_EXTENSION_URI
 
 if TYPE_CHECKING:
     from pyiceberg.table import Table
@@ -42,10 +46,15 @@ _TYPE_MAP: dict[type, str] = {
     DateType: "date",
     TimestampType: "datetime",
     TimestamptzType: "datetime",
+    # The logical type, with no parameter. The Iceberg schema carries the CRS
+    # in its own type string, as geometry(EPSG:4326); the two are different
+    # fields and neither belongs in the other.
+    GeometryType: "geometry",
+    GeographyType: "geography",
 }
 
 STAC_TABLE_EXTENSION = "https://stac-extensions.github.io/table/v1.2.0/schema.json"
-STAC_ICEBERG_EXTENSION = "https://portolan-sdi.github.io/stac-iceberg-extension/v1.0.0/schema.json"
+STAC_ICEBERG_EXTENSION = ICEBERG_EXTENSION_URI
 
 # Map PyIceberg catalog class names to catalog type strings
 _CATALOG_TYPE_MAP: dict[str, str] = {
@@ -134,12 +143,24 @@ def generate_table_metadata(table: Table) -> dict[str, Any]:
 
 
 def _get_catalog_type(table: Table) -> str:
-    """Extract the catalog type string from a table's catalog reference."""
+    """Extract the catalog type string from a table's catalog reference.
+
+    The extension enumerates the value, so an unrecognized catalog cannot be
+    described. Emitting "unknown" produced a collection that failed the schema
+    it declared, and hid the real problem: a catalog class this backend has
+    never seen.
+    """
     catalog = table.catalog
     class_name = type(catalog).__name__
     if class_name in _CATALOG_TYPE_MAP:
         return _CATALOG_TYPE_MAP[class_name]
-    return str(catalog.properties.get("type", "unknown"))
+    declared = catalog.properties.get("type")
+    if declared in _CATALOG_TYPE_MAP.values():
+        return str(declared)
+    raise ValueError(
+        f"Unrecognized Iceberg catalog {class_name!r} (type property: {declared!r}). "
+        f"The STAC Iceberg extension allows only {sorted(set(_CATALOG_TYPE_MAP.values()))}."
+    )
 
 
 def _get_catalog_uri(table: Table) -> str | None:
@@ -155,15 +176,23 @@ def _get_table_id(table: Table) -> str:
     return ".".join(name_tuple)
 
 
-def _get_partition_spec(table: Table) -> list[dict[str, str]]:
-    """Extract partition spec as a list of field descriptors."""
+def _get_partition_spec(table: Table) -> list[dict[str, Any]]:
+    """Extract the partition spec in the shape the extension defines.
+
+    The entry is keyed ``name``/``transform``/``source-id``/``field-id``. The
+    partition field name can differ from the source column name, and the
+    earlier ``field`` key carried the source column, so a renamed field or a
+    parameterized transform such as ``bucket[16]`` could not be described.
+    """
     spec = table.spec()
-    result = []
+    result: list[dict[str, Any]] = []
     for field in spec.fields:
         result.append(
             {
-                "field": table.schema().find_field(field.source_id).name,
+                "name": field.name,
                 "transform": str(field.transform),
+                "source-id": field.source_id,
+                "field-id": field.field_id,
             }
         )
     return result
@@ -189,8 +218,14 @@ def generate_collection_metadata(table: Table) -> dict[str, Any]:
     if catalog_uri:
         metadata["iceberg:catalog_uri"] = catalog_uri
 
+    metadata["iceberg:metadata_location"] = table.metadata_location
+
+    # A string: an Iceberg snapshot id is 64-bit, and a JSON parser that stores
+    # numbers as doubles rounds it above 2^53. A table with no snapshot has no
+    # id to report, and the field is optional, so it is omitted rather than null.
     snap = table.current_snapshot()
-    metadata["iceberg:current_snapshot_id"] = snap.snapshot_id if snap else None
+    if snap is not None:
+        metadata["iceberg:current_snapshot_id"] = str(snap.snapshot_id)
 
     # Assets and stac_extensions are NOT included here — they must be set
     # via pystac's first-class APIs (collection.assets, collection.stac_extensions)

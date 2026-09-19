@@ -364,17 +364,17 @@ class IcebergBackend:
                 if ext_url not in collection.stac_extensions:
                     collection.stac_extensions.append(ext_url)
 
-            # Set Iceberg data asset via pystac API (not extra_fields["assets"],
-            # which is also ignored by pystac's serialization).
-            collection.assets["data"] = pystac.Asset(
-                href=table.location(),
-                media_type="application/x-iceberg",
-                roles=["data"],
-                description=(
-                    "Apache Iceberg table \u2014 use PyIceberg, DuckDB "
-                    "iceberg_scan(), or Spark to query"
-                ),
-            )
+            # No asset is written here (issue #883). This backend always uses a
+            # managed catalog, and the STAC Iceberg extension resolves a managed
+            # table through iceberg:catalog_uri, iceberg:table_id and
+            # iceberg:metadata_location rather than through an asset. Only a
+            # static catalog carries a fetchable metadata.json asset.
+            #
+            # Earlier revisions assigned assets["data"] to table.location(),
+            # which is a directory and so resolves to no document. A generated
+            # catalog keys its GeoParquet asset by filename, so that assignment
+            # added a second asset carrying the same "data" role; a collection
+            # that does use the "data" key lost it.
 
             collection.normalize_hrefs(href_root(collection_dir))
             collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
