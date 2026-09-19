@@ -47,12 +47,19 @@ def mock_check_report(tmp_path: Path) -> Any:
 
 
 def _break_catalog(root: Path) -> str:
-    """Introduce one PTL-LNK-005 error and return the rule id it raises."""
+    """Introduce one PTL-LNK-003 error and return the rule id it raises.
+
+    PTL-LNK-003 fires on a structural link whose type is not application/json.
+    It is AUTO and the `links` fixer repairs it, which is what the payload and
+    exit-code tests below assert.
+    """
     catalog_file = root / "catalog.json"
     doc = json.loads(catalog_file.read_text())
-    doc["links"].append({"rel": "self", "href": "./catalog.json", "type": "application/json"})
+    for link in doc["links"]:
+        if link.get("rel") == "root":
+            link["type"] = "text/plain"
     catalog_file.write_text(json.dumps(doc))
-    return "PTL-LNK-005"
+    return "PTL-LNK-003"
 
 
 def _warn_catalog(root: Path) -> str:
@@ -187,7 +194,9 @@ class TestCheckFindingPayload:
         finding = next(f for f in envelope["data"]["findings"] if f["rule_id"] == rule_id)
         assert finding["remediation"] == "auto"
         assert finding["auto_fixable"] is True
-        assert finding["requirement"] == "Remove the self link; a SELF_CONTAINED catalog omits it."
+        assert finding["requirement"] == (
+            "Set structural link types: application/json, or application/geo+json for item links."
+        )
 
     @pytest.mark.unit
     def test_error_envelope_names_the_failing_rule(

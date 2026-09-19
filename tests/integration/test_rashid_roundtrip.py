@@ -50,7 +50,7 @@ EXPECTED_FROM_DAMAGE = frozenset(
         "PTL-FIL-002",  # dropped rel:'agents' link
         "PTL-DAT-001",  # mutated file:checksum
         "PTL-CNF-001",  # removed schema URI
-        "PTL-LNK-005",  # added rel:'self' link
+        "PTL-LNK-003",  # rel:'root' link typed text/plain
         "PTL-VIZ-001",  # thumbnail typed image/gif
     }
 )
@@ -133,8 +133,10 @@ def _corrupt(root: Path) -> None:
         uri for uri in data.get("stac_extensions", []) if uri != PORTOLAN_SCHEMA_URI
     ]
 
-    # 3. links: a self link a SELF_CONTAINED catalog must not carry.
-    data["links"].append({"rel": "self", "href": "./collection.json", "type": "application/json"})
+    # 3. links: a structural link typed as something other than application/json.
+    for link in data["links"]:
+        if link.get("rel") == "root":
+            link["type"] = "text/plain"
 
     # 4. agents: drop the rel='agents' link and the file it points at.
     data["links"] = [link for link in data["links"] if link.get("rel") != "agents"]
@@ -262,7 +264,11 @@ class TestRashidRoundtrip:
         rels = [link.get("rel") for link in data["links"]]
         assert (catalog / "roads" / "AGENTS.md").exists()
         assert "agents" in rels
-        assert "self" not in rels
+        assert all(
+            link["type"] == "application/json"
+            for link in data["links"]
+            if link.get("rel") == "root"
+        )
         assert PORTOLAN_SCHEMA_URI in data["stac_extensions"]
         assert data["title"]
         assert all(asset["file:checksum"] != "1220" + "0" * 64 for asset in data["assets"].values())
