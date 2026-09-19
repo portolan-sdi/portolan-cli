@@ -703,11 +703,11 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot write catalog.json: {e}") from e
 
-    # No self link: a SELF_CONTAINED catalog omits it, which is also
-    # what pystac emits and what rashid's PTL-LNK-005 enforces. `init` used to
-    # append one by hand; `add` then stripped it, so only init-only catalogs
-    # carried the violation and the conformance gate (which runs init + add)
-    # never saw it.
+    # No self link: a SELF_CONTAINED catalog omits it, which is what pystac
+    # emits. rashid enforced this through PTL-LNK-005 until 0.1.8 retired the
+    # rule, so a self link is now allowed rather than wrong. Keep omitting it:
+    # `init` used to append one by hand and `add` then stripped it, so the two
+    # commands disagreed about the same catalog.
 
     # Steps 4b to 4c-bis: AGENTS.md, the schema URI, README.md, and the logo.
     warnings.extend(_write_conformance_files(path, catalog_file, logo=logo, logo_title=logo_title))
