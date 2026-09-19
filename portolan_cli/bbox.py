@@ -22,12 +22,58 @@ LON_MAX = 180.0
 LAT_MIN = -90.0
 LAT_MAX = 90.0
 
+# How far past a WGS84 bound a coordinate may sit and still count as that bound.
+# A whole-world extent rarely lands on exactly 180.0 after a reprojection or a
+# bbox union: the specification's own natural-earth-countries.parquet carries
+# 180.00000000000006, which is 6e-14 degrees, about 7 nanometres on the ground.
+# One micro-degree is about 10 centimetres, so the slack cannot admit a projected
+# coordinate, which lands in the thousands or millions (issue #882).
+WGS84_EDGE_TOLERANCE = 1e-6
+
 # Sanity bound for any CRS. No real-world coordinate on Earth, in any projection,
 # approaches this magnitude (Web Mercator maxes near 2e7 m; the most extreme
 # projected grids stay well under 1e8). Values beyond it are "effectively
 # infinite" sentinels (e.g. WFS-served ±1.79e308 ~ ±float-max), not real data.
 # Used to reject such poison even for projected (non-WGS84) bboxes (issue #516).
 MAX_SANE_COORD = 1e9
+
+
+def _snap(value: float, low: float, high: float) -> float:
+    """Return the nearer bound when ``value`` sits just outside [low, high]."""
+    if low - WGS84_EDGE_TOLERANCE <= value < low:
+        return low
+    if high < value <= high + WGS84_EDGE_TOLERANCE:
+        return high
+    return value
+
+
+def snap_to_wgs84_range(bbox: list[float]) -> list[float]:
+    """Pull each coordinate that rounds past a WGS84 bound back onto it.
+
+    A coordinate further out than :data:`WGS84_EDGE_TOLERANCE` is returned
+    unchanged, so a projected bbox still fails the range checks below and a
+    real out-of-range value still reports. Elevation coordinates on a
+    6-element bbox carry no lon/lat bound and pass through.
+    """
+    snapped = list(bbox)
+    for i, (low, high) in enumerate(_wgs84_bounds(len(bbox))):
+        snapped[i] = _snap(snapped[i], low, high)
+    return snapped
+
+
+def _wgs84_bounds(length: int) -> list[tuple[float, float]]:
+    """The lon/lat bound pairs for each position of a 4- or 6-element bbox."""
+    if length == 6:
+        # [west, south, min_elev, east, north, max_elev]
+        return [
+            (LON_MIN, LON_MAX),
+            (LAT_MIN, LAT_MAX),
+            (-math.inf, math.inf),
+            (LON_MIN, LON_MAX),
+            (LAT_MIN, LAT_MAX),
+            (-math.inf, math.inf),
+        ]
+    return [(LON_MIN, LON_MAX), (LAT_MIN, LAT_MAX), (LON_MIN, LON_MAX), (LAT_MIN, LAT_MAX)]
 
 
 @dataclass
@@ -133,8 +179,10 @@ def is_valid_bbox(bbox: list[float], *, wgs84_only: bool = True) -> bool:
         return True
 
     # Reduce to 2D so the range checks read east/north from the correct indices
-    # for both 4- and 6-element bboxes (issue #592).
-    west, south, east, north = to_2d_bbox(bbox)
+    # for both 4- and 6-element bboxes (issue #592). Snapping first keeps a
+    # coordinate that rounds past a bound, such as 180.00000000000006, from
+    # failing the range check (issue #882).
+    west, south, east, north = to_2d_bbox(snap_to_wgs84_range(bbox))
 
     # Check longitude range (WGS84 only)
     if not (LON_MIN <= west <= LON_MAX and LON_MIN <= east <= LON_MAX):
@@ -167,8 +215,9 @@ def get_bbox_validation_reason(bbox: list[float], *, wgs84_only: bool = True) ->
 
     # Reduce to 2D so east/north come from the correct indices for both 4- and
     # 6-element bboxes; the elevation coordinates are validated separately below
-    # (issue #592, issue #516).
-    west, south, east, north = to_2d_bbox(bbox)
+    # (issue #592, issue #516). Snapping first keeps a coordinate that rounds
+    # past a bound from reporting as out of range (issue #882).
+    west, south, east, north = to_2d_bbox(snap_to_wgs84_range(bbox))
 
     # Check for non-finite values (universal for all CRS)
     for name, val in [("west", west), ("south", south), ("east", east), ("north", north)]:

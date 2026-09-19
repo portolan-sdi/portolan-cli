@@ -122,7 +122,7 @@ def transform_bbox_to_wgs84(
         # from projected data, issue #785). Publishing them would put meters
         # into a STAC extent, so fail fast instead.
         _reject_non_wgs84_magnitudes(bbox, "no CRS (assumed WGS84)", allow_guess)
-        return bbox
+        return _snapped(bbox)
 
     label = describe_crs(source_crs)
 
@@ -140,7 +140,7 @@ def transform_bbox_to_wgs84(
     # Check if already WGS84
     if _is_wgs84(src_crs):
         _reject_non_wgs84_magnitudes(bbox, label, allow_guess)
-        return bbox
+        return _snapped(bbox)
 
     # Check for CRS mismatch BEFORE attempting transformation
     # This catches the common bug where data is WGS84 but labeled as a projected CRS
@@ -175,6 +175,19 @@ def transform_bbox_to_wgs84(
         return bbox
 
 
+def _snapped(bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    """Pull a coordinate that rounds past a WGS84 bound back onto it.
+
+    A whole-world extent rarely lands on exactly 180.0 after a reprojection or
+    a bbox union, and the STAC extent this bbox becomes has to stay inside the
+    range (issue #882).
+    """
+    from portolan_cli.bbox import snap_to_wgs84_range
+
+    west, south, east, north = snap_to_wgs84_range(list(bbox))
+    return (west, south, east, north)
+
+
 def _reject_non_wgs84_magnitudes(
     bbox: tuple[float, float, float, float],
     declared: str,
@@ -186,9 +199,21 @@ def _reject_non_wgs84_magnitudes(
     here the bbox is about to pass through untransformed, so values beyond
     +/-180 / +/-90 can only mean the real CRS is projected and the metadata
     is wrong or missing (issue #785).
+
+    The comparison carries a tolerance, because a coordinate that rounds past a
+    bound is that bound rather than a projected value (issue #882).
     """
+    from portolan_cli.bbox import WGS84_EDGE_TOLERANCE
+
     minx, miny, maxx, maxy = bbox
-    if abs(minx) <= 180 and abs(maxx) <= 180 and abs(miny) <= 90 and abs(maxy) <= 90:
+    lon_limit = 180 + WGS84_EDGE_TOLERANCE
+    lat_limit = 90 + WGS84_EDGE_TOLERANCE
+    if (
+        abs(minx) <= lon_limit
+        and abs(maxx) <= lon_limit
+        and abs(miny) <= lat_limit
+        and abs(maxy) <= lat_limit
+    ):
         return
     # "Effectively infinite" sentinels (issue #516, e.g. WFS-served ±1.79e308)
     # are not projected coordinates; leave them to the existing invalid-bbox
