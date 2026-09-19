@@ -69,6 +69,8 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Examples: examples.md
+  - Guides:
+    - Iceberg: guides/iceberg.md
   - Reference:
     - Overview: reference/index.md
     - CLI Reference: reference/cli.md
