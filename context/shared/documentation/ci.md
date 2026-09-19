@@ -98,7 +98,13 @@ non-deterministic in CI — drift is still caught by the non-mutating
 
 #### `docs` — Documentation Build
 
-- `mkdocs build --strict` — Fails on warnings
+- `zensical build --strict --clean` — Builds the site. Fails on a warning, a
+  dead link, or a dead anchor.
+- `mkdocs build --strict --site-dir site-mkdocs` — Builds the same `mkdocs.yml`
+  with MkDocs. Zensical is alpha, so this leg stays until the `[docs]` group
+  drops `mkdocs` and `mkdocs-material`.
+- `pytest tests/docs/` — Verifies the built site. `--strict` does not report a
+  dropped plugin or an empty snippet include.
 
 #### `build` — Package Build
 

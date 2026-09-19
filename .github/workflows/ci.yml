@@ -377,7 +377,15 @@ jobs:
         run: uv run python scripts/generate_reference_docs.py --check
 
       - name: Build documentation
-        run: uv run mkdocs build --strict
+        run: uv run zensical build --strict --clean
+
+      # Zensical is alpha. Build the same config with MkDocs and compare
+      # the output by hand when a page looks wrong. Delete this step when
+      # the [docs] group drops mkdocs and mkdocs-material.
+      - name: Build with MkDocs for comparison
+        run: >-
+          uv run mkdocs build --strict
+          --site-dir site-mkdocs
 
       - name: Start MinIO for documentation example
         run: |

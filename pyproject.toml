@@ -106,10 +106,13 @@ thumbnails = [
     "mapbox-vector-tile>=2.0.0", # MVT decoding for PMTiles thumbnail generation
 ]
 docs = [
-    "mkdocs>=1.6.1",
-    "mkdocs-material>=9.7.1",
+    # Pinned exactly: zensical is alpha with a compiled core, so a floor
+    # constraint is not a constraint. Dependabot offers reviewable bumps.
+    "zensical==0.0.62",
+    "mkdocs>=1.6.1", # transitional: the comparison leg, removed after one release
+    "mkdocs-material>=9.7.1", # transitional: the comparison leg
     "mkdocstrings[python]>=1.0.0",
-    "pymdown-extensions>=10.21.2", # Fix filename=None bug in highlight extension
+    "pymdown-extensions>=11.0", # zensical requires >=11.0; fixes filename=None in highlight
 ]
 
 [tool.hatch.build.targets.wheel]
