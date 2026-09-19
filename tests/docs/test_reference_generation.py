@@ -147,15 +147,16 @@ def test_cli_reference_ignores_the_terminal_width(monkeypatch: pytest.MonkeyPatc
     page that read it would fail `--check` on any machine with a different
     window.
     """
-    import os
-    import shutil
-
+    # COLUMNS is the variable shutil.get_terminal_size reads first, so this
+    # drives Click the same way a real terminal does. Do not patch
+    # shutil.get_terminal_size itself, because pytest calls it with a
+    # fallback= keyword while it writes progress.
     before = _cli_page()
 
-    monkeypatch.setattr(shutil, "get_terminal_size", lambda *_: os.terminal_size((37, 24)))
+    monkeypatch.setenv("COLUMNS", "37")
     narrow = _cli_page()
 
-    monkeypatch.setattr(shutil, "get_terminal_size", lambda *_: os.terminal_size((200, 24)))
+    monkeypatch.setenv("COLUMNS", "200")
     wide = _cli_page()
 
     assert narrow == before
