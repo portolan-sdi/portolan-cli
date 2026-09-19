@@ -3293,7 +3293,7 @@ def add_cmd(
         portolan add demographics/census.parquet
         portolan add file1.geojson file2.geojson   # Add multiple files
         portolan add imagery/                      # Add all files in directory
-        portolan add. # Add all files in catalog
+        portolan add .                             # Add all files in catalog
         portolan add data.geojson --item-id my-id  # Override item ID (single file only)
         portolan add sat.tif --datetime 2024-06-15 # Explicit acquisition date
 

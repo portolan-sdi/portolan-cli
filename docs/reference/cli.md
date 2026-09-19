@@ -48,10 +48,1793 @@ This page is generated from the shipped Click command tree.
 
 ## Full Reference
 
-::: mkdocs-click
-    :module: portolan_cli.cli
-    :command: cli
-    :prog_name: portolan
-    :depth: 2
-    :style: table
-    :show_hidden: false
+### portolan { #portolan data-toc-label='portolan' }
+
+Portolan - Publish and manage cloud-native geospatial data catalogs.
+
+**Usage:**
+
+```text
+portolan [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--version` | boolean | Show the version and exit. | `False` |
+| `--format` | choice (`json` &#x7C; `text`) | Output format (json for machine parsing, text for humans). | `text` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan add { #portolan-add data-toc-label='add' }
+
+Track files in the catalog.
+
+Accepts multiple paths like git add. Each path is processed independently
+with automatic collection inference based on directory structure.
+
+Works like git: run from anywhere inside a catalog and it auto-detects
+the catalog root. Use --portolan-dir to override.
+
+```text
+Item ID derivation:
+    By default, the item ID is derived from the parent directory name.
+    For example, adding 'census/2020/data.parquet' creates an item
+    named '2020'. Use --item-id to override this automatic derivation.
+    All other files in the item directory are tracked as companion
+    assets.
+```
+
+```text
+Datetime handling:
+    --datetime applies to ALL items added in this command. For items
+    with different acquisition dates, run separate add commands:
+```
+
+        portolan add census/2020/ --datetime 2020-04-01
+        portolan add census/2023/ --datetime 2023-04-01
+
+    If --datetime is omitted, items have a null temporal extent and carry
+    the sentinel start/end range. Run 'portolan check' to find items
+    needing dates.
+
+```text
+Examples:
+    portolan add demographics/census.parquet
+    portolan add file1.geojson file2.geojson   # Add multiple files
+    portolan add imagery/                      # Add all files in directory
+    portolan add .                             # Add all files in catalog
+    portolan add data.geojson --item-id my-id  # Override item ID (single file only)
+    portolan add sat.tif --datetime 2024-06-15 # Explicit acquisition date
+```
+
+Smart behavior:
+- Unchanged files are silently skipped (use --verbose to see them)
+- Changed files are re-extracted with new metadata
+- Sidecar files (.dbf, .shx, .prj for shapefiles) are auto-detected
+- All files in the item directory are tracked, not just geo files
+
+```text
+Large file partitioning:
+    GeoParquet files exceeding 2GB are automatically partitioned into
+    spatial chunks using KD-tree partitioning. In interactive mode,
+    you'll be prompted before partitioning. Configure via:
+```
+
+        partitioning.enabled: true/false (default: true)
+        partitioning.prompt: true/false (default: true)
+        partitioning.threshold_gb: size in GB (default: 2.0)
+
+**Usage:**
+
+```text
+portolan add [OPTIONS] PATHS...
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `PATHS...` | path | yes |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--verbose`, `-v` | boolean | Show detailed output including skipped unchanged files. | `False` |
+| `--item-id` | text | Override automatic item ID derivation. Must be a single path segment. | None |
+| `--portolan-dir` | path | Path to Portolan catalog root (default: auto-detect by walking up from cwd). | None |
+| `--datetime` | datetime | Acquisition/creation datetime (ISO 8601, YYYY-MM-DD, or 'YYYY-MM-DD HH:MM:SS'). Applied to ALL items in this command. For different datetimes per item, run separate add commands. If omitted, items carry a null datetime and the sentinel start/end range (portolan check will flag them). | None |
+| `--workers` | integer | Number of parallel workers for metadata extraction. Default is 1 (sequential). Use higher values for large catalogs. | `1` |
+| `--stac-geoparquet` | boolean | Generate items.parquet for affected collections after add. | `False` |
+| `--pmtiles` | boolean | Generate PMTiles from GeoParquet assets (requires tippecanoe). | `False` |
+| `--force-pmtiles` | boolean | Regenerate PMTiles even if they exist and are up-to-date. Implies --pmtiles. | `False` |
+| `--thumbnails` / `--no-thumbnails` | boolean | Generate a thumbnail asset for each affected collection. Defaults to the catalog's thumbnails.enabled setting. Opting out leaves PTL-VIZ-001 firing, so pair --no-thumbnails with check.disabled in config.yaml if the catalog never ships thumbnails. | None |
+| `--force-thumbnails` | boolean | Redraw the thumbnail even if one is registered. Use after a collection grows, since the extent it draws is otherwise fixed at first render. A thumbnail.png or preview.png you supplied still wins. | `False` |
+| `--force` | boolean | Re-process all files, ignoring change detection. | `False` |
+| `--reconvert` | boolean | Re-convert from source files (requires --force). | `False` |
+| `--merge-strategy` | choice (`smart` &#x7C; `keep` &#x7C; `overwrite`) | How to merge auto-detected metadata with existing values. 'smart' (default): preserve human-authored fields (title, description), update machine-derivable fields (href, type, row_count). 'keep': preserve all existing fields. 'overwrite': replace everything with auto-detected values. | `smart` |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan add-external { #portolan-add-external data-toc-label='add-external' }
+
+Register remote data as a collection WITHOUT downloading or converting it.
+
+The external counterpart to 'portolan add'. Some valuable data sources are
+already published cloud-natively at a remote location and should be
+*referenced in place* rather than copied. This creates a collection.json
+whose collection-level 'data' asset href is the remote URL (kept as-is,
+carrying the 'external' role) plus a rel:via provenance link.
+
+The remote asset is never fetched, and 'portolan check' will not try to
+convert it (the metadata scanner skips scheme-qualified hrefs).
+
+A license is required. Pass an SPDX identifier, or 'other' with --license-url
+when the license has no identifier. Referencing someone else's data in place
+does not make its license unknowable, and a collection without one is an error
+under 'portolan check'.
+
+```text
+Examples:
+    # Overture Maps places — planet-scale GeoParquet on Overture's S3
+    portolan add-external \\
+        "s3://overturemaps-us-west-2/release/2024-09-18.0/theme=places/type=place/*" \\
+        --collection overture-places \\
+        --title "Overture Maps — Places" \\
+        --license ODbL-1.0 \\
+        --via "https://docs.overturemaps.org/guides/places/"
+```
+
+    portolan add-external "https://example.org/data/buildings.parquet" \\
+        --license other --license-url "https://example.org/terms"
+
+**Usage:**
+
+```text
+portolan add-external [OPTIONS] URL
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `URL` | text | yes |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--collection` | text | Collection ID for the external collection (default: derived from the URL). | None |
+| `--title` | text | Human-readable title for the collection/asset. | None |
+| `--description` | text | Collection description. | None |
+| `--media-type` | text | Asset media type (default: inferred from the URL extension). | None |
+| `--license` | text | SPDX license identifier, or 'other' with --license-url. Required. | None |
+| `--license-url` | text | URL of the license text. Required when --license is 'other'. | None |
+| `--via` | text | Provenance URL for the rel:via link (default: the data URL itself). | None |
+| `--bbox` | text | WGS84 bounding box as 'min_x,min_y,max_x,max_y' (default: global extent). | None |
+| `--portolan-dir` | path | Path to Portolan catalog root (default: auto-detect by walking up from cwd). | None |
+| `--force`, `-f` | boolean | Overwrite existing collection if it exists. | `False` |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan check { #portolan-check data-toc-label='check' }
+
+Validate a Portolan catalog against the Portolan spec.
+
+Validation runs on rashid, which reports PTL-* rule ids citing the spec
+requirements they enforce. By default it checks metadata, STAC 1.1.0
+structure, and the asset bytes themselves. The metadata and structural
+passes are offline. The data pass reads asset bytes, including remote https
+assets over HTTP range requests. Use --data-scope local to read only the
+assets inside the catalog tree. Use --no-data to skip the pass. With --fix,
+applies the mechanical repairs and re-checks.
+
+The --live pass probes the published host for HTTP Range support and CORS
+headers. It skips an upstream host only when it knows the base URL, from
+--url or publish.public_url. Without a base URL it probes every absolute
+href as declared, which can report CORS failures against a host you do not
+control.
+
+PATH is the directory to check (default: current directory).
+
+Use --metadata or --geo-assets to limit scope:
+- --metadata: Only validate the catalog (its own metadata, structure, data)
+- --geo-assets: Only check source files on disk for cloud-native status
+- Neither: Both (default)
+
+Examples:
+    portolan check                        # Validate all (metadata + geo-assets)
+
+    portolan check --metadata             # Validate the catalog only
+
+    portolan check --geo-assets           # Check source files only
+
+    portolan check --data-scope local     # Read only assets inside the catalog tree
+
+    portolan check --no-data              # Skip reading asset bytes (faster)
+
+    portolan check --live                 # Also probe the published host
+
+    portolan check --fix                  # Fix what can be fixed, then re-check
+
+    portolan check --fix --dry-run        # Preview all fixes
+
+**Usage:**
+
+```text
+portolan check [OPTIONS] [PATH]
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `[PATH]` | path | no |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--json` | boolean | Output results as JSON | `False` |
+| `--verbose`, `-v` | boolean | Show all validation rules, not just failures | `False` |
+| `--fix` | boolean | Fix issues: convert geo-assets to cloud-native, update stale metadata | `False` |
+| `--dry-run` | boolean | Preview what would be fixed (use with --fix) | `False` |
+| `--remove-legacy` | boolean | Remove source files after successful conversion (use with --fix) | `False` |
+| `--force` | boolean | Re-optimize already-valid COGs by re-applying current COG settings, e.g. to add missing overviews (use with --fix; rasters only) | `False` |
+| `--workers`, `-w` | integer range (`1` and above) | Parallel worker processes for conversion (default: auto-detect from CPU count; use 1 for sequential). Applies to --fix. | None |
+| `--metadata` | boolean | Only check/fix STAC metadata (links, schema, staleness) | `False` |
+| `--geo-assets` | boolean | Only check/fix geospatial assets (cloud-native status, convertibility) | `False` |
+| `--strict` | boolean | Fail on warnings as well as errors | `False` |
+| `--live` | boolean | Probe the published host over HTTP for Range support and CORS headers | `False` |
+| `--url` | text | Base URL the catalog is published under (overrides publish.public_url) | None |
+| `--no-data` | boolean | Skip the data pass; validate metadata without reading asset bytes | `False` |
+| `--data-scope` | choice (`all` &#x7C; `local`) | Which assets the data pass may read: all (default), or local to read only the assets inside the catalog tree, leaving assets hosted elsewhere unread | `all` |
+| `--no-structural` | boolean | Skip the STAC 1.1.0 structural pass | `False` |
+| `--schema` | boolean | Also validate against the Portolan profile JSON Schema (restates hand-rule findings; useful on catalogs produced by other tooling) | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan clean { #portolan-clean data-toc-label='clean' }
+
+Remove all Portolan metadata while preserving data files.
+
+Removes catalog.json, collection.json, item.json (STAC metadata),
+versions.json, and the .portolan/ directory. Preserves all data files
+(.parquet, .tif, .gpkg, .geojson, etc.).
+
+Use --dry-run to preview what would be removed without deleting anything.
+
+```text
+Examples:
+    portolan clean           # Remove all metadata
+    portolan clean --dry-run # Preview what would be removed
+```
+
+**Usage:**
+
+```text
+portolan clean [OPTIONS]
+```
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--dry-run` | boolean | Preview what would be removed without actually deleting. | `False` |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan clone { #portolan-clone data-toc-label='clone' }
+
+Clone a remote catalog to a local directory.
+
+This is essentially "pull to an empty directory" with guardrails.
+Creates the target directory and pulls collections from remote storage.
+
+REMOTE_URL is the object store URL (e.g., s3://mybucket/my-catalog).
+
+LOCAL_PATH is optional - if not provided, it will be inferred from the
+catalog name in the URL (git clone style).
+
+--collection is optional - if not provided, all collections in the remote
+catalog will be cloned.
+
+```text
+Examples:
+    # Infer directory from URL, clone all collections
+    portolan clone s3://mybucket/my-catalog
+```
+
+    # Clone to current directory (must be empty)
+    portolan clone s3://mybucket/my-catalog.
+
+    # Clone specific collection
+    portolan clone s3://mybucket/catalog -c demographics
+
+    # Clone all collections to specific directory
+    portolan clone s3://mybucket/catalog ./local-copy
+
+    # Clone specific collection with profile
+    portolan clone s3://mybucket/catalog ./data -c imagery --profile prod
+
+**Usage:**
+
+```text
+portolan clone [OPTIONS] REMOTE_URL [LOCAL_PATH]
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `REMOTE_URL` | text | yes |
+| `[LOCAL_PATH]` | path | no |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--collection`, `-c` | text | Collection to clone. If not specified, clones all collections. | None |
+| `--profile` | text | AWS profile name (for S3 sources). Uses env var or 'default' if not specified. | None |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan config { #portolan-config data-toc-label='config' }
+
+Manage catalog configuration.
+
+Configuration is stored in .portolan/config.yaml and follows this precedence:
+
+```text
+1. CLI argument (highest)
+2. Environment variable (PORTOLAN_<KEY>) or .env file
+3. Collection-level config
+4. Catalog-level config
+5. Built-in default (lowest)
+```
+
+Note: Sensitive settings (remote, profile, region) must use env vars or .env.
+
+```text
+Examples:
+    portolan config set backend iceberg
+    portolan config get remote
+    portolan config list
+```
+
+**Usage:**
+
+```text
+portolan config [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan config get { #portolan-config-get data-toc-label='get' }
+
+Get a configuration value.
+
+Shows the resolved value and its source (env, catalog, collection, or not set).
+
+KEY is the setting name (e.g., remote, aws_profile).
+
+```text
+Examples:
+    portolan config get remote
+    portolan config get aws_profile --collection restricted
+```
+
+**Usage:**
+
+```text
+portolan config get [OPTIONS] KEY
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `KEY` | text | yes |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--collection`, `-c` | text | Get config for a specific collection. | None |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan config list { #portolan-config-list data-toc-label='list' }
+
+List all configuration settings.
+
+Shows all settings with their values and sources.
+
+```text
+Examples:
+    portolan config list
+    portolan config list --collection demographics
+```
+
+**Usage:**
+
+```text
+portolan config list [OPTIONS]
+```
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--collection`, `-c` | text | Show config for a specific collection. | None |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan config set { #portolan-config-set data-toc-label='set' }
+
+Set a configuration value.
+
+KEY is the setting name (e.g., backend, statistics.enabled).
+VALUE is the value to set.
+
+Note: Sensitive settings (remote, profile, region) cannot be stored in
+config.yaml. Use environment variables or .env files instead.
+
+```text
+Examples:
+    portolan config set backend iceberg
+    portolan config set statistics.enabled true
+    portolan config set pmtiles.enabled false --collection demographics
+```
+
+**Usage:**
+
+```text
+portolan config set [OPTIONS] KEY VALUE
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `KEY` | text | yes |
+| `VALUE` | text | yes |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--collection`, `-c` | text | Set config for a specific collection instead of catalog-level. | None |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan config unset { #portolan-config-unset data-toc-label='unset' }
+
+Remove a configuration value.
+
+Removes the setting from the config file. Does not affect environment variables.
+
+KEY is the setting name to remove.
+
+```text
+Examples:
+    portolan config unset remote
+    portolan config unset aws_profile --collection restricted
+```
+
+**Usage:**
+
+```text
+portolan config unset [OPTIONS] KEY
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `KEY` | text | yes |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--collection`, `-c` | text | Unset config for a specific collection. | None |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan extract { #portolan-extract data-toc-label='extract' }
+
+Extract data from external sources into Portolan catalogs.
+
+Convert data from ArcGIS services, APIs, or other sources into
+well-structured Portolan catalogs with STAC metadata.
+
+```text
+Examples:
+    portolan extract arcgis https://services.arcgis.com/.../FeatureServer ./output
+    portolan extract arcgis URL --layers "Census*" --dry-run
+    portolan extract arcgis URL --filter "sdn_*" --resume
+```
+
+**Usage:**
+
+```text
+portolan extract [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan extract arcgis { #portolan-extract-arcgis data-toc-label='arcgis' }
+
+Extract data from ArcGIS FeatureServer/MapServer/ImageServer.
+
+Downloads layers from an ArcGIS REST service and creates a Portolan
+catalog with GeoParquet files (vector) or COG files (raster) and STAC metadata.
+
+URL is the ArcGIS service URL (FeatureServer, MapServer, ImageServer, or services root).
+OUTPUT_DIR is the directory to write extracted data (default: inferred from service name).
+
+The catalog id comes from the output directory name. Pass --id to set it
+yourself, because that id is the catalog's public STAC identity.
+
+```text
+URL Types:
+    FeatureServer/MapServer: Extract vector layers to GeoParquet
+    ImageServer: Extract raster tiles to COG
+    rest/services: Extract from all services (creates nested catalog)
+```
+
+```text
+Glob Patterns:
+    Patterns use fnmatch syntax: * matches any, ? matches single char.
+    Common patterns:
+    - Country prefix: 'sdn_*', 'ukr_*'
+    - Year suffix: '*_2024', '*_2025'
+    - Folder path: 'Hosted/cod_ab_*'
+    - Data family: 'cod_ab_ukr*'
+```
+
+```text
+Examples:
+    # Extract all layers from a FeatureServer
+    portolan extract arcgis https://services.arcgis.com/.../FeatureServer ./output
+```
+
+    # Extract specific layers by name
+    portolan extract arcgis URL --layers "Census*,Transport*"
+
+    # List available services from a services root
+    portolan extract arcgis https://services.arcgis.com/.../rest/services --list-services
+
+    # Extract from services root (filter services)
+    portolan extract arcgis https://.../rest/services ./output --services "Census*"
+
+    # Dry run to see what would be extracted
+    portolan extract arcgis URL --dry-run
+
+    # Reproject the output to WGS84 instead of keeping the source CRS
+    portolan extract arcgis URL --output-crs EPSG:4326
+
+    # Extract raw files only (no STAC catalog auto-init)
+    portolan extract arcgis URL --raw
+
+    # JSON output for agent consumption
+    portolan extract arcgis URL --json
+
+**Usage:**
+
+```text
+portolan extract arcgis [OPTIONS] URL [OUTPUT_DIR]
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `URL` | text | yes |
+| `[OUTPUT_DIR]` | path | no |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--layers` | text | Include layers matching glob patterns (comma-separated). Example: 'Census*,Transport*' | None |
+| `--exclude-layers` | text | Exclude layers matching glob patterns (comma-separated). Example: 'Legacy*,Test*' | None |
+| `--filter` | text | Apply glob filter to both services and layers. Example: 'sdn_*', '*_2024*' | None |
+| `--services` | text | Include services matching glob patterns (comma-separated). For services root URLs only. | None |
+| `--exclude-services` | text | Exclude services matching glob patterns (comma-separated). For services root URLs only. | None |
+| `--list-services` | boolean | List available services without extracting (for services root URLs). | `False` |
+| `--token` | text | ArcGIS token (or set ARCGIS_TOKEN). For secured services/folders. | None |
+| `--username` | text | ArcGIS username (mints a token via generateToken). | None |
+| `--password` | text | ArcGIS password (used with --username, or set ARCGIS_PASSWORD). Prompted interactively when omitted. | None |
+| `--no-recurse` | boolean | Do not traverse folders for services-root URLs (default: recurse). | `False` |
+| `--output-crs` | text | CRS for extracted GeoParquet. 'native' keeps the service's source CRS (default). Pass an EPSG code (e.g. EPSG:4326) to reproject. | `native` |
+| `--workers` | integer range (`1` and above) | Parallel page requests per layer (default: 3). | `3` |
+| `--retries` | integer range (`1` and above) | Retry attempts per failed layer (default: 3). | `3` |
+| `--timeout` | float range (`0.0` and above) | Per-request timeout in seconds (default: 60). | `60.0` |
+| `--resume` | boolean | Resume from existing extraction-report.json (skip succeeded layers). | `False` |
+| `--dry-run` | boolean | List layers without extracting. | `False` |
+| `--json` | boolean | Output extraction report as JSON. | `False` |
+| `--auto` | boolean | Skip confirmation prompts. | `False` |
+| `--raw` | boolean | Skip auto-init: create only extraction files, no STAC catalog. | `False` |
+| `--tile-size` | integer range (between `256` and `8192`) | [ImageServer] Tile size in pixels (default: 4096). | `4096` |
+| `--bbox` | text | [ImageServer] Bounding box filter: minx,miny,maxx,maxy. WGS84 coords auto-converted to service CRS. | None |
+| `--bbox-crs` | text | [ImageServer] Explicit CRS of --bbox (e.g., EPSG:4326, EPSG:3857). Skips auto-detection. | None |
+| `--compression` | choice (`DEFLATE` &#x7C; `JPEG` &#x7C; `LZW` &#x7C; `ZSTD`) | [ImageServer] COG compression (default: from config or DEFLATE). | None |
+| `--max-concurrent` | integer range (between `1` and `16`) | [ImageServer] Maximum concurrent tile downloads (default: 4). | `4` |
+| `--collection-name` | text | [ImageServer] Name for the collection (default: 'tiles'). | None |
+| `--id` | text | Catalog id. Defaults to the sanitized directory name. | None |
+| `--license` | text | SPDX license identifier, or 'other' with --license-url. Required unless the source publishes a license URL of its own. | None |
+| `--license-url` | text | URL of the license text. Required when --license is 'other'. | None |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan extract carto { #portolan-extract-carto data-toc-label='carto' }
+
+Extract tables from a Carto SQL API account.
+
+Downloads tables from a Carto account and creates a Portolan catalog with
+STAC metadata. Tables are discovered via CDB_UserTables(). Spatial tables
+become GeoParquet; non-spatial tables become plain Parquet in tabular
+collections.
+
+URL is the Carto SQL API endpoint or account domain
+(e.g. https://phl.carto.com or https://phl.carto.com/api/v2/sql).
+OUTPUT_DIR is the directory to write extracted data (default: 'carto_extract').
+
+The catalog id comes from the output directory name. Pass --id to set it
+yourself, because that id is the catalog's public STAC identity.
+
+```text
+Examples:
+    # Extract all tables from an account
+    portolan extract carto https://phl.carto.com ./output
+```
+
+    # Extract specific tables by glob
+    portolan extract carto URL --tables "vacant_*"
+
+    # Incremental refresh via a WHERE clause
+    portolan extract carto URL --tables my_table --where "updated_at > '2026-01-01'"
+
+    # Dry run to see available tables
+    portolan extract carto URL --dry-run
+
+**Usage:**
+
+```text
+portolan extract carto [OPTIONS] URL [OUTPUT_DIR]
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `URL` | text | yes |
+| `[OUTPUT_DIR]` | path | no |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--tables` | text | Include tables matching glob patterns (comma-separated). Example: 'vacant_*,zoning*' | None |
+| `--exclude-tables` | text | Exclude tables matching glob patterns (comma-separated). Example: 'test_*' | None |
+| `--where` | text | SQL WHERE clause applied to every table (e.g. "updated_at > '2026-01-01'"). | None |
+| `--bbox` | text | Bounding box filter: minx,miny,maxx,maxy (WGS84). | None |
+| `--limit` | integer range (`1` and above) | Maximum rows per table. | None |
+| `--include-cols` | text | Comma-separated columns to include (default: all). | None |
+| `--exclude-cols` | text | Comma-separated columns to exclude. | None |
+| `--api-key` | text | Carto API key for private accounts (or set the CARTO_API_KEY env var). | None |
+| `--workers` | integer range (`1` and above) | Parallel workers for table extraction (default: 1). | `1` |
+| `--retries` | integer range (`1` and above) | Retry attempts per failed table (default: 3). | `3` |
+| `--timeout` | float range (`0.0` and above) | Per-table request timeout in seconds (default: 120). | `120.0` |
+| `--resume` | boolean | Resume from existing extraction-report.json (skip succeeded tables). | `False` |
+| `--dry-run` | boolean | List tables without extracting. | `False` |
+| `--json` | boolean | Output extraction report as JSON. | `False` |
+| `--auto` | boolean | Skip confirmation prompts. | `False` |
+| `--raw` | boolean | Skip auto-init: create only extraction files, no STAC catalog. | `False` |
+| `--id` | text | Catalog id. Defaults to the sanitized directory name. | None |
+| `--license` | text | SPDX license identifier, or 'other' with --license-url. Required unless the source publishes a license URL of its own. | None |
+| `--license-url` | text | URL of the license text. Required when --license is 'other'. | None |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan extract wfs { #portolan-extract-wfs data-toc-label='wfs' }
+
+Extract data from WFS (Web Feature Service) endpoints.
+
+Downloads layers from a WFS service and creates a Portolan catalog
+with GeoParquet files and STAC metadata.
+
+URL is the WFS service endpoint URL.
+OUTPUT_DIR is the directory to write extracted data (default: 'wfs_extract').
+
+The catalog id comes from the output directory name. Pass --id to set it
+yourself, because that id is the catalog's public STAC identity.
+
+```text
+WFS Versions:
+    1.0.0: Basic WFS (GML 2.x output)
+    1.1.0: Common version (GML 3.x, coordinate axis handling)
+    2.0.0: Modern WFS (paging, stored queries)
+    auto: Let the client auto-detect (default)
+```
+
+```text
+Examples:
+    # Extract all layers from a WFS service
+    portolan extract wfs https://example.com/wfs ./output
+```
+
+    # Extract specific layers by typename
+    portolan extract wfs URL --layers "buildings*,roads*"
+
+    # Extract with bounding box filter
+    portolan extract wfs URL --bbox "-122.5,37.5,-122.0,38.0"
+
+    # Dry run to see available layers
+    portolan extract wfs URL --dry-run
+
+    # Extract with specific WFS version
+    portolan extract wfs URL --wfs-version 2.0.0
+
+    # Extract 4 layers in parallel with 5-minute timeout per layer
+    portolan extract wfs URL --workers 4 --timeout 300
+
+**Usage:**
+
+```text
+portolan extract wfs [OPTIONS] URL [OUTPUT_DIR]
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `URL` | text | yes |
+| `[OUTPUT_DIR]` | path | no |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--layers` | text | Include layers matching glob patterns (comma-separated). Example: 'buildings*,roads*' | None |
+| `--exclude-layers` | text | Exclude layers matching glob patterns (comma-separated). Example: 'test_*' | None |
+| `--wfs-version` | choice (`1.0.0` &#x7C; `1.1.0` &#x7C; `2.0.0` &#x7C; `auto`) | WFS version (default: auto-detect). | `auto` |
+| `--output-crs` | text | Target CRS for output (e.g., 'EPSG:4326'). Default keeps source CRS. | None |
+| `--bbox` | text | Bounding box filter: minx,miny,maxx,maxy in output CRS. | None |
+| `--limit` | integer range (`1` and above) | Maximum features per layer. | None |
+| `--workers` | integer range (`1` and above) | Parallel workers for layer extraction (default: 1). Each layer is extracted independently. | `1` |
+| `--retries` | integer range (`1` and above) | Retry attempts per failed layer (default: 3). | `3` |
+| `--timeout` | float range (`0.0` and above) | Per-layer timeout in seconds (default: 300). Note: large layers use gpio's internal 10-minute HTTP timeout. | `300.0` |
+| `--page-size` | integer range (`100` and above) | Features per page for large layer pagination (default: 100000). | `100000` |
+| `--auto-tile` / `--no-auto-tile` | boolean | Subdivide the bbox and retry when a server caps maxFeatures, so capped layers extract completely (default: enabled). | `True` |
+| `--resume` | boolean | Resume from existing extraction-report.json (skip succeeded layers). | `False` |
+| `--dry-run` | boolean | List layers without extracting. | `False` |
+| `--json` | boolean | Output extraction report as JSON. | `False` |
+| `--auto` | boolean | Skip confirmation prompts. | `False` |
+| `--raw` | boolean | Skip auto-init: create only extraction files, no STAC catalog. | `False` |
+| `--id` | text | Catalog id. Defaults to the sanitized directory name. | None |
+| `--license` | text | SPDX license identifier, or 'other' with --license-url. Required unless the source publishes a license URL of its own. | None |
+| `--license-url` | text | URL of the license text. Required when --license is 'other'. | None |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan info { #portolan-info data-toc-label='info' }
+
+Show information about a file, collection, or catalog.
+
+TARGET can be:
+- A file path (e.g., demographics/census.parquet) - shows file metadata
+- A collection directory (e.g., demographics/) - shows collection metadata
+- Omitted - shows catalog-level metadata
+
+The output format for files is:
+    Format: GeoParquet
+    CRS: EPSG:4326
+    Bbox: [-122.5, 37.7, -122.3, 37.9]
+    Features: 4,231
+    Version: v1.2.0
+
+```text
+Examples:
+    portolan info demographics/census.parquet  # File info
+    portolan info demographics/                # Collection info
+    portolan info                              # Catalog info
+    portolan info demographics/census.parquet --json  # JSON output
+```
+
+**Usage:**
+
+```text
+portolan info [OPTIONS] [TARGET]
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `[TARGET]` | path | no |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--catalog` | path | Path to catalog root (default: current directory). | `.` |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan init { #portolan-init data-toc-label='init' }
+
+Initialize a new Portolan catalog.
+
+Creates a catalog.json at the root level and a .portolan directory with
+management files (config.yaml, metadata.yaml). Also creates versions.json at
+the root.
+
+Derives the catalog ID from the directory name. Pass --id to set it
+yourself. The ID is the catalog's public STAC identity, so a directory
+named for a step in your workflow makes a poor one.
+
+PATH is the directory where the catalog should be created (default: current directory).
+
+A license is required. Every collection inherits it from the catalog's
+metadata.yaml, and 'portolan add' refuses to write a collection without one.
+Pass an SPDX identifier, or 'other' with --license-url when the license has no
+identifier. Without --auto or --json you are prompted for it.
+
+Use --auto to skip all prompts and use default values. Use --id, --title,
+and --description to set catalog metadata directly.
+
+A logo is optional. Pass --logo with a local image to copy it into _assets/
+and publish it as a rel="icon" link, or add one later with 'portolan logo'.
+
+```text
+Examples:
+    portolan init                            # Prompts for the license
+    portolan init --auto --license CC-BY-4.0 # Skip prompts
+    portolan init --title "My Catalog" --license MIT
+    portolan init --id phl-housing --license CC-BY-4.0
+    portolan init --license other --license-url https://x.org/terms
+    portolan init --backend iceberg --license CC0-1.0
+    portolan init --auto --license CC-BY-4.0 --logo brand.png
+```
+
+**Usage:**
+
+```text
+portolan init [OPTIONS] [PATH]
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `[PATH]` | path | no |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--auto` | boolean | Skip interactive prompts and use auto-extracted/default values. | `False` |
+| `--id` | text | Catalog id. Defaults to the sanitized directory name. | None |
+| `--title`, `-t` | text | Human-readable title for the catalog. | None |
+| `--description`, `-d` | text | Description of the catalog. | None |
+| `--backend` | text | Versioning backend to use (e.g., 'file', 'iceberg'). | `file` |
+| `--license` | text | SPDX license identifier, or 'other' with --license-url. Required. | None |
+| `--license-url` | text | URL of the license text. Required when --license is 'other'. | None |
+| `--logo` | text | Local image published as the catalog logo (PNG, WebP, JPEG, GIF, AVIF, APNG, SVG). | None |
+| `--logo-title` | text | Accessible label for the logo link. Defaults to the catalog title. | None |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan list { #portolan-list data-toc-label='list' }
+
+List all files in the catalog with tracking status.
+
+Git-style behavior: automatically finds the catalog root by walking up
+from the current directory. Works from any subdirectory within a catalog.
+Use --catalog to override and specify an explicit path.
+
+Shows all files organized by collection in a hierarchical tree view.
+Each file shows its tracking status, format type, and file size.
+
+```text
+Status indicators:
+    + = tracked (in versions.json, unchanged)
+    + = untracked (on disk, not in versions.json)
+    ~ = modified (in versions.json, checksum changed)
+    ! = deleted (in versions.json, missing from disk)
+```
+
+```text
+Example output:
+    censo-2010/
+        data/ (3 tracked, 2 untracked)
+          + census-data.parquet (GeoParquet, 4.5MB)
+          + metadata.parquet (GeoParquet, 1.2MB)
+          + README.md (2KB)
+          + style.json (1KB)
+```
+
+```text
+Examples:
+    portolan list                           # List all files with status
+    portolan list --collection demographics # Filter by collection
+    portolan list --tracked-only            # Show only tracked files
+    portolan list --untracked-only          # Show only untracked files
+    portolan list --json                    # JSON output
+```
+
+**Usage:**
+
+```text
+portolan list [OPTIONS]
+```
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--collection`, `-c` | text | Filter by collection ID. | `Sentinel.UNSET` |
+| `--catalog` | path | Path to catalog root (default: auto-detect by walking up from cwd). | None |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--tracked-only` | boolean | Show only tracked files (hide untracked). | `False` |
+| `--untracked-only` | boolean | Show only untracked files. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan logo { #portolan-logo data-toc-label='logo' }
+
+Publish SOURCE as the catalog logo.
+
+Copies the image to _assets/ beside the root catalog.json and writes a
+rel="icon" link pointing at it. A registry lists many catalogs side by side,
+and the logo is what makes yours recognizable.
+
+SOURCE must be a local file in one of the seven permitted formats: APNG,
+AVIF, GIF, JPEG, PNG, SVG, or WebP. A URL is rejected — download the image
+first. SVG conforms but STAC Browser will not render it.
+
+Re-run to replace the logo: the previous link and image are removed, so the
+catalog always carries exactly one.
+
+```text
+Examples:
+  portolan logo brand.png                     # Title from the catalog
+  portolan logo brand.png --title "Acme GIS"  # Explicit title
+```
+
+**Usage:**
+
+```text
+portolan logo [OPTIONS] SOURCE
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `SOURCE` | text | yes |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--title` | text | Accessible label for the logo. Defaults to the catalog title. | None |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan metadata { #portolan-metadata data-toc-label='metadata' }
+
+Manage catalog metadata for README generation.
+
+metadata.yaml files supplement STAC with human-enrichable fields like
+titles, descriptions, contact info, and citations. These files can exist
+at any level in the catalog hierarchy (catalog, subcatalog, collection).
+
+```text
+Examples:
+    portolan metadata init                # Create template at catalog root
+    portolan metadata init demographics   # Create template for collection
+    portolan metadata validate            # Validate metadata.yaml
+```
+
+**Usage:**
+
+```text
+portolan metadata [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan metadata init { #portolan-metadata-init data-toc-label='init' }
+
+Generate a metadata.yaml template.
+
+Creates .portolan/metadata.yaml files at all STAC levels (catalogs,
+subcatalogs, collections) by default. Skips items (item.json directories)
+and preserves existing files unless --force is used.
+
+If PATH is provided, starts from that directory. Otherwise, starts at the
+catalog root.
+
+```text
+Examples:
+    portolan metadata init                    # All levels in catalog
+    portolan metadata init climate            # All levels under climate/
+    portolan metadata init --force            # Overwrite existing
+    portolan metadata init --no-recursive     # Only at catalog root
+    portolan metadata init demographics --no-recursive  # Only for collection
+```
+
+**Usage:**
+
+```text
+portolan metadata init [OPTIONS] [PATH]
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `[PATH]` | path | no |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--force` | boolean | Overwrite existing metadata.yaml file. | `False` |
+| `--no-recursive` | boolean | Only create template at the specified path (skip subdirectories). | `False` |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan metadata validate { #portolan-metadata-validate data-toc-label='validate' }
+
+Validate metadata.yaml against schema.
+
+Validates all .portolan/metadata.yaml files in the catalog tree by default.
+Checks for:
+- Required fields: contact (name + email), license
+- Format validation: email, SPDX license identifier, DOI
+
+Uses hierarchical resolution: child metadata.yaml files inherit from
+parent levels and override specific fields.
+
+```text
+Examples:
+    portolan metadata validate                    # Validate all levels
+    portolan metadata validate climate            # Validate under climate/
+    portolan metadata validate --no-recursive     # Only at catalog root
+    portolan metadata validate demographics --no-recursive  # Only for collection
+```
+
+**Usage:**
+
+```text
+portolan metadata validate [OPTIONS] [PATH]
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `[PATH]` | path | no |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--no-recursive` | boolean | Only validate at the specified path (skip subdirectories). | `False` |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan partition { #portolan-partition data-toc-label='partition' }
+
+Partition a large GeoParquet file for better query performance.
+
+Splits a GeoParquet file into spatially-organized partitions using
+geoparquet-io. Per OGC best practices, files over 2GB should be partitioned.
+
+```text
+Output structure (Hive-style):
+    output_dir/
+    ├── kdtree_cell=001/
+    │   └── data.parquet
+    ├── kdtree_cell=002/
+    │   └── data.parquet
+    └── ...
+```
+
+```text
+Examples:
+    # Preview partition strategy
+    portolan partition buildings.parquet --preview
+```
+
+    # Partition with default settings (kdtree, 120k rows/partition)
+    portolan partition buildings.parquet output/
+
+    # Custom target rows
+    portolan partition buildings.parquet output/ --target-rows 50000
+
+**Usage:**
+
+```text
+portolan partition [OPTIONS] INPUT_FILE [OUTPUT_DIR]
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `INPUT_FILE` | path | yes |
+| `[OUTPUT_DIR]` | path | no |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--strategy` | choice (`kdtree`) | Spatial partitioning strategy. Default: kdtree (data-driven, auto-balancing). | `kdtree` |
+| `--target-rows` | integer | Target rows per partition. Default: 120,000. | `120000` |
+| `--preview` | boolean | Analyze and preview partition strategy without creating files. | `False` |
+| `--verbose`, `-v` | boolean | Show detailed output. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan pull { #portolan-pull data-toc-label='pull' }
+
+Pull updates from a remote catalog.
+
+Git-style behavior: automatically finds the catalog root by walking up
+from the current directory. Works from any subdirectory within a catalog.
+Use --catalog to override and specify an explicit path.
+
+Fetches changes from a remote catalog and downloads updated files.
+Similar to `git pull`, this checks for uncommitted local changes before
+overwriting.
+
+REMOTE_URL is the remote catalog URL (e.g., s3://bucket/catalog).
+
+If --collection is specified, pulls that collection only. If --collection
+is omitted, pulls all collections in the catalog.
+
+```text
+Examples:
+    # Pull a single collection
+    portolan pull s3://mybucket/my-catalog --collection demographics
+    portolan pull s3://mybucket/catalog -c imagery --dry-run
+```
+
+    # Pull all collections
+    portolan pull s3://mybucket/catalog
+    portolan pull s3://mybucket/catalog --workers 4
+
+**Usage:**
+
+```text
+portolan pull [OPTIONS] REMOTE_URL
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `REMOTE_URL` | text | yes |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--collection`, `-c` | text | Collection to pull. If not specified, pulls all collections. | None |
+| `--catalog` | path | Path to catalog root (default: auto-detect by walking up from cwd). | None |
+| `--force` | boolean | Discard uncommitted local changes and overwrite with remote. | `False` |
+| `--dry-run` | boolean | Show what would be downloaded without actually downloading. Note: skips remote state check (no network I/O), so remote changes won't be detected. | `False` |
+| `--restore` | boolean | Re-download files that are missing locally even if version metadata matches. Use to recover accidentally deleted files. Note: slower than normal pull (checks file existence). | `False` |
+| `--profile` | text | AWS profile name (for S3). Uses config or 'default' if not specified. | None |
+| `--workers`, `-w` | integer range (`1` and above) | Parallel workers for catalog-wide pull (default: auto-detect based on CPU count; use 1 for sequential). Ignored when --collection is specified. | None |
+| `--concurrency` | integer range (`1` and above) | Maximum concurrent file downloads within each collection (default: 50). Higher values speed up downloads but use more connections. | `50` |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan push { #portolan-push data-toc-label='push' }
+
+Push local catalog changes to cloud object storage.
+
+Git-style behavior: automatically finds the catalog root by walking up
+from the current directory. Works from any subdirectory within a catalog.
+Use --catalog to override and specify an explicit path.
+
+Syncs collection(s) to a remote destination (S3, GCS, Azure).
+Uses optimistic locking to detect concurrent modifications.
+
+DESTINATION is the object store URL (e.g., s3://mybucket/my-catalog).
+If not provided, uses 'remote' from PORTOLAN_REMOTE env var or .env file.
+
+If --collection is specified, pushes that collection only.
+If --collection is omitted, pushes all collections in the catalog.
+
+```text
+Examples:
+    # Push a single collection
+    portolan push s3://mybucket/catalog --collection demographics
+    portolan push gs://mybucket/catalog -c imagery --dry-run
+```
+
+    # Push all collections
+    portolan push s3://mybucket/catalog
+    portolan push --dry-run  # Uses configured remote
+
+**Usage:**
+
+```text
+portolan push [OPTIONS] [DESTINATION]
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `[DESTINATION]` | text | no |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--collection`, `-c` | text | Collection to push. If not specified, pushes all collections. | None |
+| `--force` | boolean | Overwrite remote even if it has diverged. | `False` |
+| `--dry-run` | boolean | Show what would be pushed without uploading. Note: skips remote state check (no network I/O), so conflicts won't be detected. | `False` |
+| `--profile` | text | AWS profile name (for S3 destinations). Uses config or 'default' if not specified. | None |
+| `--catalog` | path | Path to catalog root (default: auto-detect by walking up from cwd). | None |
+| `--workers`, `-w` | integer range (`1` and above) | Parallel workers for catalog-wide push (default: auto-detect based on CPU count; use 1 for sequential). Ignored when --collection is specified. | None |
+| `--concurrency` | integer range (between `1` and `500`) | Maximum concurrent file uploads within each collection (default: 8). Per-worker connections = concurrency × chunk-concurrency; catalog-wide total = workers × concurrency × chunk-concurrency. | `8` |
+| `--chunk-concurrency` | integer range (between `1` and `50`) | Maximum concurrent chunks per file upload (default: 4). Per-worker connections = concurrency × chunk-concurrency; catalog-wide total = workers × concurrency × chunk-concurrency. Lower values are safer for home networks. | `4` |
+| `--max-connections` | integer range (`1` and above) | Maximum total concurrent HTTP connections. If set, auto-adjusts concurrency and chunk-concurrency to stay within limit. Recommended for flaky or metered connections. | None |
+| `--adaptive` / `--no-adaptive` | boolean | Enable adaptive concurrency (default: on). Starts with low concurrency, ramps up on success, backs off on errors. Safer for home networks. | `True` |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--verbose`, `-v` | boolean | Show per-file upload details with size and speed. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan readme { #portolan-readme data-toc-label='readme' }
+
+Generate README.md from STAC metadata and metadata.yaml.
+
+Generates READMEs for the catalog and all collections by default. The README
+is a pure output - always generated from STAC (machine-extracted metadata)
+plus .portolan/metadata.yaml (human enrichment). Never hand-edit the README;
+edit metadata.yaml instead and regenerate.
+
+Use --check in CI to verify READMEs are up-to-date:
+
+```text
+Examples:
+    portolan readme                        # Generate for catalog and all collections
+    portolan readme climate                # Generate under climate/
+    portolan readme --check                # CI mode: exit 1 if any stale
+    portolan readme --no-recursive         # Only at catalog root
+    portolan readme demographics --no-recursive  # Only for collection
+    portolan readme --stdout --no-recursive      # Print single README
+```
+
+**Usage:**
+
+```text
+portolan readme [OPTIONS] [PATH]
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `[PATH]` | path | no |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--stdout` | boolean | Print README to stdout instead of writing file. | `False` |
+| `--check` | boolean | Check if README is up-to-date (for CI). Exits 1 if stale. | `False` |
+| `--no-recursive` | boolean | Only generate README at the specified path (skip subdirectories). | `False` |
+| `--verbose`, `-v` | boolean | Show detailed output. | `False` |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan rm { #portolan-rm data-toc-label='rm' }
+
+Remove files from tracking.
+
+By default, removes the file from disk AND untracks it from the catalog.
+Requires --force for destructive operations (deleting files).
+
+Works like git: run from anywhere inside a catalog and it auto-detects
+the catalog root. Use --portolan-dir to override.
+
+A file that is already gone from disk is still untracked, so you can drop a
+tracked asset that you deleted by hand. The removal is recorded as a new
+version.
+
+```text
+Safety flags:
+- --keep: Untrack file but preserve it on disk (safe, no --force needed)
+- --force: Required for destructive rm (when not using --keep)
+- --dry-run: Preview what would be removed without actually removing
+```
+
+```text
+Examples:
+    portolan rm --keep imagery/old_data.tif     # Safe: untrack only
+    portolan rm --dry-run vectors/              # Preview what would be removed
+    portolan rm -f demographics/census.parquet  # Force delete and untrack
+    portolan rm -f vectors/                     # Force remove entire directory
+```
+
+**Usage:**
+
+```text
+portolan rm [OPTIONS] PATH
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `PATH` | path | yes |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--keep` | boolean | Untrack file but preserve it on disk. | `False` |
+| `--force`, `-f` | boolean | Force deletion without safety check. Required for destructive rm. | `False` |
+| `--dry-run`, `-n` | boolean | Show what would be removed without actually removing. | `False` |
+| `--verbose`, `-v` | boolean | Show detailed output including skipped files. | `False` |
+| `--portolan-dir` | path | Path to Portolan catalog root (default: auto-detect by walking up from cwd). | None |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan scan { #portolan-scan data-toc-label='scan' }
+
+Scan a directory for geospatial files and potential issues.
+
+Discovers files by extension, validates shapefile completeness,
+and reports issues that may cause problems during import.
+
+PATH is the directory to scan (default: current directory).
+
+```text
+Fix Mode:
+    Use --fix to auto-rename files with:
+    - Invalid characters (spaces, parentheses, non-ASCII)
+    - Windows reserved names (CON, PRN, AUX, etc.)
+    - Long paths (> 200 characters)
+```
+
+    Use --dry-run to preview changes without applying.
+
+Examples:
+    portolan scan                         # Scan current directory
+
+    portolan scan --json                  # JSON output in current directory
+
+    portolan scan /data/geospatial
+
+    portolan scan /large/tree --max-depth=2
+
+    portolan scan /data --no-recursive
+
+    portolan scan /data --fix --dry-run
+
+    portolan scan /data --fix
+
+**Usage:**
+
+```text
+portolan scan [OPTIONS] [PATH]
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `[PATH]` | path | no |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--json` | boolean | Output results as JSON | `False` |
+| `--no-recursive` | boolean | Scan only the target directory (no subdirectories) | `False` |
+| `--max-depth` | integer | Maximum recursion depth (0 = target directory only) | None |
+| `--include-hidden` | boolean | Include hidden files (starting with .) | `False` |
+| `--follow-symlinks` | boolean | Follow symbolic links (may cause loops) | `False` |
+| `--all` | boolean | Show all issues without truncation (default: show first 10 per severity) | `False` |
+| `--tree` | boolean | Show directory tree view with file status markers | `False` |
+| `--suggest-collections` | boolean | Suggest collection groupings based on filename patterns | `False` |
+| `--manual` | boolean | Show only issues requiring manual resolution | `False` |
+| `--fix` | boolean | Apply safe fixes (rename files with invalid characters, Windows reserved names, or long paths) | `False` |
+| `--dry-run` | boolean | Preview fixes without applying them (use with --fix) | `False` |
+| `--strict` | boolean | Treat warnings as errors (exit 1 on any warning or error) | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan skills { #portolan-skills data-toc-label='skills' }
+
+List and view AI skills for Portolan workflows.
+
+Skills have moved to: https://github.com/portolan-sdi/portolan-skills
+
+**Usage:**
+
+```text
+portolan skills [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan skills list { #portolan-skills-list data-toc-label='list' }
+
+List available skills.
+
+**Usage:**
+
+```text
+portolan skills list [OPTIONS]
+```
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan skills show { #portolan-skills-show data-toc-label='show' }
+
+View a skill.
+
+**Usage:**
+
+```text
+portolan skills show [OPTIONS] NAME
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `NAME` | text | yes |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan stac-geoparquet { #portolan-stac-geoparquet data-toc-label='stac-geoparquet' }
+
+Generate items.parquet for efficient STAC queries.
+
+Creates a GeoParquet file containing all items in a collection,
+enabling fast spatial/temporal queries without N HTTP requests.
+
+This is optional but recommended for collections with >100 items.
+The parquet file is added as a link in collection.json.
+
+If --collection is omitted, generates for ALL collections in the catalog.
+
+```text
+Examples:
+    portolan stac-geoparquet                    # Generate for ALL collections
+    portolan stac-geoparquet -c landsat         # Generate for landsat collection
+    portolan stac-geoparquet -c imagery --dry-run  # Preview without creating
+    portolan stac-geoparquet --json             # JSON output for all collections
+```
+
+**Usage:**
+
+```text
+portolan stac-geoparquet [OPTIONS]
+```
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--collection`, `-c` | text | Collection ID to generate parquet for. If omitted, generates for all collections. | None |
+| `--catalog` | path | Path to catalog root (default: auto-detect). | None |
+| `--dry-run` | boolean | Show what would be generated without creating files. | `False` |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan status { #portolan-status data-toc-label='status' }
+
+Show local vs remote version state for collections.
+
+Git-style status showing version sync state, modified files, and
+untracked files for each collection in the catalog.
+
+```text
+Status information:
+    Local version   Current version in local versions.json
+    Remote version  Current version on remote (unless --offline)
+    Sync state      in_sync, ahead, behind, or unknown
+    Modified        Files changed since last version
+    Untracked       Files on disk not in versions.json
+    Deleted         Files in versions.json but missing from disk
+```
+
+```text
+Examples:
+    portolan status                    # Status for all collections
+    portolan status -c demographics    # Status for one collection
+    portolan status --offline          # Skip remote check
+    portolan status --json             # JSON output for agents
+```
+
+**Usage:**
+
+```text
+portolan status [OPTIONS]
+```
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--collection`, `-c` | text | Show status for a specific collection only. | `Sentinel.UNSET` |
+| `--catalog` | path | Path to catalog root (default: auto-detect). | None |
+| `--offline` | boolean | Skip remote version check (show local state only). | `False` |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan sync { #portolan-sync data-toc-label='sync' }
+
+Sync local catalog with remote storage (pull + push).
+
+Orchestrates a full sync workflow: Pull -> Init -> Scan -> Check -> Push.
+This is the recommended way to keep a local catalog in sync with remote.
+
+DESTINATION is the object store URL (e.g., s3://mybucket/my-catalog).
+
+```text
+Examples:
+    portolan sync s3://mybucket/catalog --collection demographics
+    portolan sync s3://mybucket/catalog -c imagery --dry-run
+    portolan sync s3://mybucket/catalog -c data --fix --force
+    portolan sync s3://mybucket/catalog -c data --profile prod
+    portolan sync --collection demographics  # Uses configured remote
+```
+
+**Usage:**
+
+```text
+portolan sync [OPTIONS] [DESTINATION]
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `[DESTINATION]` | text | no |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--collection`, `-c` | text | Collection to sync (required). | `Sentinel.UNSET` |
+| `--force` | boolean | Overwrite conflicts on both pull and push. | `False` |
+| `--dry-run` | boolean | Show what would happen without making changes. | `False` |
+| `--fix` | boolean | Convert non-cloud-native formats during check. | `False` |
+| `--profile` | text | AWS profile name (for S3 destinations). Uses config or 'default' if not specified. | None |
+| `--catalog` | path | Path to catalog root (default: auto-detect by walking up from cwd). | None |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan version { #portolan-version data-toc-label='version' }
+
+Version management commands.
+
+Works with any versioning backend (file, iceberg). Backend is auto-detected
+from catalog configuration.
+
+```text
+Subcommands:
+    current   Show current version of a collection
+    list      List all versions of a collection
+    rollback  Rollback to a previous version (iceberg only)
+    prune     Remove old versions (iceberg only)
+```
+
+**Usage:**
+
+```text
+portolan version [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan version bump { #portolan-version-bump data-toc-label='bump' }
+
+Create a new version from current file state.
+
+Detects modified files by comparing checksums, computes new checksums,
+and creates a new version entry in versions.json.
+
+NEW_VERSION must be an explicit semver string (e.g., "1.2.0").
+
+```text
+Examples:
+    portolan version bump demographics 1.4.0 -m "Updated source data"
+    portolan version bump demographics 2.0.0 --breaking -m "Schema change"
+    portolan version bump demographics 1.4.0 -y  # Skip confirmation
+```
+
+**Usage:**
+
+```text
+portolan version bump [OPTIONS] COLLECTION NEW_VERSION
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `COLLECTION` | text | yes |
+| `NEW_VERSION` | text | yes |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--notes`, `-m` | text | Version notes/message describing the change. | `Sentinel.UNSET` |
+| `--breaking` | boolean | Mark this version as having breaking changes. | `False` |
+| `--yes`, `-y` | boolean | Skip confirmation prompt. | `False` |
+| `--catalog` | path | Path to catalog root (default: auto-detect). | None |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan version current { #portolan-version-current data-toc-label='current' }
+
+Show the current version of a collection.
+
+Works with any versioning backend (auto-detected from config).
+
+```text
+Examples:
+    portolan version current boundaries
+    portolan version current boundaries --json
+```
+
+**Usage:**
+
+```text
+portolan version current [OPTIONS] COLLECTION
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `COLLECTION` | text | yes |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--catalog` | path | Path to catalog root (default: auto-detect). | None |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan version list { #portolan-version-list data-toc-label='list' }
+
+List all versions of a collection.
+
+Works with any versioning backend (auto-detected from config).
+
+```text
+Examples:
+    portolan version list boundaries
+    portolan version list boundaries --json
+```
+
+**Usage:**
+
+```text
+portolan version list [OPTIONS] COLLECTION
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `COLLECTION` | text | yes |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--catalog` | path | Path to catalog root (default: auto-detect). | None |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan version prune { #portolan-version-prune data-toc-label='prune' }
+
+Remove old versions, keeping the N most recent.
+
+```text
+Examples:
+    portolan version prune boundaries                # Keep 5 most recent
+    portolan version prune boundaries --keep 3       # Keep 3 most recent
+    portolan version prune boundaries --dry-run      # Preview without deleting
+```
+
+**Usage:**
+
+```text
+portolan version prune [OPTIONS] COLLECTION
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `COLLECTION` | text | yes |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--keep`, `-k` | integer range (`1` and above) | Number of recent versions to keep. | `5` |
+| `--dry-run` | boolean | Show what would be pruned without deleting. | `False` |
+| `--catalog` | path | Path to catalog root (default: auto-detect). | None |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan version rollback { #portolan-version-rollback data-toc-label='rollback' }
+
+Rollback a collection to a previous version.
+
+Uses Iceberg's native snapshot management to set the current snapshot
+pointer back to TARGET_VERSION. No data is copied — this is instant.
+
+```text
+Examples:
+    portolan version rollback boundaries 1.0.0
+    portolan version rollback boundaries 2.0.0 --json
+```
+
+**Usage:**
+
+```text
+portolan version rollback [OPTIONS] COLLECTION TARGET_VERSION
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `COLLECTION` | text | yes |
+| `TARGET_VERSION` | text | yes |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--catalog` | path | Path to catalog root (default: auto-detect). | None |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
