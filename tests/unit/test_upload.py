@@ -17,6 +17,7 @@ Test categories:
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -25,7 +26,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from tests.conftest import cleared_environ
+from tests.conftest import aws_files_environ, cleared_environ
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -91,7 +92,7 @@ region = us-east-1
 region = eu-west-1
 """)
 
-    with patch.object(Path, "home", return_value=tmp_path):
+    with patch.object(Path, "home", return_value=tmp_path), aws_files_environ(aws_dir):
         yield aws_dir
 
 
@@ -1287,3 +1288,354 @@ class TestOutputIntegration:
         # The output module uses click.echo which writes to stdout/stderr
         # Capture output to mark capsys as used (vulture)
         _ = capsys  # Fixture available for debugging if needed
+
+
+# =============================================================================
+# Profile endpoint_url Tests
+# =============================================================================
+
+
+@pytest.fixture
+def mock_profile_endpoint(tmp_path: Path) -> Generator[Path, None, None]:
+    """Create an ~/.aws/config whose profiles set endpoint_url."""
+    aws_dir = tmp_path / ".aws"
+    aws_dir.mkdir()
+
+    (aws_dir / "config").write_text(
+        """[profile proxy]
+endpoint_url = https://data.source.coop
+region = us-west-2
+
+[profile plaintext]
+endpoint_url = http://minio.example.com:9000
+
+[profile bare]
+region = eu-west-1
+"""
+    )
+
+    (aws_dir / "credentials").write_text(
+        """[plaintext]
+aws_access_key_id = AKIAPLAINKEY
+aws_secret_access_key = plainsecret
+"""
+    )
+
+    with patch.object(Path, "home", return_value=tmp_path), aws_files_environ(aws_dir):
+        yield aws_dir
+
+
+class TestReadProfileEndpointUrl:
+    """Tests for reading endpoint_url from ~/.aws/config."""
+
+    @pytest.mark.unit
+    def test_reads_named_profile(self, mock_profile_endpoint: Path) -> None:
+        """Should return the endpoint a profile sets."""
+        from portolan_cli.sync.upload import _read_profile_endpoint_url
+
+        assert mock_profile_endpoint.exists()
+        assert _read_profile_endpoint_url("proxy") == "https://data.source.coop"
+
+    @pytest.mark.unit
+    def test_profile_without_endpoint(self, mock_profile_endpoint: Path) -> None:
+        """A profile that sets no endpoint should return None."""
+        from portolan_cli.sync.upload import _read_profile_endpoint_url
+
+        assert _read_profile_endpoint_url("bare") is None
+
+    @pytest.mark.unit
+    def test_no_home_directory_returns_none(self) -> None:
+        """An unknown home directory should not raise."""
+        from portolan_cli.sync.upload import _read_profile_endpoint_url
+
+        with patch.object(Path, "home", side_effect=RuntimeError("no home")):
+            assert _read_profile_endpoint_url("proxy") is None
+
+
+@pytest.fixture
+def default_profile_endpoint(tmp_path: Path) -> Generator[Path, None, None]:
+    """Create an AWS config whose default profile sets an endpoint and a region."""
+    aws_dir = tmp_path / ".aws"
+    aws_dir.mkdir()
+
+    (aws_dir / "config").write_text(
+        """[default]
+endpoint_url = https://data.source.coop
+region = us-west-2
+"""
+    )
+
+    with patch.object(Path, "home", return_value=tmp_path), aws_files_environ(aws_dir):
+        yield aws_dir
+
+
+class TestProfileEndpointRegion:
+    """Tests that the profile endpoint keeps the profile signing region."""
+
+    @pytest.mark.unit
+    def test_environment_keys_keep_the_profile_region(self, default_profile_endpoint: Path) -> None:
+        """Environment keys must not drop the region beside the endpoint."""
+        from portolan_cli.sync.upload import _create_s3_store
+
+        with (
+            cleared_environ(
+                AWS_ACCESS_KEY_ID="AKIAENVKEY",
+                AWS_SECRET_ACCESS_KEY="envsecret",
+                AWS_CONFIG_FILE=str(default_profile_endpoint / "config"),
+            ),
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            _create_s3_store("s3://mybucket", None, None, None, None)
+
+        kwargs = mock_s3_store.call_args.kwargs
+        assert kwargs["endpoint"] == "https://data.source.coop"
+        assert kwargs["region"] == "us-west-2"
+
+    @pytest.mark.unit
+    def test_explicit_region_wins(self, default_profile_endpoint: Path) -> None:
+        """An explicit region must win over the profile region."""
+        from portolan_cli.sync.upload import _create_s3_store
+
+        with cleared_environ(), patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
+            _create_s3_store("s3://mybucket", None, None, "eu-central-1", None)
+
+        assert mock_s3_store.call_args.kwargs["region"] == "eu-central-1"
+
+
+@pytest.fixture
+def ambient_profile(tmp_path: Path) -> Generator[Path, None, None]:
+    """Create an AWS config with a default profile and a named profile."""
+    aws_dir = tmp_path / ".aws"
+    aws_dir.mkdir()
+
+    (aws_dir / "config").write_text(
+        """[default]
+endpoint_url = https://default.example.com
+region = us-east-2
+
+[profile work]
+endpoint_url = https://work.example.com
+region = eu-west-1
+"""
+    )
+
+    with patch.object(Path, "home", return_value=tmp_path), aws_files_environ(aws_dir):
+        yield aws_dir
+
+
+class TestAmbientProfile:
+    """Tests that AWS_PROFILE picks the profile settings."""
+
+    @pytest.mark.unit
+    def test_aws_profile_supplies_endpoint_and_region(self, ambient_profile: Path) -> None:
+        """AWS_PROFILE must pick the endpoint and the region of that profile."""
+        from portolan_cli.sync.upload import _create_s3_store
+
+        with (
+            cleared_environ(AWS_PROFILE="work", AWS_CONFIG_FILE=str(ambient_profile / "config")),
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            _create_s3_store("s3://mybucket", None, None, None, None)
+
+        kwargs = mock_s3_store.call_args.kwargs
+        assert kwargs["endpoint"] == "https://work.example.com"
+        assert kwargs["region"] == "eu-west-1"
+
+    @pytest.mark.unit
+    def test_explicit_profile_beats_aws_profile(self, ambient_profile: Path) -> None:
+        """An explicit profile must win over AWS_PROFILE."""
+        from portolan_cli.sync.upload import _create_s3_store
+
+        with (
+            cleared_environ(AWS_PROFILE="work", AWS_CONFIG_FILE=str(ambient_profile / "config")),
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            _create_s3_store("s3://mybucket", "default", None, None, None)
+
+        kwargs = mock_s3_store.call_args.kwargs
+        assert kwargs["endpoint"] == "https://default.example.com"
+        assert kwargs["region"] == "us-east-2"
+
+
+class TestProfileEndpointStore:
+    """Tests that a profile endpoint_url reaches the S3 store."""
+
+    @pytest.mark.unit
+    def test_profile_endpoint_used(self, mock_profile_endpoint: Path) -> None:
+        """Without PORTOLAN_S3_ENDPOINT the profile endpoint should apply."""
+        from portolan_cli.sync.upload import _create_s3_store
+
+        with cleared_environ(), patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
+            _create_s3_store("s3://mybucket", "proxy", None, None, None)
+
+        kwargs = mock_s3_store.call_args.kwargs
+        assert kwargs["endpoint"] == "https://data.source.coop"
+        assert kwargs["virtual_hosted_style_request"] is False
+
+    @pytest.mark.unit
+    def test_environment_beats_profile(self, mock_profile_endpoint: Path) -> None:
+        """PORTOLAN_S3_ENDPOINT should win over the profile endpoint."""
+        from portolan_cli.sync.upload import _create_s3_store
+
+        with (
+            cleared_environ(PORTOLAN_S3_ENDPOINT="other.example.com"),
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            _create_s3_store("s3://mybucket", "proxy", None, None, None)
+
+        assert mock_s3_store.call_args.kwargs["endpoint"] == "https://other.example.com"
+
+    @pytest.mark.unit
+    def test_explicit_argument_beats_profile(self, mock_profile_endpoint: Path) -> None:
+        """An explicit endpoint should win over the profile endpoint."""
+        from portolan_cli.sync.upload import _create_s3_store
+
+        with cleared_environ(), patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
+            _create_s3_store("s3://mybucket", "proxy", "explicit.example.com", None, None)
+
+        assert mock_s3_store.call_args.kwargs["endpoint"] == "https://explicit.example.com"
+
+    @pytest.mark.unit
+    def test_plaintext_profile_endpoint_is_refused(self, mock_profile_endpoint: Path) -> None:
+        """An http profile endpoint with credentials should raise."""
+        from portolan_cli.errors import InsecureS3EndpointError
+        from portolan_cli.sync.upload import _create_s3_store
+
+        with cleared_environ(), pytest.raises(InsecureS3EndpointError):
+            _create_s3_store("s3://mybucket", "plaintext", None, None, None)
+
+
+# =============================================================================
+# Delegated profile credential Tests
+# =============================================================================
+
+
+@pytest.fixture
+def mock_botocore_profile(tmp_path: Path) -> Generator[Path, None, None]:
+    """Create an ~/.aws/config whose profile resolves through a real command."""
+    aws_dir = tmp_path / ".aws"
+    aws_dir.mkdir()
+
+    helper = tmp_path / "creds_helper.py"
+    helper.write_text(
+        "import json\n"
+        "print(json.dumps({\n"
+        '    "Version": 1,\n'
+        '    "AccessKeyId": "ASIAPROCESSKEY",\n'
+        '    "SecretAccessKey": "processsecret",\n'
+        '    "SessionToken": "process-session-token",\n'
+        '    "Expiration": "2099-01-01T00:00:00Z",\n'
+        "}))\n"
+    )
+
+    (aws_dir / "config").write_text(
+        f"""[profile source]
+credential_process = {sys.executable} {helper}
+endpoint_url = https://data.source.coop
+region = us-west-2
+"""
+    )
+
+    with patch.object(Path, "home", return_value=tmp_path):
+        yield aws_dir
+
+
+class TestDelegatedCredentialProvider:
+    """Tests that botocore resolves the profile through obstore."""
+
+    @pytest.mark.unit
+    def test_credential_process_resolves(self, mock_botocore_profile: Path) -> None:
+        """A credential_process profile should produce obstore credentials."""
+        pytest.importorskip("boto3")
+        from portolan_cli.sync.upload import _resolve_credential_provider
+
+        with cleared_environ(AWS_CONFIG_FILE=str(mock_botocore_profile / "config")):
+            provider = _resolve_credential_provider("source")
+            assert provider is not None
+            credential = provider()
+
+        assert credential["access_key_id"] == "ASIAPROCESSKEY"
+        assert credential["token"] == "process-session-token"
+
+    @pytest.mark.unit
+    def test_config_file_env_var_drives_endpoint_and_credentials(
+        self, mock_botocore_profile: Path
+    ) -> None:
+        """AWS_CONFIG_FILE should supply the endpoint and the credentials."""
+        pytest.importorskip("boto3")
+        from portolan_cli.sync.upload import _create_s3_store
+
+        # The profile lives outside ~/.aws, so only AWS_CONFIG_FILE finds it.
+        with (
+            cleared_environ(AWS_CONFIG_FILE=str(mock_botocore_profile / "config")),
+            patch.object(Path, "home", return_value=Path("/nonexistent-home")),
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            _create_s3_store("s3://mybucket", "source", None, None, None)
+            kwargs = mock_s3_store.call_args.kwargs
+            credential = kwargs["credential_provider"]()
+
+        assert kwargs["endpoint"] == "https://data.source.coop"
+        assert kwargs["virtual_hosted_style_request"] is False
+        assert credential["access_key_id"] == "ASIAPROCESSKEY"
+
+    @pytest.mark.unit
+    def test_unknown_profile_returns_none(self, mock_botocore_profile: Path) -> None:
+        """A profile botocore cannot find should not raise."""
+        pytest.importorskip("boto3")
+        from portolan_cli.sync.upload import _resolve_credential_provider
+
+        with cleared_environ(AWS_CONFIG_FILE=str(mock_botocore_profile / "config")):
+            assert _resolve_credential_provider("missing") is None
+
+    @pytest.mark.unit
+    def test_static_keys_skip_the_session(self, mock_aws_credentials: Path) -> None:
+        """A profile with a static key pair should not build a session."""
+        from portolan_cli.sync.upload import _resolve_credential_provider
+
+        assert _resolve_credential_provider("myprofile") is None
+
+    @pytest.mark.unit
+    def test_absent_boto3_returns_none(self, mock_botocore_profile: Path) -> None:
+        """Without boto3 the resolver should fall back, not raise."""
+        import builtins
+
+        from portolan_cli.sync.upload import _resolve_credential_provider
+
+        real_import = builtins.__import__
+
+        def no_boto3(name: str, *args: object, **kwargs: object) -> object:
+            if name.startswith("boto3") or name == "obstore.auth.boto3":
+                raise ImportError("no boto3")
+            return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(builtins, "__import__", no_boto3):
+            assert _resolve_credential_provider("source") is None
+
+    @pytest.mark.unit
+    def test_store_gets_credential_provider(self, mock_botocore_profile: Path) -> None:
+        """The resolved provider should reach S3Store, not a key pair."""
+        pytest.importorskip("boto3")
+        from portolan_cli.sync.upload import _create_s3_store
+
+        with (
+            cleared_environ(AWS_CONFIG_FILE=str(mock_botocore_profile / "config")),
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            _create_s3_store("s3://mybucket", "source", None, None, None)
+
+        kwargs = mock_s3_store.call_args.kwargs
+        assert kwargs["credential_provider"] is not None
+        assert "access_key_id" not in kwargs
+
+    @pytest.mark.unit
+    def test_check_credentials_accepts_profile(self, mock_botocore_profile: Path) -> None:
+        """The preflight check should pass for a resolvable profile."""
+        pytest.importorskip("boto3")
+        from portolan_cli.sync.upload import check_credentials
+
+        with cleared_environ(AWS_CONFIG_FILE=str(mock_botocore_profile / "config")):
+            valid, hint = check_credentials("s3://mybucket/path", profile="source")
+
+        assert valid is True
+        assert hint == ""
