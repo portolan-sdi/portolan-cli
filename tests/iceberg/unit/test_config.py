@@ -53,12 +53,10 @@ def test_default_properties_without_catalog_root_uses_cwd():
 
 @_skip_windows_sqlite
 @pytest.mark.integration
-def test_create_catalog_with_catalog_root(tmp_path, monkeypatch):
+def test_create_catalog_with_catalog_root(tmp_path):
     """create_catalog(catalog_root=path) should create iceberg.db under path/.portolan/."""
     from pyiceberg.catalog import Catalog
 
-    # Isolate from ~/.pyiceberg.yaml (e.g., REST/BigLake config)
-    monkeypatch.setattr("portolan_cli.backends.iceberg.config._get_external_config", lambda: None)
     catalog = create_catalog(catalog_root=tmp_path)
     assert isinstance(catalog, Catalog)
     assert (tmp_path / ".portolan" / "iceberg.db").exists()
