@@ -401,7 +401,7 @@ def test_iceberg_format_version(iceberg_backend, iceberg_catalog, tmp_path):
 
 @pytest.mark.integration
 def test_iceberg_current_snapshot_id(iceberg_backend, iceberg_catalog, tmp_path):
-    """iceberg:current_snapshot_id should be a positive integer."""
+    """iceberg:current_snapshot_id should be a numeric string."""
     table_data = pa.table({"id": pa.array([1], type=pa.int64())})
     path = tmp_path / "data.parquet"
     pq.write_table(table_data, path)
@@ -419,8 +419,11 @@ def test_iceberg_current_snapshot_id(iceberg_backend, iceberg_catalog, tmp_path)
     table = iceberg_catalog.load_table("portolake.snapped")
     metadata = generate_collection_metadata(table)
 
-    assert isinstance(metadata["iceberg:current_snapshot_id"], int)
-    assert metadata["iceberg:current_snapshot_id"] > 0
+    # A string, because an Iceberg snapshot id is 64-bit and a JSON parser that
+    # stores numbers as doubles rounds it above 2^53 (extension v1.1.0).
+    assert isinstance(metadata["iceberg:current_snapshot_id"], str)
+    assert metadata["iceberg:current_snapshot_id"].lstrip("-").isdigit()
+    assert int(metadata["iceberg:current_snapshot_id"]) > 0
 
 
 @pytest.mark.integration
@@ -593,3 +596,74 @@ def test_generate_collection_metadata_excludes_assets(iceberg_backend, iceberg_c
     metadata = generate_collection_metadata(table)
 
     assert "assets" not in metadata
+
+
+class TestExtensionShape:
+    """The fields must match the STAC Iceberg extension v1.1.0 (issue #883)."""
+
+    @pytest.mark.unit
+    def test_partition_fields_use_the_extension_keys(self) -> None:
+        """A partition field is name/transform/source-id/field-id, not field/transform."""
+        from unittest.mock import MagicMock
+
+        from portolan_cli.backends.iceberg.stac_generator import _get_partition_spec
+
+        # MagicMock(name=...) names the mock itself, so the attribute is set after.
+        field = MagicMock(source_id=5, field_id=1000)
+        field.name = "geohash_3"
+        field.transform.__str__ = lambda self: "identity"  # type: ignore[method-assign]
+        table = MagicMock()
+        table.spec.return_value.fields = [field]
+
+        assert _get_partition_spec(table) == [
+            {"name": "geohash_3", "transform": "identity", "source-id": 5, "field-id": 1000}
+        ]
+
+    @pytest.mark.unit
+    def test_an_unrecognized_catalog_class_raises(self) -> None:
+        """A catalog type outside the extension enum must fail loudly, not emit 'unknown'."""
+        from unittest.mock import MagicMock
+
+        from portolan_cli.backends.iceberg.stac_generator import _get_catalog_type
+
+        table = MagicMock()
+        table.catalog = MagicMock()
+        type(table.catalog).__name__ = "SomeFutureCatalog"
+        table.catalog.properties = {}
+
+        with pytest.raises(ValueError, match="SomeFutureCatalog"):
+            _get_catalog_type(table)
+
+    @pytest.mark.unit
+    def test_a_catalog_type_property_outside_the_enum_raises(self) -> None:
+        from unittest.mock import MagicMock
+
+        from portolan_cli.backends.iceberg.stac_generator import _get_catalog_type
+
+        table = MagicMock()
+        table.catalog = MagicMock()
+        type(table.catalog).__name__ = "SomeFutureCatalog"
+        table.catalog.properties = {"type": "nessie"}
+
+        with pytest.raises(ValueError, match="nessie"):
+            _get_catalog_type(table)
+
+    @pytest.mark.unit
+    def test_geometry_types_report_their_logical_name(self) -> None:
+        """table:columns carries the logical type, not the parameterized Iceberg string."""
+        from pyiceberg.types import GeographyType, GeometryType
+
+        from portolan_cli.backends.iceberg.stac_generator import _iceberg_type_to_str
+
+        assert _iceberg_type_to_str(GeometryType("EPSG:4326")) == "geometry"
+        assert _iceberg_type_to_str(GeographyType("EPSG:4326")) == "geography"
+
+    @pytest.mark.unit
+    def test_the_extension_uri_is_the_canonical_one(self) -> None:
+        from portolan_cli.backends.iceberg.stac_generator import STAC_ICEBERG_EXTENSION
+        from portolan_cli.constants import ICEBERG_EXTENSION_URI
+
+        assert STAC_ICEBERG_EXTENSION == ICEBERG_EXTENSION_URI
+        assert ICEBERG_EXTENSION_URI == (
+            "https://schemas.portolan-sdi.org/incubating/iceberg/v1.1.0/schema.json"
+        )
