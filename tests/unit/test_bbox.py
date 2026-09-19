@@ -362,3 +362,43 @@ class TestBboxValidationResult:
         """has_valid should be False when no valid bboxes."""
         result = BboxValidationResult(valid=[], invalid=[])
         assert result.has_valid is False
+
+
+class TestWgs84EdgeTolerance:
+    """A coordinate that rounds past a bound is the bound (issue #882)."""
+
+    def test_rounded_longitude_is_valid(self) -> None:
+        from portolan_cli.bbox import is_valid_bbox
+
+        assert is_valid_bbox([-180.0, -90.0, 180.00000000000006, 83.64513000000001])
+
+    def test_rounded_longitude_has_no_validation_reason(self) -> None:
+        from portolan_cli.bbox import get_bbox_validation_reason
+
+        assert get_bbox_validation_reason([-180.0, -90.0, 180.00000000000006, 83.6]) is None
+
+    def test_a_degree_past_the_bound_is_still_invalid(self) -> None:
+        from portolan_cli.bbox import get_bbox_validation_reason, is_valid_bbox
+
+        assert not is_valid_bbox([-180.0, -90.0, 181.0, 83.6])
+        assert get_bbox_validation_reason([-180.0, -90.0, 181.0, 83.6]) is not None
+
+    def test_snap_returns_the_bound(self) -> None:
+        from portolan_cli.bbox import snap_to_wgs84_range
+
+        assert snap_to_wgs84_range([-180.0, -90.0, 180.00000000000006, 90.0000000000001]) == [
+            -180.0,
+            -90.0,
+            180.0,
+            90.0,
+        ]
+
+    def test_snap_leaves_an_interior_coordinate_alone(self) -> None:
+        from portolan_cli.bbox import snap_to_wgs84_range
+
+        assert snap_to_wgs84_range([-7.33, 38.04, -4.70, 40.49]) == [-7.33, 38.04, -4.70, 40.49]
+
+    def test_snap_leaves_a_real_out_of_range_coordinate_alone(self) -> None:
+        from portolan_cli.bbox import snap_to_wgs84_range
+
+        assert snap_to_wgs84_range([-180.0, -90.0, 181.0, 83.6]) == [-180.0, -90.0, 181.0, 83.6]
