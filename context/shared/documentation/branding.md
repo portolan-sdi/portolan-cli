@@ -1,13 +1,13 @@
-# How the documentation site applies the brand
+# Brand
 
 The brand kit in
 [portolan-ops](https://github.com/portolan-sdi/portolan-ops/blob/main/brand/)
 is the canonical home for the palette, the fonts, and the logo files.
-`brand.json` holds every value. This repository reads those values. It does
-not restate them.
+`brand.json` defines each value. This repository reads them from the kit. A
+new brand value belongs in portolan-ops.
 
-Three standing rules apply here. Corners are square. Surfaces are flat and
-separated by rules, not by cards or shadows. Gradients are banned anywhere.
+Corners stay square. A rule separates one flat surface from the next. The
+kit bans a gradient everywhere.
 
 ## Files the sync owns
 
@@ -24,16 +24,17 @@ local edit.
 
 ## Colors
 
-`_brand-vars.css` declares the tokens on `:root`. `mkdocs.yml` loads it
-before `extra.css`, so `extra.css` reads the tokens. The order is
-load-bearing.
+`_brand-vars.css` declares the tokens on `:root`. `mkdocs.yml` lists it
+first under `extra_css`, so `extra.css` reads the tokens. A browser
+resolves an undefined custom property to nothing, so the reverse order
+drops each color from the page.
 
-The kit declares two groups. Read a `--color-*` role first. Reach for a
+The kit declares two groups. Use a `--color-*` role first. Use a
 `--palette-*` token only when the intent is a literal brand color. A cream
 overlay on the blue header band is a literal brand color. Link text is a
 role.
 
-`extra.css` holds no hex value and no `rgba()` call. Every translucent color
+`extra.css` uses no hex value and no `rgba()` call. Every translucent color
 uses `color-mix()` over a palette token.
 
 ## Type
@@ -43,8 +44,8 @@ machine register: code, labels, data, and paths. `mkdocs.yml` names both
 under `theme.font`, so Google Fonts serves them.
 
 The kit also assigns a control to the machine register. Material renders
-`.md-typeset .md-button` in `--md-text-font`. The site therefore sets a
-button in Hanken Grotesk. This conflict is open.
+`.md-typeset .md-button` in `--md-text-font`. The site then sets a button in
+Hanken Grotesk. This conflict is open.
 
 ## Logo assets
 
@@ -54,28 +55,27 @@ button in Hanken Grotesk. This conflict is open.
 | `portolan-logomark-fcfcfa.svg` | The mark in cream. Use it on a dark ground. |
 | `portolan-logo-horizontal-light.svg` | The horizontal lockup. The mark with the wordmark beside it. |
 | `logo.png` | 1000x1000 raster mark for a fallback. |
-| `favicon.ico` | Kept on disk. Nothing references it. |
+| `favicon.ico` | Kept on disk for a manual upload. |
 | `social-card.png` | 3500x1440 card for social media previews. |
 
-Each file carries a solid fill. The mark never takes a gradient.
+Each file uses a solid fill. The mark never takes a gradient.
 
 `mkdocs.yml` sets the header logo to the cream mark, because the header is a
 solid blue band. It sets the favicon to the blue mark.
 
 ## Decisions
 
-**Google Fonts, not a self-hosted WOFF2.** `scripts/sync.py` in portolan-ops
-reads and writes text only. It cannot move a binary file. A self-hosted font
-needs a binary-capable sync first. The cost of the Google Fonts route is one
+**The site uses Google Fonts.** `scripts/sync.py` in portolan-ops reads and
+writes text only. A binary file needs a different transport. A self-hosted
+font waits for that work. The cost of the Google Fonts route is one
 third-party request for each visitor. The site has no fully offline build.
 
-**Cairo is omitted.** `theme.language` is `en` and the site is English only.
-Add Cairo when the site adds Arabic.
+**The site skips Cairo.** `theme.language` is `en` and the site is English
+only. Add Cairo when the site adds Arabic.
 
-**The favicon is an SVG.** `brand/icons/` in portolan-ops holds no file, and
-the sync cannot move an `.ico`. The site points `theme.favicon` at the synced
-blue mark. Every browser that Material targets reads an SVG favicon.
-`favicon.ico` stays on disk for a manual upload.
+**The favicon is an SVG.** `brand/icons/` in portolan-ops is empty, and the
+sync moves text only. The site points `theme.favicon` at the synced blue
+mark. Every browser that Material targets reads an SVG favicon.
 
 ## Repository setup
 
