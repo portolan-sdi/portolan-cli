@@ -124,7 +124,7 @@ jobs:
       - name: Audit dependencies (runtime + extras only)
         # Audit only what we ship: core runtime deps plus the publishable extras
         # (iceberg, pmtiles, thumbnails). Dev-group deps (moto, pytest, pip-audit
-        # itself...) and doc-build deps (mkdocs, pymdown-extensions...) are excluded
+        # itself...) and doc-build deps (zensical, pymdown-extensions...) are excluded
         # because they never reach users via the wheel.
         #
         # Ignores come from the single-source .pip-audit-ignores file (each entry
@@ -378,14 +378,6 @@ jobs:
 
       - name: Build documentation
         run: uv run zensical build --strict --clean
-
-      # Zensical is alpha. Build the same config with MkDocs and compare
-      # the output by hand when a page looks wrong. Delete this step when
-      # the [docs] group drops mkdocs and mkdocs-material.
-      - name: Build with MkDocs for comparison
-        run: >-
-          uv run mkdocs build --strict
-          --site-dir site-mkdocs
 
       - name: Start MinIO for documentation example
         run: |

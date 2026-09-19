@@ -109,9 +109,7 @@ docs = [
     # Pinned exactly: zensical is alpha with a compiled core, so a floor
     # constraint is not a constraint. Dependabot offers reviewable bumps.
     "zensical==0.0.62",
-    "mkdocs>=1.6.1", # transitional: the comparison leg, removed after one release
-    "mkdocs-material>=9.7.1", # transitional: the comparison leg
-    "mkdocstrings[python]>=1.0.0",
+    "mkdocstrings-python>=1.0.0", # pulls mkdocstrings itself as its own dependency
     "pymdown-extensions>=11.0", # zensical requires >=11.0; fixes filename=None in highlight
 ]
 

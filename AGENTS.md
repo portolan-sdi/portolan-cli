@@ -182,7 +182,7 @@ portolan-cli/
 │   ├── benchmark/         # Performance measurements
 │   ├── snapshot/          # Snapshot tests
 │   └── iceberg/           # Iceberg backend tests (unit, integration, e2e)
-├── docs/                  # PUBLIC documentation (mkdocs) - tutorials, user guides
+├── docs/                  # PUBLIC documentation (Zensical) - tutorials, user guides
 ├── context/               # AI/INTERNAL development context
 │   └── shared/            # Plans, research, reports
 │       ├── documentation/ # CI, tooling, maintainer rationale
