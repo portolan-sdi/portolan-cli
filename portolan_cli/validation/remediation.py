@@ -122,11 +122,6 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "links",
         "Set structural link types: application/json, or application/geo+json for item links.",
     ),
-    "PTL-LNK-004": _auto(
-        "links",
-        "Make structural link hrefs relative so the catalog stays portable.",
-    ),
-    "PTL-LNK-005": _auto("links", "Remove the self link; a SELF_CONTAINED catalog omits it."),
     "PTL-LNK-006": _auto(
         "links",
         "Repoint the structural link at the object it claims to reference.",
@@ -148,6 +143,13 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "Make the rel:'icon' href relative, so the catalog stays portable. "
         "`portolan logo <file>` publishes the image under _assets/ and links it "
         "relatively."
+    ),
+    # A translated tree sits outside the containment tree. Choosing between
+    # dropping the link and moving the object is the publisher's call, so the
+    # `links` fixer does not guess.
+    "PTL-LNK-010": _instruct(
+        "Link the alternate-language object as an alternate, not as a child or an item; "
+        "a translated tree stays outside the containment tree."
     ),
     # ---- bbox: derivable from the assets it summarizes ----
     # fixer `bbox` wraps bbox.py's extent computation
@@ -239,6 +241,11 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "partition",
         "Populate the partition: fields from the Hive layout on disk.",
     ),
+    # ---- catalogs: how to group children is the publisher's decision ----
+    "PTL-CAT-001": _instruct(
+        "Group the children under subcatalogs; twenty or more ungrouped children make "
+        "the catalog hard to read."
+    ),
     # ---- collections: restructuring a layout is a decision, not an edit ----
     "PTL-COL-001": _instruct(
         "Expose the single file as a collection-level asset rather than an item."
@@ -253,6 +260,10 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     "PTL-COL-004": _instruct(
         "Move each raster scene onto its own item; only a single-COG collection carries a scene "
         "itself."
+    ),
+    "PTL-COL-005": _instruct(
+        "Publish the items the collection implies; the item JSON is the normative "
+        "representation and a mirror is a derived copy of it."
     ),
     # ---- temporal: an extent is a fact about the data, not about the file ----
     "PTL-TMP-001": _instruct(
@@ -342,6 +353,10 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     "PTL-DAT-016": _instruct(
         "Regenerate the items.parquet mirror from the current items; its contents have drifted "
         "from the item files."
+    ),
+    "PTL-DAT-017": _instruct(
+        "Document the vector asset's columns with table:columns, on the collection or in "
+        "the item's properties; re-run `portolan add` to have them read from the file."
     ),
     # ---- generic, structural, schema: the object is malformed, not misconfigured ----
     "PTL-GEN-000": _instruct(
