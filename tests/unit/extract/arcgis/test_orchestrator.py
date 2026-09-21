@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -32,6 +33,9 @@ from portolan_cli.extract.arcgis.orchestrator import (
     extract_arcgis_catalog,
     list_services,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 pytestmark = pytest.mark.unit
 
@@ -1466,6 +1470,28 @@ class _StubTable:
         Path(path).write_bytes(b"PAR1")
 
 
+# A source that needs longer than gpio's 60s default, as in issue #898.
+_SLOW_LAYER_OPTIONS = ExtractionOptions(timeout=180.0, sort_hilbert=False)
+
+
+def _extract_through_fake_gpio(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_extract_arcgis: Callable[..., object],
+    options: ExtractionOptions,
+) -> tuple[int, int, float]:
+    """Install a fake geoparquet_io, then extract one layer through it."""
+    fake_gpio = types.ModuleType("geoparquet_io")
+    fake_gpio.extract_arcgis = fake_extract_arcgis  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "geoparquet_io", fake_gpio)
+    return _extract_single_layer(
+        "https://x/rest/services/F/FeatureServer",
+        LayerInfo(id=0, name="L", layer_type="Feature Layer"),
+        tmp_path / "out.parquet",
+        options,
+    )
+
+
 @pytest.mark.unit
 def test_extract_single_layer_forwards_timeout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1475,29 +1501,15 @@ def test_extract_single_layer_forwards_timeout(
     Discovery already honored --timeout, but the feature-page requests stayed at
     gpio's 60s default, so slow layers timed out however high the user set it.
     """
-    captured: dict[str, object] = {}
+    seen: dict[str, object] = {}
 
-    def fake_extract_arcgis(
-        url: str,
-        max_workers: int | None = None,
-        output_crs: str | None = None,
-        timeout: float = 60.0,
-    ) -> object:
-        captured["timeout"] = timeout
+    def gpio_with_timeout(url: str, timeout: float = 60.0, **rest: object) -> object:
+        seen["timeout"] = timeout
         return _StubTable()
 
-    fake_gpio = types.ModuleType("geoparquet_io")
-    fake_gpio.extract_arcgis = fake_extract_arcgis  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "geoparquet_io", fake_gpio)
+    _extract_through_fake_gpio(monkeypatch, tmp_path, gpio_with_timeout, _SLOW_LAYER_OPTIONS)
 
-    layer = LayerInfo(id=0, name="L", layer_type="Feature Layer")
-    _extract_single_layer(
-        "https://x/rest/services/F/FeatureServer",
-        layer,
-        tmp_path / "out.parquet",
-        ExtractionOptions(timeout=180.0, sort_hilbert=False),
-    )
-    assert captured["timeout"] == 180.0
+    assert seen["timeout"] == 180.0
 
 
 @pytest.mark.unit
@@ -1509,30 +1521,18 @@ def test_extract_single_layer_omits_timeout_when_gpio_lacks_it(
     The variadic keyword catch-all proves the kwarg is withheld rather than
     merely tolerated.
     """
-    captured: dict[str, object] = {}
+    seen: dict[str, object] = {}
 
-    def fake_extract_arcgis(
-        url: str,
-        max_workers: int | None = None,
-        output_crs: str | None = None,
-        **extra: object,
-    ) -> object:
-        captured["extra"] = extra
+    def gpio_without_timeout(url: str, **rest: object) -> object:
+        seen.update(rest)
         return _StubTable()
 
-    fake_gpio = types.ModuleType("geoparquet_io")
-    fake_gpio.extract_arcgis = fake_extract_arcgis  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "geoparquet_io", fake_gpio)
-
-    layer = LayerInfo(id=0, name="L", layer_type="Feature Layer")
-    feature_count, _size, _duration = _extract_single_layer(
-        "https://x/rest/services/F/FeatureServer",
-        layer,
-        tmp_path / "out.parquet",
-        ExtractionOptions(timeout=180.0, sort_hilbert=False),
+    rows, _size, _secs = _extract_through_fake_gpio(
+        monkeypatch, tmp_path, gpio_without_timeout, _SLOW_LAYER_OPTIONS
     )
-    assert feature_count == 1
-    assert "timeout" not in captured["extra"]  # type: ignore[operator]
+
+    assert rows == 1
+    assert "timeout" not in seen
 
 
 # =============================================================================
