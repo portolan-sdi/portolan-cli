@@ -1449,6 +1449,93 @@ def test_extract_single_layer_passes_token(monkeypatch: pytest.MonkeyPatch, tmp_
 
 
 # =============================================================================
+# _extract_single_layer timeout-forwarding tests (issue #898)
+# =============================================================================
+
+
+class _StubTable:
+    """Minimal stand-in for gpio.Table used by the timeout-forwarding fakes."""
+
+    num_rows = 1
+
+    def add_bbox(self) -> _StubTable:
+        return self
+
+    def write(self, path: str) -> None:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_bytes(b"PAR1")
+
+
+@pytest.mark.unit
+def test_extract_single_layer_forwards_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The configured timeout must reach gpio.extract_arcgis (issue #898).
+
+    Discovery already honored --timeout, but the feature-page requests stayed at
+    gpio's 60s default, so slow layers timed out however high the user set it.
+    """
+    captured: dict[str, object] = {}
+
+    def fake_extract_arcgis(
+        url: str,
+        max_workers: int | None = None,
+        output_crs: str | None = None,
+        timeout: float = 60.0,
+    ) -> object:
+        captured["timeout"] = timeout
+        return _StubTable()
+
+    fake_gpio = types.ModuleType("geoparquet_io")
+    fake_gpio.extract_arcgis = fake_extract_arcgis  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "geoparquet_io", fake_gpio)
+
+    layer = LayerInfo(id=0, name="L", layer_type="Feature Layer")
+    _extract_single_layer(
+        "https://x/rest/services/F/FeatureServer",
+        layer,
+        tmp_path / "out.parquet",
+        ExtractionOptions(timeout=180.0, sort_hilbert=False),
+    )
+    assert captured["timeout"] == 180.0
+
+
+@pytest.mark.unit
+def test_extract_single_layer_omits_timeout_when_gpio_lacks_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An older gpio without a timeout parameter must keep working (issue #898).
+
+    The variadic keyword catch-all proves the kwarg is withheld rather than
+    merely tolerated.
+    """
+    captured: dict[str, object] = {}
+
+    def fake_extract_arcgis(
+        url: str,
+        max_workers: int | None = None,
+        output_crs: str | None = None,
+        **extra: object,
+    ) -> object:
+        captured["extra"] = extra
+        return _StubTable()
+
+    fake_gpio = types.ModuleType("geoparquet_io")
+    fake_gpio.extract_arcgis = fake_extract_arcgis  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "geoparquet_io", fake_gpio)
+
+    layer = LayerInfo(id=0, name="L", layer_type="Feature Layer")
+    feature_count, _size, _duration = _extract_single_layer(
+        "https://x/rest/services/F/FeatureServer",
+        layer,
+        tmp_path / "out.parquet",
+        ExtractionOptions(timeout=180.0, sort_hilbert=False),
+    )
+    assert feature_count == 1
+    assert "timeout" not in captured["extra"]  # type: ignore[operator]
+
+
+# =============================================================================
 # _extract_single_layer output-CRS forwarding tests (issue #802)
 # =============================================================================
 

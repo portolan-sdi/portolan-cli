@@ -6907,7 +6907,8 @@ def extract() -> None:
     "--timeout",
     type=click.FloatRange(min=0.0, min_open=True),
     default=60.0,
-    help="Per-request timeout in seconds (default: 60).",
+    help="Per-request timeout in seconds. Applies to layer discovery and to "
+    "feature-page requests (default: 60).",
 )
 @click.option(
     "--resume",
