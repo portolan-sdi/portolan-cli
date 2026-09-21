@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -32,6 +33,9 @@ from portolan_cli.extract.arcgis.orchestrator import (
     extract_arcgis_catalog,
     list_services,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 pytestmark = pytest.mark.unit
 
@@ -1446,6 +1450,89 @@ def test_extract_single_layer_passes_token(monkeypatch: pytest.MonkeyPatch, tmp_
     )
     assert captured["token"] == "TKN"
     assert captured["bbox"] is True
+
+
+# =============================================================================
+# _extract_single_layer timeout-forwarding tests (issue #898)
+# =============================================================================
+
+
+class _StubTable:
+    """Minimal stand-in for gpio.Table used by the timeout-forwarding fakes."""
+
+    num_rows = 1
+
+    def add_bbox(self) -> _StubTable:
+        return self
+
+    def write(self, path: str) -> None:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_bytes(b"PAR1")
+
+
+# A source that needs longer than gpio's 60s default, as in issue #898.
+_SLOW_LAYER_OPTIONS = ExtractionOptions(timeout=180.0, sort_hilbert=False)
+
+
+def _extract_through_fake_gpio(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_extract_arcgis: Callable[..., object],
+    options: ExtractionOptions,
+) -> tuple[int, int, float]:
+    """Install a fake geoparquet_io, then extract one layer through it."""
+    fake_gpio = types.ModuleType("geoparquet_io")
+    fake_gpio.extract_arcgis = fake_extract_arcgis  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "geoparquet_io", fake_gpio)
+    return _extract_single_layer(
+        "https://x/rest/services/F/FeatureServer",
+        LayerInfo(id=0, name="L", layer_type="Feature Layer"),
+        tmp_path / "out.parquet",
+        options,
+    )
+
+
+@pytest.mark.unit
+def test_extract_single_layer_forwards_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The configured timeout must reach gpio.extract_arcgis (issue #898).
+
+    Discovery already honored --timeout, but the feature-page requests stayed at
+    gpio's 60s default, so slow layers timed out however high the user set it.
+    """
+    seen: dict[str, object] = {}
+
+    def gpio_with_timeout(url: str, timeout: float = 60.0, **rest: object) -> object:
+        seen["timeout"] = timeout
+        return _StubTable()
+
+    _extract_through_fake_gpio(monkeypatch, tmp_path, gpio_with_timeout, _SLOW_LAYER_OPTIONS)
+
+    assert seen["timeout"] == 180.0
+
+
+@pytest.mark.unit
+def test_extract_single_layer_omits_timeout_when_gpio_lacks_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An older gpio without a timeout parameter must keep working (issue #898).
+
+    The variadic keyword catch-all proves the kwarg is withheld rather than
+    merely tolerated.
+    """
+    seen: dict[str, object] = {}
+
+    def gpio_without_timeout(url: str, **rest: object) -> object:
+        seen.update(rest)
+        return _StubTable()
+
+    rows, _size, _secs = _extract_through_fake_gpio(
+        monkeypatch, tmp_path, gpio_without_timeout, _SLOW_LAYER_OPTIONS
+    )
+
+    assert rows == 1
+    assert "timeout" not in seen
 
 
 # =============================================================================

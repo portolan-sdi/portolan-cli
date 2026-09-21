@@ -244,7 +244,8 @@ class ExtractionOptions:
     Attributes:
         workers: Number of parallel page requests per layer (gpio max_workers)
         retries: Number of retry attempts per failed layer
-        timeout: Per-request timeout in seconds
+        timeout: Per-request timeout in seconds, for layer discovery and for
+            the feature-page requests gpio makes (issue #898)
         resume: Whether to resume from existing extraction report
         dry_run: If True, list layers without extracting
         sort_hilbert: Whether to apply Hilbert spatial sorting
@@ -384,6 +385,11 @@ def _extract_single_layer(
         kwargs["max_workers"] = options.workers
     if options.token and "token" in sig.parameters:
         kwargs["token"] = options.token
+    # Apply the timeout to the feature-page requests too, not only to discovery.
+    # Slow layers with complex geometry time out at gpio's 60s default otherwise,
+    # and --timeout appears to do nothing (issue #898).
+    if "timeout" in sig.parameters:
+        kwargs["timeout"] = options.timeout
     # Keep the service's source CRS instead of the silent WGS84 reprojection that
     # the GeoJSON path forces (issue #802). Older gpio versions without output_crs
     # cannot preserve the CRS, so warn that the output stays WGS84.

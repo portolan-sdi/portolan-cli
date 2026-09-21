@@ -659,7 +659,7 @@ portolan extract arcgis [OPTIONS] URL [OUTPUT_DIR]
 | `--output-crs` | text | CRS for extracted GeoParquet. 'native' keeps the service's source CRS (default). Pass an EPSG code (e.g. EPSG:4326) to reproject. | `native` |
 | `--workers` | integer range (`1` and above) | Parallel page requests per layer (default: 3). | `3` |
 | `--retries` | integer range (`1` and above) | Retry attempts per failed layer (default: 3). | `3` |
-| `--timeout` | float range (`0.0` and above) | Per-request timeout in seconds (default: 60). | `60.0` |
+| `--timeout` | float range (`0.0` and above) | Per-request timeout in seconds for discovery and feature-page requests (default: 60). | `60.0` |
 | `--resume` | boolean | Resume from existing extraction-report.json (skip succeeded layers). | `False` |
 | `--dry-run` | boolean | List layers without extracting. | `False` |
 | `--json` | boolean | Output extraction report as JSON. | `False` |
