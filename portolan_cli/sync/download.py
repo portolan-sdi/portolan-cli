@@ -7,10 +7,8 @@ object storage using the obstore library. It supports:
 - Google Cloud Storage (GCS)
 - Azure Blob Storage
 
-Credential discovery follows the obstore/cloud provider conventions:
-- S3: ~/.aws/credentials, environment variables, or explicit profile
-- GCS: GOOGLE_APPLICATION_CREDENTIALS or gcloud auth
-- Azure: AZURE_STORAGE_ACCOUNT_KEY, SAS token, or Azure CLI
+Credentials come from ``portolan_cli.sync.upload._setup_store_and_kwargs``, which
+this module calls. That module documents where it reads them.
 
 Basic Usage:
     from portolan_cli.sync.download import download_file, download_directory

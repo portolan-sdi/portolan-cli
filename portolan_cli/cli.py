@@ -4135,6 +4135,17 @@ def push(
         )
         raise SystemExit(1)
 
+    # Warn when no credential source answers. The push still runs, because a
+    # plaintext endpoint accepts an unsigned upload. A dry run reports it too,
+    # because a dry run exists to show what the real push meets.
+    # `--json` carries a machine-readable envelope, so the hint stays out of it.
+    if not use_json:
+        from portolan_cli.sync.upload import check_credentials
+
+        credentials_ok, credential_hint = check_credentials(resolved_destination, resolved_profile)
+        if not credentials_ok:
+            warn(credential_hint)
+
     # Apply max_connections cap and warn about high connection count (Issue #344)
     effective_file_conc, effective_chunk_conc = _prepare_push_concurrency(
         concurrency, chunk_concurrency, max_connections, workers, collection, use_json

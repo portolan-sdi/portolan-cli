@@ -37,6 +37,11 @@ if TYPE_CHECKING:
 # a full clear.
 _MUTMUT_ENV_KEY = "MUTANT_UNDER_TEST"
 
+# botocore reads ~/.aws itself, so these point it at an empty directory. A test
+# that clears the environment must keep them, or the developer's real profiles
+# reach the code under test.
+_AWS_ISOLATION_KEYS = ("AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE")
+
 # mutmut also re-invokes Hypothesis tests through its own runner, once per
 # mutant in the same process, so class-based property tests see more than one
 # executor instance and trip HealthCheck.differing_executors during the
@@ -88,14 +93,34 @@ if _MUTMUT_ENV_KEY not in os.environ and os.environ.get("HYPOTHESIS_PROFILE") ==
 
 
 @contextmanager
+def aws_files_environ(aws_dir: Path) -> Iterator[None]:
+    """Point the AWS readers at ``aws_dir`` instead of ~/.aws.
+
+    ``_aws_shared_file`` and botocore both read these variables, so a fixture
+    that writes profiles to a temporary directory must name them here.
+    """
+    with mock.patch.dict(
+        os.environ,
+        {
+            "AWS_SHARED_CREDENTIALS_FILE": str(aws_dir / "credentials"),
+            "AWS_CONFIG_FILE": str(aws_dir / "config"),
+        },
+    ):
+        yield
+
+
+@contextmanager
 def cleared_environ(**overrides: str) -> Iterator[None]:
-    """Clear os.environ for the block, preserving mutmut's bookkeeping var.
+    """Clear os.environ for the block, preserving the harness bookkeeping vars.
 
     Drop-in replacement for ``mock.patch.dict(os.environ, {}, clear=True)`` that
-    keeps the environment sandbox-stable under mutation testing. Pass keyword
-    ``overrides`` to seed specific variables into the otherwise-empty environment.
+    keeps the environment sandbox-stable under mutation testing. It also keeps
+    the AWS isolation vars, so botocore cannot read the developer's real
+    profiles. Pass keyword ``overrides`` to seed specific variables into the
+    otherwise-empty environment.
     """
-    preserved = {k: v for k, v in os.environ.items() if k == _MUTMUT_ENV_KEY}
+    keep = (_MUTMUT_ENV_KEY, *_AWS_ISOLATION_KEYS)
+    preserved = {k: v for k, v in os.environ.items() if k in keep}
     preserved.update(overrides)
     with mock.patch.dict(os.environ, preserved, clear=True):
         yield
@@ -639,3 +664,33 @@ def build_conformant_catalog() -> Callable[..., Path]:
 def conformant_catalog(tmp_path: Path) -> Path:
     """A generated, conformant catalog at ``tmp_path/catalog``."""
     return _init_catalog(tmp_path / "catalog")
+
+
+@pytest.fixture(autouse=True)
+def isolate_aws_config(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Point botocore at an empty AWS config for every test.
+
+    ``_resolve_credential_provider`` builds a botocore session. botocore reads
+    ~/.aws itself, so patching ``Path.home`` does not hide the developer's real
+    profiles from it. Without this fixture a machine with credentials and a
+    machine without them run different tests.
+
+    The fixture also clears the provider cache, because that cache keys on the
+    profile name alone and would otherwise cross a test boundary.
+    """
+    from portolan_cli.sync.upload import _boto3_credential_provider
+
+    empty = tmp_path_factory.mktemp("aws-isolation")
+    _boto3_credential_provider.cache_clear()
+    with mock.patch.dict(
+        os.environ,
+        {
+            "AWS_CONFIG_FILE": str(empty / "config"),
+            "AWS_SHARED_CREDENTIALS_FILE": str(empty / "credentials"),
+            # botocore probes 169.254.169.254 when no profile supplies keys.
+            # The probe blocks for 2 seconds wherever that address drops the
+            # packet, once for every store the suite builds.
+            "AWS_EC2_METADATA_DISABLED": "true",
+        },
+    ):
+        yield

@@ -8,9 +8,18 @@ object storage using the obstore library. It supports:
 - Azure Blob Storage
 
 Credential discovery follows the obstore/cloud provider conventions:
-- S3: ~/.aws/credentials, environment variables, or explicit profile
+- S3: the shared AWS credentials file, environment variables, an explicit
+  profile, or a profile that sets ``credential_process`` in the AWS config
+  file. ``AWS_SHARED_CREDENTIALS_FILE`` and ``AWS_CONFIG_FILE`` name those
+  files. Without them the files are ~/.aws/credentials and ~/.aws/config
 - GCS: GOOGLE_APPLICATION_CREDENTIALS or gcloud auth
 - Azure: AZURE_STORAGE_ACCOUNT_KEY, SAS token, or Azure CLI
+
+An AWS profile can also set ``endpoint_url`` and ``region``. Both apply to the
+profile the caller names, to ``AWS_PROFILE``, or to the default profile, as
+they do for the AWS CLI. This reads the files directly, so it applies without
+the ``aws`` extra. An explicit endpoint and ``PORTOLAN_S3_ENDPOINT`` still win,
+and the upload prints the profile that supplies an endpoint.
 
 Basic Usage:
     from portolan_cli.sync.upload import upload_file, upload_directory, check_credentials
@@ -56,7 +65,9 @@ import re
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import obstore as obs
 from obstore.store import (
@@ -68,8 +79,11 @@ from obstore.store import (
     S3Store,
 )
 
-from portolan_cli.errors import InsecureS3EndpointError
+from portolan_cli.errors import InsecureS3EndpointError, ProfileCredentialsError
 from portolan_cli.output import detail, error, info, success
+
+if TYPE_CHECKING:
+    from obstore.store import S3Credential, S3CredentialProvider
 
 # Type alias for all supported object stores
 ObjectStore = S3Store | GCSStore | AzureStore | HTTPStore | LocalStore | MemoryStore
@@ -166,9 +180,11 @@ def parse_object_store_url(url: str) -> tuple[str, str]:
 def _load_aws_credentials_from_profile(
     profile: str = "default",
 ) -> tuple[str | None, str | None, str | None, str | None]:
-    """Load AWS credentials from ~/.aws/credentials file.
+    """Load AWS credentials from the shared AWS credentials file.
 
     Uses Python's built-in configparser to read credentials without requiring boto3.
+    ``AWS_SHARED_CREDENTIALS_FILE`` and ``AWS_CONFIG_FILE`` move the files away
+    from ~/.aws, as they do for boto3 and the AWS CLI.
 
     Args:
         profile: AWS profile name (default: "default")
@@ -178,8 +194,8 @@ def _load_aws_credentials_from_profile(
         Any value may be None if not found. session_token is present for
         temporary (STS) credentials (access key id starting with "ASIA").
     """
-    creds_file = Path.home() / ".aws" / "credentials"
-    config_file = Path.home() / ".aws" / "config"
+    creds_file = _aws_shared_file("AWS_SHARED_CREDENTIALS_FILE", "credentials")
+    config_file = _aws_shared_file("AWS_CONFIG_FILE", "config")
 
     access_key: str | None = None
     secret_key: str | None = None
@@ -187,7 +203,7 @@ def _load_aws_credentials_from_profile(
     region: str | None = None
 
     # Read credentials
-    if creds_file.exists():
+    if creds_file is not None and creds_file.exists():
         parser = configparser.ConfigParser()
         parser.read(creds_file)
 
@@ -202,7 +218,7 @@ def _load_aws_credentials_from_profile(
             session_token = parser["DEFAULT"].get("aws_session_token")
 
     # Read region from config
-    if config_file.exists():
+    if config_file is not None and config_file.exists():
         config = configparser.ConfigParser()
         config.read(config_file)
 
@@ -214,6 +230,85 @@ def _load_aws_credentials_from_profile(
             region = config["DEFAULT"].get("region")
 
     return access_key, secret_key, session_token, region
+
+
+def _aws_shared_file(env_var: str, name: str) -> Path | None:
+    """Return the path of a shared AWS file.
+
+    boto3 and the AWS CLI read ``AWS_CONFIG_FILE`` and
+    ``AWS_SHARED_CREDENTIALS_FILE`` before they use ~/.aws.
+
+    Args:
+        env_var: The environment variable that names the file.
+        name: The file name under ~/.aws.
+
+    Returns:
+        The path, or None when the environment names no file and no home
+        directory.
+    """
+    configured = os.environ.get(env_var)
+    if configured:
+        return Path(configured).expanduser()
+    try:
+        return Path.home() / ".aws" / name
+    except RuntimeError:
+        # Path.home() raises when the environment names no home directory.
+        return None
+
+
+def _read_profile_setting(profile: str, key: str) -> str | None:
+    """Read one key of a profile from the AWS config file.
+
+    Args:
+        profile: AWS profile name.
+        key: The key to read.
+
+    Returns:
+        The value, or None when the profile does not set the key.
+    """
+    config_file = _aws_shared_file("AWS_CONFIG_FILE", "config")
+    if config_file is None or not config_file.exists():
+        return None
+
+    config = configparser.ConfigParser()
+    config.read(config_file)
+
+    # Profile sections in config are named "profile <name>" except for default
+    profile_section = profile if profile == "default" else f"profile {profile}"
+    if profile_section in config.sections():
+        return config[profile_section].get(key)
+    if profile == "default" and "DEFAULT" in config:
+        return config["DEFAULT"].get(key)
+    return None
+
+
+def _effective_profile(profile: str | None) -> str:
+    """Return the profile the AWS tools read when the caller names none.
+
+    boto3 reads ``AWS_PROFILE`` when no code names a profile. An explicit
+    profile, including "default", stays higher.
+
+    Args:
+        profile: AWS profile name, or None when the caller named none.
+
+    Returns:
+        The profile name to read settings from.
+    """
+    return profile or os.environ.get("AWS_PROFILE") or "default"
+
+
+def _read_profile_endpoint_url(profile: str) -> str | None:
+    """Read the ``endpoint_url`` a profile sets in the AWS config file.
+
+    The AWS CLI and boto3 read this key to address an S3-compatible service.
+
+    Args:
+        profile: AWS profile name.
+
+    Returns:
+        The endpoint URL, or None when the profile sets no endpoint.
+    """
+    return _read_profile_setting(profile, "endpoint_url")
 
 
 def _try_infer_region_from_bucket(bucket: str) -> str | None:
@@ -259,10 +354,14 @@ def _check_s3_credentials(profile: str | None = None) -> tuple[bool, str]:
     Returns:
         Tuple of (credentials_found, hint_message)
     """
-    # If profile specified, check credentials file
-    if profile:
+    # If a profile supplies the credentials, check the file, then
+    # credential_process. `_should_load_profile` decides that, so the check
+    # agrees with the upload: environment keys beat the default profile.
+    if profile and _should_load_profile(profile):
         access_key, secret_key, _, _ = _load_aws_credentials_from_profile(profile)
         if access_key and secret_key:
+            return True, ""
+        if _resolve_credential_provider(profile) is not None:
             return True, ""
         hints = []
         hints.append(f"AWS profile '{profile}' not found or incomplete.")
@@ -271,6 +370,11 @@ def _check_s3_credentials(profile: str | None = None) -> tuple[bool, str]:
         hints.append(f"  [{profile}]")
         hints.append("  aws_access_key_id = YOUR_ACCESS_KEY")
         hints.append("  aws_secret_access_key = YOUR_SECRET_KEY")
+        hints.append("")
+        hints.append("Or let botocore resolve the profile:")
+        hints.append("  pip install 'portolan-cli[aws]'")
+        hints.append("  Then credential_process, an assumed role, a web")
+        hints.append("  identity token, and IAM Identity Center all work.")
         hints.append("")
         hints.append("Or use environment variables instead:")
         hints.append("  export AWS_ACCESS_KEY_ID=your_access_key")
@@ -284,9 +388,13 @@ def _check_s3_credentials(profile: str | None = None) -> tuple[bool, str]:
     if access_key and secret_key:
         return True, ""
 
-    # Fall back to default profile in ~/.aws/credentials
-    access_key, secret_key, _, _ = _load_aws_credentials_from_profile("default")
+    # Fall back to the profile the AWS tools read
+    access_key, secret_key, _, _ = _load_aws_credentials_from_profile(_effective_profile(None))
     if access_key and secret_key:
+        return True, ""
+
+    # Then to anything botocore resolves from the default profile
+    if _resolve_credential_provider(None) is not None:
         return True, ""
 
     hints = []
@@ -299,6 +407,9 @@ def _check_s3_credentials(profile: str | None = None) -> tuple[bool, str]:
     hints.append("")
     hints.append("Option 2: Use --profile flag with AWS credentials file")
     hints.append("  portolan sync --profile myprofile")
+    hints.append("")
+    hints.append("Option 2b: Install the aws extra to use any AWS profile type")
+    hints.append("  pip install 'portolan-cli[aws]'")
     hints.append("")
     hints.append("Option 3: Configure AWS CLI")
     hints.append("  aws configure")
@@ -423,16 +534,43 @@ def check_credentials(destination: str, profile: str | None = None) -> tuple[boo
 
 
 def _resolve_s3_endpoint_settings(
-    s3_endpoint: str | None, s3_use_ssl: bool | None
+    s3_endpoint: str | None, s3_use_ssl: bool | None, profile: str | None = None
 ) -> tuple[str | None, bool]:
-    """Resolve explicit or environment-only S3 endpoint settings."""
+    """Resolve S3 endpoint settings from the argument, the environment, or the profile.
+
+    The order is the one the rest of the CLI uses: an explicit argument wins,
+    then the environment, then ``endpoint_url`` in the AWS config file.
+
+    Args:
+        s3_endpoint: An explicit endpoint, or None.
+        s3_use_ssl: An explicit TLS setting, or None.
+        profile: AWS profile name, or None when the caller named none.
+
+    Returns:
+        The resolved endpoint and TLS setting.
+    """
     from portolan_cli.config import resolve_s3_endpoint_settings
 
     environment_settings = resolve_s3_endpoint_settings()
-    return (
-        s3_endpoint if s3_endpoint is not None else environment_settings.endpoint,
-        s3_use_ssl if s3_use_ssl is not None else environment_settings.use_ssl,
-    )
+    endpoint = s3_endpoint if s3_endpoint is not None else environment_settings.endpoint
+    use_ssl = s3_use_ssl if s3_use_ssl is not None else environment_settings.use_ssl
+    if endpoint is not None:
+        return endpoint, use_ssl
+
+    effective_profile = _effective_profile(profile)
+    profile_endpoint = _read_profile_endpoint_url(effective_profile)
+    if profile_endpoint is None:
+        return None, use_ssl
+
+    # The profile applies even when the caller names none, as it does for the
+    # AWS CLI. Name the source, so a redirected upload is never silent.
+    detail(f"Endpoint {profile_endpoint} from AWS profile '{effective_profile}'")
+
+    # The profile writes a full URL, so its scheme carries the TLS setting.
+    # An explicit argument or PORTOLAN_S3_USE_SSL still wins.
+    if s3_use_ssl is None and os.environ.get("PORTOLAN_S3_USE_SSL") is None:
+        use_ssl = not profile_endpoint.startswith("http://")
+    return profile_endpoint, use_ssl
 
 
 def _should_load_profile(profile: str) -> bool:
@@ -456,7 +594,122 @@ def _resolve_s3_credentials(profile: str | None) -> S3Credentials:
     session_token = os.environ.get("AWS_SESSION_TOKEN")
     if access_key and secret_key:
         return access_key, secret_key, session_token, None
-    return _load_aws_credentials_from_profile("default")
+    return _load_aws_credentials_from_profile(_effective_profile(profile))
+
+
+class _GuardedCredentialProvider:
+    """Report a credential failure of a later call with its profile.
+
+    obstore calls the provider again when the credentials expire. botocore
+    runs ``credential_process`` again at that point, and refreshes an assumed
+    role or an SSO token. A transfer that outlives the first credentials can
+    meet a failure that the build never saw. Without this the raw botocore
+    error reaches the user in the middle of an upload.
+
+    Args:
+        provider: The provider to call.
+        profile: The profile that supplies the credentials.
+    """
+
+    def __init__(self, provider: S3CredentialProvider, profile: str) -> None:
+        self._provider = provider
+        self._profile = profile
+        config = getattr(provider, "config", None)
+        if config is not None:
+            # obstore reads the region of the session from this attribute.
+            self.config = config
+
+    def __call__(self) -> S3Credential:
+        """Fetch the credentials, or report the profile that fails."""
+        try:
+            return self._provider()  # type: ignore[return-value]
+        except ProfileCredentialsError:
+            raise
+        except Exception as error:
+            raise ProfileCredentialsError(self._profile, str(error)) from error
+
+
+@lru_cache(maxsize=8)
+def _boto3_credential_provider(profile: str | None) -> S3CredentialProvider | None:
+    """Build the provider that botocore backs, once for each profile.
+
+    botocore reads the AWS files, runs ``credential_process``, and probes the
+    instance metadata service. `push_async` sets up a store for each
+    collection, and again for the root files, so a push of N collections asks
+    N+1 times. A `credential_process` that prompts a password manager would
+    prompt that many times. obstore refreshes the credentials through the
+    provider, so a cached provider does not hold an expired key pair.
+
+    `lru_cache` does not cache an exception, so a profile that fails raises
+    every time.
+
+    ponytail: the key is the profile name. A process that changes an AWS
+    environment variable between calls keeps the first provider. Key on the
+    file paths too if that ever matters.
+
+    Args:
+        profile: AWS profile name, or None when the caller named none.
+
+    Returns:
+        A provider, or None when the profile supplies no credentials.
+
+    Raises:
+        ProfileCredentialsError: The profile names a credential source that
+            fails.
+    """
+    try:
+        import boto3  # type: ignore[import-untyped]
+        from botocore.exceptions import ProfileNotFound  # type: ignore[import-untyped]
+        from obstore.auth.boto3 import Boto3CredentialProvider
+    except ImportError:
+        return None
+
+    try:
+        built = Boto3CredentialProvider(boto3.Session(profile_name=profile))
+    except (ProfileNotFound, ValueError):
+        # A missing profile, or a profile that resolves to no credentials.
+        # obstore raises ValueError for the second case.
+        return None
+    except Exception as error:
+        # A credential_process that fails, an assume-role that is refused, or
+        # an expired SSO token. The store must not go out unauthenticated.
+        raise ProfileCredentialsError(_effective_profile(profile), str(error)) from error
+
+    return _GuardedCredentialProvider(built, _effective_profile(profile))
+
+
+def _resolve_credential_provider(profile: str | None) -> S3CredentialProvider | None:
+    """Build a credential provider that botocore backs, through obstore.
+
+    obstore's ``Boto3CredentialProvider`` wraps a botocore session, so every
+    mechanism botocore reads from a profile works here. That covers
+    ``credential_process``, an assumed role, a web identity token, and IAM
+    Identity Center. obstore calls the provider again when the credentials
+    expire, so a long transfer refreshes them.
+
+    A static key pair short-circuits this, because that path needs no session.
+    boto3 is optional, so an environment without it keeps the older behavior.
+
+    Args:
+        profile: AWS profile name, or None when the caller named none.
+
+    Returns:
+        A provider, or None when no profile supplies credentials.
+
+    Raises:
+        ProfileCredentialsError: The profile names a credential source that
+            fails. A failed ``credential_process`` and a refused assume-role
+            both stop here, because the store must not go out with no
+            credentials.
+    """
+    if profile is not None and not _should_load_profile(profile):
+        return None
+
+    access_key, secret_key, _, _ = _load_aws_credentials_from_profile(_effective_profile(profile))
+    if access_key and secret_key:
+        return None
+
+    return _boto3_credential_provider(profile)
 
 
 def _resolve_s3_region(
@@ -503,18 +756,27 @@ def _create_s3_store(
     s3_use_ssl: bool | None,
 ) -> ObjectStore:
     """Create an S3 store with credentials and endpoint settings."""
-    endpoint, use_ssl = _resolve_s3_endpoint_settings(s3_endpoint, s3_use_ssl)
+    endpoint, use_ssl = _resolve_s3_endpoint_settings(s3_endpoint, s3_use_ssl, profile)
     bucket = bucket_url.replace("s3://", "").split("/")[0]
     access_key, secret_key, session_token, profile_region = _resolve_s3_credentials(profile)
+    credential_provider = None
+    if not (access_key and secret_key):
+        credential_provider = _resolve_credential_provider(profile)
+    if profile_region is None:
+        # Environment keys skip the profile credentials, but the endpoint still
+        # comes from the profile. Read the region the profile signs with.
+        profile_region = _read_profile_setting(_effective_profile(profile), "region")
     region = _resolve_s3_region(s3_region, profile_region, bucket)
 
-    has_credentials = any((access_key, secret_key, session_token))
+    has_credentials = any((access_key, secret_key, session_token, credential_provider))
     if endpoint and not use_ssl and has_credentials:
         raise InsecureS3EndpointError(_normalize_s3_endpoint(endpoint))
 
-    store_kwargs: dict[str, str | bool] = {}
+    store_kwargs: dict[str, Any] = {}
     if region:
         store_kwargs["region"] = region
+    if credential_provider is not None:
+        store_kwargs["credential_provider"] = credential_provider
     if access_key and secret_key:
         store_kwargs["access_key_id"] = access_key
         store_kwargs["secret_access_key"] = secret_key
@@ -526,8 +788,8 @@ def _create_s3_store(
 
     if endpoint and not use_ssl:
         store_kwargs["skip_signature"] = True
-        return S3Store(bucket, client_options={"allow_http": True}, **store_kwargs)  # type: ignore[arg-type]
-    return S3Store(bucket, **store_kwargs)  # type: ignore[arg-type]
+        return S3Store(bucket, client_options={"allow_http": True}, **store_kwargs)
+    return S3Store(bucket, **store_kwargs)
 
 
 def _setup_store_and_kwargs(
@@ -542,7 +804,8 @@ def _setup_store_and_kwargs(
 
     Args:
         bucket_url: The object store bucket URL (e.g., s3://bucket)
-        profile: AWS profile name (loads credentials from ~/.aws/credentials)
+        profile: AWS profile name (loads credentials from the shared AWS
+            credentials file)
         chunk_concurrency: Max concurrent chunks per file
         s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")
         s3_region: S3 region (auto-detected from env var or profile config)
@@ -552,9 +815,9 @@ def _setup_store_and_kwargs(
         Tuple of (store, kwargs) where kwargs are passed to obs.put
 
     Note: For S3, credentials are loaded from (in order):
-    1. --profile flag (reads ~/.aws/credentials)
+    1. --profile flag (reads the shared AWS credentials file)
     2. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-    3. Default profile in ~/.aws/credentials (automatic fallback)
+    3. Default profile in the shared AWS credentials file (automatic fallback)
     """
     if bucket_url.startswith("s3://"):
         store = _create_s3_store(bucket_url, profile, s3_endpoint, s3_region, s3_use_ssl)

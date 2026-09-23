@@ -6,6 +6,7 @@ published with the catalog.
 
 from __future__ import annotations
 
+import os
 from unittest.mock import patch
 
 import pytest
@@ -60,6 +61,9 @@ def test_object_store_uses_environment_endpoint() -> None:
             {
                 "PORTOLAN_S3_ENDPOINT": "http://minio.example.test:9000",
                 "PORTOLAN_S3_USE_SSL": "false",
+                # botocore reads ~/.aws itself; keep it away from real profiles.
+                "AWS_CONFIG_FILE": os.environ.get("AWS_CONFIG_FILE", ""),
+                "AWS_SHARED_CREDENTIALS_FILE": os.environ.get("AWS_SHARED_CREDENTIALS_FILE", ""),
             },
             clear=True,
         ),
