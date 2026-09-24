@@ -576,6 +576,22 @@ class InsecureS3EndpointError(ConfigError):
         )
 
 
+class ProfileCredentialsError(ConfigError):
+    """Raised when an AWS profile fails to produce credentials.
+
+    Error code: PRTLN-CFG004
+    """
+
+    code = "PRTLN-CFG004"
+
+    def __init__(self, profile: str, reason: str) -> None:
+        super().__init__(
+            f"AWS profile '{profile}' failed to supply credentials: {reason}",
+            profile=profile,
+            reason=reason,
+        )
+
+
 # Extract Errors (PRTLN-EXT*)
 class ArcGISAuthError(PortolanError):
     """Raised when ArcGIS token resolution or authentication fails.

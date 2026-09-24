@@ -288,8 +288,12 @@ def resolve_aws_profile(
     profile: str | None,
     catalog_path: Path | None,
     collection: str | None = None,
-) -> str:
-    """Resolve AWS profile with precedence: CLI > env var > config > default.
+) -> str | None:
+    """Resolve the AWS profile: CLI, then env var, then config.
+
+    A Portolan setting wins, because a user writes it for this tool. None means
+    that nothing here names a profile. The sync layer then reads `AWS_PROFILE`,
+    and falls back to the `default` profile, as boto3 and the AWS CLI do.
 
     Args:
         profile: CLI-provided profile value (None if not specified).
@@ -297,18 +301,17 @@ def resolve_aws_profile(
         collection: Optional collection name for collection-level config.
 
     Returns:
-        Resolved profile name (defaults to "default" if nothing configured).
+        The profile name, or None when nothing here names one.
     """
     from portolan_cli.config import get_setting
 
-    resolved = get_setting(
+    return get_setting(
         "aws_profile",
         cli_value=profile,
         catalog_path=catalog_path,
         collection=collection,
         collection_path=_collection_path(catalog_path, collection),
     )
-    return resolved if resolved is not None else "default"
 
 
 def resolve_aws_region(
@@ -3835,7 +3838,7 @@ def _resolve_push_settings(
     collection: str | None,
     use_json: bool,
     command: str,
-) -> tuple[str | None, str, str | None]:
+) -> tuple[str | None, str | None, str | None]:
     """Resolve remote/profile/region for push/sync commands.
 
     Args:
@@ -4134,6 +4137,17 @@ def push(
             use_json=use_json,
         )
         raise SystemExit(1)
+
+    # Warn when no credential source answers. The push still runs, because a
+    # plaintext endpoint accepts an unsigned upload. A dry run reports it too,
+    # because a dry run exists to show what the real push meets.
+    # `--json` carries a machine-readable envelope, so the hint stays out of it.
+    if not use_json:
+        from portolan_cli.sync.upload import check_credentials
+
+        credentials_ok, credential_hint = check_credentials(resolved_destination, resolved_profile)
+        if not credentials_ok:
+            warn(credential_hint)
 
     # Apply max_connections cap and warn about high connection count (Issue #344)
     effective_file_conc, effective_chunk_conc = _prepare_push_concurrency(

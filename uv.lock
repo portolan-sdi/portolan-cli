@@ -4562,6 +4562,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+aws = [
+    { name = "boto3" },
+    { name = "botocore" },
+]
 dev = [
     { name = "codespell" },
     { name = "commitizen" },
@@ -4614,7 +4618,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "antimeridian", specifier = ">=0.3.11" },
+    { name = "boto3", marker = "extra == 'aws'", specifier = ">=1.35.0" },
     { name = "boto3", marker = "extra == 'e2e'", specifier = ">=1.35.0" },
+    { name = "botocore", marker = "extra == 'aws'", specifier = ">=1.35.0" },
     { name = "click", specifier = ">=8.4,<8.6" },
     { name = "codespell", marker = "extra == 'dev'", specifier = ">=2.4.1" },
     { name = "commitizen", marker = "extra == 'dev'", specifier = ">=4.13.4" },
@@ -4669,7 +4675,7 @@ requires-dist = [
     { name = "vulture", marker = "extra == 'dev'", specifier = ">=2.14" },
     { name = "zensical", marker = "extra == 'docs'", specifier = "==0.0.62" },
 ]
-provides-extras = ["iceberg", "e2e", "dev", "pmtiles", "thumbnails", "docs"]
+provides-extras = ["iceberg", "e2e", "aws", "dev", "pmtiles", "thumbnails", "docs"]
 
 [package.metadata.requires-dev]
 dev = [

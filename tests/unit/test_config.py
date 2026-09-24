@@ -1283,7 +1283,7 @@ class TestResolvePushSettings:
             )
 
         assert destination == "s3://cli-bucket/"
-        assert profile == "default"  # nothing configured → default
+        assert profile is None  # nothing configured → the AWS tools choose
         assert region is None
 
     @pytest.mark.unit
