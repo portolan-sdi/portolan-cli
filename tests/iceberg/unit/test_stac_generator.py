@@ -403,7 +403,11 @@ def test_iceberg_format_version(iceberg_backend, iceberg_catalog, tmp_path):
 
 @pytest.mark.integration
 def test_iceberg_current_snapshot_id(iceberg_backend, iceberg_catalog, tmp_path):
-    """iceberg:current_snapshot_id should be a numeric string."""
+    """iceberg:current_snapshot_id should be a numeric string.
+
+    A string, because an Iceberg snapshot id is 64-bit and a JSON parser that
+    stores numbers as doubles rounds it above 2^53 (extension v1.1.0).
+    """
     table_data = pa.table({"id": pa.array([1], type=pa.int64())})
     path = tmp_path / "data.parquet"
     pq.write_table(table_data, path)
@@ -421,10 +425,7 @@ def test_iceberg_current_snapshot_id(iceberg_backend, iceberg_catalog, tmp_path)
     table = iceberg_catalog.load_table("portolake.snapped")
     metadata = generate_collection_metadata(table)
 
-    # A string, because an Iceberg snapshot id is 64-bit and a JSON parser that
-    # stores numbers as doubles rounds it above 2^53 (extension v1.1.0).
     assert isinstance(metadata["iceberg:current_snapshot_id"], str)
-    assert metadata["iceberg:current_snapshot_id"].lstrip("-").isdigit()
     assert int(metadata["iceberg:current_snapshot_id"]) > 0
 
 

@@ -332,6 +332,24 @@ def test_on_post_add_no_duplicate_extensions(iceberg_backend, parquet_file, cata
     assert len(collection.stac_extensions) == len(set(collection.stac_extensions))
 
 
+def _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection):
+    """Publish one collection and run the post-add hook over it.
+
+    Every assertion below needs the same three steps, so they live here rather
+    than in each test (the duplicate-code gate reads tests/ too).
+    """
+    iceberg_backend.publish(
+        collection="boundaries",
+        assets={"item1/data.parquet": str(parquet_file)},
+        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
+        breaking=False,
+        message="test",
+    )
+    context = _make_context(catalog_root, item_dir, collection, remote=None)
+    with patch("portolan_cli.backends.iceberg.backend.upload_file", create=True):
+        iceberg_backend.on_post_add(context)
+
+
 @pytest.mark.integration
 def test_on_post_add_leaves_the_data_asset_alone(iceberg_backend, parquet_file, catalog_with_stac):
     """An asset already keyed "data" survives (issue #883).
@@ -349,18 +367,7 @@ def test_on_post_add_leaves_the_data_asset_alone(iceberg_backend, parquet_file, 
         roles=["data"],
     )
 
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
-        breaking=False,
-        message="test",
-    )
-
-    context = _make_context(catalog_root, item_dir, collection, remote=None)
-
-    with patch("portolan_cli.backends.iceberg.backend.upload_file", create=True):
-        iceberg_backend.on_post_add(context)
+    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
 
     assert collection.assets["data"].href == "./roads.parquet"
     assert collection.assets["data"].media_type == "application/vnd.apache.parquet"
@@ -377,18 +384,7 @@ def test_on_post_add_adds_no_iceberg_asset(iceberg_backend, parquet_file, catalo
     """
     catalog_root, item_dir, collection = catalog_with_stac
 
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
-        breaking=False,
-        message="test",
-    )
-
-    context = _make_context(catalog_root, item_dir, collection, remote=None)
-
-    with patch("portolan_cli.backends.iceberg.backend.upload_file", create=True):
-        iceberg_backend.on_post_add(context)
+    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
 
     assert "iceberg" not in collection.assets
     assert collection.extra_fields["iceberg:catalog_type"] == "sql"
