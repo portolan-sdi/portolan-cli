@@ -367,17 +367,29 @@ class IcebergBackend:
                 if ext_url not in collection.stac_extensions:
                     collection.stac_extensions.append(ext_url)
 
-            # No asset is written here (issue #883). This backend always uses a
-            # managed catalog, and the STAC Iceberg extension resolves a managed
-            # table through iceberg:catalog_uri, iceberg:table_id and
-            # iceberg:metadata_location rather than through an asset. Only a
-            # static catalog carries a fetchable metadata.json asset.
+            # The table's current metadata.json, under its own key (issue #883).
+            # The spec asks only that a reader open the table from this file
+            # without a catalog service, which a warehouse on object storage
+            # satisfies whether or not a server also manages the table.
             #
-            # Earlier revisions assigned assets["data"] to table.location(),
-            # which is a directory and so resolves to no document. A generated
-            # catalog keys its GeoParquet asset by filename, so that assignment
-            # added a second asset carrying the same "data" role; a collection
-            # that does use the "data" key lost it.
+            # The role is "metadata" alone, because the GeoParquet file keeps
+            # the data role. Earlier revisions assigned assets["data"] to
+            # table.location(), which is a directory and so resolves to no
+            # document. A generated catalog keys its GeoParquet asset by
+            # filename, so that assignment added a second asset carrying the
+            # same "data" role; a collection that does use the "data" key lost
+            # it. assets["data"] is not touched here.
+            metadata_location = stac_metadata.get("iceberg:metadata_location")
+            if metadata_location:
+                collection.assets["iceberg"] = pystac.Asset(
+                    href=str(metadata_location),
+                    media_type="application/vnd.apache.iceberg+json",
+                    roles=["metadata"],
+                    description=(
+                        "Apache Iceberg table metadata \u2014 read with DuckDB "
+                        "iceberg_scan() or PyIceberg StaticTable"
+                    ),
+                )
 
             collection.normalize_hrefs(href_root(collection_dir))
             collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)

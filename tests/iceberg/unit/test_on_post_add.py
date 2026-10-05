@@ -375,21 +375,26 @@ def test_on_post_add_leaves_the_data_asset_alone(iceberg_backend, parquet_file, 
 
 
 @pytest.mark.integration
-def test_on_post_add_adds_no_iceberg_asset(iceberg_backend, parquet_file, catalog_with_stac):
-    """A managed catalog carries no metadata-file asset.
+def test_on_post_add_adds_the_iceberg_metadata_asset(
+    iceberg_backend, parquet_file, catalog_with_stac
+):
+    """The table's metadata.json becomes its own asset, with the metadata role.
 
-    The extension resolves the table through iceberg:catalog_uri and
-    iceberg:table_id for a managed catalog, which the lakehouse backend always
-    is. Only a static catalog carries a fetchable metadata.json asset.
+    A reader opens the table from this file with no catalog service, which is
+    what the convention asks for. The role is "metadata" alone, because the
+    GeoParquet file keeps the data role.
     """
     catalog_root, item_dir, collection = catalog_with_stac
 
     _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
 
-    assert "iceberg" not in collection.assets
+    asset = collection.assets["iceberg"]
+    assert asset.href.endswith(".metadata.json")
+    assert asset.media_type == "application/vnd.apache.iceberg+json"
+    assert asset.roles == ["metadata"]
     assert collection.extra_fields["iceberg:catalog_type"] == "sql"
     assert collection.extra_fields["iceberg:table_id"] == "portolake.boundaries"
-    assert collection.extra_fields["iceberg:metadata_location"].endswith(".metadata.json")
+    assert collection.extra_fields["iceberg:metadata_location"] == asset.href
 
 
 @pytest.mark.integration
