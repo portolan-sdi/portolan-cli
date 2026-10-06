@@ -218,7 +218,7 @@ def test_docs_ci_uses_anonymous_http_minio() -> None:
     docs_job = workflow.partition("\n  docs:\n")[2].partition("\n  build:\n")[0]
 
     assert docs_job
-    assert "mc anonymous set public local/portolan-docs" in docs_job
+    assert "put-bucket-policy --bucket portolan-docs" in docs_job
     assert "AWS_ACCESS_KEY_ID" not in docs_job
     assert "AWS_SECRET_ACCESS_KEY" not in docs_job
     assert 'PORTOLAN_S3_USE_SSL: "false"' in docs_job

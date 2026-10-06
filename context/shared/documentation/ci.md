@@ -119,7 +119,7 @@ non-deterministic in CI — drift is still caught by the non-mutating
 
 - Python versions: 3.11, 3.12, 3.13 (Ubuntu only — Docker on Linux)
 - Runs only when iceberg-related paths change (or on push to `main`)
-- Spins up `docker-compose` (REST Iceberg catalog + MinIO), runs `-m "e2e and not e2e_slow"` with a 120s per-test timeout
+- Spins up `docker-compose` (REST Iceberg catalog + RustFS, an S3 server that keeps the service name `minio`), runs `-m "e2e and not e2e_slow"` with a 120s per-test timeout
 - Dumps Docker logs on failure and always tears down
 
 ---
@@ -214,7 +214,7 @@ Why this matters: AI-generated tests can be tautological — they may pass but n
 #### `iceberg-e2e-full` — Iceberg E2E Tests (full suite)
 
 - Python 3.11 on Ubuntu
-- Spins up `docker-compose` (REST Iceberg catalog + MinIO), runs `-m e2e` (includes `e2e_slow`: concurrency stress and large datasets)
+- Spins up `docker-compose` (REST Iceberg catalog + RustFS, an S3 server that keeps the service name `minio`), runs `-m e2e` (includes `e2e_slow`: concurrency stress and large datasets)
 - 120s per-test timeout; Docker logs on failure; always tears down
 
 ---

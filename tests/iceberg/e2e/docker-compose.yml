@@ -15,33 +15,44 @@ services:
       minio-init:
         condition: service_completed_successfully
 
+  # RustFS, not MinIO. MinIO closed its community distribution in September 2026.
+  # Neither Docker Hub nor quay.io serves its images to an anonymous client, so
+  # the jobs that start this file could not pull them. See #919.
+  #
+  # RustFS serves the same S3 API on the same port. It applies a bucket policy,
+  # refuses an anonymous read of a private bucket, and answers
+  # /minio/health/live, so the CI wait loops need no change. The service keeps
+  # the name `minio`, because the REST catalog, the test fixtures, and the
+  # documentation job address it by that host name.
   minio:
-    # Docker Hub stopped serving the MinIO images in September 2026.
-    # quay.io is the registry MinIO publishes to. Pin the tag, because
-    # `latest` makes a registry change break every branch at once.
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: rustfs/rustfs:1.0.1
     ports:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    command: server /data --console-address ":9001"
+      RUSTFS_ACCESS_KEY: minioadmin
+      RUSTFS_SECRET_KEY: minioadmin
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: ":9000"
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/minio/health/live"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
+  # RustFS ships no client. The AWS CLI creates the buckets over the S3 API.
   minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: amazon/aws-cli:2.31.19
     depends_on:
       minio:
         condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_DEFAULT_REGION: us-east-1
     entrypoint: >
       /bin/sh -c "
-      mc alias set myminio http://minio:9000 minioadmin minioadmin;
-      mc mb myminio/warehouse || true;
-      mc mb myminio/stac-metadata || true;
+      aws --endpoint-url http://minio:9000 s3api create-bucket --bucket warehouse || true;
+      aws --endpoint-url http://minio:9000 s3api create-bucket --bucket stac-metadata || true;
       exit 0;
       "

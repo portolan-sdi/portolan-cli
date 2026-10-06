@@ -379,11 +379,16 @@ jobs:
       - name: Build documentation
         run: uv run zensical build --strict --clean
 
+      # The example pushes and reads with no credentials. The bucket policy
+      # grants anonymous read and write on portolan-docs only.
       - name: Start MinIO for documentation example
         run: |
           docker compose -f tests/iceberg/e2e/docker-compose.yml up -d minio
           timeout 60 bash -c 'until curl -sf http://localhost:9000/minio/health/live; do sleep 2; done'
-          docker compose -f tests/iceberg/e2e/docker-compose.yml run --rm --entrypoint /bin/sh minio-init -c 'mc alias set local http://minio:9000 minioadmin minioadmin; mc mb local/portolan-docs || true; mc anonymous set public local/portolan-docs'
+          docker compose -f tests/iceberg/e2e/docker-compose.yml run --rm --no-deps \
+            -v "$PWD/tests/docs/portolan-docs-bucket-policy.json:/policy.json:ro" \
+            --entrypoint /bin/sh minio-init -c \
+            'aws --endpoint-url http://minio:9000 s3api create-bucket --bucket portolan-docs || true; aws --endpoint-url http://minio:9000 s3api put-bucket-policy --bucket portolan-docs --policy file:///policy.json'
 
       - name: Test documentation examples
         env:
