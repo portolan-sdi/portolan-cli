@@ -1,6 +1,6 @@
 # MinIO withdrew its community images, so the e2e stack cannot pull them
 
-**Status:** open. `Documentation Build` and `Iceberg E2E Tests` fail on every pull request.
+**Status:** resolved by [#922](https://github.com/portolan-sdi/portolan-cli/pull/922), which puts RustFS in the e2e stack. The entry stays, because the reason the images cannot be pulled does not change and the next person to read the compose file will ask.
 **Tracking issue:** [#919](https://github.com/portolan-sdi/portolan-cli/issues/919). An earlier round is [#874](https://github.com/portolan-sdi/portolan-cli/issues/874), closed on [#877](https://github.com/portolan-sdi/portolan-cli/pull/877).
 **Affected files:** `tests/iceberg/e2e/docker-compose.yml`, and the `docs` job in `.github/workflows/ci.yml` that starts the same file.
 **Found by:** the Iceberg alignment work, when every branch failed the same two jobs.
@@ -97,9 +97,16 @@ Rebuilds of MinIO itself stay pullable, `bitnamilegacy/minio` with pinnable tags
 and `chainguard/minio` on `latest` only. Both track an archived upstream, so
 neither receives a fix again.
 
-## Workaround until it is fixed
+## The replacement
 
-None for CI. Locally, run the Iceberg tests that need no Docker:
+[#922](https://github.com/portolan-sdi/portolan-cli/pull/922) replaces MinIO with
+RustFS in `tests/iceberg/e2e/docker-compose.yml` and the documentation job.
+`Iceberg E2E Tests` and `Documentation Build` run their tests again.
+
+The service keeps the name `minio`, because the REST catalog, the fixtures and
+the documentation job address it by that host name.
+
+To run the Iceberg tests without Docker at all:
 
 ```bash
 uv run pytest tests/iceberg/ -m "not e2e and not e2e_slow"
