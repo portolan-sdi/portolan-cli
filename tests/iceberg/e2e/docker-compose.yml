@@ -1,47 +1,59 @@
+# Each image names its tag and the digest that the tag resolved to. A tag that
+# is re-pushed or withdrawn then fails at the pull and does not change the stack.
+# Dependabot proposes each new digest. See .github/dependabot.yml.
 services:
   rest-catalog:
-    image: apache/iceberg-rest-fixture:1.10.1
+    image: apache/iceberg-rest-fixture:1.10.1@sha256:f7d679d30ac9c640bdeb2c015dff533cd3c8f1c7d491ebcb5d436f9a42db1d6f
     ports:
       - "8181:8181"
     environment:
       CATALOG_WAREHOUSE: s3://warehouse/
       CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
-      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_ENDPOINT: http://rustfs:9000
       CATALOG_S3_PATH__STYLE__ACCESS: "true"
-      AWS_ACCESS_KEY_ID: minioadmin
-      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_ACCESS_KEY_ID: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: rustfsadmin
       AWS_REGION: us-east-1
     depends_on:
-      minio-init:
+      rustfs-init:
         condition: service_completed_successfully
 
-  minio:
-    # Docker Hub stopped serving the MinIO images in September 2026.
-    # quay.io is the registry MinIO publishes to. Pin the tag, because
-    # `latest` makes a registry change break every branch at once.
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+  # RustFS is the S3-compatible server for the e2e stack and the documentation
+  # job. It replaced MinIO, which closed its community distribution in
+  # September 2026 (#919). RustFS applies a bucket policy and refuses an
+  # anonymous read of a private bucket.
+  rustfs:
+    image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
     ports:
       - "9000:9000"
-      - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    command: server /data --console-address ":9001"
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: rustfsadmin
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: ":9000"
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/health/live"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
-  minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+  # RustFS ships no client. The AWS CLI creates the buckets over the S3 API.
+  # A bucket that exists is kept. Any other failure, such as a refused
+  # connection or a wrong key, stops this service, so the REST catalog does not
+  # start against a server with no buckets.
+  rustfs-init:
+    image: amazon/aws-cli:2.37.5@sha256:fb7ccfc7b4e3a05017e6c9ded4ba959b99af622130e211fb976c68c2f4d3f224
     depends_on:
-      minio:
+      rustfs:
         condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: rustfsadmin
+      AWS_DEFAULT_REGION: us-east-1
     entrypoint: >
-      /bin/sh -c "
-      mc alias set myminio http://minio:9000 minioadmin minioadmin;
-      mc mb myminio/warehouse || true;
-      mc mb myminio/stac-metadata || true;
-      exit 0;
+      /bin/sh -ec "
+      for bucket in warehouse stac-metadata; do
+      aws --endpoint-url http://rustfs:9000 s3api head-bucket --bucket $$bucket ||
+      aws --endpoint-url http://rustfs:9000 s3api create-bucket --bucket $$bucket;
+      done
       "
