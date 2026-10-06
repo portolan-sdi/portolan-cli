@@ -109,7 +109,7 @@ thumbnails = [
 docs = [
     # Pinned exactly: zensical is alpha with a compiled core, so a floor
     # constraint is not a constraint. Dependabot offers reviewable bumps.
-    "zensical==0.0.62",
+    "zensical==0.0.66",
     "mkdocstrings-python>=1.0.0", # pulls mkdocstrings itself as its own dependency
     "pymdown-extensions>=11.0", # zensical requires >=11.0; fixes filename=None in highlight
 ]
