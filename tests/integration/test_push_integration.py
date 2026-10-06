@@ -1886,8 +1886,9 @@ class TestBrokenProfileCli:
         ],
         ids=["push-all", "push-one", "push-one-json", "push-all-json", "sync"],
     )
+    @pytest.mark.usefixtures("broken_profile_environ")
     def test_failing_credential_process_exits_cleanly(
-        self, catalog_with_versions: Path, broken_profile_environ: None, args: list[str]
+        self, catalog_with_versions: Path, args: list[str]
     ) -> None:
         pytest.importorskip("boto3")
         from portolan_cli.cli import cli
