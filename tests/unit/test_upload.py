@@ -1500,6 +1500,43 @@ class TestProfileEndpointStore:
         assert mock_s3_store.call_args.kwargs["endpoint"] == "https://other.example.com"
 
     @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("environment", "expected"),
+        [
+            # obstore reads AWS_ENDPOINT_URL itself, so the store gets no endpoint.
+            ({"AWS_ENDPOINT_URL": "https://generic.example.com"}, None),
+            (
+                {
+                    "AWS_ENDPOINT_URL": "https://generic.example.com",
+                    "AWS_ENDPOINT_URL_S3": "https://s3.example.com",
+                },
+                "https://s3.example.com",
+            ),
+            (
+                {
+                    "AWS_ENDPOINT_URL_S3": "https://s3.example.com",
+                    "PORTOLAN_S3_ENDPOINT": "portolan.example.com",
+                },
+                "https://portolan.example.com",
+            ),
+        ],
+        ids=["generic-beats-profile", "s3-beats-generic", "portolan-beats-aws"],
+    )
+    def test_aws_endpoint_environment_order(
+        self, mock_profile_endpoint: Path, environment: dict[str, str], expected: str | None
+    ) -> None:
+        """The AWS endpoint variables beat the profile, as they do for the AWS CLI."""
+        from portolan_cli.sync.upload import _create_s3_store
+
+        with (
+            cleared_environ(**environment),
+            patch("portolan_cli.sync.upload.S3Store") as mock_s3_store,
+        ):
+            _create_s3_store("s3://mybucket", "proxy", None, None, None)
+
+        assert mock_s3_store.call_args.kwargs.get("endpoint") == expected
+
+    @pytest.mark.unit
     def test_explicit_argument_beats_profile(self, mock_profile_endpoint: Path) -> None:
         """An explicit endpoint should win over the profile endpoint."""
         from portolan_cli.sync.upload import _create_s3_store

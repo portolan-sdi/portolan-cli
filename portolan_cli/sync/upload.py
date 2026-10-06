@@ -538,8 +538,9 @@ def _resolve_s3_endpoint_settings(
 ) -> tuple[str | None, bool]:
     """Resolve S3 endpoint settings from the argument, the environment, or the profile.
 
-    The order is the one the rest of the CLI uses: an explicit argument wins,
-    then the environment, then ``endpoint_url`` in the AWS config file.
+    An explicit argument wins, then ``PORTOLAN_S3_ENDPOINT``. Next come
+    ``AWS_ENDPOINT_URL_S3`` and ``AWS_ENDPOINT_URL``, then ``endpoint_url`` in
+    the AWS config file. The AWS CLI uses the same order for the last three.
 
     Args:
         s3_endpoint: An explicit endpoint, or None.
@@ -557,20 +558,30 @@ def _resolve_s3_endpoint_settings(
     if endpoint is not None:
         return endpoint, use_ssl
 
-    effective_profile = _effective_profile(profile)
-    profile_endpoint = _read_profile_endpoint_url(effective_profile)
-    if profile_endpoint is None:
+    # obstore reads AWS_ENDPOINT_URL itself, with its AWS_ALLOW_HTTP opt-in.
+    # Leave it to obstore, so a plaintext local endpoint keeps working.
+    if os.environ.get("AWS_ENDPOINT_URL_S3"):
+        aws_endpoint: str | None = os.environ["AWS_ENDPOINT_URL_S3"]
+        source = "AWS_ENDPOINT_URL_S3"
+    elif os.environ.get("AWS_ENDPOINT_URL"):
+        return None, use_ssl
+    else:
+        # The profile applies even when the caller names none, as it does for
+        # the AWS CLI.
+        effective_profile = _effective_profile(profile)
+        aws_endpoint = _read_profile_endpoint_url(effective_profile)
+        source = f"AWS profile '{effective_profile}'"
+    if aws_endpoint is None:
         return None, use_ssl
 
-    # The profile applies even when the caller names none, as it does for the
-    # AWS CLI. Name the source, so a redirected upload is never silent.
-    detail(f"Endpoint {profile_endpoint} from AWS profile '{effective_profile}'")
+    # Name the source, so a redirected upload is never silent.
+    detail(f"Endpoint {aws_endpoint} from {source}")
 
-    # The profile writes a full URL, so its scheme carries the TLS setting.
+    # Both sources write a full URL, so its scheme carries the TLS setting.
     # An explicit argument or PORTOLAN_S3_USE_SSL still wins.
     if s3_use_ssl is None and os.environ.get("PORTOLAN_S3_USE_SSL") is None:
-        use_ssl = not profile_endpoint.startswith("http://")
-    return profile_endpoint, use_ssl
+        use_ssl = not aws_endpoint.startswith("http://")
+    return aws_endpoint, use_ssl
 
 
 def _should_load_profile(profile: str) -> bool:
