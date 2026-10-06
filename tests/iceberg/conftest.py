@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 import pyarrow as pa
@@ -29,12 +30,19 @@ def _isolate_pyiceberg_config(tmp_path, monkeypatch):
     Pointing both ``PYICEBERG_HOME`` and the home directory at an empty
     temporary directory leaves only the current directory, which is the
     repository and carries no such file.
+
+    PyIceberg also builds a catalog from ``PYICEBERG_CATALOG__{NAME}__{KEY}``
+    environment variables, and it reads them whatever the home directory holds.
+    A developer who exports one in the shell hits the same remote catalog, so
+    the fixture removes them too.
     """
     home = tmp_path / "pyiceberg-home"
     home.mkdir()
     monkeypatch.setenv("PYICEBERG_HOME", str(home))
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    for name in [n for n in os.environ if n.startswith("PYICEBERG_CATALOG__")]:
+        monkeypatch.delenv(name)
 
 
 @pytest.fixture

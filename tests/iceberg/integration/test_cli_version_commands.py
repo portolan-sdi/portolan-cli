@@ -7,7 +7,6 @@ CLI pipeline with the iceberg backend.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import patch
 
 import pytest
 
@@ -25,13 +24,12 @@ if TYPE_CHECKING:
 
 
 def _invoke_version_cmd(runner: CliRunner, catalog_root, args: list[str]):
-    """Run a `portolan version` subcommand with config isolation."""
-    with patch("portolan_cli.backends.iceberg.config._get_external_config", return_value=None):
-        return runner.invoke(
-            cli,
-            ["version", *args, "--catalog", str(catalog_root)],
-            catch_exceptions=False,
-        )
+    """Run a `portolan version` subcommand."""
+    return runner.invoke(
+        cli,
+        ["version", *args, "--catalog", str(catalog_root)],
+        catch_exceptions=False,
+    )
 
 
 def _add_two_versions(initialized_iceberg_catalog, runner):
