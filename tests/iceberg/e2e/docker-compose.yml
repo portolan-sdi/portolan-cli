@@ -47,7 +47,7 @@ services:
   # connection or a wrong key, stops this service, so the REST catalog does not
   # start against a server with no buckets.
   minio-init:
-    image: amazon/aws-cli:2.31.19@sha256:4532e423f4e4f1092b3b1fb7819278a1f4baa3564f428182e399669d9c8f9e95
+    image: amazon/aws-cli:2.37.5@sha256:fb7ccfc7b4e3a05017e6c9ded4ba959b99af622130e211fb976c68c2f4d3f224
     depends_on:
       minio:
         condition: service_healthy
