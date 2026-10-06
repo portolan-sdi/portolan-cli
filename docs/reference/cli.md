@@ -658,14 +658,15 @@ portolan extract arcgis [OPTIONS] URL [OUTPUT_DIR]
 | `--no-recurse` | boolean | Do not traverse folders for services-root URLs (default: recurse). | `False` |
 | `--output-crs` | text | CRS for extracted GeoParquet. 'native' keeps the service's source CRS (default). Pass an EPSG code (e.g. EPSG:4326) to reproject. | `native` |
 | `--workers` | integer range (`1` and above) | Parallel page requests per layer (default: 3). | `3` |
-| `--retries` | integer range (`1` and above) | Retry attempts per failed layer (default: 3). | `3` |
-| `--timeout` | float range (`0.0` and above) | Per-request timeout in seconds for discovery and feature-page requests (default: 60). | `60.0` |
+| `--retries` | integer range (`1` and above) | Retry attempts per failed layer or tile (default: 3). | `3` |
+| `--timeout` | float range (`0.0` and above) | Per-request timeout in seconds for discovery, feature, and tile requests (default: 60). | `60.0` |
 | `--resume` | boolean | Resume from existing extraction-report.json (skip succeeded layers). | `False` |
 | `--dry-run` | boolean | List layers without extracting. | `False` |
 | `--json` | boolean | Output extraction report as JSON. | `False` |
 | `--auto` | boolean | Skip confirmation prompts. | `False` |
 | `--raw` | boolean | Skip auto-init: create only extraction files, no STAC catalog. | `False` |
 | `--tile-size` | integer range (between `256` and `8192`) | [ImageServer] Tile size in pixels (default: 4096). | `4096` |
+| `--coarse-scan` / `--no-coarse-scan` | boolean | [ImageServer] For a cache-only service, ask a coarse cache level which blocks hold data before reading them (default: off). It makes a sparse service much faster, but it can skip a thin feature that the coarse level drops. | `False` |
 | `--bbox` | text | [ImageServer] Bounding box filter: minx,miny,maxx,maxy. WGS84 coords auto-converted to service CRS. | None |
 | `--bbox-crs` | text | [ImageServer] Explicit CRS of --bbox (e.g., EPSG:4326, EPSG:3857). Skips auto-detection. | None |
 | `--compression` | choice (`DEFLATE` &#x7C; `JPEG` &#x7C; `LZW` &#x7C; `ZSTD`) | [ImageServer] COG compression (default: from config or DEFLATE). | None |

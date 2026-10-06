@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import sys
 from typing import TYPE_CHECKING
-from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -84,7 +83,6 @@ def runner() -> CliRunner:
 def initialized_iceberg_catalog(tmp_path: Path, runner: CliRunner) -> Path:
     """Create a full portolan catalog initialized with iceberg backend.
 
-    Patches _get_external_config to isolate from ~/.pyiceberg.yaml.
     Skips on Windows due to PyIceberg SQL catalog path bug.
     """
     if sys.platform == "win32":
@@ -92,12 +90,11 @@ def initialized_iceberg_catalog(tmp_path: Path, runner: CliRunner) -> Path:
             "PyIceberg SQL catalog warehouse paths broken on Windows"
             " (https://github.com/apache/iceberg-python/issues/1005)"
         )
-    with patch("portolan_cli.backends.iceberg.config._get_external_config", return_value=None):
-        result = runner.invoke(
-            cli,
-            ["init", str(tmp_path), "--auto", "--backend", "iceberg", "--license", "CC-BY-4.0"],
-            catch_exceptions=False,
-        )
+    result = runner.invoke(
+        cli,
+        ["init", str(tmp_path), "--auto", "--backend", "iceberg", "--license", "CC-BY-4.0"],
+        catch_exceptions=False,
+    )
     assert result.exit_code == 0, f"Init failed: {result.output}"
     assert (tmp_path / ".portolan" / "config.yaml").exists()
     return tmp_path
@@ -140,10 +137,9 @@ def place_geojson_in_collection(
 
 
 def invoke_add(runner: CliRunner, catalog_root: Path, file_path: Path) -> object:
-    """Invoke `portolan add` with the iceberg backend, isolated from external config."""
-    with patch("portolan_cli.backends.iceberg.config._get_external_config", return_value=None):
-        return runner.invoke(
-            cli,
-            ["add", "--portolan-dir", str(catalog_root), str(file_path)],
-            catch_exceptions=False,
-        )
+    """Invoke `portolan add` with the iceberg backend."""
+    return runner.invoke(
+        cli,
+        ["add", "--portolan-dir", str(catalog_root), str(file_path)],
+        catch_exceptions=False,
+    )

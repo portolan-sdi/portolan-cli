@@ -1,7 +1,7 @@
-"""E2E test fixtures for iceberg backend with Docker (REST catalog + MinIO).
+"""E2E test fixtures for iceberg backend with Docker (REST catalog + RustFS).
 
 Session-scoped Docker lifecycle: starts docker-compose before tests,
-tears down after. Provides REST catalog and MinIO S3 client fixtures.
+tears down after. Provides REST catalog and RustFS S3 client fixtures.
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ COMPOSE_FILE = Path(__file__).parent / "docker-compose.yml"
 
 REST_URI = "http://localhost:8181"
 S3_ENDPOINT = "http://localhost:9000"
-S3_ACCESS_KEY = "minioadmin"
-S3_SECRET_KEY = "minioadmin"
+S3_ACCESS_KEY = "rustfsadmin"
+S3_SECRET_KEY = "rustfsadmin"
 
 
 def _wait_for_service(url: str, timeout: int = 60) -> None:
@@ -44,7 +44,7 @@ def _wait_for_service(url: str, timeout: int = 60) -> None:
 
 @pytest.fixture(scope="session")
 def docker_services():
-    """Start REST catalog + MinIO via docker-compose, tear down after session."""
+    """Start REST catalog + RustFS via docker-compose, tear down after session."""
     subprocess.run(
         ["docker", "compose", "-f", str(COMPOSE_FILE), "up", "-d", "--wait"],
         check=True,
@@ -54,7 +54,7 @@ def docker_services():
 
     try:
         _wait_for_service(f"{REST_URI}/v1/config", timeout=60)
-        _wait_for_service(f"{S3_ENDPOINT}/minio/health/live", timeout=60)
+        _wait_for_service(f"{S3_ENDPOINT}/health/live", timeout=60)
         yield
     finally:
         subprocess.run(
@@ -67,7 +67,7 @@ def docker_services():
 
 @pytest.fixture
 def rest_catalog(docker_services):  # noqa: ARG001
-    """PyIceberg catalog pointing at the dockerized REST catalog + MinIO."""
+    """PyIceberg catalog pointing at the dockerized REST catalog + RustFS."""
     _ = docker_services  # Fixture dependency: ensures Docker services are running
     return load_catalog(
         "e2e-test",
@@ -88,8 +88,8 @@ def rest_iceberg_backend(rest_catalog):
 
 
 @pytest.fixture
-def minio_client(docker_services):  # noqa: ARG001
-    """boto3 S3 client for direct MinIO verification."""
+def rustfs_client(docker_services):  # noqa: ARG001
+    """boto3 S3 client for direct RustFS verification."""
     _ = docker_services  # Fixture dependency: ensures Docker services are running
     import boto3
 

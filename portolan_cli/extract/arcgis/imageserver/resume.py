@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -36,6 +37,46 @@ logger = logging.getLogger(__name__)
 MAX_COORD = 100_000
 
 
+#: Relative tolerance for the extent comparison that guards a resume. The two
+#: extents come from the same service JSON through one JSON round trip, so any
+#: difference this small is float noise rather than a different area.
+GRID_TOLERANCE = 1e-9
+
+
+@dataclass(frozen=True)
+class TileGrid:
+    """The tile grid that a run extracted.
+
+    A tile id names a position in one grid. A run with another tile size, or
+    over another extent, builds a different grid, so the same id then names a
+    different area on the ground (pull request #871 review).
+
+    Attributes:
+        tile_size: Tile size in pixels that the run asked for.
+        extent: Extent the run covered, as (xmin, ymin, xmax, ymax) in the
+            service CRS.
+    """
+
+    tile_size: int
+    extent: tuple[float, float, float, float]
+
+    def matches(self, other: TileGrid) -> bool:
+        """Report whether another grid names the same tiles as this one.
+
+        Args:
+            other: Grid to compare against.
+
+        Returns:
+            True when both the tile size and the extent agree.
+        """
+        if self.tile_size != other.tile_size:
+            return False
+        return all(
+            math.isclose(mine, theirs, rel_tol=GRID_TOLERANCE, abs_tol=0.0)
+            for mine, theirs in zip(self.extent, other.extent, strict=True)
+        )
+
+
 @dataclass
 class ImageServerResumeState:
     """State for resuming an interrupted ImageServer extraction.
@@ -48,27 +89,46 @@ class ImageServerResumeState:
         failed_tiles: Set of (x, y) tile coordinates that failed (to retry).
         service_url: The ImageServer service URL being extracted.
         started_at: When the extraction started.
+        coarse_empty_tiles: Set of (x, y) tile coordinates that the coarse scan
+            called empty. The scan reads a coarse cache level, which can drop a
+            thin feature, so these tiles stay apart from the succeeded ones.
+        grid: Tile grid the run extracted, or None for a report that an older
+            version wrote.
     """
 
     succeeded_tiles: set[tuple[int, int]]
     failed_tiles: set[tuple[int, int]]
     service_url: str
     started_at: datetime
+    coarse_empty_tiles: set[tuple[int, int]] = field(default_factory=set)
+    grid: TileGrid | None = None
 
 
-def should_process_tile(x: int, y: int, state: ImageServerResumeState | None) -> bool:
+def should_process_tile(
+    x: int,
+    y: int,
+    state: ImageServerResumeState | None,
+    *,
+    coarse_scan: bool = True,
+) -> bool:
     """Determine if a tile should be processed.
 
     Decision logic:
     - If no resume state: process all tiles
     - If tile succeeded previously: skip (return False)
+    - If the coarse scan called the tile empty: skip while the scan runs, and
+      read it again under --no-coarse-scan
     - If tile failed previously: retry (return True)
     - If tile is new (not in state): process (return True)
+
+    A coarse verdict is a heuristic, so --no-coarse-scan must be able to
+    recover a block that the scan dropped (pull request #871 review).
 
     Args:
         x: The tile X coordinate.
         y: The tile Y coordinate.
         state: Resume state from previous extraction, or None.
+        coarse_scan: Whether this run runs the coarse scan.
 
     Returns:
         True if the tile should be processed, False if it should be skipped.
@@ -77,9 +137,12 @@ def should_process_tile(x: int, y: int, state: ImageServerResumeState | None) ->
         # No resume state = fresh extraction, process everything
         return True
 
-    # A tile already recorded as succeeded is skipped. Anything else either
-    # failed and needs a retry, or is new and needs processing.
-    return (x, y) not in state.succeeded_tiles
+    if (x, y) in state.succeeded_tiles:
+        return False
+
+    # Anything else either failed and needs a retry, or is new and needs
+    # processing. A coarse-empty block waits only while the scan runs.
+    return not (coarse_scan and (x, y) in state.coarse_empty_tiles)
 
 
 def load_resume_state(
@@ -165,10 +228,12 @@ def _parse_report_data(
     # Parse tile coordinates
     succeeded_raw = tiles.get("succeeded", [])
     failed_raw = tiles.get("failed", [])
+    coarse_empty_raw = tiles.get("coarse_empty", [])
 
     try:
         succeeded_tiles = {(int(coord[0]), int(coord[1])) for coord in succeeded_raw}
         failed_tiles = {(int(coord[0]), int(coord[1])) for coord in failed_raw}
+        coarse_empty_tiles = {(int(coord[0]), int(coord[1])) for coord in coarse_empty_raw}
     except (TypeError, IndexError, ValueError):
         return None
 
@@ -176,6 +241,7 @@ def _parse_report_data(
     # This protects against malicious resume state files
     invalid_succeeded = [c for c in succeeded_tiles if not _validate_tile_coordinate(c)]
     invalid_failed = [c for c in failed_tiles if not _validate_tile_coordinate(c)]
+    coarse_empty_tiles = {c for c in coarse_empty_tiles if _validate_tile_coordinate(c)}
 
     if invalid_succeeded or invalid_failed:
         logger.warning(
@@ -199,7 +265,33 @@ def _parse_report_data(
         failed_tiles=failed_tiles,
         service_url=service_url,
         started_at=started_at,
+        coarse_empty_tiles=coarse_empty_tiles,
+        grid=_parse_grid(data.get("grid")),
     )
+
+
+def _parse_grid(raw: Any) -> TileGrid | None:
+    """Read the tile grid from a report.
+
+    Args:
+        raw: Value of the ``grid`` key, which an older report does not carry.
+
+    Returns:
+        The grid, or None when the report declares none or declares a broken
+        one.
+    """
+    if not isinstance(raw, dict):
+        return None
+    extent = raw.get("extent")
+    if not isinstance(extent, list) or len(extent) != 4:
+        return None
+    try:
+        return TileGrid(
+            tile_size=int(raw["tile_size"]),
+            extent=(float(extent[0]), float(extent[1]), float(extent[2]), float(extent[3])),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def save_resume_state(state: ImageServerResumeState, report_path: Path) -> None:
@@ -214,14 +306,20 @@ def save_resume_state(state: ImageServerResumeState, report_path: Path) -> None:
     """
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
-    data = {
+    data: dict[str, Any] = {
         "extraction_type": "imageserver",
         "service_url": state.service_url,
         "started_at": state.started_at.isoformat().replace("+00:00", "Z"),
         "tiles": {
             "succeeded": sorted([list(coord) for coord in state.succeeded_tiles]),
             "failed": sorted([list(coord) for coord in state.failed_tiles]),
+            "coarse_empty": sorted([list(coord) for coord in state.coarse_empty_tiles]),
         },
     }
+    if state.grid is not None:
+        data["grid"] = {
+            "tile_size": state.grid.tile_size,
+            "extent": list(state.grid.extent),
+        }
 
     write_json_atomic(report_path, data)

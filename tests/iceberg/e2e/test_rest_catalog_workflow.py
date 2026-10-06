@@ -1,4 +1,4 @@
-"""E2E tests for full version lifecycle against REST catalog + MinIO.
+"""E2E tests for full version lifecycle against REST catalog + RustFS.
 
 These tests exercise IcebergBackend.publish/list/rollback/prune
 against a real Iceberg REST catalog server with S3 storage.
@@ -98,19 +98,19 @@ def test_schema_evolution_rest(rest_iceberg_backend, tmp_path):
 
 
 @pytest.mark.e2e
-def test_data_stored_in_minio(rest_iceberg_backend, minio_client, tmp_path):
-    """After publish, Parquet data files should exist in MinIO warehouse bucket."""
-    asset = write_test_parquet(tmp_path / "minio_check.parquet")
+def test_data_stored_in_rustfs(rest_iceberg_backend, rustfs_client, tmp_path):
+    """After publish, Parquet data files should exist in RustFS warehouse bucket."""
+    asset = write_test_parquet(tmp_path / "rustfs_check.parquet")
 
     rest_iceberg_backend.publish(
-        collection="minio-check",
-        assets={"minio_check.parquet": str(asset)},
+        collection="rustfs-check",
+        assets={"rustfs_check.parquet": str(asset)},
         schema={"columns": ["id", "val"], "types": {}, "hash": "h1"},
         breaking=False,
-        message="Check MinIO",
+        message="Check RustFS",
     )
 
-    response = minio_client.list_objects_v2(Bucket="warehouse", Prefix="portolake/")
+    response = rustfs_client.list_objects_v2(Bucket="warehouse", Prefix="portolake/")
     contents = response.get("Contents", [])
     keys = [obj["Key"] for obj in contents]
 

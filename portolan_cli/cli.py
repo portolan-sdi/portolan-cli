@@ -4106,6 +4106,7 @@ def push(
     """
     import asyncio
 
+    from portolan_cli.errors import ProfileCredentialsError
     from portolan_cli.sync.push import PushConflictError, push_all_collections, push_async
 
     use_json = should_output_json(ctx, json_output)
@@ -4135,6 +4136,25 @@ def push(
         )
         raise SystemExit(1)
 
+    # Warn when no credential source answers. The push still runs, because a
+    # plaintext endpoint accepts an unsigned upload. A dry run reports it too,
+    # because a dry run exists to show what the real push meets.
+    # `--json` carries a machine-readable envelope, so the hint stays out of it.
+    if not use_json:
+        from portolan_cli.sync.upload import check_credentials
+
+        # A profile whose credential source fails stops the push. A warning
+        # would let the upload meet the same failure later.
+        try:
+            credentials_ok, credential_hint = check_credentials(
+                resolved_destination, resolved_profile
+            )
+        except ProfileCredentialsError as err:
+            emit_error("push", type(err).__name__, str(err), use_json=use_json, code=err.code)
+            raise SystemExit(1) from err
+        if not credentials_ok:
+            warn(credential_hint)
+
     # Apply max_connections cap and warn about high connection count (Issue #344)
     effective_file_conc, effective_chunk_conc = _prepare_push_concurrency(
         concurrency, chunk_concurrency, max_connections, workers, collection, use_json
@@ -4163,7 +4183,8 @@ def push(
             return
 
         except Exception as err:
-            emit_error("push", type(err).__name__, str(err), use_json=use_json)
+            code = getattr(err, "code", None)
+            emit_error("push", type(err).__name__, str(err), use_json=use_json, code=code)
             raise SystemExit(1) from err
 
     try:
@@ -4199,8 +4220,9 @@ def push(
             info_output("Use --force to overwrite, or pull remote changes first")
         raise SystemExit(1) from err
 
-    except FileNotFoundError as err:
-        emit_error("push", "FileNotFoundError", str(err), use_json=use_json)
+    except (ProfileCredentialsError, FileNotFoundError) as err:
+        code = getattr(err, "code", None)
+        emit_error("push", type(err).__name__, str(err), use_json=use_json, code=code)
         raise SystemExit(1) from err
 
     except ValueError as err:
@@ -4580,6 +4602,7 @@ def sync(
         portolan sync s3://mybucket/catalog -c data --profile prod
         portolan sync --collection demographics  # Uses configured remote
     """
+    from portolan_cli.errors import ProfileCredentialsError
     from portolan_cli.sync.core import sync as sync_fn
 
     use_json = should_output_json(ctx, json_output)
@@ -4606,16 +4629,20 @@ def sync(
         )
         raise SystemExit(1)
 
-    result = sync_fn(
-        catalog_root=catalog_path,
-        collection=collection,
-        destination=resolved_destination,
-        force=force,
-        dry_run=dry_run,
-        fix=fix,
-        profile=resolved_profile,
-        region=resolved_region,
-    )
+    try:
+        result = sync_fn(
+            catalog_root=catalog_path,
+            collection=collection,
+            destination=resolved_destination,
+            force=force,
+            dry_run=dry_run,
+            fix=fix,
+            profile=resolved_profile,
+            region=resolved_region,
+        )
+    except ProfileCredentialsError as err:
+        emit_error("sync", type(err).__name__, str(err), use_json=use_json, code=err.code)
+        raise SystemExit(1) from err
 
     if use_json:
         data: dict[str, Any] = {
@@ -6384,16 +6411,20 @@ def _handle_imageserver_extraction(
     output_dir: Path,
     catalog_id: str | None,
     tile_size: int,
+    coarse_scan: bool,
     bbox: str | None,
     bbox_crs: str | None,
     compression: str | None,
     max_concurrent: int,
     timeout: float,
+    retries: int,
     resume: bool,
     dry_run: bool,
     json_output: bool,
     auto: bool,
     collection_name: str | None,
+    license_id: str | None = None,
+    license_url: str | None = None,
 ) -> None:
     """Handle ImageServer URL extraction (raster data)."""
     from portolan_cli.conversion_config import CogSettings, get_cog_settings
@@ -6453,7 +6484,9 @@ def _handle_imageserver_extraction(
     options = ImageServerCLIOptions(
         catalog_id=catalog_id,
         tile_size=tile_size,
+        coarse_scan=coarse_scan,
         max_concurrent=max_concurrent,
+        max_retries=retries,
         dry_run=dry_run,
         resume=resume,
         raw=False,  # ImageServer always creates STAC structure
@@ -6463,6 +6496,8 @@ def _handle_imageserver_extraction(
         compression=cog_settings.compression,
         use_json=json_output,
         collection_name=collection_name,
+        license=license_id,
+        license_url=license_url,
     )
 
     # Run extraction
@@ -6901,13 +6936,13 @@ def extract() -> None:
     "--retries",
     type=click.IntRange(min=1),
     default=3,
-    help="Retry attempts per failed layer (default: 3).",
+    help="Retry attempts per failed layer or tile (default: 3).",
 )
 @click.option(
     "--timeout",
     type=click.FloatRange(min=0.0, min_open=True),
     default=60.0,
-    help="Per-request timeout in seconds for discovery and feature-page requests (default: 60).",
+    help="Per-request timeout in seconds for discovery, feature, and tile requests (default: 60).",
 )
 @click.option(
     "--resume",
@@ -6941,6 +6976,16 @@ def extract() -> None:
     type=click.IntRange(min=256, max=8192),
     default=4096,
     help="[ImageServer] Tile size in pixels (default: 4096).",
+)
+@click.option(
+    "--coarse-scan/--no-coarse-scan",
+    default=False,
+    help=(
+        "[ImageServer] For a cache-only service, ask a coarse cache level which "
+        "blocks hold data before reading them (default: off). It makes a sparse "
+        "service much faster, but it can skip a thin feature that the coarse "
+        "level drops."
+    ),
 )
 @click.option(
     "--bbox",
@@ -7021,6 +7066,7 @@ def extract_arcgis_cmd(
     auto: bool,
     raw: bool,
     tile_size: int,
+    coarse_scan: bool,
     bbox: str | None,
     bbox_crs: str | None,
     compression: str | None,
@@ -7154,16 +7200,20 @@ def extract_arcgis_cmd(
             output_dir=output_dir,
             catalog_id=catalog_id,
             tile_size=tile_size,
+            coarse_scan=coarse_scan,
             bbox=bbox,
             bbox_crs=bbox_crs,
             compression=compression,
             max_concurrent=max_concurrent,
             timeout=timeout,
+            retries=retries,
             resume=resume,
             dry_run=dry_run,
             json_output=use_json,
             auto=auto,
             collection_name=collection_name,
+            license_id=license_id,
+            license_url=license_url,
         )
         return
 

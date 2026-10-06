@@ -19,6 +19,7 @@ import pytest
 
 from portolan_cli.extract.arcgis.imageserver.resume import (
     ImageServerResumeState,
+    TileGrid,
     load_resume_state,
     save_resume_state,
     should_process_tile,
@@ -421,6 +422,114 @@ class TestEdgeCases:
 
         assert loaded is not None
         assert loaded.service_url == url
+
+
+@pytest.mark.unit
+class TestCoarseEmptyTiles:
+    """A coarse-scan verdict is not a completed tile (PR #871 review)."""
+
+    @staticmethod
+    def _state() -> ImageServerResumeState:
+        return ImageServerResumeState(
+            succeeded_tiles={(0, 0)},
+            failed_tiles=set(),
+            service_url="https://example.com/ImageServer",
+            started_at=datetime(2026, 9, 22, tzinfo=timezone.utc),
+            coarse_empty_tiles={(1, 1)},
+        )
+
+    def test_the_scan_skips_a_coarse_empty_tile(self) -> None:
+        assert should_process_tile(1, 1, self._state(), coarse_scan=True) is False
+
+    def test_no_coarse_scan_reads_a_coarse_empty_tile_again(self) -> None:
+        """The probe reads a coarse level, which can drop a thin feature."""
+        assert should_process_tile(1, 1, self._state(), coarse_scan=False) is True
+
+    def test_a_completed_tile_stays_skipped_without_the_scan(self) -> None:
+        assert should_process_tile(0, 0, self._state(), coarse_scan=False) is False
+
+    def test_the_set_survives_a_save_and_a_load(self, tmp_path: Path) -> None:
+        path = tmp_path / "imageserver-resume.json"
+
+        save_resume_state(self._state(), path)
+        loaded = load_resume_state(path)
+
+        assert loaded is not None
+        assert loaded.coarse_empty_tiles == {(1, 1)}
+        assert loaded.succeeded_tiles == {(0, 0)}
+
+    def test_a_report_without_the_key_loads_an_empty_set(self, tmp_path: Path) -> None:
+        path = tmp_path / "imageserver-resume.json"
+        path.write_text(
+            json.dumps(
+                _create_imageserver_report(
+                    "https://example.com/ImageServer", [(0, 0)], [], "2026-09-22T00:00:00Z"
+                )
+            )
+        )
+
+        loaded = load_resume_state(path)
+
+        assert loaded is not None
+        assert loaded.coarse_empty_tiles == set()
+
+
+@pytest.mark.unit
+class TestTileGrid:
+    """The grid that a saved state describes."""
+
+    def test_the_same_grid_matches(self) -> None:
+        grid = TileGrid(tile_size=1024, extent=(0.0, 0.0, 100.0, 100.0))
+
+        assert grid.matches(TileGrid(tile_size=1024, extent=(0.0, 0.0, 100.0, 100.0)))
+
+    def test_another_tile_size_does_not_match(self) -> None:
+        grid = TileGrid(tile_size=1024, extent=(0.0, 0.0, 100.0, 100.0))
+
+        assert not grid.matches(TileGrid(tile_size=3000, extent=(0.0, 0.0, 100.0, 100.0)))
+
+    def test_another_extent_does_not_match(self) -> None:
+        grid = TileGrid(tile_size=1024, extent=(0.0, 0.0, 100.0, 100.0))
+
+        assert not grid.matches(TileGrid(tile_size=1024, extent=(0.0, 0.0, 100.0, 200.0)))
+
+    def test_float_noise_still_matches(self) -> None:
+        """One JSON round trip leaves a difference far below this tolerance."""
+        grid = TileGrid(tile_size=1024, extent=(0.0, 0.0, 100.0, 100.0))
+
+        assert grid.matches(TileGrid(tile_size=1024, extent=(0.0, 0.0, 100.0, 100.0 + 1e-12)))
+
+    def test_the_grid_survives_a_save_and_a_load(self, tmp_path: Path) -> None:
+        path = tmp_path / "imageserver-resume.json"
+        grid = TileGrid(tile_size=1024, extent=(1.5, 2.5, 100.25, 200.75))
+
+        save_resume_state(
+            ImageServerResumeState(
+                succeeded_tiles=set(),
+                failed_tiles=set(),
+                service_url="https://example.com/ImageServer",
+                started_at=datetime(2026, 9, 22, tzinfo=timezone.utc),
+                grid=grid,
+            ),
+            path,
+        )
+        loaded = load_resume_state(path)
+
+        assert loaded is not None
+        assert loaded.grid == grid
+
+    def test_a_broken_grid_block_loads_as_none(self, tmp_path: Path) -> None:
+        path = tmp_path / "imageserver-resume.json"
+        report = _create_imageserver_report(
+            "https://example.com/ImageServer", [(0, 0)], [], "2026-09-22T00:00:00Z"
+        )
+        report["grid"] = {"tile_size": 1024, "extent": [1.0, 2.0]}
+        path.write_text(json.dumps(report))
+
+        loaded = load_resume_state(path)
+
+        assert loaded is not None
+        assert loaded.grid is None
 
 
 def _create_imageserver_report(

@@ -15,6 +15,21 @@ updates:
       - "github-actions"
     open-pull-requests-limit: 5
 
+  # Images in the e2e Docker stack. The compose file pins each image by digest,
+  # and this entry proposes the new digest when a tag moves.
+  - package-ecosystem: "docker-compose"
+    directory: "/tests/iceberg/e2e"
+    schedule:
+      interval: "weekly"
+    # See the github-actions block above: 7-day delay before adopting a fresh
+    # release (zizmor dependabot-cooldown).
+    cooldown:
+      default-days: 7
+    labels:
+      - "dependencies"
+      - "docker"
+    open-pull-requests-limit: 5
+
   # Python dependencies - weekly updates (features + patches)
   # Note: Dependabot automatically prioritizes security updates regardless of
   # schedule. The security-audit.yml workflow handles daily notification via

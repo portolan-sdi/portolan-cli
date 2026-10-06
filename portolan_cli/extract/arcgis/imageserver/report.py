@@ -34,7 +34,9 @@ class TileResult:
 
     Attributes:
         tile_id: Tile identifier (e.g., "0_0" for grid position).
-        status: Extraction status ("success", "failed", "skipped").
+        status: Extraction status ("success", "failed", "skipped", "empty").
+            "empty" marks a tile that holds no valid pixel, which a sparse
+            tile cache produces outside the data footprint (issue #870).
         size_bytes: Output file size in bytes (None if failed).
         duration_seconds: Extraction duration (None if failed).
         output_path: Relative path to output COG file (None if failed).
@@ -92,6 +94,7 @@ class ImageServerExtractionSummary:
         succeeded: Number of successfully extracted tiles.
         failed: Number of failed tile extractions.
         skipped: Number of skipped tiles (e.g., from resume).
+        empty: Number of tiles that hold no valid pixel, so they wrote no COG.
         total_size_bytes: Total output size in bytes.
         total_duration_seconds: Total extraction time.
     """
@@ -102,6 +105,7 @@ class ImageServerExtractionSummary:
     skipped: int
     total_size_bytes: int
     total_duration_seconds: float
+    empty: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
@@ -110,6 +114,7 @@ class ImageServerExtractionSummary:
             "succeeded": self.succeeded,
             "failed": self.failed,
             "skipped": self.skipped,
+            "empty": self.empty,
             "total_size_bytes": self.total_size_bytes,
             "total_duration_seconds": self.total_duration_seconds,
         }
@@ -122,6 +127,7 @@ class ImageServerExtractionSummary:
             succeeded=data["succeeded"],
             failed=data["failed"],
             skipped=data["skipped"],
+            empty=data.get("empty", 0),
             total_size_bytes=data["total_size_bytes"],
             total_duration_seconds=data["total_duration_seconds"],
         )
@@ -400,12 +406,14 @@ def build_imageserver_report(
     succeeded = sum(1 for r in tile_results if r.status == "success")
     failed = sum(1 for r in tile_results if r.status == "failed")
     skipped = sum(1 for r in tile_results if r.status == "skipped")
+    empty = sum(1 for r in tile_results if r.status == "empty")
 
     summary = ImageServerExtractionSummary(
         total_tiles=len(tile_results),
         succeeded=succeeded,
         failed=failed,
         skipped=skipped,
+        empty=empty,
         total_size_bytes=sum(r.size_bytes or 0 for r in tile_results),
         total_duration_seconds=total_duration,
     )

@@ -29,7 +29,7 @@ dependencies = [
     "antimeridian>=0.3.11", # RFC 7946 compliant antimeridian handling for STAC bbox
     "click>=8.4,<8.6", # PYSEC-2026-2132 fix; 8.4 makes ParamType generic (temporal.FlexibleDateTime subscripts it)
     "defusedxml>=0.7.1", # Safe XML parsing (XXE protection) for CSW/ISO 19139 metadata
-    "duckdb>=1.5.2,<1.5.6", # 1.5.5 segfaults in ST_Read_Meta on malformed input; see known-issues
+    "duckdb>=1.5.2,<1.5.7", # 1.5.5 segfaults in ST_Read_Meta on malformed input; see known-issues
     "geopandas>=0.14.0", # Reads GeoParquet for the thumbnail floor, which every collection needs (Issue #683)
     "geoparquet-io>=1.4.0", # Table API keeps the source CRS on write (gpio#625, Issue #810)
     "httpx>=0.27.0", # HTTP client for ArcGIS REST API discovery
@@ -54,6 +54,7 @@ dependencies = [
     "rio-cogeo>=5.0.0", # COG creation/validation (includes rasterio)
     "rashid>=0.1.5,<0.2.0", # Conformance validator behind `portolan check`; ships its own STAC + Portolan profile schemas, so validation runs offline. 0.1.5 is the floor for the catalog-logo rules PTL-LNK-007/008/009 (PORTO-CORE-074..077) and for PTL-AST-006, whose absence in 0.1.4 let a wrong COG media type mask PTL-COL-004 and PTL-MIR-001. The conformance gate asserts all four, so this is a hard floor, not a preference
     "typing_extensions>=4.0.0; python_version < '3.11'",
+    "lerc>=4.0.1", # Decodes the LERC tiles that hosted tiled imagery layers cache. GDAL 3.12 fails on LERC2 version 6 with "MRF: Error decoding Lerc", so `extract arcgis` cannot read a TilesOnly ImageServer without it (Issue #870). The wheel ships binaries for Windows x64, macOS, and Linux x86-64, so tilecache.py imports it lazily and explains the failure on other platforms
 ]
 
 [project.scripts]
@@ -73,6 +74,15 @@ iceberg = [
 ]
 e2e = [
     "boto3>=1.35.0",
+]
+aws = [
+    # obstore.auth.boto3 wraps a botocore session, which reads every credential
+    # mechanism an AWS profile can name. Optional, because a static key pair and
+    # the environment variables need none of it (Issue #872).
+    "boto3>=1.35.0",
+    # boto3 installs botocore. The profile errors live there, and the upload
+    # path reads ProfileNotFound to tell a missing profile from a failed one.
+    "botocore>=1.35.0",
 ]
 dev = [
     "codespell>=2.4.1",
@@ -108,7 +118,7 @@ thumbnails = [
 docs = [
     # Pinned exactly: zensical is alpha with a compiled core, so a floor
     # constraint is not a constraint. Dependabot offers reviewable bumps.
-    "zensical==0.0.62",
+    "zensical==0.0.66",
     "mkdocstrings-python>=1.0.0", # pulls mkdocstrings itself as its own dependency
     "pymdown-extensions>=11.0", # zensical requires >=11.0; fixes filename=None in highlight
 ]
@@ -147,7 +157,7 @@ markers = [
     "snapshot: Compares output against golden files",
     "benchmark: Performance measurement, tracked over time",
     "slow: Takes > 5 seconds",
-    "e2e: End-to-end tests requiring Docker (REST catalog + MinIO)",
+    "e2e: End-to-end tests requiring Docker (REST catalog + RustFS)",
     "e2e_slow: Extended E2E tests (concurrency stress, large datasets) - nightly only",
     "source_scan: Static source-tree guard incompatible with mutmut instrumentation",
 ]
@@ -334,7 +344,8 @@ disable_error_code = ["import-untyped"]
 # French words from Belgian ISO 19139 test fixture (tests/fixtures/csw/belgium_buildings_iso19139.xml)
 # "BU" is the INSPIRE theme code for Buildings (used in test fixtures)
 # "disjointness" is a real set-theory term (codespell wants "disjointedness")
-ignore-words-list = "nd,bu,ue,adresse,projet,environnement,copie,explicite,connexion,objets,visibles,issus,fonction,mesures,informations,disjointness"
+# "lod" is the ArcGIS tile cache term for a level of detail (the tileInfo "lods" array)
+ignore-words-list = "nd,bu,ue,adresse,projet,environnement,copie,explicite,connexion,objets,visibles,issus,fonction,mesures,informations,disjointness,lod"
 
 # ---------- dead code ----------
 
