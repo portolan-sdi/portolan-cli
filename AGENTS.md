@@ -233,7 +233,7 @@ Always research before implementing:
 @pytest.mark.snapshot    # Compares output against golden files
 @pytest.mark.benchmark   # Performance measurement, tracked over time
 @pytest.mark.slow        # Takes > 5 seconds
-@pytest.mark.e2e         # End-to-end tests requiring Docker (REST catalog + MinIO)
+@pytest.mark.e2e         # End-to-end tests requiring Docker (REST catalog + RustFS)
 @pytest.mark.e2e_slow    # Extended E2E tests (concurrency stress, large datasets) - nightly only
 ```
 
