@@ -29,12 +29,14 @@ import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from portolan_cli.errors import MissingLicenseError
 from portolan_cli.extract.arcgis.imageserver.extractor import (
     ExtractionConfig,
     TileProgress,
     extract_imageserver,
 )
-from portolan_cli.output import detail, error, info, success
+from portolan_cli.licensing import CLI_LICENSE_REMEDIATION
+from portolan_cli.output import detail, error, info, success, warn
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -50,6 +52,7 @@ class ImageServerCLIOptions:
     Attributes:
         tile_size: Desired tile size in pixels (default 4096).
         max_concurrent: Maximum concurrent tile downloads (default 4).
+        max_retries: Attempts per tile before it counts as failed (default 3).
         dry_run: If True, compute tiles but don't download.
         resume: If True, resume from previous extraction.
         raw: If True, skip auto-init (only create COGs + report, no STAC catalog).
@@ -61,10 +64,17 @@ class ImageServerCLIOptions:
         collection_name: Optional name for the collection (default: 'tiles').
         catalog_id: Catalog id for the created catalog. None derives it from
             the output directory name, which is the behavior before issue #821.
+        license: SPDX identifier from --license, or "other" with license_url.
+            Overrides any license URL in the service's licenseInfo (issue #686).
+        license_url: URL of the license text from --license-url.
+        coarse_scan: Ask a coarse tile cache level which blocks hold data
+            before reading them (issue #870). Only a cache-only service uses
+            it. It is off by default, because the scan can skip a thin feature.
     """
 
     tile_size: int = 4096
     max_concurrent: int = 4
+    max_retries: int = 3
     dry_run: bool = False
     resume: bool = False
     raw: bool = False
@@ -75,6 +85,9 @@ class ImageServerCLIOptions:
     use_json: bool = False
     collection_name: str | None = None
     catalog_id: str | None = None
+    license: str | None = None
+    license_url: str | None = None
+    coarse_scan: bool = False
 
 
 def _create_progress_callback(
@@ -116,6 +129,24 @@ def _create_progress_callback(
     return status_tracker, on_progress
 
 
+def _print_failure_hint(tiles_failed: int) -> None:
+    """Tell the user how to recover from failed tiles (issue #870).
+
+    Failed tiles stay in the resume state, so a second run with --resume
+    retries them alone. HTTP 5xx responses from exportImage usually mean the
+    server could not build a tile of the requested size under load, so a
+    smaller tile or fewer parallel requests is the next thing to try.
+
+    Args:
+        tiles_failed: Number of tiles that failed after all retries.
+    """
+    warn(
+        f"Re-run the same command with --resume to retry the {tiles_failed} failed tiles. "
+        "If the server returned HTTP 5xx, lower --tile-size or --max-concurrent. "
+        "A new --tile-size builds another tile grid, so that run reads every tile again."
+    )
+
+
 async def run_imageserver_extraction(
     url: str,
     output_dir: Path,
@@ -136,7 +167,8 @@ async def run_imageserver_extraction(
 
     Returns:
         Tuple of (exit_code, report). Exit code is 0 for success, 1 for failure.
-        Report is None on complete failure.
+        Report is None on complete failure. A run without a usable license
+        also prints the flags that set one.
     """
     if options is None:
         options = ImageServerCLIOptions()
@@ -146,6 +178,8 @@ async def run_imageserver_extraction(
         catalog_id=options.catalog_id,
         tile_size=options.tile_size,
         max_concurrent=options.max_concurrent,
+        max_retries=options.max_retries,
+        coarse_scan=options.coarse_scan,
         dry_run=options.dry_run,
         raw=options.raw,
         timeout=options.timeout,
@@ -165,6 +199,8 @@ async def run_imageserver_extraction(
             on_progress=on_progress,
             collection_name=options.collection_name,
             bbox_crs=options.bbox_crs,
+            license_id=options.license,
+            license_url=options.license_url,
         )
 
         # Determine exit code based on results
@@ -174,6 +210,18 @@ async def run_imageserver_extraction(
         if result.tiles_downloaded == 0 and result.tiles_failed > 0:
             # Complete failure - all tiles failed
             error(f"Extraction failed: all {result.tiles_failed} tiles failed")
+            _print_failure_hint(result.tiles_failed)
+            return 1, result.report
+
+        if result.tiles_downloaded == 0 and result.tiles_empty > 0 and result.tiles_skipped == 0:
+            # The service answered every request, and every tile holds no data.
+            # A resumed run that skips completed tiles holds data, so it is not
+            # a failure.
+            error(
+                f"Extraction produced no data: all {result.tiles_empty} tiles are empty. "
+                "The service extent covers more area than its data does. "
+                "Use --bbox to name the area you want."
+            )
             return 1, result.report
 
         # Success or partial success
@@ -182,6 +230,7 @@ async def run_imageserver_extraction(
                 f"Extraction completed with warnings: "
                 f"{result.tiles_downloaded} succeeded, {result.tiles_failed} failed"
             )
+            _print_failure_hint(result.tiles_failed)
         else:
             success(
                 f"Extraction complete: {result.tiles_downloaded} tiles "
@@ -189,6 +238,15 @@ async def run_imageserver_extraction(
             )
 
         return 0, result.report
+
+    except MissingLicenseError as e:
+        # The license resolves before any download, so the failure costs one
+        # command re-run. The user needs the flags that fix it, which the
+        # FeatureServer path also prints (pull request #871 review).
+        error(f"ImageServer extraction failed: {e}")
+        if not options.use_json:
+            info(CLI_LICENSE_REMEDIATION)
+        return 1, None
 
     except Exception as e:
         error(f"ImageServer extraction failed: {e}")

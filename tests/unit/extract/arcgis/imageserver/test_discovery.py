@@ -674,3 +674,199 @@ class TestDiscoverImageserverEdgeCases:
 
             assert result.pixel_size_x == pytest.approx(0.00027777777778)
             assert result.pixel_type == "F64"
+
+
+# =============================================================================
+# Optional image size limits (issue #870)
+# =============================================================================
+
+
+class TestOptionalImageSizeLimits:
+    """Hosted tiled imagery layers omit maxImageHeight and maxImageWidth.
+
+    Issue #870 reports a tiled imagery layer on ArcGIS Online that fails
+    discovery with "Missing required field 'maxImageHeight'". The fields are
+    optional. When a service omits them, discovery applies the ArcGIS Server
+    defaults instead of refusing the service.
+    """
+
+    def _without_limits(self, response: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in response.items()
+            if key not in ("maxImageHeight", "maxImageWidth")
+        }
+
+    def test_parse_applies_defaults_when_limits_missing(
+        self, imageserver_response: dict[str, Any]
+    ) -> None:
+        from portolan_cli.extract.arcgis.imageserver.discovery import (
+            DEFAULT_MAX_IMAGE_HEIGHT,
+            DEFAULT_MAX_IMAGE_WIDTH,
+            parse_imageserver_response,
+        )
+
+        metadata = parse_imageserver_response(self._without_limits(imageserver_response))
+
+        assert DEFAULT_MAX_IMAGE_WIDTH == 15000
+        assert DEFAULT_MAX_IMAGE_HEIGHT == 4100
+        assert metadata.max_image_width == 15000
+        assert metadata.max_image_height == 4100
+
+    def test_parse_keeps_explicit_limits(self, imageserver_response: dict[str, Any]) -> None:
+        from portolan_cli.extract.arcgis.imageserver.discovery import (
+            parse_imageserver_response,
+        )
+
+        metadata = parse_imageserver_response(imageserver_response)
+
+        assert metadata.max_image_width == 4096
+        assert metadata.max_image_height == 4096
+
+    def test_parse_applies_default_for_one_missing_limit(
+        self, imageserver_response: dict[str, Any]
+    ) -> None:
+        from portolan_cli.extract.arcgis.imageserver.discovery import (
+            parse_imageserver_response,
+        )
+
+        data = dict(imageserver_response)
+        del data["maxImageHeight"]
+
+        metadata = parse_imageserver_response(data)
+
+        assert metadata.max_image_width == 4096
+        assert metadata.max_image_height == 4100
+
+    def test_parse_logs_warning_when_defaults_apply(
+        self, imageserver_response: dict[str, Any], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        from portolan_cli.extract.arcgis.imageserver.discovery import (
+            parse_imageserver_response,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="portolan_cli.extract.arcgis.imageserver"):
+            parse_imageserver_response(self._without_limits(imageserver_response))
+
+        assert "maxImageWidth" in caplog.text
+        assert "maxImageHeight" in caplog.text
+        assert "15000" in caplog.text
+        assert "4100" in caplog.text
+
+    def test_parse_still_rejects_missing_band_count(
+        self, imageserver_response: dict[str, Any]
+    ) -> None:
+        from portolan_cli.extract.arcgis.imageserver.discovery import (
+            parse_imageserver_response,
+        )
+
+        data = self._without_limits(imageserver_response)
+        del data["bandCount"]
+
+        with pytest.raises(ImageServerDiscoveryError, match="Missing required field 'bandCount'"):
+            parse_imageserver_response(data)
+
+    @pytest.mark.asyncio
+    async def test_discover_applies_defaults_when_limits_missing(
+        self, imageserver_response: dict[str, Any]
+    ) -> None:
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            _setup_async_client_mock(
+                mock_client_class,
+                _mock_httpx_response(self._without_limits(imageserver_response)),
+            )
+
+            metadata = await discover_imageserver("https://services.arcgis.com/test/ImageServer")
+
+        assert metadata.max_image_width == 15000
+        assert metadata.max_image_height == 4100
+
+
+class TestTilesOnlyServices:
+    """A hosted tiled imagery layer serves only its cache (issue #870).
+
+    The service reports `capabilities: "Image,TilesOnly"` and answers
+    exportImage with HTTP 400 at every size. Discovery must report the cache
+    grid so the extractor can read the tiles instead.
+    """
+
+    @staticmethod
+    def _tiles_only(response: dict[str, Any]) -> dict[str, Any]:
+        """Turn a normal ImageServer response into a cache-only one."""
+        data = dict(response)
+        data["capabilities"] = "Image,TilesOnly"
+        data["maxImageWidth"] = None
+        data["maxImageHeight"] = None
+        data["tileInfo"] = {
+            "rows": 256,
+            "cols": 256,
+            "format": "LERC2D",
+            "origin": {"x": -12060495.1357351, "y": 5110175.25118694},
+            "spatialReference": {"wkid": 102100, "latestWkid": 3857},
+            "lods": [{"level": level, "resolution": 15360.0 / (2**level)} for level in range(10)],
+        }
+        return data
+
+    def test_reports_that_export_image_is_unavailable(
+        self, imageserver_response: dict[str, Any]
+    ) -> None:
+        from portolan_cli.extract.arcgis.imageserver.discovery import (
+            parse_imageserver_response,
+        )
+
+        metadata = parse_imageserver_response(self._tiles_only(imageserver_response))
+
+        assert metadata.export_image_supported is False
+
+    def test_reports_that_export_image_works_for_a_normal_service(
+        self, imageserver_response: dict[str, Any]
+    ) -> None:
+        from portolan_cli.extract.arcgis.imageserver.discovery import (
+            parse_imageserver_response,
+        )
+
+        metadata = parse_imageserver_response(imageserver_response)
+
+        assert metadata.export_image_supported is True
+
+    def test_reads_the_tile_cache_grid(self, imageserver_response: dict[str, Any]) -> None:
+        from portolan_cli.extract.arcgis.imageserver.discovery import (
+            parse_imageserver_response,
+        )
+
+        metadata = parse_imageserver_response(self._tiles_only(imageserver_response))
+
+        assert metadata.tile_cache is not None
+        assert metadata.tile_cache.tile_format == "LERC2D"
+        assert metadata.tile_cache.tile_width == 256
+        assert len(metadata.tile_cache.lods) == 10
+
+    def test_tile_cache_is_none_without_tile_info(
+        self, imageserver_response: dict[str, Any]
+    ) -> None:
+        from portolan_cli.extract.arcgis.imageserver.discovery import (
+            parse_imageserver_response,
+        )
+
+        assert parse_imageserver_response(imageserver_response).tile_cache is None
+
+    @pytest.mark.asyncio
+    async def test_discover_reads_the_cache_from_a_live_response(
+        self, imageserver_response: dict[str, Any]
+    ) -> None:
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            _setup_async_client_mock(
+                mock_client_class,
+                _mock_httpx_response(self._tiles_only(imageserver_response)),
+            )
+
+            metadata = await discover_imageserver("https://services.arcgis.com/test/ImageServer")
+
+        assert metadata.export_image_supported is False
+        assert metadata.tile_cache is not None

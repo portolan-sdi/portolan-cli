@@ -7,8 +7,10 @@ Uses mocking for HTTP and COG conversion to keep tests fast and isolated.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from portolan_cli.extract.arcgis.imageserver.discovery import ImageServerMetadata
@@ -86,6 +88,32 @@ def sample_tile() -> TileSpec:
 # =============================================================================
 # ExtractionConfig Tests
 # =============================================================================
+
+
+@pytest.mark.unit
+class TestLoadEffectiveConfig:
+    """COG settings from config.yaml must not reset other options."""
+
+    def test_catalog_cog_settings_keep_the_other_options(self, tmp_path: Path) -> None:
+        from portolan_cli.conversion_config import CogSettings
+        from portolan_cli.extract.arcgis.imageserver.extractor import _load_effective_config
+
+        config = ExtractionConfig(
+            tile_size=1024, raw=True, catalog_id="my-catalog", coarse_scan=True
+        )
+        catalog_settings = CogSettings(compression="JPEG")
+
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.extractor.get_cog_settings",
+            return_value=catalog_settings,
+        ):
+            effective = _load_effective_config(config, tmp_path)
+
+        assert effective.cog_settings == catalog_settings
+        assert effective.tile_size == 1024
+        assert effective.raw is True
+        assert effective.catalog_id == "my-catalog"
+        assert effective.coarse_scan is True
 
 
 @pytest.mark.unit
@@ -655,3 +683,1180 @@ class TestAutoInitCatalogExistingCatalog:
         _auto_init_catalog(tmp_path, service_name="svc", catalog_id="phl-housing")
 
         assert "Ignored --id 'phl-housing'" in capsys.readouterr().err
+
+
+# =============================================================================
+# HTTP error messages (issue #870)
+# =============================================================================
+
+
+def _mock_client_with_status(status_code: int, content: bytes) -> AsyncMock:
+    """Build an httpx client mock whose GET fails raise_for_status with a body."""
+    request = httpx.Request("GET", "https://example.com/ImageServer/exportImage")
+    response = httpx.Response(status_code, content=content, request=request)
+    mock_response = AsyncMock()
+    mock_response.status_code = status_code
+    mock_response.content = content
+    mock_response.raise_for_status = MagicMock(
+        side_effect=httpx.HTTPStatusError("server error", request=request, response=response)
+    )
+    client = AsyncMock()
+    client.get.return_value = mock_response
+    return client
+
+
+@pytest.mark.unit
+class TestHttpErrorMessages:
+    """A failed exportImage request reports the reason and the request URL.
+
+    Issue #870 reports NAIP tiles that fail with "HTTP 500" and nothing else.
+    The error must carry the ArcGIS message and details when the body has
+    them, the body text when it is not JSON, and the exportImage URL in every
+    case so the user can reproduce the request.
+    """
+
+    EXPORT_URL = (
+        "https://example.com/ImageServer/exportImage"
+        "?bbox=0.0%2C0.0%2C4096.0%2C4096.0&size=4096%2C4096&format=tiff&f=image"
+    )
+
+    @pytest.mark.asyncio
+    async def test_http_500_json_error_reports_message_details_and_url(
+        self, sample_tile: TileSpec, tmp_path: Path
+    ) -> None:
+        body = (
+            b'{"error":{"code":500,"message":"Unable to complete operation.",'
+            b'"details":["Image export failed.","Timeout reading raster."]}}'
+        )
+        client = _mock_client_with_status(500, body)
+
+        with pytest.raises(ImageServerExtractionError) as exc_info:
+            await download_tile(
+                "https://example.com/ImageServer", sample_tile, tmp_path / "out.tif", client
+            )
+
+        assert str(exc_info.value) == (
+            "ArcGIS error for tile tile_0_0: HTTP 500 [500] Unable to complete operation. "
+            "Details: Image export failed.; Timeout reading raster. "
+            f"Request: {self.EXPORT_URL}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_http_500_text_body_is_quoted(
+        self, sample_tile: TileSpec, tmp_path: Path
+    ) -> None:
+        client = _mock_client_with_status(500, b"  Internal Server Error\n")
+
+        with pytest.raises(ImageServerExtractionError) as exc_info:
+            await download_tile(
+                "https://example.com/ImageServer", sample_tile, tmp_path / "out.tif", client
+            )
+
+        assert str(exc_info.value) == (
+            "Tile download failed (tile_0_0): HTTP 500. Response: Internal Server Error. "
+            f"Request: {self.EXPORT_URL}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_http_500_empty_body_names_request_url(
+        self, sample_tile: TileSpec, tmp_path: Path
+    ) -> None:
+        client = _mock_client_with_status(500, b"")
+
+        with pytest.raises(ImageServerExtractionError) as exc_info:
+            await download_tile(
+                "https://example.com/ImageServer", sample_tile, tmp_path / "out.tif", client
+            )
+
+        assert str(exc_info.value) == (
+            "Tile download failed (tile_0_0): HTTP 500 (empty response body). "
+            f"Request: {self.EXPORT_URL}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_http_500_html_body_reports_its_title_only(
+        self, sample_tile: TileSpec, tmp_path: Path
+    ) -> None:
+        """An error page spends its first 200 characters on boilerplate.
+
+        The request URL is the useful part of the message, so the excerpt
+        quotes the page title alone (pull request #871 review).
+        """
+        body = (
+            b"<!DOCTYPE html><html><head><style>"
+            + b"body{font-family:sans-serif}" * 20
+            + b"</style><title>500 Internal Server Error</title></head>"
+            + b"<body><h1>Server Error</h1></body></html>"
+        )
+        client = _mock_client_with_status(500, body)
+
+        with pytest.raises(ImageServerExtractionError) as exc_info:
+            await download_tile(
+                "https://example.com/ImageServer", sample_tile, tmp_path / "out.tif", client
+            )
+
+        message = str(exc_info.value)
+        assert message == (
+            "Tile download failed (tile_0_0): HTTP 500. Response: an HTML error page "
+            f"titled '500 Internal Server Error'. Request: {self.EXPORT_URL}"
+        )
+        assert "font-family" not in message
+
+    @pytest.mark.asyncio
+    async def test_http_500_html_body_without_a_title_says_so(
+        self, sample_tile: TileSpec, tmp_path: Path
+    ) -> None:
+        client = _mock_client_with_status(500, b"<html>" + b"x" * 500 + b"</html>")
+
+        with pytest.raises(ImageServerExtractionError) as exc_info:
+            await download_tile(
+                "https://example.com/ImageServer", sample_tile, tmp_path / "out.tif", client
+            )
+
+        message = str(exc_info.value)
+        assert message == (
+            "Tile download failed (tile_0_0): HTTP 500. Response: an HTML error page. "
+            f"Request: {self.EXPORT_URL}"
+        )
+        assert "xxx" not in message
+
+    @pytest.mark.asyncio
+    async def test_http_200_json_error_reports_details_and_url(
+        self, sample_tile: TileSpec, tmp_path: Path
+    ) -> None:
+        body = (
+            b'{"error":{"code":400,"message":"The requested image exceeds the size limit.",'
+            b'"details":[]}}'
+        )
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.content = body
+        mock_response.raise_for_status = MagicMock()
+        client = AsyncMock()
+        client.get.return_value = mock_response
+
+        with pytest.raises(ImageServerExtractionError) as exc_info:
+            await download_tile(
+                "https://example.com/ImageServer", sample_tile, tmp_path / "out.tif", client
+            )
+
+        assert str(exc_info.value) == (
+            "ArcGIS error for tile tile_0_0: HTTP 200 [400] "
+            "The requested image exceeds the size limit. "
+            f"Request: {self.EXPORT_URL}"
+        )
+
+
+@pytest.mark.unit
+class TestFailedTileOutput:
+    """The per-tile failure line shows the reason (issue #870)."""
+
+    def test_failed_tile_line_includes_reason(
+        self, tmp_path: Path, sample_tile: TileSpec, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from datetime import datetime, timezone
+
+        from portolan_cli.extract.arcgis.imageserver.extractor import (
+            _ProcessingStats,
+            _update_stats_and_state,
+        )
+        from portolan_cli.extract.arcgis.imageserver.resume import ImageServerResumeState
+
+        stats = _ProcessingStats()
+        state = ImageServerResumeState(
+            succeeded_tiles=set(),
+            failed_tiles=set(),
+            service_url="https://example.com/ImageServer",
+            started_at=datetime.now(timezone.utc),
+        )
+
+        _update_stats_and_state(
+            tile=sample_tile,
+            succeeded=False,
+            bytes_downloaded=0,
+            stats=stats,
+            resume_state=state,
+            index=0,
+            total=1,
+            duration=1.0,
+            error_msg="Tile download failed (tile_0_0): HTTP 500 (empty response body)",
+            attempts=3,
+        )
+
+        captured = capsys.readouterr()
+        assert (
+            "Tile tile_0_0: failed [1/1]: "
+            "Tile download failed (tile_0_0): HTTP 500 (empty response body)"
+        ) in captured.err
+        assert stats.tiles_failed == 1
+        assert stats.tile_results[0].error == (
+            "Tile download failed (tile_0_0): HTTP 500 (empty response body)"
+        )
+
+
+# =============================================================================
+# License resolution on the raster path (issue #870)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestLicenseResolution:
+    """The raster path honors --license and stops early without one.
+
+    Issue #870 runs `extract arcgis <ImageServer> --license CC-BY-4.0`. Before
+    the fix the raster path dropped the flag, seeded a TODO placeholder, and
+    the add license gate (issue #686) aborted after every tile had downloaded.
+    """
+
+    def _run(
+        self,
+        tmp_path: Path,
+        metadata: ImageServerMetadata,
+        *,
+        license_id: str | None = None,
+        license_url: str | None = None,
+    ) -> tuple[AsyncMock, Path]:
+        """Run extract_imageserver with discovery, download, and init mocked."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _ProcessingStats
+
+        stats = _ProcessingStats()
+        mock_tiles = AsyncMock(return_value=stats)
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.extractor.discover_imageserver",
+                new_callable=AsyncMock,
+                return_value=metadata,
+            ),
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.extractor._extract_all_tiles",
+                mock_tiles,
+            ),
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.extractor._auto_init_catalog",
+                return_value=True,
+            ),
+        ):
+            import asyncio
+
+            asyncio.run(
+                extract_imageserver(
+                    "https://example.com/ImageServer",
+                    tmp_path,
+                    config=ExtractionConfig(raw=False),
+                    license_id=license_id,
+                    license_url=license_url,
+                )
+            )
+        return mock_tiles, tmp_path / ".portolan" / "metadata.yaml"
+
+    def test_license_flag_seeds_metadata_yaml(
+        self, tmp_path: Path, small_extent_metadata: ImageServerMetadata
+    ) -> None:
+        import yaml
+
+        mock_tiles, metadata_path = self._run(
+            tmp_path, small_extent_metadata, license_id="CC-BY-4.0"
+        )
+
+        assert mock_tiles.await_count == 1
+        seeded = yaml.safe_load(metadata_path.read_text())
+        assert seeded["license"] == "CC-BY-4.0"
+        assert "license_url" not in seeded
+
+    def test_license_flag_with_url_seeds_both(
+        self, tmp_path: Path, small_extent_metadata: ImageServerMetadata
+    ) -> None:
+        import yaml
+
+        _, metadata_path = self._run(
+            tmp_path,
+            small_extent_metadata,
+            license_id="other",
+            license_url="https://example.com/terms.html",
+        )
+
+        seeded = yaml.safe_load(metadata_path.read_text())
+        assert seeded["license"] == "other"
+        assert seeded["license_url"] == "https://example.com/terms.html"
+
+    def test_harvested_license_url_seeds_other(
+        self, tmp_path: Path, small_extent_metadata: ImageServerMetadata
+    ) -> None:
+        import yaml
+
+        small_extent_metadata.license_info = (
+            "Data licensed under https://creativecommons.org/licenses/by/4.0/"
+        )
+
+        _, metadata_path = self._run(tmp_path, small_extent_metadata)
+
+        seeded = yaml.safe_load(metadata_path.read_text())
+        assert seeded["license"] == "other"
+        assert seeded["license_url"] == "https://creativecommons.org/licenses/by/4.0/"
+
+    def test_missing_license_stops_before_download(
+        self, tmp_path: Path, small_extent_metadata: ImageServerMetadata
+    ) -> None:
+        from portolan_cli.errors import MissingLicenseError
+
+        assert small_extent_metadata.license_info is None
+
+        with pytest.raises(MissingLicenseError, match="publishes no license URL"):
+            self._run(tmp_path, small_extent_metadata)
+
+        assert not (tmp_path / "tiles").exists() or not any((tmp_path / "tiles").iterdir())
+        assert not (tmp_path / ".portolan" / "imageserver-resume.json").exists()
+
+
+@pytest.mark.unit
+class TestResumeSplitRunsBeforeTheCoarseScan:
+    """A completed tile stays skipped, and the coarse scan never sees it."""
+
+    @staticmethod
+    async def _run(
+        tmp_path: Path,
+        metadata: ImageServerMetadata,
+        resume_state: Any,
+    ) -> tuple[Any, list[list[TileSpec]]]:
+        """Extract with the scan and the downloader replaced by recorders."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _ProcessingStats
+
+        scanned: list[list[TileSpec]] = []
+
+        async def fake_scan(
+            url: str, tiles: list[TileSpec], plan: Any, config: ExtractionConfig
+        ) -> tuple[list[TileSpec], list[TileSpec]]:
+            scanned.append(list(tiles))
+            return list(tiles), []
+
+        async def fake_extract_all(*args: Any, **kwargs: Any) -> _ProcessingStats:
+            return _ProcessingStats()
+
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.extractor.discover_imageserver",
+                new_callable=AsyncMock,
+                return_value=metadata,
+            ),
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.extractor._load_or_create_resume_state",
+                return_value=resume_state,
+            ),
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.extractor._scan_for_empty_blocks",
+                fake_scan,
+            ),
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.extractor._extract_all_tiles",
+                fake_extract_all,
+            ),
+        ):
+            result = await extract_imageserver(
+                "https://example.com/ImageServer",
+                tmp_path,
+                config=ExtractionConfig(tile_size=4096, raw=True, coarse_scan=True),
+                resume=True,
+            )
+        return result, scanned
+
+    @pytest.mark.asyncio
+    async def test_a_completed_tile_is_not_scanned_and_stays_skipped(
+        self, tmp_path: Path, sample_metadata: ImageServerMetadata
+    ) -> None:
+        """The scan reads the pending tiles only (CodeRabbit review of issue #870).
+
+        Before the fix the scan ran over every tile. A completed tile that the
+        coarse level called empty lost its "skipped" status and was counted as
+        empty instead.
+        """
+        from datetime import datetime, timezone
+
+        from portolan_cli.extract.arcgis.imageserver.resume import ImageServerResumeState
+
+        state = ImageServerResumeState(
+            succeeded_tiles={(0, 0)},
+            failed_tiles=set(),
+            service_url="https://example.com/ImageServer",
+            started_at=datetime.now(timezone.utc),
+        )
+
+        result, scanned = await self._run(tmp_path, sample_metadata, state)
+
+        assert len(scanned) == 1
+        assert (0, 0) not in {(t.x, t.y) for t in scanned[0]}
+        assert result.tiles_skipped == 1
+        assert result.tiles_empty == 0
+        assert result.report is not None
+        assert [t.status for t in result.report.tiles if t.tile_id == "tile_0_0"] == ["skipped"]
+
+
+# =============================================================================
+# Tile cache routing (issue #870)
+# =============================================================================
+
+TILE_ORIGIN_X = -12060495.1357351
+TILE_ORIGIN_Y = 5110175.25118694
+LERC_FIXTURES = Path(__file__).parents[4] / "fixtures" / "imageserver" / "tilecache"
+
+
+@pytest.fixture
+def tiles_only_metadata() -> ImageServerMetadata:
+    """Metadata for a hosted tiled imagery layer, which rejects exportImage.
+
+    The numbers come from the live service named in issue #870. The extent
+    covers 512 x 512 pixels at level 9, so it makes one output tile.
+    """
+    from portolan_cli.extract.arcgis.imageserver.tilecache import parse_tile_info
+
+    cache = parse_tile_info(
+        {
+            "tileInfo": {
+                "rows": 256,
+                "cols": 256,
+                "format": "LERC2D",
+                "origin": {"x": TILE_ORIGIN_X, "y": TILE_ORIGIN_Y},
+                "spatialReference": {"wkid": 102100, "latestWkid": 3857},
+                "lods": [
+                    {"level": level, "resolution": 15360.0 / (2**level)} for level in range(10)
+                ],
+            }
+        }
+    )
+    assert cache is not None
+    return ImageServerMetadata(
+        name="Atlantic_Marine_Mammals",
+        band_count=1,
+        pixel_type="U4",
+        pixel_size_x=30.0,
+        pixel_size_y=30.0,
+        full_extent={
+            "xmin": TILE_ORIGIN_X,
+            "ymin": TILE_ORIGIN_Y - 512 * 30.0,
+            "xmax": TILE_ORIGIN_X + 512 * 30.0,
+            "ymax": TILE_ORIGIN_Y,
+            "spatialReference": {"wkid": 102100, "latestWkid": 3857},
+        },
+        max_image_width=15000,
+        max_image_height=4100,
+        capabilities=["Image", "TilesOnly"],
+        license_info="https://creativecommons.org/licenses/by/4.0/",
+        tile_cache=cache,
+    )
+
+
+@pytest.mark.unit
+class TestTilePlanning:
+    """Choosing between exportImage and the tile cache."""
+
+    def test_normal_service_uses_the_export_image_grid(
+        self, sample_metadata: ImageServerMetadata
+    ) -> None:
+        from portolan_cli.extract.arcgis.imageserver.extractor import _plan_tiles
+
+        # 10000 map units at 10 units per pixel is 1000 px, so 256 px tiles
+        # make a 4 x 4 grid.
+        plan = _plan_tiles(
+            sample_metadata, sample_metadata.full_extent, ExtractionConfig(tile_size=256)
+        )
+
+        assert plan.cache is None
+        assert plan.lod is None
+        assert len(plan.tiles) == 16
+
+    def test_tiles_only_service_uses_the_cache_grid(
+        self, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        from portolan_cli.extract.arcgis.imageserver.extractor import _plan_tiles
+
+        plan = _plan_tiles(
+            tiles_only_metadata,
+            tiles_only_metadata.full_extent,
+            ExtractionConfig(tile_size=512),
+        )
+
+        assert plan.cache is tiles_only_metadata.tile_cache
+        assert plan.lod is not None
+        assert plan.lod.level == 9
+        assert len(plan.tiles) == 1
+        assert (plan.tiles[0].width_px, plan.tiles[0].height_px) == (512, 512)
+
+    def test_cache_grid_ignores_the_export_image_size_limit(
+        self, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        from portolan_cli.extract.arcgis.imageserver.extractor import _plan_tiles
+
+        # maxImageHeight is 4100, which would clamp exportImage tiles. The cache
+        # has no such limit, so a 512 px request stays 512 px.
+        plan = _plan_tiles(
+            tiles_only_metadata,
+            tiles_only_metadata.full_extent,
+            ExtractionConfig(tile_size=512),
+        )
+
+        assert plan.tiles[0].width_px == 512
+
+    def test_tiles_only_service_without_a_cache_explains_the_failure(
+        self, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from portolan_cli.extract.arcgis.imageserver.extractor import _plan_tiles
+
+        no_cache = dc_replace(tiles_only_metadata, tile_cache=None)
+
+        with pytest.raises(ImageServerExtractionError, match="TilesOnly"):
+            _plan_tiles(no_cache, no_cache.full_extent, ExtractionConfig())
+
+    def test_cache_grid_reprojects_a_service_extent_in_another_crs(
+        self, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from pyproj import Transformer
+
+        from portolan_cli.extract.arcgis.imageserver.extractor import _plan_tiles
+
+        # The service reports its extent in EPSG:4326, but the cache grid is in
+        # EPSG:3857. The plan must match the plan for the same area in 3857.
+        extent = tiles_only_metadata.full_extent
+        to_wgs84 = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+        xmin, ymin, xmax, ymax = to_wgs84.transform_bounds(
+            extent["xmin"], extent["ymin"], extent["xmax"], extent["ymax"]
+        )
+        wgs84_extent = {
+            "xmin": xmin,
+            "ymin": ymin,
+            "xmax": xmax,
+            "ymax": ymax,
+            "spatialReference": {"wkid": 4326},
+        }
+        pixel_deg = 30.0 * (xmax - xmin) / (extent["xmax"] - extent["xmin"])
+        wgs84 = dc_replace(
+            tiles_only_metadata,
+            full_extent=wgs84_extent,
+            pixel_size_x=pixel_deg,
+            pixel_size_y=pixel_deg,
+        )
+
+        expected = _plan_tiles(tiles_only_metadata, extent, ExtractionConfig(tile_size=512))
+        plan = _plan_tiles(wgs84, wgs84_extent, ExtractionConfig(tile_size=512))
+
+        assert plan.lod == expected.lod
+        assert [(t.x, t.y, t.width_px, t.height_px) for t in plan.tiles] == [
+            (t.x, t.y, t.width_px, t.height_px) for t in expected.tiles
+        ]
+        for got, want in zip(plan.tiles, expected.tiles, strict=True):
+            assert got.bbox == pytest.approx(want.bbox, abs=1e-3)
+
+    def test_cache_grid_fails_when_the_extent_cannot_be_reprojected(
+        self, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from portolan_cli.extract.arcgis.imageserver.extractor import _plan_tiles
+
+        cache = tiles_only_metadata.tile_cache
+        assert cache is not None
+        unknown = dc_replace(
+            tiles_only_metadata,
+            tile_cache=dc_replace(cache, spatial_reference={"wkid": 999999}),
+        )
+
+        with pytest.raises(ImageServerExtractionError, match="cache CRS"):
+            _plan_tiles(unknown, unknown.full_extent, ExtractionConfig(tile_size=512))
+
+
+@pytest.mark.unit
+class TestTilesOnlyExtraction:
+    """End-to-end extraction against a cache-only service (issue #870)."""
+
+    @staticmethod
+    def _transport(body: bytes) -> httpx.MockTransport:
+        """Serve the same cache tile for every request."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "/tile/" in request.url.path:
+                return httpx.Response(200, content=body)
+            return httpx.Response(404, text="not found")
+
+        return httpx.MockTransport(handler)
+
+    @staticmethod
+    def _client_factory(transport: httpx.MockTransport) -> Any:
+        """Build a replacement for httpx.AsyncClient that uses a transport.
+
+        The real class is captured now, because patching the attribute would
+        otherwise make the replacement call itself.
+        """
+        real_client = httpx.AsyncClient
+
+        def _build(**kwargs: Any) -> httpx.AsyncClient:
+            kwargs.pop("transport", None)
+            return real_client(transport=transport, **kwargs)
+
+        return _build
+
+    @classmethod
+    async def _extract(
+        cls,
+        transport: httpx.MockTransport,
+        metadata: ImageServerMetadata,
+        tmp_path: Path,
+        config: ExtractionConfig,
+    ) -> Any:
+        """Run one extraction against a mock transport and mock discovery."""
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.extractor.discover_imageserver",
+                new_callable=AsyncMock,
+                return_value=metadata,
+            ),
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.extractor.httpx.AsyncClient",
+                cls._client_factory(transport),
+            ),
+        ):
+            return await extract_imageserver(
+                "https://example.com/ImageServer",
+                tmp_path,
+                config=config,
+            )
+
+    @pytest.mark.asyncio
+    async def test_writes_a_cog_from_the_tile_cache(
+        self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        import rasterio
+
+        body = (LERC_FIXTURES / "lerc2d_level0_0_0.bin").read_bytes()
+        transport = self._transport(body)
+
+        result = await self._extract(
+            transport, tiles_only_metadata, tmp_path, ExtractionConfig(tile_size=512, raw=True)
+        )
+
+        assert result.tiles_downloaded == 1
+        assert result.tiles_failed == 0
+        cog = tmp_path / "tiles" / "tile_0_0" / "tile_0_0.tif"
+        assert cog.exists()
+        with rasterio.open(cog) as src:
+            assert (src.width, src.height) == (512, 512)
+            assert src.crs.to_string() == "EPSG:3857"
+            assert int((src.dataset_mask() > 0).sum()) == 2851 * 4
+
+    @pytest.mark.asyncio
+    async def test_a_float32_cache_keeps_its_mask_in_the_cog(
+        self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        """A float cache must not report its masked pixels as valid zeros.
+
+        rio-cogeo wraps the raw GeoTIFF in a WarpedVRT with an alpha band. For
+        a float source GDAL builds a float alpha band and reads it as data, so
+        an internal mask alone does not survive the conversion. The raw file
+        carries nan in the masked pixels and declares nan as its nodata value
+        (pull request #871 review).
+        """
+        import numpy as np
+        import rasterio
+
+        body = (LERC_FIXTURES / "lerc2d_float32.bin").read_bytes()
+        transport = self._transport(body)
+
+        result = await self._extract(
+            transport, tiles_only_metadata, tmp_path, ExtractionConfig(tile_size=512, raw=True)
+        )
+
+        assert result.tiles_downloaded == 1
+        cog = tmp_path / "tiles" / "tile_0_0" / "tile_0_0.tif"
+        with rasterio.open(cog) as src:
+            assert src.dtypes[0] == "float32"
+            # The fixture holds 43,887 valid pixels, and the mock serves it for
+            # each of the 4 cache tiles that cover the 512 x 512 output tile.
+            assert int((src.dataset_mask() > 0).sum()) == 43887 * 4
+            values = src.read(1, masked=True)
+            assert float(values.min()) == pytest.approx(741.4, abs=0.01)
+            assert float(values.max()) == pytest.approx(741.4, abs=0.01)
+            # A masked pixel holds nan, so a reader that ignores the mask
+            # still cannot read it as a valid 0.
+            raw = src.read(1)
+            assert np.isnan(raw[src.dataset_mask() == 0]).all()
+
+    @pytest.mark.asyncio
+    async def test_empty_tiles_write_no_file_and_do_not_fail(
+        self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        body = (LERC_FIXTURES / "lerc2d_empty.bin").read_bytes()
+        transport = self._transport(body)
+
+        result = await self._extract(
+            transport, tiles_only_metadata, tmp_path, ExtractionConfig(tile_size=512, raw=True)
+        )
+
+        assert result.tiles_empty == 1
+        assert result.tiles_downloaded == 0
+        assert result.tiles_failed == 0
+        assert not (tmp_path / "tiles" / "tile_0_0" / "tile_0_0.tif").exists()
+        assert result.report is not None
+        assert [t.status for t in result.report.tiles] == ["empty"]
+
+    @pytest.mark.asyncio
+    async def test_a_cache_error_fails_the_tile_with_the_reason(
+        self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(403, text="token required")
+
+        transport = httpx.MockTransport(handler)
+
+        result = await self._extract(
+            transport,
+            tiles_only_metadata,
+            tmp_path,
+            ExtractionConfig(tile_size=512, raw=True, max_retries=1),
+        )
+
+        assert result.tiles_failed == 1
+        assert result.report is not None
+        assert "HTTP 403" in (result.report.tiles[0].error or "")
+
+
+@pytest.mark.unit
+class TestCacheRequestCountWarning:
+    """A full-extent cache read must report its own cost (issue #870)."""
+
+    @staticmethod
+    def _blocks(count: int) -> list[TileSpec]:
+        """Build `count` output blocks of 16 x 16 cache tiles each."""
+        return [
+            TileSpec(
+                x=index,
+                y=0,
+                bbox=(0.0, 0.0, 1.0, 1.0),
+                width_px=4096,
+                height_px=4096,
+            )
+            for index in range(count)
+        ]
+
+    def test_counts_only_the_blocks_that_remain_after_the_scan(
+        self, tiles_only_metadata: ImageServerMetadata, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from portolan_cli.extract.arcgis.imageserver.extractor import (
+            _warn_on_cache_request_count,
+        )
+
+        assert tiles_only_metadata.tile_cache is not None
+        # 64 blocks of 16 x 16 cache tiles is 16,384 requests.
+        _warn_on_cache_request_count(self._blocks(64), tiles_only_metadata.tile_cache)
+
+        assert "16,384 cache tiles" in capsys.readouterr().err
+
+    def test_stays_quiet_for_a_small_run(
+        self, tiles_only_metadata: ImageServerMetadata, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from portolan_cli.extract.arcgis.imageserver.extractor import (
+            _warn_on_cache_request_count,
+        )
+
+        assert tiles_only_metadata.tile_cache is not None
+        _warn_on_cache_request_count(self._blocks(4), tiles_only_metadata.tile_cache)
+
+        assert "cache tiles" not in capsys.readouterr().err
+
+
+@pytest.mark.unit
+class TestCoarseScan:
+    """Skipping empty blocks after a coarse probe (issue #870)."""
+
+    @staticmethod
+    def _wide(metadata: ImageServerMetadata) -> ImageServerMetadata:
+        """Widen the extent to 2 x 1 blocks of 4096 px at level 9."""
+        from dataclasses import replace as dc_replace
+
+        return dc_replace(
+            metadata,
+            full_extent={
+                "xmin": TILE_ORIGIN_X,
+                "ymin": TILE_ORIGIN_Y - 4096 * 30.0,
+                "xmax": TILE_ORIGIN_X + 2 * 4096 * 30.0,
+                "ymax": TILE_ORIGIN_Y,
+                "spatialReference": {"wkid": 102100, "latestWkid": 3857},
+            },
+        )
+
+    @staticmethod
+    def _recording_handler(body: bytes) -> tuple[list[str], Any]:
+        """Serve one body for every request and record the paths it asked for."""
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.path)
+            return httpx.Response(200, content=body)
+
+        return seen, handler
+
+    @staticmethod
+    async def _run(
+        metadata: ImageServerMetadata,
+        tmp_path: Path,
+        handler: Any,
+        coarse_scan: bool,
+        resume: bool = False,
+    ) -> ExtractionResult:
+        transport = httpx.MockTransport(handler)
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.extractor.discover_imageserver",
+                new_callable=AsyncMock,
+                return_value=metadata,
+            ),
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.extractor.httpx.AsyncClient",
+                TestTilesOnlyExtraction._client_factory(transport),
+            ),
+        ):
+            return await extract_imageserver(
+                "https://example.com/ImageServer",
+                tmp_path,
+                config=ExtractionConfig(tile_size=4096, raw=True, coarse_scan=coarse_scan),
+                resume=resume,
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("coarse_scan", "requests", "level"),
+        [
+            # The scan asks level 5 once per block, and reads no tile at level 9.
+            (True, 2, "/tile/5/"),
+            # Without the scan each of the 2 blocks reads its 16 x 16 cache tiles.
+            (False, 512, "/tile/9/"),
+        ],
+        ids=["scan-on", "scan-off"],
+    )
+    async def test_the_scan_decides_how_many_cache_tiles_the_reader_asks_for(
+        self,
+        tmp_path: Path,
+        tiles_only_metadata: ImageServerMetadata,
+        coarse_scan: bool,
+        requests: int,
+        level: str,
+    ) -> None:
+        empty = (LERC_FIXTURES / "lerc2d_empty.bin").read_bytes()
+        seen, handler = self._recording_handler(empty)
+
+        result = await self._run(self._wide(tiles_only_metadata), tmp_path, handler, coarse_scan)
+
+        assert result.tiles_empty == 2
+        assert result.tiles_downloaded == 0
+        assert len(seen) == requests
+        assert all(level in path for path in seen)
+
+    @pytest.mark.asyncio
+    async def test_reads_a_block_whose_coarse_tile_holds_data(
+        self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        data = (LERC_FIXTURES / "lerc2d_level0_0_0.bin").read_bytes()
+        empty = (LERC_FIXTURES / "lerc2d_empty.bin").read_bytes()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            # Only the first block holds data at the coarse level.
+            first_block = "/tile/5/0/0" in request.url.path
+            if "/tile/5/" in request.url.path:
+                return httpx.Response(200, content=data if first_block else empty)
+            return httpx.Response(200, content=data)
+
+        result = await self._run(self._wide(tiles_only_metadata), tmp_path, handler, True)
+
+        assert result.tiles_downloaded == 1
+        assert result.tiles_empty == 1
+        assert (tmp_path / "tiles" / "tile_0_0" / "tile_0_0.tif").exists()
+        assert not (tmp_path / "tiles" / "tile_1_0" / "tile_1_0.tif").exists()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_probe_reads_the_block_in_full(
+        self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        # A probe that errors must never skip a block, because that would drop
+        # data without saying so.
+        data = (LERC_FIXTURES / "lerc2d_level0_0_0.bin").read_bytes()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "/tile/5/" in request.url.path:
+                return httpx.Response(500, text="boom")
+            return httpx.Response(200, content=data)
+
+        result = await self._run(self._wide(tiles_only_metadata), tmp_path, handler, True)
+
+        assert result.tiles_downloaded == 2
+        assert result.tiles_empty == 0
+
+
+@pytest.mark.unit
+class TestCoarseScanResume:
+    """A coarse verdict must not become a completed tile (PR #871 review)."""
+
+    @pytest.mark.asyncio
+    async def test_a_coarse_empty_block_stays_out_of_the_succeeded_tiles(
+        self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        import json
+
+        empty = (LERC_FIXTURES / "lerc2d_empty.bin").read_bytes()
+        seen, handler = TestCoarseScan._recording_handler(empty)
+
+        await TestCoarseScan._run(
+            TestCoarseScan._wide(tiles_only_metadata), tmp_path, handler, True
+        )
+
+        state = json.loads((tmp_path / ".portolan" / "imageserver-resume.json").read_text())
+        assert state["tiles"]["succeeded"] == []
+        assert state["tiles"]["coarse_empty"] == [[0, 0], [1, 0]]
+        assert state["grid"] == {
+            "tile_size": 4096,
+            "extent": [
+                TILE_ORIGIN_X,
+                TILE_ORIGIN_Y - 4096 * 30.0,
+                TILE_ORIGIN_X + 2 * 4096 * 30.0,
+                TILE_ORIGIN_Y,
+            ],
+        }
+
+    @pytest.mark.asyncio
+    async def test_no_coarse_scan_reads_a_block_the_scan_dropped(
+        self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        """--resume --no-coarse-scan must recover a block the probe skipped.
+
+        The probe reads a coarse level, which can drop a thin feature. The
+        recovery run therefore reads the block at full resolution.
+        """
+        data = (LERC_FIXTURES / "lerc2d_level0_0_0.bin").read_bytes()
+        empty = (LERC_FIXTURES / "lerc2d_empty.bin").read_bytes()
+        wide = TestCoarseScan._wide(tiles_only_metadata)
+
+        def coarse_says_empty(request: httpx.Request) -> httpx.Response:
+            if "/tile/5/" in request.url.path:
+                return httpx.Response(200, content=empty)
+            return httpx.Response(200, content=data)
+
+        first = await TestCoarseScan._run(wide, tmp_path, coarse_says_empty, True)
+        assert first.tiles_empty == 2
+        assert first.tiles_downloaded == 0
+
+        second = await TestCoarseScan._run(
+            wide,
+            tmp_path,
+            lambda request: httpx.Response(200, content=data),
+            coarse_scan=False,
+            resume=True,
+        )
+
+        assert second.tiles_downloaded == 2
+        assert second.tiles_skipped == 0
+
+    @pytest.mark.asyncio
+    async def test_resume_with_the_scan_on_keeps_skipping_those_blocks(
+        self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        empty = (LERC_FIXTURES / "lerc2d_empty.bin").read_bytes()
+        wide = TestCoarseScan._wide(tiles_only_metadata)
+        seen, handler = TestCoarseScan._recording_handler(empty)
+
+        await TestCoarseScan._run(wide, tmp_path, handler, True)
+        first_requests = len(seen)
+
+        second = await TestCoarseScan._run(wide, tmp_path, handler, coarse_scan=True, resume=True)
+
+        # The second run asks for nothing, because the saved verdict stands.
+        assert len(seen) == first_requests
+        assert second.tiles_empty == 2
+
+
+@pytest.mark.unit
+class TestResumeGridGuard:
+    """A resumed run must extract the grid the saved state describes."""
+
+    @staticmethod
+    def _state(tmp_path: Path, tile_size: int) -> Path:
+        from datetime import datetime, timezone
+
+        from portolan_cli.extract.arcgis.imageserver.resume import (
+            ImageServerResumeState,
+            TileGrid,
+            save_resume_state,
+        )
+
+        path = tmp_path / "imageserver-resume.json"
+        save_resume_state(
+            ImageServerResumeState(
+                succeeded_tiles={(0, 0), (1, 0)},
+                failed_tiles=set(),
+                service_url="https://example.com/ImageServer",
+                started_at=datetime(2026, 9, 22, tzinfo=timezone.utc),
+                grid=TileGrid(tile_size=tile_size, extent=(0.0, 0.0, 100.0, 100.0)),
+            ),
+            path,
+        )
+        return path
+
+    @staticmethod
+    def _load(path: Path, tile_size: int, extent: tuple[float, float, float, float]) -> Any:
+        """Load the saved state against the grid a new run would extract."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import (
+            _load_or_create_resume_state,
+        )
+        from portolan_cli.extract.arcgis.imageserver.resume import TileGrid
+
+        return _load_or_create_resume_state(
+            True,
+            path,
+            "https://example.com/ImageServer",
+            TileGrid(tile_size=tile_size, extent=extent),
+        )
+
+    def test_a_different_tile_size_starts_a_fresh_state(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = self._state(tmp_path, tile_size=3000)
+
+        state = self._load(path, 1024, (0.0, 0.0, 100.0, 100.0))
+
+        assert state.succeeded_tiles == set()
+        message = capsys.readouterr().err
+        assert "--tile-size 3000" in message
+        assert "--tile-size 1024" in message
+
+    def test_a_different_extent_starts_a_fresh_state(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = self._state(tmp_path, tile_size=1024)
+
+        state = self._load(path, 1024, (0.0, 0.0, 200.0, 100.0))
+
+        assert state.succeeded_tiles == set()
+        assert "covered another area" in capsys.readouterr().err
+
+    def test_the_same_grid_resumes(self, tmp_path: Path) -> None:
+        path = self._state(tmp_path, tile_size=1024)
+
+        state = self._load(path, 1024, (0.0, 0.0, 100.0, 100.0))
+
+        assert state.succeeded_tiles == {(0, 0), (1, 0)}
+
+    def test_a_state_without_a_grid_still_resumes(self, tmp_path: Path) -> None:
+        """A report an older version wrote declares no grid.
+
+        Such a state cannot be checked, and refusing it would break every
+        resume that is already in flight.
+        """
+        import json
+
+        from portolan_cli.extract.arcgis.imageserver.resume import TileGrid
+
+        path = tmp_path / "imageserver-resume.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "extraction_type": "imageserver",
+                    "service_url": "https://example.com/ImageServer",
+                    "started_at": "2026-09-22T00:00:00Z",
+                    "tiles": {"succeeded": [[0, 0]], "failed": []},
+                }
+            )
+        )
+
+        state = self._load(path, 1024, (0.0, 0.0, 100.0, 100.0))
+
+        assert state.succeeded_tiles == {(0, 0)}
+        assert state.grid == TileGrid(tile_size=1024, extent=(0.0, 0.0, 100.0, 100.0))
+
+
+@pytest.mark.unit
+class TestCachePreflight:
+    """A cache the reader cannot decode must fail before the first request."""
+
+    @staticmethod
+    def _with_format(metadata: ImageServerMetadata, tile_format: str) -> ImageServerMetadata:
+        from dataclasses import replace as dc_replace
+
+        cache = metadata.tile_cache
+        assert cache is not None
+        return dc_replace(metadata, tile_cache=dc_replace(cache, tile_format=tile_format))
+
+    def test_an_unknown_format_stops_the_plan(
+        self, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        from portolan_cli.extract.arcgis.imageserver.extractor import _plan_tiles
+
+        unknown = self._with_format(tiles_only_metadata, "BUNDLE")
+
+        with pytest.raises(ImageServerExtractionError, match="BUNDLE"):
+            _plan_tiles(unknown, unknown.full_extent, ExtractionConfig(tile_size=512))
+
+    def test_a_jpegplus_cache_plans_tiles(self, tiles_only_metadata: ImageServerMetadata) -> None:
+        """JPEGPlus names a plain JPEG payload, which rasterio reads."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _plan_tiles
+
+        jpegplus = self._with_format(tiles_only_metadata, "JPEGPLUS")
+
+        plan = _plan_tiles(jpegplus, jpegplus.full_extent, ExtractionConfig(tile_size=512))
+
+        assert len(plan.tiles) == 1
+
+    @pytest.mark.asyncio
+    async def test_the_reader_sends_no_request_for_an_unknown_format(
+        self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.path)
+            return httpx.Response(200, content=b"")
+
+        unknown = self._with_format(tiles_only_metadata, "BUNDLE")
+
+        with pytest.raises(ImageServerExtractionError, match="BUNDLE"):
+            await TestTilesOnlyExtraction._extract(
+                httpx.MockTransport(handler),
+                unknown,
+                tmp_path,
+                ExtractionConfig(tile_size=512, raw=True),
+            )
+
+        assert seen == []
+
+
+@pytest.mark.unit
+class TestCacheRateLimit:
+    """HTTP 429 from the cache must back off, not fail the tile."""
+
+    @pytest.mark.asyncio
+    async def test_a_429_becomes_a_rate_limit_error(
+        self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
+    ) -> None:
+        from portolan_cli.extract.arcgis.imageserver.extractor import (
+            RateLimitError,
+            _download_one_tile,
+            _plan_tiles,
+        )
+
+        plan = _plan_tiles(
+            tiles_only_metadata,
+            tiles_only_metadata.full_extent,
+            ExtractionConfig(tile_size=512),
+        )
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(429, headers={"Retry-After": "7"})
+        )
+
+        async with httpx.AsyncClient(transport=transport) as client:
+            with pytest.raises(RateLimitError) as exc_info:
+                await _download_one_tile(
+                    tile=plan.tiles[0],
+                    url="https://example.com/ImageServer",
+                    raw_path=tmp_path / "raw.tif",
+                    client=client,
+                    plan=plan,
+                )
+
+        assert exc_info.value.retry_after == 7.0

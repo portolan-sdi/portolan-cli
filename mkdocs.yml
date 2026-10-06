@@ -8,13 +8,24 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
-  logo: assets/images/icon-white.svg
-  favicon: assets/images/favicon.ico
+  # Zensical builds this site. `classic` keeps the Material 9
+  # markup, so every `.md-*` selector in extra.css still applies.
+  variant: classic
+  # The header is a solid blue band, so the mark on it is cream. The
+  # favicon sits on a browser tab, so it is blue. The sync in
+  # portolan-ops owns both files.
+  logo: assets/images/portolan-logomark-fcfcfa.svg
+  favicon: assets/images/portolan-logomark-4163cc.svg
   # Light mode only. The brand kit carries no dark theme and no toggle.
   palette:
     scheme: default
     primary: custom
     accent: custom
+  # Google Fonts serves both families. Hanken Grotesk sets prose and
+  # headlines. JetBrains Mono sets code, labels, data, and paths.
+  font:
+    text: Hanken Grotesk
+    code: JetBrains Mono
   features:
     - navigation.top
     - navigation.tabs
@@ -25,6 +36,10 @@ theme:
     - content.code.annotate
 
 extra_css:
+  # Order is load-bearing. `_brand-vars.css` declares the tokens on
+  # `:root` and `extra.css` reads them. The sync in portolan-ops owns
+  # the first file.
+  - assets/stylesheets/_brand-vars.css
   - assets/stylesheets/extra.css
 
 extra:
@@ -34,6 +49,9 @@ extra:
       name: Portolan CLI on GitHub
 
 plugins:
+  # Zensical builds the search index natively. It still reads this
+  # entry. Keep it, because MkDocs drops search when the `plugins` key
+  # exists and omits it. That keeps the rollback leg complete.
   - search
   - mkdocstrings:
       handlers:
@@ -47,10 +65,12 @@ plugins:
             members_order: source
             docstring_style: google
 
+# This list is exhaustive on purpose. Both builders replace their
+# default set when this key exists. Add an extension here before you
+# use its syntax in a page.
 markdown_extensions:
   - admonition
   - attr_list
-  - mkdocs-click  # Must come after attr_list for correct rendering
   - md_in_html
   - pymdownx.superfences
   - pymdownx.tabbed:
@@ -66,6 +86,13 @@ markdown_extensions:
   - toc:
       permalink: true
 
+# Zensical validates links and anchors by default. State the level so
+# MkDocs, which defaults anchors to `info`, reports the same problems.
+validation:
+  links:
+    not_found: warn
+    anchors: warn
+
 nav:
   - Home: index.md
   - Examples: examples.md
@@ -76,6 +103,3 @@ nav:
     - Configuration Reference: reference/configuration.md
   - Contributing: contributing.md
   - Changelog: changelog.md
-
-not_in_nav: |
-  /BRANDING.md

@@ -1,44 +1,49 @@
 /* Portolan brand styles for the documentation site.
 
-   The values come from the brand kit in portolan-ops. See brand/brand.json
-   there. Four standing rules shape this file. Light mode only. Square
-   corners. Flat surfaces separated by rules, not by cards or shadows. No
-   gradients anywhere. */
+   The brand kit in portolan-ops owns every value. The sync copies
+   `_brand-vars.css` into this directory, and `mkdocs.yml` loads it before
+   this file. Read a role token such as `--color-accent` first. Reach for a
+   `--palette-*` token only when the intent is a literal brand color.
+
+   Four standing rules shape this file. Light mode only. Square corners.
+   Flat surfaces separated by rules, not by cards or shadows. No gradients
+   anywhere. */
 
 :root {
-  /* Palette. These mirror brand.json and change only when it changes. */
-  --portolan-primary: #4163cc;
-  --portolan-primary-ink: #2d4aa8;
-  --portolan-surface: #fcfcfa;
-  --portolan-ink: #16170f;
-  --portolan-rule-soft: #d6d5ca;
-
   /* Material overrides */
-  --md-primary-fg-color: var(--portolan-primary);
-  --md-primary-fg-color--light: var(--portolan-primary);
-  --md-primary-fg-color--dark: var(--portolan-primary-ink);
-  --md-accent-fg-color: var(--portolan-primary-ink);
-  --md-accent-fg-color--transparent: rgba(65, 99, 204, 0.1);
+  --md-primary-fg-color: var(--color-accent);
+  --md-primary-fg-color--light: var(--color-accent);
+  --md-primary-fg-color--dark: var(--color-link-hover);
+  --md-accent-fg-color: var(--color-link-hover);
+  --md-accent-fg-color--transparent: color-mix(
+    in srgb,
+    var(--palette-primary) 10%,
+    transparent
+  );
 
-  --md-primary-bg-color: var(--portolan-surface);
-  --md-primary-bg-color--light: rgba(252, 252, 250, 0.7);
+  --md-primary-bg-color: var(--color-background);
+  --md-primary-bg-color--light: color-mix(
+    in srgb,
+    var(--palette-surface) 70%,
+    transparent
+  );
 
-  --md-default-bg-color: var(--portolan-surface);
-  --md-text-color: var(--portolan-ink);
-  --md-typeset-color: var(--portolan-ink);
+  --md-default-bg-color: var(--color-background);
+  --md-text-color: var(--color-text);
+  --md-typeset-color: var(--color-text);
 }
 
 /* The header is a solid blue band. The mark and the text sit on it in cream. */
 .md-header {
-  background-color: var(--portolan-primary);
+  background-color: var(--palette-primary);
   box-shadow: none;
-  border-bottom: 1px solid var(--portolan-ink);
+  border-bottom: 1px solid var(--color-rule);
 }
 
 .md-header__title,
 .md-header__button,
 .md-header-nav__button {
-  color: var(--portolan-surface);
+  color: var(--color-background);
 }
 
 .md-header__button.md-logo {
@@ -53,46 +58,54 @@
 }
 
 .md-tabs {
-  background-color: var(--portolan-primary);
+  background-color: var(--palette-primary);
 }
 
 .md-tabs__link {
-  color: rgba(252, 252, 250, 0.8);
+  color: color-mix(in srgb, var(--palette-surface) 80%, transparent);
 }
 
 .md-tabs__link:hover,
 .md-tabs__link--active {
-  color: var(--portolan-surface);
+  color: var(--color-background);
 }
 
 /* Search sits inside the band, so it takes a cream rule rather than a fill. */
 .md-search__form {
-  background-color: rgba(252, 252, 250, 0.15);
+  background-color: color-mix(
+    in srgb,
+    var(--palette-surface) 15%,
+    transparent
+  );
   border-radius: 0;
 }
 
 .md-search__form:hover {
-  background-color: rgba(252, 252, 250, 0.25);
+  background-color: color-mix(
+    in srgb,
+    var(--palette-surface) 25%,
+    transparent
+  );
 }
 
 .md-search__input::placeholder {
-  color: rgba(252, 252, 250, 0.7);
+  color: color-mix(in srgb, var(--palette-surface) 70%, transparent);
 }
 
 .md-search__input {
-  color: var(--portolan-surface);
+  color: var(--color-background);
 }
 
 /* Headings are ink. The gradient text effect is gone. */
 .md-typeset h1 {
-  color: var(--portolan-ink);
+  color: var(--color-text);
   font-weight: 700;
   letter-spacing: -0.015em;
 }
 
 .md-typeset h1 + p > strong:first-child {
   font-size: 1.2rem;
-  color: var(--portolan-ink);
+  color: var(--color-text);
 }
 
 /* Corners are square everywhere. */
@@ -114,55 +127,58 @@
 }
 
 .md-typeset .md-button--primary {
-  background-color: var(--portolan-primary);
-  border: 1px solid var(--portolan-primary);
-  color: var(--portolan-surface);
+  background-color: var(--palette-primary);
+  border: 1px solid var(--palette-primary);
+  color: var(--color-background);
 }
 
 .md-typeset .md-button--primary:hover {
-  background-color: var(--portolan-primary-ink);
-  border-color: var(--portolan-primary-ink);
+  background-color: var(--color-link-hover);
+  border-color: var(--color-link-hover);
   box-shadow: none;
 }
 
 .md-typeset .md-button:not(.md-button--primary) {
-  border: 1px solid var(--portolan-ink);
-  color: var(--portolan-ink);
+  border: 1px solid var(--color-rule);
+  color: var(--color-text);
 }
 
 .md-typeset .md-button:not(.md-button--primary):hover {
-  background-color: var(--portolan-primary);
-  border-color: var(--portolan-primary);
-  color: var(--portolan-surface);
+  background-color: var(--palette-primary);
+  border-color: var(--palette-primary);
+  color: var(--color-background);
 }
 
 /* Cards are bordered blocks, never raised ones. */
 .md-typeset .grid.cards > ul > li,
 .md-typeset .grid.cards > ol > li,
 .md-typeset .grid > .card {
-  border: 1px solid var(--portolan-ink);
+  border: 1px solid var(--color-rule);
   transition: border-color 0.2s;
 }
 
 .md-typeset .grid.cards > ul > li:hover,
 .md-typeset .grid.cards > ol > li:hover,
 .md-typeset .grid > .card:hover {
-  border-color: var(--portolan-primary);
+  border-color: var(--palette-primary);
   box-shadow: none;
 }
 
 .md-typeset .grid.cards .lg {
   font-size: 2rem;
-  color: var(--portolan-primary);
+  color: var(--color-accent);
 }
 
+/* The border of a code block is a structural rule, so it takes ink. The kit
+   reserves `rule_soft` for a separator inside a block that already has a
+   border. */
 .md-typeset pre {
-  border: 1px solid var(--portolan-rule-soft);
+  border: 1px solid var(--color-rule);
 }
 
 .md-typeset .admonition.tip,
 .md-typeset details.tip {
-  border-color: var(--portolan-primary);
+  border-color: var(--palette-primary);
 }
 
 .md-typeset .tip > .admonition-title,
@@ -171,13 +187,13 @@
 }
 
 .md-footer {
-  background-color: var(--portolan-ink);
+  background-color: var(--palette-ink);
 }
 
 .md-typeset a {
-  color: var(--portolan-primary);
+  color: var(--color-link);
 }
 
 .md-typeset a:hover {
-  color: var(--portolan-primary-ink);
+  color: var(--color-link-hover);
 }
