@@ -39,7 +39,7 @@ def test_every_e2e_image_is_pinned_by_tag_and_digest() -> None:
         if not PINNED_IMAGE.match(service["image"])
     }
 
-    assert set(services) == {"rest-catalog", "minio", "minio-init"}
+    assert set(services) == {"rest-catalog", "rustfs", "rustfs-init"}
     assert unpinned == {}
 
 

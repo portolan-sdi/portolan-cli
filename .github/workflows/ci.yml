@@ -334,8 +334,8 @@ jobs:
       - name: Wait for REST catalog
         run: timeout 60 bash -c 'until curl -sf http://localhost:8181/v1/config; do sleep 2; done'
 
-      - name: Wait for MinIO
-        run: timeout 60 bash -c 'until curl -sf http://localhost:9000/minio/health/live; do sleep 2; done'
+      - name: Wait for RustFS
+        run: timeout 60 bash -c 'until curl -sf http://localhost:9000/health/live; do sleep 2; done'
 
       - name: Run E2E tests (fast tier, excludes e2e_slow)
         run: uv run pytest tests/iceberg/e2e/ -v --tb=long -m "e2e and not e2e_slow" --timeout=120
@@ -381,19 +381,19 @@ jobs:
 
       # The example pushes and reads with no credentials. The bucket policy
       # grants anonymous read and write on portolan-docs only.
-      - name: Start MinIO for documentation example
+      - name: Start RustFS for documentation example
         run: |
-          docker compose -f tests/iceberg/e2e/docker-compose.yml up -d minio
-          timeout 60 bash -c 'until curl -sf http://localhost:9000/minio/health/live; do sleep 2; done'
+          docker compose -f tests/iceberg/e2e/docker-compose.yml up -d rustfs
+          timeout 60 bash -c 'until curl -sf http://localhost:9000/health/live; do sleep 2; done'
           docker compose -f tests/iceberg/e2e/docker-compose.yml run --rm --no-deps \
             -v "$PWD/tests/docs/portolan-docs-bucket-policy.json:/policy.json:ro" \
-            --entrypoint /bin/sh minio-init -ec \
-            'aws --endpoint-url http://minio:9000 s3api head-bucket --bucket portolan-docs || aws --endpoint-url http://minio:9000 s3api create-bucket --bucket portolan-docs; aws --endpoint-url http://minio:9000 s3api put-bucket-policy --bucket portolan-docs --policy file:///policy.json'
+            --entrypoint /bin/sh rustfs-init -ec \
+            'aws --endpoint-url http://rustfs:9000 s3api head-bucket --bucket portolan-docs || aws --endpoint-url http://rustfs:9000 s3api create-bucket --bucket portolan-docs; aws --endpoint-url http://rustfs:9000 s3api put-bucket-policy --bucket portolan-docs --policy file:///policy.json'
 
       - name: Test documentation examples
         env:
           AWS_REGION: us-east-1
-          PORTOLAN_DOCS_MINIO: "1"
+          PORTOLAN_DOCS_RUSTFS: "1"
           PORTOLAN_S3_ENDPOINT: localhost:9000
           PORTOLAN_S3_USE_SSL: "false"
         run: uv run pytest tests/docs/ -v --tb=short
@@ -406,11 +406,11 @@ jobs:
           path: site
           retention-days: 7
 
-      - name: MinIO logs
+      - name: RustFS logs
         if: failure()
         run: docker compose -f tests/iceberg/e2e/docker-compose.yml logs
 
-      - name: Stop MinIO
+      - name: Stop RustFS
         if: always()
         run: docker compose -f tests/iceberg/e2e/docker-compose.yml down -v
 

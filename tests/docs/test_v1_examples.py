@@ -212,7 +212,7 @@ def test_tutorial_uses_a_placeholder_contact() -> None:
 
 
 @pytest.mark.unit
-def test_docs_ci_uses_anonymous_http_minio() -> None:
+def test_docs_ci_uses_anonymous_http_rustfs() -> None:
     """The docs job does not send credentials to its plaintext test service."""
     workflow = _read_text(CI_WORKFLOW)
     docs_job = workflow.partition("\n  docs:\n")[2].partition("\n  build:\n")[0]
@@ -393,8 +393,8 @@ def test_example_publishes_assets_that_remain_queryable_without_arcgis(
     tmp_path: Path,
 ) -> None:
     """CI queries the published Assets after the source service stops."""
-    if os.environ.get("PORTOLAN_DOCS_MINIO") != "1":
-        pytest.skip("Documentation MinIO service is not running")
+    if os.environ.get("PORTOLAN_DOCS_RUSTFS") != "1":
+        pytest.skip("Documentation RustFS service is not running")
 
     catalog_dir = tmp_path / "philadelphia-housing"
     remote = "s3://portolan-docs/philadelphia-housing"

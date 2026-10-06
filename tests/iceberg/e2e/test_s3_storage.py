@@ -1,7 +1,7 @@
-"""E2E tests for S3 storage verification via MinIO.
+"""E2E tests for S3 storage verification via RustFS.
 
 Verifies that Iceberg data and metadata files are correctly stored
-in MinIO S3-compatible storage after publishing through the REST catalog.
+in RustFS S3-compatible storage after publishing through the REST catalog.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from tests.iceberg.e2e.conftest import write_test_parquet
 
 
 @pytest.mark.e2e
-def test_parquet_files_in_s3(rest_iceberg_backend, minio_client, tmp_path):
+def test_parquet_files_in_s3(rest_iceberg_backend, rustfs_client, tmp_path):
     """boto3 list_objects finds Parquet data files in warehouse bucket."""
     asset = write_test_parquet(tmp_path / "s3_data.parquet")
 
@@ -26,7 +26,7 @@ def test_parquet_files_in_s3(rest_iceberg_backend, minio_client, tmp_path):
         message="S3 parquet check",
     )
 
-    response = minio_client.list_objects_v2(Bucket="warehouse", Prefix="portolake/s3-parquet/")
+    response = rustfs_client.list_objects_v2(Bucket="warehouse", Prefix="portolake/s3-parquet/")
     contents = response.get("Contents", [])
     parquet_keys = [obj["Key"] for obj in contents if obj["Key"].endswith(".parquet")]
 
@@ -34,7 +34,7 @@ def test_parquet_files_in_s3(rest_iceberg_backend, minio_client, tmp_path):
 
 
 @pytest.mark.e2e
-def test_iceberg_metadata_in_s3(rest_iceberg_backend, minio_client, tmp_path):
+def test_iceberg_metadata_in_s3(rest_iceberg_backend, rustfs_client, tmp_path):
     """Iceberg metadata JSON and manifest files should exist in S3."""
     asset = write_test_parquet(tmp_path / "meta_check.parquet")
 
@@ -46,7 +46,7 @@ def test_iceberg_metadata_in_s3(rest_iceberg_backend, minio_client, tmp_path):
         message="Metadata check",
     )
 
-    response = minio_client.list_objects_v2(
+    response = rustfs_client.list_objects_v2(
         Bucket="warehouse", Prefix="portolake/s3-metadata/metadata/"
     )
     contents = response.get("Contents", [])
