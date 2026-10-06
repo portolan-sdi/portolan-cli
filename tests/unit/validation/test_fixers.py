@@ -250,7 +250,7 @@ class TestApplyFixers:
         apply_fixers(
             tmp_path,
             [
-                _finding("PTL-LNK-005"),
+                _finding("PTL-LNK-003"),
                 _finding("PTL-TTL-001"),
                 _finding("PTL-CNF-001"),
                 _finding("PTL-FIL-001"),
