@@ -422,12 +422,10 @@ def test_directory_traversal_rejected(iceberg_backend):
     reason="PyIceberg SQL catalog warehouse paths broken on Windows (apache/iceberg-python#1005)",
 )
 @pytest.mark.integration
-def test_backend_with_catalog_root_creates_files_in_correct_location(tmp_path, monkeypatch):
+def test_backend_with_catalog_root_creates_files_in_correct_location(tmp_path):
     """IcebergBackend(catalog_root=path) should create iceberg.db under path/.portolan/."""
     from portolan_cli.backends.iceberg.backend import IcebergBackend
 
-    # Isolate from ~/.pyiceberg.yaml (e.g., REST/BigLake config)
-    monkeypatch.setattr("portolan_cli.backends.iceberg.config._get_external_config", lambda: None)
     backend = IcebergBackend(catalog_root=tmp_path)
     assert (tmp_path / ".portolan" / "iceberg.db").exists()
 

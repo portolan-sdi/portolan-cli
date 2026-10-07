@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 import pyarrow as pa
@@ -13,6 +14,35 @@ from pyiceberg.catalog import load_catalog
 # producing paths like /C:/Users/... which PyArrow's local filesystem rejects.
 # Upstream: https://github.com/apache/iceberg-python/issues/1005 (closed, fix never merged)
 # PyIceberg doesn't run CI on Windows: https://github.com/apache/iceberg-python/issues/2477
+
+
+@pytest.fixture(autouse=True)
+def _isolate_pyiceberg_config(tmp_path, monkeypatch):
+    """Hide the developer's ~/.pyiceberg.yaml from every test in this suite.
+
+    PyIceberg reads a catalog definition from the first ``.pyiceberg.yaml`` it
+    finds, searching ``PYICEBERG_HOME``, then the home directory, then the
+    current directory. A developer who has ever pointed the CLI at a REST or
+    BigLake catalog has one in their home directory, and these tests then load
+    that catalog instead of the temporary SQLite one. The failure is remote and
+    credential-dependent, so it reproduces for one person and not for CI.
+
+    Pointing both ``PYICEBERG_HOME`` and the home directory at an empty
+    temporary directory leaves only the current directory, which is the
+    repository and carries no such file.
+
+    PyIceberg also builds a catalog from ``PYICEBERG_CATALOG__{NAME}__{KEY}``
+    environment variables, and it reads them whatever the home directory holds.
+    A developer who exports one in the shell hits the same remote catalog, so
+    the fixture removes them too.
+    """
+    home = tmp_path / "pyiceberg-home"
+    home.mkdir()
+    monkeypatch.setenv("PYICEBERG_HOME", str(home))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    for name in [n for n in os.environ if n.startswith("PYICEBERG_CATALOG__")]:
+        monkeypatch.delenv(name)
 
 
 @pytest.fixture

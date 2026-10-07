@@ -137,8 +137,17 @@ or double-count machine metadata. This caused repeated data-loss bugs.
 
 ## pystac leaks absolute paths and mis-detects dirs (known-issues/pystac-absolute-paths.md)
 
-The catalog type is SELF_CONTAINED, all `root`/`self`/`parent`/`child` links MUST
-be relative, no leading `/`, no `file://`, no `C:\`, no URI scheme (rashid PTL-LNK-004).
+The catalog type is SELF_CONTAINED, so write `root`/`self`/`parent`/`child`
+links relative, with no leading `/`, no `file://`, no `C:\` and no URI scheme.
+This keeps the tree portable, which is the reason core.md gives at line 520.
+
+The validator does not enforce it. core.md says "Structural links can be
+relative or absolute; Portolan takes no position". rashid 0.1.8 retires
+`PTL-LNK-004` and leaves an absolute structural link unreported, because
+without a published base it cannot say what the URL points at. `PTL-LNK-006`
+checks only that a link resolves. So keep the links relative by construction
+here, and do not expect `portolan check` to catch a regression.
+
 pystac fights this in two ways.
 
 - **Absolute-path leak.** `to_dict()`/`save()` can emit absolute local paths.

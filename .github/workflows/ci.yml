@@ -50,6 +50,10 @@ jobs:
               - 'portolan_cli/backends/iceberg/**'
               - 'tests/iceberg/**'
               - 'pyproject.toml'
+              # pyiceberg can move in the lock alone, through a transitive
+              # bump or an explicit upgrade. Without this the Iceberg jobs
+              # skip the very change that needs them.
+              - 'uv.lock'
             python:
               - 'portolan_cli/**/*.py'
 
