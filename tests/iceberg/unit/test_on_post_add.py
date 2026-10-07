@@ -375,26 +375,56 @@ def test_on_post_add_leaves_the_data_asset_alone(iceberg_backend, parquet_file, 
 
 
 @pytest.mark.integration
-def test_on_post_add_adds_the_iceberg_metadata_asset(
+def test_on_post_add_writes_no_iceberg_asset_for_a_local_warehouse(
     iceberg_backend, parquet_file, catalog_with_stac
 ):
-    """The table's metadata.json becomes its own asset, with the metadata role.
+    """A local warehouse gets no asset, because no reader can fetch the file.
 
-    A reader opens the table from this file with no catalog service, which is
-    what the convention asks for. The role is "metadata" alone, because the
-    GeoParquet file keeps the data role.
+    The extension says to add the asset only when the metadata.json is a
+    document a reader can fetch. The default SQLite catalog writes a file://
+    location, which also carries the absolute path of the machine that ran the
+    command.
     """
     catalog_root, item_dir, collection = catalog_with_stac
 
     _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
 
-    asset = collection.assets["iceberg"]
-    assert asset.href.endswith(".metadata.json")
-    assert asset.media_type == "application/vnd.apache.iceberg+json"
-    assert asset.roles == ["metadata"]
+    assert "iceberg" not in collection.assets
+    assert "iceberg:metadata_location" not in collection.extra_fields
     assert collection.extra_fields["iceberg:catalog_type"] == "sql"
     assert collection.extra_fields["iceberg:table_id"] == "portolake.boundaries"
-    assert collection.extra_fields["iceberg:metadata_location"] == asset.href
+
+
+@pytest.mark.integration
+def test_on_post_add_adds_the_iceberg_metadata_asset_when_fetchable(
+    iceberg_backend, parquet_file, catalog_with_stac, monkeypatch
+):
+    """An https metadata.json becomes its own asset, with the metadata role.
+
+    A reader opens the table from this file with no catalog service, which is
+    what the convention asks for. The role is "metadata" alone, because the
+    GeoParquet file keeps the data role.
+    """
+    from portolan_cli.backends.iceberg import stac_generator
+
+    published = "https://data.example.org/warehouse/boundaries/metadata/v3.metadata.json"
+    real = stac_generator.generate_collection_metadata
+
+    def _published(table):
+        meta = real(table)
+        meta["iceberg:metadata_location"] = published
+        return meta
+
+    monkeypatch.setattr(stac_generator, "generate_collection_metadata", _published)
+
+    catalog_root, item_dir, collection = catalog_with_stac
+    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
+
+    asset = collection.assets["iceberg"]
+    assert asset.href == published
+    assert asset.media_type == "application/vnd.apache.iceberg+json"
+    assert asset.roles == ["metadata"]
+    assert collection.extra_fields["iceberg:metadata_location"] == published
 
 
 @pytest.mark.integration

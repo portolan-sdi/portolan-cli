@@ -329,7 +329,10 @@ def test_iceberg_metadata_has_required_fields(iceberg_backend, iceberg_catalog, 
     assert "iceberg:table_id" in metadata
     assert "iceberg:format_version" in metadata
     assert "iceberg:current_snapshot_id" in metadata
-    assert "iceberg:partition_spec" in metadata
+    # iceberg:partition_spec and iceberg:metadata_location are both optional.
+    # This table is unpartitioned and the warehouse is local, so the extension
+    # says to omit the first and the second names no fetchable document.
+    assert "iceberg:partition_spec" not in metadata
 
 
 @pytest.mark.integration
@@ -430,8 +433,10 @@ def test_iceberg_current_snapshot_id(iceberg_backend, iceberg_catalog, tmp_path)
 
 
 @pytest.mark.integration
-def test_iceberg_partition_spec_empty_for_unpartitioned(iceberg_backend, iceberg_catalog, tmp_path):
-    """iceberg:partition_spec should be empty list for unpartitioned tables."""
+def test_iceberg_partition_spec_absent_for_unpartitioned(
+    iceberg_backend, iceberg_catalog, tmp_path
+):
+    """The extension says to omit iceberg:partition_spec for an unpartitioned table."""
     table_data = pa.table({"id": pa.array([1], type=pa.int64())})
     path = tmp_path / "data.parquet"
     pq.write_table(table_data, path)
@@ -449,7 +454,7 @@ def test_iceberg_partition_spec_empty_for_unpartitioned(iceberg_backend, iceberg
     table = iceberg_catalog.load_table("portolake.unpart")
     metadata = generate_collection_metadata(table)
 
-    assert metadata["iceberg:partition_spec"] == []
+    assert "iceberg:partition_spec" not in metadata
 
 
 @pytest.mark.integration
@@ -621,6 +626,23 @@ class TestExtensionShape:
         assert _get_partition_spec(table) == [
             {"name": "geohash_3", "transform": "identity", "source-id": 5, "field-id": 1000}
         ]
+
+    @pytest.mark.unit
+    def test_an_unpartitioned_table_omits_the_partition_spec(self) -> None:
+        """The extension says to omit the field for an unpartitioned table."""
+        from unittest.mock import MagicMock
+
+        from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata
+
+        table = MagicMock()
+        table.catalog = MagicMock()
+        type(table.catalog).__name__ = "SqlCatalog"
+        table.catalog.properties = {}
+        table.spec.return_value.fields = []
+        table.metadata_location = "https://data.example.org/t/metadata/v1.metadata.json"
+        table.current_snapshot.return_value = None
+
+        assert "iceberg:partition_spec" not in generate_collection_metadata(table)
 
     @pytest.mark.unit
     def test_an_unrecognized_catalog_class_raises(self) -> None:

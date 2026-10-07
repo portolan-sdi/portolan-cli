@@ -210,13 +210,22 @@ def generate_collection_metadata(table: Table) -> dict[str, Any]:
     metadata["iceberg:catalog_type"] = _get_catalog_type(table)
     metadata["iceberg:table_id"] = _get_table_id(table)
     metadata["iceberg:format_version"] = table.format_version
-    metadata["iceberg:partition_spec"] = _get_partition_spec(table)
+    # The field describes a partition spec. The extension says to omit it for
+    # an unpartitioned table, so an empty list says nothing and is left out.
+    partition_spec = _get_partition_spec(table)
+    if partition_spec:
+        metadata["iceberg:partition_spec"] = partition_spec
 
     catalog_uri = _get_catalog_uri(table)
     if catalog_uri:
         metadata["iceberg:catalog_uri"] = catalog_uri
 
-    metadata["iceberg:metadata_location"] = table.metadata_location
+    # Omit a local location. A file:// path is the absolute path of the machine
+    # that ran the command, so publishing it leaks the layout of that machine
+    # and names a document no reader can fetch.
+    location = table.metadata_location
+    if location and not location.startswith("file://"):
+        metadata["iceberg:metadata_location"] = location
 
     # A string: an Iceberg snapshot id is 64-bit, and a JSON parser that stores
     # numbers as doubles rounds it above 2^53. A table with no snapshot has no

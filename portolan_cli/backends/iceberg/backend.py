@@ -35,6 +35,18 @@ if TYPE_CHECKING:
 NAMESPACE = "portolake"
 
 
+def _is_fetchable(href: str) -> bool:
+    """Can a reader retrieve this href over the web?
+
+    rashid's PTL-AST-002 accepts a relative href or https, so an s3:// or gs://
+    location fails the same rule a published catalog has to meet.
+    """
+    from urllib.parse import urlparse
+
+    scheme = urlparse(href).scheme
+    return scheme in ("", "https")
+
+
 class IcebergBackend:
     """Enterprise versioning backend using Apache Iceberg.
 
@@ -379,8 +391,12 @@ class IcebergBackend:
             # filename, so that assignment added a second asset carrying the
             # same "data" role; a collection that does use the "data" key lost
             # it. assets["data"] is not touched here.
+            # PTL-AST-002 allows a relative href or https. The extension says
+            # to add the asset only when the metadata.json is a document a
+            # reader can fetch, so a warehouse the catalog does not publish
+            # over the web carries the connection fields alone.
             metadata_location = stac_metadata.get("iceberg:metadata_location")
-            if metadata_location:
+            if metadata_location and _is_fetchable(str(metadata_location)):
                 collection.assets["iceberg"] = pystac.Asset(
                     href=str(metadata_location),
                     media_type="application/vnd.apache.iceberg+json",
