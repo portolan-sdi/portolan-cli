@@ -22,7 +22,7 @@ server, and every other part of Portolan assumes it.
 ## Install
 
 ```bash
-pip install portolan-cli[iceberg]
+pip install "portolan-cli[iceberg]"
 ```
 
 The extra brings PyIceberg and a SQLite catalog driver. Without it, every
@@ -78,12 +78,16 @@ table is a second copy of the rows, inside the warehouse.
 Any Iceberg client reads the table. The local warehouse writes one numbered
 metadata file per commit, under
 `.portolan/warehouse/portolake/<collection>/metadata/`. The highest number is
-the current one, and `iceberg:metadata_location` on the collection names it.
+the current one. Name it:
+
+```bash
+ls .portolan/warehouse/portolake/buildings/metadata/*.metadata.json | tail -1
+```
 
 ```sql
 INSTALL iceberg; LOAD iceberg;
 SELECT count(*) FROM iceberg_scan(
-  '.portolan/warehouse/portolake/buildings/metadata/00001-d1c5ba5b-a0fd-4053-98fc-ee20adf2dfd9.metadata.json'
+  '.portolan/warehouse/portolake/buildings/metadata/<NNNNN>-<uuid>.metadata.json'
 );
 -- 1012
 ```
@@ -117,7 +121,8 @@ portolan version prune buildings --keep 3
 "iceberg:table_id": "portolake.buildings",
 "iceberg:catalog_uri": "sqlite:///.../.portolan/iceberg.db",
 "iceberg:format_version": 2,
-"iceberg:current_snapshot_id": "3024701191045327257"
+"iceberg:partition_spec": [],
+"iceberg:current_snapshot_id": 3024701191045327257
 ```
 
 They follow the
@@ -131,8 +136,7 @@ current metadata at read time and publishes no fixed path to put in an asset.
 local tree remains to upload:
 
 ```
-Push is not supported with the 'iceberg' backend.
-The iceberg backend manages versions through its catalog.
+Push is not supported with the 'iceberg' backend. The iceberg backend manages versions through its catalog.
 ```
 
 A browser and a plain HTTP client read the GeoParquet file beside the
@@ -146,7 +150,8 @@ PyIceberg 0.12 writes a quoted CRS in a geometry type string and parses only the
 quoted form, so a table it writes and a table DuckDB writes are not
 interchangeable.
 
-`check_drift` is a stub and reports nothing.
+`portolan check` reports no drift between the collection and the table. No
+check compares them yet.
 
 ## Modes
 
@@ -155,8 +160,9 @@ The lakehouse above stores the rows itself, and you select it at `init`.
 A second mode is planned and not built: a static Iceberg table over the
 GeoParquet a catalog already publishes. It copies no rows, needs no server, and
 leaves the STAC `data` asset alone. The Portolan specification describes that
-mode, under
-[Iceberg](https://github.com/portolan-sdi/portolan-spec/blob/main/specs/incubating/iceberg.md).
+mode is proposed for the specification in
+[portolan-spec#201](https://github.com/portolan-sdi/portolan-spec/pull/201), and
+is not part of the specification yet.
 
 The reasoning behind both is recorded in
 [`context/shared/documentation/iceberg-as-optional-extra.md`](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/documentation/iceberg-as-optional-extra.md).
