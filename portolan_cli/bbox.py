@@ -349,7 +349,9 @@ def filter_valid_bboxes(
     for bbox in bboxes:
         reason = get_bbox_validation_reason(bbox, wgs84_only=wgs84_only)
         if reason is None:
-            valid.append(bbox)
+            # The reason was judged on the snapped bbox, so keep that one. The
+            # raw value otherwise reaches the union and the collection extent.
+            valid.append(snap_to_wgs84_range(bbox) if wgs84_only else bbox)
         else:
             invalid.append((bbox, reason))
 

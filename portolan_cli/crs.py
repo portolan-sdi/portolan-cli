@@ -163,7 +163,7 @@ def transform_bbox_to_wgs84(
 
     # Transform bbox to WGS84 polygon and compute RFC 7946 compliant bbox
     try:
-        return _transform_and_compute_bbox(bbox, src_crs)
+        return _snapped(_transform_and_compute_bbox(bbox, src_crs))
     except Exception as e:
         # Catch transformation errors (e.g., coordinates outside projection bounds)
         logger.warning(
@@ -498,7 +498,7 @@ def measure_wgs84_bbox(
     bounds = _stream_wgs84_bounds(files, geometry_column, src, data_path)
     if bounds is None:
         return None
-    return _bbox_from_bounds(bounds)
+    return _snapped(_bbox_from_bounds(bounds))
 
 
 def _stream_wgs84_bounds(

@@ -383,6 +383,31 @@ class TestWgs84EdgeTolerance:
         assert not is_valid_bbox([-180.0, -90.0, 181.0, 83.6])
         assert get_bbox_validation_reason([-180.0, -90.0, 181.0, 83.6]) is not None
 
+    def test_filter_keeps_the_snapped_value(self) -> None:
+        """The filter validates the snapped bbox, so it must keep the snapped one."""
+        from portolan_cli.bbox import filter_valid_bboxes
+
+        result = filter_valid_bboxes([[-180.0, -90.0, 180.00000000000006, 83.6]])
+
+        assert result.valid == [[-180.0, -90.0, 180.0, 83.6]]
+
+    def test_union_emits_the_bound_not_the_raw_value(self) -> None:
+        """An unsnapped value reached the collection extent through the union."""
+        from portolan_cli.bbox import compute_bbox_union
+
+        result = compute_bbox_union(
+            [[-180.0, -90.0, 180.00000000000006, 83.6], [10.0, 10.0, 20.0, 20.0]]
+        )
+
+        assert result.bbox == [-180.0, -90.0, 180.0, 83.6]
+
+    def test_a_stored_extent_past_the_bound_is_repairable(self) -> None:
+        """check --fix skipped the extent, because the raw value validated."""
+        from portolan_cli.validation.fixers import _looks_valid
+
+        assert not _looks_valid([-180.0, -90.0, 180.00000000000006, 83.6])
+        assert _looks_valid([-180.0, -90.0, 180.0, 83.6])
+
     def test_snap_returns_the_bound(self) -> None:
         from portolan_cli.bbox import snap_to_wgs84_range
 
