@@ -198,15 +198,13 @@ class IcebergBackend:
         if parquet_paths:
             arrow_schema = pq.read_schema(parquet_paths[0])
             table = self._load_or_create_table(table_id, arrow_schema, row_count=0)
+            # An Iceberg manifest stores an absolute URI, so registering a
+            # local file records the absolute path of this machine. A catalog
+            # with a local warehouse is therefore not portable and not
+            # publishable, which is why the backend omits
+            # iceberg:metadata_location and the iceberg asset for a file://
+            # location. A catalog on object storage records the object URI.
             uris = [Path(p).resolve().as_uri() for p in parquet_paths]
-            # A publish carries the assets that changed, and the collection
-            # keeps the rest, so the table's live set is the union. P2 asks for
-            # that set to be exactly the collection's data assets.
-            #
-            # add_files refuses a path the table already references. A
-            # republished file keeps its path and changes its bytes, so that
-            # path is removed first and added again. Both run in one
-            # transaction, so no reader sees the file missing.
             # The live set is every file the table already lists plus the ones
             # this publish carries. A republished file keeps its path and
             # changes its bytes, and add_files refuses a path the table already
