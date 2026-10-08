@@ -457,3 +457,26 @@ def test_on_post_add_preserves_existing_assets(iceberg_backend, parquet_file, ca
 
     assert "thumbnail" in collection.assets
     assert collection.assets["data"].href == "./roads.parquet"
+
+
+@pytest.mark.integration
+def test_on_post_add_keeps_the_structural_links(iceberg_backend, parquet_file, catalog_with_stac):
+    """The hook re-saves the collection, and must not re-root it (issue #940).
+
+    PySTAC points ``root`` at the object it saves, so a plain save makes the
+    collection its own root and drops ``parent``. ``portolan check`` then
+    reports PTL-LNK-001 and PTL-LNK-006 on every collection the backend writes.
+    """
+    import json
+
+    catalog_root, item_dir, collection = catalog_with_stac
+
+    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
+
+    written = json.loads(
+        (catalog_root / "boundaries" / "collection.json").read_text(encoding="utf-8")
+    )
+    rels = {link["rel"]: link["href"] for link in written.get("links", [])}
+
+    assert "parent" in rels, f"no parent link: {sorted(rels)}"
+    assert rels["root"] != "./collection.json", "root points at the collection itself"
