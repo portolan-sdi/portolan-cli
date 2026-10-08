@@ -35,6 +35,18 @@ if TYPE_CHECKING:
 NAMESPACE = "portolake"
 
 
+def _is_fetchable(href: str) -> bool:
+    """Can a reader retrieve this href over the web?
+
+    rashid's PTL-AST-002 accepts a relative href or https, so an s3:// or gs://
+    location fails the same rule a published catalog has to meet.
+    """
+    from urllib.parse import urlparse
+
+    scheme = urlparse(href).scheme
+    return scheme in ("", "https")
+
+
 class IcebergBackend:
     """Enterprise versioning backend using Apache Iceberg.
 
@@ -367,17 +379,33 @@ class IcebergBackend:
                 if ext_url not in collection.stac_extensions:
                     collection.stac_extensions.append(ext_url)
 
-            # Set Iceberg data asset via pystac API (not extra_fields["assets"],
-            # which is also ignored by pystac's serialization).
-            collection.assets["data"] = pystac.Asset(
-                href=table.location(),
-                media_type="application/x-iceberg",
-                roles=["data"],
-                description=(
-                    "Apache Iceberg table \u2014 use PyIceberg, DuckDB "
-                    "iceberg_scan(), or Spark to query"
-                ),
-            )
+            # The table's current metadata.json, under its own key (issue #883).
+            # The spec asks only that a reader open the table from this file
+            # without a catalog service, which a warehouse on object storage
+            # satisfies whether or not a server also manages the table.
+            #
+            # The role is "metadata" alone, because the GeoParquet file keeps
+            # the data role. Earlier revisions assigned assets["data"] to
+            # table.location(), which is a directory and so resolves to no
+            # document. A generated catalog keys its GeoParquet asset by
+            # filename, so that assignment added a second asset carrying the
+            # same "data" role; a collection that does use the "data" key lost
+            # it. assets["data"] is not touched here.
+            # PTL-AST-002 allows a relative href or https. The extension says
+            # to add the asset only when the metadata.json is a document a
+            # reader can fetch, so a warehouse the catalog does not publish
+            # over the web carries the connection fields alone.
+            metadata_location = stac_metadata.get("iceberg:metadata_location")
+            if metadata_location and _is_fetchable(str(metadata_location)):
+                collection.assets["iceberg"] = pystac.Asset(
+                    href=str(metadata_location),
+                    media_type="application/vnd.apache.iceberg+json",
+                    roles=["metadata"],
+                    description=(
+                        "Apache Iceberg table metadata \u2014 read with DuckDB "
+                        "iceberg_scan() or PyIceberg StaticTable"
+                    ),
+                )
 
             collection.normalize_hrefs(href_root(collection_dir))
             collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)

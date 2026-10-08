@@ -332,11 +332,12 @@ def test_on_post_add_no_duplicate_extensions(iceberg_backend, parquet_file, cata
     assert len(collection.stac_extensions) == len(set(collection.stac_extensions))
 
 
-@pytest.mark.integration
-def test_on_post_add_sets_iceberg_data_asset(iceberg_backend, parquet_file, catalog_with_stac):
-    """on_post_add should set a data asset via pystac API with correct media type."""
-    catalog_root, item_dir, collection = catalog_with_stac
+def _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection):
+    """Publish one collection and run the post-add hook over it.
 
+    Every assertion below needs the same three steps, so they live here rather
+    than in each test (the duplicate-code gate reads tests/ too).
+    """
     iceberg_backend.publish(
         collection="boundaries",
         assets={"item1/data.parquet": str(parquet_file)},
@@ -344,25 +345,101 @@ def test_on_post_add_sets_iceberg_data_asset(iceberg_backend, parquet_file, cata
         breaking=False,
         message="test",
     )
-
     context = _make_context(catalog_root, item_dir, collection, remote=None)
-
     with patch("portolan_cli.backends.iceberg.backend.upload_file", create=True):
         iceberg_backend.on_post_add(context)
 
-    assert "data" in collection.assets
-    assert collection.assets["data"].media_type == "application/x-iceberg"
+
+@pytest.mark.integration
+def test_on_post_add_leaves_the_data_asset_alone(iceberg_backend, parquet_file, catalog_with_stac):
+    """An asset already keyed "data" survives (issue #883).
+
+    The backend used to assign assets["data"] the warehouse directory, typed
+    application/x-iceberg. A generated catalog keys its GeoParquet asset by
+    filename, so there the assignment added a second asset carrying the same
+    "data" role. A collection that does use the "data" key, such as a
+    hand-authored one, lost it.
+    """
+    catalog_root, item_dir, collection = catalog_with_stac
+    collection.assets["data"] = pystac.Asset(
+        href="./roads.parquet",
+        media_type="application/vnd.apache.parquet",
+        roles=["data"],
+    )
+
+    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
+
+    assert collection.assets["data"].href == "./roads.parquet"
+    assert collection.assets["data"].media_type == "application/vnd.apache.parquet"
     assert collection.assets["data"].roles == ["data"]
 
 
 @pytest.mark.integration
+def test_on_post_add_writes_no_iceberg_asset_for_a_local_warehouse(
+    iceberg_backend, parquet_file, catalog_with_stac
+):
+    """A local warehouse gets no asset, because no reader can fetch the file.
+
+    The extension says to add the asset only when the metadata.json is a
+    document a reader can fetch. The default SQLite catalog writes a file://
+    location, which also carries the absolute path of the machine that ran the
+    command.
+    """
+    catalog_root, item_dir, collection = catalog_with_stac
+
+    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
+
+    assert "iceberg" not in collection.assets
+    assert "iceberg:metadata_location" not in collection.extra_fields
+    assert collection.extra_fields["iceberg:catalog_type"] == "sql"
+    assert collection.extra_fields["iceberg:table_id"] == "portolake.boundaries"
+
+
+@pytest.mark.integration
+def test_on_post_add_adds_the_iceberg_metadata_asset_when_fetchable(
+    iceberg_backend, parquet_file, catalog_with_stac, monkeypatch
+):
+    """An https metadata.json becomes its own asset, with the metadata role.
+
+    A reader opens the table from this file with no catalog service, which is
+    what the convention asks for. The role is "metadata" alone, because the
+    GeoParquet file keeps the data role.
+    """
+    from portolan_cli.backends.iceberg import stac_generator
+
+    published = "https://data.example.org/warehouse/boundaries/metadata/v3.metadata.json"
+    real = stac_generator.generate_collection_metadata
+
+    def _published(table):
+        meta = real(table)
+        meta["iceberg:metadata_location"] = published
+        return meta
+
+    monkeypatch.setattr(stac_generator, "generate_collection_metadata", _published)
+
+    catalog_root, item_dir, collection = catalog_with_stac
+    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
+
+    asset = collection.assets["iceberg"]
+    assert asset.href == published
+    assert asset.media_type == "application/vnd.apache.iceberg+json"
+    assert asset.roles == ["metadata"]
+    assert collection.extra_fields["iceberg:metadata_location"] == published
+
+
+@pytest.mark.integration
 def test_on_post_add_preserves_existing_assets(iceberg_backend, parquet_file, catalog_with_stac):
-    """on_post_add should preserve non-data assets already on the collection."""
+    """on_post_add should leave every asset already on the collection alone."""
     catalog_root, item_dir, collection = catalog_with_stac
     collection.assets["thumbnail"] = pystac.Asset(
         href="https://example.com/thumb.png",
         media_type="image/png",
         roles=["thumbnail"],
+    )
+    collection.assets["data"] = pystac.Asset(
+        href="./roads.parquet",
+        media_type="application/vnd.apache.parquet",
+        roles=["data"],
     )
 
     iceberg_backend.publish(
@@ -379,4 +456,4 @@ def test_on_post_add_preserves_existing_assets(iceberg_backend, parquet_file, ca
         iceberg_backend.on_post_add(context)
 
     assert "thumbnail" in collection.assets
-    assert "data" in collection.assets
+    assert collection.assets["data"].href == "./roads.parquet"
