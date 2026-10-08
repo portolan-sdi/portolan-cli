@@ -31,6 +31,9 @@ This page is generated from the shipped Click command tree.
 - `portolan pull`
 - `portolan push`
 - `portolan readme`
+- `portolan registry`
+- `portolan registry fetch`
+- `portolan registry list`
 - `portolan rm`
 - `portolan scan`
 - `portolan skills`
@@ -1344,6 +1347,71 @@ portolan readme [OPTIONS] [PATH]
 | `--check` | boolean | Check if README is up-to-date (for CI). Exits 1 if stale. | `False` |
 | `--no-recursive` | boolean | Only generate README at the specified path (skip subdirectories). | `False` |
 | `--verbose`, `-v` | boolean | Show detailed output. | `False` |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+#### portolan registry { #portolan-registry data-toc-label='registry' }
+
+Inspect and fetch catalogs from the Portolan registry.
+
+**Usage:**
+
+```text
+portolan registry [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan registry fetch { #portolan-registry-fetch data-toc-label='fetch' }
+
+Fetch registry catalogs for local workflows.
+
+**Usage:**
+
+```text
+portolan registry fetch [OPTIONS] [CATALOG_ID]
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `[CATALOG_ID]` | text | no |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--registry-url` | text | Portolan registry export URL. | None |
+| `--output` | path | Directory that will receive the catalog snapshot. | `registry_catalogs` |
+| `--all` | boolean | Fetch all registry catalog entries. | `False` |
+| `--include-stale` | boolean | Allow stale registry entries. | `False` |
+| `--path-only` | boolean | Print only the downloaded catalog path. | `False` |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan registry list { #portolan-registry-list data-toc-label='list' }
+
+List published catalog entries from the Portolan registry.
+
+**Usage:**
+
+```text
+portolan registry list [OPTIONS]
+```
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--registry-url` | text | Portolan registry export URL. | None |
+| `--catalog-id` | text | Only show this registry catalog id. | `Sentinel.UNSET` |
+| `--include-stale` | boolean | Include stale registry entries. | `False` |
+| `--limit` | integer | Maximum registry entries to show. | None |
 | `--json` | boolean | Output as JSON. | `False` |
 | `--help` | boolean | Show this message and exit. | `False` |
 

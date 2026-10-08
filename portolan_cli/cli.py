@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from portolan_cli.sync.pull import PullResult
 
 import click
+import httpx
 from rashid.model import Severity as RashidSeverity
 
 from portolan_cli.add import AddFailure, add_files
@@ -8769,3 +8770,188 @@ def skills_show_cmd(ctx: click.Context, name: str, json_output: bool) -> None:
         "skills show", {"name": name, "content": None, "url": SKILLS_REPO}, use_json=use_json
     ):
         click.echo(get_install_instructions())
+
+
+# Registry Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.group("registry")
+def registry_cmd() -> None:
+    """Inspect and fetch catalogs from the Portolan registry."""
+
+
+def _registry_catalog_entries(
+    registry_url: str | None,
+    catalog_id: tuple[str, ...],
+    include_stale: bool,
+    limit: int | None,
+) -> Any:
+    from portolan_cli.registry import DEFAULT_REGISTRY_URL, load_registry_entries
+
+    return load_registry_entries(
+        registry_url or DEFAULT_REGISTRY_URL,
+        catalog_ids=set(catalog_id) if catalog_id else None,
+        include_stale=include_stale,
+        limit=limit,
+    )
+
+
+def _fail_registry_command(
+    command: str,
+    context: str,
+    err: Exception,
+    *,
+    use_json: bool,
+) -> NoReturn:
+    message = f"{context}: {err}"
+    if use_json:
+        emit_error(command, type(err).__name__, message, use_json=True)
+        raise SystemExit(1) from err
+    raise click.ClickException(message) from err
+
+
+def _fail_registry_message(message: str, *, use_json: bool) -> NoReturn:
+    if use_json:
+        emit_error("registry fetch", "ClickException", message, use_json=True)
+        raise SystemExit(1)
+    raise click.ClickException(message)
+
+
+@registry_cmd.command("list")
+@click.option("--registry-url", default=None, help="Portolan registry export URL.")
+@click.option("--catalog-id", multiple=True, help="Only show this registry catalog id.")
+@click.option("--include-stale", is_flag=True, help="Include stale registry entries.")
+@click.option("--limit", type=int, default=None, help="Maximum registry entries to show.")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def registry_list_cmd(
+    ctx: click.Context,
+    registry_url: str | None,
+    catalog_id: tuple[str, ...],
+    include_stale: bool,
+    limit: int | None,
+    json_output: bool,
+) -> None:
+    """List published catalog entries from the Portolan registry."""
+    use_json = should_output_json(ctx, json_output)
+    try:
+        entries = _registry_catalog_entries(registry_url, catalog_id, include_stale, limit)
+    except (httpx.HTTPError, ValueError, TypeError) as err:
+        _fail_registry_command(
+            "registry list",
+            "Could not load Portolan registry",
+            err,
+            use_json=use_json,
+        )
+    payload = [
+        {"id": entry.id, "url": entry.url, "title": entry.title, "status": entry.status}
+        for entry in entries
+    ]
+    if emit_success("registry list", {"catalogs": payload}, use_json=use_json):
+        return
+
+    click.echo(f"{'Catalog':<28} {'Status':<10} URL")
+    click.echo("-" * 88)
+    for entry in entries:
+        status = entry.status or "-"
+        click.echo(f"{entry.id:<28} {status:<10} {entry.url}")
+
+
+@registry_cmd.command("fetch")
+@click.argument("catalog_id", required=False)
+@click.option("--registry-url", default=None, help="Portolan registry export URL.")
+@click.option(
+    "--output",
+    "output_dir",
+    type=click.Path(path_type=Path),
+    default=Path("registry_catalogs"),
+    help="Directory that will receive the catalog snapshot.",
+)
+@click.option("--all", "fetch_all", is_flag=True, help="Fetch all registry catalog entries.")
+@click.option("--include-stale", is_flag=True, help="Allow stale registry entries.")
+@click.option("--path-only", is_flag=True, help="Print only the downloaded catalog path.")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def registry_fetch_cmd(
+    ctx: click.Context,
+    catalog_id: str | None,
+    registry_url: str | None,
+    output_dir: Path,
+    fetch_all: bool,
+    include_stale: bool,
+    path_only: bool,
+    json_output: bool,
+) -> None:
+    """Fetch registry catalogs for local workflows."""
+    from portolan_cli.registry import download_registry_catalog
+
+    use_json = should_output_json(ctx, json_output)
+    if fetch_all and catalog_id is not None:
+        _fail_registry_message(
+            "Use either CATALOG_ID or --all, not both.",
+            use_json=use_json,
+        )
+    if not fetch_all and catalog_id is None:
+        _fail_registry_message("Provide CATALOG_ID or use --all.", use_json=use_json)
+    if fetch_all:
+        catalog_ids: tuple[str, ...] = ()
+    else:
+        if catalog_id is None:
+            _fail_registry_message("Provide CATALOG_ID or use --all.", use_json=use_json)
+        catalog_ids = (catalog_id,)
+    try:
+        entries = _registry_catalog_entries(
+            registry_url,
+            catalog_ids,
+            include_stale,
+            limit=None,
+        )
+    except (httpx.HTTPError, ValueError, TypeError) as err:
+        _fail_registry_command(
+            "registry fetch",
+            "Could not load Portolan registry",
+            err,
+            use_json=use_json,
+        )
+    if not entries:
+        if fetch_all:
+            _fail_registry_message("No catalogs found in registry.", use_json=use_json)
+        _fail_registry_message(f"Catalog not found in registry: {catalog_id}", use_json=use_json)
+    fetched = []
+    for entry in entries:
+        try:
+            catalog_root = download_registry_catalog(
+                entry.url,
+                output_dir,
+                expected_catalog_id=entry.id,
+            )
+        except (httpx.HTTPError, OSError, RuntimeError, TypeError, ValueError) as err:
+            _fail_registry_command(
+                "registry fetch",
+                f"Could not download catalog '{entry.id}'",
+                err,
+                use_json=use_json,
+            )
+        fetched.append((entry, catalog_root))
+    if path_only:
+        for _entry, catalog_root in fetched:
+            click.echo(catalog_root)
+        return
+    if emit_success(
+        "registry fetch",
+        {
+            "catalogs": [
+                {
+                    "id": entry.id,
+                    "url": entry.url,
+                    "path": str(catalog_root),
+                }
+                for entry, catalog_root in fetched
+            ],
+        },
+        use_json=use_json,
+    ):
+        return
+    for entry, catalog_root in fetched:
+        success(f"Fetched {entry.id} to {catalog_root}")

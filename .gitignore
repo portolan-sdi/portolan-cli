@@ -155,6 +155,9 @@ venv.bak/
 /site
 /site-mkdocs
 
+# Registry catalog snapshots
+/registry_catalogs/
+
 # mypy
 .mypy_cache/
 .dmypy.json

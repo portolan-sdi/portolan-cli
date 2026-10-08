@@ -16,7 +16,7 @@ numbers drift, treat them as a starting point and confirm in the file.
 flowchart TD
     user([User or Agent]) --> CLI
     subgraph CLI["CLI layer (cli.py, thin Click shell)"]
-        cmds["commands: init list status info check scan add rm<br/>push pull sync clone clean readme logo stac-geoparquet<br/>groups: config metadata extract version skills"]
+        cmds["commands: init list status info check scan add rm<br/>push pull sync clone clean readme logo stac-geoparquet<br/>groups: config metadata extract version skills registry"]
     end
     subgraph LIB["Library layer (all logic)"]
         catalog["catalog.py<br/>find_catalog_root, init_catalog"]
@@ -71,7 +71,8 @@ and every command live. Top-level commands: `init`, `list`, `status`, `info`,
 `check`, `scan`, `add`, `rm`, `push`, `pull`, `sync`, `clone`, `clean`,
 `readme`, `logo`, `stac-geoparquet`. Command groups with subcommands: `config`
 (set/get/list/unset), `metadata` (init/validate), `extract` (arcgis/wfs),
-`version` (current/list/bump/rollback/prune), `skills` (list/show). When you add
+`version` (current/list/bump/rollback/prune), `skills` (list/show), `registry`
+(list/fetch). When you add
 or rename a command, the AST in `scripts/validate_agents_md.py` re-reads these
 decorators, so the root `AGENTS.md` command references must stay accurate.
 

@@ -63,7 +63,7 @@ def test_cli_reference_anchors_match_the_toc_slug() -> None:
     from scripts.generate_reference_docs import _slug, _walk
 
     paths = [ctx.command_path for ctx, _ in _walk(portolan_cli.cli)]
-    assert len(paths) == 40
+    assert len(paths) == 43
     for path in paths:
         assert _slug(path) == slugify(path, "-"), path
 
