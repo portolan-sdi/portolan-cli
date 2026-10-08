@@ -409,6 +409,19 @@ class IcebergBackend:
 
             collection.normalize_hrefs(href_root(collection_dir))
             collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
+
+            # pystac points root at the object it saves, so the save above makes
+            # the collection its own root and drops parent. `portolan check`
+            # then reports PTL-LNK-001 and PTL-LNK-006 on every collection this
+            # backend writes. The pipeline repairs the same two links after its
+            # own save, and this is that repair (issue #940).
+            from portolan_cli.finalization import _fix_collection_links
+
+            _fix_collection_links(
+                Path(collection_dir) / "collection.json",
+                Path(context["catalog_root"]),
+                Path(collection_dir),
+            )
         except Exception:
             logger.warning(
                 "Could not update STAC extensions for collection %s",
