@@ -1,7 +1,13 @@
-"""Integration tests for spatial partitioning in IcebergBackend (Phase 2).
+"""The table's columns are the GeoParquet's, with nothing derived added (#938).
 
-Tests that publish() adds geohash and bbox columns when the data
-contains a geometry column, and creates partitioned Iceberg tables.
+`publish()` registered the rows by rewriting them, and the rewrite added a
+`geohash_N` column and `bbox_*` columns so the table could carry an identity
+partition spec over the geohash. The backend now registers the published file
+instead, so the table holds that file's own columns.
+
+`specs/incubating/iceberg.md` asks for this. A partitioned collection maps to an
+identity spec over its own `partition:keys`, and the partition cell column stays
+in the data files. A geohash the backend derives at ingest is not that column.
 """
 
 from __future__ import annotations
@@ -32,211 +38,69 @@ def _write_geo_parquet(path, points: list[tuple[float, float]]):
     return path
 
 
-@pytest.mark.integration
-def test_publish_adds_geohash_column(iceberg_backend, iceberg_catalog, tmp_path):
-    """Publishing GeoParquet should add geohash column to the Iceberg table."""
-    geo_file = _write_geo_parquet(
-        tmp_path / "geo.parquet",
-        [(2.3522, 48.8566), (-73.9857, 40.7484), (139.6917, 35.6895)],  # Paris, NYC, Tokyo
-    )
-
-    iceberg_backend.publish(
-        collection="places",
-        assets={"geo.parquet": str(geo_file)},
-        schema={"columns": ["id", "name", "geometry"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="geo data",
-    )
-
-    table = iceberg_catalog.load_table("portolake.places")
-    field_names = {f.name for f in table.schema().fields}
-
-    # Should have a geohash column (precision depends on row count, but for <100K rows
-    # the plan says no partitioning. However, for geo data we always add geohash for
-    # spatial query support -- so this tests that geohash is added when geometry exists)
-    # For small data, we still add the column but don't partition by it.
-    has_geohash = any(name.startswith("geohash_") for name in field_names)
-    assert has_geohash, f"Expected geohash column, got fields: {field_names}"
+_POINTS = [(2.3522, 48.8566), (-73.9857, 40.7484), (139.6917, 35.6895)]
 
 
-@pytest.mark.integration
-def test_publish_adds_bbox_columns(iceberg_backend, iceberg_catalog, tmp_path):
-    """Publishing GeoParquet should add bbox columns."""
-    geo_file = _write_geo_parquet(
-        tmp_path / "geo.parquet",
-        [(2.3522, 48.8566), (-73.9857, 40.7484)],
-    )
-
-    iceberg_backend.publish(
-        collection="places",
-        assets={"geo.parquet": str(geo_file)},
-        schema={"columns": ["id", "name", "geometry"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="geo data",
-    )
-
-    table = iceberg_catalog.load_table("portolake.places")
-    field_names = {f.name for f in table.schema().fields}
-
-    for col in ["bbox_xmin", "bbox_ymin", "bbox_xmax", "bbox_ymax"]:
-        assert col in field_names, f"Expected {col} in fields: {field_names}"
-
-
-@pytest.mark.integration
-def test_publish_bbox_values_correct(iceberg_backend, iceberg_catalog, tmp_path):
-    """Bbox values should match geometry coordinates."""
-    geo_file = _write_geo_parquet(
-        tmp_path / "geo.parquet",
-        [(10.5, 20.3)],
-    )
-
-    iceberg_backend.publish(
-        collection="places",
-        assets={"geo.parquet": str(geo_file)},
-        schema={"columns": ["id", "name", "geometry"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="single point",
-    )
-
-    table = iceberg_catalog.load_table("portolake.places")
-    result = table.scan().to_arrow()
-
-    assert result.column("bbox_xmin")[0].as_py() == pytest.approx(10.5)
-    assert result.column("bbox_ymin")[0].as_py() == pytest.approx(20.3)
-
-
-@pytest.mark.integration
-def test_publish_skips_partitioning_small_collection(iceberg_backend, iceberg_catalog, tmp_path):
-    """Small data (<100K rows) should NOT have partition spec on geohash."""
-    geo_file = _write_geo_parquet(
-        tmp_path / "geo.parquet",
-        [(2.3522, 48.8566), (-73.9857, 40.7484)],
-    )
-
-    iceberg_backend.publish(
-        collection="small",
-        assets={"geo.parquet": str(geo_file)},
-        schema={"columns": ["id", "name", "geometry"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="tiny dataset",
-    )
-
-    table = iceberg_catalog.load_table("portolake.small")
-    # Small data should have unpartitioned spec
-    partition_fields = table.spec().fields
-    assert len(partition_fields) == 0, f"Expected no partition fields, got {partition_fields}"
-
-
-@pytest.mark.integration
-def test_publish_no_geometry_skips_spatial_columns(iceberg_backend, iceberg_catalog, tmp_path):
-    """Non-geometry data should not get geohash or bbox columns."""
-    table_data = pa.table({"id": pa.array([1, 2, 3], type=pa.int64())})
-    path = tmp_path / "plain.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="plain",
-        assets={"plain.parquet": str(path)},
-        schema={"columns": ["id"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="no geometry",
-    )
-
-    table = iceberg_catalog.load_table("portolake.plain")
-    field_names = {f.name for f in table.schema().fields}
-
-    assert not any(name.startswith("geohash_") for name in field_names)
-    assert "bbox_xmin" not in field_names
-
-
-@pytest.mark.integration
-def test_publish_creates_partitioned_table(iceberg_catalog, tmp_path):
-    """Collections >= 100K rows should create an Iceberg table partitioned by geohash."""
-    import random
-
-    from portolan_cli.backends.iceberg.backend import IcebergBackend
-
-    backend = IcebergBackend(catalog=iceberg_catalog)
-
-    # Generate 100K+ points spread across Spain to trigger partitioning (precision 3)
-    random.seed(42)
-    n = 100_001
-    points = [(random.uniform(-9.0, 3.0), random.uniform(36.0, 43.5)) for _ in range(n)]
-    wkb_values = [_make_wkb_point(x, y) for x, y in points]
-
-    table_data = pa.table(
-        {
-            "id": pa.array(range(n), type=pa.int64()),
-            "geometry": pa.array(wkb_values, type=pa.binary()),
-        }
-    )
-    path = tmp_path / "large_geo.parquet"
-    pq.write_table(table_data, path)
-
+def _publish(backend, path, collection):
     backend.publish(
-        collection="large_geo",
-        assets={"large_geo.parquet": str(path)},
-        schema={"columns": ["id", "geometry"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="large geo dataset",
-    )
-
-    table = iceberg_catalog.load_table("portolake.large_geo")
-
-    # Should have partition spec on geohash_3
-    partition_fields = table.spec().fields
-    assert len(partition_fields) == 1, f"Expected 1 partition field, got {partition_fields}"
-    assert partition_fields[0].name == "geohash_3"
-
-    # Verify multiple data files were created (one per partition)
-    data_files = list(table.scan().plan_files())
-    assert len(data_files) > 1, f"Expected multiple data files (partitions), got {len(data_files)}"
-
-
-@pytest.mark.integration
-def test_publish_no_partition_for_non_geo(iceberg_backend, iceberg_catalog, tmp_path):
-    """Non-geometry data should never have a partition spec, regardless of size."""
-    table_data = pa.table({"id": pa.array(range(1000), type=pa.int64())})
-    path = tmp_path / "plain.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="plain_large",
-        assets={"plain.parquet": str(path)},
-        schema={"columns": ["id"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="plain data",
-    )
-
-    table = iceberg_catalog.load_table("portolake.plain_large")
-    partition_fields = table.spec().fields
-    assert len(partition_fields) == 0
-
-
-@pytest.mark.integration
-def test_publish_geohash_values_queryable(iceberg_backend, iceberg_catalog, tmp_path):
-    """Should be able to filter by geohash value after publish."""
-    geo_file = _write_geo_parquet(
-        tmp_path / "geo.parquet",
-        [(2.3522, 48.8566), (-73.9857, 40.7484), (139.6917, 35.6895)],
-    )
-
-    iceberg_backend.publish(
-        collection="queryable",
-        assets={"geo.parquet": str(geo_file)},
+        collection=collection,
+        assets={"geo.parquet": str(path)},
         schema={"columns": ["id", "name", "geometry"], "types": {}, "hash": "h1"},
         breaking=False,
-        message="queryable data",
+        message="v1",
     )
 
-    table = iceberg_catalog.load_table("portolake.queryable")
-    result = table.scan().to_arrow()
 
-    # Find which geohash column exists
-    geohash_col = [c for c in result.column_names if c.startswith("geohash_")][0]
-    geohash_values = result.column(geohash_col).to_pylist()
+@pytest.mark.integration
+def test_publish_adds_no_derived_columns(iceberg_backend, iceberg_catalog, tmp_path):
+    """The table's columns are exactly the file's."""
+    geo_file = _write_geo_parquet(tmp_path / "geo.parquet", _POINTS)
 
-    # All values should be non-empty strings
-    assert all(isinstance(v, str) and len(v) > 0 for v in geohash_values)
-    # Different locations should (likely) have different geohashes
-    assert len(set(geohash_values)) > 1
+    _publish(iceberg_backend, geo_file, "nocols")
+
+    columns = set(iceberg_catalog.load_table("portolake.nocols").schema().column_names)
+    assert columns == {"id", "name", "geometry"}
+
+
+@pytest.mark.integration
+def test_publish_adds_no_geohash_column(iceberg_backend, iceberg_catalog, tmp_path):
+    """A geohash the backend derives at ingest is not the convention's partition column."""
+    geo_file = _write_geo_parquet(tmp_path / "geo.parquet", _POINTS)
+
+    _publish(iceberg_backend, geo_file, "nogeohash")
+
+    columns = iceberg_catalog.load_table("portolake.nogeohash").schema().column_names
+    assert not [c for c in columns if c.startswith("geohash_")]
+
+
+@pytest.mark.integration
+def test_publish_adds_no_bbox_columns(iceberg_backend, iceberg_catalog, tmp_path):
+    """The GeoParquet carries its own bbox covering column when it has one."""
+    geo_file = _write_geo_parquet(tmp_path / "geo.parquet", _POINTS)
+
+    _publish(iceberg_backend, geo_file, "nobbox")
+
+    columns = iceberg_catalog.load_table("portolake.nobbox").schema().column_names
+    assert not [c for c in columns if c.startswith("bbox_")]
+
+
+@pytest.mark.integration
+def test_publish_creates_an_unpartitioned_table(iceberg_backend, iceberg_catalog, tmp_path):
+    """No partition spec, because the file carries no partition cell column."""
+    geo_file = _write_geo_parquet(tmp_path / "geo.parquet", _POINTS)
+
+    _publish(iceberg_backend, geo_file, "unpart")
+
+    assert iceberg_catalog.load_table("portolake.unpart").spec().fields == ()
+
+
+@pytest.mark.integration
+def test_the_rows_are_readable_from_the_registered_file(iceberg_backend, iceberg_catalog, tmp_path):
+    """Registering changes where the rows live, not whether they read back."""
+    geo_file = _write_geo_parquet(tmp_path / "geo.parquet", _POINTS)
+
+    _publish(iceberg_backend, geo_file, "readable")
+
+    arrow = iceberg_catalog.load_table("portolake.readable").scan().to_arrow()
+    assert arrow.num_rows == len(_POINTS)
+    assert pq.ParquetFile(geo_file).metadata.num_rows == len(_POINTS)

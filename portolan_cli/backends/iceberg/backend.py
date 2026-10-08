@@ -13,11 +13,12 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 from pyiceberg.exceptions import NoSuchTableError
+from pyiceberg.expressions import AlwaysTrue
 from pyiceberg.table import Transaction
 from pyiceberg.table.update.snapshot import ExpireSnapshots
 
 from portolan_cli.backends.iceberg.config import create_catalog
-from portolan_cli.backends.iceberg.spatial import add_spatial_columns, detect_geohash_precision
+from portolan_cli.backends.iceberg.spatial import detect_geohash_precision
 from portolan_cli.backends.iceberg.versioning import (
     build_assets,
     compute_next_version,
@@ -188,14 +189,33 @@ class IcebergBackend:
             next_ver, breaking, message, merged_assets, schema_info, changes
         )
 
-        # Read actual Parquet data from asset files
-        arrow_data = _read_parquet_assets(assets)
+        # Register the published GeoParquet. The table and the collection then
+        # end at the same bytes, which specs/incubating/iceberg.md requires in
+        # P2, and the file keeps its geo key, its spatial order and its
+        # row-group statistics because nothing rewrites it (issue #938).
+        parquet_paths = _registerable_assets(assets)
 
-        if arrow_data is not None:
-            table = self._load_or_create_table(
-                table_id, arrow_data.schema, row_count=len(arrow_data)
-            )
-            table.append(arrow_data, snapshot_properties=props)
+        if parquet_paths:
+            arrow_schema = pq.read_schema(parquet_paths[0])
+            table = self._load_or_create_table(table_id, arrow_schema, row_count=0)
+            # An Iceberg manifest stores an absolute URI, so registering a
+            # local file records the absolute path of this machine. A catalog
+            # with a local warehouse is therefore not portable and not
+            # publishable, which is why the backend omits
+            # iceberg:metadata_location and the iceberg asset for a file://
+            # location. A catalog on object storage records the object URI.
+            uris = [Path(p).resolve().as_uri() for p in parquet_paths]
+            # The live set is every file the table already lists plus the ones
+            # this publish carries. A republished file keeps its path and
+            # changes its bytes, and add_files refuses a path the table already
+            # references, so the snapshot is rebuilt from the whole set. Both
+            # steps run in one transaction, so no reader sees the table empty.
+            already = _referenced_paths(table)
+            desired = sorted(already | set(uris))
+            with table.transaction() as tx:
+                if already:
+                    tx.delete(delete_filter=AlwaysTrue())
+                tx.add_files(desired, snapshot_properties=props)
         else:
             # No parquet data to ingest (e.g., only removals)
             table = self._load_or_create_table_from_existing(table_id)
@@ -557,23 +577,28 @@ class IcebergBackend:
         )
 
 
-def _read_parquet_assets(assets: dict[str, str]) -> pa.Table | None:
-    """Read Parquet data from asset file paths, concatenate, and add spatial columns."""
-    tables = []
-    for path_str in assets.values():
+def _referenced_paths(table: Table) -> set[str]:
+    """The data-file paths the table's current snapshot already lists."""
+    if table.current_snapshot() is None:
+        return set()
+    return {task.file.file_path for task in table.scan().plan_files()}
+
+
+def _registerable_assets(assets: dict[str, str]) -> list[str]:
+    """The Parquet assets a table can register, in a stable order.
+
+    ``add_files`` reads each file's own footer, so an unreadable file would fail
+    the commit rather than be skipped. The check here keeps that from happening
+    for a file this backend never meant to register.
+    """
+    paths = []
+    for path_str in sorted(assets.values()):
         path = Path(path_str)
         if path.exists() and path.suffix == ".parquet":
-            # Skip an invalid or unreadable Parquet file.
             with contextlib.suppress(Exception):
-                tables.append(pq.read_table(path))
-
-    if not tables:
-        return None
-
-    result = tables[0] if len(tables) == 1 else pa.concat_tables(tables, promote_options="default")
-
-    # Add spatial columns (geohash + bbox) if geometry is present
-    return add_spatial_columns(result)
+                pq.read_schema(path)
+                paths.append(path_str)
+    return paths
 
 
 def _empty_table(arrow_schema: pa.Schema) -> pa.Table:
