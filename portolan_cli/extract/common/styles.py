@@ -30,7 +30,7 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 
@@ -42,6 +42,7 @@ from portolan_cli.extract.common.converters.sld import (
 from portolan_cli.json_io import write_json_atomic
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,113 @@ def _wfs_url_to_wms_path(wfs_url: str) -> tuple[str, str]:
     return f"{parsed.scheme}://{parsed.netloc}", path
 
 
+def _redact_url_for_logging(url: str) -> str:
+    """Strip userinfo and query parameters from a URL before logging it.
+
+    URLs built from a WFS endpoint can carry sensitive values (e.g. an
+    ``apikey``) in the query string. Logging only scheme, host and path
+    keeps debug output useful without leaking credentials.
+
+    Args:
+        url: Full URL, possibly with a query string.
+
+    Returns:
+        URL with userinfo and query string removed.
+    """
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = f"{host}:{parsed.port}" if parsed.port else host
+    return urlunparse(parsed._replace(netloc=netloc, query=""))
+
+
+# Query parameter names (case-insensitive) that commonly carry a credential.
+# A plain-HTTP request exposes any of these to a network observer, since the
+# request has no TLS confidentiality (RFC 9110 section 4.2.2).
+_CREDENTIAL_QUERY_PARAM_NAMES = frozenset(
+    {
+        "apikey",
+        "api_key",
+        "api-key",
+        "access_token",
+        "token",
+        "auth",
+        "authorization",
+        "key",
+        "secret",
+        "client_secret",
+        "password",
+    }
+)
+
+
+def _reject_credential_bearing_http_url(url: str) -> None:
+    """Refuse to fetch a non-HTTPS URL that carries a credential.
+
+    Args:
+        url: URL that will be sent as-is to the remote service.
+
+    Raises:
+        StyleExtractionError: If the URL uses a non-HTTPS scheme and its
+            query string has a parameter name that looks like a credential.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme == "https":
+        return
+
+    query_param_names = {name.lower() for name, _ in parse_qsl(parsed.query)}
+    leaked = query_param_names & _CREDENTIAL_QUERY_PARAM_NAMES
+    if leaked:
+        raise StyleExtractionError(
+            f"Refusing to send credential-bearing query parameter(s) "
+            f"{sorted(leaked)} over a non-HTTPS URL "
+            f"({_redact_url_for_logging(url)}). Use an https:// endpoint."
+        )
+
+
+def _credential_redirect_guard(url: str) -> Callable[[httpx.Request], None]:
+    """Build an httpx request hook that checks every hop, redirects included.
+
+    If the initial URL carries a credential, any non-HTTPS hop is rejected.
+    """
+    carries_credential = False
+    try:
+        # Probe as plain HTTP so the credential check runs regardless of scheme.
+        _reject_credential_bearing_http_url(urlunparse(urlparse(url)._replace(scheme="http")))
+    except StyleExtractionError:
+        carries_credential = True
+
+    def hook(request: httpx.Request) -> None:
+        if carries_credential and request.url.scheme != "https":
+            raise StyleExtractionError(
+                "Refusing to send a credential-bearing request to a non-HTTPS URL "
+                f"({_redact_url_for_logging(str(request.url))})."
+            )
+
+    return hook
+
+
+def _merge_query_params(query: str, overrides: dict[str, str]) -> str:
+    """Merge override params into a query string, matching names case-insensitively.
+
+    An existing parameter whose name matches an override, ignoring case (e.g.
+    ``SERVICE`` vs. ``service``), is replaced rather than duplicated.
+    Unrelated parameters are preserved as-is.
+
+    Args:
+        query: Original query string (without leading "?").
+        overrides: New parameter values keyed by (lowercase) parameter name.
+
+    Returns:
+        URL-encoded query string with overrides applied.
+    """
+    override_names = {name.lower() for name in overrides}
+    kept = [(name, value) for name, value in parse_qsl(query) if name.lower() not in override_names]
+    kept.extend(overrides.items())
+    return urlencode(kept)
+
+
 def _build_wms_getstyles_url(wfs_url: str, layer_name: str) -> str:
     """Build WMS GetStyles URL from WFS endpoint.
 
@@ -136,7 +244,10 @@ def _build_wms_getstyles_url(wfs_url: str, layer_name: str) -> str:
         "layers": layer_name,
     }
 
-    new_parsed = parsed._replace(path=path, query=urlencode(params))
+    # Merge with the original query string so non-WMS parameters (e.g. an
+    # API key) survive; the new WMS parameters override same-named ones,
+    # regardless of the original parameter's letter case.
+    new_parsed = parsed._replace(path=path, query=_merge_query_params(parsed.query, params))
     return urlunparse(new_parsed)
 
 
@@ -165,7 +276,10 @@ def _build_wms_getlegendgraphic_url(wfs_url: str, layer_name: str) -> str:
         "format": "image/png",
     }
 
-    new_parsed = parsed._replace(path=path, query=urlencode(params))
+    # Merge with the original query string so non-WMS parameters (e.g. an
+    # API key) survive; the new WMS parameters override same-named ones,
+    # regardless of the original parameter's letter case.
+    new_parsed = parsed._replace(path=path, query=_merge_query_params(parsed.query, params))
     return urlunparse(new_parsed)
 
 
@@ -180,10 +294,17 @@ def _fetch_wms_style(url: str, timeout: float = 30.0) -> str:
         SLD XML string.
 
     Raises:
-        StyleExtractionError: On HTTP or response errors.
+        StyleExtractionError: On HTTP or response errors, or if the URL
+            carries a credential over a non-HTTPS scheme.
     """
+    _reject_credential_bearing_http_url(url)
+
     try:
-        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        with httpx.Client(
+            timeout=timeout,
+            follow_redirects=True,
+            event_hooks={"request": [_credential_redirect_guard(url)]},
+        ) as client:
             response = client.get(url)
             response.raise_for_status()
 
@@ -302,7 +423,7 @@ def extract_wms_style(
 
     # Build WMS URL
     wms_url = _build_wms_getstyles_url(wfs_url, layer_name)
-    logger.debug("Fetching WMS style from: %s", wms_url)
+    logger.debug("Fetching WMS style from: %s", _redact_url_for_logging(wms_url))
 
     try:
         sld_xml = _fetch_wms_style(wms_url, timeout=timeout)
@@ -408,10 +529,17 @@ def _fetch_wms_legend(url: str, timeout: float = 30.0) -> bytes | None:
         timeout: Request timeout in seconds.
 
     Returns:
-        PNG image bytes if successful, None on errors.
+        PNG image bytes if successful, None on errors (including a
+        credential-bearing non-HTTPS URL).
     """
     try:
-        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        _reject_credential_bearing_http_url(url)
+
+        with httpx.Client(
+            timeout=timeout,
+            follow_redirects=True,
+            event_hooks={"request": [_credential_redirect_guard(url)]},
+        ) as client:
             response = client.get(url)
             response.raise_for_status()
 
@@ -434,6 +562,9 @@ def _fetch_wms_legend(url: str, timeout: float = 30.0) -> bytes | None:
         return None
     except httpx.RequestError as e:
         logger.warning("WMS GetLegendGraphic request failed: %s", e)
+        return None
+    except StyleExtractionError as e:
+        logger.warning("%s", e)
         return None
 
 
@@ -486,7 +617,7 @@ def extract_wms_legend(
     """
     # Build WMS GetLegendGraphic URL
     legend_url = _build_wms_getlegendgraphic_url(wfs_url, layer_name)
-    logger.debug("Fetching WMS legend from: %s", legend_url)
+    logger.debug("Fetching WMS legend from: %s", _redact_url_for_logging(legend_url))
 
     # Fetch legend image
     legend_bytes = _fetch_wms_legend(legend_url, timeout=timeout)

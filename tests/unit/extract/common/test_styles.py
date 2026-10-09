@@ -14,6 +14,7 @@ import pytest
 from portolan_cli.extract.common.styles import (
     StyleExtractionError,
     _build_wms_getstyles_url,
+    _redact_url_for_logging,
     extract_esri_style,
     extract_wms_style,
 )
@@ -22,6 +23,64 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
+
+
+class TestRedactURLForLogging:
+    """Tests for query-string redaction before logging (security review)."""
+
+    def test_strips_api_key_from_query_string(self) -> None:
+        """An apikey query parameter is not present in the redacted URL."""
+        url = "https://example.com/geoserver/wms?service=WMS&apikey=SECRET123"
+        result = _redact_url_for_logging(url)
+
+        assert "SECRET123" not in result
+        assert "apikey" not in result
+        assert "?" not in result
+
+    def test_keeps_scheme_host_and_path(self) -> None:
+        """Scheme, host and path survive redaction."""
+        url = "https://example.com/geoserver/wms?apikey=SECRET123"
+        result = _redact_url_for_logging(url)
+
+        assert result == "https://example.com/geoserver/wms"
+
+
+class TestRejectCredentialBearingHTTPURL:
+    """Tests for the plain-HTTP credential guard (security review)."""
+
+    def test_rejects_http_url_with_apikey(self) -> None:
+        """A plain-HTTP URL with an apikey is refused."""
+        from portolan_cli.extract.common.styles import (
+            StyleExtractionError,
+            _reject_credential_bearing_http_url,
+        )
+
+        with pytest.raises(StyleExtractionError, match="non-HTTPS"):
+            _reject_credential_bearing_http_url("http://example.com/wms?apikey=SECRET123")
+
+    def test_error_message_does_not_leak_the_key(self) -> None:
+        """The raised error redacts the query string."""
+        from portolan_cli.extract.common.styles import (
+            StyleExtractionError,
+            _reject_credential_bearing_http_url,
+        )
+
+        with pytest.raises(StyleExtractionError) as exc_info:
+            _reject_credential_bearing_http_url("http://example.com/wms?apikey=SECRET123")
+
+        assert "SECRET123" not in str(exc_info.value)
+
+    def test_allows_https_url_with_apikey(self) -> None:
+        """An HTTPS URL with an apikey is allowed."""
+        from portolan_cli.extract.common.styles import _reject_credential_bearing_http_url
+
+        _reject_credential_bearing_http_url("https://example.com/wms?apikey=SECRET123")
+
+    def test_allows_http_url_without_credential_params(self) -> None:
+        """A plain-HTTP URL without a credential-like param is allowed."""
+        from portolan_cli.extract.common.styles import _reject_credential_bearing_http_url
+
+        _reject_credential_bearing_http_url("http://example.com/wms?service=WMS&layers=test")
 
 
 class TestBuildWMSGetStylesURL:
@@ -52,6 +111,42 @@ class TestBuildWMSGetStylesURL:
 
         assert "geonode.pergamino.gob.ar" in result
         assert "/geoserver/wms" in result
+
+    def test_preserves_extra_query_params(self) -> None:
+        """Non-WMS query parameters (e.g. an API key) survive (issue #910)."""
+        wfs_url = "https://example.com/geoserver/wfs?apikey=YOUR_API_KEY"
+        result = _build_wms_getstyles_url(wfs_url, "geonode:layer")
+
+        assert "apikey=YOUR_API_KEY" in result
+        assert "request=GetStyles" in result
+
+    def test_new_params_override_same_named_wfs_params(self) -> None:
+        """New WMS parameters override same-named parameters from the WFS URL."""
+        wfs_url = "https://example.com/geoserver/wfs?service=WFS&request=GetCapabilities"
+        result = _build_wms_getstyles_url(wfs_url, "layer")
+
+        assert "service=WMS" in result
+        assert "request=GetStyles" in result
+        assert "GetCapabilities" not in result
+        assert "service=WFS" not in result
+
+
+class TestFetchWMSStyle:
+    """Tests for WMS style fetching."""
+
+    def test_raises_for_http_url_with_apikey(self) -> None:
+        """A plain-HTTP URL with an apikey is refused before any request is sent."""
+        from unittest.mock import patch
+
+        from portolan_cli.extract.common.styles import StyleExtractionError, _fetch_wms_style
+
+        with (
+            patch("portolan_cli.extract.common.styles.httpx.Client") as mock_client,
+            pytest.raises(StyleExtractionError, match="non-HTTPS"),
+        ):
+            _fetch_wms_style("http://example.com/wms?apikey=SECRET123")
+
+        mock_client.assert_not_called()
 
 
 class TestExtractWMSStyle:
@@ -102,6 +197,27 @@ class TestExtractWMSStyle:
         style = json.loads(result.path.read_text())
         assert style["version"] == 8
         assert len(style["layers"]) >= 1
+
+    def test_does_not_log_api_key(
+        self, tmp_path: Path, sample_sld: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An apikey on the WFS URL never reaches the debug log (security review)."""
+        collection_path = tmp_path / "test-collection"
+        collection_path.mkdir()
+
+        with (
+            caplog.at_level("DEBUG", logger="portolan_cli.extract.common.styles"),
+            patch("portolan_cli.extract.common.styles._fetch_wms_style") as mock_fetch,
+        ):
+            mock_fetch.return_value = sample_sld
+
+            extract_wms_style(
+                wfs_url="https://example.com/geoserver/wfs?apikey=SECRET123",
+                layer_name="test",
+                collection_path=collection_path,
+            )
+
+        assert "SECRET123" not in caplog.text
 
     def test_returns_none_on_fetch_failure(self, tmp_path: Path) -> None:
         """Returns None when WMS request fails."""
@@ -354,9 +470,31 @@ class TestBuildWMSGetLegendGraphicURL:
         assert "geonode.pergamino.gob.ar" in result
         assert "/geoserver/wms" in result
 
+    def test_preserves_extra_query_params(self) -> None:
+        """Non-WMS query parameters (e.g. an API key) survive (issue #910)."""
+        from portolan_cli.extract.common.styles import _build_wms_getlegendgraphic_url
+
+        wfs_url = "https://example.com/geoserver/wfs?apikey=YOUR_API_KEY"
+        result = _build_wms_getlegendgraphic_url(wfs_url, "geonode:layer")
+
+        assert "apikey=YOUR_API_KEY" in result
+        assert "request=GetLegendGraphic" in result
+
 
 class TestFetchWMSLegend:
     """Tests for WMS legend fetching."""
+
+    def test_returns_none_for_http_url_with_apikey(self) -> None:
+        """A plain-HTTP URL with an apikey is refused before any request is sent."""
+        from unittest.mock import patch
+
+        from portolan_cli.extract.common.styles import _fetch_wms_legend
+
+        with patch("portolan_cli.extract.common.styles.httpx.Client") as mock_client:
+            result = _fetch_wms_legend("http://example.com/wms?apikey=SECRET123")
+
+        assert result is None
+        mock_client.assert_not_called()
 
     def test_returns_bytes_on_success(self) -> None:
         """Returns PNG bytes when request succeeds."""
