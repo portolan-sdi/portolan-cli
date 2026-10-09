@@ -27,6 +27,29 @@ if TYPE_CHECKING:
 TEST_REMOTE = "s3://test-bucket/test-catalog"
 
 
+def _write_catalog(tmp_path: Path) -> Path:
+    """Create a catalog with one pushable collection and no sensitive settings.
+
+    The remote and the profile come from environment variables (Issue #356).
+    """
+    catalog_root = tmp_path / "catalog"
+    catalog_root.mkdir()
+    (catalog_root / "catalog.json").write_text('{"type": "Catalog", "id": "test"}')
+
+    collection_dir = catalog_root / "test-collection"
+    collection_dir.mkdir()
+    (collection_dir / "collection.json").write_text(
+        '{"type": "Collection", "id": "test-collection"}'
+    )
+    (collection_dir / "versions.json").write_text('{"spec_version": "1.0.0", "versions": []}')
+
+    portolan_dir = catalog_root / ".portolan"
+    portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text("# No sensitive settings\n")
+
+    return catalog_root
+
+
 class TestProfileDefaultBehavior:
     """Test that --profile defaults to 'default' for S3 commands."""
 
@@ -36,22 +59,7 @@ class TestProfileDefaultBehavior:
 
         Note: remote must be set via PORTOLAN_REMOTE env var (Issue #356).
         """
-        catalog_root = tmp_path / "catalog"
-        catalog_root.mkdir()
-        (catalog_root / "catalog.json").write_text('{"type": "Catalog", "id": "test"}')
-
-        collection_dir = catalog_root / "test-collection"
-        collection_dir.mkdir()
-        (collection_dir / "collection.json").write_text(
-            '{"type": "Collection", "id": "test-collection"}'
-        )
-        (collection_dir / "versions.json").write_text('{"spec_version": "1.0.0", "versions": []}')
-
-        portolan_dir = catalog_root / ".portolan"
-        portolan_dir.mkdir()
-        (portolan_dir / "config.yaml").write_text("# No sensitive settings\n")
-
-        return catalog_root
+        return _write_catalog(tmp_path)
 
     @pytest.mark.unit
     def test_push_defaults_to_default_profile(self, mock_catalog: Path) -> None:
@@ -82,10 +90,57 @@ class TestProfileDefaultBehavior:
                     ["push", "--collection", "test-collection", "--catalog", str(mock_catalog)],
                 )
 
-            # Verify push was called with profile="default"
+            # Verify push received None, so the AWS tools choose the profile
             assert mock_push.called
             call_kwargs = mock_push.call_args.kwargs
-            assert call_kwargs["profile"] == "default"
+            assert call_kwargs["profile"] is None
+
+    @pytest.mark.unit
+    def test_push_lets_aws_profile_through(self, mock_catalog: Path) -> None:
+        """AWS_PROFILE must reach the sync layer, as it reaches the AWS CLI."""
+        runner = CliRunner()
+
+        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
+            mock_push.return_value = MagicMock(
+                success=True, files_uploaded=0, versions_pushed=0, conflicts=[], errors=[]
+            )
+            with patch.dict(
+                os.environ,
+                {"PORTOLAN_REMOTE": TEST_REMOTE, "AWS_PROFILE": "work"},
+                clear=False,
+            ):
+                runner.invoke(
+                    cli,
+                    ["push", "--collection", "test-collection", "--catalog", str(mock_catalog)],
+                )
+
+        # None reaches the sync layer, where `_effective_profile` reads AWS_PROFILE.
+        assert mock_push.call_args.kwargs["profile"] is None
+
+    @pytest.mark.unit
+    def test_portolan_profile_beats_aws_profile(self, mock_catalog: Path) -> None:
+        """A Portolan setting must win over the ambient AWS variable."""
+        runner = CliRunner()
+
+        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
+            mock_push.return_value = MagicMock(
+                success=True, files_uploaded=0, versions_pushed=0, conflicts=[], errors=[]
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "PORTOLAN_REMOTE": TEST_REMOTE,
+                    "PORTOLAN_AWS_PROFILE": "portolan-profile",
+                    "AWS_PROFILE": "work",
+                },
+                clear=False,
+            ):
+                runner.invoke(
+                    cli,
+                    ["push", "--collection", "test-collection", "--catalog", str(mock_catalog)],
+                )
+
+        assert mock_push.call_args.kwargs["profile"] == "portolan-profile"
 
     @pytest.mark.unit
     def test_push_respects_explicit_profile(self, mock_catalog: Path) -> None:
@@ -148,10 +203,10 @@ class TestProfileDefaultBehavior:
                 ],
             )
 
-            # Verify pull was called with profile="default"
+            # Verify pull received None, so the AWS tools choose the profile
             assert mock_pull.called
             call_kwargs = mock_pull.call_args.kwargs
-            assert call_kwargs["profile"] == "default"
+            assert call_kwargs["profile"] is None
 
     @pytest.mark.unit
     def test_sync_defaults_to_default_profile(self, mock_catalog: Path) -> None:
@@ -172,10 +227,10 @@ class TestProfileDefaultBehavior:
                     ["sync", "--collection", "test-collection", "--catalog", str(mock_catalog)],
                 )
 
-            # Verify sync was called with profile="default"
+            # Verify sync received None, so the AWS tools choose the profile
             assert mock_sync.called
             call_kwargs = mock_sync.call_args.kwargs
-            assert call_kwargs["profile"] == "default"
+            assert call_kwargs["profile"] is None
 
     @pytest.mark.unit
     def test_clone_defaults_to_default_profile(self, tmp_path: Path) -> None:
@@ -202,10 +257,10 @@ class TestProfileDefaultBehavior:
             # Verify command succeeded
             assert result.exit_code == 0
 
-            # Verify clone was called with profile="default"
+            # Verify clone received None, so the AWS tools choose the profile
             assert mock_clone.called
             call_kwargs = mock_clone.call_args.kwargs
-            assert call_kwargs["profile"] == "default"
+            assert call_kwargs["profile"] is None
 
 
 class TestProfileConfigResolution:
@@ -221,22 +276,7 @@ class TestProfileConfigResolution:
 
         Note: remote and profile must be set via env vars (Issue #356).
         """
-        catalog_root = tmp_path / "catalog"
-        catalog_root.mkdir()
-        (catalog_root / "catalog.json").write_text('{"type": "Catalog", "id": "test"}')
-
-        collection_dir = catalog_root / "test-collection"
-        collection_dir.mkdir()
-        (collection_dir / "collection.json").write_text(
-            '{"type": "Collection", "id": "test-collection"}'
-        )
-        (collection_dir / "versions.json").write_text('{"spec_version": "1.0.0", "versions": []}')
-
-        portolan_dir = catalog_root / ".portolan"
-        portolan_dir.mkdir()
-        (portolan_dir / "config.yaml").write_text("# No sensitive settings\n")
-
-        return catalog_root
+        return _write_catalog(tmp_path)
 
     @pytest.mark.unit
     def test_push_uses_aws_profile_from_env(self, basic_catalog: Path) -> None:
@@ -398,20 +438,7 @@ class TestProfileConfigResolution:
     @pytest.mark.unit
     def test_push_uses_env_var_when_no_cli(self, tmp_path: Path) -> None:
         """PORTOLAN_AWS_PROFILE env var should be used when no CLI arg."""
-        catalog_root = tmp_path / "catalog"
-        catalog_root.mkdir()
-        (catalog_root / "catalog.json").write_text('{"type": "Catalog", "id": "test"}')
-
-        collection_dir = catalog_root / "test-collection"
-        collection_dir.mkdir()
-        (collection_dir / "collection.json").write_text(
-            '{"type": "Collection", "id": "test-collection"}'
-        )
-        (collection_dir / "versions.json").write_text('{"spec_version": "1.0.0", "versions": []}')
-
-        portolan_dir = catalog_root / ".portolan"
-        portolan_dir.mkdir()
-        (portolan_dir / "config.yaml").write_text("# No sensitive settings\n")
+        catalog_root = _write_catalog(tmp_path)
 
         runner = CliRunner()
 

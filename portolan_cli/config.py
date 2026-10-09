@@ -1060,7 +1060,7 @@ def resolve_push_settings(
     profile: str | None,
     catalog_path: Path,
     collection: str | None,
-) -> tuple[str | None, str, str | None]:
+) -> tuple[str | None, str | None, str | None]:
     """Resolve remote/profile/region for push/sync with CLI > env > config precedence.
 
     Sensitive settings (remote, profile, region) come from CLI flags, env vars,
@@ -1076,7 +1076,8 @@ def resolve_push_settings(
 
     Returns:
         Tuple of (resolved_destination, resolved_profile, resolved_region).
-        ``resolved_profile`` defaults to ``"default"`` when nothing is configured.
+        ``resolved_profile`` is None when nothing here names a profile. The sync
+        layer then reads ``AWS_PROFILE``, then the ``default`` profile.
 
     Raises:
         ValueError: If ``config.yaml`` contains stale sensitive settings.
@@ -1103,8 +1104,4 @@ def resolve_push_settings(
         collection=collection,
         collection_path=collection_path,
     )
-    return (
-        resolved_destination,
-        resolved_profile if resolved_profile is not None else "default",
-        resolved_region,
-    )
+    return resolved_destination, resolved_profile, resolved_region

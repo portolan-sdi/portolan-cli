@@ -90,6 +90,13 @@ PARTITION_EXTENSION_URI: str = (
     "https://schemas.portolan-sdi.org/incubating/partition/v1.0.0/schema.json"
 )
 
+# The Iceberg extension a collection published as an Iceberg table declares.
+# portolan-spec pins it under incubating/iceberg, next to the partition
+# extension, and serves it from the same host.
+ICEBERG_EXTENSION_URI: str = (
+    "https://schemas.portolan-sdi.org/incubating/iceberg/v1.1.0/schema.json"
+)
+
 # The extension vocabulary below is DERIVED from portolan_cli.extension_registry
 # (the single source). Edit rows there, not these members.
 

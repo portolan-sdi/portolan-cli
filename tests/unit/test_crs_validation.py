@@ -256,3 +256,43 @@ class TestRejectNonWgs84Magnitudes:
             result = transform_bbox_to_wgs84(self.METER_BBOX, None, allow_guess=True)
         assert result == self.METER_BBOX
         assert any("exceed lon/lat range" in r.message for r in caplog.records)
+
+
+class TestWgs84EdgeTolerance:
+    """A longitude that rounds past 180 is 180, not a projected coordinate (issue #882).
+
+    The Portolan specification's own ``natural-earth-countries.parquet`` carries
+    ``[-180.0, -90.0, 180.00000000000006, 83.64513000000001]``. The excess is
+    6e-14 degrees, about 7 nanometres on the ground.
+    """
+
+    NATURAL_EARTH_BBOX = (-180.0, -90.0, 180.00000000000006, 83.64513000000001)
+
+    def test_rounded_longitude_is_accepted(self) -> None:
+        result = transform_bbox_to_wgs84(self.NATURAL_EARTH_BBOX, None)
+        assert result[2] == 180.0
+
+    def test_rounded_longitude_is_accepted_when_wgs84_is_declared(self) -> None:
+        result = transform_bbox_to_wgs84(self.NATURAL_EARTH_BBOX, "EPSG:4326")
+        assert result[2] == 180.0
+
+    def test_every_edge_snaps_to_its_bound(self) -> None:
+        bbox = (-180.0000000000001, -90.0000000000001, 180.0000000000001, 90.0000000000001)
+        assert transform_bbox_to_wgs84(bbox, None) == (-180.0, -90.0, 180.0, 90.0)
+
+    def test_a_coordinate_inside_the_range_is_untouched(self) -> None:
+        bbox = (-7.33, 38.04, -4.70, 40.49)
+        assert transform_bbox_to_wgs84(bbox, None) == bbox
+
+    def test_a_degree_past_the_bound_still_raises(self) -> None:
+        """The tolerance admits rounding, not a real coordinate outside the range."""
+        from portolan_cli.errors import CRSMismatchError
+
+        with pytest.raises(CRSMismatchError):
+            transform_bbox_to_wgs84((-180.0, -90.0, 181.0, 83.6), None)
+
+    def test_projected_coordinates_still_raise(self) -> None:
+        from portolan_cli.errors import CRSMismatchError
+
+        with pytest.raises(CRSMismatchError):
+            transform_bbox_to_wgs84((121577.87, 4214399.77, 353182.80, 4486795.22), None)

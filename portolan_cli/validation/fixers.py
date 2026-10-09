@@ -283,13 +283,19 @@ def _extent_bboxes(node: Node) -> list[Any] | None:
 
 
 def _looks_valid(box: Any) -> bool:
-    from portolan_cli.bbox import is_valid_bbox, to_2d_bbox
+    from portolan_cli.bbox import is_valid_bbox, snap_to_wgs84_range, to_2d_bbox
 
     if not isinstance(box, list) or len(box) not in (4, 6):
         return False
     if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in box):
         return False
-    return is_valid_bbox(to_2d_bbox(box))
+    flat = to_2d_bbox(box)
+    if not is_valid_bbox(flat):
+        return False
+    # A coordinate a hair past the bound validates once snapped, so
+    # is_valid_bbox accepts it. The stored extent still carries the raw value,
+    # and replacing it is what this fixer is for.
+    return snap_to_wgs84_range(flat) == flat
 
 
 def _child_bboxes(node: Node, graph: CatalogGraph) -> list[list[float]]:
