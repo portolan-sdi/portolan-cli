@@ -24,6 +24,7 @@ from typing import Any
 from rashid.catalog import is_absolute_href
 
 from portolan_cli.json_io import write_json_atomic
+from portolan_cli.stac_links import visible_stac_files
 
 #: Canonical filename for the AI/agent metadata file (uppercase, matching the
 #: cross-tool ``AGENTS.md`` convention — like ``README.md``).
@@ -40,30 +41,6 @@ AGENTS_LINK_TITLE = "Agent/LLM usage guide"
 
 #: Relative href used when the ``AGENTS.md`` sits next to the STAC JSON.
 AGENTS_LINK_HREF = f"./{AGENTS_MD_FILENAME}"
-
-
-def visible_stac_files(catalog_root: Path) -> list[Path]:
-    """Every ``catalog.json``/``collection.json`` in the *visible* catalog tree.
-
-    Dot-directories (``.portolan/``, ``.git/``, editor scratch dirs) hold caches
-    and backups, not published STAC objects; a sweep that descends into them
-    rewrites files no publisher asked about. Shared by every catalog-wide sweep
-    so they all walk exactly the same set.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-
-    Returns:
-        Sorted catalog paths first, then sorted collection paths.
-    """
-    found: list[Path] = []
-    for pattern in ("catalog.json", "collection.json"):
-        for path in sorted(catalog_root.rglob(pattern)):
-            rel_parts = path.parent.relative_to(catalog_root).parts
-            if any(part.startswith(".") for part in rel_parts):
-                continue
-            found.append(path)
-    return found
 
 
 def markdown_link_gap(stac_path: Path, data: dict[str, Any], *, rel: str, target: str) -> bool:

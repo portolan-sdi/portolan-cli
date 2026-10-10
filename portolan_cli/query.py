@@ -5,14 +5,13 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.constants import (
     MTIME_TOLERANCE_SECONDS,
 )
-from portolan_cli.formats import (
-    FormatType,
-)
+from portolan_cli.format_types import FormatType
+from portolan_cli.stac_links import catalog_collections, owned_item_hrefs
 from portolan_cli.sync.checksums import compute_checksum, compute_dir_checksum
 from portolan_cli.versions import (
     read_versions,
@@ -50,120 +49,8 @@ class ItemInfo:
     datetime: datetime | None = None
 
 
-def list_items(
-    catalog_root: Path,
-    collection_id: str | None = None,
-) -> list[ItemInfo]:
-    """List items in a Portolan catalog.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        collection_id: Optional collection to filter by.
-
-    Returns:
-        List of ItemInfo objects.
-    """
-    # Catalog at root level
-    catalog_path = catalog_root / "catalog.json"
-
-    if not catalog_path.exists():
-        return []
-
-    items: list[ItemInfo] = []
-
-    # Scan root-level directories for collections
-    for col_dir in catalog_root.iterdir():
-        if not col_dir.is_dir():
-            continue
-
-        # Skip .portolan and hidden directories
-        if col_dir.name.startswith("."):
-            continue
-
-        col_id = col_dir.name
-
-        # Filter by collection if specified
-        if collection_id and col_id != collection_id:
-            continue
-
-        collection_path = col_dir / "collection.json"
-        if not collection_path.exists():
-            continue
-
-        # Load collection to get items
-        collection_data = json.loads(collection_path.read_text(encoding="utf-8"))
-
-        for link in collection_data.get("links", []):
-            if link.get("rel") != "item":
-                continue
-
-            # Parse item href to get item ID
-            item_href = link.get("href", "")
-            # href is like ./item-id/item-id.json
-            item_id = item_href.split("/")[1] if "/" in item_href else item_href
-
-            # Load item
-            item_path = col_dir / item_href.removeprefix("./")
-            if not item_path.exists():
-                continue
-
-            item_data = json.loads(item_path.read_text(encoding="utf-8"))
-
-            # Determine format from assets
-            format_type = FormatType.UNKNOWN
-            asset_paths: list[str] = []
-            for asset in item_data.get("assets", {}).values():
-                href = asset.get("href", "")
-                asset_paths.append(href)
-                if href.endswith(".parquet"):
-                    format_type = FormatType.VECTOR
-                elif href.endswith(".tif"):
-                    format_type = FormatType.RASTER
-
-            items.append(
-                ItemInfo(
-                    item_id=item_data.get("id", item_id),
-                    collection_id=col_id,
-                    format_type=format_type,
-                    bbox=item_data.get("bbox", [0, 0, 0, 0]),
-                    asset_paths=asset_paths,
-                    title=item_data.get("properties", {}).get("title"),
-                    description=item_data.get("properties", {}).get("description"),
-                )
-            )
-
-    return items
-
-
-def get_item_info(
-    catalog_root: Path,
-    stac_id: str,
-) -> ItemInfo:
-    """Get information about a specific item.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        stac_id: STAC identifier in format "collection/item".
-
-    Returns:
-        ItemInfo for the requested item.
-
-    Raises:
-        KeyError: If the item doesn't exist.
-    """
-    if "/" not in stac_id:
-        raise KeyError(f"Item not found: {stac_id} (expected format: collection/item)")
-
-    collection_id, item_id = stac_id.split("/", 1)
-
-    # STAC at root level
-    item_path = catalog_root / collection_id / item_id / f"{item_id}.json"
-
-    if not item_path.exists():
-        raise KeyError(f"Item not found: {stac_id}")
-
-    item_data = json.loads(item_path.read_text(encoding="utf-8"))
-
+def _item_info(item_data: dict[str, Any], collection_id: str, fallback_id: str) -> ItemInfo:
+    """Build an ItemInfo from a parsed STAC item."""
     # Determine format from assets
     format_type = FormatType.UNKNOWN
     asset_paths: list[str] = []
@@ -175,15 +62,85 @@ def get_item_info(
         elif href.endswith(".tif"):
             format_type = FormatType.RASTER
 
+    properties = item_data.get("properties", {})
     return ItemInfo(
-        item_id=item_data.get("id", item_id),
+        item_id=item_data.get("id", fallback_id),
         collection_id=collection_id,
         format_type=format_type,
         bbox=item_data.get("bbox", [0, 0, 0, 0]),
         asset_paths=asset_paths,
-        title=item_data.get("properties", {}).get("title"),
-        description=item_data.get("properties", {}).get("description"),
+        title=properties.get("title"),
+        description=properties.get("description"),
     )
+
+
+def _collection_items(catalog_root: Path, collection_id: str) -> list[ItemInfo]:
+    """The items a collection owns, read through its links."""
+    items: list[ItemInfo] = []
+    collection_json = catalog_root / collection_id / "collection.json"
+    for _href, item_path in owned_item_hrefs(collection_json):
+        if not item_path.exists():
+            continue
+        item_data = json.loads(item_path.read_text(encoding="utf-8"))
+        items.append(_item_info(item_data, collection_id, item_path.stem))
+    return items
+
+
+def list_items(
+    catalog_root: Path,
+    collection_id: str | None = None,
+) -> list[ItemInfo]:
+    """List items in a Portolan catalog.
+
+    The collections come from the containment walk that ``check`` applies. The
+    items of each collection come from its ``item`` links, through any
+    catalogs that organize them (issue #944).
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection_id: Optional collection to filter by.
+
+    Returns:
+        List of ItemInfo objects.
+    """
+    if not (catalog_root / "catalog.json").exists():
+        return []
+
+    items: list[ItemInfo] = []
+    for col_id in catalog_collections(catalog_root):
+        if collection_id and col_id != collection_id:
+            continue
+        items.extend(_collection_items(catalog_root, col_id))
+    return items
+
+
+def get_item_info(
+    catalog_root: Path,
+    stac_id: str,
+) -> ItemInfo:
+    """Get information about a specific item.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        stac_id: STAC identifier in format "collection/item". A nested
+            collection gives "parent/collection/item".
+
+    Returns:
+        ItemInfo for the requested item.
+
+    Raises:
+        KeyError: If the item doesn't exist.
+    """
+    if "/" not in stac_id:
+        raise KeyError(f"Item not found: {stac_id} (expected format: collection/item)")
+
+    collection_id, item_id = stac_id.rsplit("/", 1)
+
+    for item in _collection_items(catalog_root, collection_id):
+        if item.item_id == item_id:
+            return item
+
+    raise KeyError(f"Item not found: {stac_id}")
 
 
 def is_current(

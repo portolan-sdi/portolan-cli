@@ -101,7 +101,8 @@ def init_extracted_catalog(
         The list of added parquet files, or ``None`` when there was nothing to
         add (the caller should then stop — no catalog was created).
     """
-    from portolan_cli.catalog import CatalogState, add_files, detect_state, init_catalog
+    from portolan_cli.add import add_files
+    from portolan_cli.catalog import CatalogState, detect_state, init_catalog
     from portolan_cli.output import warn
 
     parquet_files = collect_successful_parquet_files(output_dir, report)

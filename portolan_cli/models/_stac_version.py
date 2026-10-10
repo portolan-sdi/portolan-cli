@@ -1,18 +1,18 @@
-"""Shared STAC version accessor to avoid circular imports.
+"""Shared STAC version accessor for the model dataclasses.
 
-This module provides a lazy accessor for STAC_VERSION that can be used
-in dataclass default_factory without causing circular import issues.
+The models use this accessor in a dataclass ``default_factory``. The constant
+lives in ``constants.py``, which loads neither pystac nor ``stac.py``.
 """
 
 from __future__ import annotations
 
+from portolan_cli.constants import STAC_VERSION
+
 
 def get_stac_version() -> str:
-    """Get STAC_VERSION constant (avoids circular import).
+    """Get the STAC_VERSION constant.
 
     Returns:
         The current STAC version string (e.g., "1.1.0").
     """
-    from portolan_cli.stac import STAC_VERSION
-
     return STAC_VERSION

@@ -20,6 +20,7 @@ from portolan_cli.models.collection import (
     TemporalExtent,
 )
 from portolan_cli.models.schema import SchemaModel
+from portolan_cli.stac_links import catalog_collections
 
 logger = logging.getLogger(__name__)
 
@@ -200,8 +201,9 @@ def read_schema_json(path: Path) -> SchemaModel:
 def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
     """Get bounding boxes from all sibling collections in the catalog (Issue #432).
 
-    Scans the catalog for child collection links and extracts their spatial extents.
-    Used for AOI inheritance when creating tabular-only collections.
+    The collections come from the containment walk that ``check`` applies
+    (issue #944). A collection without a ``child`` link counts too. Used for
+    AOI inheritance when creating tabular-only collections.
 
     Args:
         catalog_root: Root directory of the catalog.
@@ -210,65 +212,37 @@ def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
         List of bboxes [west, south, east, north] from sibling collections.
         Empty list if no collections with valid extents found.
     """
-    catalog_path = catalog_root / "catalog.json"
-    if not catalog_path.exists():
-        return []
-
-    try:
-        with Path(catalog_path).open(encoding="utf-8") as f:
-            catalog_data = json.load(f)
-    except (json.JSONDecodeError, OSError):
+    if not (catalog_root / "catalog.json").exists():
         return []
 
     bboxes: list[list[float]] = []
-
-    # Find child links to collections
-    for link in catalog_data.get("links", []):
-        if link.get("rel") != "child":
-            continue
-
-        href = link.get("href", "")
-        if not href.endswith("collection.json"):
-            continue
-
-        # Security: Validate path is within catalog_root (path hardening)
-        # Prevents path traversal via malicious hrefs like "../../../etc/passwd"
-        try:
-            collection_path = (catalog_root / href).resolve()
-            # Ensure resolved path is within catalog_root
-            collection_path.relative_to(catalog_root.resolve())
-        except ValueError:
-            # Path is outside catalog_root - skip silently (path traversal attempt)
-            continue
-
-        if not collection_path.exists():
-            continue
-
-        try:
-            with Path(collection_path).open(encoding="utf-8") as f:
-                collection_data = json.load(f)
-
-            # Extract bbox from extent
-            extent = collection_data.get("extent", {})
-            spatial = extent.get("spatial", {})
-            bbox_list = spatial.get("bbox", [])
-
-            if bbox_list and len(bbox_list) > 0:
-                bbox = bbox_list[0]
-                # Validate bbox format: [west, south, east, north] or 3D variant
-                # STAC allows 6-element bboxes for 3D: [west, south, min_z, east, north, max_z]
-                # We use only the 2D components for union computation
-                if (
-                    isinstance(bbox, list)
-                    and len(bbox) in (4, 6)
-                    and all(isinstance(x, (int, float)) for x in bbox)
-                ):
-                    bboxes.append(to_2d_bbox(bbox))
-
-        except (json.JSONDecodeError, OSError, KeyError):
-            continue
-
+    for collection_id in catalog_collections(catalog_root):
+        bbox = _first_collection_bbox(catalog_root / collection_id / "collection.json")
+        if bbox is not None:
+            bboxes.append(bbox)
     return bboxes
+
+
+def _first_collection_bbox(collection_path: Path) -> list[float] | None:
+    """The 2D form of a collection's first extent bbox, or None when it is not valid."""
+    try:
+        collection_data = json.loads(collection_path.read_text(encoding="utf-8"))
+        bbox_list = collection_data.get("extent", {}).get("spatial", {}).get("bbox", [])
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError, AttributeError):
+        return None
+
+    if not isinstance(bbox_list, list) or not bbox_list:
+        return None
+    bbox = bbox_list[0]
+    # STAC allows 6-element bboxes for 3D: [west, south, min_z, east, north, max_z]
+    # We use only the 2D components for union computation
+    if (
+        isinstance(bbox, list)
+        and len(bbox) in (4, 6)
+        and all(isinstance(x, (int, float)) for x in bbox)
+    ):
+        return to_2d_bbox(bbox)
+    return None
 
 
 def _compute_union_bbox(bboxes: list[list[float]]) -> list[float]:

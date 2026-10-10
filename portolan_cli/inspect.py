@@ -15,8 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.formats import FormatType, detect_format
-from portolan_cli.metadata.cog import extract_cog_metadata
-from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+from portolan_cli.stac_links import catalog_collections
 from portolan_cli.stac_parquet import count_items
 from portolan_cli.versions import read_versions
 
@@ -255,6 +254,9 @@ def _inspect_geoparquet(path: Path, *, catalog_root: Path | None = None) -> File
     Returns:
         FileInfo with GeoParquet metadata.
     """
+    # Lazy: the extractor loads pyarrow, and importing inspect must not (#944).
+    from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+
     metadata = extract_geoparquet_metadata(path)
 
     # Look up version if catalog_root provided
@@ -287,6 +289,9 @@ def _inspect_cog(path: Path, *, catalog_root: Path | None = None) -> FileInfo:
     Returns:
         FileInfo with COG metadata.
     """
+    # Lazy: the extractor loads rasterio, and importing inspect must not (#944).
+    from portolan_cli.metadata.cog import extract_cog_metadata
+
     metadata = extract_cog_metadata(path)
 
     # Look up version if catalog_root provided
@@ -441,9 +446,10 @@ def inspect_catalog(catalog_root: Path) -> CatalogInfo:
 
     data = json.loads(catalog_json_path.read_text(encoding="utf-8"))
 
-    # Count collections from child links
-    child_links = [link for link in data.get("links", []) if link.get("rel") == "child"]
-    collection_count = len(child_links)
+    # The containment walk counts the same collections as `check` (#944). A
+    # child link to a sub-catalog is not a collection, and an unlinked
+    # collection still is one.
+    collection_count = len(catalog_collections(catalog_root))
 
     return CatalogInfo(
         catalog_id=data.get("id", catalog_root.name),

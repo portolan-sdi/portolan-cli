@@ -15,10 +15,10 @@ from pathlib import Path
 
 import pytest
 
+from portolan_cli.constants import STAC_VERSION
 from portolan_cli.models.catalog import CatalogModel
 from portolan_cli.models.collection import CollectionModel
 from portolan_cli.models.item import ItemModel
-from portolan_cli.stac import STAC_VERSION
 
 # Fixture directory paths
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "metadata" / "stac"

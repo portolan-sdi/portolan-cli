@@ -94,9 +94,6 @@ MACHINE_DERIVABLE_EXTRA_FIELDS = frozenset(
     }
 )
 
-# STAC version we generate (v1.1.0 has unified bands array, superseding eo:bands/raster:bands)
-STAC_VERSION = "1.1.0"
-
 # Default license when not specified.
 # STAC 1.1 deprecates "proprietary" (it is not an SPDX identifier); "other" is
 # the spec keyword for a license not covered by an SPDX expression. A rel="license"

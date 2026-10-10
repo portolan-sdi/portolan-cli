@@ -607,6 +607,91 @@ class TestCollectionStatus:
         assert status.remote_version is None
 
 
+class TestRemoteVersionFetcher:
+    """The caller passes the remote reader in (issue #944).
+
+    status.py must not import sync.pull, which loads Click and the write
+    modules. The CLI passes ``sync.pull.fetch_remote_versions``.
+    """
+
+    @staticmethod
+    def _remote(version: str) -> VersionsFile:
+        return VersionsFile(
+            spec_version="1.0.0",
+            current_version=version,
+            versions=[
+                Version(
+                    version=version,
+                    created=datetime(2026, 10, 10, tzinfo=timezone.utc),
+                    breaking=False,
+                    assets={},
+                    changes=[],
+                )
+            ],
+        )
+
+    @pytest.mark.unit
+    def test_fetcher_supplies_the_remote_version(self, tmp_path: Path) -> None:
+        """The injected fetcher gets (remote_url, collection) and its version is used."""
+        from portolan_cli.status import get_collection_status
+
+        (tmp_path / "collection").mkdir()
+        calls: list[tuple[str, str]] = []
+
+        def fetch(remote_url: str, collection: str) -> VersionsFile:
+            calls.append((remote_url, collection))
+            return self._remote("3.1.0")
+
+        status = get_collection_status(
+            catalog_root=tmp_path,
+            collection="collection",
+            remote_url="s3://bucket/catalog",
+            fetch_remote_versions=fetch,
+        )
+
+        assert calls == [("s3://bucket/catalog", "collection")]
+        assert status.remote_version == "3.1.0"
+
+    @pytest.mark.unit
+    def test_fetcher_failure_gives_no_remote_version(self, tmp_path: Path) -> None:
+        """A fetch error leaves the remote version unknown instead of raising."""
+        from portolan_cli.status import get_collection_status
+
+        (tmp_path / "collection").mkdir()
+
+        def fetch(_remote_url: str, _collection: str) -> VersionsFile:
+            raise OSError("unreachable")
+
+        status = get_collection_status(
+            catalog_root=tmp_path,
+            collection="collection",
+            remote_url="s3://bucket/catalog",
+            fetch_remote_versions=fetch,
+        )
+
+        assert status.remote_version is None
+
+    @pytest.mark.unit
+    def test_offline_never_calls_the_fetcher(self, tmp_path: Path) -> None:
+        """Offline mode skips the fetcher even when a remote is configured."""
+        from portolan_cli.status import get_collection_status
+
+        (tmp_path / "collection").mkdir()
+
+        def fetch(_remote_url: str, _collection: str) -> VersionsFile:
+            raise AssertionError("offline status must not fetch")
+
+        status = get_collection_status(
+            catalog_root=tmp_path,
+            collection="collection",
+            offline=True,
+            remote_url="s3://bucket/catalog",
+            fetch_remote_versions=fetch,
+        )
+
+        assert status.remote_version is None
+
+
 class TestStatusOutput:
     """Tests for status output formatting."""
 

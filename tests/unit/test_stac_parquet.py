@@ -344,7 +344,7 @@ class TestOwnedItemHrefs:
     @pytest.mark.unit
     def test_returns_href_and_resolved_path_pairs(self, collection_with_items: Path) -> None:
         """Each pair carries the written href and the file it resolves to."""
-        from portolan_cli.stac_parquet import owned_item_hrefs
+        from portolan_cli.stac_links import owned_item_hrefs
 
         owned = owned_item_hrefs(collection_with_items / "collection.json")
 
@@ -356,16 +356,69 @@ class TestOwnedItemHrefs:
     @pytest.mark.unit
     def test_descends_organizing_catalogs(self, collection_with_organizing_catalogs: Path) -> None:
         """Items behind an organizing catalog still belong to the collection."""
-        from portolan_cli.stac_parquet import owned_item_hrefs
+        from portolan_cli.stac_links import owned_item_hrefs
 
         assert len(owned_item_hrefs(collection_with_organizing_catalogs / "collection.json")) == 2
 
     @pytest.mark.unit
     def test_missing_node_returns_empty(self, tmp_path: Path) -> None:
         """A collection with no collection.json owns nothing."""
-        from portolan_cli.stac_parquet import owned_item_hrefs
+        from portolan_cli.stac_links import owned_item_hrefs
 
         assert owned_item_hrefs(tmp_path / "collection.json") == []
+
+    @pytest.mark.unit
+    def test_child_link_cycle_terminates(self, tmp_path: Path) -> None:
+        """Two catalogs that link to each other do not recurse without end."""
+        from portolan_cli.stac_links import owned_item_hrefs
+
+        (tmp_path / "a").mkdir()
+        (tmp_path / "collection.json").write_text(
+            json.dumps({"links": [{"rel": "child", "href": "./a/catalog.json"}]})
+        )
+        (tmp_path / "a" / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "links": [
+                        {"rel": "item", "href": "./x/x.json"},
+                        {"rel": "child", "href": "../a/catalog.json"},
+                    ]
+                }
+            )
+        )
+
+        owned = owned_item_hrefs(tmp_path / "collection.json")
+
+        assert [href for href, _ in owned] == ["./x/x.json"]
+
+    @pytest.mark.unit
+    def test_shared_catalog_in_two_branches_is_walked_twice(self, tmp_path: Path) -> None:
+        """The cycle guard skips only catalogs active in the current branch."""
+        from portolan_cli.stac_links import owned_item_hrefs
+
+        for name in ("a", "b", "shared"):
+            (tmp_path / name).mkdir()
+        (tmp_path / "collection.json").write_text(
+            json.dumps(
+                {
+                    "links": [
+                        {"rel": "child", "href": "./a/catalog.json"},
+                        {"rel": "child", "href": "./b/catalog.json"},
+                    ]
+                }
+            )
+        )
+        for name in ("a", "b"):
+            (tmp_path / name / "catalog.json").write_text(
+                json.dumps({"links": [{"rel": "child", "href": "../shared/catalog.json"}]})
+            )
+        (tmp_path / "shared" / "catalog.json").write_text(
+            json.dumps({"links": [{"rel": "item", "href": "./s/s.json"}]})
+        )
+
+        owned = owned_item_hrefs(tmp_path / "collection.json")
+
+        assert [href for href, _ in owned] == ["./s/s.json", "./s/s.json"]
 
 
 # =============================================================================
@@ -1335,14 +1388,15 @@ class TestGenerateParquetMirrors:
         from portolan_cli.stac_parquet import generate_parquet_mirrors
 
         catalog_root = collection_with_items.parent
-        generate_parquet_mirrors(
+        report = generate_parquet_mirrors(
             catalog_root,
             {"landsat"},
             generate_parquet=True,
-            verbose=False,
         )
 
         assert (collection_with_items / "items.parquet").exists()
+        assert report.generated == ["landsat"]
+        assert report.failed == {}
 
     @pytest.mark.unit
     def test_default_generates_without_flag_or_config(self, collection_with_items: Path) -> None:
@@ -1358,7 +1412,6 @@ class TestGenerateParquetMirrors:
             catalog_root,
             {"landsat"},
             generate_parquet=False,
-            verbose=False,
         )
 
         assert (collection_with_items / "items.parquet").exists()
@@ -1378,7 +1431,6 @@ class TestGenerateParquetMirrors:
             catalog_root,
             {"landsat"},
             generate_parquet=False,
-            verbose=False,
         )
 
         assert not (collection_with_items / "items.parquet").exists()
@@ -1396,7 +1448,6 @@ class TestGenerateParquetMirrors:
             catalog_root,
             {"landsat"},
             generate_parquet=True,
-            verbose=False,
         )
 
         assert (collection_with_items / "items.parquet").exists()
@@ -1412,7 +1463,6 @@ class TestGenerateParquetMirrors:
             tmp_path,
             {"ghost"},
             generate_parquet=True,
-            verbose=False,
         )
         assert not (tmp_path / "ghost" / "items.parquet").exists()
 
@@ -1422,7 +1472,9 @@ class TestGenerateParquetMirrors:
         from portolan_cli.stac_parquet import generate_parquet_mirrors
 
         # No exception, nothing created
-        generate_parquet_mirrors(tmp_path, set(), generate_parquet=True, verbose=False)
+        report = generate_parquet_mirrors(tmp_path, set(), generate_parquet=True)
+        assert report.generated == []
+        assert report.failed == {}
 
     @pytest.mark.unit
     def test_itemless_collection_gets_no_mirror(self, tmp_path: Path) -> None:
@@ -1451,9 +1503,10 @@ class TestGenerateParquetMirrors:
             )
         )
 
-        generate_parquet_mirrors(tmp_path, {"vectors"}, generate_parquet=False, verbose=False)
+        report = generate_parquet_mirrors(tmp_path, {"vectors"}, generate_parquet=False)
 
         assert not (collection_dir / "items.parquet").exists()
+        assert report.generated == []
 
     @pytest.mark.unit
     def test_mirror_folds_into_the_version_add_just_wrote(
@@ -1474,7 +1527,6 @@ class TestGenerateParquetMirrors:
             catalog_root,
             {"landsat"},
             generate_parquet=False,
-            verbose=False,
             versioned_collections={"landsat"},
         )
 
@@ -1499,7 +1551,6 @@ class TestGenerateParquetMirrors:
             catalog_root,
             {"landsat"},
             generate_parquet=False,
-            verbose=False,
             versioned_collections=set(),
         )
 
@@ -1520,7 +1571,6 @@ class TestGenerateParquetMirrors:
             catalog_root,
             {"landsat"},
             generate_parquet=False,
-            verbose=False,
             versioned_collections={"landsat"},
         )
         first = read_versions(collection_with_items / "versions.json")
@@ -1530,7 +1580,6 @@ class TestGenerateParquetMirrors:
             catalog_root,
             {"landsat"},
             generate_parquet=False,
-            verbose=False,
             versioned_collections=set(),
         )
         second = read_versions(collection_with_items / "versions.json")
@@ -1556,12 +1605,11 @@ class TestGenerateParquetMirrors:
                 catalog_root,
                 {"landsat"},
                 generate_parquet=True,
-                verbose=False,
             )
 
     @pytest.mark.unit
     def test_auto_failure_warns_not_raises(self, collection_with_items: Path) -> None:
-        """A default-generation failure warns instead of raising."""
+        """A default-generation failure goes into the report instead of raising."""
         from unittest.mock import patch
 
         from portolan_cli.stac_parquet import generate_parquet_mirrors
@@ -1573,10 +1621,11 @@ class TestGenerateParquetMirrors:
             side_effect=RuntimeError("boom"),
         ):
             # generate_parquet=False → default path → should NOT raise
-            generate_parquet_mirrors(
+            report = generate_parquet_mirrors(
                 catalog_root,
                 {"landsat"},
                 generate_parquet=False,
-                verbose=False,
             )
         assert not (collection_with_items / "items.parquet").exists()
+        assert report.generated == []
+        assert str(report.failed["landsat"]) == "boom"

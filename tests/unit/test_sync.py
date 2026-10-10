@@ -1046,13 +1046,13 @@ class TestDryRunNetworkIsolation:
     ) -> None:
         """sync(dry_run=True) must not make network calls in the pull step.
 
-        Regression test for bug #137: pull() called _fetch_remote_versions
+        Regression test for bug #137: pull() called fetch_remote_versions
         unconditionally even when dry_run=True.
         """
         from portolan_cli.sync.core import sync
 
         with (
-            patch("portolan_cli.sync.pull._fetch_remote_versions") as mock_pull_fetch,
+            patch("portolan_cli.sync.pull.fetch_remote_versions") as mock_pull_fetch,
             patch("portolan_cli.sync.push.setup_store") as mock_push_setup,
             patch("portolan_cli.sync.push._fetch_remote_versions") as mock_push_fetch,
             patch("portolan_cli.sync.core.init_catalog"),
@@ -1083,7 +1083,7 @@ class TestDryRunNetworkIsolation:
         from portolan_cli.sync.core import sync
 
         with (
-            patch("portolan_cli.sync.pull._fetch_remote_versions") as mock_pull_fetch,
+            patch("portolan_cli.sync.pull.fetch_remote_versions") as mock_pull_fetch,
             patch("portolan_cli.sync.push.setup_store") as mock_setup,
             patch("portolan_cli.sync.push._fetch_remote_versions") as mock_push_fetch,
             patch("portolan_cli.sync.core.init_catalog"),
