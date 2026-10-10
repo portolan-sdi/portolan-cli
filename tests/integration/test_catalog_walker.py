@@ -251,3 +251,88 @@ class TestCommandsAgree:
             {"path": "data.parquet", "status": "tracked", "format": "GeoParquet", "size": 4}
         ]
         assert roads["items"] == []
+
+
+class TestStatusMatchesPush:
+    """``status`` reports every collection ``check`` sees and every one ``push`` uploads.
+
+    ``push`` finds a collection by its ``versions.json``. ``check`` finds it by
+    its ``collection.json``. A collection that holds only one of the two must
+    still appear in ``status``, which previews ``push``.
+    """
+
+    @pytest.mark.unit
+    def test_versioned_collections(self, tmp_path: Path) -> None:
+        """Every visible directory below the root that holds versions.json."""
+        from portolan_cli.stac_links import versioned_collections
+
+        for rel in ("orphan", "a/nested", ".portolan/backup", ""):
+            (tmp_path / rel).mkdir(parents=True, exist_ok=True)
+            (tmp_path / rel / "versions.json").write_text("{}")
+        _stac(tmp_path / "draft" / "collection.json", "Collection")
+
+        assert versioned_collections(tmp_path) == ["a/nested", "orphan"]
+
+    @pytest.mark.integration
+    def test_status_reports_the_check_and_push_collections(self, mixed_catalog: Path) -> None:
+        """A versions.json without collection.json, and the reverse, both appear."""
+        from portolan_cli.sync.push import discover_collections
+
+        (mixed_catalog / "orphan").mkdir()
+        _track(mixed_catalog, "orphan")
+        _stac(mixed_catalog / "draft" / "collection.json", "Collection")
+
+        status_data = _invoke(mixed_catalog, "status", "--offline")
+        assert isinstance(status_data["collections"], list)
+        status_ids = sorted(col["collection"] for col in status_data["collections"])
+
+        assert "orphan" in discover_collections(mixed_catalog)
+        assert "draft" in catalog_collections(mixed_catalog)
+        assert status_ids == ["buildings", "climate/heat", "draft", "orphan", "roads"]
+
+
+class TestManagedFiles:
+    """``list`` and ``status`` agree that Portolan's own files are not untracked data."""
+
+    @pytest.mark.integration
+    def test_list_and_status_skip_untracked_managed_files(self, mixed_catalog: Path) -> None:
+        """README.md, AGENTS.md, and metadata.yaml are not reported as untracked."""
+        roads = mixed_catalog / "roads"
+        for name in ("README.md", "AGENTS.md", "metadata.yaml"):
+            (roads / name).write_text("x")
+        (roads / "extra.csv").write_text("a,b\n")
+
+        list_cols = _invoke(mixed_catalog, "list")["collections"]
+        status_cols = _invoke(mixed_catalog, "status", "--offline")["collections"]
+        assert isinstance(list_cols, list)
+        assert isinstance(status_cols, list)
+        list_roads = next(col for col in list_cols if col["id"] == "roads")
+        status_roads = next(col for col in status_cols if col["collection"] == "roads")
+
+        assert [(a["path"], a["status"]) for a in list_roads["assets"]] == [
+            ("data.parquet", "tracked"),
+            ("extra.csv", "untracked"),
+        ]
+        assert status_roads["untracked_files"] == ["extra.csv"]
+
+    @pytest.mark.integration
+    def test_list_shows_a_tracked_managed_file(self, mixed_catalog: Path) -> None:
+        """A managed file that versions.json tracks still appears as tracked."""
+        roads = mixed_catalog / "roads"
+        (roads / "README.md").write_text("x")
+        manifest = json.loads((roads / "versions.json").read_text())
+        manifest["versions"][0]["assets"]["README.md"] = {
+            "sha256": "0" * 64,
+            "size_bytes": 1,
+            "href": "roads/README.md",
+        }
+        (roads / "versions.json").write_text(json.dumps(manifest))
+
+        list_cols = _invoke(mixed_catalog, "list")["collections"]
+        assert isinstance(list_cols, list)
+        list_roads = next(col for col in list_cols if col["id"] == "roads")
+
+        assert [(a["path"], a["status"]) for a in list_roads["assets"]] == [
+            ("README.md", "tracked"),
+            ("data.parquet", "tracked"),
+        ]

@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from portolan_cli.constants import MANAGED_FILES
+from portolan_cli.stac_links import catalog_collections, versioned_collections
 from portolan_cli.sync.checksums import compute_checksum
 from portolan_cli.versions import VersionsFile, read_versions
 
@@ -160,16 +162,20 @@ def detect_deleted_files(
     return sorted(deleted)
 
 
-# Files managed by Portolan that should not appear as "untracked"
-MANAGED_FILES = frozenset(
-    {
-        "versions.json",
-        "collection.json",
-        "catalog.json",
-        "README.md",
-        "metadata.yaml",
-    }
-)
+def status_collections(catalog_root: Path) -> list[str]:
+    """The collections ``status`` reports: the ``check`` set and the ``push`` set.
+
+    ``check`` finds a collection by its ``collection.json``. ``push`` finds it by
+    its ``versions.json``. ``status`` previews ``push`` and must agree with
+    ``check``, so it reports both sets (issue #944).
+
+    Args:
+        catalog_root: Root directory of the catalog.
+
+    Returns:
+        Sorted collection IDs with forward slashes on every platform.
+    """
+    return sorted({*catalog_collections(catalog_root), *versioned_collections(catalog_root)})
 
 
 def _is_stac_item(file_path: Path) -> bool:

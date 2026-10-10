@@ -986,10 +986,10 @@ def status_cmd(
     if not offline:
         remote_url = resolve_remote(None, catalog_path, collection)
 
-    # The containment walk finds the same collections as `check` (#944)
-    from portolan_cli.stac_links import catalog_collections
+    # The collections `check` sees and the ones `push` uploads (#944)
+    from portolan_cli.status import status_collections
 
-    collections = [collection] if collection else catalog_collections(catalog_path)
+    collections = [collection] if collection else status_collections(catalog_path)
 
     if not collections:
         if not emit_success("status", {"collections": []}, use_json=use_json):

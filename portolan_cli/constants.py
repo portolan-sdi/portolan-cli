@@ -28,6 +28,19 @@ PORTOLAN_SPEC_VERSION: str = max(bundled_schema_versions()).removeprefix("v")
 # can read it without loading pystac (issue #944).
 STAC_VERSION: str = "1.1.0"
 
+# Files that Portolan writes into a collection directory. ``status`` and
+# ``list`` do not report one of them as untracked data (issue #944).
+MANAGED_FILES: frozenset[str] = frozenset(
+    {
+        "versions.json",
+        "collection.json",
+        "catalog.json",
+        "README.md",
+        "AGENTS.md",
+        "metadata.yaml",
+    }
+)
+
 # The versioned Portolan profile schema URI every catalog and collection
 # declares in ``stac_extensions`` (issue #654; rashid PTL-CNF-001/002). Its
 # shape is fixed by the validator's pattern

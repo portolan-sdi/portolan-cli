@@ -119,13 +119,20 @@ def visible_stac_files(catalog_root: Path) -> list[Path]:
     Returns:
         Sorted catalog paths first, then sorted collection paths.
     """
+    return [
+        *_visible_files(catalog_root, "catalog.json"),
+        *_visible_files(catalog_root, "collection.json"),
+    ]
+
+
+def _visible_files(catalog_root: Path, name: str) -> list[Path]:
+    """Every file called ``name`` below ``catalog_root``, outside dot-directories, sorted."""
     found: list[Path] = []
-    for pattern in ("catalog.json", "collection.json"):
-        for path in sorted(catalog_root.rglob(pattern)):
-            rel_parts = path.parent.relative_to(catalog_root).parts
-            if any(part.startswith(".") for part in rel_parts):
-                continue
-            found.append(path)
+    for path in sorted(catalog_root.rglob(name)):
+        rel_parts = path.parent.relative_to(catalog_root).parts
+        if any(part.startswith(".") for part in rel_parts):
+            continue
+        found.append(path)
     return found
 
 
@@ -165,5 +172,26 @@ def catalog_collections(catalog_root: Path) -> list[str]:
         path.parent.relative_to(catalog_root).as_posix()
         for path in visible_stac_files(catalog_root)
         if path.name == "collection.json" and path.parent != catalog_root
+    }
+    return sorted(ids)
+
+
+def versioned_collections(catalog_root: Path) -> list[str]:
+    """The ID of every directory below the root that holds ``versions.json``.
+
+    ``push`` and ``pull`` find collections by this rule. A directory with
+    ``versions.json`` but no ``collection.json`` is not in ``catalog_collections``.
+    ``push`` still uploads it, so ``status`` must report it.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+
+    Returns:
+        Sorted collection IDs with forward slashes on every platform.
+    """
+    ids = {
+        path.parent.relative_to(catalog_root).as_posix()
+        for path in _visible_files(catalog_root, "versions.json")
+        if path.parent != catalog_root
     }
     return sorted(ids)

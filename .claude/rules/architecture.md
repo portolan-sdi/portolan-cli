@@ -119,7 +119,10 @@ subsystem table below and the path-scoped rules for each.
 `collection.json` below the root and skips dot-directories. It applies the
 rule of rashid's `CatalogGraph`, so `list`, `status`, and `check` report the
 same collections. A collection without a `child` link still counts, and `check`
-reports the missing link as PTL-LNK-002. `owned_item_hrefs` follows `item` and
+reports the missing link as PTL-LNK-002. `push` and `pull` find a collection
+by its `versions.json` instead (`versioned_collections`). `status` previews
+`push`, so `status.status_collections` reports the union of the two sets.
+`owned_item_hrefs` follows `item` and
 organizing-catalog `child` links. `iter_links` is the primitive both use. Do
 not write a new `rglob` or link loop to find collections or items. Two walks
 stay apart on purpose. `sync/core.py` lists a remote catalog over HTTP, where

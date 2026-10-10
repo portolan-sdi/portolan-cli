@@ -17,6 +17,7 @@ from enum import Enum
 from pathlib import Path
 
 from portolan_cli.config import get_ignored_files
+from portolan_cli.constants import MANAGED_FILES
 from portolan_cli.format_types import FORMAT_DISPLAY_NAMES, FormatType, _detect_json_type
 from portolan_cli.stac_links import catalog_collections
 from portolan_cli.versions import read_versions
@@ -260,6 +261,10 @@ def _scan_files(
                 continue
 
             asset_key = f"{key_prefix}{filename}"
+            # A file Portolan writes into the collection directory is not
+            # untracked data. `status` applies the same rule.
+            if not key_prefix and filename in MANAGED_FILES and asset_key not in tracked_assets:
+                continue
             seen_keys.add(asset_key)
 
             # Simplified logic: file exists + in versions.json = TRACKED
