@@ -18,8 +18,8 @@ from typing import Any
 import pytest
 
 from portolan_cli.catalog import _sanitize_id, create_catalog
+from portolan_cli.constants import STAC_VERSION
 from portolan_cli.errors import CatalogAlreadyExistsError
-from portolan_cli.stac import STAC_VERSION
 
 
 class TestSanitizeIdEdgeCases:

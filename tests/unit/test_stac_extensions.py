@@ -25,7 +25,7 @@ class TestStacVersion:
     @pytest.mark.unit
     def test_stac_version_is_1_1_0(self) -> None:
         """STAC_VERSION constant should be 1.1.0."""
-        from portolan_cli.stac import STAC_VERSION
+        from portolan_cli.constants import STAC_VERSION
 
         assert STAC_VERSION == "1.1.0"
 
@@ -574,8 +574,8 @@ class TestStacVersionInModels:
     @pytest.mark.unit
     def test_item_model_uses_stac_version_constant(self) -> None:
         """ItemModel.stac_version should use STAC_VERSION constant."""
+        from portolan_cli.constants import STAC_VERSION
         from portolan_cli.models.item import ItemModel
-        from portolan_cli.stac import STAC_VERSION
 
         item = ItemModel(
             id="test-item",
@@ -591,13 +591,13 @@ class TestStacVersionInModels:
     @pytest.mark.unit
     def test_collection_model_uses_stac_version_constant(self) -> None:
         """CollectionModel.stac_version should use STAC_VERSION constant."""
+        from portolan_cli.constants import STAC_VERSION
         from portolan_cli.models.collection import (
             CollectionModel,
             ExtentModel,
             SpatialExtent,
             TemporalExtent,
         )
-        from portolan_cli.stac import STAC_VERSION
 
         collection = CollectionModel(
             id="test-collection",
@@ -613,8 +613,8 @@ class TestStacVersionInModels:
     @pytest.mark.unit
     def test_catalog_model_uses_stac_version_constant(self) -> None:
         """CatalogModel.stac_version should use STAC_VERSION constant."""
+        from portolan_cli.constants import STAC_VERSION
         from portolan_cli.models.catalog import CatalogModel
-        from portolan_cli.stac import STAC_VERSION
 
         catalog = CatalogModel(
             id="test-catalog",

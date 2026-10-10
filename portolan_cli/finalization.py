@@ -56,6 +56,7 @@ from portolan_cli.stac import (
     update_catalog_provenance,
     update_collection_summaries,
 )
+from portolan_cli.stac_links import iter_links
 from portolan_cli.utils import href_root, relative_href
 from portolan_cli.versions import (
     Asset,
@@ -211,13 +212,8 @@ def _fix_item_links(
         return
 
     collection_data = json.loads(collection_json_path.read_text(encoding="utf-8"))
-    for link in collection_data.get("links", []):
-        if link.get("rel") != "item":
-            continue
-        href = link.get("href", "")
-        if not href:
-            continue
-        item_path = (collection_dir / href).resolve()
+    for _link, _href, linked_path in iter_links(collection_data, collection_dir, ("item",)):
+        item_path = linked_path.resolve()
         if not item_path.exists():
             continue
 

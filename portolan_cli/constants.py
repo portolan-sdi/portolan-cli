@@ -23,6 +23,11 @@ from portolan_cli import extension_registry as _reg
 # from versions.SPEC_VERSION, which versions the versions.json manifest schema.
 PORTOLAN_SPEC_VERSION: str = max(bundled_schema_versions()).removeprefix("v")
 
+# STAC version we generate (v1.1.0 has unified bands array, superseding
+# eo:bands/raster:bands). It lives here, not in stac.py, so the models package
+# can read it without loading pystac (issue #944).
+STAC_VERSION: str = "1.1.0"
+
 # The versioned Portolan profile schema URI every catalog and collection
 # declares in ``stac_extensions`` (issue #654; rashid PTL-CNF-001/002). Its
 # shape is fixed by the validator's pattern

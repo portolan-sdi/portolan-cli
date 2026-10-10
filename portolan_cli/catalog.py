@@ -17,12 +17,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, overload
 
-from portolan_cli.agents_md import visible_stac_files
 from portolan_cli.errors import CatalogAlreadyExistsError
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.input_hardening import validate_catalog_id
 from portolan_cli.json_io import write_json_atomic, write_text_atomic
 from portolan_cli.models.catalog import CatalogModel
+from portolan_cli.stac_links import iter_links, iter_stac_objects, visible_stac_files
 from portolan_cli.utils import href_root, relative_href
 
 if sys.version_info >= (3, 11):
@@ -1040,23 +1040,9 @@ def ensure_link_titles(catalog_root: Path) -> bool:
     """
     changed_any = False
 
-    stac_files = visible_stac_files(catalog_root)
-
-    for stac_file in stac_files:
-        try:
-            content = json.loads(stac_file.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            continue
-
-        links = content.get("links")
-        if not isinstance(links, list):
-            continue
-
+    for stac_file, content in iter_stac_objects(catalog_root):
         file_changed = False
-        for link in links:
-            if not isinstance(link, dict) or link.get("rel") not in ("child", "item"):
-                continue
-
+        for link, _href, _path in iter_links(content, stac_file.parent, ("child", "item")):
             # Fill a missing media type (STAC best practice).
             if not link.get("type"):
                 link["type"] = (
@@ -1183,15 +1169,8 @@ def ensure_schema_uris(catalog_root: Path) -> bool:
     from portolan_cli.stac import ensure_portolan_schema_uri
 
     changed_any = False
-    stac_files = visible_stac_files(catalog_root)
 
-    for stac_file in stac_files:
-        try:
-            content = json.loads(stac_file.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            continue
-        if not isinstance(content, dict):
-            continue
+    for stac_file, content in iter_stac_objects(catalog_root):
         if ensure_portolan_schema_uri(content):
             write_json_atomic(stac_file, content)
             changed_any = True
@@ -1299,7 +1278,3 @@ def update_catalog_versions(
 
 class CatalogVersionsCorruptedError(Exception):
     """Raised when catalog-level versions.json is corrupted."""
-
-
-# Re-export add_files for STAC-aligned imports (ADR terminology)
-from portolan_cli.add import add_files as add_files  # noqa: E402, F401, PLC0414

@@ -811,7 +811,7 @@ class TestPullOperation:
         """Pull --dry-run should not download anything and make no network calls.
 
         Bug #137: dry-run must return early before ANY network I/O, including
-        _fetch_remote_versions. This test verifies neither the remote fetch
+        fetch_remote_versions. This test verifies neither the remote fetch
         nor the download step is invoked.
         """
         from portolan_cli.sync.pull import pull
@@ -922,7 +922,7 @@ class TestRemoteFetch:
     @pytest.mark.unit
     def test_fetch_remote_versions_s3(self) -> None:
         """Should fetch versions.json from S3."""
-        from portolan_cli.sync.pull import _fetch_remote_versions
+        from portolan_cli.sync.pull import fetch_remote_versions
 
         remote_data = {
             "spec_version": "1.0.0",
@@ -941,7 +941,7 @@ class TestRemoteFetch:
 
             mock_download.side_effect = write_versions
 
-            result = _fetch_remote_versions(
+            result = fetch_remote_versions(
                 remote_url="s3://bucket/catalog",
                 collection="test-collection",
             )
@@ -952,7 +952,7 @@ class TestRemoteFetch:
     @pytest.mark.unit
     def test_fetch_remote_versions_not_found(self) -> None:
         """Should raise error when remote versions.json doesn't exist."""
-        from portolan_cli.sync.pull import PullError, _fetch_remote_versions
+        from portolan_cli.sync.pull import PullError, fetch_remote_versions
 
         with patch("portolan_cli.sync.pull.download_file") as mock_download:
             mock_result = MagicMock()
@@ -961,7 +961,7 @@ class TestRemoteFetch:
             mock_download.return_value = mock_result
 
             with pytest.raises(PullError, match="versions.json"):
-                _fetch_remote_versions(
+                fetch_remote_versions(
                     remote_url="s3://bucket/catalog",
                     collection="test-collection",
                 )
@@ -1617,12 +1617,12 @@ class TestValidateSafePathEdgeCases:
 
 
 class TestFetchRemoteVersionsErrors:
-    """Tests for error handling in _fetch_remote_versions."""
+    """Tests for error handling in fetch_remote_versions."""
 
     @pytest.mark.unit
     def test_fetch_remote_versions_download_error(self) -> None:
-        """_fetch_remote_versions should raise PullError on download failure."""
-        from portolan_cli.sync.pull import PullError, _fetch_remote_versions
+        """fetch_remote_versions should raise PullError on download failure."""
+        from portolan_cli.sync.pull import PullError, fetch_remote_versions
 
         with patch("portolan_cli.sync.pull.download_file") as mock_download:
             mock_result = MagicMock()
@@ -1631,7 +1631,7 @@ class TestFetchRemoteVersionsErrors:
             mock_download.return_value = mock_result
 
             with pytest.raises(PullError, match="versions.json"):
-                _fetch_remote_versions(
+                fetch_remote_versions(
                     remote_url="s3://bucket/catalog",
                     collection="test",
                 )
@@ -1748,8 +1748,8 @@ class TestMalformedDataHandling:
 
     @pytest.mark.unit
     def test_fetch_remote_malformed_response(self, tmp_path: Path) -> None:
-        """_fetch_remote_versions should raise when remote returns malformed data."""
-        from portolan_cli.sync.pull import PullError, _fetch_remote_versions
+        """fetch_remote_versions should raise when remote returns malformed data."""
+        from portolan_cli.sync.pull import PullError, fetch_remote_versions
 
         malformed_json = '{"spec_version": "1.0.0"}'  # Missing current_version and versions
 
@@ -1765,7 +1765,7 @@ class TestMalformedDataHandling:
             mock_download.side_effect = write_malformed
 
             with pytest.raises((PullError, ValueError)):
-                _fetch_remote_versions(
+                fetch_remote_versions(
                     remote_url="s3://bucket/catalog",
                     collection="test-collection",
                 )
@@ -1779,7 +1779,7 @@ class TestMalformedDataHandling:
 class TestDryRunNetworkIsolation:
     """Tests that dry-run mode never makes network calls.
 
-    Bug #137: --dry-run was still calling _fetch_remote_versions,
+    Bug #137: --dry-run was still calling fetch_remote_versions,
     making real network connections. These tests assert the fix:
     dry_run=True must return early BEFORE any network I/O.
     """
@@ -1788,10 +1788,10 @@ class TestDryRunNetworkIsolation:
     def test_pull_dry_run_never_calls_fetch_remote_versions(
         self, catalog_with_versions: Path
     ) -> None:
-        """pull(dry_run=True) must not call _fetch_remote_versions at all.
+        """pull(dry_run=True) must not call fetch_remote_versions at all.
 
         This is the core regression test for bug #137. The previous behaviour
-        called _fetch_remote_versions unconditionally, which triggered a real
+        called fetch_remote_versions unconditionally, which triggered a real
         network connection even when the user passed --dry-run.
         """
         from portolan_cli.sync.pull import pull
@@ -1851,7 +1851,7 @@ class TestDryRunNetworkIsolation:
     def test_pull_non_dry_run_still_calls_fetch_remote_versions(
         self, catalog_with_versions: Path, remote_versions_data: dict
     ) -> None:
-        """Non-dry-run pull must still call _fetch_remote_versions (sanity check)."""
+        """Non-dry-run pull must still call fetch_remote_versions (sanity check)."""
         from portolan_cli.sync.pull import pull
         from portolan_cli.versions import _parse_versions_file
 

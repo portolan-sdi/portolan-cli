@@ -32,6 +32,7 @@ from portolan_cli.add import AddFailure, add_files
 from portolan_cli.add_progress import AddProgressReporter, count_files
 from portolan_cli.catalog import find_catalog_root
 from portolan_cli.catalog_list import (
+    AssetInfo,
     AssetStatus,
     CatalogListResult,
     list_catalog_contents,
@@ -693,16 +694,25 @@ def _apply_list_status_filter(
     if not (tracked_only or untracked_only):
         return
 
+    keep = AssetStatus.TRACKED if tracked_only else AssetStatus.UNTRACKED
     for col in result.collections:
         for item in col.items:
-            if tracked_only:
-                item.assets = [a for a in item.assets if a.status == AssetStatus.TRACKED]
-            elif untracked_only:
-                item.assets = [a for a in item.assets if a.status == AssetStatus.UNTRACKED]
+            item.assets = [a for a in item.assets if a.status == keep]
+        col.assets = [a for a in col.assets if a.status == keep]
         # Remove empty items after filtering
         col.items = [item for item in col.items if item.assets]
     # Remove empty collections after filtering
-    result.collections = [col for col in result.collections if col.items]
+    result.collections = [col for col in result.collections if col.items or col.assets]
+
+
+def _list_asset_json(asset: AssetInfo) -> dict[str, Any]:
+    """Serialize one ``list`` asset for the JSON envelope."""
+    return {
+        "path": asset.path,
+        "status": asset.status.value,
+        "format": asset.format_name,
+        "size": asset.size_bytes,
+    }
 
 
 def _list_tree_output_with_status(result: CatalogListResult) -> None:
@@ -740,6 +750,10 @@ def _list_tree_output_with_status(result: CatalogListResult) -> None:
         # Print collection header
         info_output(f"{col.collection_id}/")
 
+        # Files directly in the collection directory come before the items
+        for asset in col.assets:
+            detail(f"  {_list_asset_line(asset, status_symbols)}")
+
         for item in col.items:
             # Build status summary
             parts = []
@@ -757,22 +771,26 @@ def _list_tree_output_with_status(result: CatalogListResult) -> None:
 
             # List each asset with status indicator
             for asset in item.assets:
-                symbol = status_symbols.get(asset.status, "?")
-                format_name = asset.format_name or "Unknown"
+                detail(f"    {_list_asset_line(asset, status_symbols)}")
 
-                # Build size string
-                size_str = ""
-                if asset.size_bytes is not None:
-                    size_str = f", {format_size(asset.size_bytes)}"
 
-                # Add status label for non-tracked
-                status_label = ""
-                if asset.status == AssetStatus.MODIFIED:
-                    status_label = ", modified"
-                elif asset.status == AssetStatus.DELETED:
-                    status_label = ", deleted"
+def _list_asset_line(asset: AssetInfo, status_symbols: dict[AssetStatus, str]) -> str:
+    """Format one ``list`` asset line: symbol, path, format, size, and status."""
+    symbol = status_symbols.get(asset.status, "?")
+    format_name = asset.format_name or "Unknown"
 
-                detail(f"    {symbol} {asset.path} ({format_name}{size_str}{status_label})")
+    size_str = ""
+    if asset.size_bytes is not None:
+        size_str = f", {format_size(asset.size_bytes)}"
+
+    # Add status label for non-tracked
+    status_label = ""
+    if asset.status == AssetStatus.MODIFIED:
+        status_label = ", modified"
+    elif asset.status == AssetStatus.DELETED:
+        status_label = ", deleted"
+
+    return f"{symbol} {asset.path} ({format_name}{size_str}{status_label})"
 
 
 @cli.command("list")
@@ -860,15 +878,7 @@ def list_cmd(
         for col in result.collections:
             items_data = []
             for item in col.items:
-                assets_data = [
-                    {
-                        "path": a.path,
-                        "status": a.status.value,
-                        "format": a.format_name,
-                        "size": a.size_bytes,
-                    }
-                    for a in item.assets
-                ]
+                assets_data = [_list_asset_json(a) for a in item.assets]
                 items_data.append(
                     {
                         "id": item.item_id,
@@ -883,6 +893,7 @@ def list_cmd(
                 {
                     "id": col.collection_id,
                     "is_initialized": col.is_initialized,
+                    "assets": [_list_asset_json(a) for a in col.assets],
                     "items": items_data,
                 }
             )
@@ -975,15 +986,17 @@ def status_cmd(
     if not offline:
         remote_url = resolve_remote(None, catalog_path, collection)
 
-    # Discover collections
-    from portolan_cli.sync.push import discover_collections
+    # The containment walk finds the same collections as `check` (#944)
+    from portolan_cli.stac_links import catalog_collections
 
-    collections = [collection] if collection else discover_collections(catalog_path)
+    collections = [collection] if collection else catalog_collections(catalog_path)
 
     if not collections:
         if not emit_success("status", {"collections": []}, use_json=use_json):
             info_output("No collections found")
         return
+
+    from portolan_cli.sync.pull import fetch_remote_versions
 
     # Get status for each collection
     statuses: list[CollectionStatus] = []
@@ -993,6 +1006,7 @@ def status_cmd(
             collection=coll,
             offline=offline,
             remote_url=remote_url,
+            fetch_remote_versions=fetch_remote_versions,
         )
         statuses.append(status)
 
@@ -3135,6 +3149,30 @@ def _check_partition_prompt(
     return False
 
 
+def _generate_add_mirrors(
+    catalog_root: Path,
+    affected: set[str],
+    *,
+    generate_parquet: bool,
+    verbose: bool,
+    versioned_collections: set[str],
+) -> None:
+    """Generate the item mirrors after ``add`` and report the outcome."""
+    from portolan_cli.stac_parquet import generate_parquet_mirrors
+
+    mirrors = generate_parquet_mirrors(
+        catalog_root,
+        affected,
+        generate_parquet=generate_parquet,
+        versioned_collections=versioned_collections,
+    )
+    if verbose:
+        for coll_id in mirrors.generated:
+            info_output(f"Generated items.parquet for '{coll_id}'")
+    for coll_id, exc in mirrors.failed.items():
+        warn(f"Failed to generate parquet for '{coll_id}': {exc}")
+
+
 @cli.command("add")
 @click.argument(
     "paths",
@@ -3434,9 +3472,7 @@ def add_cmd(
 
     # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state)
     # Always run parquet generation if --stac-geoparquet flag was passed, regardless of output mode
-    from portolan_cli.stac_parquet import generate_parquet_mirrors
-
-    generate_parquet_mirrors(
+    _generate_add_mirrors(
         catalog_root,
         affected,
         generate_parquet=generate_parquet,
@@ -8448,7 +8484,10 @@ def prune(
 
 
 def _discover_collections_with_items(catalog_root: Path) -> list[str]:
-    """Find all collections that have STAC items (collection.json with item links).
+    """Find all collections that own STAC items.
+
+    Ownership includes the items an organizing catalog groups beneath a
+    collection (core.md:168-170).
 
     Args:
         catalog_root: Path to the catalog root directory.
@@ -8456,27 +8495,18 @@ def _discover_collections_with_items(catalog_root: Path) -> list[str]:
     Returns:
         Sorted list of collection IDs relative to catalog_root.
     """
+    from portolan_cli.stac_links import catalog_collections
     from portolan_cli.stac_parquet import count_items
 
     collections: list[str] = []
-
-    # Find all collection.json files
-    for collection_file in catalog_root.rglob("collection.json"):
-        # Skip files in .portolan directory
-        if ".portolan" in collection_file.parts:
-            continue
-
-        # Check if collection owns any items, including those an organizing
-        # catalog groups beneath it (core.md:168-170)
+    for collection_id in catalog_collections(catalog_root):
         try:
-            if count_items(collection_file.parent) > 0:
-                # Get relative path as collection ID
-                rel_path = collection_file.parent.relative_to(catalog_root)
-                collections.append(str(rel_path))
+            if count_items(catalog_root / collection_id) > 0:
+                collections.append(collection_id)
         except (json.JSONDecodeError, OSError):
             continue
 
-    return sorted(collections)
+    return collections
 
 
 @dataclass

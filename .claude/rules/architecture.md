@@ -66,8 +66,11 @@ flowchart TD
 
 ## Command surface (entry point cli.py)
 
-`portolan_cli/__init__.py` re-exports `cli` from `cli.py`, where the Click group
-and every command live. Top-level commands: `init`, `list`, `status`, `info`,
+`portolan_cli/__init__.py` exports `cli` lazily through `__getattr__`. The Click
+group and every command live in `cli.py`. The package root imports nothing at
+module level, so `import portolan_cli.stac` does not load `cli.py` or Click
+(issue #944). The `project.scripts` entry point `portolan_cli:cli` resolves the
+lazy export. Top-level commands: `init`, `list`, `status`, `info`,
 `check`, `scan`, `add`, `rm`, `push`, `pull`, `sync`, `clone`, `clean`,
 `readme`, `logo`, `stac-geoparquet`. Command groups with subcommands: `config`
 (set/get/list/unset), `metadata` (init/validate), `extract` (arcgis/wfs),
@@ -102,6 +105,25 @@ subsystem table below and the path-scoped rules for each.
 - Import contracts (`uv run lint-imports`): `cli` must not import `backends`
   (only `backends.protocol` under `TYPE_CHECKING`), `backends.iceberg` must not
   import `cli`.
+- `read-modules-stay-light` keeps the read modules (`versions`, `json_io`,
+  `bbox`, `models`, `query`, `status`, `catalog_list`, `agents_md`) free of
+  Click, rasterio, pystac, `cli`, and the write modules. The contract follows
+  imports inside function bodies too. A read module that needs a heavy
+  dependency takes it as a parameter. `status.get_collection_status` takes
+  `fetch_remote_versions` for this reason.
+
+## One catalog walker (stac_links.py)
+
+`stac_links.py` answers "which collections does this catalog hold?" and
+"which items does this collection own?". `catalog_collections` finds every
+`collection.json` below the root and skips dot-directories. It applies the
+rule of rashid's `CatalogGraph`, so `list`, `status`, and `check` report the
+same collections. A collection without a `child` link still counts, and `check`
+reports the missing link as PTL-LNK-002. `owned_item_hrefs` follows `item` and
+organizing-catalog `child` links. `iter_links` is the primitive both use. Do
+not write a new `rglob` or link loop to find collections or items. Two walks
+stay apart on purpose. `sync/core.py` lists a remote catalog over HTTP, where
+no directory listing exists. `validation/` uses rashid's own graph.
 
 ## Format detection and conversion routing (formats.py, convert.py)
 
@@ -109,7 +131,8 @@ Two enums in `formats.py`: `CloudNativeStatus` (`CLOUD_NATIVE` / `CONVERTIBLE` /
 `UNSUPPORTED`) and `FormatType` (`VECTOR` routes to geoparquet-io, `RASTER`
 routes to rio-cogeo, `UNKNOWN`). The extension vocabulary (which set each
 extension belongs to, plus its media type / role / display name) is
-single-sourced in `extension_registry.py` and *derived* into `formats.py`,
+single-sourced in `extension_registry.py` and *derived* into `format_types.py`
+(the dependency-free extension detection, re-exported by `formats.py`), `formats.py`,
 `constants.py`, `scan_classify.py`, and `add.py` — edit the
 registry rows, not the frozensets. `CLOUD_NATIVE_EXTENSIONS` is the derived source of truth for "already
 cloud-native, skip conversion" (`.fgb`, `.pmtiles`; `.parquet`/`.tif` need

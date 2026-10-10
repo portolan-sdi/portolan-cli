@@ -59,9 +59,10 @@ All code must have type annotations (`mypy --strict`). The CLI is a thin Click l
   Raw `print()` appears only inside progress rendering and JSON emission, do not
   use it for normal messaging.
 - **Architecture is enforced by import-linter** (`uv run lint-imports`).
-  Three contracts: `portolan_cli.cli` must not import `portolan_cli.backends`
+  Among the contracts: `portolan_cli.cli` must not import `portolan_cli.backends`
   (only `backends.protocol` under `TYPE_CHECKING`), `backends.iceberg` must not
-  import `cli`, and utility/leaf modules stay independent. Check
+  import `cli`, utility/leaf modules stay independent, and the read modules
+  stay free of Click and the geospatial stack (`read-modules-stay-light`). Check
   `[tool.importlinter]` before adding any cross-module import.
 - **Ruff rule sets**: see `select` in `[tool.ruff.lint]`. It holds 37 groups.
   Read the comment on each one before you suppress it. Line length 100, double

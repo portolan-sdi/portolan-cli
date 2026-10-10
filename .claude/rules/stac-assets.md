@@ -162,7 +162,8 @@ pystac fights this in two ways.
 ## STAC v1.1.0 conventions (RULE matrix + models/_stac_version.py)
 
 - Generate STAC **v1.1.0**. Use the `STAC_VERSION` constant from
-  `models/_stac_version.py` / `stac.py` everywhere. **Never hardcode `"1.0.0"`**
+  `constants.py` (models read it through `models/_stac_version.py`)
+  everywhere. **Never hardcode `"1.0.0"`**
   in serialization (this regressed in `models/catalog.py`).
 - Raster band metadata (`bands`, formerly `raster:bands`) goes on the **data
   asset**, never on `item.properties`. Declare the raster extension (v2.0.0)

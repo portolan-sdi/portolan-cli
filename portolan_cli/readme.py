@@ -38,11 +38,11 @@ from typing import Any
 from urllib.parse import quote
 
 from portolan_cli.agents_md import markdown_link_gap
-from portolan_cli.agents_md import visible_stac_files as _visible_stac_files
 from portolan_cli.config import load_merged_metadata
 from portolan_cli.errors import ConfigInvalidStructureError
 from portolan_cli.json_io import write_json_atomic
-from portolan_cli.stac_parquet import owned_item_hrefs
+from portolan_cli.stac_links import owned_item_hrefs
+from portolan_cli.stac_links import visible_stac_files as _visible_stac_files
 
 # Keyword-badge rendering limits (#515). A junk-dominated list is a machine dump
 # (e.g. WFS layer ids seeded into metadata.yaml at extraction) and is suppressed;

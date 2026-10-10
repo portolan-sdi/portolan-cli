@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from portolan_cli.constants import STAC_VERSION
 from portolan_cli.models.item import AssetModel, ItemModel
-from portolan_cli.stac import STAC_VERSION
 
 if TYPE_CHECKING:
     from pathlib import Path

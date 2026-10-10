@@ -359,7 +359,7 @@ def diff_versions(
 # =============================================================================
 
 
-def _fetch_remote_versions(
+def fetch_remote_versions(
     remote_url: str,
     collection: str,
     profile: str | None = None,

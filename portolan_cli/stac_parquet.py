@@ -28,13 +28,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from rashid.catalog import is_absolute_href
 
 from portolan_cli.constants import ROLE_COLLECTION_MIRROR
 from portolan_cli.json_io import write_json_atomic
-from portolan_cli.output import info, warn
+from portolan_cli.stac_links import owned_item_hrefs, resolve_href
 from portolan_cli.sync.checksums import file_fields
 
 if TYPE_CHECKING:
@@ -43,48 +44,6 @@ if TYPE_CHECKING:
 # Constants
 PARQUET_FILENAME = "items.parquet"
 PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
-
-
-def _resolve_href(base_dir: Path, href: str) -> Path:
-    """Resolve a STAC link href against the directory holding the linking object."""
-    if href.startswith("./"):
-        return base_dir / href[2:]
-    if href.startswith("../"):
-        return (base_dir / href).resolve()
-    return base_dir / href
-
-
-def owned_item_hrefs(node_json_path: Path) -> list[tuple[str, Path]]:
-    """Every (href, path) pair for the items the object at ``node_json_path`` owns.
-
-    A catalog may sit below a collection to organize its items (core.md:168-170),
-    so ownership follows ``rel="child"`` links down into catalogs rather than
-    stopping at the collection's own ``rel="item"`` links. Descent stops at a
-    child collection, whose items belong to that collection instead.
-
-    The href is carried alongside the resolved path because it is what the
-    operator wrote and therefore what a stale-link error should name.
-    """
-    if not node_json_path.exists():
-        return []
-
-    data = json.loads(node_json_path.read_text(encoding="utf-8"))
-    base_dir = node_json_path.parent
-    owned: list[tuple[str, Path]] = []
-
-    for link in data.get("links", []):
-        href = link.get("href", "")
-        if not isinstance(href, str) or not href:
-            continue
-        rel = link.get("rel")
-        if rel == "item":
-            owned.append((href, _resolve_href(base_dir, href)))
-        elif rel == "child":
-            child_path = _resolve_href(base_dir, href)
-            if child_path.name == "catalog.json":
-                owned.extend(owned_item_hrefs(child_path))
-
-    return owned
 
 
 def count_items(collection_path: Path) -> int:
@@ -278,7 +237,7 @@ def stamp_file_fields(asset: dict[str, Any], base_dir: Path) -> bool:
     if not isinstance(href, str) or not href or is_absolute_href(href):
         return False
 
-    path = _resolve_href(base_dir, href)
+    path = resolve_href(base_dir, href)
     if not path.exists():
         return _strip_file_fields(asset)
     if not path.is_file():
@@ -572,14 +531,29 @@ def track_parquet_in_versions(
     )
 
 
+@dataclass
+class MirrorReport:
+    """The outcome of one ``generate_parquet_mirrors`` run.
+
+    The function returns this report and writes no terminal output. The caller
+    reports it, so a library caller does not load Click (issue #944).
+
+    Attributes:
+        generated: Collection IDs that received a new ``items.parquet``.
+        failed: Collection IDs whose default generation failed, with the error.
+    """
+
+    generated: list[str] = field(default_factory=list)
+    failed: dict[str, Exception] = field(default_factory=dict)
+
+
 def generate_parquet_mirrors(
     catalog_root: Path,
     affected_collections: set[str],
     *,
     generate_parquet: bool,
-    verbose: bool,
     versioned_collections: set[str] | None = None,
-) -> None:
+) -> MirrorReport:
     """Generate the item mirror for each affected item-bearing collection.
 
     PORTO-FMT-040 says the mirror SHOULD be published, and the spec applies
@@ -593,19 +567,22 @@ def generate_parquet_mirrors(
 
     Generation always runs regardless of output mode so the JSON envelope
     reflects the final state. An explicitly-requested generation that fails
-    re-raises; a default-generation failure only warns.
+    re-raises. A default-generation failure goes into the report.
 
     Args:
         catalog_root: Catalog root directory.
         affected_collections: Collection IDs modified by the add command.
         generate_parquet: Whether ``--stac-geoparquet`` was passed.
-        verbose: Whether to emit per-collection success detail.
         versioned_collections: Collections the add command wrote a version
             for in this run. Their mirror folds into that snapshot instead
             of bumping a second version (one add is one version, #683).
+
+    Returns:
+        The collections that got a mirror and the ones that failed.
     """
+    report = MirrorReport()
     if not affected_collections:
-        return
+        return report
 
     from portolan_cli.config import coerce_bool, get_setting
 
@@ -640,11 +617,12 @@ def generate_parquet_mirrors(
                 catalog_root,
                 amend_latest=coll_id in (versioned_collections or set()),
             )
-            if verbose:
-                info(f"Generated items.parquet for '{coll_id}'")
+            report.generated.append(coll_id)
         except Exception as e:
             # Explicit --stac-geoparquet should fail the command
             if generate_parquet:
                 raise
-            # Default-generation failures just warn
-            warn(f"Failed to generate parquet for '{coll_id}': {e}")
+            # The caller warns about a default-generation failure
+            report.failed[coll_id] = e
+
+    return report

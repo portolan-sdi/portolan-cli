@@ -405,6 +405,9 @@ pytest_add_cli_args = [
 
 [tool.importlinter]
 root_packages = ["portolan_cli"]
+# The read-modules-stay-light contract forbids click, rasterio, and pystac.
+# import-linter adds those external packages to the graph only with this flag.
+include_external_packages = true
 
 [[tool.importlinter.contracts]]
 id = "cli-no-storage"
@@ -503,6 +506,37 @@ type = "forbidden"
 source_modules = ["portolan_cli.scan"]
 forbidden_modules = ["portolan_cli.sync", "portolan_cli.viz"]
 allow_indirect_imports = true
+
+# ---------- library boundary (#944) ----------
+# A library caller (a Cloud Run job, a notebook) reads a catalog without the
+# CLI shell. These modules read catalog state. They must not load Click, the
+# geospatial stack, or the modules that write a catalog. The check follows
+# transitive imports, and an import inside a function body counts too.
+
+[[tool.importlinter.contracts]]
+id = "read-modules-stay-light"
+name = "Read modules must not import click, the geospatial stack, or write modules"
+type = "forbidden"
+source_modules = [
+    "portolan_cli.versions",
+    "portolan_cli.json_io",
+    "portolan_cli.bbox",
+    "portolan_cli.models",
+    "portolan_cli.query",
+    "portolan_cli.status",
+    "portolan_cli.catalog_list",
+    "portolan_cli.agents_md",
+]
+forbidden_modules = [
+    "click",
+    "rasterio",
+    "pystac",
+    "portolan_cli.cli",
+    "portolan_cli.add",
+    "portolan_cli.convert",
+    "portolan_cli.preparation",
+    "portolan_cli.finalization",
+]
 
 # ---------- dependency checking ----------
 # deptry detects unused, missing, and transitive dependencies

@@ -17,6 +17,7 @@ from portolan_cli.metadata.models import MetadataCheckResult, MetadataReport, Me
 from portolan_cli.models.catalog import CatalogModel
 from portolan_cli.models.collection import CollectionModel
 from portolan_cli.models.item import ItemModel
+from portolan_cli.stac_links import resolve_href
 
 
 @dataclass
@@ -151,8 +152,7 @@ def validate_catalog_links(
         elif link.rel == "root":
             has_root = True
         elif link.rel in ("child", "item"):
-            # Resolve relative path
-            target_path = (catalog_dir / link.href).resolve()
+            target_path = resolve_href(catalog_dir, link.href).resolve()
 
             if not target_path.exists():
                 result.passed = False
