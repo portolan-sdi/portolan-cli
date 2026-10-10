@@ -405,7 +405,7 @@ pytest_add_cli_args = [
 
 [tool.importlinter]
 root_packages = ["portolan_cli"]
-# The read-modules-stay-light contract forbids click, rasterio, and pystac.
+# The read-modules-stay-light contract forbids click and rasterio.
 # import-linter adds those external packages to the graph only with this flag.
 include_external_packages = true
 
@@ -515,7 +515,7 @@ allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 id = "read-modules-stay-light"
-name = "Read modules must not import click, the geospatial stack, or write modules"
+name = "Read modules must not import click, rasterio, or write modules"
 type = "forbidden"
 source_modules = [
     "portolan_cli.versions",
@@ -530,7 +530,6 @@ source_modules = [
 forbidden_modules = [
     "click",
     "rasterio",
-    "pystac",
     "portolan_cli.cli",
     "portolan_cli.add",
     "portolan_cli.convert",

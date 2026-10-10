@@ -107,7 +107,7 @@ subsystem table below and the path-scoped rules for each.
   import `cli`.
 - `read-modules-stay-light` keeps the read modules (`versions`, `json_io`,
   `bbox`, `models`, `query`, `status`, `catalog_list`, `agents_md`) free of
-  Click, rasterio, pystac, `cli`, and the write modules. The contract follows
+  Click, rasterio, `cli`, and the write modules. The contract follows
   imports inside function bodies too. A read module that needs a heavy
   dependency takes it as a parameter. `status.get_collection_status` takes
   `fetch_remote_versions` for this reason.

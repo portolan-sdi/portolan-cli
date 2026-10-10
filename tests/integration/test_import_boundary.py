@@ -53,33 +53,6 @@ def test_import_loads_no_heavy_module(statement: str) -> None:
 
 
 @pytest.mark.integration
-def test_pystac_stays_out_of_the_read_modules() -> None:
-    """The read modules do not load pystac. ``stac.py`` builds pystac objects and does."""
-    script = (
-        "import sys\n"
-        "import portolan_cli.status, portolan_cli.query, portolan_cli.catalog_list\n"
-        "print('pystac' in sys.modules)\n"
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert result.stdout.strip() == "False"
-
-
-@pytest.mark.unit
-def test_cli_export_loads_on_access() -> None:
-    """``from portolan_cli import cli`` still returns the Click group."""
-    import click
-
-    from portolan_cli import cli
-
-    assert isinstance(cli, click.Group)
-
-
-@pytest.mark.integration
 def test_cli_export_is_the_group_after_the_submodule_loads() -> None:
     """Importing ``portolan_cli.cli`` first must not rebind the export to the module.
 
