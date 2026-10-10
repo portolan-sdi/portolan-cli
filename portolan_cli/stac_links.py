@@ -128,7 +128,7 @@ def visible_stac_files(catalog_root: Path) -> list[Path]:
 def _visible_files(catalog_root: Path, name: str) -> list[Path]:
     """Every file called ``name`` below ``catalog_root``, outside dot-directories, sorted."""
     found: list[Path] = []
-    for path in sorted(catalog_root.rglob(name)):
+    for path in sorted(catalog_root.rglob(name), key=lambda p: p.as_posix()):
         rel_parts = path.parent.relative_to(catalog_root).parts
         if any(part.startswith(".") for part in rel_parts):
             continue

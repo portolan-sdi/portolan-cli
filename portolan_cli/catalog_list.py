@@ -14,7 +14,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from portolan_cli.config import get_ignored_files
 from portolan_cli.constants import MANAGED_FILES
@@ -205,6 +205,15 @@ def _get_format_display_name(filename: str, file_path: Path | None = None) -> st
     return "Unknown"
 
 
+def _by_name(path: PurePath) -> str:
+    """Sort key that orders files the same way on every platform.
+
+    A Windows ``Path`` compares without case, so ``sorted`` on paths puts
+    ``data.parquet`` before ``README.md`` there and after it on POSIX.
+    """
+    return path.name
+
+
 def _get_tracked_assets(versions_path: Path) -> set[str]:
     """Read tracked asset keys from versions.json.
 
@@ -252,7 +261,7 @@ def _scan_files(
     seen_keys: set[str] = set()
 
     try:
-        for entry in sorted(directory.iterdir()):
+        for entry in sorted(directory.iterdir(), key=_by_name):
             if entry.is_dir():
                 continue
 
@@ -354,7 +363,7 @@ def _scan_collection_directory(
 
     items: list[ItemInfo] = []
     try:
-        for entry in sorted(col_dir.iterdir()):
+        for entry in sorted(col_dir.iterdir(), key=_by_name):
             if not entry.is_dir() or entry.name.startswith("."):
                 continue
             if (entry / "collection.json").exists():
