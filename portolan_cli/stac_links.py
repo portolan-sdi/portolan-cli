@@ -77,18 +77,31 @@ def owned_item_hrefs(node_json_path: Path) -> list[tuple[str, Path]]:
     The href is carried alongside the resolved path because it is what the
     operator wrote and therefore what a stale-link error should name.
     """
+    return _owned_item_hrefs(node_json_path, set())
+
+
+def _owned_item_hrefs(node_json_path: Path, active: set[Path]) -> list[tuple[str, Path]]:
+    """Walk ``owned_item_hrefs`` with ``active``, the catalogs in the current branch.
+
+    A ``child`` link back to an active catalog is a cycle and is skipped. A
+    catalog leaves ``active`` when its walk ends, so two branches that reach the
+    same catalog both include its items.
+    """
     if not node_json_path.exists():
         return []
 
     data = json.loads(node_json_path.read_text(encoding="utf-8"))
     owned: list[tuple[str, Path]] = []
+    key = node_json_path.resolve()
+    active.add(key)
 
     for link, href, path in iter_links(data, node_json_path.parent, ("item", "child")):
         if link["rel"] == "item":
             owned.append((href, path))
-        elif path.name == "catalog.json":
-            owned.extend(owned_item_hrefs(path))
+        elif path.name == "catalog.json" and path.resolve() not in active:
+            owned.extend(_owned_item_hrefs(path, active))
 
+    active.discard(key)
     return owned
 
 

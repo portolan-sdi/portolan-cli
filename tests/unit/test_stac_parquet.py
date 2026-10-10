@@ -367,6 +367,59 @@ class TestOwnedItemHrefs:
 
         assert owned_item_hrefs(tmp_path / "collection.json") == []
 
+    @pytest.mark.unit
+    def test_child_link_cycle_terminates(self, tmp_path: Path) -> None:
+        """Two catalogs that link to each other do not recurse without end."""
+        from portolan_cli.stac_links import owned_item_hrefs
+
+        (tmp_path / "a").mkdir()
+        (tmp_path / "collection.json").write_text(
+            json.dumps({"links": [{"rel": "child", "href": "./a/catalog.json"}]})
+        )
+        (tmp_path / "a" / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "links": [
+                        {"rel": "item", "href": "./x/x.json"},
+                        {"rel": "child", "href": "../a/catalog.json"},
+                    ]
+                }
+            )
+        )
+
+        owned = owned_item_hrefs(tmp_path / "collection.json")
+
+        assert [href for href, _ in owned] == ["./x/x.json"]
+
+    @pytest.mark.unit
+    def test_shared_catalog_in_two_branches_is_walked_twice(self, tmp_path: Path) -> None:
+        """The cycle guard skips only catalogs active in the current branch."""
+        from portolan_cli.stac_links import owned_item_hrefs
+
+        for name in ("a", "b", "shared"):
+            (tmp_path / name).mkdir()
+        (tmp_path / "collection.json").write_text(
+            json.dumps(
+                {
+                    "links": [
+                        {"rel": "child", "href": "./a/catalog.json"},
+                        {"rel": "child", "href": "./b/catalog.json"},
+                    ]
+                }
+            )
+        )
+        for name in ("a", "b"):
+            (tmp_path / name / "catalog.json").write_text(
+                json.dumps({"links": [{"rel": "child", "href": "../shared/catalog.json"}]})
+            )
+        (tmp_path / "shared" / "catalog.json").write_text(
+            json.dumps({"links": [{"rel": "item", "href": "./s/s.json"}]})
+        )
+
+        owned = owned_item_hrefs(tmp_path / "collection.json")
+
+        assert [href for href, _ in owned] == ["./s/s.json", "./s/s.json"]
+
 
 # =============================================================================
 # Test: Item Count and Threshold
