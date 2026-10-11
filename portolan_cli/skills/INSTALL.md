@@ -7,7 +7,7 @@ claude plugin marketplace add portolan-sdi/portolan-skills
 claude plugin install portolan
 ```
 
-Skills become available under the `portolan:` prefix: `portolan:git-backed-catalog`, `portolan:portolan-bootstrap`, `portolan:portolan-cli`, `portolan:portolan-migrate`, `portolan:portolan-thumbnails`, `portolan:reading-portolan`, `portolan:register-catalog`, `portolan:report-catalog-issue`, and `portolan:sourcecoop`.
+Skills become available under the `portolan:` prefix: `portolan:customize-portolan-browser`, `portolan:git-backed-catalog`, `portolan:portolan-bootstrap`, `portolan:portolan-cli`, `portolan:portolan-migrate`, `portolan:portolan-thumbnails`, `portolan:reading-portolan`, `portolan:register-catalog`, `portolan:report-catalog-issue`, and `portolan:sourcecoop`.
 
 ### Claude.ai (web and desktop apps)
 
@@ -27,6 +27,8 @@ Gemini CLI natively supports the same `SKILL.md` format:
 
 ```bash
 # Install skills at user scope
+gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
+  --path skills/customize-portolan-browser --consent
 gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
   --path skills/git-backed-catalog --consent
 gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
