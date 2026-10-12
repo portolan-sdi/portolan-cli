@@ -378,7 +378,20 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "Correct the object against the Portolan profile schema; the schema error names the "
         "failing field."
     ),
-    # ---- live: server configuration, never a catalog edit ----
+    # ---- extensions: the object breaks a STAC extension schema it declares ----
+    "PTL-EXT-000": _instruct(
+        "Re-run with network access so rashid can fetch the extension schema, or declare an "
+        "extension version rashid ships."
+    ),
+    "PTL-EXT-001": _instruct(
+        "Correct the object against the schema of the extension it declares; the schema error "
+        "names the failing field."
+    ),
+    "PTL-EXT-002": _instruct(
+        "Declare an extension the Portolan registry lists, or accept that rashid did not "
+        "validate the object against this extension's schema."
+    ),
+    # ---- live: server configuration, except a file the push did not publish ----
     "PTL-LIV-000": _instruct(
         "Re-run the live pass with a reachable host; it could not probe the published assets."
     ),
@@ -398,6 +411,12 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     ),
     "PTL-LIV-005": _external(
         "Configure the host to answer CORS preflight (OPTIONS) requests for asset URLs."
+    ),
+    # The host lacks a file the catalog links. The fix is a push, not a host
+    # setting, so this live rule is INSTRUCT (issue #935).
+    "PTL-LIV-006": _instruct(
+        "Run `portolan push` again so the host serves every file a link names; if the file is "
+        "missing locally too, restore it or remove the link."
     ),
 }
 

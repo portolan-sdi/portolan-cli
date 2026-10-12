@@ -1343,7 +1343,7 @@ def _output_check_json(payload: dict[str, Any], *, failed: bool) -> None:
 @click.option(
     "--live",
     is_flag=True,
-    help="Probe the published host over HTTP for Range support and CORS headers",
+    help="Probe the published host over HTTP for Range support, CORS headers, and link targets",
 )
 @click.option(
     "--url",
@@ -1409,7 +1409,8 @@ def check(
     applies the mechanical repairs and re-checks.
 
     The --live pass probes the published host for HTTP Range support and CORS
-    headers. It skips an upstream host only when it knows the base URL, from
+    headers. It also requests every link target under the base URL, and reports
+    a linked file the host does not serve. It skips an upstream host only when it knows the base URL, from
     --url or publish.public_url. Without a base URL it probes every absolute
     href as declared, which can report CORS failures against a host you do not
     control.

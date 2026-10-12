@@ -231,7 +231,8 @@ assets inside the catalog tree. Use --no-data to skip the pass. With --fix,
 applies the mechanical repairs and re-checks.
 
 The --live pass probes the published host for HTTP Range support and CORS
-headers. It skips an upstream host only when it knows the base URL, from
+headers. It also requests every link target under the base URL, and reports
+a linked file the host does not serve. It skips an upstream host only when it knows the base URL, from
 --url or publish.public_url. Without a base URL it probes every absolute
 href as declared, which can report CORS failures against a host you do not
 control.
@@ -286,7 +287,7 @@ portolan check [OPTIONS] [PATH]
 | `--metadata` | boolean | Only check/fix STAC metadata (links, schema, staleness) | `False` |
 | `--geo-assets` | boolean | Only check/fix geospatial assets (cloud-native status, convertibility) | `False` |
 | `--strict` | boolean | Fail on warnings as well as errors | `False` |
-| `--live` | boolean | Probe the published host over HTTP for Range support and CORS headers | `False` |
+| `--live` | boolean | Probe the published host over HTTP for Range support, CORS headers, and link targets | `False` |
 | `--url` | text | Base URL the catalog is published under (overrides publish.public_url) | None |
 | `--no-data` | boolean | Skip the data pass; validate metadata without reading asset bytes | `False` |
 | `--data-scope` | choice (`all` &#x7C; `local`) | Which assets the data pass may read: all (default), or local to read only the assets inside the catalog tree, leaving assets hosted elsewhere unread | `all` |

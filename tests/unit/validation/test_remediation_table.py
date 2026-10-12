@@ -10,11 +10,8 @@ Phase 3 will register.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import pytest
-from rashid import data, live, runner, schema, structural
-from rashid.rules import DEFAULT_RULES
+from rashid.registry import CHECKS
 
 from portolan_cli.validation.remediation import (
     DEFAULT_REMEDIATION,
@@ -24,24 +21,11 @@ from portolan_cli.validation.remediation import (
     remediation_for,
 )
 
-if TYPE_CHECKING:
-    from types import ModuleType
-
 pytestmark = pytest.mark.unit
 
-
-def _declared_ids(module: ModuleType) -> set[str]:
-    """Every ``PTL-*`` id a rashid pass module declares as a constant."""
-    return {
-        value
-        for name, value in vars(module).items()
-        if name.isupper() and isinstance(value, str) and value.startswith("PTL-")
-    }
-
-
-ALL_RULE_IDS = {rule.id for rule in DEFAULT_RULES}.union(
-    *(_declared_ids(m) for m in (data, live, runner, schema, structural))
-)
+# rashid's registry joins its rules and the ids of every pass module. A scan of
+# a fixed module list missed the extensions pass, which rashid 0.2.0 added.
+ALL_RULE_IDS = set(CHECKS)
 
 
 class TestCompleteness:
@@ -94,13 +78,20 @@ class TestBucketInvariants:
 
         ``PTL-LIV-000`` is excluded: it is the pass's own degradation warning
         (the prober could not reach the host), not a defect in the hosting.
+        ``PTL-LIV-006`` is excluded too. The host lacks a file the catalog
+        links, and a push of the catalog uploads it (issue #935).
         """
         live_buckets = {
             RULE_REMEDIATION[rule_id].bucket
             for rule_id in RULE_REMEDIATION
-            if rule_id.startswith("PTL-LIV-") and rule_id != "PTL-LIV-000"
+            if rule_id.startswith("PTL-LIV-") and rule_id not in {"PTL-LIV-000", "PTL-LIV-006"}
         }
         assert live_buckets == {Bucket.EXTERNAL}
+
+    def test_unserved_link_target_is_a_push_not_a_host_setting(self) -> None:
+        remediation = RULE_REMEDIATION["PTL-LIV-006"]
+        assert remediation.bucket is Bucket.INSTRUCT
+        assert "portolan push" in remediation.requirement
 
     def test_known_auto_and_instruct_assignments(self) -> None:
         """Spot-check the boundary the bucket table draws inside a family."""

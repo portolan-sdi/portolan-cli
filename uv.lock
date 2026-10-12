@@ -4692,7 +4692,7 @@ requires-dist = [
     { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.3.1" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "rashid", specifier = ">=0.1.5,<0.2.0" },
+    { name = "rashid", specifier = ">=0.2.0,<0.3.0" },
     { name = "rasterio", specifier = ">=1.3.0" },
     { name = "requests", specifier = ">=2.33.0" },
     { name = "rich", specifier = ">=13.0.0" },
@@ -5898,7 +5898,7 @@ wheels = [
 
 [[package]]
 name = "rashid"
-version = "0.1.8"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -5913,9 +5913,9 @@ dependencies = [
     { name = "rio-cogeo", version = "7.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "shapely" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bd/61/8b29b0c1ac8d7dcf6a666f01a457cf3c8f91f4c65a5b0c5bec08006baf5b/rashid-0.1.8.tar.gz", hash = "sha256:b1625928836be4de2d59f7d440eee9ec657d5e22a1ca449463b9aedd4bdcf491", size = 496875, upload-time = "2026-08-28T11:31:26.001Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/7e/404225c3e5771e7fc342c18e5e7f66b61b4381d87889dda7d226bfde6990/rashid-0.2.0.tar.gz", hash = "sha256:46eaf27a4fb664dc533470c0ec5bf694c6bf87aa1f1e8bbf23bba31099510153", size = 555881, upload-time = "2026-10-12T11:16:47.585Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4f/54/c2c46828dae4ab8ce412bb56328e5e6008d278a1284c8168c64448527692/rashid-0.1.8-py3-none-any.whl", hash = "sha256:3f74f355a314f16e3c3ae9d9d4e0e0abedbc25f6ca3ff2a95ea35aa7a76fa7e3", size = 147429, upload-time = "2026-08-28T11:31:24.555Z" },
+    { url = "https://files.pythonhosted.org/packages/14/20/7e86d35170da48819e6d3336664d9e44be8a7f7d6959f0e103340161c18b/rashid-0.2.0-py3-none-any.whl", hash = "sha256:cdbe36ac8fc6b6ecf8e74c3f8c5ee450418d2b2d4ec3497e258a79896524e414", size = 178017, upload-time = "2026-10-12T11:16:46.212Z" },
 ]
 
 [[package]]

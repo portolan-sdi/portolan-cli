@@ -642,7 +642,7 @@ def _discover_stac_files(
         root_readme = catalog_root / "README.md"
         if root_readme.exists():
             stac_files["readmes"].append(root_readme)
-        # Intermediate catalog.json / README.md for nested collections (Issue #547, #552).
+        # Intermediate catalog files for nested collections (Issue #547, #552, #905).
         # Only relevant for standalone single-collection push (include_catalog=True);
         # catalog-wide push handles these centrally after all collections succeed.
         for inter_file in _discover_intermediate_catalog_files(catalog_root, [collection]):
@@ -1342,7 +1342,7 @@ def _handle_push_dry_run(
             rel_path = f.relative_to(catalog_root)
             detail(f" {rel_path}")
 
-    # Show intermediate catalog.json / README.md for nested collections (Issue #547, #552)
+    # Show intermediate catalog files for nested collections (Issue #547, #552, #905)
     intermediate_files = _discover_intermediate_catalog_files(catalog_root, [collection])
     if intermediate_files:
         info(f"[DRY RUN] Would upload {len(intermediate_files)} intermediate catalog file(s)")
@@ -2465,38 +2465,61 @@ def _discover_root_metadata_files(catalog_root: Path) -> list[Path]:
 
 
 def _discover_intermediate_catalog_files(catalog_root: Path, collections: list[str]) -> list[Path]:
-    """Discover intermediate catalog.json / README.md files for nested collections.
+    """Discover the files of each intermediate catalog for nested collections.
 
     A nested collection ``a/b/c`` has a ``catalog.json`` at each
     intermediate level (``a/``, ``a/b/``) created by ``create_intermediate_catalogs``
     during ``add``. These are neither leaf ``collection.json`` files nor the root
     ``catalog.json``, so every other push discovery path misses them (Issue #547,
     #552). This walks each collection's ancestor sub-catalog ids (shared
-    ``intermediate_catalog_ids`` helper) and returns the metadata files that
-    actually exist on disk, deduped across sibling collections and sorted for
-    deterministic output.
+    ``intermediate_catalog_ids`` helper), deduped across sibling collections and
+    sorted for deterministic output.
 
-    README.md is included only when present; ``create_intermediate_catalogs``
-    writes only ``catalog.json``, but real catalogs may carry authored READMEs at
-    sub-catalog levels (Issue #547).
+    An intermediate level follows the rule of the root level. Every file in the
+    directory is published, except the files the push exclusions skip. A fixed
+    name list missed the scaffolded AGENTS.md, which the catalog's rel="agents"
+    link names (Issue #905, #935). Subdirectories are child catalogs or
+    collections, and their own walks handle them.
 
     Args:
         catalog_root: Path to the catalog root directory.
         collections: Leaf collection ids (from ``discover_collections``).
 
     Returns:
-        Existing intermediate ``catalog.json``/``README.md`` paths, sorted.
+        Existing intermediate file paths. In each directory, ``catalog.json``
+        comes first, then ``README.md``, then the other files by name.
     """
     seen: set[str] = set()
     for collection in collections:
         seen.update(intermediate_catalog_ids(collection))
 
+    # An empty stac_item_paths turns off the item-name heuristic. A catalog
+    # level holds no items, so a file such as a/a.json is a sidecar.
+    ctx = _ExcludeContext(
+        exclude_patterns=_get_effective_exclude_patterns(catalog_root, None),
+        versioned_asset_paths=set(),
+        stac_item_paths=set(),
+        collection=None,
+    )
+
     files: list[Path] = []
     for sub in sorted(seen):
+        sub_dir = catalog_root / sub
+        # _should_exclude_from_push skips these two names, because other phases
+        # upload them at the root and collection levels. Here this phase does.
         for name in ("catalog.json", "README.md"):
-            path = catalog_root / sub / name
+            path = sub_dir / name
             if path.exists():
                 files.append(path)
+        if not sub_dir.is_dir() or sub_dir.is_symlink():
+            continue
+        files.extend(
+            item
+            for item in sorted(sub_dir.iterdir(), key=lambda p: p.name)
+            if not item.is_symlink()
+            and item.is_file()
+            and not _should_exclude_from_push(item, catalog_root, ctx)
+        )
     return files
 
 
@@ -2625,7 +2648,7 @@ def _push_all_upload_root_files(
     1. README.md (documentation, optional)
     2. Root metadata files (style.json, thumbnails, etc.) - Issue #426
     3. catalog.json (STAC catalog metadata, required)
-    4. Intermediate catalog.json / README.md for nested collections - Issue #547, #552
+    4. Intermediate catalog files (catalog.json, README.md, AGENTS.md, ...) - Issue #547, #552, #905
     5. versions.json (manifest, required - uploaded LAST per manifest-last atomicity)
 
     These are uploaded AFTER all collections succeed.
@@ -2653,7 +2676,7 @@ def _push_all_upload_root_files(
     # Discover root metadata files (Issue #426)
     root_metadata = _discover_root_metadata_files(catalog_root)
 
-    # Discover intermediate catalog.json / README.md for nested collections
+    # Discover intermediate catalog files for nested collections (Issue #905)
     # (Issue #547, #552). Uploaded after root catalog.json, before versions.json.
     intermediate_files = _discover_intermediate_catalog_files(catalog_root, collections or [])
 
