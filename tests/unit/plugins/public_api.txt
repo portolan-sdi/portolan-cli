@@ -1,0 +1,30 @@
+# portolan_cli.api
+Asset
+DriftReport
+EnrichContext
+PluginWarning
+PostAddContext
+PostAddItemContext
+PullResult
+SchemaFingerprint
+SchemaInfo
+Version
+VersioningBackend
+detail
+download_file
+error
+hookimpl
+info
+parse_version
+success
+upload_file
+warn
+
+# portolan_cli.hookspecs
+portolan_backends() -> 'dict[str, BackendFactory]'
+portolan_enrich_collection(collection: 'dict[str, Any]', context: 'EnrichContext') -> 'None'
+portolan_enrich_item(item: 'dict[str, Any]', context: 'EnrichContext') -> 'None'
+
+# portolan_cli.testing
+ConformanceError
+check_backend(factory: 'Callable[..., Any]', catalog_root: 'Path') -> 'None'
