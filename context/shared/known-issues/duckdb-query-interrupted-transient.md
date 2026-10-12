@@ -10,8 +10,10 @@ conversion entry point the `add` pipeline uses).
 > `preparation.py::convert_tabular`) — **not** `_convert_vector` — so the nightly
 > `test_add_1000_files_*` job kept flaking on the exact same `Query interrupted`.
 > The retry logic was extracted into `convert.py::run_with_transient_convert_retry`
-> and is now applied on every add-path conversion seam (`_convert_vector`,
-> `_convert_vector_layer`, `preparation.convert_vector`, `preparation.convert_tabular`).
+> and is now applied on every add-path conversion seam (`_convert_vector_layer`,
+> `preparation.convert_vector`, `preparation.convert_tabular`). In October 2026
+> (#947) `_convert_vector` was removed, and `check --fix` converts through
+> `preparation.convert_vector` as well.
 
 ## Description
 During large bulk `portolan add` runs, a single vector→GeoParquet conversion
@@ -55,9 +57,8 @@ transitive-import contract). Any non-transient error still fails on the first
 attempt.
 
 Every conversion seam the `add` pipeline can reach is wrapped in this helper:
-- `convert.py::_convert_vector` (single-layer, `convert_file` route)
 - `convert.py::_convert_vector_layer` (multi-layer GeoPackage/FileGDB)
-- `preparation.py::convert_vector` (single-layer vectors — the `add` route)
+- `preparation.py::convert_vector` (single-layer vectors, for `add` and `check --fix`)
 - `preparation.py::convert_tabular` (CSV/TSV/XLSX)
 
 See `_is_transient_conversion_error`,

@@ -74,9 +74,10 @@ name it.
 conversion when the output exists (issue #386), and for a single-file
 collection the output *is* the source, so that skip once returned a file with
 no covering column and no warning — the exact failure #805 removes. The skip
-branch now calls `_ensure_conforming_geoparquet`, which runs the same footer
-test. If you add another early return to `_convert_and_extract_metadata`, carry
-that call with it.
+branch in `_convert_and_extract_metadata` now passes the existing output back
+through the handler's `convert` when the handler reads that format, and
+`preparation.convert_vector` runs the same footer test. If you add another
+early return there, keep that call.
 
 When the source is its own destination, `_rewrite_parquet_in_place` writes a
 sibling and swaps it in with `Path.replace`, so a failed write cannot destroy

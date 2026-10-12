@@ -118,11 +118,22 @@ import only `portolan_cli.api`. `preparation.convert_vector` and
 `add` safety features apply to both commands: the fidelity gate, the rewrite
 temp marker, the schema metadata restore, and the transient retry.
 
-One rule decides partitioning, in `partitioning.partition_strategy`. A
-configured spatial index (`conversion.vector.partition`) comes first, then the
-size threshold (`partitioning.threshold_gb`). The partitions go next to the
-converted file. `check --fix` used to write them into a subdirectory named
-after the file.
+Two partition rules apply.
+
+- The size rule is in `partitioning.partition_strategy`, and both commands
+  apply it. A file at or above `partitioning.threshold_gb` partitions into
+  Hive directories next to it. The file is removed only when the step wrote a
+  partition.
+- The index rule (`conversion.vector.partition`) applies only to
+  `check --fix`, as before the merge. `convert._convert_partitioned_by_index`
+  writes the partitions to `<output_dir>/<stem>/`. `add` writes one file with
+  the index column.
+
+The index rule keeps a directory per source. geoparquet-io names a Hive file
+after its cell and does not write over a cell that exists. In one shared
+directory, the second source lost every row in a cell that the first source
+wrote. Small files also failed in `add`, because geoparquet-io refuses
+partitions under 100 rows.
 
 The handler owns the per-format STAC logic. `describe_item` adds statistics,
 render fields, nodata defaults, and the item extensions. `describe_collection`
@@ -130,7 +141,8 @@ adds the table extension. `inspect` answers `portolan info`. Core code uses
 the family only to group files in `scan` and to label them.
 
 The COG handler writes the raster thumbnail when it converts, because each
-raster is an item. The GeoParquet handler writes no thumbnail. A collection
+raster is an item. It keeps a thumbnail that exists, so a hand-made thumbnail
+survives a re-add. The GeoParquet handler writes no thumbnail. A collection
 can hold thousands of vector files, and `add` writes one thumbnail for the
 collection. `check --fix` no longer writes a thumbnail next to a converted
 vector file. A reference catalog built before and after the merge
