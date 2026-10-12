@@ -1,0 +1,39 @@
+# Thin caller — synced from portolan-sdi/portolan-ops (ci/links.yml).
+# Edit it there. Local changes are overwritten on the next sync.
+#
+# lychee checks the links in this repo against the org rules. The rules and
+# their reasons live in portolan-ops norms/ci.md. Put this repo's exceptions
+# in lychee.toml (paths) or .lycheeignore (URLs) at the repo root.
+#
+# A push or pull request checks relative links and anchors, offline. The
+# weekly run checks external URLs and keeps one "Broken external links"
+# issue current. Link rot never fails a pull request.
+name: Links
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "41 7 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  links:
+    # v1 is a moving major tag. A change to a rule reaches this repo when
+    # the tag moves, not when ops merges.
+    uses: portolan-sdi/portolan-ops/.github/workflows/reusable-links.yml@v1
+    permissions:
+      contents: read
+      issues: write
+    with:
+      # Report only while the fleet fixes the links it has now. Then this
+      # changes to true and links / lychee becomes a required check.
+      fail: false
