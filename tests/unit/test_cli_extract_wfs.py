@@ -8,7 +8,7 @@ import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-from portolan_cli.extract.common.source import Discovery, build_report
+from tests.support.extract import make_report
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -36,7 +36,7 @@ def _make_capturing_fake(
         captured["page_size"] = options.page_size
         captured["auto_tile"] = options.auto_tile
         captured["catalog_id"] = options.catalog_id
-        return build_report(Discovery(source_url=url, layers=[]), [])
+        return make_report([], url)
 
     return fake_extract
 

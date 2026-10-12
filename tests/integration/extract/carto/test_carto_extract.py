@@ -14,14 +14,11 @@ from pathlib import Path
 import pytest
 
 from portolan_cli.extract.carto.discovery import CartoDiscoveryResult, CartoTableInfo
-from portolan_cli.extract.carto.orchestrator import _auto_init_catalog
-from portolan_cli.extract.common.report import (
-    ExtractionReport,
-    ExtractionSummary,
-    LayerResult,
-    MetadataExtracted,
-)
+from portolan_cli.extract.carto.orchestrator import CartoLayerSource
+from portolan_cli.extract.common.report import ExtractionReport, MetadataExtracted
+from portolan_cli.extract.common.source import LayerRef, build_catalog
 from portolan_cli.licensing import ResolvedLicense
+from tests.support.extract import make_layer_result, make_report
 
 pytestmark = [pytest.mark.integration]
 
@@ -29,51 +26,38 @@ FIXTURES_DIR = Path(__file__).parent.parent.parent.parent / "fixtures"
 SQL_API_URL = "https://phl.carto.com/api/v2/sql"
 
 
-# Calling _auto_init_catalog directly skips the resolution the orchestrator does
+# Building the catalog directly skips the license resolution the driver does
 # before its download, so the license is passed in here (issue #686).
 TEST_LICENSE = ResolvedLicense(license_id="CC-BY-4.0", license_url=None)
 
 
+def _auto_init_catalog(
+    output_dir: Path,
+    report: ExtractionReport,
+    found: CartoDiscoveryResult,
+    resolved_license: ResolvedLicense,
+) -> None:
+    """Build the catalog for ``report`` through the shared driver seam."""
+    layers = [LayerRef(id=t.id, name=t.name, data=t) for t in found.tables]
+    discovery = CartoLayerSource.discovery_from(found, layers)
+    build_catalog(
+        CartoLayerSource(), discovery, output_dir, report, resolved_license=resolved_license
+    )
+
+
 def _report(output_path: str, name: str) -> ExtractionReport:
-    layer = LayerResult(
-        id=0,
-        name=name,
-        status="success",
-        features=3,
-        size_bytes=1202,
-        duration_seconds=0.5,
-        output_path=output_path,
-        warnings=[],
-        error=None,
-        attempts=1,
-    )
-    return ExtractionReport(
-        extraction_date="2026-06-17T12:00:00Z",
+    layer = make_layer_result(name=name, output_path=output_path, features=3, size_bytes=1202)
+    metadata = MetadataExtracted(
         source_url=SQL_API_URL,
-        portolan_version="test",
-        gpio_version="test",
-        metadata_extracted=MetadataExtracted(
-            source_url=SQL_API_URL,
-            description=None,
-            attribution="Carto account: phl",
-            keywords=None,
-            contact_name=None,
-            processing_notes=None,
-            known_issues=None,
-            license_info_raw=None,
-        ),
-        layers=[layer],
-        summary=ExtractionSummary(
-            total_layers=1,
-            succeeded=1,
-            failed=0,
-            skipped=0,
-            empty=0,
-            total_features=3,
-            total_size_bytes=1202,
-            total_duration_seconds=0.5,
-        ),
+        description=None,
+        attribution="Carto account: phl",
+        keywords=None,
+        contact_name=None,
+        processing_notes=None,
+        known_issues=None,
+        license_info_raw=None,
     )
+    return make_report([layer], SQL_API_URL, metadata=metadata)
 
 
 def _discovery() -> CartoDiscoveryResult:
