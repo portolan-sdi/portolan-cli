@@ -13,6 +13,7 @@ except ModuleNotFoundError:
     pass  # Iceberg tests don't need matplotlib
 
 import os
+import sys
 from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
@@ -133,6 +134,32 @@ def cleared_environ(**overrides: str) -> Iterator[None]:
     preserved.update(overrides)
     with mock.patch.dict(os.environ, preserved, clear=True):
         yield
+
+
+# geoparquet-io installs DuckDB extensions on first use. The network guard
+# refuses that download, so a fresh CI runner could load none of them. Install
+# them once, before any test starts. Under xdist only the controller does it,
+# before it starts the workers. An installed extension costs no download.
+_DUCKDB_EXTENSIONS = ("spatial", "httpfs", "encodings")
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Install the DuckDB extensions before the network guard starts."""
+    if hasattr(config, "workerinput"):
+        return
+    import duckdb
+
+    connection = duckdb.connect()
+    try:
+        for name in _DUCKDB_EXTENSIONS:
+            try:
+                connection.install_extension(name)
+            except duckdb.Error as exc:
+                # Offline, or no build for this platform. A test that needs the
+                # extension then fails and names extensions.duckdb.org.
+                print(f"Could not install the DuckDB {name} extension: {exc}", file=sys.stderr)
+    finally:
+        connection.close()
 
 
 # mutmut drives pytest in-process and runs the suite several times per
