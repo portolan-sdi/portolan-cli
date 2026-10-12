@@ -91,10 +91,13 @@ subsystem table below and the path-scoped rules for each.
 
 - `backends/protocol.py` defines `@runtime_checkable class VersioningBackend`
   with `get_current_version`, `list_versions`, `publish`, `rollback`, `prune`,
-  `check_drift`. `backends/__init__.py` `get_backend(name)` is the factory,
-  `"file"` -> `JsonFileBackend` (always available), `"iceberg"` ->
-  `IcebergBackend` (needs the `[iceberg]` extra). The CLI reaches a backend only
-  through `version_ops.py`, which resolves the name CLI flag > config > `"file"`.
+  `check_drift`. `backends/__init__.py` `get_backend(name)` is the factory.
+  It resolves names through the `portolan_backends` hook (#947): the built-in
+  hook module registers `"file"` -> `JsonFileBackend`, and a plugin can add a
+  name. `"iceberg"` -> `IcebergBackend` (needs the `[iceberg]` extra) is still
+  resolved directly. A built-in name always wins a collision. The CLI
+  reaches a backend only through `version_ops.py`, which resolves the name
+  CLI flag > config > `"file"`.
 - **Optional hooks are duck-typed, NOT in the Protocol.** `on_post_add`, `pull`,
   `supports_push`, `push_blocked_message` are checked via `hasattr`. If you add
   one, document it in `protocol.py`, do not widen the Protocol.
@@ -170,6 +173,7 @@ geoparquet-io or rio-cogeo. Never put geometry or raster math in our layer.
 | Sync / remote | `push.py`, `pull.py`, `sync.py`, `upload.py`, `download.py`, `async_utils.py` | `sync.md` |
 | Scan / check / metadata | `scan*.py`, `check.py`, `metadata/`, `clean.py` | `scan-check.md` (the four `metadata/{cog,geoparquet,pmtiles,flatgeobuf}.py` format extractors also load `conversion-and-visualization.md`) |
 | Versioning backends | `backends/`, `version_ops.py`, `versions.py` | this file + `stac-assets.md` |
+| Plugin system | `hookspecs.py`, `api.py`, `testing.py`, `plugins/`, `stac_enrich.py`, `lazy_exports.py` | `plugins.md` |
 | Extract / harvest | `extract/` (only `arcgis` and `wfs` are wired commands, `csw/` is a module dir not yet exposed as a subcommand) | (reuse `extract/common/`, mock network in tests) |
 | Config / leaf utils | `config.py`, `constants.py`, `utils.py` | `python.md` (conventions, import contracts) |
 
