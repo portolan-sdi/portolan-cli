@@ -259,7 +259,6 @@ def _maybe_partition_large_file(
     catalog_root: Path,
     item_datetime: datetime | None,
     skip_partitioning: bool = False,
-    source: Path | None = None,
 ) -> list[PreparedItem]:
     """Partition a large GeoParquet file if it exceeds the size threshold.
 
@@ -272,12 +271,11 @@ def _maybe_partition_large_file(
         item_datetime: Optional datetime for created items.
         skip_partitioning: If True, skip partitioning even if file exceeds threshold.
             Used when user declines interactive prompt.
-        source: The file the operator added. When the collection already holds
-            partitions, the converted copy is removed, so no row appears twice.
-            A source that is its own output stays.
 
     Raises:
         PartitionCollisionError: The collection already holds partitions.
+            A converted file that this run wrote is removed first, so no row
+            appears twice. A file that existed before the run stays.
 
     Returns:
         List of PreparedItems. If partitioning occurred, contains multiple
@@ -313,7 +311,7 @@ def _maybe_partition_large_file(
     try:
         partition_files: list[Path] = partition(primary_parquet, catalog_root)
     except PartitionCollisionError:
-        if source is not None and source.resolve() != primary_parquet.resolve():
+        if prepared.created_output:
             primary_parquet.unlink(missing_ok=True)
         raise
     if not partition_files:
@@ -939,7 +937,6 @@ def _prepare_multilayer_file(
                         catalog_root=opts.catalog_root,
                         item_datetime=opts.item_datetime,
                         skip_partitioning=opts.skip_partitioning,
-                        source=file_path,
                     )
                 )
             except Exception as err:
@@ -990,7 +987,6 @@ def _prepare_single_file(
             catalog_root=opts.catalog_root,
             item_datetime=opts.item_datetime,
             skip_partitioning=opts.skip_partitioning,
-            source=file_path,
         )
         return (partitioned, [], None)
 

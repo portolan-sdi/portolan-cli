@@ -129,7 +129,8 @@ Partitioning follows the size rule and the index rule.
   Hive directories next to it. The file is removed only when the step wrote a
   partition. A directory that already holds partitions for the strategy raises
   `PartitionCollisionError`, because geoparquet-io does not write over a cell.
-  `add` then removes the converted copy, so no row appears twice.
+  `add` then removes a converted file that the run wrote, so no row appears
+  twice. A file that existed before the run stays.
   `check --fix` converts a source again on every run, so the size rule would
   collide with its own earlier partitions there.
 - The index rule (`conversion.vector.partition`) applies only to

@@ -2497,7 +2497,7 @@ class TestPartitionedOutputWithGeoparquetIO:
         assert (tmp_path / "kdtree_cell=0000" / "0000.parquet").exists()
 
     @staticmethod
-    def _prepared(path: Path) -> Any:
+    def _prepared(path: Path, created_output: bool) -> Any:
         from portolan_cli.preparation import PreparedItem
 
         return PreparedItem(
@@ -2509,17 +2509,19 @@ class TestPartitionedOutputWithGeoparquetIO:
             item_json_path=None,
             is_collection_level_asset=True,
             format_name="geoparquet",
+            created_output=created_output,
         )
 
     @pytest.mark.unit
-    @pytest.mark.parametrize("in_place", [False, True])
-    def test_add_collision_removes_only_a_converted_copy(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_place: bool
+    @pytest.mark.parametrize("created_output", [True, False])
+    def test_add_collision_removes_only_a_new_copy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, created_output: bool
     ) -> None:
-        """A collision in `add` leaves no whole copy beside the partitions.
+        """A collision in `add` removes the converted file only when this run wrote it.
 
-        The converted file goes, so the collection holds no row twice. A
-        `.parquet` source that is its own output stays.
+        A new copy goes, so the collection holds no row twice. A file that
+        existed before the run stays: a `.parquet` source that is its own
+        output, or an output that `add --force` kept.
         """
         from portolan_cli import partitioning
         from portolan_cli.add import _maybe_partition_large_file
@@ -2529,15 +2531,33 @@ class TestPartitionedOutputWithGeoparquetIO:
         (coll / "kdtree_cell=0000").mkdir(parents=True)
         converted = coll / "big.parquet"
         converted.write_bytes(b"PAR1")
-        source = converted if in_place else coll / "big.geojson"
-        source.write_bytes(b"PAR1" if in_place else b"{}")
         monkeypatch.setattr(partitioning, "partition_strategy", lambda *_: "kdtree")
 
         with pytest.raises(PartitionCollisionError):
-            _maybe_partition_large_file(self._prepared(converted), tmp_path, None, source=source)
+            _maybe_partition_large_file(self._prepared(converted, created_output), tmp_path, None)
 
-        assert converted.exists() is in_place
-        assert source.exists()
+        assert converted.exists() is not created_output
+
+    @pytest.mark.integration
+    def test_prepare_item_reports_a_new_output(self, tmp_path: Path) -> None:
+        """`created_output` is True for a new conversion and False for a kept output."""
+        import shutil
+
+        from portolan_cli.preparation import prepare_item
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text("{}\n", encoding="utf-8")
+        coll = tmp_path / "coll"
+        coll.mkdir()
+        fixtures = Path(__file__).parents[1] / "fixtures" / "vector" / "valid"
+        source = coll / "points.geojson"
+        shutil.copy(fixtures / "points.geojson", source)
+
+        first = prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
+        kept = prepare_item(path=source, catalog_root=tmp_path, collection_id="coll", force=True)
+
+        assert first.created_output is True
+        assert kept.created_output is False
 
     @pytest.mark.integration
     @pytest.mark.xfail(

@@ -340,6 +340,9 @@ class PreparedItem:
     metadata: AllMetadata | None = None
     partition_metadata: dict[str, object] | None = None
     format_name: str | None = None  # The format handler that converted the file (#947)
+    # True when this run wrote the output and no file was there before. Only
+    # such a file is safe to remove when a later step fails.
+    created_output: bool = False
 
 
 def _pre_validate_geometry(path: Path) -> None:
@@ -1021,6 +1024,7 @@ def prepare_item(
         ) from err
 
     # Step 3: Convert and extract metadata
+    created_output = not handler.output_path(path, item_dir).exists()
     output_path, metadata = _convert_and_extract_metadata(
         path,
         item_dir,
@@ -1094,6 +1098,7 @@ def prepare_item(
             stac_assets=_fix_collection_level_asset_hrefs(stac_assets),
             metadata=metadata,
             format_name=handler.name,
+            created_output=created_output,
         )
 
     # Item-level: create STAC item and save item.json
@@ -1129,6 +1134,7 @@ def prepare_item(
         stac_item=item,
         metadata=metadata,
         format_name=handler.name,
+        created_output=created_output,
     )
 
 
