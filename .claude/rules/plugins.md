@@ -62,8 +62,10 @@ before you change the plugin code.
 - A backend that changes STAC JSON after the hooks run merges into the file
   on disk. Never call `pystac.Collection.save` there, because it drops the
   hook fields. `IcebergBackend.on_post_add` shows the pattern.
-- Backend precedence comes from `hook_calls`, which lists built-ins first.
-  Do not depend on pluggy call order.
+- Backend precedence comes from `hook_calls`. It lists the built-ins first in
+  registration order. The outside plugins follow in pluggy call order.
+  `builtin:legacy_backends` comes last. `tryfirst` and `trylast` cannot move
+  an outside plugin before a built-in.
 
 ## Example plugin
 

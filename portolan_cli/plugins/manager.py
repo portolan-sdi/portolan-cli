@@ -232,7 +232,9 @@ def call_each(hook_name: str, **kwargs: Any) -> list[tuple[str, Any]]:
         **kwargs: Hook arguments.
 
     Returns:
-        ``(plugin_name, result)`` pairs in registration order, built-ins first.
+        ``(plugin_name, result)`` pairs in the order of ``hook_calls``. The
+        built-ins come first, then the outside plugins in pluggy call order.
+        ``builtin:legacy_backends`` comes last.
     """
     results: list[tuple[str, Any]] = []
     for plugin_name, call in hook_calls(hook_name):
