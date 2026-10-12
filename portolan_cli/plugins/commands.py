@@ -1,8 +1,8 @@
 """A Click group that adds commands from the ``portolan.commands`` group (#947).
 
 Command names come from entry point metadata. The group imports a command
-module only when the user runs that command, so ``portolan --help`` imports no
-plugin. Help lists a plugin command with its distribution name, not its help
+module only when the user runs that command. ``portolan --help`` and shell
+completion import no plugin. Help lists a plugin command with its distribution name, not its help
 text, because the help text lives in the module it would have to import.
 
 A dotted name attaches to a built-in group: ``version.rollback`` becomes
@@ -23,6 +23,8 @@ from portolan_cli.plugins.manager import COMMANDS_ENTRY_POINT_GROUP, enabled_ent
 
 if TYPE_CHECKING:
     from importlib.metadata import EntryPoint
+
+    from click.shell_completion import CompletionItem
 
 
 def _group_path(ctx: click.Context) -> str:
@@ -50,7 +52,9 @@ class PluginGroup(click.Group):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._loaded: dict[str, click.Command | None] = {}
+        # Keyed by entry point. A command that PORTOLAN_PLUGINS disables after
+        # a reset_plugin_manager() is no longer found, so it does not run.
+        self._loaded: dict[EntryPoint, click.Command | None] = {}
 
     def _plugin_entries(self, ctx: click.Context) -> dict[str, EntryPoint]:
         """Return the plugin commands for this group, keyed by command name."""
@@ -74,14 +78,12 @@ class PluginGroup(click.Group):
         builtin = super().get_command(ctx, cmd_name)
         if builtin is not None:
             return builtin
-        if cmd_name in self._loaded:
-            return self._loaded[cmd_name]
         ep = self._plugin_entries(ctx).get(cmd_name)
         if ep is None:
             return None
-        command = self._load(cmd_name, ep)
-        self._loaded[cmd_name] = command
-        return command
+        if ep not in self._loaded:
+            self._loaded[ep] = self._load(cmd_name, ep)
+        return self._loaded[ep]
 
     @staticmethod
     def _load(cmd_name: str, ep: EntryPoint) -> click.Command | None:
@@ -95,37 +97,53 @@ class PluginGroup(click.Group):
             return None
         return loaded
 
-    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        """Write the command list without importing a plugin.
+    def _rows(self, ctx: click.Context) -> list[tuple[str, str | click.Command]]:
+        """Return each visible command with its built-in or its plugin label.
 
-        Click's version calls ``get_command`` for each name to read the short
-        help, which would import every plugin command.
+        A plugin row holds ``(plugin: <distribution>)`` in place of the help
+        text. The method imports no plugin. Click's own help and completion
+        call ``get_command`` for each name, which would import every plugin.
         """
         plugins = self._plugin_entries(ctx)
-        rows: list[tuple[str, click.Command | EntryPoint]] = []
+        rows: list[tuple[str, str | click.Command]] = []
         for name in self.list_commands(ctx):
             builtin = super().get_command(ctx, name)
             if builtin is None:
-                rows.append((name, plugins[name]))
-                continue
-            if name in plugins:
-                warn(
-                    f"Plugin command '{name}' from {_distribution(plugins[name])} has the "
-                    "name of a built-in command. The built-in command runs."
-                )
-            if not builtin.hidden:
+                rows.append((name, f"(plugin: {_distribution(plugins[name])})"))
+            elif not builtin.hidden:
                 rows.append((name, builtin))
+        return rows
+
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        """Write the command list without importing a plugin."""
+        plugins = self._plugin_entries(ctx)
+        for name in sorted(plugins.keys() & set(super().list_commands(ctx))):
+            warn(
+                f"Plugin command '{name}' from {_distribution(plugins[name])} has the "
+                "name of a built-in command. The built-in command runs."
+            )
+        rows = self._rows(ctx)
         if not rows:
             return
         limit = formatter.width - 6 - max(len(name) for name, _ in rows)
         lines = [
-            (
-                name,
-                item.get_short_help_str(limit)
-                if isinstance(item, click.Command)
-                else f"(plugin: {_distribution(item)})",
-            )
+            (name, item.get_short_help_str(limit) if isinstance(item, click.Command) else item)
             for name, item in rows
         ]
         with formatter.section("Commands"):
             formatter.write_dl(lines)
+
+    def shell_complete(self, ctx: click.Context, incomplete: str) -> list[CompletionItem]:
+        """Complete command names without importing a plugin, then options."""
+        from click.shell_completion import CompletionItem
+
+        results = [
+            CompletionItem(
+                name, help=item.get_short_help_str() if isinstance(item, click.Command) else item
+            )
+            for name, item in self._rows(ctx)
+            if name.startswith(incomplete)
+        ]
+        # click.Command.shell_complete completes the options of this group.
+        results.extend(click.Command.shell_complete(self, ctx, incomplete))
+        return results

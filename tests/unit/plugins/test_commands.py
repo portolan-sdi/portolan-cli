@@ -189,3 +189,52 @@ def test_importing_the_cli_installs_show_warning() -> None:
     )
 
     assert result.stdout.strip() == "True"
+
+
+def test_shell_completion_lists_plugin_command_without_importing_it(
+    installed: list[EntryPoint],
+) -> None:
+    """Tab completion reads plugin names from metadata, like `--help`."""
+    from click.shell_completion import ShellComplete
+
+    installed.append(_command("lazy", "lazy_commands:lazy"))
+    sys.modules.pop(f"{_FIXTURES}.lazy_commands", None)
+
+    completions = ShellComplete(_root(), {}, "portolan", "_PORTOLAN_COMPLETE").get_completions(
+        [], "la"
+    )
+
+    assert [(item.value, item.help) for item in completions] == [
+        ("lazy", "(plugin: portolan-example)")
+    ]
+    assert f"{_FIXTURES}.lazy_commands" not in sys.modules
+
+
+def test_shell_completion_lists_builtin_commands(installed: list[EntryPoint]) -> None:
+    """Built-in names keep their short help in completion."""
+    from click.shell_completion import ShellComplete
+
+    completions = ShellComplete(_root(), {}, "portolan", "_PORTOLAN_COMPLETE").get_completions(
+        [], ""
+    )
+
+    assert [(item.value, item.help) for item in completions] == [
+        ("add", "Built-in add."),
+        ("version", "Version commands."),
+    ]
+
+
+def test_disabled_plugin_command_stops_running_after_a_reset(
+    installed: list[EntryPoint], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A command loaded once does not outlive `PORTOLAN_PLUGINS=none`."""
+    installed.append(_command("example", "commands:group"))
+    root = _root()
+    assert CliRunner().invoke(root, ["example", "hello"]).exit_code == 0
+
+    monkeypatch.setenv(manager.ENV_VAR, "none")
+    manager.reset_plugin_manager()
+    result = CliRunner().invoke(root, ["example", "hello"])
+
+    assert result.exit_code == 2
+    assert "No such command 'example'" in result.output
