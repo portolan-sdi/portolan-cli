@@ -4281,8 +4281,9 @@ def push(
     each skipped asset in the store. Push then sends one HEAD per skipped
     asset. It uploads the asset again when the object is missing or its size
     differs from the manifest. This works with no new version, and it adds
-    no version. The check compares sizes only. It cannot find a wrong object
-    of the same size.
+    no version. With no new version and no --force, push uploads only those
+    assets and keeps the remote versions.json as is. The check compares
+    sizes only. It cannot find a wrong object of the same size.
 
     \b
     Examples:
@@ -4652,7 +4653,6 @@ def pull_command(
                     "failed_collections": all_result.failed_collections,
                     "total_files_downloaded": all_result.total_files_downloaded,
                     "collection_errors": all_result.collection_errors,
-                    **_verify_payload(all_result),
                 }
 
                 if all_result.success:

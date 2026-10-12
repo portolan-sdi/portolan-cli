@@ -111,11 +111,22 @@ that field is missing or names no entry, push uses the last entry.
   its manifest. `push --verify` sends one HEAD per skipped asset (#966). It
   uploads the asset when the object is missing or its size differs from the
   local `size_bytes`. The HEADs run through `AsyncIOExecutor` with the push
-  concurrency. Without the flag, push sends no HEAD. A dry run never sends one.
-- A verify mismatch takes the upload path also with no new version. That path
-  writes the same local `versions.json` last, with the ETag precondition. So
-  the repair adds no version. The size check cannot find a wrong object of the
-  same size.
+  concurrency. Without the flag, push sends no HEAD for a skipped asset. A dry
+  run never sends one.
+- With no new version and no `--force`, a verify mismatch uploads only the
+  flagged assets. Each one has the same sha256 in the local and remote current
+  snapshots, so the local bytes are the bytes the remote manifest records. Push
+  then syncs the non-versioned metadata. It does not write `versions.json`.
+  The local manifest can differ from the remote one with the same version
+  list, for example in `current_version`. A plain push publishes none of that,
+  so a repair must not either. A failed repair upload deletes nothing.
+- With a new version or `--force`, the flagged assets join the normal upload
+  set. That path writes the local `versions.json` last, with the ETag
+  precondition.
+- `_skipped_entries` is the one skip rule. The upload set and the verify set
+  both read it, so they cannot drift. The repair count counts the flagged
+  assets that uploaded, not the flagged set. The size check cannot find a
+  wrong object of the same size.
 
 ## A missing optional derivative warns, a missing data asset raises
 

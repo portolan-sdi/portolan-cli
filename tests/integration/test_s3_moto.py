@@ -461,8 +461,10 @@ class TestPushS3Integration:
         """Issue #966: `push --verify` repairs an object that disagrees with the manifest.
 
         The store holds other bytes of another size under the asset key. The
-        manifests agree, and no local version is new. A plain push skips the
-        asset. `push --verify` must upload it and keep versions.json as is.
+        manifests list the same versions, and no local version is new. A plain
+        push skips the asset. `push --verify` must upload it and must not write
+        versions.json. The remote manifest carries a marker key that the local
+        one lacks, so a write of the local manifest would drop it.
         """
         bucket_name, endpoint_url = s3_bucket
 
@@ -481,7 +483,12 @@ class TestPushS3Integration:
         )
 
         assert push(catalog_with_data, "test-collection", destination).success is True
-        versions_before = client.get_object(Bucket=bucket_name, Key=versions_key)["Body"].read()
+        remote_manifest = json.loads(
+            client.get_object(Bucket=bucket_name, Key=versions_key)["Body"].read()
+        )
+        remote_manifest["x-remote-marker"] = "kept"
+        versions_before = json.dumps(remote_manifest).encode()
+        client.put_object(Bucket=bucket_name, Key=versions_key, Body=versions_before)
 
         # Damage the store the way the #962 bug did. Other bytes, other size.
         client.put_object(Bucket=bucket_name, Key=data_key, Body=b"stale bytes")
@@ -501,8 +508,8 @@ class TestPushS3Integration:
         stored = client.get_object(Bucket=bucket_name, Key=data_key)["Body"].read()
         versions_after = client.get_object(Bucket=bucket_name, Key=versions_key)["Body"].read()
         assert stored == data_file.read_bytes()
-        assert json.loads(versions_after)["current_version"] == "1.0.0"
-        assert json.loads(versions_after) == json.loads(versions_before)
+        assert versions_after == versions_before
+        assert json.loads(versions_after)["x-remote-marker"] == "kept"
 
         # The store now agrees, so a second verify uploads no asset.
         again = push(catalog_with_data, "test-collection", destination, verify=True)
