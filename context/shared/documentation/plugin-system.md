@@ -129,10 +129,12 @@ render fields, nodata defaults, and the item extensions. `describe_collection`
 adds the table extension. `inspect` answers `portolan info`. Core code uses
 the family only to group files in `scan` and to label them.
 
-The handler writes the thumbnail when it converts. A reference catalog built
-before and after the merge differs only in thumbnails: `add` now writes one for
-each converted vector file, as `check --fix` did. `portolan check` reports one
-warning fewer on that catalog.
+The COG handler writes the raster thumbnail when it converts, because each
+raster is an item. The GeoParquet handler writes no thumbnail. A collection
+can hold thousands of vector files, and `add` writes one thumbnail for the
+collection. `check --fix` therefore no longer writes a thumbnail next to a
+converted vector file. A reference catalog built before and after the merge
+differs only in timestamps and in those `check --fix` thumbnails.
 
 `--force` without `--reconvert` keeps an existing output for every handler. The
 handler converts it again only when it reads that format. `--reconvert` on a
