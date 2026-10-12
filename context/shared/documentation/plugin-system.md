@@ -52,7 +52,8 @@ warning, without the source path that Python adds.
 plugins follow in pluggy call order: `tryfirst`, then the plugin registered
 last, then `trylast`. Pluggy itself calls a normal outside plugin before the
 built-ins, because it calls the plugin registered last first. The manager
-therefore ranks by plugin name and does not use pluggy order. The deprecated
+therefore puts the built-ins first and uses pluggy order only inside the
+outside plugins. The deprecated
 `legacy_backends` module comes after every outside plugin. A hook wrapper
 (`wrapper=True` or `hookwrapper=True`) produces a `PluginWarning` and is
 skipped, because a plain call of a wrapper only creates a generator.
