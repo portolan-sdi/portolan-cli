@@ -8,15 +8,13 @@ consistent behavior where commands either all succeed or all fail.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def setup_managed_catalog(path: Path) -> None:
@@ -337,16 +335,21 @@ class TestGitStyleCommandScoping:
         nested_dir = tmp_path / "collection" / "item"
         nested_dir.mkdir(parents=True)
 
-        # Run pull from nested directory - should find catalog but fail for other reason
-        # (invalid remote URL). The key test is that it DOESN'T fail with
-        # "not a portolan catalog" error.
-        with runner.isolated_filesystem(temp_dir=nested_dir):
+        # The library pull is replaced, so the command never contacts
+        # s3://dummy/bucket. Unmocked, the test waited 15 s on the network.
+        with (
+            runner.isolated_filesystem(temp_dir=nested_dir),
+            patch("portolan_cli.sync.pull.pull", side_effect=ValueError("stub remote")) as pull_fn,
+        ):
             result = runner.invoke(cli, ["pull", "s3://dummy/bucket", "--collection", "test"])
 
         # Should NOT fail with "not a portolan catalog" - proves it found the catalog
         assert "not a portolan catalog" not in result.output.lower(), (
             f"pull should find catalog from subdirectory: {result.output}"
         )
+        # The command passed the catalog root it found, not the subdirectory.
+        pull_fn.assert_called_once()
+        assert Path(pull_fn.call_args.kwargs["local_root"]).resolve() == tmp_path.resolve()
 
     @pytest.mark.integration
     def test_pull_fails_outside_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
