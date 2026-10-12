@@ -140,19 +140,34 @@ no directory listing exists. `validation/` uses rashid's own graph.
 
 ## Format detection and conversion routing (formats.py, convert.py)
 
-Two enums in `formats.py`: `CloudNativeStatus` (`CLOUD_NATIVE` / `CONVERTIBLE` /
-`UNSUPPORTED`) and `FormatType` (`VECTOR` routes to geoparquet-io, `RASTER`
-routes to rio-cogeo, `UNKNOWN`). The extension vocabulary (which set each
-extension belongs to, plus its media type / role / display name) is
-single-sourced in `extension_registry.py` and *derived* into `format_types.py`
-(the dependency-free extension detection, re-exported by `formats.py`), `formats.py`,
-`constants.py`, `scan_classify.py`, and `add.py` — edit the
-registry rows, not the frozensets. `CLOUD_NATIVE_EXTENSIONS` is the derived source of truth for "already
+`CloudNativeStatus` in `formats.py` is `CLOUD_NATIVE` / `CONVERTIBLE` /
+`UNSUPPORTED`. A format **family** is a plain string: `vector` routes to
+geoparquet-io and `raster` to rio-cogeo (`format_families.VECTOR`/`RASTER`).
+A plugin format brings its own family string, so never treat the families as a
+closed set. There is no format enum any more (#947).
+
+A **format handler** (`plugins/formats.py`) converts one format and reads its
+metadata. `handler_for(path, catalog_root)` picks one: a `conversion.handlers`
+pin, then a plugin handler, then a built-in handler from
+`plugins/builtin/formats.py` (GeoParquet, COG, PMTiles, FlatGeobuf).
+`prepare_item` and `convert_file` both ask the registry. A built-in handler
+keeps the existing code path in `preparation.py` / `convert.py`; a plugin
+handler goes through its own `convert` and `read_metadata`. The collection
+depth in `collection_id.py` comes from the handler's `asset_level`.
+
+`format_families.py` is the dependency-free half: built-in extension routing
+and the GeoJSON sniff, for the read modules that must not load a plugin.
+`formats.detect_format` adds the plugin handlers. The extension vocabulary
+(which set each extension belongs to, plus its media type / role / display
+name) is single-sourced in `extension_registry.py` and *derived* into
+`format_families.py`, `formats.py`, `constants.py`, `scan/classify.py`, and
+`add.py`. Edit the registry rows, not the frozensets.
+`CLOUD_NATIVE_EXTENSIONS` is the derived source of truth for "already
 cloud-native, skip conversion" (`.fgb`, `.pmtiles`; `.parquet`/`.tif` need
-content inspection; `.zarr`/`.copc.laz` are cloud-native via dedicated branches).
-`convert.py` orchestrates only: `CLOUD_NATIVE` -> SKIPPED, `UNSUPPORTED` -> returned with no error
-(accept with a warning), else route by `detect_format` to
-geoparquet-io or rio-cogeo. Never put geometry or raster math in our layer.
+content inspection; `.zarr`/`.copc.laz` are cloud-native via dedicated
+branches). `convert.py` orchestrates only: `CLOUD_NATIVE` -> SKIPPED,
+`UNSUPPORTED` -> returned with no error (accept with a warning), else route
+through the handler. Never put geometry or raster math in our layer.
 
 ## Source-of-truth model
 

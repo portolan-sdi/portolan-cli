@@ -87,6 +87,36 @@ A built-in name always wins:
 - A `portolan_backends` result that is not a mapping is ignored with a
   `PluginWarning`. `get_backend("file")` still resolves.
 
+## Format handlers
+
+Format handlers follow a different rule. A plugin handler comes before the
+built-in handler for the same extension. A plugin can therefore replace the
+COG conversion for `.tif`. `plugins/formats.py` `select_handler` applies this
+order:
+
+1. A pin in `.portolan/config.yaml`, for example `conversion.handlers: {.tif: cog}`.
+   A pin to a missing name raises `UnknownFormatHandlerError`.
+2. A plugin handler whose `extensions` hold the extension and whose `claims`
+   returns True. Two such handlers raise `AmbiguousFormatError`, which names
+   the pin to add.
+3. A built-in handler that claims the file.
+
+`FormatType` is gone. A format family is a plain string, because a plugin
+brings its own. The built-in families are `vector` and `raster`.
+
+A file that a plugin handler claims takes the plugin path. `prepare_item`
+calls the handler's `convert` and `read_metadata`, and the rest of `add` runs
+as for a built-in format of the same family and `asset_level`.
+`convert_file` returns the handler's output. `add`, `check --geo-assets`,
+`scan`, and `get_cloud_native_status` accept the extensions that plugin
+handlers register.
+
+The built-in handlers keep the existing conversion code: `preparation.py` for
+`add`, and `convert._convert_vector`/`_convert_raster` for `check --fix`. The
+two paths still differ. Only the `add` path rewrites a GeoParquet in place, and
+only the `check --fix` path partitions. A reference catalog built before and
+after the handler change showed no difference apart from timestamps.
+
 ## Enrichment runs on the files
 
 `portolan_enrich_item` and `portolan_enrich_collection` receive the STAC JSON

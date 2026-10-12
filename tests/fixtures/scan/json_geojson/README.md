@@ -20,5 +20,5 @@ Per [Issue #256](https://github.com/portolan-sdi/portolan-cli/issues/256), GeoJS
 are often saved with `.json` extension rather than `.geojson`. Portolan should detect
 GeoJSON content by inspecting the file, not just relying on extension.
 
-The detection uses `formats._detect_json_type()` which reads the first 8KB and looks
+The detection uses `format_families.is_geojson()`, which reads the first 8KB and looks
 for GeoJSON type tokens like `"type":"FeatureCollection"`.

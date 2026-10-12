@@ -67,6 +67,14 @@ before you change the plugin code.
   `builtin:legacy_backends` comes last. `tryfirst` and `trylast` cannot move
   an outside plugin before a built-in.
 
+## Format handlers
+
+- A format family is a string. Never add a format enum, and never treat
+  `vector` and `raster` as the only families.
+- Pick a handler with `plugins.formats.handler_for`. Do not route on a file
+  extension in new code.
+- A read module uses `format_families`, never the plugin registry.
+
 ## Example plugin
 
 - `tests/plugins/portolan_example` uses each extension point. When you add a
