@@ -213,6 +213,9 @@ class TestCheckFixDryRun:
 # =============================================================================
 
 
+# check --fix converts two files in spawned workers. A worker draws the
+# thumbnail, and the no_basemap_tiles patch does not reach it.
+@pytest.mark.refused_hosts("a.basemaps.cartocdn.com")
 @pytest.mark.integration
 @pytest.mark.skipif(
     sys.platform == "win32",

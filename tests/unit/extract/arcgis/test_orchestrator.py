@@ -121,6 +121,7 @@ def mock_gpio() -> MagicMock:
 # =============================================================================
 
 
+@pytest.mark.usefixtures("no_extract_side_requests")
 class TestExtractArcgisCatalog:
     """Tests for extract_arcgis_catalog function."""
 
@@ -373,6 +374,7 @@ class TestExtractionProgress:
 # =============================================================================
 
 
+@pytest.mark.usefixtures("no_extract_side_requests")
 class TestOrchestratorIntegration:
     """Integration tests for orchestrator with mocked external dependencies."""
 
@@ -689,6 +691,7 @@ class TestServicesRootDiscoveryResult:
         assert d["total_services"] == 2
 
 
+@pytest.mark.usefixtures("no_extract_side_requests")
 class TestServicesRootExtraction:
     """Tests for services root extraction (full extraction mode)."""
 

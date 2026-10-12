@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = [pytest.mark.unit]
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("no_extract_side_requests")]
 
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"

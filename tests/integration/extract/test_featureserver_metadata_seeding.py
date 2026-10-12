@@ -52,6 +52,7 @@ def _create_extraction_mock(
     return (100, 1024, 1.5)
 
 
+@pytest.mark.usefixtures("no_extract_side_requests")
 class TestFeatureServerMetadataSeeding:
     """Integration tests for auto-seeding metadata.yaml from FeatureServer extraction."""
 

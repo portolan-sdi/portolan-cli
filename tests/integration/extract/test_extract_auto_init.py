@@ -22,7 +22,7 @@ from portolan_cli.extract.arcgis.report import (
 )
 from portolan_cli.licensing import ResolvedLicense
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_extract_side_requests")]
 
 
 # Path to real test fixtures

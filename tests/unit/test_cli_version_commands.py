@@ -871,8 +871,11 @@ class TestTryBackendPull:
         """pull falls through to file-based pull when backend is 'file'."""
         catalog_root = _make_file_catalog(tmp_path)
 
-        with patch("portolan_cli.config.get_setting", return_value=None):
-            # Without a real remote the pull will fail, but not because of backend routing
+        # The file pull is replaced, so the command never contacts GCS.
+        with (
+            patch("portolan_cli.config.get_setting", return_value=None),
+            patch("portolan_cli.sync.pull.pull", side_effect=ValueError("stub remote")) as pull_fn,
+        ):
             result = runner.invoke(
                 cli,
                 [
@@ -887,6 +890,8 @@ class TestTryBackendPull:
 
         # Backend routing should NOT produce a "not supported" message
         assert "not supported" not in result.output.lower()
+        pull_fn.assert_called_once()
+        assert pull_fn.call_args.kwargs["remote_url"] == "gs://some-bucket/catalog"
 
     @pytest.mark.unit
     def test_backend_without_pull_method_falls_through(
@@ -902,6 +907,7 @@ class TestTryBackendPull:
         with (
             patch("portolan_cli.config.get_setting", return_value="custom"),
             patch("portolan_cli.backends.get_backend", return_value=mock_backend),
+            patch("portolan_cli.sync.pull.pull", side_effect=ValueError("stub remote")) as pull_fn,
         ):
             runner.invoke(
                 cli,
@@ -915,8 +921,8 @@ class TestTryBackendPull:
                 ],
             )
 
-        # Should not have called mock's pull method
-        assert not hasattr(mock_backend, "pull") or not mock_backend.pull.called
+        # The command fell through to the file pull.
+        pull_fn.assert_called_once()
 
     @pytest.mark.unit
     def test_backend_pull_method_called(self, runner: CliRunner, tmp_path: Path) -> None:

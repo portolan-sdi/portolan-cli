@@ -22,7 +22,7 @@ from portolan_cli.extract.wfs.orchestrator import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("no_extract_side_requests")]
 
 
 def make_discovery_result(

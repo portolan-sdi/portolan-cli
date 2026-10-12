@@ -327,7 +327,9 @@ def _validate(root: Path, **kwargs: Any) -> Any:
     resolves an absolute https href over the wire, so a catalog that ever grows a
     remote asset would silently start making requests. This one resolves inside
     the catalog tree and nowhere else. ``live`` stays off; it is the only pass
-    that probes hosts by design.
+    that probes hosts by design. The extension pass still fetches a registered
+    extension at a version rashid does not pin. A test that declares one stubs
+    ``rashid.extensions._fetch_schema``.
     """
     return validate(
         root,
@@ -877,13 +879,25 @@ class TestTheGateCatchesTheDriftItWasBuiltFor:
         shutil.copytree(generated_catalog, root)
         return root
 
-    def test_a_stale_extension_version_fails(self, damaged: Path) -> None:
+    def test_a_stale_extension_version_fails(
+        self, damaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """The #654 drift itself: raster pinned a major version behind.
 
         This is the case an error-only gate could not see. PTL-CNF-004 reports it
         as a warning, deliberately — a catalog published before the registry moved
         is behind, not broken — so the count assertion is what catches it.
+
+        rashid fetches the schema of a registered extension at a version it does
+        not pin. The stub makes that fetch fail, so the extension pass reports
+        PTL-EXT-000 on every machine and the test stays offline.
         """
+        import rashid.extensions
+
+        def offline(uri: str) -> dict[str, Any]:
+            raise OSError(f"offline test: {uri}")
+
+        monkeypatch.setattr(rashid.extensions, "_fetch_schema", offline)
         item_path = damaged / "imagery" / "scene-a" / "scene-a.json"
         item = _load(item_path)
         item["stac_extensions"] = [
@@ -897,6 +911,7 @@ class TestTheGateCatchesTheDriftItWasBuiltFor:
         advisories = _rule_counts(damaged, Severity.WARNING) + _rule_counts(damaged, Severity.INFO)
 
         assert advisories["PTL-CNF-004"] == 1
+        assert advisories["PTL-EXT-000"] == 1
         assert dict(advisories) != EXPECTED_ADVISORIES
 
     def test_a_stale_extension_version_also_fails_the_schema(self, damaged: Path) -> None:

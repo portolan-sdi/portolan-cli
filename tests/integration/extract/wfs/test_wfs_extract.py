@@ -34,7 +34,7 @@ from portolan_cli.extract.wfs.orchestrator import (
 )
 from portolan_cli.licensing import ResolvedLicense
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_extract_side_requests")]
 
 FIXTURES_DIR = Path(__file__).parent.parent.parent.parent / "fixtures"
 

@@ -27,9 +27,13 @@ def _isolate_pyiceberg_config(tmp_path, monkeypatch):
     that catalog instead of the temporary SQLite one. The failure is remote and
     credential-dependent, so it reproduces for one person and not for CI.
 
-    Pointing both ``PYICEBERG_HOME`` and the home directory at an empty
-    temporary directory leaves only the current directory, which is the
-    repository and carries no such file.
+    The fixture puts a stub ``.pyiceberg.yaml`` in ``PYICEBERG_HOME``, so the
+    search stops there. PyIceberg skips a file with no keys, so the stub holds
+    one key that PyIceberg does not read.
+
+    The home directory stays real. DuckDB keeps its extensions in
+    ``~/.duckdb``. An empty home directory made geoparquet-io download the
+    77 MB spatial extension again in each test.
 
     PyIceberg also builds a catalog from ``PYICEBERG_CATALOG__{NAME}__{KEY}``
     environment variables, and it reads them whatever the home directory holds.
@@ -38,9 +42,8 @@ def _isolate_pyiceberg_config(tmp_path, monkeypatch):
     """
     home = tmp_path / "pyiceberg-home"
     home.mkdir()
+    (home / ".pyiceberg.yaml").write_text("portolan-test-isolation: true\n", encoding="utf-8")
     monkeypatch.setenv("PYICEBERG_HOME", str(home))
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))
     for name in [n for n in os.environ if n.startswith("PYICEBERG_CATALOG__")]:
         monkeypatch.delenv(name)
 
