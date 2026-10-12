@@ -172,10 +172,15 @@ def test_the_real_graph_selects_importers_and_skips_the_rest() -> None:
     """On this repository, a json_output change reaches its test, not the push tests.
 
     push.py does not import json_output, directly or through another module.
+
+    The base ref does not exist. CI checks out a single commit with no
+    ``origin/main``, and only a deleted module needs the merge base.
     """
     repo = Path(__file__).resolve().parents[2]
 
-    selection = at.select_for_repo(repo, [("M", "portolan_cli/json_output.py")])
+    selection = at.select_for_repo(
+        repo, [("M", "portolan_cli/json_output.py")], base="refs/heads/no-such-base"
+    )
 
     assert selection.full is False
     assert "tests/unit/test_json_output.py" in selection.targets

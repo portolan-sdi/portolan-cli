@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import functools
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -215,11 +216,15 @@ def _test_index(repo: Path, known: set[str]) -> tuple[dict[str, set[str]], dict[
 
 
 def _deleted_importers_at(repo: Path, base: str) -> Callable[[str], set[str]]:
-    merge_base = _git(repo, "merge-base", base, "HEAD").strip()
+    # Only a deleted module needs the merge base. CI checks out a single commit
+    # with no base ref, so the lookup waits until a deletion asks for it.
+    @functools.cache
+    def merge_base() -> str:
+        return _git(repo, "merge-base", base, "HEAD").strip()
 
     def find(module: str) -> set[str]:
         result = subprocess.run(
-            ["git", "grep", "-l", "-w", "-F", module, merge_base, "--", PACKAGE, TESTS_DIR],
+            ["git", "grep", "-l", "-w", "-F", module, merge_base(), "--", PACKAGE, TESTS_DIR],
             cwd=repo,
             capture_output=True,
             text=True,
