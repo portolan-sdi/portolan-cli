@@ -238,3 +238,17 @@ def test_disabled_plugin_command_stops_running_after_a_reset(
 
     assert result.exit_code == 2
     assert "No such command 'example'" in result.output
+
+
+def test_shipped_commands_leave_out_outside_plugins(installed: list[EntryPoint]) -> None:
+    """The generated reference documents portolan-cli's own commands only."""
+    installed.append(_command("version.rollback", "commands:rollback", dist="portolan-cli"))
+    installed.append(_command("version.extra", "commands:rollback"))
+    root = _root()
+    version = root.commands["version"]
+    assert isinstance(version, PluginGroup)
+    ctx = click.Context(version, info_name="version", parent=click.Context(root))
+
+    shipped = version.shipped_commands(ctx)
+
+    assert sorted(shipped) == ["list", "rollback"]

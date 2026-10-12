@@ -24,6 +24,7 @@ from portolan_cli.conversion_config import (
     VALID_SPATIAL_INDEXES,
     VectorSettings,
 )
+from portolan_cli.plugins.commands import PluginGroup
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -87,10 +88,14 @@ def _walk(
     if not isinstance(command, click.Group):
         return
 
-    # Read `commands` directly rather than `Group.list_commands(ctx)`. An
-    # override of that method can run code, and this generator only reads.
-    for name in sorted(command.commands):
-        yield from _walk(command.commands[name], parent_ctx=ctx, prog_name=name, depth=depth + 1)
+    # Read the shipped commands rather than `Group.list_commands(ctx)`, which
+    # also lists commands from installed plugins. The reference documents what
+    # portolan-cli ships, including the commands it declares as entry points.
+    subcommands = (
+        command.shipped_commands(ctx) if isinstance(command, PluginGroup) else command.commands
+    )
+    for name in sorted(subcommands):
+        yield from _walk(subcommands[name], parent_ctx=ctx, prog_name=name, depth=depth + 1)
 
 
 def _command_names() -> list[str]:

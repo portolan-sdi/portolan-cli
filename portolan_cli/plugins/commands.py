@@ -90,6 +90,27 @@ class PluginGroup(click.Group):
             self._loaded[ep] = self._load(cmd_name, ep)
         return self._loaded[ep]
 
+    def shipped_commands(self, ctx: click.Context) -> dict[str, click.Command]:
+        """Return the commands portolan-cli ships in this group.
+
+        The result holds the built-in commands and the entry point commands
+        that portolan-cli declares. Commands from outside packages are left
+        out, so a generated reference does not depend on installed plugins.
+
+        Args:
+            ctx: Context of this group.
+
+        Returns:
+            Command name to command.
+        """
+        shipped = dict(self.commands)
+        for name, ep in self._plugin_entries(ctx).items():
+            if name not in shipped and is_builtin(ep):
+                command = self.get_command(ctx, name)
+                if command is not None:
+                    shipped[name] = command
+        return shipped
+
     @staticmethod
     def _load(cmd_name: str, ep: EntryPoint) -> click.Command | None:
         try:
