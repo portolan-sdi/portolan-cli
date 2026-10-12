@@ -824,6 +824,27 @@ def no_extract_side_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gpio_wfs, "negotiate_wfs_version", lambda *a, **k: ("1.1.0", None))
 
 
+@pytest.fixture(autouse=True)
+def isolate_installed_plugins(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    """Load no outside plugin, except in tests marked ``plugin`` (#947).
+
+    The plugin docs install the example plugin into the project environment.
+    It then stays installed, and its hooks write fields into every STAC file
+    that `add` produces. Without this fixture a developer machine and CI run
+    different tests. The ``installed`` and ``register_plugin`` fixtures clear
+    the variable again for the tests that control the plugin set.
+    """
+    from portolan_cli.plugins import manager
+
+    if request.node.get_closest_marker("plugin") is None:
+        monkeypatch.setenv(manager.ENV_VAR, "none")
+    manager.reset_plugin_manager()
+    yield
+    manager.reset_plugin_manager()
+
+
 @pytest.fixture
 def register_plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., None]]:
     """Register plugin objects on a fresh plugin manager (#947).
