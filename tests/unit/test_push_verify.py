@@ -99,6 +99,14 @@ def _counting_head(
     return head
 
 
+def _assert_one_repair(result: PushResult, store: MemoryStore, expected: bytes) -> None:
+    """Assert a push that verified, repaired a.parquet, and pushed no version."""
+    assert result.success is True, result.errors
+    assert result.versions_pushed == 0
+    assert result.verify == VerifyReport(checked=1, mismatched=1)
+    assert bytes(obs.get(store, f"{PREFIX}/test/a.parquet").bytes()) == expected
+
+
 # =============================================================================
 # The verify decision
 # =============================================================================
@@ -295,10 +303,7 @@ class TestPushAsyncVerify:
 
         result = self._push(root, store, verify=True)
 
-        assert result.success is True, result.errors
-        assert result.versions_pushed == 0
-        assert result.verify == VerifyReport(checked=1, mismatched=1)
-        assert bytes(obs.get(store, f"{PREFIX}/test/a.parquet").bytes()) == good
+        _assert_one_repair(result, store, good)
         remote = json.loads(bytes(obs.get(store, f"{PREFIX}/test/versions.json").bytes()))
         assert remote["current_version"] == "1.0.5"
         assert remote["versions"] == data["versions"]
@@ -383,6 +388,181 @@ class TestPushAsyncVerify:
             self._push(root, store, verify=True)
 
         assert calls == []
+
+
+class TestRepairOnlyPath:
+    """A repair without a new version uploads the flagged assets only.
+
+    Push then keeps the remote versions.json as is. The local manifest can
+    differ from the remote manifest with the same version list. A plain push
+    publishes none of that difference, so a repair must not publish it either.
+    """
+
+    @staticmethod
+    def _push(root: Path, store: MemoryStore, **kwargs: Any) -> PushResult:
+        return TestPushAsyncVerify._push(root, store, **kwargs)
+
+    @pytest.mark.unit
+    def test_repair_keeps_the_remote_manifest_and_skips_unflagged_assets(
+        self, tmp_path: Path
+    ) -> None:
+        """Reviewer probe. Local current is 1.0.0, remote current is 1.0.1.
+
+        Both sides list the same versions. The store has no a.parquet. The
+        local b.parquet differs from the remote current b.parquet, but verify
+        does not flag it. Push must upload a.parquet only, and it must not
+        write versions.json.
+        """
+        a = b"a bytes"
+        b_one, b_two = b"b-one", b"b-two-longer"
+        entries = (
+            _snapshot("1.0.0", {"a.parquet": a, "b.parquet": b_one}),
+            _snapshot("1.0.1", {"a.parquet": a, "b.parquet": b_two}),
+        )
+        local = _versions("1.0.0", *entries)
+        remote = _versions("1.0.1", *entries)
+        root = tmp_path / "catalog"
+        _write_catalog(root, local, {"a.parquet": a, "b.parquet": b_one})
+        store = MemoryStore()
+        remote_bytes = json.dumps(remote).encode()
+        obs.put(store, f"{PREFIX}/test/versions.json", remote_bytes)
+        obs.put(store, f"{PREFIX}/test/b.parquet", b_two)
+
+        result = self._push(root, store, verify=True)
+
+        _assert_one_repair(result, store, a)
+        assert bytes(obs.get(store, f"{PREFIX}/test/b.parquet").bytes()) == b_two
+        stored_manifest = bytes(obs.get(store, f"{PREFIX}/test/versions.json").bytes())
+        assert stored_manifest == remote_bytes
+        assert json.loads(stored_manifest)["current_version"] == "1.0.1"
+
+    @pytest.mark.unit
+    def test_repair_does_not_write_versions_json(self, tmp_path: Path) -> None:
+        """The repair-only path never calls the manifest write."""
+        root, store, good, _ = TestPushAsyncVerify._seeded(tmp_path, b"stale bytes of 1.0.4")
+
+        with patch("portolan_cli.sync.push._upload_versions_json_async") as mock_manifest:
+            result = self._push(root, store, verify=True)
+
+        assert result.success is True, result.errors
+        mock_manifest.assert_not_called()
+        assert bytes(obs.get(store, f"{PREFIX}/test/a.parquet").bytes()) == good
+
+    @pytest.mark.unit
+    def test_repair_upload_failure_fails_and_deletes_nothing(self, tmp_path: Path) -> None:
+        """A failed repair upload reports failure, and push deletes no key."""
+        root, store, _, _ = TestPushAsyncVerify._seeded(tmp_path, b"stale bytes of 1.0.4")
+
+        async def failed_upload(*args: Any, **kwargs: Any) -> Any:
+            from portolan_cli.sync.push import UploadMetrics
+
+            return 0, ["Failed to upload test/a.parquet: boom"], [], UploadMetrics()
+
+        with (
+            patch("portolan_cli.sync.push._upload_assets_async", failed_upload),
+            patch("portolan_cli.sync.push._cleanup_uploaded_assets") as mock_cleanup,
+            patch("portolan_cli.sync.push._upload_versions_json_async") as mock_manifest,
+        ):
+            result = self._push(root, store, verify=True)
+
+        assert result.success is False
+        assert result.errors == ["Failed to upload test/a.parquet: boom"]
+        assert result.verify == VerifyReport(checked=1, mismatched=1)
+        mock_cleanup.assert_not_called()
+        mock_manifest.assert_not_called()
+        assert bytes(obs.get(store, f"{PREFIX}/test/a.parquet").bytes()) == (
+            b"stale bytes of 1.0.4"
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("force", [False, True], ids=["repair-only", "force"])
+    def test_repaired_count_excludes_a_skipped_optional_derivative(
+        self, tmp_path: Path, force: bool, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A flagged optional derivative that is missing on disk does not count as repaired."""
+        a = b"a bytes"
+        tiles = b"pmtiles bytes"
+        data = _versions("1.0.0", _snapshot("1.0.0", {"a.parquet": a, "a.pmtiles": tiles}))
+        root = tmp_path / "catalog"
+        _write_catalog(root, data, {"a.parquet": a})
+        store = MemoryStore()
+        obs.put(store, f"{PREFIX}/test/versions.json", json.dumps(data).encode())
+
+        result = self._push(root, store, verify=True, force=force)
+
+        assert result.success is True, result.errors
+        assert result.verify == VerifyReport(checked=2, mismatched=2)
+        assert bytes(obs.get(store, f"{PREFIX}/test/a.parquet").bytes()) == a
+        out = capsys.readouterr().out
+        assert "Repaired 1 asset(s) (no new versions)" in out
+        assert "Repaired 2 asset(s)" not in out
+
+
+class TestSkipRuleHasOneSource:
+    """Verify and the upload rule read the same per-href view of the local snapshot."""
+
+    @staticmethod
+    def _duplicate_href(first: bytes, second: bytes) -> dict[str, Any]:
+        """A local snapshot with two entries, x and y, for the same href."""
+        snap = _snapshot("1.0.0", {"x": first, "y": second})
+        for entry in snap["assets"].values():
+            entry["href"] = "test/a.parquet"
+        return _versions("1.0.0", snap)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("order", ["remote-first", "remote-last"])
+    def test_duplicate_href_is_either_verified_or_uploaded(
+        self, tmp_path: Path, order: str
+    ) -> None:
+        """An href is in the verify set exactly when the upload rule skips it."""
+        from portolan_cli.sync.push import _get_assets_to_upload, _skipped_asset_sizes
+
+        aaa, bbb = b"AAA", b"BBB-longer"
+        local = (
+            self._duplicate_href(aaa, bbb)
+            if order == "remote-first"
+            else self._duplicate_href(bbb, aaa)
+        )
+        remote = _versions("1.0.0", _snapshot("1.0.0", {"a.parquet": aaa}))
+        (tmp_path / "test").mkdir()
+        a_file = tmp_path / "test" / "a.parquet"
+        a_file.write_bytes(bbb)
+
+        verify_set = _skipped_asset_sizes(local, remote)
+        uploads = _get_assets_to_upload(tmp_path, local, remote)
+
+        if order == "remote-first":
+            # The last entry (y, BBB) wins. It differs, so it uploads and gets no HEAD.
+            assert verify_set == {}
+            assert uploads == [a_file.resolve()]
+        else:
+            # The last entry (y, AAA) wins. It matches, so it skips and gets a HEAD.
+            assert verify_set == {"test/a.parquet": len(aaa)}
+            assert uploads == []
+
+
+class TestPushAllVerifyCounts:
+    """A catalog-wide push sums the verify counts of every collection that verified."""
+
+    @pytest.mark.unit
+    def test_failed_collection_after_verify_adds_its_counts(self) -> None:
+        """A collection that verified and then failed its upload still adds its counts."""
+        from portolan_cli.sync.push import _push_all_process_result
+
+        stats: dict[str, Any] = {"failed": 0, "errors": {}, "verify": VerifyReport()}
+        failed = PushResult(
+            success=False,
+            files_uploaded=0,
+            versions_pushed=0,
+            errors=["boom"],
+            verify=VerifyReport(checked=4, mismatched=2),
+        )
+
+        _push_all_process_result("test", failed, None, 1, 1, stats)
+
+        assert stats["failed"] == 1
+        assert stats["errors"] == {"test": ["boom"]}
+        assert stats["verify"] == VerifyReport(checked=4, mismatched=2)
 
 
 class TestDryRunVerifyNetworkIsolation:

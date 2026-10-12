@@ -1268,8 +1268,9 @@ Push does not read the object for that decision. Use --verify to check
 each skipped asset in the store. Push then sends one HEAD per skipped
 asset. It uploads the asset again when the object is missing or its size
 differs from the manifest. This works with no new version, and it adds
-no version. The check compares sizes only. It cannot find a wrong object
-of the same size.
+no version. With no new version and no --force, push uploads only those
+assets and keeps the remote versions.json as is. The check compares
+sizes only. It cannot find a wrong object of the same size.
 
 ```text
 Examples:

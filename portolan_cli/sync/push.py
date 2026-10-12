@@ -499,6 +499,28 @@ def _current_snapshot(versions_data: dict[str, Any] | None) -> dict[str, Any] | 
     return next((v for v in versions if v.get("version") == current_name), versions[-1])
 
 
+def _snapshot_entries(snapshot: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Map each href in a version snapshot to its asset entry.
+
+    This is the one per-href view of a snapshot. A malformed snapshot can
+    record two entries for the same href. The last entry then wins.
+
+    Args:
+        snapshot: One versions.json entry, or None.
+
+    Returns:
+        A dict from href to asset entry. The dict is empty when ``snapshot``
+        is None.
+    """
+    if snapshot is None:
+        return {}
+
+    entries: dict[str, dict[str, Any]] = {}
+    for asset_name, asset_data in snapshot.get("assets", {}).items():
+        entries[asset_data.get("href", asset_name)] = asset_data
+    return entries
+
+
 def _snapshot_hashes(snapshot: dict[str, Any] | None) -> dict[str, str | None]:
     """Map each href in a version snapshot to its sha256.
 
@@ -509,13 +531,7 @@ def _snapshot_hashes(snapshot: dict[str, Any] | None) -> dict[str, str | None]:
         A dict from href to sha256. A malformed asset without a sha256 maps
         to None. The dict is empty when ``snapshot`` is None.
     """
-    if snapshot is None:
-        return {}
-
-    hashes: dict[str, str | None] = {}
-    for asset_name, asset_data in snapshot.get("assets", {}).items():
-        hashes[asset_data.get("href", asset_name)] = asset_data.get("sha256")
-    return hashes
+    return {href: entry.get("sha256") for href, entry in _snapshot_entries(snapshot).items()}
 
 
 def _matches_remote(local_sha256: str | None, remote_sha256: str | None) -> bool:
@@ -525,6 +541,31 @@ def _matches_remote(local_sha256: str | None, remote_sha256: str | None) -> bool
     sha256 cannot prove a match.
     """
     return bool(local_sha256) and remote_sha256 == local_sha256
+
+
+def _skipped_entries(
+    versions_data: dict[str, Any],
+    remote_versions_data: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """Return the local current entries that the snapshot diff skips.
+
+    This is the one skip rule. ``_get_assets_to_upload`` skips exactly these
+    hrefs, and ``push --verify`` sends a HEAD for exactly these hrefs. Both
+    read the per-href view of ``_snapshot_entries``, so they cannot drift.
+
+    Args:
+        versions_data: Local versions.json data.
+        remote_versions_data: Remote versions.json data, or None.
+
+    Returns:
+        A dict from href to local asset entry, in local snapshot order.
+    """
+    remote_assets = _snapshot_hashes(_current_snapshot(remote_versions_data))
+    return {
+        href: entry
+        for href, entry in _snapshot_entries(_current_snapshot(versions_data)).items()
+        if _matches_remote(entry.get("sha256"), remote_assets.get(href))
+    }
 
 
 def _skipped_asset_sizes(
@@ -544,15 +585,10 @@ def _skipped_asset_sizes(
         A dict from href to size in bytes. The size is None when the snapshot
         records no integer ``size_bytes``.
     """
-    remote_assets = _snapshot_hashes(_current_snapshot(remote_versions_data))
-    local_current = _current_snapshot(versions_data) or {}
-
     sizes: dict[str, int | None] = {}
-    for asset_name, asset_data in local_current.get("assets", {}).items():
-        href = asset_data.get("href", asset_name)
-        if _matches_remote(asset_data.get("sha256"), remote_assets.get(href)):
-            size = asset_data.get("size_bytes")
-            sizes[href] = size if isinstance(size, int) else None
+    for href, entry in _skipped_entries(versions_data, remote_versions_data).items():
+        size = entry.get("size_bytes")
+        sizes[href] = size if isinstance(size, int) else None
     return sizes
 
 
@@ -624,6 +660,39 @@ async def _verify_skipped_assets_async(
     return mismatched, report
 
 
+def _resolve_local_asset(catalog_root: Path, href: str, version_str: str | None) -> Path | None:
+    """Return the local file of an asset to upload, or None to skip it.
+
+    A recorded asset that is absent from disk raises. One exception applies.
+    An optional derivative only warns, and the caller skips it (Issue #735).
+
+    Args:
+        catalog_root: Path to catalog root.
+        href: Catalog-root-relative asset href.
+        version_str: Version that records the asset, for the messages.
+
+    Returns:
+        The resolved absolute path, or None for an absent optional derivative.
+
+    Raises:
+        FileNotFoundError: If a ``data`` or ``source`` asset file is absent.
+    """
+    asset_path = catalog_root / href
+    if asset_path.exists():
+        return asset_path.resolve()
+    # The spec calls four roles optional derivatives, namely `visual`,
+    # `thumbnail`, `style` and `collection-mirror`. See portolan-spec
+    # specs/portolan/core.md, sections Assets and Single-File Collections.
+    # Portolan rebuilds each one from data the catalog still holds. An absent
+    # one must not fail a sound push (Issue #735). Conformance gaps belong to
+    # `portolan check`. Roles `data` and `source` stay a hard error, because
+    # nothing can reconstruct them.
+    if is_optional_derivative(catalog_root, href):
+        warn(f"Optional asset not found, skipped: {href} (version {version_str})")
+        return None
+    raise FileNotFoundError(f"Asset referenced in version {version_str} not found: {href}")
+
+
 def _get_assets_to_upload(
     catalog_root: Path,
     versions_data: dict[str, Any],
@@ -669,42 +738,90 @@ def _get_assets_to_upload(
     """
     local_current = _current_snapshot(versions_data)
     version_str = local_current.get("version") if local_current else None
-    remote_assets = _snapshot_hashes(_current_snapshot(remote_versions_data))
+    has_remote = bool(_snapshot_entries(_current_snapshot(remote_versions_data)))
+    # Skip the upload only if the remote current snapshot records the same
+    # sha256 for the same href. A renamed file (same sha256, new href) still
+    # uploads. ``push --verify`` checks the same set (Issue #966).
+    skipped = _skipped_entries(versions_data, remote_versions_data)
 
     assets_to_upload: list[Path] = []
     skipped_count = 0
 
-    for href, local_sha256 in _snapshot_hashes(local_current).items():
-        # Skip the upload only if the remote current snapshot records the same
-        # sha256 for the same href. A renamed file (same sha256, new href)
-        # still uploads.
-        if _matches_remote(local_sha256, remote_assets.get(href)) and href not in reupload:
+    for href in _snapshot_entries(local_current):
+        if href in skipped and href not in reupload:
             skipped_count += 1
             continue
-
-        # Resolve path relative to catalog root
-        asset_path = catalog_root / href
-        if not asset_path.exists():
-            # The spec calls four roles optional derivatives, namely
-            # `visual`, `thumbnail`, `style` and `collection-mirror`. See
-            # portolan-spec specs/portolan/core.md, sections Assets and
-            # Single-File Collections. Portolan rebuilds each one from data
-            # the catalog still holds. An absent one must not fail a sound
-            # push (Issue #735). Conformance gaps belong to `portolan check`.
-            # Roles `data` and `source` stay a hard error, because nothing
-            # can reconstruct them.
-            if is_optional_derivative(catalog_root, href):
-                warn(f"Optional asset not found, skipped: {href} (version {version_str})")
-                continue
-            raise FileNotFoundError(f"Asset referenced in version {version_str} not found: {href}")
-        assets_to_upload.append(asset_path.resolve())
+        asset_path = _resolve_local_asset(catalog_root, href, version_str)
+        if asset_path is not None:
+            assets_to_upload.append(asset_path)
 
     # Log diffing results for user feedback (Issue #329)
     new_count = len(assets_to_upload)
-    if skipped_count > 0 or (remote_assets and new_count > 0):
+    if skipped_count > 0 or (has_remote and new_count > 0):
         info(f"Uploading {new_count} new/changed asset(s), skipping {skipped_count} unchanged")
 
     return assets_to_upload
+
+
+def _get_reupload_assets(
+    catalog_root: Path,
+    versions_data: dict[str, Any],
+    reupload: frozenset[str],
+) -> list[Path]:
+    """Return the local files of the hrefs that ``push --verify`` flagged.
+
+    Only these assets upload in a repair without a new version (Issue #966).
+    Each flagged href has the same sha256 in the local and the remote current
+    snapshots. So the local file holds the bytes that the remote manifest
+    records. An absent optional derivative warns and is skipped, the same as
+    in ``_get_assets_to_upload``.
+
+    Args:
+        catalog_root: Path to catalog root.
+        versions_data: Local versions.json data.
+        reupload: Hrefs that ``push --verify`` found wrong in the store.
+
+    Returns:
+        List of absolute paths to upload, in local snapshot order.
+
+    Raises:
+        FileNotFoundError: If a flagged ``data`` or ``source`` asset file is
+            absent.
+    """
+    local_current = _current_snapshot(versions_data)
+    version_str = local_current.get("version") if local_current else None
+    paths: list[Path] = []
+    for href in _snapshot_entries(local_current):
+        if href in reupload:
+            asset_path = _resolve_local_asset(catalog_root, href, version_str)
+            if asset_path is not None:
+                paths.append(asset_path)
+    return paths
+
+
+def _repaired_count(prefix: str, reupload: frozenset[str], uploaded_keys: list[str]) -> int:
+    """Count the flagged hrefs that push uploaded.
+
+    A flagged optional derivative that is absent from disk does not upload.
+    So it does not count as repaired.
+
+    Args:
+        prefix: Prefix in object storage.
+        reupload: Hrefs that ``push --verify`` found wrong in the store.
+        uploaded_keys: Object keys that the asset upload wrote.
+
+    Returns:
+        Number of flagged hrefs whose object key push wrote.
+    """
+    written = set(uploaded_keys)
+    return sum(1 for href in reupload if f"{prefix}/{href}".lstrip("/") in written)
+
+
+def _with_metrics(msg: str, metrics: UploadMetrics) -> str:
+    """Append the upload size and speed to a summary line when push sent bytes."""
+    if metrics.total_bytes > 0:
+        msg += f" ({format_file_size(metrics.total_bytes)}, {format_speed(metrics.average_speed)})"
+    return msg
 
 
 def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> None:
@@ -2224,18 +2341,15 @@ async def _execute_push_uploads_async(
     info("Uploading versions.json...")
     try:
         await _upload_versions_json_async(store, prefix, collection, local_data, etag, force=force)
+        repaired = _repaired_count(prefix, reupload, uploaded_keys)
         if diff.local_only:
             msg = f"Pushed {len(diff.local_only)} version(s): {diff.local_only}"
-        elif reupload:
-            msg = f"Repaired {len(reupload)} asset(s) (no new versions)"
+        elif repaired:
+            msg = f"Repaired {repaired} asset(s) (no new versions)"
         else:
             # Force re-push with no version delta refreshes metadata only (Issue #496)
             msg = "Refreshed metadata (no new versions)"
-        if metrics.total_bytes > 0:
-            msg += (
-                f" ({format_file_size(metrics.total_bytes)}, {format_speed(metrics.average_speed)})"
-            )
-        success(msg)
+        success(_with_metrics(msg, metrics))
     except PushConflictError as e:
         _cleanup_uploaded_assets(store, uploaded_keys)
         raise PushConflictError("Remote changed during push, re-run push to try again") from e
@@ -2333,6 +2447,82 @@ async def _sync_collection_metadata_only(
     )
 
 
+async def _repair_flagged_assets_async(
+    store: ObjectStore,
+    catalog_root: Path,
+    prefix: str,
+    collection: str,
+    local_data: dict[str, Any],
+    reupload: frozenset[str],
+    *,
+    include_catalog_root: bool,
+    concurrency: int,
+    chunk_concurrency: int,
+    json_mode: bool,
+    suppress_progress: bool,
+    verbose: bool,
+    adaptive: bool,
+) -> PushResult:
+    """Repair the flagged objects when no version is new and there is no force.
+
+    ``push --verify`` flagged each href in ``reupload`` (Issue #966). Each one
+    has the same sha256 in the local and the remote current snapshots. So the
+    local file holds the bytes that the remote manifest records. This function
+    uploads exactly those files. Then it syncs the non-versioned metadata, the
+    same as a plain push with no new version.
+
+    It does not write versions.json. The local manifest can differ from the
+    remote manifest with the same version list, for example in
+    ``current_version``. A plain push publishes none of that difference, so a
+    repair must not publish it either. Other assets that differ do not upload.
+
+    A failed upload reports failure and deletes nothing. A flagged key held
+    wrong bytes or no object before, so a rollback has nothing to restore.
+
+    Returns:
+        PushResult with the repair and metadata upload counts.
+    """
+    assets = _get_reupload_assets(catalog_root, local_data, reupload)
+    files_uploaded, upload_errors, uploaded_keys, metrics = await _upload_assets_async(
+        store,
+        catalog_root,
+        prefix,
+        assets,
+        concurrency=concurrency,
+        chunk_concurrency=chunk_concurrency,
+        json_mode=json_mode,
+        suppress_progress=suppress_progress,
+        verbose=verbose,
+        adaptive=adaptive,
+    )
+    if upload_errors:
+        error("Asset repair failed. The remote versions.json stays as is")
+        return PushResult(
+            success=False,
+            files_uploaded=files_uploaded,
+            versions_pushed=0,
+            conflicts=[],
+            errors=upload_errors,
+            metrics=metrics,
+        )
+
+    result = await _sync_collection_metadata_only(
+        store,
+        catalog_root,
+        prefix,
+        collection,
+        include_catalog_root=include_catalog_root,
+        concurrency=concurrency,
+        verbose=verbose,
+    )
+    repaired = _repaired_count(prefix, reupload, uploaded_keys)
+    if repaired:
+        success(_with_metrics(f"Repaired {repaired} asset(s) (no new versions)", metrics))
+    result.files_uploaded += files_uploaded
+    result.metrics = metrics
+    return result
+
+
 async def push_async(
     catalog_root: Path,
     collection: str,
@@ -2377,10 +2567,11 @@ async def push_async(
             skips (Issue #966). Push uploads an asset whose object is missing.
             Push also uploads an asset whose object size differs from
             ``size_bytes`` in the local current snapshot. The check runs also
-            when no version is new, so it can repair a damaged store. The
-            repair adds no version. Push writes the local versions.json again
-            after the assets, with the ETag precondition. A size check cannot
-            find a wrong object of the same size.
+            when no version is new, so it can repair a damaged store. Without
+            a new version and without ``force``, push uploads only the flagged
+            assets and does not write versions.json. With a new version or
+            ``force``, the flagged assets join the normal upload set. A size
+            check cannot find a wrong object of the same size.
 
     Returns:
         PushResult with upload statistics.
@@ -2453,21 +2644,42 @@ async def push_async(
     # That diff compares the local and remote current snapshots. So a force push
     # also uploads an asset whose bytes differ from the remote current snapshot
     # (Issue #962).
-    # A mismatch that --verify finds also takes the upload path. That path
-    # writes the same versions.json again, last and with the ETag
-    # precondition. So the repair adds no version (Issue #966).
-    if not force and not diff.local_only and not reupload:
-        result = await _sync_collection_metadata_only(
-            store,
-            catalog_root,
-            prefix,
-            collection,
-            include_catalog_root=include_catalog,
-            concurrency=concurrency,
-            verbose=verbose,
-        )
+    if not force and not diff.local_only:
+        if reupload:
+            # A mismatch that --verify finds, with no new version and no
+            # force. Push uploads the flagged assets only and does not write
+            # versions.json. So the remote manifest stays as is (Issue #966).
+            result = await _repair_flagged_assets_async(
+                store,
+                catalog_root,
+                prefix,
+                collection,
+                local_data,
+                reupload,
+                include_catalog_root=include_catalog,
+                concurrency=concurrency,
+                chunk_concurrency=chunk_concurrency,
+                json_mode=json_mode,
+                suppress_progress=suppress_progress,
+                verbose=verbose,
+                adaptive=adaptive,
+            )
+        else:
+            result = await _sync_collection_metadata_only(
+                store,
+                catalog_root,
+                prefix,
+                collection,
+                include_catalog_root=include_catalog,
+                concurrency=concurrency,
+                verbose=verbose,
+            )
         result.verify = verify_report
         return result
+
+    # With a new version or --force, the hrefs that --verify flagged join the
+    # normal upload set. That path writes the local versions.json last, with
+    # the ETag precondition (Issue #966).
 
     # Execute uploads (with remote data for sha256 diffing, Issue #329)
     result = await _execute_push_uploads_async(
@@ -2515,8 +2727,9 @@ class PushAllResult:
         total_would_push_versions: In dry-run mode, max versions that would be pushed
             (upper bound; actual count depends on remote state).
         collection_errors: Dict mapping collection name to error messages.
-        verify: Sum of the ``--verify`` counts of all collections. None when
-            push did not verify.
+        verify: Sum of the ``--verify`` counts of all collections that
+            returned a result. A collection that raised adds no counts. None
+            when push did not verify.
     """
 
     success: bool
@@ -2648,6 +2861,9 @@ def _push_all_process_result(
             error(f"[{current_completed}/{total}] Failed {coll}: {', '.join(errors_list)}")
             stats["failed"] += 1
             stats["errors"][coll] = errors_list
+            # A push can fail after verify. Its counts still describe the store.
+            if result.verify is not None and stats["verify"] is not None:
+                stats["verify"].merge(result.verify)
         else:
             error(f"[{current_completed}/{total}] Failed {coll}: Unknown error")
             stats["failed"] += 1
