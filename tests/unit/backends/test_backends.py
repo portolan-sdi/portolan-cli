@@ -884,3 +884,17 @@ class TestLegacyBackendsEntryPointGroup:
             ValueError, match=r"^Unknown backend: legacy\. Available: file, iceberg$"
         ):
             get_backend("legacy")
+
+    @pytest.mark.unit
+    def test_hook_plugin_wins_over_the_legacy_group(self, legacy: list[Any]) -> None:
+        """A name in the new hook wins over the same name in the old group."""
+        legacy.append(self._ep("shared"))
+        hook_backend = MagicMock(spec=VersioningBackend)
+        manager.get_plugin_manager().register(
+            _BackendPlugin({"shared": MagicMock(return_value=hook_backend)}), name="new"
+        )
+
+        with pytest.warns(manager.PluginWarning, match="'builtin:legacy_backends'.*'shared'"):
+            backend = get_backend("shared")
+
+        assert backend is hook_backend

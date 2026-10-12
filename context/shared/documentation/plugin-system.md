@@ -48,9 +48,12 @@ plugin name of each result. A hook that raises produces a `PluginWarning`, and
 the next plugin still runs. The CLI prints a `PluginWarning` as an output
 warning, without the source path that Python adds.
 
-`hook_calls` lists the built-ins first and then the outside plugins in pluggy
-order. Pluggy puts a `trylast` implementation before a built-in, so the
-manager sorts by name and does not trust pluggy order. A hook wrapper
+`hook_calls` lists the built-ins first, in registration order. The outside
+plugins follow in pluggy call order: `tryfirst`, then the plugin registered
+last, then `trylast`. Pluggy itself calls a normal outside plugin before the
+built-ins, because it calls the plugin registered last first. The manager
+therefore ranks by plugin name and does not use pluggy order. The deprecated
+`legacy_backends` module comes after every outside plugin. A hook wrapper
 (`wrapper=True` or `hookwrapper=True`) produces a `PluginWarning` and is
 skipped, because a plain call of a wrapper only creates a generator.
 
@@ -111,7 +114,8 @@ After each hook, `stac_enrich` restores `id`, `type`, `stac_version`, and
 v0.8.0 and v1.0.0b0 found plugin backends in the `portolan.backends` entry
 point group. The `portolan_backends` hook replaces it.
 `plugins/builtin/legacy_backends.py` reads the group for one more minor
-release. Each backend it finds produces a `PluginWarning`, and the backend
+release. It ranks after the outside plugins, so a `portolan_backends` hook
+wins a shared name. Each backend it finds produces a `PluginWarning`, and the backend
 class loads only when `get_backend` asks for it. `PORTOLAN_PLUGINS` selects
 these entry points like command entry points. A later minor release deletes
 the module.

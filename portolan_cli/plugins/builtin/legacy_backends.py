@@ -29,8 +29,11 @@ def portolan_backends() -> dict[str, BackendFactory] | None:
 
     factories: dict[str, BackendFactory] = {}
     for ep in enabled_entry_points(LEGACY_BACKENDS_ENTRY_POINT_GROUP):
+        dist = getattr(ep, "dist", None)
+        source = dist.name if dist is not None else "an unknown distribution"
         warnings.warn(
-            f"Backend '{ep.name}' uses the deprecated '{LEGACY_BACKENDS_ENTRY_POINT_GROUP}' "
+            f"Backend '{ep.name}' from {source} uses the deprecated "
+            f"'{LEGACY_BACKENDS_ENTRY_POINT_GROUP}' "
             "entry point group. Register it with the portolan_backends hook. A future "
             "minor release stops reading the group.",
             PluginWarning,

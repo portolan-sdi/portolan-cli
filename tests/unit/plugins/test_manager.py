@@ -192,6 +192,14 @@ class _Hooks:
         def portolan_backends(self) -> dict[str, object]:
             return {"first": object}
 
+    class Plain:
+        def __init__(self, name: str) -> None:
+            self._name = name
+
+        @hookimpl
+        def portolan_backends(self) -> dict[str, object]:
+            return {self._name: object}
+
     class Wrapper:
         @hookimpl(wrapper=True)
         def portolan_enrich_item(self, item: dict[str, object]) -> Iterator[None]:
@@ -213,8 +221,9 @@ def test_hook_calls_list_builtins_first(installed: list[EntryPoint]) -> None:
 
     names = [name for name, _ in manager.hook_calls("portolan_backends")]
 
-    assert names[:2] == ["builtin:backends", "builtin:legacy_backends"]
-    assert sorted(names[2:]) == ["first", "last"]
+    # Outside plugins follow pluggy call order: tryfirst, then trylast. The
+    # deprecated backend group comes after every outside plugin.
+    assert names == ["builtin:backends", "first", "last", "builtin:legacy_backends"]
 
 
 @pytest.mark.parametrize("wrapper", [_Hooks.Wrapper, _Hooks.OldWrapper])
@@ -238,3 +247,19 @@ def test_outside_plugin_cannot_take_the_builtin_prefix(installed: list[EntryPoin
         names = _plugin_names()
 
     assert "builtin:good" not in names
+
+
+def test_outside_plugins_follow_pluggy_call_order(installed: list[EntryPoint]) -> None:
+    """Pluggy calls the plugin registered last first. hook_calls does the same."""
+    pm = manager.get_plugin_manager()
+    pm.register(_Hooks.Plain("a"), name="registered-first")
+    pm.register(_Hooks.Plain("b"), name="registered-second")
+
+    names = [name for name, _ in manager.hook_calls("portolan_backends")]
+
+    assert names == [
+        "builtin:backends",
+        "registered-second",
+        "registered-first",
+        "builtin:legacy_backends",
+    ]

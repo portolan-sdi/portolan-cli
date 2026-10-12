@@ -2,9 +2,10 @@
 
 Importing this module creates nothing. ``get_plugin_manager`` builds one
 ``pluggy.PluginManager`` and caches it. It registers the built-in hook modules
-first, then each outside plugin from the ``portolan`` entry point group. Pluggy
-calls the plugin registered last first, so outside plugins come before the
-built-ins in hook results.
+first, then each outside plugin from the ``portolan`` entry point group.
+``hook_calls`` and ``call_each`` list the built-ins first. Do not call
+``PluginManager.hook.<name>()`` directly: pluggy calls the plugin registered
+last first, so its results put the outside plugins first.
 
 ``PORTOLAN_PLUGINS`` controls discovery of outside plugins:
 
@@ -49,6 +50,9 @@ _BUILTIN_MODULES = (
     "portolan_cli.plugins.builtin.backends",
     "portolan_cli.plugins.builtin.legacy_backends",
 )
+# Built-in modules that rank after the outside plugins. The deprecated backend
+# group holds third-party backends, so a hook plugin wins a name over it.
+_TRAILING_BUILTINS = frozenset({f"{BUILTIN_PREFIX}legacy_backends"})
 
 _manager: pluggy.PluginManager | None = None
 
@@ -247,9 +251,11 @@ def hook_calls(hook_name: str) -> list[tuple[str, Callable[..., Any]]]:
     """Return one callable per plugin that implements ``hook_name``.
 
     Each callable takes the full hook arguments as keywords and passes on the
-    ones the implementation names. The built-ins come first, then the outside
-    plugins in pluggy order. ``tryfirst`` and ``trylast`` cannot move an
-    outside plugin before a built-in. A hook wrapper produces a
+    ones the implementation names. The built-ins come first in registration
+    order. The outside plugins follow in pluggy call order: ``tryfirst``, then
+    the plugin registered last, then ``trylast``. ``tryfirst`` and ``trylast``
+    cannot move an outside plugin before a built-in. The deprecated
+    ``legacy_backends`` module comes last. A hook wrapper produces a
     ``PluginWarning`` and is skipped, because a plain call of a wrapper only
     creates a generator. An empty list means no plugin implements the hook.
 
@@ -260,8 +266,10 @@ def hook_calls(hook_name: str) -> list[tuple[str, Callable[..., Any]]]:
         ``(plugin_name, call)`` pairs.
     """
     pm = get_plugin_manager()
-    calls: list[tuple[str, Callable[..., Any]]] = []
-    for impl in getattr(pm.hook, hook_name).get_hookimpls():
+    ranked: list[tuple[tuple[int, int], str, Callable[..., Any]]] = []
+    # get_hookimpls() lists trylast, then registration order, then tryfirst.
+    # Pluggy calls the list from the end.
+    for index, impl in enumerate(getattr(pm.hook, hook_name).get_hookimpls()):
         if impl.wrapper or impl.hookwrapper:
             warnings.warn(
                 f"Plugin '{impl.plugin_name}' implements {hook_name} as a hook wrapper. "
@@ -274,9 +282,17 @@ def hook_calls(hook_name: str) -> list[tuple[str, Callable[..., Any]]]:
         def _call(_impl: Any = impl, **kwargs: Any) -> Any:
             return _impl.function(**{arg: kwargs[arg] for arg in _impl.argnames})
 
-        calls.append((impl.plugin_name, _call))
-    # sorted() is stable, so each side keeps its pluggy order.
-    return sorted(calls, key=lambda pair: not pair[0].startswith(BUILTIN_PREFIX))
+        ranked.append((_rank(impl.plugin_name, index), impl.plugin_name, _call))
+    return [(name, call) for _, name, call in sorted(ranked, key=lambda entry: entry[0])]
+
+
+def _rank(plugin_name: str, index: int) -> tuple[int, int]:
+    """Order built-ins by registration and outside plugins by pluggy call order."""
+    if plugin_name in _TRAILING_BUILTINS:
+        return (2, index)
+    if plugin_name.startswith(BUILTIN_PREFIX):
+        return (0, index)
+    return (1, -index)
 
 
 def warn_hook_failure(plugin_name: str, hook_name: str, err: Exception) -> None:
