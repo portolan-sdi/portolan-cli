@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import obstore as obs
+from obstore.exceptions import NotFoundError
 
 from portolan_cli.async_utils import (
     AsyncIOExecutor,
@@ -573,21 +574,137 @@ def _get_assets_to_upload(
     return assets_to_upload
 
 
-def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> None:
-    """Clean up (delete) uploaded assets after a failed push.
+def _object_key(catalog_root: Path, prefix: str, path: Path) -> str:
+    """Return the object key that push writes for a local file.
 
-    This is called when asset uploads succeed but versions.json upload fails,
-    preventing orphaned assets in the bucket.
+    Args:
+        catalog_root: Path to the catalog root.
+        prefix: Prefix in object storage.
+        path: Local file under ``catalog_root``.
+
+    Returns:
+        The key, as ``{prefix}/{path relative to the root}`` without a leading slash.
+    """
+    return f"{prefix}/{path.relative_to(catalog_root).as_posix()}".lstrip("/")
+
+
+def _planned_upload_keys(
+    catalog_root: Path, prefix: str, assets: list[Path], stac_files: dict[str, list[Path]]
+) -> list[str]:
+    """Return the keys that a push can roll back.
+
+    These are the asset keys and the STAC keys. The push writes the READMEs
+    after versions.json, so rollback never touches them.
+
+    Args:
+        catalog_root: Path to the catalog root.
+        prefix: Prefix in object storage.
+        assets: Asset files that the push uploads.
+        stac_files: STAC files from ``_discover_stac_files``.
+
+    Returns:
+        The object keys, in upload order.
+    """
+    stac_paths = stac_files["items"] + stac_files["collection"] + stac_files["catalog"]
+    return [_object_key(catalog_root, prefix, path) for path in assets + stac_paths]
+
+
+async def _key_exists(store: ObjectStore, key: str) -> bool:
+    """Return True when the store holds ``key``.
+
+    A not-found error gives False. Every other error goes to the caller, because
+    an unknown state must not count as a missing key.
 
     Args:
         store: Object store instance.
-        uploaded_keys: List of object keys to delete.
+        key: Object key to check.
+
+    Returns:
+        True when the key exists, False when it does not.
+    """
+    try:
+        await obs.head_async(store, key)
+    except (FileNotFoundError, NotFoundError):
+        return False
+    return True
+
+
+async def _existing_keys_before_push(
+    store: ObjectStore, prefix: str, collection: str, planned_keys: list[str]
+) -> set[str] | None:
+    """Return the keys that exist in the store before the push writes anything.
+
+    Rollback uses this set to delete only the keys that the push created
+    (Issue #965). One paginated listing reads the collection prefix. A catalog
+    can hold 25k items, so the function sends no HEAD for a key in that prefix.
+    It sends one HEAD for each planned key outside the prefix, such as the root
+    catalog.json and the intermediate catalog files.
+
+    Args:
+        store: Object store instance.
+        prefix: Prefix in object storage.
+        collection: Collection identifier.
+        planned_keys: Keys that the push can roll back.
+
+    Returns:
+        The set of existing keys. None when a request fails. Then rollback
+        cannot tell a new key from an overwritten key, so it deletes nothing.
+    """
+    collection_prefix = f"{prefix}/{collection}".strip("/")
+    outside = sorted({k for k in planned_keys if not k.startswith(f"{collection_prefix}/")})
+    try:
+        existing = {
+            str(meta["path"])
+            async for batch in obs.list(store, prefix=collection_prefix)
+            for meta in batch
+        }
+        found = await asyncio.gather(*(_key_exists(store, key) for key in outside))
+    except Exception as e:
+        warn(f"Cannot read the remote keys before the upload: {e}")
+        return None
+    existing.update(key for key, exists in zip(outside, found, strict=True) if exists)
+    return existing
+
+
+def _cleanup_uploaded_assets(
+    store: ObjectStore, uploaded_keys: list[str], *, existing_keys: set[str] | None
+) -> None:
+    """Delete the keys that a failed push created.
+
+    Rollback deletes only a key that did not exist before the push (Issue #965).
+    Asset hrefs carry no version segment. So most keys that a push writes are
+    overwrites of keys that the remote current version uses. Rollback keeps
+    those keys, and the remote current version stays readable.
+
+    Known limitation: an overwritten key keeps the bytes of the failed push.
+    The store keeps no copy of the old bytes, so rollback cannot restore them.
+    The remote versions.json can then record a sha256 that the object does not
+    match. A later push uploads the key again only when the local current
+    sha256 differs from the remote current sha256.
+
+    Args:
+        store: Object store instance.
+        uploaded_keys: Keys that the failed push wrote.
+        existing_keys: Keys that existed before the push, from
+            ``_existing_keys_before_push``. None means that the state is
+            unknown. Then rollback deletes nothing.
     """
     if not uploaded_keys:
         return
 
-    warn(f"Rolling back {len(uploaded_keys)} uploaded asset(s)...")
-    for key in uploaded_keys:
+    if existing_keys is None:
+        warn("Cannot tell which keys existed before the push. Rollback deletes nothing.")
+        return
+
+    created = [key for key in uploaded_keys if key not in existing_keys]
+    kept = len(uploaded_keys) - len(created)
+    if kept:
+        detail(f"Keeping {kept} key(s) that existed before the push")
+    if not created:
+        return
+
+    warn(f"Rolling back {len(created)} uploaded asset(s)...")
+    for key in created:
         try:
             obs.delete(store, key)
             detail(f"Deleted: {key}")
@@ -1554,8 +1671,7 @@ async def _upload_assets_async(
     async def upload_one(asset_path_str: str) -> tuple[str, int, float]:
         """Upload a single asset, using appropriate method based on size."""
         asset_path = Path(asset_path_str)
-        rel_path = asset_path.relative_to(catalog_root)
-        target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
+        target_key = _object_key(catalog_root, prefix, asset_path)
 
         size_bytes = file_sizes[asset_path]
 
@@ -1701,7 +1817,7 @@ async def _upload_stac_files_async(
         async with semaphore:
             try:
                 rel_path = file_path.relative_to(catalog_root)
-                target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
+                target_key = _object_key(catalog_root, prefix, file_path)
                 file_size = file_sizes[file_path]
 
                 content = file_path.read_bytes()
@@ -1983,6 +2099,32 @@ async def _execute_push_uploads_async(
     # Get assets to upload (only new/changed, per Issue #329)
     assets = _get_assets_to_upload(catalog_root, local_data, remote_versions_data=remote_data)
 
+    # Discover the STAC files before any upload. The rollback needs every key
+    # that the push can write (Issue #965).
+    # include_catalog controls whether catalog.json and root README.md are included.
+    # - True for standalone push() so remote is a complete clonable catalog
+    # - False when called from push_all_collections() (uploads once at end)
+    try:
+        stac_files = _discover_stac_files(catalog_root, collection, include_catalog=include_catalog)
+    except FileNotFoundError as e:
+        error(str(e))
+        return PushResult(
+            success=False,
+            files_uploaded=0,
+            versions_pushed=0,
+            conflicts=[],
+            errors=[str(e)],
+        )
+
+    # Record the keys that exist before the upload. Rollback deletes only the
+    # keys that this push creates, never a key that it overwrites (Issue #965).
+    existing_keys = await _existing_keys_before_push(
+        store,
+        prefix,
+        collection,
+        _planned_upload_keys(catalog_root, prefix, assets, stac_files),
+    )
+
     # Upload assets first (async, manifest-last pattern)
     # chunk_concurrency now properly limits per-file multipart parallelism
     # for files >5MB (Issue #344)
@@ -2001,7 +2143,7 @@ async def _execute_push_uploads_async(
 
     if upload_errors:
         error("Asset upload failed, aborting push")
-        _cleanup_uploaded_assets(store, uploaded_keys)
+        _cleanup_uploaded_assets(store, uploaded_keys, existing_keys=existing_keys)
         return PushResult(
             success=False,
             files_uploaded=files_uploaded,
@@ -2012,23 +2154,6 @@ async def _execute_push_uploads_async(
         )
 
     # Upload STAC metadata files (async)
-    # include_catalog controls whether catalog.json and root README.md are included.
-    # - True for standalone push() so remote is a complete clonable catalog
-    # - False when called from push_all_collections() (uploads once at end)
-    try:
-        stac_files = _discover_stac_files(catalog_root, collection, include_catalog=include_catalog)
-    except FileNotFoundError as e:
-        error(str(e))
-        _cleanup_uploaded_assets(store, uploaded_keys)
-        return PushResult(
-            success=False,
-            files_uploaded=files_uploaded,
-            versions_pushed=0,
-            conflicts=[],
-            errors=[str(e)],
-            metrics=metrics,
-        )
-
     stac_uploaded, stac_errors, stac_keys = await _upload_stac_files_async(
         store,
         catalog_root,
@@ -2043,7 +2168,7 @@ async def _execute_push_uploads_async(
 
     if stac_errors:
         error("STAC metadata upload failed, aborting push")
-        _cleanup_uploaded_assets(store, uploaded_keys)
+        _cleanup_uploaded_assets(store, uploaded_keys, existing_keys=existing_keys)
         return PushResult(
             success=False,
             files_uploaded=files_uploaded,
@@ -2085,10 +2210,10 @@ async def _execute_push_uploads_async(
             )
         success(msg)
     except PushConflictError as e:
-        _cleanup_uploaded_assets(store, uploaded_keys)
+        _cleanup_uploaded_assets(store, uploaded_keys, existing_keys=existing_keys)
         raise PushConflictError("Remote changed during push, re-run push to try again") from e
     except Exception as e:
-        _cleanup_uploaded_assets(store, uploaded_keys)
+        _cleanup_uploaded_assets(store, uploaded_keys, existing_keys=existing_keys)
         error(f"Failed to upload versions.json: {e}")
         return PushResult(
             success=False,

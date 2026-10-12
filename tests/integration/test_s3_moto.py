@@ -535,6 +535,89 @@ class TestPushS3Integration:
         assert stored == bytes_a
 
     @pytest.mark.integration
+    def test_failed_push_keeps_the_remote_current_version_on_s3(
+        self,
+        s3_bucket: tuple[str, str],
+        catalog_with_data: Path,
+        _aws_env: None,
+    ) -> None:
+        """Issue #965: a failed push must not delete keys that existed before it.
+
+        Push 1.0.0. Then push 1.0.1 and make the versions.json write fail.
+        Before the fix, the rollback deleted every key that the push wrote.
+        That removed the 1.0.0 data, collection.json and catalog.json. The
+        rollback must delete only extra.parquet, which is new in 1.0.1.
+        """
+        from unittest.mock import patch
+
+        from portolan_cli.sync import push as push_module
+
+        bucket_name, endpoint_url = s3_bucket
+        destination = f"s3://{bucket_name}/catalog"
+        collection_dir = catalog_with_data / "test-collection"
+        versions_path = collection_dir / "versions.json"
+
+        first = push_module.push(catalog_with_data, "test-collection", destination)
+        assert first.success is True, f"Push 1.0.0 failed: {first.errors}"
+
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",
+            region_name="us-east-1",
+        )
+
+        def stored_keys() -> list[str]:
+            response = client.list_objects_v2(Bucket=bucket_name)
+            return sorted(obj["Key"] for obj in response.get("Contents", []))
+
+        keys_after_first_push = stored_keys()
+        assert keys_after_first_push == [
+            "catalog/catalog.json",
+            "catalog/test-collection/collection.json",
+            "catalog/test-collection/data.parquet",
+            "catalog/test-collection/versions.json",
+        ]
+
+        bytes_b = b"Bytes B overwrite the 1.0.0 data key"
+        extra = b"A file that only version 1.0.1 has"
+        (collection_dir / "data.parquet").write_bytes(bytes_b)
+        (collection_dir / "extra.parquet").write_bytes(extra)
+        versions_data = json.loads(versions_path.read_text())
+        versions_data["versions"].append(
+            {
+                "version": "1.0.1",
+                "created": "2024-02-01T00:00:00Z",
+                "breaking": False,
+                "changes": ["data.parquet", "extra.parquet"],
+                "assets": {
+                    name: {
+                        "sha256": hashlib.sha256(content).hexdigest(),
+                        "size_bytes": len(content),
+                        "href": f"test-collection/{name}",
+                    }
+                    for name, content in (("data.parquet", bytes_b), ("extra.parquet", extra))
+                },
+            }
+        )
+        versions_data["current_version"] = "1.0.1"
+        versions_path.write_text(json.dumps(versions_data))
+
+        async def fail_versions_write(*args: object, **kwargs: object) -> None:
+            raise OSError("simulated versions.json write failure")
+
+        with patch.object(push_module, "_upload_versions_json_async", fail_versions_write):
+            second = push_module.push(catalog_with_data, "test-collection", destination)
+
+        assert second.success is False
+        assert second.errors == [
+            "Failed to upload versions.json: simulated versions.json write failure"
+        ]
+        # Every key of 1.0.0 is still there. The key new in 1.0.1 is gone.
+        assert stored_keys() == keys_after_first_push
+
+    @pytest.mark.integration
     def test_push_uploads_intermediate_catalogs_to_s3(
         self,
         s3_bucket: tuple[str, str],

@@ -140,6 +140,23 @@ catalog-wide push reaches sub-catalogs at any depth. A flat
   atomicity), so a reader never sees a manifest referencing
   not-yet-uploaded bytes.
 
+## Rollback deletes only the keys that the push created
+
+A push that fails before the `versions.json` write rolls back (#965). Most keys
+that a push writes are overwrites of keys that the remote current version uses.
+A rollback that deletes them removes the previous good catalog.
+
+- `_existing_keys_before_push` records the existing keys before the first
+  upload. One paginated listing reads the collection prefix. One HEAD checks
+  each planned key outside it, such as the root and intermediate catalog files.
+  Never send one HEAD per asset, because a collection can hold 25k items.
+- `_cleanup_uploaded_assets` deletes only the uploaded keys that the set does
+  not hold. All four failure paths pass the same set, `PushConflictError` too.
+- When the listing or a HEAD fails, the set is None and rollback deletes
+  nothing. An orphan key is harmless. A deleted live key breaks the catalog.
+- An overwritten key keeps the new bytes. See
+  `context/shared/known-issues/push-rollback-overwritten-keys.md`.
+
 ## Dry-run does NO network I/O
 
 `pull(dry_run=True)` and `push(dry_run=True)` must return **before** any network

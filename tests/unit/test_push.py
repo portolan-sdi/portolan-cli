@@ -1380,14 +1380,14 @@ class TestOrphanCleanup:
 
     @pytest.mark.unit
     def test_cleanup_deletes_uploaded_assets(self) -> None:
-        """_cleanup_uploaded_assets should delete all uploaded keys."""
+        """_cleanup_uploaded_assets should delete each key that the push created."""
         from portolan_cli.sync.push import _cleanup_uploaded_assets
 
         with patch("portolan_cli.sync.push.obs.delete") as mock_delete:
             mock_store = MagicMock()
             uploaded_keys = ["catalog/file1.parquet", "catalog/file2.parquet"]
 
-            _cleanup_uploaded_assets(mock_store, uploaded_keys)
+            _cleanup_uploaded_assets(mock_store, uploaded_keys, existing_keys=set())
 
         assert mock_delete.call_count == 2
         mock_delete.assert_any_call(mock_store, "catalog/file1.parquet")
@@ -1400,7 +1400,7 @@ class TestOrphanCleanup:
 
         with patch("portolan_cli.sync.push.obs.delete") as mock_delete:
             mock_store = MagicMock()
-            _cleanup_uploaded_assets(mock_store, [])
+            _cleanup_uploaded_assets(mock_store, [], existing_keys=set())
 
         mock_delete.assert_not_called()
 
@@ -1417,7 +1417,7 @@ class TestOrphanCleanup:
             uploaded_keys = ["key1", "key2"]
 
             # Should not raise
-            _cleanup_uploaded_assets(mock_store, uploaded_keys)
+            _cleanup_uploaded_assets(mock_store, uploaded_keys, existing_keys=set())
 
         assert mock_delete.call_count == 2
 
@@ -1506,6 +1506,188 @@ class TestOrphanCleanup:
                             )
 
         mock_cleanup.assert_called_once()
+
+
+class TestRollbackKeepsExistingKeys:
+    """Issue #965: a failed push deletes only the keys that it created.
+
+    Asset hrefs carry no version segment. Many keys that a push writes are
+    overwrites of keys that the remote current version still uses. Rollback
+    must keep those keys, so the remote current version stays readable.
+    """
+
+    @pytest.mark.unit
+    def test_cleanup_keeps_keys_that_existed_before_the_push(self) -> None:
+        from portolan_cli.sync.push import _cleanup_uploaded_assets
+
+        uploaded = ["cat/coll/data.parquet", "cat/coll/new.parquet", "cat/catalog.json"]
+        existing = {"cat/coll/data.parquet", "cat/catalog.json", "cat/coll/versions.json"}
+        with patch("portolan_cli.sync.push.obs.delete") as mock_delete:
+            mock_store = MagicMock()
+            _cleanup_uploaded_assets(mock_store, uploaded, existing_keys=existing)
+
+        assert mock_delete.call_args_list == [((mock_store, "cat/coll/new.parquet"),)]
+
+    @pytest.mark.unit
+    def test_cleanup_deletes_nothing_when_existing_keys_are_unknown(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from portolan_cli.sync.push import _cleanup_uploaded_assets
+
+        with patch("portolan_cli.sync.push.obs.delete") as mock_delete:
+            _cleanup_uploaded_assets(MagicMock(), ["cat/coll/new.parquet"], existing_keys=None)
+
+        mock_delete.assert_not_called()
+        assert "Rollback deletes nothing" in capsys.readouterr().err
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_existing_keys_lists_the_collection_and_heads_other_keys(self) -> None:
+        import obstore
+        from obstore.store import MemoryStore
+
+        from portolan_cli.sync.push import _existing_keys_before_push
+
+        store = MemoryStore()
+        for key in (
+            "cat/coll/data.parquet",
+            "cat/coll/item/item.json",
+            "cat/catalog.json",
+            "cat/collection-two/data.parquet",
+        ):
+            obstore.put(store, key, b"x")
+
+        planned = [
+            "cat/coll/data.parquet",
+            "cat/coll/new.parquet",
+            "cat/catalog.json",
+            "cat/group/catalog.json",
+        ]
+        with patch("portolan_cli.sync.push.obs.head_async", wraps=obstore.head_async) as mock_head:
+            existing = await _existing_keys_before_push(store, "cat", "coll", planned)
+
+        assert existing == {
+            "cat/coll/data.parquet",
+            "cat/coll/item/item.json",
+            "cat/catalog.json",
+        }
+        # One HEAD for each planned key outside the collection prefix, none inside it.
+        assert sorted(c.args[1] for c in mock_head.call_args_list) == [
+            "cat/catalog.json",
+            "cat/group/catalog.json",
+        ]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_existing_keys_is_none_when_the_listing_fails(self) -> None:
+        from obstore.store import MemoryStore
+
+        from portolan_cli.sync.push import _existing_keys_before_push
+
+        with patch("portolan_cli.sync.push.obs.list", side_effect=OSError("listing failed")):
+            existing = await _existing_keys_before_push(
+                MemoryStore(), "cat", "coll", ["cat/coll/data.parquet"]
+            )
+
+        assert existing is None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_existing_keys_is_none_when_a_head_fails(self) -> None:
+        from obstore.store import MemoryStore
+
+        from portolan_cli.sync.push import _existing_keys_before_push
+
+        with patch(
+            "portolan_cli.sync.push.obs.head_async",
+            new_callable=AsyncMock,
+            side_effect=PermissionError("access denied"),
+        ):
+            existing = await _existing_keys_before_push(
+                MemoryStore(), "cat", "coll", ["cat/catalog.json"]
+            )
+
+        assert existing is None
+
+    @pytest.mark.unit
+    def test_failed_push_keeps_keys_of_the_remote_current_version(self, tmp_path: Path) -> None:
+        """Push 1.0.0, then fail the versions.json write of 1.0.1.
+
+        The nested collection puts an intermediate catalog.json outside the
+        collection prefix. Rollback must keep it, the root catalog.json, the
+        collection.json and the 1.0.0 data. It must delete new.parquet only.
+        """
+        import hashlib
+
+        import obstore
+        from obstore.store import MemoryStore
+
+        from portolan_cli.sync import push as push_module
+
+        root = tmp_path / "catalog"
+        coll = root / "group" / "coll"
+        coll.mkdir(parents=True)
+        for path in (root / "catalog.json", root / "group" / "catalog.json"):
+            path.write_text(json.dumps({"type": "Catalog", "id": path.parent.name, "links": []}))
+        (coll / "collection.json").write_text(
+            json.dumps({"type": "Collection", "id": "coll", "links": []})
+        )
+        versions: list[dict[str, Any]] = []
+
+        def write_version(version: str, files: dict[str, bytes]) -> None:
+            for name, content in files.items():
+                (coll / name).write_bytes(content)
+            versions.append(
+                {
+                    "version": version,
+                    "created": "2024-01-01T00:00:00Z",
+                    "breaking": False,
+                    "changes": list(files),
+                    "assets": {
+                        name: {
+                            "sha256": hashlib.sha256(content).hexdigest(),
+                            "size_bytes": len(content),
+                            "href": f"group/coll/{name}",
+                        }
+                        for name, content in files.items()
+                    },
+                }
+            )
+            (coll / "versions.json").write_text(
+                json.dumps(
+                    {"spec_version": "1.0.0", "current_version": version, "versions": versions}
+                )
+            )
+
+        store = MemoryStore()
+
+        def stored_keys() -> list[str]:
+            return sorted(meta["path"] for batch in obstore.list(store) for meta in batch)
+
+        with patch.object(push_module, "setup_store", return_value=(store, "cat")):
+            write_version("1.0.0", {"data.parquet": b"bytes A"})
+            first = push_module.push(root, "group/coll", "s3://bucket/cat")
+            assert first.success is True, first.errors
+            keys_after_first_push = stored_keys()
+
+            write_version("1.0.1", {"data.parquet": b"bytes B", "new.parquet": b"new"})
+            with patch.object(
+                push_module,
+                "_upload_versions_json_async",
+                new_callable=AsyncMock,
+                side_effect=OSError("simulated failure"),
+            ):
+                second = push_module.push(root, "group/coll", "s3://bucket/cat")
+
+        assert keys_after_first_push == [
+            "cat/catalog.json",
+            "cat/group/catalog.json",
+            "cat/group/coll/collection.json",
+            "cat/group/coll/data.parquet",
+            "cat/group/coll/versions.json",
+        ]
+        assert second.success is False
+        assert stored_keys() == keys_after_first_push
 
 
 # =============================================================================
