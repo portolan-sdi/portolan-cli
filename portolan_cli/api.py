@@ -16,7 +16,7 @@ Groups:
 - Versioning backends: ``VersioningBackend``, ``DriftReport``,
   ``SchemaFingerprint``, ``PostAddContext``, ``PostAddItemContext``,
   ``Version``, ``Asset``, ``SchemaInfo``, ``parse_version``, ``get_backend``.
-- Catalogs: ``find_catalog_root``, ``get_setting``, ``href_root``.
+- Catalogs: ``find_catalog_root``, ``get_setting``, ``write_json_atomic``.
 - Remote storage: ``upload_file``, ``download_file``, ``PullResult``.
 - Terminal output: ``success``, ``info``, ``warn``, ``error``, ``detail``.
 - JSON output for commands: ``success_envelope``, ``error_envelope``,
@@ -42,13 +42,13 @@ if TYPE_CHECKING:
     from portolan_cli.catalog import find_catalog_root
     from portolan_cli.config import get_setting
     from portolan_cli.hookspecs import EnrichContext, hookimpl
+    from portolan_cli.json_io import write_json_atomic
     from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
     from portolan_cli.output import detail, error, info, success, warn
     from portolan_cli.plugins.manager import PluginWarning
     from portolan_cli.sync.download import download_file
     from portolan_cli.sync.pull import PullResult
     from portolan_cli.sync.upload import upload_file
-    from portolan_cli.utils import href_root
     from portolan_cli.versions import Asset, SchemaInfo, Version, parse_version
 
 __all__ = [
@@ -72,13 +72,13 @@ __all__ = [
     "get_backend",
     "get_setting",
     "hookimpl",
-    "href_root",
     "info",
     "parse_version",
     "success",
     "success_envelope",
     "upload_file",
     "warn",
+    "write_json_atomic",
 ]
 
 _EXPORTS = {
@@ -102,13 +102,13 @@ _EXPORTS = {
     "get_backend": "portolan_cli.backends",
     "get_setting": "portolan_cli.config",
     "hookimpl": "portolan_cli.hookspecs",
-    "href_root": "portolan_cli.utils",
     "info": "portolan_cli.output",
     "parse_version": "portolan_cli.versions",
     "success": "portolan_cli.output",
     "success_envelope": "portolan_cli.json_output",
     "upload_file": "portolan_cli.sync.upload",
     "warn": "portolan_cli.output",
+    "write_json_atomic": "portolan_cli.json_io",
 }
 
 

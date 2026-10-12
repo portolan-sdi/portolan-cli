@@ -30,7 +30,7 @@ from portolan_cli.api import (
     SchemaFingerprint,
     SchemaInfo,
     Version,
-    href_root,
+    write_json_atomic,
 )
 from portolan_cli.backends.iceberg.config import create_catalog
 from portolan_cli.backends.iceberg.spatial import add_spatial_columns, detect_geohash_precision
@@ -65,8 +65,6 @@ def _merge_into_collection_json(
         assets: Asset dicts by key. They replace an asset with the same key.
     """
     import json
-
-    from portolan_cli.json_io import write_json_atomic
 
     document: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     document.update(fields)

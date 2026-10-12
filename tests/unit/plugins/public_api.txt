@@ -19,13 +19,13 @@ find_catalog_root
 get_backend
 get_setting
 hookimpl
-href_root
 info
 parse_version
 success
 success_envelope
 upload_file
 warn
+write_json_atomic
 
 # portolan_cli.hookspecs
 portolan_backends() -> 'dict[str, BackendFactory]'

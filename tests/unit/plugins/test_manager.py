@@ -176,7 +176,10 @@ def test_failed_registration_leaves_no_hook_behind(installed: list[EntryPoint]) 
         names = _plugin_names()
 
     assert "half" not in names
-    assert [name for name, _ in manager.call_each("portolan_backends")] == ["builtin:backends"]
+    assert [name for name, _ in manager.call_each("portolan_backends")] == [
+        "builtin:backends",
+        "builtin:iceberg",
+    ]
 
 
 class _Hooks:
@@ -223,7 +226,13 @@ def test_hook_calls_list_builtins_first(installed: list[EntryPoint]) -> None:
 
     # Outside plugins follow pluggy call order: tryfirst, then trylast. The
     # deprecated backend group comes after every outside plugin.
-    assert names == ["builtin:backends", "first", "last", "builtin:legacy_backends"]
+    assert names == [
+        "builtin:backends",
+        "builtin:iceberg",
+        "first",
+        "last",
+        "builtin:legacy_backends",
+    ]
 
 
 @pytest.mark.parametrize("wrapper", [_Hooks.Wrapper, _Hooks.OldWrapper])
@@ -259,6 +268,7 @@ def test_outside_plugins_follow_pluggy_call_order(installed: list[EntryPoint]) -
 
     assert names == [
         "builtin:backends",
+        "builtin:iceberg",
         "registered-second",
         "registered-first",
         "builtin:legacy_backends",
