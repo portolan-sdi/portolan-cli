@@ -109,8 +109,8 @@ non-deterministic in CI — drift is still caught by the non-mutating
 
 #### `plugin-test` — the example plugin
 
-- Installs `tests/plugins/portolan_example` with `uv run --with` and runs
-  `pytest tests/plugins -m plugin`
+- Installs `tests/plugins/portolan_example` into the project environment
+  with `uv pip install`, then runs `uv run --no-sync pytest tests/plugins -m plugin`
 - Cells: Ubuntu with Python 3.10, Windows with Python 3.13
 - The example plugin imports only `portolan_cli.api`,
   `portolan_cli.hookspecs`, and `portolan_cli.testing`. A change to those

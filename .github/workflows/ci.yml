@@ -286,8 +286,14 @@ jobs:
           retry_wait_seconds: 15
           command: uv sync --all-extras
 
+      # Install into the project environment. With uv 0.6.14, `uv run --with`
+      # built its overlay on the runner's system Python, not the synced 3.10
+      # environment, and pytest could not import the plugin.
+      - name: Install the example plugin
+        run: uv pip install ./tests/plugins/portolan_example
+
       - name: Run the example plugin tests
-        run: uv run --with ./tests/plugins/portolan_example pytest tests/plugins -m plugin --tb=short
+        run: uv run --no-sync pytest tests/plugins -m plugin --tb=short
 
   iceberg-test:
     name: Iceberg Unit & Integration Tests (Python ${{ matrix.python-version }} / ${{ matrix.os }})

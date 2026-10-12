@@ -107,11 +107,14 @@ def test_companion_asset_reruns_the_item_hook(catalog: Path, fixtures_dir: Path)
     shutil.copy(fixtures_dir / "raster" / "valid" / "singleband.tif", raster)
     (item_dir / "notes.csv").write_text("name,value\nband,1\n", encoding="utf-8")
 
-    _, _, failures = add_files(paths=[item_dir], catalog_root=catalog, collection_id="imagery")
+    _, skipped, failures = add_files(
+        paths=[item_dir], catalog_root=catalog, collection_id="imagery"
+    )
 
     assert failures == []
+    assert [path.name for path in skipped] == ["notes.csv"]
     item = _read(item_dir / "scene-a.json")
-    assert "notes" in item["assets"]
+    assert "notes" in item["assets"], sorted(item["assets"])
     assert item["properties"]["test:assets"] == sorted(item["assets"])
 
 
