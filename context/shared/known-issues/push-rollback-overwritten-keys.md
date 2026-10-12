@@ -2,18 +2,18 @@
 
 ## Symptom
 
-A push fails after the asset upload, for example when the `versions.json`
-write fails. The remote `versions.json` still names the old current version.
+A push fails after the asset upload. The `versions.json` write is one such
+failure. The remote `versions.json` still names the old current version.
 An asset key that the failed push overwrote holds the new bytes. The sha256
 that the remote current version records for that key does not match the
 stored object.
 
-The remote catalog stays readable. Every key that the remote current version
-uses still exists. Only the bytes of an overwritten asset can differ.
+The remote catalog is readable after the rollback. Each key that the remote
+current version uses still exists. Only the bytes of an overwritten asset can differ.
 
 ## Root cause
 
-Asset hrefs carry no version segment. Every version writes the same object
+Asset hrefs contain no version segment. Each version writes to the same object
 key, such as `{prefix}/{collection}/data.parquet`. A push overwrites the key
 in place, and the store keeps no copy of the old bytes. So a rollback cannot
 restore them.
