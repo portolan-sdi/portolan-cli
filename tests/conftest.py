@@ -892,6 +892,7 @@ def no_remote_key_listing(request: pytest.FixtureRequest) -> Iterator[None]:
     async def in_process_only(
         store: object, prefix: str, collection: str, planned_keys: list[str]
     ) -> set[str] | None:
+        """Run the real key read for an in-process store, else report the state unknown."""
         if isinstance(store, MemoryStore | LocalStore):
             return await real(store, prefix, collection, planned_keys)
         return None

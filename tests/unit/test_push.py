@@ -1518,6 +1518,7 @@ class TestRollbackKeepsExistingKeys:
 
     @pytest.mark.unit
     def test_cleanup_keeps_keys_that_existed_before_the_push(self) -> None:
+        """Rollback deletes only the keys that the failed push created."""
         from portolan_cli.sync.push import _cleanup_uploaded_assets
 
         uploaded = ["cat/coll/data.parquet", "cat/coll/new.parquet", "cat/catalog.json"]
@@ -1532,6 +1533,7 @@ class TestRollbackKeepsExistingKeys:
     def test_cleanup_deletes_nothing_when_existing_keys_are_unknown(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        """Rollback deletes nothing when the existing keys are unknown."""
         from portolan_cli.sync.push import _cleanup_uploaded_assets
 
         with patch("portolan_cli.sync.push.obs.delete") as mock_delete:
@@ -1543,6 +1545,7 @@ class TestRollbackKeepsExistingKeys:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_existing_keys_lists_the_collection_and_heads_other_keys(self) -> None:
+        """One listing covers the collection prefix, and a HEAD covers each other key."""
         import obstore
         from obstore.store import MemoryStore
 
@@ -1580,6 +1583,7 @@ class TestRollbackKeepsExistingKeys:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_existing_keys_is_none_when_the_listing_fails(self) -> None:
+        """A failed listing makes the existing keys unknown."""
         from obstore.store import MemoryStore
 
         from portolan_cli.sync.push import _existing_keys_before_push
@@ -1594,6 +1598,7 @@ class TestRollbackKeepsExistingKeys:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_existing_keys_is_none_when_a_head_fails(self) -> None:
+        """A HEAD that fails for a reason other than not-found makes the existing keys unknown."""
         from obstore.store import MemoryStore
 
         from portolan_cli.sync.push import _existing_keys_before_push
@@ -1635,6 +1640,7 @@ class TestRollbackKeepsExistingKeys:
         versions: list[dict[str, Any]] = []
 
         def write_version(version: str, files: dict[str, bytes]) -> None:
+            """Write one version of the collection to the local catalog."""
             for name, content in files.items():
                 (coll / name).write_bytes(content)
             versions.append(
@@ -1662,6 +1668,7 @@ class TestRollbackKeepsExistingKeys:
         store = MemoryStore()
 
         def stored_keys() -> list[str]:
+            """Return the keys that the store holds."""
             return sorted(meta["path"] for batch in obstore.list(store) for meta in batch)
 
         with patch.object(push_module, "setup_store", return_value=(store, "cat")):

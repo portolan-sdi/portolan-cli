@@ -569,6 +569,7 @@ class TestPushS3Integration:
         )
 
         def stored_keys() -> list[str]:
+            """Return the keys that the bucket holds."""
             response = client.list_objects_v2(Bucket=bucket_name)
             return sorted(obj["Key"] for obj in response.get("Contents", []))
 
@@ -605,6 +606,7 @@ class TestPushS3Integration:
         versions_path.write_text(json.dumps(versions_data))
 
         async def fail_versions_write(*args: object, **kwargs: object) -> None:
+            """Make the versions.json write fail."""
             raise OSError("simulated versions.json write failure")
 
         with patch.object(push_module, "_upload_versions_json_async", fail_versions_write):
