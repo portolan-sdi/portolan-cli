@@ -26,6 +26,7 @@ import importlib
 import os
 import warnings
 from importlib.metadata import EntryPoint, entry_points
+from typing import Any
 
 import pluggy
 
@@ -181,6 +182,32 @@ def get_plugin_manager() -> pluggy.PluginManager:
     _drop_plugins_with_unknown_hooks(pm)
     _manager = pm
     return pm
+
+
+def results_by_plugin(hook_name: str, **kwargs: Any) -> list[tuple[str, Any]]:
+    """Call one hook plugin by plugin and keep the plugin name of each result.
+
+    A plugin whose hook raises produces a ``PluginLoadWarning``, and the call
+    continues with the next plugin. A None result is dropped.
+
+    Args:
+        hook_name: Name of a hook in ``hookspecs``.
+        **kwargs: Hook arguments.
+
+    Returns:
+        ``(plugin_name, result)`` pairs in registration order, built-ins first.
+    """
+    pm = get_plugin_manager()
+    results: list[tuple[str, Any]] = []
+    for impl in getattr(pm.hook, hook_name).get_hookimpls():
+        try:
+            result = impl.function(**{arg: kwargs[arg] for arg in impl.argnames})
+        except Exception as err:  # noqa: BLE001 - one broken plugin must not stop the CLI
+            _warn(f"Plugin '{impl.plugin_name}' failed in {hook_name}: {err}")
+            continue
+        if result is not None:
+            results.append((impl.plugin_name, result))
+    return results
 
 
 def reset_plugin_manager() -> None:

@@ -7,14 +7,19 @@ that allows external backends (like portolake) to integrate with portolan-cli.
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import MagicMock, patch
+from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock
 
 import pytest
 
 from portolan_cli.backends import get_backend
 from portolan_cli.backends.json_file import JsonFileBackend
 from portolan_cli.backends.protocol import DriftReport, SchemaFingerprint, VersioningBackend
+from portolan_cli.hookspecs import hookimpl
+from portolan_cli.plugins import manager
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
 
 
 class TestVersioningBackendProtocol:
@@ -156,118 +161,131 @@ class TestGetBackend:
         assert isinstance(backend, JsonFileBackend)
         assert backend._catalog_root == Path(tmp_path)
 
+
+class _BackendPlugin:
+    """A plugin object whose `portolan_backends` hook returns fixed factories."""
+
+    def __init__(self, factories: dict[str, Any]) -> None:
+        self._factories = factories
+
+    @hookimpl
+    def portolan_backends(self) -> dict[str, Any]:
+        return self._factories
+
+
+class _RaisingPlugin:
+    """A plugin whose `portolan_backends` hook raises."""
+
+    @hookimpl
+    def portolan_backends(self) -> dict[str, Any]:
+        raise RuntimeError("backend registry is broken")
+
+
+@pytest.fixture
+def register_plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[object, str], None]]:
+    """Register plugin objects on a fresh manager with no installed plugins."""
+    monkeypatch.setattr(manager, "entry_points", lambda *, group: [])
+    monkeypatch.delenv(manager.ENV_VAR, raising=False)
+    manager.reset_plugin_manager()
+
+    def _register(plugin: object, name: str = "test-plugin") -> None:
+        manager.get_plugin_manager().register(plugin, name=name)
+
+    yield _register
+    manager.reset_plugin_manager()
+
+
+class TestGetBackendPlugins:
+    """`get_backend` finds backends through the `portolan_backends` hook (#947)."""
+
     @pytest.mark.unit
-    def test_get_backend_plugin_passes_catalog_root(self) -> None:
-        """get_backend('plugin', catalog_root=path) passes root to plugin constructor."""
+    def test_plugin_backend_receives_catalog_root(
+        self, register_plugin: Callable[[object, str], None]
+    ) -> None:
+        """The factory is called with `catalog_root`."""
         from pathlib import Path
 
         mock_backend = MagicMock(spec=VersioningBackend)
-        mock_backend_class = MagicMock(return_value=mock_backend)
-        mock_entry_point = MagicMock()
-        mock_entry_point.name = "custom"
-        mock_entry_point.load.return_value = mock_backend_class
-
+        factory = MagicMock(return_value=mock_backend)
+        register_plugin(_BackendPlugin({"custom": factory}), "test-plugin")
         root = Path("/some/catalog")
-        with patch("portolan_cli.backends.entry_points") as mock_eps:
-            mock_eps.return_value = [mock_entry_point]
-            get_backend("custom", catalog_root=root)
 
-        mock_backend_class.assert_called_once_with(catalog_root=root)
+        backend = get_backend("custom", catalog_root=root)
 
-    @pytest.mark.unit
-    def test_get_backend_discovers_entry_point(self) -> None:
-        """get_backend() discovers backends registered via entry points."""
-        # Create a mock backend class that implements the protocol
-        mock_backend = MagicMock(spec=VersioningBackend)
-        mock_backend_class = MagicMock(return_value=mock_backend)
-        mock_entry_point = MagicMock()
-        mock_entry_point.name = "custom"
-        mock_entry_point.load.return_value = mock_backend_class
-
-        # Patch entry_points to return our mock
-        with patch("portolan_cli.backends.entry_points") as mock_eps:
-            mock_eps.return_value = [mock_entry_point]
-            backend = get_backend("custom")
-
-        # Verify the entry point was loaded and returns protocol-compliant object
-        mock_entry_point.load.assert_called_once()
-        mock_backend_class.assert_called_once()
+        factory.assert_called_once_with(catalog_root=root)
         assert backend is mock_backend
 
     @pytest.mark.unit
-    def test_get_backend_entry_point_name_must_match(self) -> None:
-        """get_backend() only loads entry points with matching names."""
-        # Create an entry point with a different name
-        mock_entry_point = MagicMock()
-        mock_entry_point.name = "other_backend"
+    def test_unknown_name_lists_plugin_backends(
+        self, register_plugin: Callable[[object, str], None]
+    ) -> None:
+        """The error names every backend the hooks registered."""
+        register_plugin(_BackendPlugin({"custom": MagicMock()}), "test-plugin")
 
-        with patch("portolan_cli.backends.entry_points") as mock_eps:
-            mock_eps.return_value = [mock_entry_point]
-            with pytest.raises(ValueError, match="Unknown backend: custom"):
-                get_backend("custom")
+        with pytest.raises(
+            ValueError, match=r"^Unknown backend: nope\. Available: custom, file, iceberg$"
+        ):
+            get_backend("nope")
+
+    @pytest.mark.unit
+    def test_hook_that_raises_is_skipped_with_a_warning(
+        self, register_plugin: Callable[[object, str], None]
+    ) -> None:
+        """One broken plugin does not stop the built-in backends."""
+        register_plugin(_RaisingPlugin(), "broken-plugin")
+
+        with pytest.warns(
+            manager.PluginLoadWarning, match="broken-plugin.*backend registry is broken"
+        ):
+            backend = get_backend("file")
+
+        assert isinstance(backend, JsonFileBackend)
+
+    @pytest.mark.unit
+    def test_builtin_file_backend_wins_a_name_collision(
+        self, register_plugin: Callable[[object, str], None]
+    ) -> None:
+        """A plugin cannot replace the built-in `file` backend."""
+        register_plugin(_BackendPlugin({"file": MagicMock()}), "shadow-plugin")
+
+        with pytest.warns(manager.PluginLoadWarning, match="shadow-plugin.*'file'"):
+            backend = get_backend("file")
+
+        assert isinstance(backend, JsonFileBackend)
 
 
 class TestGetBackendErrorHandling:
-    """Tests for error handling in plugin discovery."""
+    """Tests for error handling around plugin backends."""
 
     @pytest.mark.unit
-    def test_get_backend_handles_import_error_on_load(self) -> None:
-        """get_backend() handles ImportError when loading a broken plugin."""
-        mock_entry_point = MagicMock()
-        mock_entry_point.name = "broken"
-        mock_entry_point.load.side_effect = ImportError("Module not found")
+    def test_get_backend_handles_exception_on_instantiation(
+        self, register_plugin: Callable[[object, str], None]
+    ) -> None:
+        """A factory that raises becomes a ValueError that names the backend."""
+        register_plugin(
+            _BackendPlugin({"failing": MagicMock(side_effect=TypeError("numpy not found"))}),
+            "test-plugin",
+        )
 
-        with patch("portolan_cli.backends.entry_points") as mock_eps:
-            mock_eps.return_value = [mock_entry_point]
-            with pytest.raises(ValueError, match="Failed to load backend 'broken'"):
-                get_backend("broken")
-
-    @pytest.mark.unit
-    def test_get_backend_handles_exception_on_instantiation(self) -> None:
-        """get_backend() handles exceptions during plugin instantiation."""
-        mock_backend_class = MagicMock(side_effect=TypeError("Missing argument"))
-        mock_entry_point = MagicMock()
-        mock_entry_point.name = "failing"
-        mock_entry_point.load.return_value = mock_backend_class
-
-        with patch("portolan_cli.backends.entry_points") as mock_eps:
-            mock_eps.return_value = [mock_entry_point]
-            with pytest.raises(ValueError, match="Failed to instantiate backend 'failing'"):
-                get_backend("failing")
+        with pytest.raises(
+            ValueError, match=r"^Failed to instantiate backend 'failing': numpy not found$"
+        ):
+            get_backend("failing")
 
     @pytest.mark.unit
-    def test_get_backend_validates_protocol_compliance(self) -> None:
-        """get_backend() validates that loaded plugins implement the protocol."""
+    def test_get_backend_validates_protocol_compliance(
+        self, register_plugin: Callable[[object, str], None]
+    ) -> None:
+        """get_backend() validates that a plugin backend implements the protocol."""
 
-        # Create a class that doesn't implement VersioningBackend but accepts kwargs
         class NotABackend:
             def __init__(self, **_kwargs: Any) -> None:
                 pass
 
-        mock_entry_point = MagicMock()
-        mock_entry_point.name = "invalid"
-        mock_entry_point.load.return_value = NotABackend
+        register_plugin(_BackendPlugin({"invalid": NotABackend}), "test-plugin")
 
-        with patch("portolan_cli.backends.entry_points") as mock_eps:
-            mock_eps.return_value = [mock_entry_point]
-            with pytest.raises(ValueError, match="does not implement VersioningBackend"):
-                get_backend("invalid")
-
-    @pytest.mark.unit
-    def test_get_backend_error_message_is_actionable(self) -> None:
-        """Error messages include plugin name for troubleshooting."""
-        mock_entry_point = MagicMock()
-        mock_entry_point.name = "problematic"
-        mock_entry_point.load.side_effect = ImportError("numpy not found")
-
-        with patch("portolan_cli.backends.entry_points") as mock_eps:
-            mock_eps.return_value = [mock_entry_point]
-            with pytest.raises(ValueError) as exc_info:
-                get_backend("problematic")
-
-            error_msg = str(exc_info.value)
-            assert "problematic" in error_msg
-            assert "numpy not found" in error_msg
+        with pytest.raises(ValueError, match="does not implement VersioningBackend"):
+            get_backend("invalid")
 
 
 class TestJsonFileBackend:
