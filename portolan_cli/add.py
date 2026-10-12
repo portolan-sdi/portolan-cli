@@ -40,7 +40,7 @@ from portolan_cli.constants import (
 from portolan_cli.conversion_config import get_vector_settings
 from portolan_cli.convert import convert_multilayer_file
 from portolan_cli.discovery import get_sidecars, iter_files_with_sidecars, iter_geospatial_files
-from portolan_cli.errors import MissingLicenseError, NoGeometryError
+from portolan_cli.errors import MissingLicenseError, NoGeometryError, PartitionCollisionError
 
 # Batch finalization (STAC-write + backend coordination) was extracted to
 # finalization.py (issue #624). add.py orchestrates on top of it: add_files /
@@ -259,6 +259,7 @@ def _maybe_partition_large_file(
     catalog_root: Path,
     item_datetime: datetime | None,
     skip_partitioning: bool = False,
+    source: Path | None = None,
 ) -> list[PreparedItem]:
     """Partition a large GeoParquet file if it exceeds the size threshold.
 
@@ -271,6 +272,12 @@ def _maybe_partition_large_file(
         item_datetime: Optional datetime for created items.
         skip_partitioning: If True, skip partitioning even if file exceeds threshold.
             Used when user declines interactive prompt.
+        source: The file the operator added. When the collection already holds
+            partitions, the converted copy is removed, so no row appears twice.
+            A source that is its own output stays.
+
+    Raises:
+        PartitionCollisionError: The collection already holds partitions.
 
     Returns:
         List of PreparedItems. If partitioning occurred, contains multiple
@@ -303,7 +310,12 @@ def _maybe_partition_large_file(
 
     primary_parquet = parquet_files[0]
     partition_output_dir = primary_parquet.parent
-    partition_files: list[Path] = partition(primary_parquet, catalog_root)
+    try:
+        partition_files: list[Path] = partition(primary_parquet, catalog_root)
+    except PartitionCollisionError:
+        if source is not None and source.resolve() != primary_parquet.resolve():
+            primary_parquet.unlink(missing_ok=True)
+        raise
     if not partition_files:
         return [prepared]
     columns = partition_columns_of(partition_files)
@@ -927,6 +939,7 @@ def _prepare_multilayer_file(
                         catalog_root=opts.catalog_root,
                         item_datetime=opts.item_datetime,
                         skip_partitioning=opts.skip_partitioning,
+                        source=file_path,
                     )
                 )
             except Exception as err:
@@ -977,6 +990,7 @@ def _prepare_single_file(
             catalog_root=opts.catalog_root,
             item_datetime=opts.item_datetime,
             skip_partitioning=opts.skip_partitioning,
+            source=file_path,
         )
         return (partitioned, [], None)
 

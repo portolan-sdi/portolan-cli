@@ -680,7 +680,8 @@ def _describe_schema_diff(
 def partition_strategy(path: Path, catalog_root: Path | None) -> str | None:
     """Decide whether and how to partition a converted GeoParquet file (#947).
 
-    This is the size rule for ``add`` and ``check --fix``. A file at or above
+    This is the size rule. Only ``add`` applies it, as before #947, because
+    ``check --fix`` converts a source again on every run. A file at or above
     ``partitioning.threshold_gb`` (2 GB by default) partitions by
     ``partitioning.strategy`` (kdtree by default), unless
     ``partitioning.enabled`` is false.

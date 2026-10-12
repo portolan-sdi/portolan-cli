@@ -2496,6 +2496,49 @@ class TestPartitionedOutputWithGeoparquetIO:
         assert converted.exists()
         assert (tmp_path / "kdtree_cell=0000" / "0000.parquet").exists()
 
+    @staticmethod
+    def _prepared(path: Path) -> Any:
+        from portolan_cli.preparation import PreparedItem
+
+        return PreparedItem(
+            item_id=path.stem,
+            collection_id="coll",
+            format_type="vector",
+            bbox=[0.0, 0.0, 1.0, 1.0],
+            asset_files={path.name: (path, "x", 1)},
+            item_json_path=None,
+            is_collection_level_asset=True,
+            format_name="geoparquet",
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("in_place", [False, True])
+    def test_add_collision_removes_only_a_converted_copy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_place: bool
+    ) -> None:
+        """A collision in `add` leaves no whole copy beside the partitions.
+
+        The converted file goes, so the collection holds no row twice. A
+        `.parquet` source that is its own output stays.
+        """
+        from portolan_cli import partitioning
+        from portolan_cli.add import _maybe_partition_large_file
+        from portolan_cli.errors import PartitionCollisionError
+
+        coll = tmp_path / "coll"
+        (coll / "kdtree_cell=0000").mkdir(parents=True)
+        converted = coll / "big.parquet"
+        converted.write_bytes(b"PAR1")
+        source = converted if in_place else coll / "big.geojson"
+        source.write_bytes(b"PAR1" if in_place else b"{}")
+        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_: "kdtree")
+
+        with pytest.raises(PartitionCollisionError):
+            _maybe_partition_large_file(self._prepared(converted), tmp_path, None, source=source)
+
+        assert converted.exists() is in_place
+        assert source.exists()
+
     @pytest.mark.integration
     @pytest.mark.xfail(
         strict=True,

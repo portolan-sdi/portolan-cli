@@ -124,11 +124,14 @@ import only `portolan_cli.api`. `preparation.convert_vector` and
 
 Partitioning follows the size rule and the index rule.
 
-- The size rule is in `partitioning.partition_strategy`, and both commands
-  apply it. A file at or above `partitioning.threshold_gb` partitions into
+- The size rule is in `partitioning.partition_strategy`, and only `add`
+  applies it, as before the merge. A file at or above `partitioning.threshold_gb` partitions into
   Hive directories next to it. The file is removed only when the step wrote a
   partition. A directory that already holds partitions for the strategy raises
   `PartitionCollisionError`, because geoparquet-io does not write over a cell.
+  `add` then removes the converted copy, so no row appears twice.
+  `check --fix` converts a source again on every run, so the size rule would
+  collide with its own earlier partitions there.
 - The index rule (`conversion.vector.partition`) applies only to
   `check --fix`, as before the merge. `convert._convert_partitioned_by_index`
   writes the partitions to `<output_dir>/<stem>/`. `add` writes one file with

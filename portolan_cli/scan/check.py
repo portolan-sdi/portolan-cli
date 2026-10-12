@@ -458,10 +458,13 @@ def _build_preview_results(
     file_statuses: list[FileStatus], *, force: bool, catalog_path: Path | None = None
 ) -> list[ConversionResult]:
     """Build dry-run preview ConversionResults for --fix (and --force)."""
+    from portolan_cli.plugins.formats import handler_for
 
     def predicted_output(f: FileStatus) -> Path:
-        if f.target_format == "GeoParquet":
-            return f.path.parent / f"{f.path.stem}.parquet"
+        # The handler names its output. A plugin can write any file name.
+        handler = handler_for(f.path, catalog_path)
+        if handler is not None:
+            return handler.output_path(f.path, f.path.parent)
         return f.path.parent / f"{f.path.stem}.tif"
 
     previews = [

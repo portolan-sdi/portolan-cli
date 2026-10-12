@@ -455,13 +455,12 @@ def convert_file(
                 if reoptimize
                 else _convert_partitioned_by_index(handler, source, out_dir, catalog_path)
             )
-            if partitioned is not None:
-                output_path = partitioned
-            else:
-                output_path = convert_with_handler(
-                    handler, source, out_dir, catalog_path, reoptimize=reoptimize
-                )
-                output_path = partition_with_handler(handler, output_path, catalog_path)
+            # The size partition rule belongs to `add` only, as before #947.
+            # This path converts a source again on every run, and a second
+            # size partition into the same directory would collide.
+            output_path = partitioned or convert_with_handler(
+                handler, source, out_dir, catalog_path, reoptimize=reoptimize
+            )
         except InvalidOutputError as err:
             logger.warning("Conversion completed but validation failed: %s", err)
             return _result(
@@ -580,20 +579,6 @@ def _convert_partitioned_by_index(
     if error is not None:
         raise InvalidOutputError(str(output), error)
     return output
-
-
-def partition_with_handler(handler: FormatHandler, path: Path, catalog_root: Path | None) -> Path:
-    """Partition a converted file when the handler's rule asks for it.
-
-    Returns:
-        The directory that holds the partitions, or ``path`` when nothing was
-        partitioned.
-    """
-    partition = getattr(handler, "partition", None)
-    if partition is None or not path.is_file():
-        return path
-    files = partition(path, catalog_root)
-    return path.parent if files else path
 
 
 _CONVERT_MAX_ATTEMPTS = 3

@@ -267,3 +267,27 @@ def test_two_plugins_for_a_builtin_extension_raise_in_the_status(
 
     with pytest.raises(AmbiguousFormatError):
         get_cloud_native_status(_touch(tmp_path, "a.tif"))
+
+
+class _PointsOut(StubHandler):
+    def output_path(self, source: Path, output_dir: Path) -> Path:
+        return output_dir / f"{source.stem}.points"
+
+
+def test_dry_run_preview_names_the_handler_output(
+    register_plugin: Callable[..., None], tmp_path: Path
+) -> None:
+    import shutil
+    from pathlib import Path as _Path
+
+    from portolan_cli.scan.check import check_directory
+
+    fixtures = _Path(__file__).parents[2] / "fixtures" / "vector" / "valid"
+    source = tmp_path / "points.geojson"
+    shutil.copy(fixtures / "points.geojson", source)
+    register_plugin(_Plugin(_PointsOut("points-out", frozenset({".geojson"}))), "points-plugin")
+
+    report = check_directory(tmp_path, fix=True, dry_run=True)
+
+    assert report.conversion_report is not None
+    assert [r.output for r in report.conversion_report.results] == [tmp_path / "points.points"]
