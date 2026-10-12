@@ -10,17 +10,30 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from portolan_cli.extract.arcgis.orchestrator import _auto_init_catalog
 from portolan_cli.extract.arcgis.report import (
     ExtractionReport,
-    ExtractionSummary,
     LayerResult,
     MetadataExtracted,
 )
 from portolan_cli.licensing import ResolvedLicense
+from tests.support.extract import make_layer_result as shared_layer_result  # noqa: E402
+from tests.support.extract import make_report as shared_make_report  # noqa: E402
+
+
+def make_layer_result(
+    *,
+    name: str = "Test Layer",
+    output_path: str | None = "test_layer/data.parquet",
+    **fields: Any,
+) -> LayerResult:
+    """Create a LayerResult with this file's default name and path."""
+    return shared_layer_result(name=name, output_path=output_path, **fields)
+
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_extract_side_requests")]
 
@@ -29,70 +42,12 @@ pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_extract_side_
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures"
 
 
-def make_layer_result(
-    *,
-    layer_id: int = 0,
-    name: str = "Test Layer",
-    status: str = "success",
-    output_path: str | None = "test_layer/data.parquet",
-    features: int | None = 100,
-    size_bytes: int | None = 1000,
-    error: str | None = None,
-) -> LayerResult:
-    """Create a LayerResult with sensible defaults."""
-    return LayerResult(
-        id=layer_id,
-        name=name,
-        status=status,
-        output_path=output_path,
-        features=features if status == "success" else None,
-        size_bytes=size_bytes if status == "success" else None,
-        duration_seconds=1.0 if status == "success" else None,
-        warnings=[],
-        error=error,
-        attempts=1 if status != "failed" else 3,
-    )
-
-
 def make_report(
     layers: list[LayerResult],
     source_url: str = "https://example.com/arcgis/rest/services/Test/FeatureServer",
 ) -> ExtractionReport:
-    """Create an ExtractionReport with sensible defaults."""
-    succeeded = sum(1 for layer in layers if layer.status == "success")
-    failed = sum(1 for layer in layers if layer.status == "failed")
-    skipped = sum(1 for layer in layers if layer.status == "skipped")
-    empty = sum(1 for layer in layers if layer.status == "empty")
-    total_features = sum(layer.features or 0 for layer in layers)
-    total_bytes = sum(layer.size_bytes or 0 for layer in layers)
-
-    return ExtractionReport(
-        extraction_date="2026-03-30T12:00:00Z",
-        source_url=source_url,
-        portolan_version="0.1.0",
-        gpio_version="0.5.0",
-        metadata_extracted=MetadataExtracted(
-            source_url=source_url,
-            description=None,
-            attribution=None,
-            keywords=None,
-            contact_name=None,
-            processing_notes=None,
-            known_issues=None,
-            license_info_raw=None,
-        ),
-        layers=layers,
-        summary=ExtractionSummary(
-            total_layers=len(layers),
-            succeeded=succeeded,
-            failed=failed,
-            skipped=skipped,
-            empty=empty,
-            total_features=total_features,
-            total_size_bytes=total_bytes,
-            total_duration_seconds=float(len(layers)),
-        ),
-    )
+    """Create an ExtractionReport for ``layers``."""
+    return shared_make_report(layers, source_url)
 
 
 # Calling _auto_init_catalog directly skips the resolution the orchestrator does

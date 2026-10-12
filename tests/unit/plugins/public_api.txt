@@ -1,6 +1,8 @@
 # portolan_cli.api
 Asset
+Discovery
 DriftReport
+EmptyLayerError
 EnrichContext
 ErrorDetail
 ExtractedMetadata
@@ -22,6 +24,7 @@ PullResult
 RASTER_EXTENSIONS
 SchemaFingerprint
 SchemaInfo
+SourceLink
 VECTOR_EXTENSIONS
 Version
 VersioningBackend

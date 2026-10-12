@@ -19,8 +19,9 @@ Groups:
   ``Version``, ``Asset``, ``SchemaInfo``, ``parse_version``, ``get_backend``.
 - Catalogs: ``find_catalog_root``, ``get_setting``, ``write_json_atomic``.
 - Extractors: ``Extractor``, ``ExtractionReport``.
-- Layer sources: ``LayerSource``, ``LayerRef``, ``LayerMetadata``,
-  ``LayerSourceOptions``, ``ExtractedMetadata``, ``run_layer_extraction``,
+- Layer sources: ``LayerSource``, ``Discovery``, ``LayerRef``,
+  ``LayerMetadata``, ``SourceLink``, ``LayerSourceOptions``,
+  ``EmptyLayerError``, ``ExtractedMetadata``, ``run_layer_extraction``,
   ``extractor_from``.
 - Remote storage: ``upload_file``, ``download_file``, ``PullResult``.
 - Terminal output: ``success``, ``info``, ``warn``, ``error``, ``detail``.
@@ -58,10 +59,13 @@ if TYPE_CHECKING:
     from portolan_cli.errors import InvalidOutputError
     from portolan_cli.extract.common.report import ExtractionReport
     from portolan_cli.extract.common.source import (
+        Discovery,
+        EmptyLayerError,
         LayerMetadata,
         LayerRef,
         LayerSource,
         LayerSourceOptions,
+        SourceLink,
         extractor_from,
         run_layer_extraction,
     )
@@ -95,7 +99,9 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Asset",
+    "Discovery",
     "DriftReport",
+    "EmptyLayerError",
     "EnrichContext",
     "ErrorDetail",
     "ExtractedMetadata",
@@ -117,6 +123,7 @@ __all__ = [
     "RASTER_EXTENSIONS",
     "SchemaFingerprint",
     "SchemaInfo",
+    "SourceLink",
     "VECTOR_EXTENSIONS",
     "Version",
     "VersioningBackend",
@@ -158,7 +165,9 @@ __all__ = [
 
 _EXPORTS = {
     "Asset": "portolan_cli.versions",
+    "Discovery": "portolan_cli.extract.common.source",
     "DriftReport": "portolan_cli.backends.protocol",
+    "EmptyLayerError": "portolan_cli.extract.common.source",
     "EnrichContext": "portolan_cli.hookspecs",
     "ErrorDetail": "portolan_cli.json_output",
     "ExtractedMetadata": "portolan_cli.metadata_extraction",
@@ -180,6 +189,7 @@ _EXPORTS = {
     "RASTER_EXTENSIONS": "portolan_cli.format_families",
     "SchemaFingerprint": "portolan_cli.backends.protocol",
     "SchemaInfo": "portolan_cli.versions",
+    "SourceLink": "portolan_cli.extract.common.source",
     "VECTOR_EXTENSIONS": "portolan_cli.format_families",
     "Version": "portolan_cli.versions",
     "VersioningBackend": "portolan_cli.backends.protocol",

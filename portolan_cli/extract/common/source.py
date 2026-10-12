@@ -1,15 +1,22 @@
 """LayerSource: a data source made of layers, and the driver that extracts it (#947).
 
-A service that serves named layers implements ``LayerSource`` with six
-methods. ``run_layer_extraction`` gives it the extraction lifecycle that
-the built-in extractors use: filters, resume, retry, the extraction report,
-the license check, catalog setup, styles, provenance links, and metadata
-seeding. ``extractor_from`` wraps a ``LayerSource`` as an ``Extractor``, so it
-becomes ``portolan extract <name>``.
+A service that serves named layers implements ``LayerSource``.
+``run_layer_extraction`` runs it through the extraction lifecycle: filters,
+the license check, resume, fetch with retry (one layer at a time or in
+parallel), the extraction report, catalog setup, styles, provenance links,
+and collection metadata. ``extractor_from`` wraps a ``LayerSource`` as an
+``Extractor``, so it becomes ``portolan extract <name>``.
 
-The built-in ArcGIS, Carto, and WFS extractors keep their own drivers. Each
-one adds source-specific work, such as WFS version negotiation, ArcGIS
-services-root traversal, and parallel layer downloads.
+The built-in ArcGIS, Carto, and WFS extractors are ``LayerSource``
+implementations too. Source-specific work goes through the protocol:
+
+- ``discover`` does everything that happens once per run, such as WFS
+  version negotiation or ArcGIS services-root traversal. It returns a
+  ``Discovery`` with the layers and the catalog-level metadata.
+- Each ``LayerRef`` carries the collection path and the source's own
+  ``data`` for the layer, such as a service URL or a negotiated version.
+- ``LayerSourceOptions.workers`` and ``layer_timeout`` select parallel
+  downloads with a per-layer deadline.
 """
 
 from __future__ import annotations
@@ -17,24 +24,42 @@ from __future__ import annotations
 import importlib
 import logging
 import re
+import threading
 import time
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     import click
 
     from portolan_cli.extract.common.progress import ExtractionProgress
-    from portolan_cli.extract.common.report import ExtractionReport, LayerResult
+    from portolan_cli.extract.common.report import (
+        ExtractionReport,
+        FolderCoverage,
+        LayerResult,
+        MetadataExtracted,
+    )
     from portolan_cli.licensing import ResolvedLicense
     from portolan_cli.metadata_extraction import ExtractedMetadata
 
 logger = logging.getLogger(__name__)
+
+# Collection metadata fetches run in parallel, as WFS ISO record fetches did.
+_METADATA_WORKERS = 4
+
+
+class EmptyLayerError(Exception):
+    """Raised by ``fetch`` when the layer has no features.
+
+    The driver records the layer as ``empty``, not ``failed``. A resumed run
+    does not try it again.
+    """
 
 
 @dataclass(frozen=True)
@@ -42,12 +67,50 @@ class LayerRef:
     """One layer that a source serves.
 
     Attributes:
-        id: Stable integer id. The report and resume state use it.
-        name: Layer name. The collection directory is a slug of it.
+        id: Layer id as the source knows it. The report records it.
+        name: Layer name. Filters and resume match on it.
+        path: Collection directory relative to the catalog, ``/``-separated.
+            The data file is ``<path>/<last segment>.parquet``. None uses a
+            slug of the name.
+        data: The source's own data for the layer, for ``fetch`` and the
+            other methods. The driver does not read it.
+        notes: Warnings that a dry run reports for the layer.
     """
 
     id: int
     name: str
+    path: str | None = None
+    data: Any = None
+    notes: tuple[str, ...] = ()
+
+
+@dataclass
+class Discovery:
+    """What ``discover`` found at a source.
+
+    Attributes:
+        source_url: URL that the report records and that the other methods
+            receive as ``source``.
+        layers: Layers in discovery order.
+        metadata: Service metadata for the report. None records the URL only.
+        catalog_seed: Metadata that seeds the catalog ``metadata.yaml``.
+        license_url: License URL that the source publishes, if any.
+        catalog_title: Title for a new catalog, or None for the default.
+        catalog_description: Description for a new catalog, or None.
+        root_metadata: ``(title, description)`` written to ``catalog.json``
+            after a new catalog is created, or None to leave it.
+        folder_coverage: Folders that a services-root traversal visited.
+    """
+
+    source_url: str
+    layers: list[LayerRef]
+    metadata: MetadataExtracted | None = None
+    catalog_seed: ExtractedMetadata | None = None
+    license_url: str | None = None
+    catalog_title: str | None = None
+    catalog_description: str | None = None
+    root_metadata: tuple[str | None, str | None] | None = None
+    folder_coverage: FolderCoverage | None = None
 
 
 @dataclass(frozen=True)
@@ -58,11 +121,32 @@ class LayerMetadata:
         title: Collection title.
         description: Collection description.
         keywords: Discovery keywords.
+        layer_name: Layer name for the processing notes. None uses the name.
+        source_type: ``source_type`` in ``metadata.yaml``. None uses the
+            source's name.
+        source_url: Layer URL for provenance. None uses the source link.
+        record: A full metadata record, such as an ISO 19139 record. It
+            replaces the fields above in ``metadata.yaml``, and ``title``
+            and ``description`` go to ``collection.json``.
+        record_label: Name of the record kind for the progress message.
     """
 
     title: str | None = None
     description: str | None = None
     keywords: list[str] | None = None
+    layer_name: str | None = None
+    source_type: str | None = None
+    source_url: str | None = None
+    record: ExtractedMetadata | None = None
+    record_label: str = "metadata record"
+
+
+@dataclass(frozen=True)
+class SourceLink:
+    """A provenance ``via`` link from a collection to the original layer."""
+
+    href: str
+    title: str
 
 
 @dataclass(frozen=True)
@@ -72,11 +156,14 @@ class LayerSourceOptions:
     Attributes:
         layer_filter: Glob patterns of layer names to include. None includes all.
         layer_exclude: Glob patterns of layer names to exclude.
-        resume: Skip layers that succeeded in the previous report.
+        resume: Skip layers that succeeded or were empty in the previous report.
         dry_run: Report the layers without writing anything.
         raw: Write the layer files and the report, but no catalog.
         retries: Attempts per layer.
         retry_delay: Seconds before the first retry. Later retries double it.
+        workers: Layers to fetch at the same time.
+        layer_timeout: With more than one worker, seconds a layer may run
+            before it is recorded as failed. None sets no limit.
         catalog_id: Catalog id. None derives it from the output directory.
         license: SPDX license identifier, or ``other`` with ``license_url``.
         license_url: URL of the license text.
@@ -89,6 +176,8 @@ class LayerSourceOptions:
     raw: bool = False
     retries: int = 3
     retry_delay: float = 1.0
+    workers: int = 1
+    layer_timeout: float | None = None
     catalog_id: str | None = None
     license: str | None = None
     license_url: str | None = None
@@ -100,48 +189,71 @@ class LayerSource(Protocol):
 
     Attributes:
         name: The subcommand name, ``portolan extract <name>``. It is also
-            the ``source_type`` in the seeded metadata.
+            the default ``source_type`` in seeded metadata.
         summary: One line that describes the source.
     """
 
     name: str
     summary: str
 
-    def discover(self, source: str) -> list[LayerRef]:
-        """List the layers at ``source``."""
-        ...
+    def discover(self, source: str, options: LayerSourceOptions) -> Discovery:
+        """Find the layers at ``source`` and the catalog-level metadata.
 
-    def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
-        """Write ``layer`` as GeoParquet to ``dest``. Return the feature count.
-
-        Raise an exception on failure. The driver retries it.
+        Do the work that happens once per run here, such as protocol
+        negotiation or a walk through a services root. Put what ``fetch``
+        needs for a layer into ``LayerRef.data``.
         """
         ...
 
-    def service_metadata(self, source: str) -> ExtractedMetadata | None:
-        """Return catalog-level metadata, or None when the source has none.
+    def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
+        """Write ``layer`` to ``dest`` as Parquet. Return the row count.
 
-        A ``license_url`` in it lets the license check pass without
-        ``--license``.
+        Raise ``EmptyLayerError`` for a layer with no features. Raise any
+        other exception for a failure. The driver retries both.
         """
         ...
 
     def layer_metadata(self, source: str, layer: LayerRef) -> LayerMetadata | None:
-        """Return the metadata for the layer's collection, or None."""
+        """Return the metadata for the layer's collection, or None to skip it."""
         ...
 
     def styles(self, source: str, layer: LayerRef, collection_dir: Path) -> None:
-        """Write Mapbox GL style files into ``collection_dir/styles/``, or do nothing."""
+        """Write style or legend files next to the layer's data, or do nothing."""
         ...
 
-    def source_link(self, source: str, layer: LayerRef) -> str | None:
-        """Return the URL of the original layer for a ``via`` link, or None."""
+    def source_link(self, source: str, layer: LayerRef) -> SourceLink | None:
+        """Return the ``via`` link to the original layer, or None."""
         ...
 
 
-def _slug(name: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
-    return slug or "layer"
+def slugify(name: str) -> str:
+    """Convert a name to a filesystem-safe slug, ``unnamed`` when nothing is left."""
+    slug = re.sub(r"[^a-z0-9]+", "_", name.lower())
+    slug = re.sub(r"_+", "_", slug).strip("_")
+    return slug or "unnamed"
+
+
+def layer_path(layer: LayerRef) -> str:
+    """Return the layer's data file, relative to the catalog."""
+    collection = layer.path or slugify(layer.name)
+    return f"{collection}/{PurePath(collection).name}.parquet"
+
+
+def filter_refs(
+    layers: list[LayerRef], include: list[str] | None, exclude: list[str] | None
+) -> list[LayerRef]:
+    """Keep the layers whose names pass the include and exclude glob patterns."""
+    from portolan_cli.extract.common.filters import filter_layers
+
+    if not include and not exclude:
+        return layers
+    kept = filter_layers(
+        [{"id": index, "name": layer.name} for index, layer in enumerate(layers)],
+        include=include,
+        exclude=exclude,
+    )
+    kept_ids = {item["id"] for item in kept}
+    return [layer for index, layer in enumerate(layers) if index in kept_ids]
 
 
 def _package_version(name: str) -> str:
@@ -151,9 +263,16 @@ def _package_version(name: str) -> str:
         return "unknown"
 
 
-def _build_report(
-    source: str, metadata: ExtractedMetadata | None, results: list[LayerResult]
-) -> ExtractionReport:
+def build_report(discovery: Discovery, results: list[LayerResult]) -> ExtractionReport:
+    """Build the extraction report for ``results``.
+
+    Args:
+        discovery: The discovery the results come from.
+        results: One result per layer, in discovery order.
+
+    Returns:
+        The report with its summary.
+    """
     from portolan_cli.extract.common.report import (
         ExtractionReport,
         ExtractionSummary,
@@ -170,39 +289,26 @@ def _build_report(
         total_size_bytes=sum(r.size_bytes or 0 for r in results),
         total_duration_seconds=sum(r.duration_seconds or 0.0 for r in results),
     )
-    extracted = MetadataExtracted(
-        source_url=source,
-        description=metadata.description if metadata else None,
-        attribution=metadata.attribution if metadata else None,
-        keywords=metadata.keywords if metadata else None,
-        contact_name=metadata.contact_name if metadata else None,
-        processing_notes=metadata.processing_notes if metadata else None,
-        known_issues=metadata.known_issues if metadata else None,
-        license_info_raw=metadata.license_raw if metadata else None,
+    metadata = discovery.metadata or MetadataExtracted(
+        source_url=discovery.source_url,
+        description=None,
+        attribution=None,
+        keywords=None,
+        contact_name=None,
+        processing_notes=None,
+        known_issues=None,
+        license_info_raw=None,
     )
     return ExtractionReport(
         extraction_date=datetime.now(timezone.utc).isoformat(),
-        source_url=source,
+        source_url=discovery.source_url,
         portolan_version=_package_version("portolan-cli"),
         gpio_version=_package_version("geoparquet-io"),
-        metadata_extracted=extracted,
+        metadata_extracted=metadata,
         layers=results,
         summary=summary,
+        folder_coverage=discovery.folder_coverage,
     )
-
-
-def _select_layers(layers: list[LayerRef], options: LayerSourceOptions) -> list[LayerRef]:
-    from portolan_cli.extract.common.filters import filter_layers
-
-    if not options.layer_filter and not options.layer_exclude:
-        return layers
-    kept = filter_layers(
-        [{"id": layer.id, "name": layer.name} for layer in layers],
-        include=options.layer_filter,
-        exclude=options.layer_exclude,
-    )
-    kept_ids = {item["id"] for item in kept}
-    return [layer for layer in layers if layer.id in kept_ids]
 
 
 def _result(layer: LayerRef, status: str, **fields: Any) -> LayerResult:
@@ -221,55 +327,193 @@ def _result(layer: LayerRef, status: str, **fields: Any) -> LayerResult:
     return LayerResult(id=layer.id, name=layer.name, status=status, **values)
 
 
-def _fetch_layer(
-    layer_source: LayerSource,
-    source: str,
-    layer: LayerRef,
-    output_dir: Path,
-    options: LayerSourceOptions,
-) -> LayerResult:
-    from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
-
-    slug = _slug(layer.name)
-    dest = output_dir / slug / f"{slug}.parquet"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    start = time.monotonic()
-    outcome = retry_with_backoff(
-        layer_source.fetch,
-        RetryConfig(max_attempts=max(options.retries, 1), initial_delay=options.retry_delay),
-        source,
-        layer,
-        dest,
-    )
-    duration = time.monotonic() - start
-    if not outcome.success:
-        return _result(layer, "failed", error=str(outcome.error), attempts=outcome.attempts)
-    features = int(outcome.value or 0)
-    if features == 0 or not dest.exists():
-        return _result(
-            layer,
-            "empty",
-            features=0,
-            size_bytes=0,
-            duration_seconds=duration,
-            error="The layer has no features.",
-            attempts=outcome.attempts,
-        )
-    layer_source.styles(source, layer, dest.parent)
+def _pending(layer: LayerRef) -> LayerResult:
     return _result(
         layer,
-        "success",
-        features=features,
-        size_bytes=dest.stat().st_size,
-        duration_seconds=duration,
-        output_path=dest.relative_to(output_dir).as_posix(),
-        attempts=outcome.attempts,
+        "pending",
+        features=0,
+        size_bytes=0,
+        duration_seconds=0.0,
+        output_path="",
+        warnings=list(layer.notes),
     )
 
 
-def _resolve_license(
-    metadata: ExtractedMetadata | None, options: LayerSourceOptions
-) -> ResolvedLicense | None:
+@dataclass
+class _Run:
+    """One extraction: the source, its discovery, and where it writes."""
+
+    source: LayerSource
+    discovery: Discovery
+    output_dir: Path
+    options: LayerSourceOptions
+    on_progress: Callable[[ExtractionProgress], None] | None
+
+    def fetch_layer(self, layer: LayerRef) -> LayerResult:
+        """Fetch one layer with retry and return its result."""
+        from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
+
+        relative = layer_path(layer)
+        dest = self.output_dir / relative
+        source_url = self.discovery.source_url
+
+        def attempt() -> tuple[int, float]:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            start = time.monotonic()
+            rows = self.source.fetch(source_url, layer, dest)
+            return rows, time.monotonic() - start
+
+        outcome = retry_with_backoff(
+            attempt,
+            RetryConfig(
+                max_attempts=max(self.options.retries, 1), initial_delay=self.options.retry_delay
+            ),
+            on_retry=lambda count, err: logger.debug(
+                "Retry %d for layer %s: %s", count, layer.name, err
+            ),
+        )
+        if outcome.success and outcome.value is not None:
+            rows, duration = outcome.value
+            self._styles(layer, dest.parent)
+            return _result(
+                layer,
+                "success",
+                features=rows,
+                size_bytes=dest.stat().st_size if dest.exists() else 0,
+                duration_seconds=duration,
+                output_path=relative,
+                attempts=outcome.attempts,
+            )
+        error = str(outcome.error) if outcome.error else "Unknown error"
+        if isinstance(outcome.error, EmptyLayerError):
+            logger.warning("Layer %s is empty (0 features), skipping", layer.name)
+            return _result(
+                layer,
+                "empty",
+                features=0,
+                size_bytes=0,
+                duration_seconds=0.0,
+                warnings=["Layer has no features"],
+                error=error,
+                attempts=outcome.attempts,
+            )
+        return _result(layer, "failed", error=error, attempts=outcome.attempts)
+
+    def _styles(self, layer: LayerRef, collection_dir: Path) -> None:
+        try:
+            self.source.styles(self.discovery.source_url, layer, collection_dir)
+        except Exception:  # noqa: BLE001 - a missing style must not fail the layer
+            logger.warning(
+                "Style extraction failed for layer '%s'; skipping style.", layer.name, exc_info=True
+            )
+
+    def emit(
+        self, index: int, total: int, layer: LayerRef, status: str, error: str | None = None
+    ) -> None:
+        from portolan_cli.extract.common.progress import emit_progress
+
+        emit_progress(self.on_progress, index, total, layer.name, status, error=error)
+
+
+def _previous_results(report_path: Path) -> tuple[dict[str, LayerResult], dict[str, LayerResult]]:
+    """Read the previous report: done layers by data file, empty layers by name."""
+    from portolan_cli.extract.common.report import load_report
+
+    by_path: dict[str, LayerResult] = {}
+    empty_by_name: dict[str, LayerResult] = {}
+    for result in load_report(report_path).layers:
+        if result.status in ("success", "skipped") and result.output_path:
+            by_path[PurePath(result.output_path.replace("\\", "/")).as_posix()] = result
+        elif result.status == "empty":
+            empty_by_name[result.name] = result
+    return by_path, empty_by_name
+
+
+def _fetch_sequential(
+    run: _Run, jobs: list[tuple[int, LayerRef]], total: int
+) -> list[tuple[int, LayerResult]]:
+    results: list[tuple[int, LayerResult]] = []
+    for index, layer in jobs:
+        run.emit(index, total, layer, "starting")
+        run.emit(index, total, layer, "extracting")
+        result = run.fetch_layer(layer)
+        run.emit(
+            index, total, layer, result.status, result.error if result.status == "failed" else None
+        )
+        results.append((index, result))
+    return results
+
+
+def _fetch_parallel(
+    run: _Run, jobs: list[tuple[int, LayerRef]], total: int
+) -> list[tuple[int, LayerResult]]:
+    """Fetch layers on worker threads, with a deadline per started layer.
+
+    A layer's deadline starts when a worker picks it up, not when it is
+    queued, so a queued layer is never timed out (issues #508, #526). A
+    timed-out thread runs on, but its result is discarded.
+    """
+    workers = min(run.options.workers, len(jobs))
+    timeout = run.options.layer_timeout
+    logger.info("Extracting %d layers with %d workers", len(jobs), workers)
+    lock = threading.Lock()
+    started: dict[int, float] = {}
+    results: list[tuple[int, LayerResult]] = []
+
+    def task(index: int, layer: LayerRef) -> LayerResult:
+        with lock:
+            started[index] = time.monotonic()
+        return run.fetch_layer(layer)
+
+    def deadline(future: Future[LayerResult]) -> float | None:
+        index = futures[future][0]
+        with lock:
+            start = started.get(index)
+        return None if start is None or timeout is None else start + timeout
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(task, index, layer): (index, layer) for index, layer in jobs}
+        pending: set[Future[LayerResult]] = set(futures)
+        while pending:
+            now = time.monotonic()
+            deadlines = [d for f in pending if (d := deadline(f)) is not None]
+            wait_for = max(0.1, min(d - now for d in deadlines)) if deadlines else 0.5
+            done, pending = wait(pending, timeout=wait_for, return_when=FIRST_COMPLETED)
+            for future in done:
+                index, layer = futures[future]
+                try:
+                    result = future.result()
+                except Exception as err:  # noqa: BLE001 - one layer must not stop the run
+                    logger.error("Layer %s failed: %s", layer.name, err)
+                    result = _result(layer, "failed", error=str(err), attempts=1)
+                run.emit(
+                    index,
+                    total,
+                    layer,
+                    result.status,
+                    result.error if result.status == "failed" else None,
+                )
+                results.append((index, result))
+            now = time.monotonic()
+            for future in [f for f in pending if (d := deadline(f)) is not None and d <= now]:
+                index, layer = futures[future]
+                with lock:
+                    elapsed = now - started[index]
+                error = f"Timeout after {timeout}s"
+                logger.error("Layer %s timed out after %ss", layer.name, timeout)
+                run.emit(index, total, layer, "failed", error)
+                results.append(
+                    (
+                        index,
+                        _result(layer, "failed", duration_seconds=elapsed, error=error, attempts=1),
+                    )
+                )
+                future.cancel()
+                pending.discard(future)
+    return results
+
+
+def _resolve_license(discovery: Discovery, options: LayerSourceOptions) -> ResolvedLicense | None:
     from portolan_cli.licensing import resolve_harvest_license
 
     if options.raw:
@@ -277,61 +521,161 @@ def _resolve_license(
     return resolve_harvest_license(
         cli_license=options.license,
         cli_license_url=options.license_url,
-        harvested_license_url=metadata.license_url if metadata else None,
+        harvested_license_url=discovery.license_url,
     )
 
 
-def _build_catalog(
+def _post_init(
+    discovery: Discovery, resolved_license: ResolvedLicense | None
+) -> Callable[[Path, list[Path], bool], None]:
+    def post_init(out: Path, files: list[Path], fresh: bool) -> None:
+        from portolan_cli.config import set_setting
+        from portolan_cli.extract.common.orchestrator_base import seed_catalog_metadata
+        from portolan_cli.formats import is_geoparquet
+        from portolan_cli.stac import update_stac_metadata
+
+        # A plain Parquet output, from a table with no geometry, becomes a
+        # tabular collection. add_files accepts it only with tabular support.
+        if any(not is_geoparquet(path) for path in files):
+            set_setting(out, "tabular.enabled", True)
+        # Overwrite the init defaults only on a new catalog. A second
+        # extraction into it must keep the root metadata (issue #832).
+        if fresh and discovery.root_metadata is not None:
+            title, description = discovery.root_metadata
+            update_stac_metadata(out / "catalog.json", title=title, description=description)
+        # The license must be in place before add_files checks for it (issue #686).
+        seed_catalog_metadata(out, discovery.catalog_seed, resolved_license)
+
+    return post_init
+
+
+def _seed_collection(
     layer_source: LayerSource,
-    source: str,
-    output_dir: Path,
-    report: ExtractionReport,
-    layers: dict[str, LayerRef],
-    metadata: ExtractedMetadata | None,
-    resolved_license: ResolvedLicense | None,
-    options: LayerSourceOptions,
+    source_url: str,
+    collection_dir: Path,
+    layer: LayerRef,
+    meta: LayerMetadata,
 ) -> None:
     from portolan_cli.extract.common.metadata_seeding import seed_collection_metadata
+    from portolan_cli.metadata_seeding import seed_metadata_yaml
+    from portolan_cli.output import detail
+    from portolan_cli.stac import update_stac_metadata
+
+    if meta.record is not None:
+        detail(f"Using {meta.record_label} for {layer.name}")
+        # No license placeholder: a collection inherits the catalog's license.
+        seed_metadata_yaml(
+            meta.record, collection_dir / ".portolan" / "metadata.yaml", license_placeholder=False
+        )
+        update_stac_metadata(
+            collection_dir / "collection.json", title=meta.title, description=meta.description
+        )
+        return
+    link = layer_source.source_link(source_url, layer)
+    seed_collection_metadata(
+        collection_dir,
+        source_type=meta.source_type or layer_source.name,
+        source_url=meta.source_url or (link.href if link else source_url),
+        layer_name=meta.layer_name or layer.name,
+        title=meta.title,
+        description=meta.description,
+        keywords=meta.keywords,
+    )
+
+
+def seed_collections(
+    layer_source: LayerSource,
+    discovery: Discovery,
+    output_dir: Path,
+    report: ExtractionReport,
+) -> None:
+    """Seed ``metadata.yaml`` for each successful layer's collection.
+
+    ``layer_metadata`` runs for the layers in parallel, because it can fetch a
+    remote record. Seeding then runs in report order.
+
+    Args:
+        layer_source: The source the layers come from.
+        discovery: The discovery that holds the layers.
+        output_dir: Catalog directory.
+        report: The extraction report.
+    """
+    by_path = {layer_path(layer): layer for layer in discovery.layers}
+    done = [
+        (result, by_path[result.output_path])
+        for result in report.layers
+        if result.status == "success" and result.output_path in by_path
+    ]
+    if not done:
+        return
+    source_url = discovery.source_url
+    with ThreadPoolExecutor(max_workers=_METADATA_WORKERS) as executor:
+        metadata = list(
+            executor.map(lambda item: layer_source.layer_metadata(source_url, item[1]), done)
+        )
+    for (result, layer), meta in zip(done, metadata, strict=True):
+        if meta is not None and result.output_path:
+            _seed_collection(
+                layer_source,
+                source_url,
+                output_dir / PurePath(result.output_path).parent,
+                layer,
+                meta,
+            )
+
+
+def build_catalog(
+    layer_source: LayerSource,
+    discovery: Discovery,
+    output_dir: Path,
+    report: ExtractionReport,
+    *,
+    resolved_license: ResolvedLicense | None = None,
+    catalog_id: str | None = None,
+) -> None:
+    """Build or extend the catalog around the layers that succeeded.
+
+    Steps: init the catalog and add the files, register styles and legends,
+    add a ``via`` link to each collection, then seed collection metadata.
+
+    Args:
+        layer_source: The source the layers come from.
+        discovery: The discovery that holds the layers.
+        output_dir: Catalog directory.
+        report: The extraction report.
+        resolved_license: The license to seed (issue #686).
+        catalog_id: Catalog id. None derives it from the directory name.
+    """
     from portolan_cli.extract.common.orchestrator_base import (
         add_source_links,
         init_extracted_catalog,
         register_collection_styles,
-        seed_catalog_metadata,
     )
 
     added = init_extracted_catalog(
         output_dir,
         report,
-        catalog_id=options.catalog_id,
-        title=None,
-        description=metadata.description if metadata else None,
-        post_init=lambda out, _files, _fresh: seed_catalog_metadata(
-            out, metadata, resolved_license
-        ),
+        catalog_id=catalog_id,
+        title=discovery.catalog_title,
+        description=discovery.catalog_description,
+        post_init=_post_init(discovery, resolved_license),
     )
     if added is None:
         return
-    register_collection_styles(output_dir, report)
+    register_collection_styles(output_dir, report, include_legends=True)
+    by_path = {layer_path(layer): layer for layer in discovery.layers}
+
+    def link(result: LayerResult) -> SourceLink | None:
+        layer = by_path.get(result.output_path or "")
+        return layer_source.source_link(discovery.source_url, layer) if layer else None
+
     add_source_links(
         output_dir,
         report,
-        url_builder=lambda src, result: layer_source.source_link(src, layers[result.name]) or src,
-        title_builder=lambda result: f"Source layer: {result.name}",
+        url_builder=lambda source, result: found.href if (found := link(result)) else source,
+        title_builder=lambda result: found.title if (found := link(result)) else result.name,
     )
-    for result in report.layers:
-        if result.status != "success" or not result.output_path:
-            continue
-        layer = layers[result.name]
-        layer_meta = layer_source.layer_metadata(source, layer) or LayerMetadata()
-        seed_collection_metadata(
-            output_dir / result.output_path.rsplit("/", 1)[0],
-            source_type=layer_source.name,
-            source_url=layer_source.source_link(source, layer) or source,
-            layer_name=layer.name,
-            title=layer_meta.title,
-            description=layer_meta.description,
-            keywords=layer_meta.keywords,
-        )
+    seed_collections(layer_source, discovery, output_dir, report)
 
 
 def run_layer_extraction(
@@ -344,10 +688,9 @@ def run_layer_extraction(
 ) -> ExtractionReport:
     """Extract the layers of ``source`` into a Portolan catalog.
 
-    The steps are those of the built-in extractors: discover, filter, check
-    the license, resume, fetch with retry, save the report to
-    ``.portolan/extraction-report.json``, then build the catalog unless
-    ``options.raw`` is set.
+    Steps: discover, filter, check the license, resume, fetch with retry,
+    save the report to ``.portolan/extraction-report.json``, then build the
+    catalog unless ``options.raw`` is set.
 
     Args:
         layer_source: The source implementation.
@@ -363,65 +706,54 @@ def run_layer_extraction(
         MissingLicenseError: Before any download, when no license can be
             resolved and ``options.raw`` is not set.
     """
-    from portolan_cli.extract.common.progress import emit_progress
-    from portolan_cli.extract.common.report import load_report, save_report
-    from portolan_cli.extract.common.resume import get_resume_state, should_process_layer
+    from portolan_cli.extract.common.report import save_report
 
     options = options or LayerSourceOptions()
-    layers = _select_layers(layer_source.discover(source), options)
-    metadata = layer_source.service_metadata(source)
-
+    discovery = layer_source.discover(source, options)
+    layers = filter_refs(discovery.layers, options.layer_filter, options.layer_exclude)
     if options.dry_run:
-        return _build_report(
-            source,
-            metadata,
-            [_result(layer, "pending", features=0, size_bytes=0) for layer in layers],
-        )
+        return build_report(discovery, [_pending(layer) for layer in layers])
 
-    resolved_license = _resolve_license(metadata, options)
+    resolved_license = _resolve_license(discovery, options)
     report_path = output_dir / ".portolan" / "extraction-report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
+    done_by_path, empty_by_name = (
+        _previous_results(report_path) if options.resume and report_path.exists() else ({}, {})
+    )
 
-    previous: dict[str, LayerResult] = {}
-    resume_state = None
-    if options.resume and report_path.exists():
-        existing = load_report(report_path)
-        resume_state = get_resume_state(existing)
-        previous = {r.name: r for r in existing.layers}
-
-    results: list[LayerResult] = []
+    run = _Run(layer_source, discovery, output_dir, options, on_progress)
     total = len(layers)
+    collected: list[tuple[int, LayerResult]] = []
+    jobs: list[tuple[int, LayerRef]] = []
     for index, layer in enumerate(layers):
-        if (
-            resume_state
-            and layer.name in previous
-            and not should_process_layer(layer.id, resume_state, layer_name=layer.name)
-        ):
-            emit_progress(on_progress, index, total, layer.name, "skipped")
-            results.append(previous[layer.name])
-            continue
-        emit_progress(on_progress, index, total, layer.name, "starting")
-        result = _fetch_layer(layer_source, source, layer, output_dir, options)
-        emit_progress(on_progress, index, total, layer.name, result.status, error=result.error)
-        results.append(result)
+        previous = done_by_path.get(layer_path(layer)) or empty_by_name.get(layer.name)
+        if previous is not None:
+            run.emit(index, total, layer, "skipped")
+            collected.append((index, previous))
+        else:
+            jobs.append((index, layer))
 
-    report = _build_report(source, metadata, results)
+    if options.workers > 1 and len(jobs) > 1:
+        collected += _fetch_parallel(run, jobs, total)
+    else:
+        collected += _fetch_sequential(run, jobs, total)
+    collected.sort(key=lambda item: item[0])
+
+    report = build_report(discovery, [result for _, result in collected])
     save_report(report, report_path)
     if not options.raw:
-        _build_catalog(
+        build_catalog(
             layer_source,
-            source,
+            discovery,
             output_dir,
             report,
-            {layer.name: layer for layer in layers},
-            metadata,
-            resolved_license,
-            options,
+            resolved_license=resolved_license,
+            catalog_id=options.catalog_id,
         )
     return report
 
 
-class _LayerSourceExtractor:
+class LayerSourceExtractor:
     """An ``Extractor`` that runs a ``LayerSource`` through the shared driver."""
 
     def __init__(self, layer_source: LayerSource) -> None:
@@ -451,7 +783,7 @@ class _LayerSourceExtractor:
         return command
 
 
-def extractor_from(layer_source: LayerSource) -> _LayerSourceExtractor:
+def extractor_from(layer_source: LayerSource) -> LayerSourceExtractor:
     """Wrap a ``LayerSource`` as an ``Extractor`` for ``portolan_extractors``.
 
     Args:
@@ -460,4 +792,4 @@ def extractor_from(layer_source: LayerSource) -> _LayerSourceExtractor:
     Returns:
         An extractor with the source's name and summary.
     """
-    return _LayerSourceExtractor(layer_source)
+    return LayerSourceExtractor(layer_source)
