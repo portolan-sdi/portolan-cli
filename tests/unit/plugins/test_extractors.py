@@ -119,3 +119,22 @@ def test_extract_help_lists_the_builtin_sources(register_plugin: Callable[..., N
     assert result.exit_code == 0
     commands = result.output.split("Commands:")[1].split()
     assert [w for w in commands if w in {"arcgis", "carto", "wfs"}] == ["arcgis", "carto", "wfs"]
+
+
+def test_shipped_commands_list_the_builtin_sources_without_plugins(
+    register_plugin: Callable[..., None],
+) -> None:
+    """The reference docs read the shipped commands. No plugin manager builds."""
+    from portolan_cli.plugins import manager
+
+    register_plugin(_Plugin([_FakeExtractor()]), "fake-plugin")
+    manager.reset_plugin_manager()
+    extract_group = _cli().commands["extract"]
+
+    root = click.Context(_cli(), info_name="portolan")
+    ctx = click.Context(extract_group, info_name="extract", parent=root)
+
+    shipped = extract_group.shipped_commands(ctx)  # type: ignore[attr-defined]
+
+    assert sorted(shipped) == ["arcgis", "carto", "wfs"]
+    assert manager._manager is None

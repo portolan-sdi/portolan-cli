@@ -112,11 +112,7 @@ class PluginGroup(click.Group):
         Returns:
             Command name to command.
         """
-        shipped: dict[str, click.Command] = {}
-        for name in self._builtin_names(ctx):
-            builtin = self._builtin_command(ctx, name)
-            if builtin is not None:
-                shipped[name] = builtin
+        shipped = dict(self.commands)
         for name, ep in self._plugin_entries(ctx).items():
             if name not in shipped and is_builtin(ep):
                 command = self.get_command(ctx, name)
@@ -216,6 +212,15 @@ class ExtractGroup(PluginGroup):
     --help`` builds no plugin manager. An extractor command counts as a
     built-in command of this group.
     """
+
+    def shipped_commands(self, ctx: click.Context) -> dict[str, click.Command]:
+        """Add the built-in extractor commands. The plugin manager does not load."""
+        from portolan_cli.plugins.builtin.extractors import portolan_extractors
+
+        commands = super().shipped_commands(ctx)
+        for extractor in portolan_extractors():
+            commands.setdefault(extractor.name, extractor.cli_command())
+        return commands
 
     def _builtin_names(self, ctx: click.Context) -> list[str]:
         from portolan_cli.plugins.extractors import registered_extractors
