@@ -23,19 +23,32 @@ def _is_geospatial_file(item: Path) -> bool:
     return item.suffix.lower() in GEOSPATIAL_EXTENSIONS and item.is_file()
 
 
-def _iter_recursive(directory: Path) -> Iterator[Path]:
+def _iter_recursive(directory: Path, visited: set[Path] | None = None) -> Iterator[Path]:
     """Yield geospatial assets under ``directory``, pruning FileGDB subtrees.
 
     FileGDB (``.gdb``) directories are single geospatial assets: they are
     yielded as-is and their internals are *never* enumerated (issue #590),
     avoiding a wasted walk over the thousands of files a FileGDB contains.
+
+    The walk enters each real directory once. A directory symlink that points
+    back at an ancestor would otherwise repeat the walk until the OS refuses
+    the path, and ``add`` would find and convert the same file about 40 times.
+    A symlink to a directory outside the walk is still followed once. The
+    listing is sorted, so the path that reaches a directory first is the same
+    on every filesystem.
     """
-    for item in directory.iterdir():
+    if visited is None:
+        visited = set()
+    real = directory.resolve()
+    if real in visited:
+        return
+    visited.add(real)
+    for item in sorted(directory.iterdir()):
         if item.is_dir():
             if is_filegdb(item):
                 yield item  # single asset; do not descend into its internals
             else:
-                yield from _iter_recursive(item)
+                yield from _iter_recursive(item, visited)
         elif _is_geospatial_file(item):
             yield item
 
