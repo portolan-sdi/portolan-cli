@@ -150,10 +150,13 @@ A **format handler** (`plugins/formats.py`) converts one format and reads its
 metadata. `handler_for(path, catalog_root)` picks one: a `conversion.handlers`
 pin, then a plugin handler, then a built-in handler from
 `plugins/builtin/formats.py` (GeoParquet, COG, PMTiles, FlatGeobuf).
-`prepare_item` and `convert_file` both ask the registry. A built-in handler
-keeps the existing code path in `preparation.py` / `convert.py`; a plugin
-handler goes through its own `convert` and `read_metadata`. The collection
-depth in `collection_id.py` comes from the handler's `asset_level`.
+`prepare_item` and `convert_file` both ask the registry and call the
+handler's `convert` and `read_metadata`. The built-in handlers live in
+`formats_builtin/`, one package per format, and import only `portolan_cli.api`.
+The handler also owns `describe_item`, `describe_collection`, `inspect`, and
+the optional `partition` and `reoptimize`, so core code never branches on the
+family for them. The collection depth in `collection_id.py` comes from the
+handler's `asset_level`.
 
 `format_families.py` is the dependency-free half: built-in extension routing
 and the GeoJSON sniff, for the read modules that must not load a plugin.

@@ -111,11 +111,32 @@ as for a built-in format of the same family and `asset_level`.
 `scan`, and `get_cloud_native_status` accept the extensions that plugin
 handlers register.
 
-The built-in handlers keep the existing conversion code: `preparation.py` for
-`add`, and `convert._convert_vector`/`_convert_raster` for `check --fix`. The
-two paths still differ. Only the `add` path rewrites a GeoParquet in place, and
-only the `check --fix` path partitions. A reference catalog built before and
-after the handler change showed no difference apart from timestamps.
+`add` and `check --fix` convert through the same handler code. The built-in
+handlers live in `portolan_cli/formats_builtin`, one package per format, and
+import only `portolan_cli.api`. `preparation.convert_vector` and
+`preparation.convert_raster` are the one vector and one raster converter. The
+`add` safety features apply to both commands: the fidelity gate, the rewrite
+temp marker, the schema metadata restore, and the transient retry.
+
+One rule decides partitioning, in `partitioning.partition_strategy`. A
+configured spatial index (`conversion.vector.partition`) comes first, then the
+size threshold (`partitioning.threshold_gb`). The partitions go next to the
+converted file. `check --fix` used to write them into a subdirectory named
+after the file.
+
+The handler owns the per-format STAC logic. `describe_item` adds statistics,
+render fields, nodata defaults, and the item extensions. `describe_collection`
+adds the table extension. `inspect` answers `portolan info`. Core code uses
+the family only to group files in `scan` and to label them.
+
+The handler writes the thumbnail when it converts. A reference catalog built
+before and after the merge differs only in thumbnails: `add` now writes one for
+each converted vector file, as `check --fix` did. `portolan check` reports one
+warning fewer on that catalog.
+
+`--force` without `--reconvert` keeps an existing output for every handler. The
+handler converts it again only when it reads that format. `--reconvert` on a
+file that is its own output calls the handler's `reoptimize`.
 
 ## Enrichment runs on the files
 

@@ -46,9 +46,9 @@ through the bbox covering column, so dropping `add_bbox` fails one rule and
 silently leaves the other unevaluated. Keep the two defaults together.
 
 Three writers must stay in agreement, and they have drifted before:
-`preparation.convert_vector` (single-file `add`), `convert._convert_vector`
-(multilayer `add`), and `extract/arcgis/orchestrator` (which builds its own
-table). WFS and Carto delegate to `geoparquet-io` helpers that already do both.
+`preparation.convert_vector` (`add` and `check --fix`, through the GeoParquet
+handler), `convert._convert_vector_layer` (multilayer `add`), and
+`extract/arcgis/orchestrator` (which builds its own table). WFS and Carto delegate to `geoparquet-io` helpers that already do both.
 When you change the layout, grep for every `add_bbox(` call and apply it to all
 of them. Every one of them must first test `convert.has_geometry`: a CSV of
 records and an ArcGIS **Table** layer both read as a table with
