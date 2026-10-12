@@ -277,9 +277,9 @@ class TestConvertVectorRetriesTransientInterrupt:
     """The add pipeline's ``convert_vector`` retries a transient DuckDB interrupt.
 
     Regression guard for the Issue #339 nightly ``test_add_1000_files_*`` flake:
-    ``add`` converts single-layer vectors via ``preparation.convert_vector`` (not
-    ``convert.convert_file``/``_convert_vector``), so the bounded transient-interrupt
-    retry must protect *this* code path too. A single ``InterruptException`` on the
+    ``add`` and ``check --fix`` convert single-layer vectors via
+    ``preparation.convert_vector``, so the bounded transient-interrupt retry
+    must protect this code path. A single ``InterruptException`` on the
     first ``gpio.convert`` must be retried and succeed; a non-transient error must
     still fail fast.
     """

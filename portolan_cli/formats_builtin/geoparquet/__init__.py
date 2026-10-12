@@ -60,7 +60,7 @@ class GeoParquetHandler:
         return output
 
     def partition(self, path: Path, catalog_root: Path | None) -> list[Path]:
-        """Partition by the one partition rule. See ``partition_strategy``."""
+        """Partition a file above the size threshold. See ``partition_strategy``."""
         return api.partition_vector_file(path, catalog_root)
 
     def read_metadata(self, path: Path) -> Any:

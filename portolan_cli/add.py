@@ -287,7 +287,7 @@ def _maybe_partition_large_file(
     if skip_partitioning:
         return [prepared]
 
-    # The format handler owns the one partition rule (#947).
+    # The format handler owns the size partition rule (#947).
     handler = handler_named(prepared.format_name) if prepared.format_name else None
     partition = getattr(handler, "partition", None)
     if partition is None:

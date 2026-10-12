@@ -1568,6 +1568,21 @@ class TestGenerateCogThumbnail:
         assert thumb.exists()
 
     @pytest.mark.unit
+    def test_convert_keeps_a_hand_made_thumbnail(self, non_cog_tif: Path, tmp_path: Path) -> None:
+        """A new COG keeps the ``.thumb.jpg`` that is already next to it."""
+        from portolan_cli.plugins.formats import handler_named
+
+        handler = handler_named("cog")
+        assert handler is not None
+        thumb = tmp_path / f"{non_cog_tif.stem}.thumb.jpg"
+        thumb.write_bytes(b"hand-made")
+
+        output = handler.convert(non_cog_tif, tmp_path, None)
+
+        assert output.exists()
+        assert thumb.read_bytes() == b"hand-made"
+
+    @pytest.mark.unit
     def test_convert_to_cog_skips_thumbnail_when_disabled(
         self, non_cog_tif: Path, tmp_path: Path
     ) -> None:
@@ -1889,7 +1904,7 @@ class TestVectorSettingsIntegration:
     def test_convert_file_passes_vector_settings(
         self, sample_geojson: Path, tmp_path: Path
     ) -> None:
-        """convert_file correctly passes VectorSettings to _convert_vector."""
+        """convert_file correctly passes VectorSettings to the vector converter."""
         import pyarrow.parquet as pq
 
         from portolan_cli.conversion_config import VectorSettings
@@ -1968,7 +1983,7 @@ class TestVectorSettingsIntegration:
 
 
 class TestVectorConversionRetriesTransientInterrupt:
-    """`_convert_vector` retries a transient DuckDB "Query interrupted".
+    """`convert_file` retries a transient DuckDB "Query interrupted".
 
     geoparquet-io runs conversions through DuckDB, which non-deterministically
     raises ``InterruptException('Query interrupted')`` (~1/1000 files) during
@@ -2366,8 +2381,8 @@ class TestPartitionedOutputWithGeoparquetIO:
         """`partition: true` alone still adds the column for a single-file write.
 
         `add` and the multilayer writer call `apply_vector_settings` and write
-        one file whatever `partition` says. Only `_convert_vector` passes
-        `partitioned=True`.
+        one file whatever `partition` says. Only `preparation.convert_vector`
+        passes `partitioned=True`, when the partition rule partitions next.
         """
         from portolan_cli.conversion_config import VectorSettings
         from portolan_cli.convert import apply_vector_settings
@@ -2378,26 +2393,79 @@ class TestPartitionedOutputWithGeoparquetIO:
 
         assert "h3_cell" in table.column_names
 
-    @pytest.mark.integration
-    def test_partition_rule_writes_auto_sized_partitions(self, tmp_path: Path) -> None:
-        """Convert, then partition by the one rule: Hive directories sized by `auto` (#947).
+    @staticmethod
+    def _catalog(tmp_path: Path, scheme: str = "h3") -> Path:
+        """Write a catalog config that asks for partitions by ``scheme``."""
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text(
+            "conversion:\n  vector:\n"
+            f"    spatial_index: {scheme}\n    resolution: auto\n    partition: true\n",
+            encoding="utf-8",
+        )
+        return tmp_path
 
-        The partitions go next to the converted file, which the step removes.
+    @pytest.mark.integration
+    def test_add_keeps_one_file_with_the_index_column(self, tmp_path: Path) -> None:
+        """`add` writes one file with the index column, whatever `partition` says.
+
+        The partition rule that `add` runs is the size threshold only. A
+        400-row file stays whole.
         """
-        from portolan_cli.conversion_config import VectorSettings, settings_override
-        from portolan_cli.partitioning import partition_vector_file
+        import pyarrow.parquet as pq
+
+        from portolan_cli.partitioning import partition_strategy, partition_vector_file
         from portolan_cli.preparation import convert_vector
 
-        settings = VectorSettings(spatial_index="h3", resolution="auto", partition=True)
-        out = tmp_path / "out"
-        out.mkdir()
+        root = self._catalog(tmp_path)
 
-        with settings_override(vector=settings):
-            converted = convert_vector(self._points(tmp_path), out)
-            files = partition_vector_file(converted, None)
+        converted = convert_vector(self._points(tmp_path), root, root)
 
-        assert not converted.exists()
-        assert [f.parent.name for f in files] == ["h3_cell=80b3fffffffffff"]
+        assert partition_strategy(converted, root) is None
+        assert partition_vector_file(converted, root) == []
+        assert converted.is_file()
+        assert "h3_cell" in pq.read_schema(converted).names
+
+    @pytest.mark.integration
+    def test_check_fix_partitions_each_source_in_its_own_directory(self, tmp_path: Path) -> None:
+        """`check --fix` writes each source's partitions under `<stem>/`.
+
+        Two sources in one directory share every cell. Each keeps all its rows.
+        """
+        import shutil
+
+        import pyarrow.parquet as pq
+
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        root = self._catalog(tmp_path)
+        first = self._points(root)
+        second = root / "second.csv"
+        shutil.copy(first, second)
+
+        results = [convert_file(source, catalog_path=root) for source in (first, second)]
+
+        assert [r.status for r in results] == [ConversionStatus.SUCCESS] * 2
+        assert [r.output for r in results] == [root / "points", root / "second"]
+        for output in (root / "points", root / "second"):
+            files = sorted(output.glob("h3_cell=*/*.parquet"))
+            assert files
+            assert sum(pq.read_metadata(f).num_rows for f in files) == 400
+        assert not (root / "points.parquet").exists()
+
+    @pytest.mark.unit
+    def test_size_partition_that_writes_nothing_keeps_the_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The converted file stays when the partition step writes no file."""
+        from portolan_cli import partitioning
+
+        converted = tmp_path / "big.parquet"
+        converted.write_bytes(b"PAR1")
+        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_: "kdtree")
+        monkeypatch.setattr(partitioning, "partition_geoparquet", lambda **_: [])
+
+        assert partitioning.partition_vector_file(converted, tmp_path) == []
+        assert converted.exists()
 
     @pytest.mark.integration
     @pytest.mark.xfail(

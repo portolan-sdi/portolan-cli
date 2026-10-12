@@ -1205,12 +1205,20 @@ def convert_vector(
     *,
     reconvert: bool = False,
     settings: VectorSettings | None = None,
+    partition_dir: Path | None = None,
 ) -> Path:
     """Convert a vector file to GeoParquet. ``add`` and ``check --fix`` both use this (#947).
 
     Applies the catalog's ``conversion.vector`` settings, which sort rows and
     add a bbox covering column by default (issue #805). A ``.parquet`` source
     is copied unless :func:`_needs_spatial_rewrite` says it must be rewritten.
+
+    ``add`` writes one file. A configured spatial index becomes a column of
+    that file, whatever ``partition`` says. ``check --fix`` passes
+    ``partition_dir`` instead, and the table is written as Hive partitions by
+    that index. Each source gets its own ``partition_dir``, because two
+    sources in one directory share cells, and geoparquet-io does not write over
+    a cell that exists.
 
     Args:
         source: Source vector file.
@@ -1220,13 +1228,17 @@ def convert_vector(
         reconvert: True when the operator asked to re-convert from source, which
             rewrites a Parquet file whatever its footer already declares.
         settings: Explicit vector settings. None reads them from the catalog.
+        partition_dir: Directory for Hive partitions by the configured spatial
+            index. It applies only to a non-Parquet source, when the settings
+            set ``partition`` and a spatial index.
 
     Returns:
-        Path to the output GeoParquet file.
+        Path to the output GeoParquet file, or ``partition_dir`` when the
+        table was written as partitions.
     """
     import geoparquet_io as gpio  # type: ignore[import-untyped]
 
-    from portolan_cli.convert import repair_shapefile_encoding_sidecar
+    from portolan_cli.convert import _write_partitioned, repair_shapefile_encoding_sidecar
 
     output_path = dest_dir / f"{source.stem}.parquet"
     if settings is None:
@@ -1264,18 +1276,24 @@ def convert_vector(
     # A non-Parquet source. Convert with the geoparquet-io fluent API, wrapped
     # in the shared retry so a transient DuckDB "Query interrupted" does not
     # fail a bulk add (Issue #339 nightly test_add_1000_files_* flake); this is
-    # the code path add and check --fix use. When the partition rule partitions
-    # by the configured index, the partition step adds the index column at the
-    # size it partitions by, so the converter leaves it out.
-    partitioned = settings.partition and settings.spatial_index != "none"
+    # the code path add and check --fix use. A partitioned write adds the index
+    # column at the size it partitions by, so the converter leaves it out.
+    if not (settings.partition and settings.spatial_index != "none"):
+        partition_dir = None
+    resolved = settings
 
     def _run() -> None:
-        table = apply_vector_settings(gpio.convert(str(source)), settings, partitioned=partitioned)
-        table.write(str(output_path))
+        table = apply_vector_settings(
+            gpio.convert(str(source)), resolved, partitioned=partition_dir is not None
+        )
+        if partition_dir is None:
+            table.write(str(output_path))
+        else:
+            _write_partitioned(table, partition_dir, resolved)
 
     run_with_transient_convert_retry(_run, source_name=source.name)
 
-    return output_path
+    return output_path if partition_dir is None else partition_dir
 
 
 # Above this size, the rewrite is slow enough that the operator should know why

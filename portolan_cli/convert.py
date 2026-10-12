@@ -331,6 +331,7 @@ def _early_exit_result(
     *,
     force: bool,
     start_time: float,
+    catalog_path: Path | None = None,
 ) -> ConversionResult | None:
     """Return a SKIPPED/UNSUPPORTED result if no conversion should run, else None.
 
@@ -343,7 +344,7 @@ def _early_exit_result(
         # --force re-optimizes a file whose handler can rewrite it (issue #530).
         from portolan_cli.plugins.formats import handler_for
 
-        handler = handler_for(source) if force else None
+        handler = handler_for(source, catalog_path) if force else None
         if handler is not None and hasattr(handler, "reoptimize"):
             return None
         duration_ms = int((time.perf_counter() - start_time) * 1000)
@@ -426,8 +427,10 @@ def convert_file(
     reoptimize = False
     display_name = handler.display_name if handler is not None else ""
     if handler is None:
-        format_info = get_cloud_native_status(source)
-        early_exit = _early_exit_result(source, format_info, force=force, start_time=start_time)
+        format_info = get_cloud_native_status(source, catalog_path)
+        early_exit = _early_exit_result(
+            source, format_info, force=force, start_time=start_time, catalog_path=catalog_path
+        )
         if early_exit is not None:
             return early_exit
         reoptimize = format_info.status == CloudNativeStatus.CLOUD_NATIVE
@@ -444,12 +447,21 @@ def convert_file(
             start_time,
         )
 
+    out_dir = output_dir or source.parent
     with settings_override(cog=cog_settings, vector=vector_settings):
         try:
-            output_path = convert_with_handler(
-                handler, source, output_dir or source.parent, catalog_path, reoptimize=reoptimize
+            partitioned = (
+                None
+                if reoptimize
+                else _convert_partitioned_by_index(handler, source, out_dir, catalog_path)
             )
-            output_path = partition_with_handler(handler, output_path, catalog_path)
+            if partitioned is not None:
+                output_path = partitioned
+            else:
+                output_path = convert_with_handler(
+                    handler, source, out_dir, catalog_path, reoptimize=reoptimize
+                )
+                output_path = partition_with_handler(handler, output_path, catalog_path)
         except InvalidOutputError as err:
             logger.warning("Conversion completed but validation failed: %s", err)
             return _result(
@@ -536,6 +548,40 @@ def convert_with_handler(
     return handler.convert(source, output_dir, catalog_root)
 
 
+def _convert_partitioned_by_index(
+    handler: FormatHandler, source: Path, output_dir: Path, catalog_root: Path | None
+) -> Path | None:
+    """Convert a vector source into Hive partitions by the configured spatial index.
+
+    Only ``check --fix`` does this, and only for the built-in GeoParquet
+    handler. ``add`` keeps one file with the index column. The partitions go
+    to ``<output_dir>/<stem>/``, so two sources in one directory cannot write
+    to the same cell.
+
+    Returns:
+        The partition directory, or None when the settings ask for no
+        partitions or the handler is not the built-in GeoParquet handler.
+
+    Raises:
+        InvalidOutputError: The partitions are not valid GeoParquet.
+    """
+    from portolan_cli.plugins.formats import handler_named
+    from portolan_cli.preparation import convert_vector
+
+    if handler is not handler_named("geoparquet") or source.suffix.lower() == ".parquet":
+        return None
+    settings = get_vector_settings(catalog_root)
+    if not (settings.partition and settings.spatial_index != "none"):
+        return None
+    output = convert_vector(
+        source, output_dir, catalog_root, partition_dir=output_dir / source.stem
+    )
+    error = validate_geoparquet(output)
+    if error is not None:
+        raise InvalidOutputError(str(output), error)
+    return output
+
+
 def partition_with_handler(handler: FormatHandler, path: Path, catalog_root: Path | None) -> Path:
     """Partition a converted file when the handler's rule asks for it.
 
@@ -553,23 +599,20 @@ def partition_with_handler(handler: FormatHandler, path: Path, catalog_root: Pat
 _CONVERT_MAX_ATTEMPTS = 3
 
 
-def write_raster_thumbnail(
-    cog_path: Path, catalog_root: Path | None, *, replace: bool = False
-) -> None:
+def write_raster_thumbnail(cog_path: Path, catalog_root: Path | None) -> None:
     """Write ``<stem>.thumb.jpg`` next to a COG when the COG settings ask for it.
 
+    A thumbnail that exists stays, so a hand-made thumbnail survives a re-add.
     A thumbnail is optional, so a failure only warns.
 
     Args:
         cog_path: The COG.
         catalog_root: Catalog root, for the COG settings.
-        replace: Write over a thumbnail that exists. Pass True after the data
-            changed.
     """
     settings = get_cog_settings(catalog_root)
     if not settings.generate_thumbnail:
         return
-    if cog_path.with_name(f"{cog_path.stem}.thumb.jpg").exists() and not replace:
+    if cog_path.with_name(f"{cog_path.stem}.thumb.jpg").exists():
         return
     try:
         generate_cog_thumbnail(
@@ -616,8 +659,8 @@ def run_with_transient_convert_retry(
     the first occurrence.
 
     Shared by every conversion entry point the ``add`` pipeline uses
-    (:func:`_convert_vector`, :func:`_convert_vector_layer`, and
-    ``preparation.convert_vector`` / ``preparation.convert_tabular``) so the
+    (:func:`_convert_vector_layer`, ``preparation.convert_vector``, and
+    ``preparation.convert_tabular``) so the
     retry is applied uniformly rather than on a single code path (Issue #339
     nightly ``test_add_1000_files_*`` flake).
 

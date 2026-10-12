@@ -33,21 +33,19 @@ class CogHandler:
     def convert(self, source: Path, output_dir: Path, catalog_root: Path | None) -> Path:
         """Convert, validate, and write a thumbnail.
 
-        A kept COG gets a thumbnail only when it has none. A new COG gets a new one.
+        The thumbnail is written only when the COG has none. A thumbnail that
+        a publisher made survives a re-add.
         """
-        target = self.output_path(source, output_dir)
-        before = target.stat().st_mtime_ns if target.exists() else None
         output = api.convert_raster(source, output_dir, catalog_root)
-        written = before is None or output.stat().st_mtime_ns != before
         self._check(output)
-        api.write_raster_thumbnail(output, catalog_root, replace=written)
+        api.write_raster_thumbnail(output, catalog_root)
         return output
 
     def reoptimize(self, source: Path, catalog_root: Path | None) -> Path:
         """Rewrite a COG with the current settings (issue #530)."""
         output = api.convert_raster(source, source.parent, catalog_root, reoptimize=True)
         self._check(output)
-        api.write_raster_thumbnail(output, catalog_root, replace=True)
+        api.write_raster_thumbnail(output, catalog_root)
         return output
 
     def read_metadata(self, path: Path) -> Any:
