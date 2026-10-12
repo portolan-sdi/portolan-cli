@@ -911,6 +911,9 @@ def _prepare_multilayer_file(
     try:
         # Load vector settings from catalog config, then convert all layers.
         vector_settings = get_vector_settings(opts.catalog_root)
+        # prepare_item sees each layer file after it exists, so it cannot tell
+        # a new layer file from an old one. Record the old ones here.
+        existing = set(file_path.parent.glob("*.parquet"))
         results = convert_multilayer_file(file_path, file_path.parent, settings=vector_settings)
 
         for result in results:
@@ -930,6 +933,7 @@ def _prepare_multilayer_file(
                     reconvert=opts.reconvert,
                     exclude_sibling_names=opts.batch_exclude_names,
                 )
+                prepared.created_output = result.output not in existing
                 # Apply partitioning to each layer (Issue #352)
                 prepared_list.extend(
                     _maybe_partition_large_file(

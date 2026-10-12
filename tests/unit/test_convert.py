@@ -2538,6 +2538,51 @@ class TestPartitionedOutputWithGeoparquetIO:
 
         assert converted.exists() is not created_output
 
+    @pytest.mark.unit
+    @pytest.mark.parametrize("existed", [False, True])
+    def test_multilayer_collision_removes_only_a_new_layer_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existed: bool
+    ) -> None:
+        """A multilayer layer file that this run wrote goes on a collision.
+
+        A layer file that existed before the run stays.
+        """
+        from portolan_cli import add, partitioning
+        from portolan_cli.convert import LayerConversionResult
+
+        coll = tmp_path / "coll"
+        (coll / "kdtree_cell=0000").mkdir(parents=True)
+        gpkg = coll / "multi.gpkg"
+        gpkg.write_bytes(b"x")
+        layer = coll / "roads.parquet"
+        if existed:
+            layer.write_bytes(b"PAR1")
+
+        def _convert(source: Path, out: Path, settings: Any = None) -> list[Any]:
+            layer.write_bytes(b"PAR1")
+            return [LayerConversionResult(source, "roads", layer, True)]
+
+        monkeypatch.setattr(add, "convert_multilayer_file", _convert)
+        monkeypatch.setattr(
+            add, "prepare_item", lambda path, **_: self._prepared(path, created_output=False)
+        )
+        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_: "kdtree")
+        opts = add._PrepareOptions(
+            catalog_root=tmp_path,
+            item_id=None,
+            item_datetime=None,
+            force=True,
+            reconvert=False,
+            skip_partitioning=False,
+            batch_exclude_names=frozenset(),
+        )
+
+        prepared, failures = add._prepare_multilayer_file(gpkg, "coll", opts)
+
+        assert prepared == []
+        assert len(failures) == 1
+        assert layer.exists() is existed
+
     @pytest.mark.integration
     def test_prepare_item_reports_a_new_output(self, tmp_path: Path) -> None:
         """`created_output` is True for a new conversion and False for a kept output."""
