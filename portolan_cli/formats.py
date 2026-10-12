@@ -310,13 +310,25 @@ def detect_format(path: Path, catalog_root: Path | None = None) -> str | None:
     return detect_family(path)
 
 
-def _plugin_status(path: Path) -> FormatInfo | None:
-    """Report a file that a plugin format handler claims as CONVERTIBLE."""
-    from portolan_cli.plugins.formats import extension_of, plugin_extensions, plugin_handler_for
+def _plugin_status(path: Path, catalog_root: Path | None = None) -> FormatInfo | None:
+    """Report a file that a plugin format handler claims as CONVERTIBLE.
 
-    if extension_of(path) not in plugin_extensions():
+    Return None when the built-in checks decide the status. That is the case
+    for an extension that a built-in handler also registers, so a valid COG
+    stays CLOUD_NATIVE when a plugin claims ``.tif``. It is also the case when
+    a ``conversion.handlers`` pin under ``catalog_root`` selects a built-in.
+    """
+    from portolan_cli.plugins.formats import (
+        builtin_extensions,
+        extension_of,
+        plugin_extensions,
+        plugin_handler_for,
+    )
+
+    extension = extension_of(path)
+    if extension not in plugin_extensions() or extension in builtin_extensions():
         return None
-    handler = plugin_handler_for(path)
+    handler = plugin_handler_for(path, catalog_root)
     if handler is None:
         return None
     return FormatInfo(
@@ -327,7 +339,7 @@ def _plugin_status(path: Path) -> FormatInfo | None:
     )
 
 
-def get_cloud_native_status(path: Path) -> FormatInfo:
+def get_cloud_native_status(path: Path, catalog_root: Path | None = None) -> FormatInfo:
     """Determine cloud-native status and format info for a file.
 
     Classifies a file as CLOUD_NATIVE, CONVERTIBLE, or UNSUPPORTED based on
@@ -336,6 +348,7 @@ def get_cloud_native_status(path: Path) -> FormatInfo:
 
     Args:
         path: Path to the file to classify.
+        catalog_root: Catalog root, for a ``conversion.handlers`` pin.
 
     Returns:
         FormatInfo with status, display name, target format, and error message.
@@ -361,7 +374,7 @@ def get_cloud_native_status(path: Path) -> FormatInfo:
     extension = path.suffix.lower()
 
     # A plugin format handler converts its own formats (#947).
-    plugin_info = _plugin_status(path)
+    plugin_info = _plugin_status(path, catalog_root)
     if plugin_info is not None:
         return plugin_info
 
@@ -459,8 +472,9 @@ def get_effective_status(
         path: Path to the file to classify.
         overrides: Optional ConversionOverrides with user configuration.
             If None, returns the same result as get_cloud_native_status().
-        root: Catalog root for resolving relative paths in glob patterns.
-            Required if using path-based overrides.
+        root: Catalog root for resolving relative paths in glob patterns
+            and for a ``conversion.handlers`` pin. Required if using
+            path-based overrides.
 
     Returns:
         FormatInfo with potentially modified status based on overrides.
@@ -475,7 +489,7 @@ def get_effective_status(
         >>> result.status  # CONVERTIBLE instead of CLOUD_NATIVE
     """
     # Get original status
-    info = get_cloud_native_status(path)
+    info = get_cloud_native_status(path, root)
 
     # No overrides? Return original
     if overrides is None:

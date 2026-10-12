@@ -284,7 +284,7 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
     # - asset_level "item" (raster): grandparent = collection, parent = item
     from portolan_cli.plugins.formats import handler_for
 
-    handler = handler_for(path)
+    handler = handler_for(path, catalog_root)
     is_raster = handler is not None and handler.asset_level == "item"
 
     if is_raster:

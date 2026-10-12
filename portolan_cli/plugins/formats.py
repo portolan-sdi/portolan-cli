@@ -160,8 +160,8 @@ class FormatHandler(Protocol):
 def format_handlers() -> list[tuple[str, FormatHandler]]:
     """Return every format handler with the name of the plugin that gives it.
 
-    A result that is not a ``FormatHandler`` produces a ``PluginWarning`` and is
-    dropped.
+    A hook result that is not a list, or a list entry that is not a
+    ``FormatHandler``, produces a ``PluginWarning`` and is dropped.
 
     The list is cached per plugin manager, because ``add`` and ``scan`` ask for
     a handler once per file. ``reset_plugin_manager`` makes a new manager, which
@@ -178,6 +178,14 @@ def format_handlers() -> list[tuple[str, FormatHandler]]:
 
     handlers: list[tuple[str, FormatHandler]] = []
     for plugin_name, result in call_each("portolan_formats"):
+        if not isinstance(result, (list, tuple)):
+            warnings.warn(
+                f"Plugin '{plugin_name}' returned {type(result).__name__} from "
+                "portolan_formats, which is not a list of format handlers.",
+                PluginWarning,
+                stacklevel=2,
+            )
+            continue
         for handler in result:
             if isinstance(handler, FormatHandler):
                 handlers.append((plugin_name, handler))
@@ -258,7 +266,7 @@ def select_handler(
     claiming = [
         (plugin_name, handler)
         for plugin_name, handler in handlers
-        if extension in handler.extensions and handler.claims(path)
+        if extension in handler.extensions and _claims(plugin_name, handler, path)
     ]
     plugins = [(name, handler) for name, handler in claiming if not is_builtin(name)]
     if len(plugins) > 1:
@@ -266,6 +274,33 @@ def select_handler(
     if plugins:
         return plugins[0]
     return claiming[0] if claiming else None
+
+
+def _claims(plugin_name: str, handler: FormatHandler, path: Path) -> bool:
+    """Ask ``handler`` to claim ``path``. A plugin that raises claims nothing.
+
+    One broken plugin must not stop ``scan``, ``check``, or ``add`` for every
+    file with its extension, so the error becomes a ``PluginWarning``.
+    """
+    if is_builtin(plugin_name):
+        return handler.claims(path)
+    try:
+        return handler.claims(path)
+    except Exception as err:  # noqa: BLE001 - one broken plugin must not stop the CLI
+        from portolan_cli.plugins.manager import warn_hook_failure
+
+        warn_hook_failure(plugin_name, f"{handler.name}.claims", err)
+        return False
+
+
+def builtin_extensions() -> frozenset[str]:
+    """Return the extensions that the built-in format handlers register."""
+    return frozenset(
+        extension
+        for plugin_name, handler in format_handlers()
+        if is_builtin(plugin_name)
+        for extension in handler.extensions
+    )
 
 
 def plugin_extensions() -> frozenset[str]:

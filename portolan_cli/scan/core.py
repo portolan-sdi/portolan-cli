@@ -414,6 +414,8 @@ class _ScanContext:
     special_formats: list[SpecialFormat] = field(default_factory=list)
     # Progress callback (called for each directory scanned)
     progress_callback: Callable[[], None] | None = None
+    # Catalog that holds the scanned directory, for a conversion.handlers pin
+    catalog_root: Path | None = None
 
 
 # =============================================================================
@@ -513,7 +515,7 @@ def _infer_collection_id_from_relative_path(relative_path: str) -> str:
     return "/".join(non_partition_segments)
 
 
-def _get_format_info(path: Path, ext: str) -> FormatInfo:
+def _get_format_info(path: Path, ext: str, catalog_root: Path | None = None) -> FormatInfo:
     """Get cloud-native status and format info for a file.
 
     This is a lightweight wrapper around get_cloud_native_status() that
@@ -522,12 +524,13 @@ def _get_format_info(path: Path, ext: str) -> FormatInfo:
     Args:
         path: Path to the file.
         ext: File extension (lowercase).
+        catalog_root: Catalog root, for a ``conversion.handlers`` pin.
 
     Returns:
         FormatInfo with status, display_name, target_format, and error_message.
     """
     try:
-        return get_cloud_native_status(path)
+        return get_cloud_native_status(path, catalog_root)
     except (FileNotFoundError, IsADirectoryError):
         # Return a fallback for edge cases
         from portolan_cli.formats import FormatInfo as RuntimeFormatInfo
@@ -1195,7 +1198,7 @@ def _discover_files(
     yield from _walk_with_depth(root)
 
 
-def _other_format_type(path: Path, ext: str) -> str | None:
+def _other_format_type(path: Path, ext: str, catalog_root: Path | None = None) -> str | None:
     """Return the family of a recognized or plugin extension, or None to skip.
 
     A plugin format handler reads its own extensions (#947).
@@ -1203,7 +1206,7 @@ def _other_format_type(path: Path, ext: str) -> str | None:
     if _is_recognized_extension(ext):
         return _get_format_type(ext)
     if ext in plugin_extensions():
-        return detect_format(path)
+        return detect_format(path, catalog_root)
     return None
 
 
@@ -1353,7 +1356,7 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
         # It's GeoJSON in a .json file - treat as vector format
         format_type = VECTOR
     else:
-        other_type = _other_format_type(path, ext)
+        other_type = _other_format_type(path, ext, ctx.catalog_root)
         if other_type is None:
             # Unrecognized extension
             ctx.skipped.append(_make_skipped_file(ctx, path, size))
@@ -1365,7 +1368,7 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
     inferred_collection_id = _infer_collection_id_from_relative_path(relative_path)
 
     # Get format info for cloud-native status and display name
-    format_info = _get_format_info(path, ext)
+    format_info = _get_format_info(path, ext, ctx.catalog_root)
 
     # Create scanned file
     scanned = ScannedFile(
@@ -1433,8 +1436,15 @@ def scan_directory(
     if options is None:
         options = ScanOptions()
 
-    # Create scan context
-    ctx = _ScanContext(root=path, options=options, progress_callback=progress_callback)
+    from portolan_cli.catalog import find_catalog_root
+
+    # Create scan context. A scan outside a catalog reads no handler pin.
+    ctx = _ScanContext(
+        root=path,
+        options=options,
+        progress_callback=progress_callback,
+        catalog_root=find_catalog_root(path, require_operational=False),
+    )
 
     # Discover and process files
     for file_path, file_size in _discover_files(ctx):

@@ -382,7 +382,7 @@ def check_directory(
         if overrides is not None:
             status_info = get_effective_status(file_path, overrides=overrides, root=catalog_path)
         else:
-            status_info = get_cloud_native_status(file_path)
+            status_info = get_cloud_native_status(file_path, catalog_path)
         file_statuses.append(
             FileStatus(
                 path=file_path,
@@ -404,7 +404,7 @@ def check_directory(
             f.path for f in file_statuses if f.status == CloudNativeStatus.CONVERTIBLE
         ]
         if force:
-            files_to_convert.extend(_forced_raster_paths(file_statuses))
+            files_to_convert.extend(_forced_raster_paths(file_statuses, catalog_path))
         conversion_report = convert_directory(
             path,
             on_progress=on_progress,
@@ -428,14 +428,16 @@ def check_directory(
     elif fix and dry_run:
         # Preview mode - show what would be converted (no changes on disk).
         report.conversion_report = ConversionReport(
-            results=_build_preview_results(file_statuses, force=force)
+            results=_build_preview_results(file_statuses, force=force, catalog_path=catalog_path)
         )
         # Note: remove_legacy is ignored in dry_run mode (no actual removal)
 
     return report
 
 
-def _forced_raster_paths(file_statuses: list[FileStatus]) -> list[Path]:
+def _forced_raster_paths(
+    file_statuses: list[FileStatus], catalog_path: Path | None = None
+) -> list[Path]:
     """Paths of already-cloud-native files eligible for --force re-optimization.
 
     These are files `--fix` would normally skip, whose format handler has a
@@ -447,12 +449,13 @@ def _forced_raster_paths(file_statuses: list[FileStatus]) -> list[Path]:
     return [
         f.path
         for f in file_statuses
-        if f.status == CloudNativeStatus.CLOUD_NATIVE and hasattr(handler_for(f.path), "reoptimize")
+        if f.status == CloudNativeStatus.CLOUD_NATIVE
+        and hasattr(handler_for(f.path, catalog_path), "reoptimize")
     ]
 
 
 def _build_preview_results(
-    file_statuses: list[FileStatus], *, force: bool
+    file_statuses: list[FileStatus], *, force: bool, catalog_path: Path | None = None
 ) -> list[ConversionResult]:
     """Build dry-run preview ConversionResults for --fix (and --force)."""
 
@@ -476,7 +479,7 @@ def _build_preview_results(
     ]
     if force:
         # Forced rasters re-encode in place: COG -> COG, same path.
-        forced = set(_forced_raster_paths(file_statuses))
+        forced = set(_forced_raster_paths(file_statuses, catalog_path))
         previews.extend(
             ConversionResult(
                 source=f.path,
