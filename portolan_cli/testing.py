@@ -16,6 +16,7 @@ module follows semantic versioning, as ``portolan_cli.api`` does.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_type_hints
 
@@ -75,8 +76,67 @@ def check_format_handler(handler: Any, sample: Path, output_dir: Path) -> None:
         problems.append(f"read_metadata bbox {bbox!r} has a minimum above its maximum.")
     if not isinstance(metadata.to_stac_properties(), dict):
         problems.append("to_stac_properties returned something other than a dict.")
+    if handler.output_path(sample, output_dir) != output:
+        problems.append("output_path does not name the file that convert wrote.")
+    problems += _check_describe(handler, sample, output, metadata, output_dir)
+    problems += _check_optional_methods(handler, output)
     if problems:
         raise ConformanceError("\n".join(problems))
+
+
+def _check_describe(
+    handler: Any, sample: Path, output: Path, metadata: Any, output_dir: Path
+) -> list[str]:
+    """Run ``describe_item``, ``describe_collection``, and ``inspect`` on stand-in objects."""
+    from datetime import datetime, timezone
+
+    import pystac
+
+    from portolan_cli.plugins.formats import FormatContext
+
+    context = FormatContext(catalog_root=output_dir, collection_dir=output_dir, source=sample)
+    problems: list[str] = []
+    bbox = [float(v) for v in metadata.bbox]
+    item = pystac.Item(
+        id="conformance",
+        geometry=None,
+        bbox=bbox,
+        datetime=datetime.now(timezone.utc),
+        properties=dict(metadata.to_stac_properties()),
+        assets={"data": pystac.Asset(href=f"./{output.name}", media_type=handler.media_type)},
+    )
+    handler.describe_item(item, output, metadata, context)
+    if item.id != "conformance" or "data" not in item.assets:
+        problems.append("describe_item removed the item id or its data asset.")
+    collection = pystac.Collection(
+        id="conformance",
+        description="Conformance check",
+        extent=pystac.Extent(
+            pystac.SpatialExtent([bbox]),
+            pystac.TemporalExtent([[datetime.now(timezone.utc), None]]),
+        ),
+    )
+    handler.describe_collection(collection, [metadata], context)
+    if collection.id != "conformance":
+        problems.append("describe_collection changed the collection id.")
+    # inspect may raise ValueError for a format ``portolan info`` does not read.
+    with contextlib.suppress(ValueError):
+        handler.inspect(output, None)
+    return problems
+
+
+def _check_optional_methods(handler: Any, output: Path) -> list[str]:
+    """Check ``partition`` and ``reoptimize`` when the handler has them."""
+    problems: list[str] = []
+    partition = getattr(handler, "partition", None)
+    if partition is not None and not isinstance(partition(output, None), list):
+        problems.append("partition returned something other than a list.")
+    reoptimize = getattr(handler, "reoptimize", None)
+    if reoptimize is not None and output.exists():
+        result = reoptimize(output, None)
+        if not isinstance(result, Path) or not result.exists():
+            problems.append(f"reoptimize returned {result!r}, expected an existing Path.")
+    return problems
 
 
 def _check_handler_attributes(handler: Any) -> list[str]:

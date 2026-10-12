@@ -12,6 +12,8 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from portolan_cli import api
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -64,12 +66,36 @@ class XyzHandler:
         rows = [f"{x},{y},{z},POINT({x} {y})" for x, y, z in _points(source)]
         csv = output_dir / f".{source.stem}.xyz.csv"
         csv.write_text("x,y,z,wkt\n" + "\n".join(rows) + "\n", encoding="utf-8")
-        output = output_dir / f"{source.stem}.parquet"
+        output = self.output_path(source, output_dir)
         try:
             gpio.convert(str(csv)).add_bbox().sort_hilbert().write(str(output))
         finally:
             csv.unlink(missing_ok=True)
         return output
+
+    def output_path(self, source: Path, output_dir: Path) -> Path:
+        """Return ``<stem>.parquet`` in ``output_dir``."""
+        return output_dir / f"{source.stem}.parquet"
+
+    def describe_item(
+        self, item: Any, output: Path, metadata: Any, context: api.FormatContext
+    ) -> None:
+        """Add column statistics, as the built-in GeoParquet handler does."""
+        api.describe_vector_item(item, output, metadata, context)
+
+    def describe_collection(
+        self, collection: Any, metadata: list[Any], context: api.FormatContext
+    ) -> None:
+        """Record the total point count of the files this ``add`` converted."""
+        total = sum(m.point_count for m in metadata if isinstance(m, XyzMetadata))
+        collection.extra_fields["example:point_count"] = total
+
+    def inspect(self, path: Path, catalog_root: Path | None) -> Any:
+        """Describe the converted GeoParquet next to an ``.xyz`` file."""
+        converted = self.output_path(path, path.parent) if path.suffix == ".xyz" else path
+        if not converted.exists():
+            raise ValueError(f"Run portolan add first. {converted.name} does not exist.")
+        return api.inspect_geoparquet(converted, catalog_root=catalog_root)
 
     def read_metadata(self, path: Path) -> XyzMetadata:
         """Read the bbox from the GeoParquet ``geo`` key."""
