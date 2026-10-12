@@ -602,8 +602,11 @@ _CONVERT_MAX_ATTEMPTS = 3
 def write_raster_thumbnail(cog_path: Path, catalog_root: Path | None) -> None:
     """Write ``<stem>.thumb.jpg`` next to a COG when the COG settings ask for it.
 
-    A thumbnail that exists stays, so a hand-made thumbnail survives a re-add.
-    A thumbnail is optional, so a failure only warns.
+    A thumbnail that exists stays, so a re-add keeps a hand-made thumbnail.
+    Portolan cannot tell a hand-made thumbnail from one it wrote, so an old
+    thumbnail also stays after the imagery changes. Delete ``<stem>.thumb.jpg``
+    to make the next conversion write a new one. A thumbnail is optional, so a
+    failure only warns.
 
     Args:
         cog_path: The COG.

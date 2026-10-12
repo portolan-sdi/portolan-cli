@@ -97,8 +97,8 @@ order:
 1. A pin in `.portolan/config.yaml`, such as `conversion.handlers: {.tif: cog}`.
    A pin to a missing name raises `UnknownFormatHandlerError`.
 2. A plugin handler whose `extensions` hold the extension and whose `claims`
-   returns True. Two such handlers raise `AmbiguousFormatError`, which names
-   the pin to add.
+   returns True. When more than one plugin handler claims the file,
+   `AmbiguousFormatError` names the pin to add.
 3. A built-in handler that claims the file.
 
 `FormatType` is gone. A format family is a plain string, because a plugin
@@ -115,15 +115,20 @@ handlers register.
 handlers live in `portolan_cli/formats_builtin`, one package per format, and
 import only `portolan_cli.api`. `preparation.convert_vector` and
 `preparation.convert_raster` are the one vector and one raster converter. The
-`add` safety features apply to both commands: the fidelity gate, the rewrite
-temp marker, the schema metadata restore, and the transient retry.
+`add` safety features apply to both commands:
 
-Two partition rules apply.
+- the fidelity gate
+- the rewrite temp marker
+- the schema metadata restore
+- the transient retry
+
+Partitioning follows the size rule and the index rule.
 
 - The size rule is in `partitioning.partition_strategy`, and both commands
   apply it. A file at or above `partitioning.threshold_gb` partitions into
   Hive directories next to it. The file is removed only when the step wrote a
-  partition.
+  partition. A directory that already holds partitions for the strategy raises
+  `PartitionCollisionError`, because geoparquet-io does not write over a cell.
 - The index rule (`conversion.vector.partition`) applies only to
   `check --fix`, as before the merge. `convert._convert_partitioned_by_index`
   writes the partitions to `<output_dir>/<stem>/`. `add` writes one file with
@@ -141,8 +146,9 @@ adds the table extension. `inspect` answers `portolan info`. Core code uses
 the family only to group files in `scan` and to label them.
 
 The COG handler writes the raster thumbnail when it converts, because each
-raster is an item. It keeps a thumbnail that exists, so a hand-made thumbnail
-survives a re-add. The GeoParquet handler writes no thumbnail. A collection
+raster is an item. It keeps a thumbnail that exists, so a re-add leaves a
+hand-made thumbnail in place. An old thumbnail also stays after the imagery
+changes. Delete it to get a new one. The GeoParquet handler writes no thumbnail. A collection
 can hold thousands of vector files, and `add` writes one thumbnail for the
 collection. `check --fix` no longer writes a thumbnail next to a converted
 vector file. A reference catalog built before and after the merge

@@ -476,6 +476,29 @@ class InvalidOutputError(ConversionError):
         self.reason = reason
 
 
+class PartitionCollisionError(ConversionError):
+    """Raised when a size partition would write into a directory that holds partitions.
+
+    Error code: PRTLN-CNV009
+
+    geoparquet-io names each Hive file after its cell and does not write over a
+    cell that exists. A second write into the same directory would lose the
+    rows in each shared cell, so Portolan keeps the converted file and stops.
+    """
+
+    code = "PRTLN-CNV009"
+
+    def __init__(self, path: str, directory: str, existing: list[str]) -> None:
+        shown = ", ".join(existing[:3]) + (", ..." if len(existing) > 3 else "")
+        super().__init__(
+            f"cannot partition {path}: {directory} already holds partitions ({shown}). "
+            "Remove them, or put each large file in its own collection.",
+            path=path,
+            directory=directory,
+            existing=existing,
+        )
+
+
 class AmbiguousFormatError(ConversionError):
     """Raised when two plugin format handlers claim one file and no pin decides.
 

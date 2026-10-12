@@ -720,18 +720,31 @@ def partition_vector_file(path: Path, catalog_root: Path | None) -> list[Path]:
     ``partition_geoparquet``. The file is removed only when the step wrote at
     least one partition file.
 
+    The directory must hold no partitions for the strategy. geoparquet-io does
+    not write over a cell that exists, so a second source, or a re-add, would
+    lose the rows in each shared cell.
+
     Args:
         path: The converted GeoParquet file.
         catalog_root: Catalog root, for the settings.
 
     Returns:
         The partition files, or an empty list when the file stays whole.
+
+    Raises:
+        PartitionCollisionError: The directory already holds partitions.
     """
     strategy = partition_strategy(path, catalog_root)
     if strategy is None:
         return []
 
     from portolan_cli.config import get_setting
+    from portolan_cli.errors import PartitionCollisionError
+
+    column = PARTITION_COLUMNS.get(strategy, f"{strategy}_cell")
+    existing = sorted(p.name for p in path.parent.glob(f"{column}=*") if p.is_dir())
+    if existing:
+        raise PartitionCollisionError(str(path), str(path.parent), existing)
 
     target_rows = get_setting(
         "partitioning.target_rows", catalog_path=catalog_root, collection_path=path.parent

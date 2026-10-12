@@ -2467,6 +2467,35 @@ class TestPartitionedOutputWithGeoparquetIO:
         assert partitioning.partition_vector_file(converted, tmp_path) == []
         assert converted.exists()
 
+    @pytest.mark.unit
+    def test_size_partition_refuses_a_directory_with_partitions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A second partitioned source in one directory raises and keeps its file.
+
+        geoparquet-io does not write over a cell that exists, so a write into
+        the same directory would lose the rows in each shared cell.
+        """
+        from portolan_cli import partitioning
+        from portolan_cli.errors import PartitionCollisionError
+
+        (tmp_path / "kdtree_cell=0000").mkdir()
+        (tmp_path / "kdtree_cell=0000" / "0000.parquet").write_bytes(b"PAR1")
+        converted = tmp_path / "second.parquet"
+        converted.write_bytes(b"PAR1")
+        called: list[str] = []
+        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_: "kdtree")
+        monkeypatch.setattr(
+            partitioning, "partition_geoparquet", lambda **_: called.append("write") or []
+        )
+
+        with pytest.raises(PartitionCollisionError, match="kdtree_cell=0000"):
+            partitioning.partition_vector_file(converted, tmp_path)
+
+        assert called == []
+        assert converted.exists()
+        assert (tmp_path / "kdtree_cell=0000" / "0000.parquet").exists()
+
     @pytest.mark.integration
     @pytest.mark.xfail(
         strict=True,
