@@ -452,6 +452,64 @@ class TestPushS3Integration:
         assert stored == bytes_a
 
     @pytest.mark.integration
+    def test_verify_push_repairs_a_damaged_object_without_new_version(
+        self,
+        s3_bucket: tuple[str, str],
+        catalog_with_data: Path,
+        _aws_env: None,
+    ) -> None:
+        """Issue #966: `push --verify` repairs an object that disagrees with the manifest.
+
+        The store holds other bytes of another size under the asset key. The
+        manifests agree, and no local version is new. A plain push skips the
+        asset. `push --verify` must upload it and keep versions.json as is.
+        """
+        bucket_name, endpoint_url = s3_bucket
+
+        from portolan_cli.sync.push import push
+
+        data_file = catalog_with_data / "test-collection" / "data.parquet"
+        destination = f"s3://{bucket_name}/catalog"
+        data_key = "catalog/test-collection/data.parquet"
+        versions_key = "catalog/test-collection/versions.json"
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",
+            region_name="us-east-1",
+        )
+
+        assert push(catalog_with_data, "test-collection", destination).success is True
+        versions_before = client.get_object(Bucket=bucket_name, Key=versions_key)["Body"].read()
+
+        # Damage the store the way the #962 bug did. Other bytes, other size.
+        client.put_object(Bucket=bucket_name, Key=data_key, Body=b"stale bytes")
+
+        plain = push(catalog_with_data, "test-collection", destination)
+        assert plain.success is True
+        assert plain.verify is None
+        stored = client.get_object(Bucket=bucket_name, Key=data_key)["Body"].read()
+        assert stored == b"stale bytes"
+
+        result = push(catalog_with_data, "test-collection", destination, verify=True)
+        assert result.success is True, f"Verify push failed: {result.errors}"
+        assert result.versions_pushed == 0
+        assert result.verify is not None
+        assert (result.verify.checked, result.verify.mismatched) == (1, 1)
+
+        stored = client.get_object(Bucket=bucket_name, Key=data_key)["Body"].read()
+        versions_after = client.get_object(Bucket=bucket_name, Key=versions_key)["Body"].read()
+        assert stored == data_file.read_bytes()
+        assert json.loads(versions_after)["current_version"] == "1.0.0"
+        assert json.loads(versions_after) == json.loads(versions_before)
+
+        # The store now agrees, so a second verify uploads no asset.
+        again = push(catalog_with_data, "test-collection", destination, verify=True)
+        assert again.verify is not None
+        assert (again.verify.checked, again.verify.mismatched) == (1, 0)
+
+    @pytest.mark.integration
     def test_push_uploads_intermediate_catalogs_to_s3(
         self,
         s3_bucket: tuple[str, str],

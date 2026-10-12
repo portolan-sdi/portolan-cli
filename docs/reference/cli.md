@@ -1271,6 +1271,14 @@ If not provided, uses 'remote' from PORTOLAN_REMOTE env var or .env file.
 If --collection is specified, pushes that collection only.
 If --collection is omitted, pushes all collections in the catalog.
 
+Push skips an asset when the remote manifest records the same sha256.
+Push does not read the object for that decision. Use --verify to check
+each skipped asset in the store. Push then sends one HEAD per skipped
+asset. It uploads the asset again when the object is missing or its size
+differs from the manifest. This works with no new version, and it adds
+no version. The check compares sizes only. It cannot find a wrong object
+of the same size.
+
 ```text
 Examples:
     # Push a single collection
@@ -1281,6 +1289,9 @@ Examples:
     # Push all collections
     portolan push s3://mybucket/catalog
     portolan push --dry-run  # Uses configured remote
+
+    # Repair objects that disagree with the manifest
+    portolan push s3://mybucket/catalog -c demographics --verify
 
 **Usage:**
 
@@ -1308,6 +1319,7 @@ portolan push [OPTIONS] [DESTINATION]
 | `--chunk-concurrency` | integer range (between `1` and `50`) | Maximum concurrent chunks per file upload (default: 4). Per-worker connections = concurrency × chunk-concurrency; catalog-wide total = workers × concurrency × chunk-concurrency. Lower values are safer for home networks. | `4` |
 | `--max-connections` | integer range (`1` and above) | Maximum total concurrent HTTP connections. If set, auto-adjusts concurrency and chunk-concurrency to stay within limit. Recommended for flaky or metered connections. | None |
 | `--adaptive` / `--no-adaptive` | boolean | Enable adaptive concurrency (default: on). Starts with low concurrency, ramps up on success, backs off on errors. Safer for home networks. | `True` |
+| `--verify` | boolean | Send a HEAD for each asset that push skips as unchanged. Upload the asset again when the object is missing or its size differs from the manifest. Works with no new version. A size check cannot find a wrong object of the same size. Without this flag, push sends no request for a skipped asset. | `False` |
 | `--json` | boolean | Output as JSON. | `False` |
 | `--verbose`, `-v` | boolean | Show per-file upload details with size and speed. | `False` |
 | `--help` | boolean | Show this message and exit. | `False` |
