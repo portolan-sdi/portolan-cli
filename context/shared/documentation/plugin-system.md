@@ -136,7 +136,8 @@ warning fewer on that catalog.
 
 `--force` without `--reconvert` keeps an existing output for every handler. The
 handler converts it again only when it reads that format. `--reconvert` on a
-file that is its own output calls the handler's `reoptimize`.
+file that is its own output calls the handler's `reconvert`. `check --fix
+--force` calls `reoptimize`, which only the COG handler has (issue #530).
 
 ## Enrichment runs on the files
 

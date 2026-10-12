@@ -48,8 +48,12 @@ class GeoParquetHandler:
             api.write_vector_thumbnail(output, catalog_root)
         return output
 
-    def reoptimize(self, source: Path, catalog_root: Path | None) -> Path:
-        """Rewrite a GeoParquet file with the current settings."""
+    def reconvert(self, source: Path, catalog_root: Path | None) -> Path:
+        """Rewrite a GeoParquet file with the current settings (``add --reconvert``).
+
+        There is no ``reoptimize``: ``check --fix --force`` re-encodes rasters
+        only (issue #530).
+        """
         output = api.convert_vector(source, source.parent, catalog_root, reconvert=True)
         self._check(output)
         api.write_vector_thumbnail(output, catalog_root, replace=True)

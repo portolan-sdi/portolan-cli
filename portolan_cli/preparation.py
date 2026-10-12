@@ -645,7 +645,7 @@ def _convert_and_extract_metadata(
       format itself, which brings an existing GeoParquet up to the profile
       (issue #805).
     - ``--reconvert`` on a source that is its own output rewrites it with the
-      handler's ``reoptimize``.
+      handler's ``reconvert``, when it has one.
     - Otherwise the handler converts the source.
 
     Args:
@@ -662,7 +662,7 @@ def _convert_and_extract_metadata(
     """
     expected = handler.output_path(path, item_dir)
     in_place = expected.resolve() == path.resolve()
-    reoptimize = getattr(handler, "reoptimize", None)
+    reconvert_method = getattr(handler, "reconvert", None)
 
     if force and not reconvert and expected.exists():
         if not in_place:
@@ -670,8 +670,8 @@ def _convert_and_extract_metadata(
         output = expected
         if extension_of(expected) in handler.extensions:
             output = handler.convert(expected, item_dir, catalog_root)
-    elif reconvert and in_place and reoptimize is not None:
-        output = reoptimize(path, catalog_root)
+    elif reconvert and in_place and reconvert_method is not None:
+        output = reconvert_method(path, catalog_root)
     else:
         output = handler.convert(path, item_dir, catalog_root)
     return output, cast("AllMetadata", handler.read_metadata(output))

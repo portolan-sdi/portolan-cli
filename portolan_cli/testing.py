@@ -131,11 +131,12 @@ def _check_optional_methods(handler: Any, output: Path) -> list[str]:
     partition = getattr(handler, "partition", None)
     if partition is not None and not isinstance(partition(output, None), list):
         problems.append("partition returned something other than a list.")
-    reoptimize = getattr(handler, "reoptimize", None)
-    if reoptimize is not None and output.exists():
-        result = reoptimize(output, None)
-        if not isinstance(result, Path) or not result.exists():
-            problems.append(f"reoptimize returned {result!r}, expected an existing Path.")
+    for method_name in ("reoptimize", "reconvert"):
+        method = getattr(handler, method_name, None)
+        if method is not None and output.exists():
+            result = method(output, None)
+            if not isinstance(result, Path) or not result.exists():
+                problems.append(f"{method_name} returned {result!r}, expected an existing Path.")
     return problems
 
 

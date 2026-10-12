@@ -28,9 +28,7 @@ from portolan_cli.convert import (
     convert_directory,
 )
 from portolan_cli.formats import (
-    RASTER,
     CloudNativeStatus,
-    detect_format,
     get_cloud_native_status,
     get_effective_status,
     is_geoparquet,
@@ -438,15 +436,18 @@ def check_directory(
 
 
 def _forced_raster_paths(file_statuses: list[FileStatus]) -> list[Path]:
-    """Paths of already-cloud-native RASTERS eligible for --force re-optimization.
+    """Paths of already-cloud-native files eligible for --force re-optimization.
 
-    These are valid COGs that `--fix` would normally skip. Vectors are excluded
-    so `--force` only re-encodes rasters (issue #530).
+    These are files `--fix` would normally skip, whose format handler has a
+    ``reoptimize`` method. Only the COG handler has one, so `--force` only
+    re-encodes rasters (issue #530).
     """
+    from portolan_cli.plugins.formats import handler_for
+
     return [
         f.path
         for f in file_statuses
-        if f.status == CloudNativeStatus.CLOUD_NATIVE and detect_format(f.path) == RASTER
+        if f.status == CloudNativeStatus.CLOUD_NATIVE and hasattr(handler_for(f.path), "reoptimize")
     ]
 
 

@@ -152,7 +152,9 @@ class FormatHandler(Protocol):
 #   partition(path, catalog_root) -> list[Path]
 #       Split a converted file into Hive partitions. Return [] to keep it whole.
 #   reoptimize(source, catalog_root) -> Path
-#       Rewrite a file that is already cloud-native with the current settings.
+#       Rewrite a cloud-native file for ``check --fix --force`` (issue #530).
+#   reconvert(source, catalog_root) -> Path
+#       Rewrite a file that is its own output for ``add --force --reconvert``.
 
 
 def format_handlers() -> list[tuple[str, FormatHandler]]:
