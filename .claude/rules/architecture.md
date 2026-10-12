@@ -105,10 +105,14 @@ subsystem table below and the path-scoped rules for each.
 - Import contracts (`uv run lint-imports`): `cli` must not import `backends`
   (only `backends.protocol` under `TYPE_CHECKING`), `backends.iceberg` must not
   import `cli`.
-- `read-modules-stay-light` keeps the read modules (`versions`, `json_io`,
-  `bbox`, `models`, `query`, `status`, `catalog_list`, `agents_md`) free of
-  Click, rasterio, `cli`, and the write modules. The contract follows
-  imports inside function bodies too. A read module that needs a heavy
+- Three layer contracts (#944, #947). `layer-read` keeps the read modules
+  (`versions`, `json_io`, `bbox`, `models`, `query`, `status`, `catalog_list`,
+  `agents_md`) free of Click, rasterio, `cli`, and the write modules.
+  `layer-manage` keeps every module outside the CLI layer free of Click.
+  `layer-cli` lets only the CLI layer (`cli`, `cli_types`, `emit`,
+  `add_progress`, `scan.progress`) import a CLI module. Each contract follows
+  imports inside function bodies too. `output.py` writes without Click by
+  default, and `cli.py` installs `click_writer` at import time. A read module that needs a heavy
   dependency takes it as a parameter. `status.get_collection_status` takes
   `fetch_remote_versions` for this reason.
 

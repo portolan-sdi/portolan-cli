@@ -11,7 +11,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn, TextIO
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -37,6 +37,7 @@ from portolan_cli.catalog_list import (
     CatalogListResult,
     list_catalog_contents,
 )
+from portolan_cli.cli_types import FLEXIBLE_DATETIME
 from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.discovery import get_sidecars
 from portolan_cli.emit import emit_error, emit_success
@@ -49,7 +50,7 @@ from portolan_cli.licensing import (
     license_gap,
 )
 from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
-from portolan_cli.output import detail, error, success, warn
+from portolan_cli.output import detail, error, set_writer, success, warn
 from portolan_cli.output import info as info_output
 from portolan_cli.remove import remove_files
 from portolan_cli.scan.core import (
@@ -76,7 +77,6 @@ from portolan_cli.scan.output import (
 from portolan_cli.scan.progress import ScanProgressReporter, count_directories
 from portolan_cli.stac import MergeStrategy
 from portolan_cli.status import CollectionStatus, get_collection_status
-from portolan_cli.temporal import FLEXIBLE_DATETIME
 from portolan_cli.utils import format_size
 from portolan_cli.validation import (
     InputValidationError,
@@ -88,6 +88,30 @@ from portolan_cli.validation import (
     validate_catalog_id,
     validate_safe_path,
 )
+
+
+def click_writer(
+    prefix: str,
+    message: str,
+    *,
+    fg: str | None,
+    dim: bool,
+    file: TextIO | None,
+    nl: bool,
+) -> None:
+    """Write an ``output`` message through ``click.echo``.
+
+    ``click.echo`` strips color from a pipe, follows the CliRunner ``color``
+    setting, and wraps a Windows console. The library writer does not.
+    """
+    click.echo(
+        f"{click.style(prefix, fg=fg, dim=dim)} {click.style(message, fg=fg, dim=dim)}",
+        file=file,
+        nl=nl,
+    )
+
+
+set_writer(click_writer)
 
 
 def should_output_json(ctx: click.Context, json_flag: bool = False) -> bool:

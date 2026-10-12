@@ -25,12 +25,12 @@ from hypothesis import strategies as st
 
 from portolan_cli.add import (
     _copy_non_geo_to_item_dir,
-    _is_no_geometry_error,
     _update_item_with_asset,
     add_files,
     iter_files_with_sidecars,
 )
 from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
+from portolan_cli.errors import NoGeometryError
 from tests.unit.add_stubs import add_mixed_directory_without_raising, write_point_geojson
 
 
@@ -691,35 +691,6 @@ class TestExceptionHandlingNarrowness:
     """Tests for narrow exception handling (adversarial review issue #1)."""
 
     @pytest.mark.unit
-    def test_is_no_geometry_error_detects_geometry_error(self) -> None:
-        """_is_no_geometry_error should detect geoparquet-io geometry errors."""
-        # Create mock errors that match geoparquet-io patterns
-        geometry_errors = [
-            click.ClickException("Could not detect geometry columns in CSV/TSV file"),
-            click.ClickException("Reading failed: Could not detect geometry columns"),
-            click.ClickException("No geometry columns in csv file"),
-            click.ClickException("No geometry columns in tsv file"),
-        ]
-
-        for err in geometry_errors:
-            assert _is_no_geometry_error(err), f"Should detect as geometry error: {err.message}"
-
-    @pytest.mark.unit
-    def test_is_no_geometry_error_rejects_other_errors(self) -> None:
-        """_is_no_geometry_error should NOT match non-geometry errors."""
-        # These are errors that should NOT be caught as geometry errors
-        other_errors = [
-            click.ClickException("Permission denied: /path/to/file"),
-            click.ClickException("File not found: data.csv"),
-            click.ClickException("Memory allocation failed"),
-            click.ClickException("Invalid encoding: UTF-16"),
-            click.ClickException("Connection timeout"),
-        ]
-
-        for err in other_errors:
-            assert not _is_no_geometry_error(err), f"Should NOT be geometry error: {err.message}"
-
-    @pytest.mark.unit
     def test_non_geometry_click_exception_propagates(
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
@@ -1376,7 +1347,7 @@ class TestAddFilesCodePaths:
             if path.suffix.lower() == ".geojson":
                 return MagicMock(item_id="data", collection_id="collection")
             if path.suffix.lower() == ".csv":
-                raise click.ClickException("Could not detect geometry columns in CSV file")
+                raise NoGeometryError(str(path), "No geometry columns.")
             # Skip other files (like parquet) - they shouldn't be in source_dir
             raise ValueError(f"Unexpected file type: {path}")
 
@@ -1417,7 +1388,7 @@ class TestAddFilesCodePaths:
 
         with patch("portolan_cli.add.prepare_item") as mock_add:
             # Simulate geometry detection error for a non-tabular format
-            mock_add.side_effect = click.ClickException("Could not detect geometry columns in file")
+            mock_add.side_effect = NoGeometryError(str(geojson), "No geometry columns.")
 
             # Per Issue #175: errors are now collected instead of raised
             added, skipped, failures = add_files(

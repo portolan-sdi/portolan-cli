@@ -21,7 +21,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import click
 import pystac
 
 from portolan_cli.collection import (
@@ -175,16 +174,6 @@ if TYPE_CHECKING:
     from portolan_cli.versions import Version
 
 logger = logging.getLogger(__name__)
-
-# Error message patterns from geoparquet-io for non-geospatial CSV/TSV files.
-# These specific patterns indicate the file lacks geometry columns (not other errors
-# like permission denied, encoding issues, or memory errors).
-# See: https://github.com/geoparquet/geoparquet-io (geometry detection logic)
-_GEOPARQUET_IO_NO_GEOMETRY_PATTERNS: tuple[str, ...] = (
-    "could not detect geometry columns",
-    "geometry columns in csv",
-    "geometry columns in tsv",
-)
 
 # Error message patterns for parquet files without geometry (Issue #177).
 # These patterns indicate a parquet file lacks GeoParquet metadata (no 'geo' key),
@@ -781,23 +770,6 @@ def add_directory(
 # Note: SIDECAR_PATTERNS imported from portolan_cli.constants
 
 
-def _is_no_geometry_error(err: click.ClickException) -> bool:
-    """Check if a ClickException is specifically a 'no geometry columns' error from geoparquet-io.
-
-    This narrows the exception handling to ONLY geometry detection errors,
-    avoiding accidentally catching permission errors, encoding issues, or
-    memory errors that might also be wrapped in ClickException.
-
-    Args:
-        err: The ClickException to check.
-
-    Returns:
-        True if the error is specifically about missing geometry columns.
-    """
-    err_msg = (str(err.message) if hasattr(err, "message") else str(err)).lower()
-    return any(pattern in err_msg for pattern in _GEOPARQUET_IO_NO_GEOMETRY_PATTERNS)
-
-
 def _copy_non_geo_to_item_dir(
     file_path: Path,
     item_dir: Path,
@@ -1060,11 +1032,6 @@ def _prepare_single_file(
             skip_partitioning=opts.skip_partitioning,
         )
         return (partitioned, [], None)
-
-    except click.ClickException as err:
-        if _is_no_geometry_error(err) and file_path.suffix.lower() in TABULAR_EXTENSIONS:
-            return ([], [], (file_path, file_path.parent, coll_id))
-        return ([], [AddFailure(path=file_path, error=str(err))], None)
 
     except NoGeometryError as err:
         if file_path.suffix.lower() in TABULAR_EXTENSIONS:

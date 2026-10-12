@@ -408,7 +408,7 @@ pytest_add_cli_args = [
 
 [tool.importlinter]
 root_packages = ["portolan_cli"]
-# The read-modules-stay-light contract forbids click and rasterio.
+# The layer contracts forbid click and rasterio.
 # import-linter adds those external packages to the graph only with this flag.
 include_external_packages = true
 
@@ -510,15 +510,22 @@ source_modules = ["portolan_cli.scan"]
 forbidden_modules = ["portolan_cli.sync", "portolan_cli.viz"]
 allow_indirect_imports = true
 
-# ---------- library boundary (#944) ----------
-# A library caller (a Cloud Run job, a notebook) reads a catalog without the
-# CLI shell. These modules read catalog state. They must not load Click, the
-# geospatial stack, or the modules that write a catalog. The check follows
-# transitive imports, and an import inside a function body counts too.
+# ---------- layers (#944, #947) ----------
+# The package has three layers. A library caller (a Cloud Run job, a notebook,
+# a plugin) imports the read and manage layers without the CLI shell.
+#
+#   read    catalog, collection, and item access. No Click, no rasterio,
+#           no module that writes a catalog.
+#   manage  STAC builders, conversion, extraction, versions.json, sync,
+#           backends. No Click.
+#   cli     cli, cli_types, emit, add_progress, scan.progress. Click and Rich.
+#
+# Each check follows transitive imports, and an import inside a function body
+# counts too.
 
 [[tool.importlinter.contracts]]
-id = "read-modules-stay-light"
-name = "Read modules must not import click, rasterio, or write modules"
+id = "layer-read"
+name = "Read layer: no click, rasterio, or write modules"
 type = "forbidden"
 source_modules = [
     "portolan_cli.versions",
@@ -538,6 +545,46 @@ forbidden_modules = [
     "portolan_cli.convert",
     "portolan_cli.preparation",
     "portolan_cli.finalization",
+]
+
+[[tool.importlinter.contracts]]
+id = "layer-manage"
+name = "Manage layer: no click"
+type = "forbidden"
+source_modules = ["portolan_cli", "portolan_cli.**"]
+forbidden_modules = ["click"]
+ignore_imports = [
+    # The CLI layer is the one place Click belongs.
+    "portolan_cli.cli -> click",
+    "portolan_cli.cli_types -> click",
+    "portolan_cli.emit -> click",
+    # The package root names the Click group for type checkers only. It loads
+    # the group lazily through __getattr__.
+    "portolan_cli -> portolan_cli.cli",
+]
+
+[[tool.importlinter.contracts]]
+id = "layer-cli"
+name = "CLI layer: only the CLI layer imports it"
+type = "protected"
+protected_modules = [
+    "portolan_cli.cli",
+    "portolan_cli.cli_types",
+    "portolan_cli.emit",
+    "portolan_cli.add_progress",
+    "portolan_cli.scan.progress",
+]
+allowed_importers = [
+    "portolan_cli.cli",
+    "portolan_cli.cli_types",
+    "portolan_cli.emit",
+    "portolan_cli.add_progress",
+    "portolan_cli.scan.progress",
+]
+ignore_imports = [
+    # The package root names the Click group for type checkers only. It loads
+    # the group lazily through __getattr__.
+    "portolan_cli -> portolan_cli.cli",
 ]
 
 # ---------- dependency checking ----------
