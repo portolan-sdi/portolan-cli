@@ -189,13 +189,13 @@ def test_effective_status_reads_the_pin(
 def test_pin_to_a_builtin_hides_the_plugin_status(
     register_plugin: Callable[..., None], tmp_path: Path
 ) -> None:
-    from portolan_cli.formats import _plugin_status
+    from portolan_cli.formats import _plugin_handler
 
     path = _pin_two_plugins(register_plugin, tmp_path, "cog", ".xyz")
 
     with pytest.raises(AmbiguousFormatError):
-        _plugin_status(path)
-    assert _plugin_status(path, catalog_root=tmp_path) is None
+        _plugin_handler(path)
+    assert _plugin_handler(path, catalog_root=tmp_path) == (None, True)
 
 
 def test_scan_reads_the_pin(register_plugin: Callable[..., None], tmp_path: Path) -> None:
@@ -249,7 +249,21 @@ def test_plugin_for_a_builtin_extension_keeps_the_cog_check(
     register_plugin(_Plugin(StubHandler("better-tif", frozenset({".tif"}))), "tif-plugin")
 
     assert get_cloud_native_status(cog).status == CloudNativeStatus.CLOUD_NATIVE
-    assert get_cloud_native_status(plain).status == CloudNativeStatus.CONVERTIBLE
+    plain_info = get_cloud_native_status(plain)
+    assert plain_info.status == CloudNativeStatus.CONVERTIBLE
+    assert plain_info.target_format == "Test"
     handler = handler_for(plain)
     assert handler is not None
     assert handler.name == "better-tif"
+
+
+def test_two_plugins_for_a_builtin_extension_raise_in_the_status(
+    register_plugin: Callable[..., None], tmp_path: Path
+) -> None:
+    from portolan_cli.formats import get_cloud_native_status
+
+    register_plugin(_Plugin(StubHandler("one", frozenset({".tif"}))), "one-plugin")
+    register_plugin(_Plugin(StubHandler("two", frozenset({".tif"}))), "two-plugin")
+
+    with pytest.raises(AmbiguousFormatError):
+        get_cloud_native_status(_touch(tmp_path, "a.tif"))

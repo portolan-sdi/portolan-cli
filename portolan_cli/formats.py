@@ -13,7 +13,7 @@ Additionally, it provides cloud-native status classification (see issue #10):
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from portolan_cli.conversion_config import ConversionOverrides
+    from portolan_cli.plugins.formats import FormatHandler
 
 logger = logging.getLogger(__name__)
 
@@ -310,13 +311,19 @@ def detect_format(path: Path, catalog_root: Path | None = None) -> str | None:
     return detect_family(path)
 
 
-def _plugin_status(path: Path, catalog_root: Path | None = None) -> FormatInfo | None:
-    """Report a file that a plugin format handler claims as CONVERTIBLE.
+def _plugin_handler(
+    path: Path, catalog_root: Path | None = None
+) -> tuple[FormatHandler | None, bool]:
+    """Return the plugin handler for ``path``, and whether only plugins register its extension.
 
-    Return None when the built-in checks decide the status. That is the case
-    for an extension that a built-in handler also registers, so a valid COG
-    stays CLOUD_NATIVE when a plugin claims ``.tif``. It is also the case when
-    a ``conversion.handlers`` pin under ``catalog_root`` selects a built-in.
+    The lookup runs for every extension that a plugin registers, so an
+    ambiguous claim or a pin to a missing handler raises here, before
+    ``check --fix`` converts a file. A ``conversion.handlers`` pin that selects
+    a built-in hides the plugin.
+
+    Raises:
+        AmbiguousFormatError: Two plugin handlers claim the file and no pin decides.
+        UnknownFormatHandlerError: A pin names a handler that does not exist.
     """
     from portolan_cli.plugins.formats import (
         builtin_extensions,
@@ -326,17 +333,9 @@ def _plugin_status(path: Path, catalog_root: Path | None = None) -> FormatInfo |
     )
 
     extension = extension_of(path)
-    if extension not in plugin_extensions() or extension in builtin_extensions():
-        return None
-    handler = plugin_handler_for(path, catalog_root)
-    if handler is None:
-        return None
-    return FormatInfo(
-        status=CloudNativeStatus.CONVERTIBLE,
-        display_name=handler.display_name,
-        target_format=handler.display_name,
-        error_message=None,
-    )
+    if extension not in plugin_extensions():
+        return None, False
+    return plugin_handler_for(path, catalog_root), extension not in builtin_extensions()
 
 
 def get_cloud_native_status(path: Path, catalog_root: Path | None = None) -> FormatInfo:
@@ -370,13 +369,28 @@ def get_cloud_native_status(path: Path, catalog_root: Path | None = None) -> For
             )
         raise IsADirectoryError(f"Path is a directory: {path}")
 
+    # A plugin format handler converts the formats it claims (#947). For an
+    # extension that a built-in handler also registers, the built-in checks
+    # decide the status, so a valid COG stays CLOUD_NATIVE when a plugin
+    # claims .tif. The plugin still names the target format.
+    handler, plugin_only = _plugin_handler(path, catalog_root)
+    if handler is not None and plugin_only:
+        return FormatInfo(
+            status=CloudNativeStatus.CONVERTIBLE,
+            display_name=handler.display_name,
+            target_format=handler.display_name,
+            error_message=None,
+        )
+    info = _builtin_status(path)
+    if handler is not None and info.status == CloudNativeStatus.CONVERTIBLE:
+        return replace(info, target_format=handler.display_name)
+    return info
+
+
+def _builtin_status(path: Path) -> FormatInfo:
+    """Classify a file by the built-in format rules. See ``get_cloud_native_status``."""
     # Get the file extension (lowercase)
     extension = path.suffix.lower()
-
-    # A plugin format handler converts its own formats (#947).
-    plugin_info = _plugin_status(path, catalog_root)
-    if plugin_info is not None:
-        return plugin_info
 
     # Handle compound extensions like .copc.laz
     if path.name.lower().endswith(".copc.laz"):
