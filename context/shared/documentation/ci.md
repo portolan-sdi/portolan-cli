@@ -107,6 +107,17 @@ non-deterministic in CI — drift is still caught by the non-mutating
 
 - `uv build` — Verify package builds correctly
 
+#### `plugin-test` — the example plugin
+
+- Installs `tests/plugins/portolan_example` with `uv run --with` and runs
+  `pytest tests/plugins -m plugin`
+- Cells: Ubuntu with Python 3.10, Windows with Python 3.13
+- The example plugin imports only `portolan_cli.api`,
+  `portolan_cli.hookspecs`, and `portolan_cli.testing`. A change to those
+  modules that breaks a plugin fails this job (#947)
+- The main `test` job collects the same files and skips them, because the
+  plugin is not installed there
+
 #### `iceberg-test` — Iceberg Unit & Integration Tests
 
 - Python versions: 3.11, 3.12, 3.13
@@ -289,6 +300,7 @@ markers = [
     "network: Requires network access (mocked locally, real in CI)",
     "realdata: Uses real-world fixtures from tests/fixtures/realdata/ (tests orchestration, not geometry)",
     "snapshot: Compares output against golden files",
+    "plugin: Needs the example plugin installed (tests/plugins/portolan_example)",
     "benchmark: Performance measurement, tracked over time",
     "slow: Takes > 5 seconds",
     "e2e: End-to-end tests requiring Docker (REST catalog + RustFS)",
@@ -301,7 +313,7 @@ markers = [
 | Gate | Tests |
 |------|-------|
 | Pre-commit | unit only (fast, < 30s total) |
-| CI (PR) | unit, integration, snapshot, **realdata**; iceberg `e2e` (not `e2e_slow`) when iceberg paths change |
+| CI (PR) | unit, integration, snapshot, **realdata**; `plugin` in the `plugin-test` job; iceberg `e2e` (not `e2e_slow`) when iceberg paths change |
 | Nightly | All markers including network, benchmark, and the full iceberg `e2e` suite (with `e2e_slow`) |
 
 ### Real-World Fixtures

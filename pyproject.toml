@@ -157,6 +157,7 @@ markers = [
     "refused_hosts: The network guard refuses these hosts without failing the test (child-process requests only)",
     "realdata: Uses real-world fixtures from tests/fixtures/realdata/ (tests orchestration, not geometry)",
     "snapshot: Compares output against golden files",
+    "plugin: Needs the example plugin installed (tests/plugins/portolan_example)",
     "benchmark: Performance measurement, tracked over time",
     "slow: Takes > 5 seconds",
     "e2e: End-to-end tests requiring Docker (REST catalog + RustFS)",
@@ -318,6 +319,9 @@ docstring-code-format = true
 [tool.mypy]
 python_version = "3.10"
 strict = true # Enables all strict flags at once
+# The example plugin (#947) is a separate package. This path lets mypy check
+# its tests and its code without installing it.
+mypy_path = "tests/plugins/portolan_example/src"
 # pyarrow >=24 ships py.typed but leaves pyarrow.parquet helpers untyped, so
 # strict's disallow_untyped_calls trips on every read_table/write_table/
 # ParquetFile/read_metadata/read_schema call. Scope the suppression to pyarrow

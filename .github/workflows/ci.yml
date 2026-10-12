@@ -246,6 +246,49 @@ jobs:
           slug: portolan-sdi/portolan-cli
           flags: main
 
+  plugin-test:
+    # The example plugin uses the public plugin API alone (#947). A change to
+    # portolan_cli.api or portolan_cli.hookspecs that breaks a plugin fails here.
+    name: Example Plugin (Python ${{ matrix.python-version }} / ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest, python-version: '3.10'}
+          - {os: windows-latest, python-version: '3.13'}
+    env:
+      AWS_EC2_METADATA_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.6.14"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: uv sync --all-extras
+
+      - name: Run the example plugin tests
+        run: uv run --with ./tests/plugins/portolan_example pytest tests/plugins -m plugin --tb=short
+
   iceberg-test:
     name: Iceberg Unit & Integration Tests (Python ${{ matrix.python-version }} / ${{ matrix.os }})
     needs: changes

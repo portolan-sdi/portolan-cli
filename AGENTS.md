@@ -232,6 +232,7 @@ Always research before implementing:
 @pytest.mark.network     # Requires network (mocked locally, real in CI nightly)
 @pytest.mark.realdata    # Uses real-world fixtures from tests/fixtures/realdata/ (tests orchestration, not geometry)
 @pytest.mark.snapshot    # Compares output against golden files
+@pytest.mark.plugin      # Needs the example plugin installed (tests/plugins/portolan_example)
 @pytest.mark.benchmark   # Performance measurement, tracked over time
 @pytest.mark.slow        # Takes > 5 seconds
 @pytest.mark.e2e         # End-to-end tests requiring Docker (REST catalog + RustFS)
