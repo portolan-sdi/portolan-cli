@@ -9,6 +9,7 @@ Per CLAUDE.md: "Property-based testing — Use hypothesis for invariant verifica
 
 from __future__ import annotations
 
+import functools
 import string
 import tempfile
 from pathlib import Path
@@ -1427,6 +1428,41 @@ def _setup_managed_catalog(catalog_root: Path) -> None:
     (portolan_dir / "config.yaml").write_text("# Portolan config\n")
 
 
+@functools.cache
+def _conformant_parquet_bytes() -> bytes:
+    """A GeoParquet of VALID_GEOJSON_TEMPLATE that `add` copies without a rewrite.
+
+    The item-id properties below call `add` on this file, not on GeoJSON. The
+    item id comes from the directory before any conversion, so the property is
+    the same. A GeoJSON source made every example pay for a geoparquet-io
+    conversion, and the three properties took 18 s together.
+    """
+    import json
+
+    import geoparquet_io as gpio  # type: ignore[import-untyped]
+
+    from portolan_cli.conversion_config import VectorSettings
+    from portolan_cli.convert import apply_vector_settings
+    from portolan_cli.preparation import _needs_spatial_rewrite
+
+    settings = VectorSettings()
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "source.geojson"
+        source.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
+        output = Path(tmp) / "source.parquet"
+        apply_vector_settings(gpio.convert(str(source)), settings).write(str(output))
+        assert not _needs_spatial_rewrite(output, settings)
+        return output.read_bytes()
+
+
+def _parquet_name(stem: str) -> str:
+    """Return a file name for `stem` that `add` treats as data.
+
+    `add` skips `items.parquet`, the STAC-GeoParquet index of a collection.
+    """
+    return f"{stem}_data.parquet" if stem == "items" else f"{stem}.parquet"
+
+
 class TestItemIdDerivationProperties:
     """Property-based tests for item_id derivation.
 
@@ -1456,7 +1492,6 @@ class TestItemIdDerivationProperties:
 
         NON-TAUTOLOGICAL: This test calls add() and verifies ItemInfo.item_id.
         """
-        import json
 
         from portolan_cli.add import add
 
@@ -1470,9 +1505,9 @@ class TestItemIdDerivationProperties:
             item_dir = catalog_root / collection / item_id
             item_dir.mkdir(parents=True, exist_ok=True)
 
-            # Create a VALID GeoJSON file (with geometry)
-            geo_file = item_dir / f"{filename}.geojson"
-            geo_file.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
+            # A valid GeoParquet file (with geometry) that add copies as is
+            geo_file = item_dir / _parquet_name(filename)
+            geo_file.write_bytes(_conformant_parquet_bytes())
 
             # Call add() - this is what we're actually testing
             result = add(
@@ -1505,7 +1540,6 @@ class TestItemIdDerivationProperties:
 
         NON-TAUTOLOGICAL: This test calls add() twice and compares results.
         """
-        import json
 
         from portolan_cli.add import add
 
@@ -1519,14 +1553,14 @@ class TestItemIdDerivationProperties:
             # Set up managed catalog (catalog.json + .portolan sentinel)
             _setup_managed_catalog(catalog_root)
 
-            # Create item directory with two valid GeoJSON files
+            # Create item directory with two valid GeoParquet files
             item_dir = catalog_root / collection / item_id
             item_dir.mkdir(parents=True, exist_ok=True)
 
-            file1 = item_dir / f"{filename1}.geojson"
-            file2 = item_dir / f"{filename2}.geojson"
-            file1.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
-            file2.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
+            file1 = item_dir / _parquet_name(filename1)
+            file2 = item_dir / _parquet_name(filename2)
+            file1.write_bytes(_conformant_parquet_bytes())
+            file2.write_bytes(_conformant_parquet_bytes())
 
             # Call add() for both files
             result1 = add(
@@ -1742,7 +1776,6 @@ class TestItemIdOverrideProperties:
         Issue #136: When item_id is explicitly provided, it should override
         the automatic derivation from parent directory name.
         """
-        import json
 
         from portolan_cli.add import add
 
@@ -1755,8 +1788,8 @@ class TestItemIdOverrideProperties:
             item_dir = catalog_root / collection / "auto-derived-dir"
             item_dir.mkdir(parents=True, exist_ok=True)
 
-            geo_file = item_dir / "data.geojson"
-            geo_file.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
+            geo_file = item_dir / "data.parquet"
+            geo_file.write_bytes(_conformant_parquet_bytes())
 
             result = add(
                 path=geo_file,
