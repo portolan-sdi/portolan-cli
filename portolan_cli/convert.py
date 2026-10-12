@@ -41,9 +41,6 @@ from portolan_cli.formats import (
     get_cloud_native_status,
 )
 from portolan_cli.viz.thumbnail import (
-    ThumbnailConfig,
-    generate_vector_thumbnail,
-    get_thumbnail_config,
     thumbnail_path_for,
 )
 
@@ -554,34 +551,6 @@ def partition_with_handler(handler: FormatHandler, path: Path, catalog_root: Pat
 
 
 _CONVERT_MAX_ATTEMPTS = 3
-
-
-def write_vector_thumbnail(
-    geoparquet_path: Path, catalog_root: Path | None, *, replace: bool = False
-) -> None:
-    """Write ``<stem>.thumb.jpg`` next to a GeoParquet file.
-
-    A thumbnail is optional, so a failure only warns.
-
-    Args:
-        geoparquet_path: The GeoParquet file.
-        catalog_root: Catalog root, for the thumbnail settings.
-        replace: Write over a thumbnail that exists. Pass True after the data
-            changed.
-    """
-    if geoparquet_path.with_name(f"{geoparquet_path.stem}.thumb.jpg").exists() and not replace:
-        return
-    try:
-        config = get_thumbnail_config(catalog_root) if catalog_root else ThumbnailConfig()
-        if config.enabled:
-            generate_vector_thumbnail(
-                pmtiles_path=None,
-                geoparquet_path=geoparquet_path,
-                config=config,
-                style_path=_discover_style_for_thumbnail(geoparquet_path.parent),
-            )
-    except Exception as e:  # noqa: BLE001 - the thumbnail is optional
-        logger.warning("Thumbnail generation failed for %s: %s", geoparquet_path.name, e)
 
 
 def write_raster_thumbnail(

@@ -50,7 +50,6 @@ if TYPE_CHECKING:
         validate_cog,
         validate_geoparquet,
         write_raster_thumbnail,
-        write_vector_thumbnail,
     )
     from portolan_cli.errors import InvalidOutputError
     from portolan_cli.finalization import aggregate_table_extension
@@ -131,7 +130,6 @@ __all__ = [
     "warn",
     "write_json_atomic",
     "write_raster_thumbnail",
-    "write_vector_thumbnail",
 ]
 
 _EXPORTS = {
@@ -186,7 +184,6 @@ _EXPORTS = {
     "warn": "portolan_cli.output",
     "write_json_atomic": "portolan_cli.json_io",
     "write_raster_thumbnail": "portolan_cli.convert",
-    "write_vector_thumbnail": "portolan_cli.convert",
 }
 
 

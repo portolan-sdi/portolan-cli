@@ -50,7 +50,6 @@ validate_geoparquet
 warn
 write_json_atomic
 write_raster_thumbnail
-write_vector_thumbnail
 
 # portolan_cli.hookspecs
 portolan_backends() -> 'dict[str, BackendFactory]'
