@@ -23,6 +23,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from portolan_cli import errors
 from portolan_cli.add import (
     _copy_non_geo_to_item_dir,
     _update_item_with_asset,
@@ -30,7 +31,6 @@ from portolan_cli.add import (
     iter_files_with_sidecars,
 )
 from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
-from portolan_cli.errors import NoGeometryError
 from tests.unit.add_stubs import add_mixed_directory_without_raising, write_point_geojson
 
 
@@ -1347,7 +1347,7 @@ class TestAddFilesCodePaths:
             if path.suffix.lower() == ".geojson":
                 return MagicMock(item_id="data", collection_id="collection")
             if path.suffix.lower() == ".csv":
-                raise NoGeometryError(str(path), "No geometry columns.")
+                raise errors.NoGeometryError(str(path), "No geometry columns.")
             # Skip other files (like parquet) - they shouldn't be in source_dir
             raise ValueError(f"Unexpected file type: {path}")
 
@@ -1388,7 +1388,7 @@ class TestAddFilesCodePaths:
 
         with patch("portolan_cli.add.prepare_item") as mock_add:
             # Simulate geometry detection error for a non-tabular format
-            mock_add.side_effect = NoGeometryError(str(geojson), "No geometry columns.")
+            mock_add.side_effect = errors.NoGeometryError(str(geojson), "No geometry columns.")
 
             # Per Issue #175: errors are now collected instead of raised
             added, skipped, failures = add_files(
