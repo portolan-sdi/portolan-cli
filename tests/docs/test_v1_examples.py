@@ -391,6 +391,9 @@ def test_example_builds_and_analyzes_a_philadelphia_catalog(tmp_path: Path) -> N
     assert query.stdout == EXPECTED_QUERY_OUTPUT
 
 
+# The example runs portolan in a subprocess. It draws thumbnails there, and the
+# no_basemap_tiles patch does not reach it.
+@pytest.mark.refused_hosts("a.basemaps.cartocdn.com")
 @pytest.mark.e2e
 def test_example_publishes_assets_that_remain_queryable_without_arcgis(
     tmp_path: Path,
