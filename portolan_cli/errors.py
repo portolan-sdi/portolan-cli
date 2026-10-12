@@ -11,6 +11,7 @@ All errors follow the format PRTLN-{category}{number}:
 - PRTLN-LOG*: Catalog logo errors
 - PRTLN-CFG*: Configuration errors
 - PRTLN-EXT*: Extract / harvest errors
+- PRTLN-SYN*: Sync errors (push, pull)
 """
 
 from __future__ import annotations
@@ -662,6 +663,33 @@ class ProfileCredentialsError(ConfigError):
             f"AWS profile '{profile}' failed to supply credentials: {reason}",
             profile=profile,
             reason=reason,
+        )
+
+
+# Sync Errors (PRTLN-SYN*)
+class SyncError(PortolanError):
+    """Base class for push and pull errors."""
+
+    code = "PRTLN-SYN000"
+
+
+class PushVerifyError(SyncError):
+    """Raised when ``push --verify`` cannot read the state of a remote object.
+
+    A HEAD request that fails for a reason other than a missing object gives no
+    answer. Push stops, because a guess can hide a damaged object.
+
+    Error code: PRTLN-SYN001
+    """
+
+    code = "PRTLN-SYN001"
+
+    def __init__(self, failures: list[str]) -> None:
+        shown = "; ".join(failures[:5])
+        more = f" (and {len(failures) - 5} more)" if len(failures) > 5 else ""
+        super().__init__(
+            f"Could not verify {len(failures)} remote object(s): {shown}{more}",
+            failures=failures,
         )
 
 
