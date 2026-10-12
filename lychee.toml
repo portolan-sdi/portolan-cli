@@ -1,0 +1,8 @@
+# This repo's link-check exceptions. The org rules live in portolan-ops
+# lychee/org.toml.
+exclude_path = [
+  # The built 404 page links with absolute /portolan-cli/ paths, because
+  # GitHub Pages serves it at any depth. Every other page has the same
+  # navigation with relative links, and the check covers them there.
+  '(^|/)404\.html$',
+]
