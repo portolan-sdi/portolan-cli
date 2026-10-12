@@ -776,3 +776,111 @@ class TestJsonFileBackendIntegration:
         asset = version.assets["data.parquet"]
         assert asset.mtime is not None
         assert abs(asset.mtime - asset_file.stat().st_mtime) < 0.001
+
+
+class _TryLastFilePlugin:
+    """A plugin that asks pluggy to order it before the built-ins."""
+
+    @hookimpl(trylast=True)
+    def portolan_backends(self) -> dict[str, Any]:
+        return {"file": MagicMock()}
+
+
+class TestGetBackendMisbehavingPlugins:
+    """A misbehaving `portolan_backends` hook cannot break or replace a built-in."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("result", [["example"], "example", 42])
+    def test_non_mapping_result_is_skipped_with_a_warning(
+        self, register_plugin: Callable[..., None], result: object
+    ) -> None:
+        """A result that is not a mapping produces a warning and no backend."""
+
+        class _Plugin:
+            @hookimpl
+            def portolan_backends(self) -> object:
+                return result
+
+        register_plugin(_Plugin(), "odd-plugin")
+
+        with pytest.warns(manager.PluginWarning, match="'odd-plugin'.*not a mapping"):
+            backend = get_backend("file")
+
+        assert isinstance(backend, JsonFileBackend)
+
+    @pytest.mark.unit
+    def test_trylast_plugin_cannot_replace_the_file_backend(
+        self, register_plugin: Callable[..., None]
+    ) -> None:
+        """Built-in precedence does not depend on pluggy call order."""
+        register_plugin(_TryLastFilePlugin(), "trylast-plugin")
+
+        with pytest.warns(
+            manager.PluginWarning, match="'trylast-plugin'.*'file'.*'builtin:backends'"
+        ):
+            backend = get_backend("file")
+
+        assert isinstance(backend, JsonFileBackend)
+
+
+class TestLegacyBackendsEntryPointGroup:
+    """`portolan.backends` still works for one minor release, with a warning (#947).
+
+    v0.8.0 and v1.0.0b0 found plugin backends in this group.
+    """
+
+    @pytest.fixture
+    def legacy(self, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+        eps: list[Any] = []
+        monkeypatch.setattr(
+            manager, "entry_points", lambda *, group: [ep for ep in eps if ep.group == group]
+        )
+        monkeypatch.delenv(manager.ENV_VAR, raising=False)
+        manager.reset_plugin_manager()
+        return eps
+
+    @staticmethod
+    def _ep(name: str) -> Any:
+        from importlib.metadata import EntryPoint
+
+        return EntryPoint(
+            name=name,
+            value="portolan_cli.backends.json_file:JsonFileBackend",
+            group="portolan.backends",
+        )
+
+    @pytest.mark.unit
+    def test_legacy_backend_loads_with_a_deprecation_warning(
+        self, legacy: list[Any], tmp_path: Any
+    ) -> None:
+        """A backend from the old group resolves and gets `catalog_root`."""
+        legacy.append(self._ep("legacy"))
+
+        with pytest.warns(manager.PluginWarning, match="'legacy'.*deprecated 'portolan.backends'"):
+            backend = get_backend("legacy", catalog_root=tmp_path)
+
+        assert isinstance(backend, JsonFileBackend)
+        assert backend._catalog_root == tmp_path
+
+    @pytest.mark.unit
+    def test_legacy_backend_cannot_replace_the_file_backend(self, legacy: list[Any]) -> None:
+        """A built-in name still wins over the old group."""
+        legacy.append(self._ep("file"))
+
+        with pytest.warns(manager.PluginWarning, match="'file'"):
+            backend = get_backend("file")
+
+        assert type(backend) is JsonFileBackend
+
+    @pytest.mark.unit
+    def test_legacy_backend_respects_portolan_plugins_none(
+        self, legacy: list[Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`PORTOLAN_PLUGINS=none` hides the old group too."""
+        legacy.append(self._ep("legacy"))
+        monkeypatch.setenv(manager.ENV_VAR, "none")
+
+        with pytest.raises(
+            ValueError, match=r"^Unknown backend: legacy\. Available: file, iceberg$"
+        ):
+            get_backend("legacy")

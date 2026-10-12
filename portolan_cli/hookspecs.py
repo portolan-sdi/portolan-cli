@@ -83,6 +83,9 @@ def portolan_enrich_item(item: dict[str, Any], context: EnrichContext) -> None:
     The hook runs every time ``portolan add`` writes the item. It must give
     the same result when it runs twice.
 
+    Portolan calls each implementation on its own. A hook wrapper
+    (``wrapper=True`` or ``hookwrapper=True``) is skipped with a warning.
+
     Args:
         item: STAC item JSON.
         context: Where the item lives.

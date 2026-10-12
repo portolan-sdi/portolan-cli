@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.hookspecs import EnrichContext
+from portolan_cli.hookspecs import EnrichContext, hookimpl
 from portolan_cli.plugins import manager
 
 if TYPE_CHECKING:
@@ -162,3 +162,79 @@ def test_importing_the_cli_builds_no_manager() -> None:
     )
 
     assert result.stdout.strip() == "True"
+
+
+def test_failed_registration_leaves_no_hook_behind(installed: list[EntryPoint]) -> None:
+    """A plugin that fails validation contributes no hook at all.
+
+    pluggy adds hook implementations one by one and stops at the first
+    invalid one. The valid ones before it stay unless the manager removes them.
+    """
+    installed.append(_ep("half", "half"))
+
+    with pytest.warns(manager.PluginLoadWarning, match="'half'.*did not register"):
+        names = _plugin_names()
+
+    assert "half" not in names
+    assert [name for name, _ in manager.call_each("portolan_backends")] == ["builtin:backends"]
+
+
+class _Hooks:
+    """Plugin objects with pluggy ordering options."""
+
+    class TryLast:
+        @hookimpl(trylast=True)
+        def portolan_backends(self) -> dict[str, object]:
+            return {"file": object}
+
+    class TryFirst:
+        @hookimpl(tryfirst=True)
+        def portolan_backends(self) -> dict[str, object]:
+            return {"first": object}
+
+    class Wrapper:
+        @hookimpl(wrapper=True)
+        def portolan_enrich_item(self, item: dict[str, object]) -> Iterator[None]:
+            item["wrapped"] = True
+            return (yield)
+
+    class OldWrapper:
+        @hookimpl(hookwrapper=True)
+        def portolan_enrich_item(self, item: dict[str, object]) -> Iterator[None]:
+            item["wrapped"] = True
+            yield
+
+
+def test_hook_calls_list_builtins_first(installed: list[EntryPoint]) -> None:
+    """`trylast` and `tryfirst` cannot move a plugin before the built-ins."""
+    pm = manager.get_plugin_manager()
+    pm.register(_Hooks.TryLast(), name="last")
+    pm.register(_Hooks.TryFirst(), name="first")
+
+    names = [name for name, _ in manager.hook_calls("portolan_backends")]
+
+    assert names[:2] == ["builtin:backends", "builtin:legacy_backends"]
+    assert sorted(names[2:]) == ["first", "last"]
+
+
+@pytest.mark.parametrize("wrapper", [_Hooks.Wrapper, _Hooks.OldWrapper])
+def test_hook_calls_skip_wrappers_with_a_warning(
+    installed: list[EntryPoint], wrapper: type
+) -> None:
+    """A hook wrapper is not a plain call, so the manager skips it."""
+    manager.get_plugin_manager().register(wrapper(), name="wrapping")
+
+    with pytest.warns(manager.PluginWarning, match="'wrapping'.*wrapper"):
+        calls = manager.hook_calls("portolan_enrich_item")
+
+    assert calls == []
+
+
+def test_outside_plugin_cannot_take_the_builtin_prefix(installed: list[EntryPoint]) -> None:
+    """An entry point named `builtin:...` would sort before the built-ins."""
+    installed.append(_ep("builtin:good", "good"))
+
+    with pytest.warns(manager.PluginLoadWarning, match="'builtin:good'.*reserved"):
+        names = _plugin_names()
+
+    assert "builtin:good" not in names

@@ -43,15 +43,26 @@ _ICEBERG = "iceberg"
 def _registered_factories() -> dict[str, Any]:
     """Collect backend factories from every ``portolan_backends`` hook.
 
-    Built-ins register first, so a built-in name keeps its built-in factory.
-    A plugin that registers that name again produces a warning.
+    ``call_each`` lists the built-ins first, so a built-in name keeps its
+    built-in factory. A plugin that registers that name again produces a
+    warning. A result that is not a mapping produces a warning and adds nothing.
     """
+    from collections.abc import Mapping
+
     from portolan_cli.plugins.manager import PluginWarning, call_each
 
     factories: dict[str, Any] = {}
     owners: dict[str, str] = {}
     for plugin_name, result in call_each("portolan_backends"):
-        for name, factory in dict(result).items():
+        if not isinstance(result, Mapping):
+            warnings.warn(
+                f"Plugin '{plugin_name}' returned {type(result).__name__} from "
+                "portolan_backends, which is not a mapping of names to factories.",
+                PluginWarning,
+                stacklevel=3,
+            )
+            continue
+        for name, factory in result.items():
             if name in factories or name == _ICEBERG:
                 warnings.warn(
                     f"Plugin '{plugin_name}' registers backend '{name}', which "

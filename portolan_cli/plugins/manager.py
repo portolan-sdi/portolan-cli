@@ -38,11 +38,17 @@ if TYPE_CHECKING:
 
 ENTRY_POINT_GROUP = "portolan"
 COMMANDS_ENTRY_POINT_GROUP = "portolan.commands"
+# Deprecated in #947. Read by plugins.builtin.legacy_backends.
+LEGACY_BACKENDS_ENTRY_POINT_GROUP = "portolan.backends"
 ENV_VAR = "PORTOLAN_PLUGINS"
 BUILTIN_DISTRIBUTION = "portolan-cli"
+BUILTIN_PREFIX = "builtin:"
 
 # Built-in hook modules. They implement the same hooks an outside plugin does.
-_BUILTIN_MODULES = ("portolan_cli.plugins.builtin.backends",)
+_BUILTIN_MODULES = (
+    "portolan_cli.plugins.builtin.backends",
+    "portolan_cli.plugins.builtin.legacy_backends",
+)
 
 _manager: pluggy.PluginManager | None = None
 
@@ -146,7 +152,7 @@ def _warn_unknown_requested_names() -> None:
     if not requested:
         return
     known: set[str] = set()
-    for group in (ENTRY_POINT_GROUP, COMMANDS_ENTRY_POINT_GROUP):
+    for group in (ENTRY_POINT_GROUP, COMMANDS_ENTRY_POINT_GROUP, LEGACY_BACKENDS_ENTRY_POINT_GROUP):
         for ep in _scan(group):
             known |= plugin_names(ep)
     for name in sorted(requested - known):
@@ -155,6 +161,11 @@ def _warn_unknown_requested_names() -> None:
 
 def _register_outside_plugins(pm: pluggy.PluginManager) -> None:
     for ep in enabled_entry_points(ENTRY_POINT_GROUP):
+        if ep.name.startswith(BUILTIN_PREFIX):
+            _warn(
+                f"Plugin '{ep.name}' from {_describe(ep)} uses the reserved '{BUILTIN_PREFIX}' prefix."
+            )
+            continue
         try:
             plugin = ep.load()
         except Exception as err:  # noqa: BLE001 - any import failure skips the plugin
@@ -163,6 +174,10 @@ def _register_outside_plugins(pm: pluggy.PluginManager) -> None:
         try:
             pm.register(plugin, name=ep.name)
         except (ValueError, pluggy.PluginValidationError) as err:
+            # pluggy adds the hooks one by one and keeps the ones it added
+            # before the invalid one. Remove them, so the plugin adds nothing.
+            if isinstance(err, pluggy.PluginValidationError) and pm.is_registered(plugin):
+                pm.unregister(plugin)
             _warn(f"Plugin '{ep.name}' from {_describe(ep)} did not register: {err}")
 
 
@@ -194,7 +209,7 @@ def get_plugin_manager() -> pluggy.PluginManager:
     for module_name in _BUILTIN_MODULES:
         pm.register(
             importlib.import_module(module_name),
-            name=f"builtin:{module_name.rsplit('.', 1)[1]}",
+            name=f"{BUILTIN_PREFIX}{module_name.rsplit('.', 1)[1]}",
         )
     _warn_unknown_requested_names()
     _register_outside_plugins(pm)
@@ -232,8 +247,11 @@ def hook_calls(hook_name: str) -> list[tuple[str, Callable[..., Any]]]:
     """Return one callable per plugin that implements ``hook_name``.
 
     Each callable takes the full hook arguments as keywords and passes on the
-    ones the implementation names. The list is in registration order,
-    built-ins first. An empty list means no plugin implements the hook.
+    ones the implementation names. The built-ins come first, then the outside
+    plugins in pluggy order. ``tryfirst`` and ``trylast`` cannot move an
+    outside plugin before a built-in. A hook wrapper produces a
+    ``PluginWarning`` and is skipped, because a plain call of a wrapper only
+    creates a generator. An empty list means no plugin implements the hook.
 
     Args:
         hook_name: Name of a hook in ``hookspecs``.
@@ -244,12 +262,21 @@ def hook_calls(hook_name: str) -> list[tuple[str, Callable[..., Any]]]:
     pm = get_plugin_manager()
     calls: list[tuple[str, Callable[..., Any]]] = []
     for impl in getattr(pm.hook, hook_name).get_hookimpls():
+        if impl.wrapper or impl.hookwrapper:
+            warnings.warn(
+                f"Plugin '{impl.plugin_name}' implements {hook_name} as a hook wrapper. "
+                "Portolan calls each implementation on its own and skips wrappers.",
+                PluginWarning,
+                stacklevel=2,
+            )
+            continue
 
         def _call(_impl: Any = impl, **kwargs: Any) -> Any:
             return _impl.function(**{arg: kwargs[arg] for arg in _impl.argnames})
 
         calls.append((impl.plugin_name, _call))
-    return calls
+    # sorted() is stable, so each side keeps its pluggy order.
+    return sorted(calls, key=lambda pair: not pair[0].startswith(BUILTIN_PREFIX))
 
 
 def warn_hook_failure(plugin_name: str, hook_name: str, err: Exception) -> None:
