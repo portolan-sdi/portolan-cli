@@ -269,6 +269,8 @@ ignore = [
 "scripts/**/*.py" = [
     "T20", # scripts are CLIs of their own and print by design
     "S310", # a script opens an https URL it writes itself
+    "S603", # a script starts a tool or pytest with a literal argument list
+    "S607", # the script resolves its tools from PATH
 ]
 "examples/**/*.py" = ["T20"] # an example prints its result for the reader
 

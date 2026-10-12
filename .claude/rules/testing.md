@@ -16,6 +16,27 @@ paths:
 4. **RUN TESTS AGAIN**, Verify they pass
 5. **ADD EDGE CASES**, Test error conditions
 
+## Run the affected tests while you work
+
+Run only the tests your change can reach while you work:
+
+```bash
+uv run python scripts/affected_tests.py --run -n 4
+```
+
+The script reads the import graph and the changed files against
+`origin/main`. A change to `pyproject.toml`, `uv.lock`, `tests/conftest.py`,
+or `tests/fixtures/` selects the full suite. Run the full suite once before you
+push, or let CI run it:
+
+```bash
+HYPOTHESIS_PROFILE=ci uv run pytest -n 4 -q \
+  -m "not network and not slow and not benchmark and not e2e and not e2e_slow"
+```
+
+The affected set is a guide, not a proof. A test that reaches code through a
+subprocess or a file path, and not through an import, can be missing from it.
+
 Test markers are documented in the root `AGENTS.md` (kept there because
 `scripts/validate_agents_md.py` and `scripts/generate_agents_md_sections.py`
 keep them in sync with `pyproject.toml`).

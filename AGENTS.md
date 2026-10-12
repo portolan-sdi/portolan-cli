@@ -139,6 +139,7 @@ prek install                            # Install git hooks (requires: uv tool i
 # Development
 uv run pytest                           # Run tests
 uv run pytest -m unit                   # Run only unit tests
+uv run python scripts/affected_tests.py --run -n 4  # Run tests this change can affect
 uv run pytest --cov-report=html         # Coverage report
 uv run ruff check .                     # Lint
 uv run ruff format .                    # Format
