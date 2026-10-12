@@ -151,3 +151,19 @@ def test_metadata_fix_enriches_a_created_item(catalog: Path, fixtures_dir: Path)
     created = create_missing_item(loose, catalog / "imagery")
 
     assert _read(created)["properties"]["test:item_id"] == "scene-b"
+
+
+def test_add_external_enriches_the_collection(catalog: Path) -> None:
+    """`add --external` runs the collection hook on the file it writes."""
+    from portolan_cli.external import add_external
+
+    result = add_external(
+        url="https://data.example.org/roads.parquet",
+        catalog_root=catalog,
+        collection_id="roads",
+        license="CC0-1.0",
+    )
+
+    collection = _read(result.collection_path)
+    assert collection["test:collection_id"] == "roads"
+    assert collection["test:assets"] == sorted(collection["assets"])
