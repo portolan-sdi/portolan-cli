@@ -1,8 +1,8 @@
 # DuckDB 1.5.5 segfaults in ST_Read_Meta on malformed input
 
-**Status:** open upstream. Portolan pins `duckdb>=1.5.2,<1.5.5`.
-**Upstream issue:** [duckdb-spatial#860](https://github.com/duckdb/duckdb-spatial/issues/860), filed 2026-08-31.
-**Affected version:** duckdb 1.5.5 only. 1.5.1, 1.5.2, 1.5.3 and 1.5.4 are all fine.
+**Status:** resolved. DuckDB 1.5.6 contains the fix. Portolan pins `duckdb>=1.5.6,<1.5.7`.
+**Upstream issue:** [duckdb-spatial#860](https://github.com/duckdb/duckdb-spatial/issues/860), filed 2026-08-31, closed 2026-10-08.
+**Affected version:** duckdb 1.5.5 only. 1.5.1, 1.5.2, 1.5.3, 1.5.4 and 1.5.6 are all fine.
 **Found by:** the geoparquet-io 1.4.0 bump (Portolan issue #810), which raised the DuckDB floor to `>=1.5.2` and let the resolver reach 1.5.5.
 
 ## What happens
@@ -35,6 +35,7 @@ Result by version:
 | 1.5.3 | returns without error |
 | 1.5.4 | returns without error |
 | 1.5.5 | `SIGSEGV`, exit 139 |
+| 1.5.6 | returns without error |
 
 The spatial extension build changes with the DuckDB release: `b68b309` at
 1.5.4, `eb1e57c` at 1.5.5. Any file GDAL cannot open crashes, including an
@@ -54,11 +55,11 @@ this. It feeds truncated GeoJSON to `convert_file` and expects
 
 ## What Portolan does
 
-`pyproject.toml` pins `duckdb>=1.5.2,<1.5.5`. The lower bound comes from
-geoparquet-io 1.4.0. This follows the same pattern as the `pyarrow<22.0.0` pin.
+`pyproject.toml` pins `duckdb>=1.5.6,<1.5.7`. geoparquet-io 1.6.0 needs
+`duckdb>=1.5.5`, so the floor must name 1.5.6 to keep 1.5.5 out. Do not lower
+the floor below 1.5.6.
 
-Do not add a subprocess guard or a pre-parse check around the call. The crash
-belongs to DuckDB. Raise the pin once a fixed release ships.
+This note stays as the record of why the floor skips 1.5.5.
 
 ## Related
 

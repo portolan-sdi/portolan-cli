@@ -1889,13 +1889,7 @@ class TestVectorSettingsIntegration:
     def test_convert_file_passes_vector_settings(
         self, sample_geojson: Path, tmp_path: Path
     ) -> None:
-        """convert_file correctly passes VectorSettings to _convert_vector.
-
-        This uses h3 rather than s2. geoparquet-io 1.4.0 withdrew s2 because the
-        DuckDB ``geography`` community extension is not published for
-        ``duckdb>=1.5.2``. See
-        ``context/shared/known-issues/geoparquet-io-s2-unavailable.md``.
-        """
+        """convert_file correctly passes VectorSettings to _convert_vector."""
         import pyarrow.parquet as pq
 
         from portolan_cli.conversion_config import VectorSettings
@@ -1911,15 +1905,6 @@ class TestVectorSettingsIntegration:
         assert "h3_cell" in table.schema.names
 
     @pytest.mark.unit
-    @pytest.mark.xfail(
-        strict=False,
-        reason=(
-            "geoparquet-io 1.4.0 withdrew s2: the DuckDB 'geography' community "
-            "extension is not published for duckdb>=1.5.2 (geoparquet-io#778). "
-            "This test passes again once the extension returns, with no Portolan "
-            "change. See context/shared/known-issues/geoparquet-io-s2-unavailable.md"
-        ),
-    )
     def test_convert_file_builds_an_s2_index(self, sample_geojson: Path, tmp_path: Path) -> None:
         """Portolan still offers s2 and still writes an ``s2_cell`` column."""
         import pyarrow.parquet as pq
@@ -2312,3 +2297,113 @@ class TestPartitionedOutputStaysHive:
         assert seen["resolution"] == 6
         assert seen["hive"] is True
         assert seen["keep_h3_column"] is True
+
+
+class TestPartitionedOutputWithGeoparquetIO:
+    """`apply_vector_settings` and `_write_partitioned` run against geoparquet-io.
+
+    geoparquet-io 1.5 made every partition method and ``add_kdtree`` refuse a
+    call that names neither a resolution nor ``auto`` (geoparquet-io#800,
+    #855). The spy tests above cannot see that, because they never call the
+    library. These tests write real partitions.
+    """
+
+    _COLUMNS = {
+        "h3": "h3_cell",
+        "s2": "s2_cell",
+        "quadkey": "quadkey_prefix",
+        "a5": "a5_cell",
+        "kdtree": "kdtree_cell",
+    }
+    # Coarse cells over a small cluster keep every partition above the
+    # 100-row floor that geoparquet-io enforces ("Tiny partitions").
+    _EXPLICIT = {"h3": 3, "s2": 5, "quadkey": 6, "a5": 3, "kdtree": 1}
+
+    @staticmethod
+    def _points(tmp_path: Path) -> Path:
+        """Write a 400-point cluster, about 0.2 degrees wide, as a CSV."""
+        source = tmp_path / "points.csv"
+        rows = [f"{i},POINT({-70 + (i % 20) * 0.01} {-30 + (i // 20) * 0.01})" for i in range(400)]
+        source.write_text("id,wkt\n" + "\n".join(rows) + "\n", encoding="utf-8")
+        return source
+
+    @classmethod
+    def _table(cls, tmp_path: Path) -> Any:
+        """Read the point cluster into a geoparquet-io Table."""
+        import geoparquet_io as gpio
+
+        return gpio.convert(str(cls._points(tmp_path)))
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("scheme", ["h3", "s2", "quadkey", "a5", "kdtree"])
+    @pytest.mark.parametrize("resolution", ["auto", "explicit"])
+    def test_every_scheme_writes_hive_partitions(
+        self, scheme: str, resolution: str, tmp_path: Path
+    ) -> None:
+        """Each scheme writes `<column>=<cell>` directories with Parquet files."""
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import _write_partitioned, apply_vector_settings
+
+        settings = VectorSettings(
+            spatial_index=scheme,
+            resolution=self._EXPLICIT[scheme] if resolution == "explicit" else "auto",
+            partition=True,
+        )
+        out = tmp_path / "out"
+
+        table = apply_vector_settings(self._table(tmp_path), settings, partitioned=True)
+        _write_partitioned(table, out, settings)
+
+        partitions = sorted(out.glob(f"{self._COLUMNS[scheme]}=*"))
+        assert partitions, f"{scheme} wrote no Hive partition directories"
+        assert all(any(p.glob("*.parquet")) for p in partitions)
+
+    @pytest.mark.integration
+    def test_single_file_writers_keep_the_index_column(self, tmp_path: Path) -> None:
+        """`partition: true` alone still adds the column for a single-file write.
+
+        `add` and the multilayer writer call `apply_vector_settings` and write
+        one file whatever `partition` says. Only `_convert_vector` passes
+        `partitioned=True`.
+        """
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import apply_vector_settings
+
+        settings = VectorSettings(spatial_index="h3", resolution="auto", partition=True)
+
+        table = apply_vector_settings(self._table(tmp_path), settings)
+
+        assert "h3_cell" in table.column_names
+
+    @pytest.mark.integration
+    def test_convert_vector_partitions_with_auto_resolution(self, tmp_path: Path) -> None:
+        """`_convert_vector` writes Hive partitions for the default `auto` size."""
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import _convert_vector
+
+        settings = VectorSettings(spatial_index="h3", resolution="auto", partition=True)
+
+        output = _convert_vector(self._points(tmp_path), tmp_path / "out", settings)
+
+        assert output == tmp_path / "out" / "points"
+        assert [p.name for p in output.glob("h3_cell=*")] == ["h3_cell=80b3fffffffffff"]
+
+    @pytest.mark.integration
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "geoparquet-io#1222: Table.add_kdtree raises ST_Centroid(BLOB) on a "
+            "table from gpio.convert(). See "
+            "context/shared/known-issues/geoparquet-io-add-kdtree-convert.md"
+        ),
+    )
+    def test_single_file_kdtree_index(self, tmp_path: Path) -> None:
+        """A non-partitioned kdtree index adds the `kdtree_cell` column."""
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import apply_vector_settings
+
+        settings = VectorSettings(spatial_index="kdtree", resolution=1)
+
+        table = apply_vector_settings(self._table(tmp_path), settings)
+
+        assert "kdtree_cell" in table.column_names
