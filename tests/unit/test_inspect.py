@@ -235,7 +235,7 @@ class TestFileInfoGeoParquet:
     """Tests for inspect_file with GeoParquet files."""
 
     @pytest.mark.unit
-    def test_inspect_geoparquet_returns_metadata(self, catalog_with_tracked_file: Path) -> None:
+    def testinspect_geoparquet_returns_metadata(self, catalog_with_tracked_file: Path) -> None:
         """Test that inspect_file extracts GeoParquet metadata."""
         from portolan_cli.inspect import inspect_file
 
@@ -250,7 +250,7 @@ class TestFileInfoGeoParquet:
         assert result.feature_count > 0
 
     @pytest.mark.unit
-    def test_inspect_geoparquet_includes_version_when_tracked(
+    def testinspect_geoparquet_includes_version_when_tracked(
         self, catalog_with_tracked_file: Path
     ) -> None:
         """Test that inspect_file includes version from versions.json."""
@@ -262,7 +262,7 @@ class TestFileInfoGeoParquet:
         assert result.version == "v1.2.0"
 
     @pytest.mark.unit
-    def test_inspect_geoparquet_no_version_when_not_tracked(
+    def testinspect_geoparquet_no_version_when_not_tracked(
         self, valid_points_parquet: Path, tmp_path: Path
     ) -> None:
         """Test that version is None when file is not tracked."""
@@ -290,7 +290,7 @@ class TestFileInfoCOG:
     """Tests for inspect_file with COG files."""
 
     @pytest.mark.unit
-    def test_inspect_cog_returns_metadata(self, catalog_with_cog: Path) -> None:
+    def testinspect_cog_returns_metadata(self, catalog_with_cog: Path) -> None:
         """Test that inspect_file extracts COG metadata."""
         from portolan_cli.inspect import inspect_file
 
@@ -305,7 +305,7 @@ class TestFileInfoCOG:
         assert result.height is not None
 
     @pytest.mark.unit
-    def test_inspect_cog_includes_version_when_tracked(self, catalog_with_cog: Path) -> None:
+    def testinspect_cog_includes_version_when_tracked(self, catalog_with_cog: Path) -> None:
         """Test that inspect_file includes version from versions.json for COG."""
         from portolan_cli.inspect import inspect_file
 

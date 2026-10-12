@@ -26,5 +26,17 @@ class StubHandler:
     def convert(self, source: Path, output_dir: Path, catalog_root: Path | None) -> Path:
         return source
 
+    def output_path(self, source: Path, output_dir: Path) -> Path:
+        return output_dir / source.name
+
     def read_metadata(self, path: Path) -> Any:
         return None
+
+    def describe_item(self, item: Any, output: Path, metadata: Any, context: Any) -> None:
+        pass
+
+    def describe_collection(self, collection: Any, metadata: list[Any], context: Any) -> None:
+        pass
+
+    def inspect(self, path: Path, catalog_root: Path | None) -> Any:
+        raise ValueError("stub")

@@ -463,6 +463,19 @@ class RewriteFidelityError(ConversionError):
         self.lost = lost
 
 
+class InvalidOutputError(ConversionError):
+    """Raised when a format handler writes a file that fails its own validation.
+
+    Error code: PRTLN-CNV008
+    """
+
+    code = "PRTLN-CNV008"
+
+    def __init__(self, path: str, reason: str) -> None:
+        super().__init__(f"{path} failed validation: {reason}", path=path, reason=reason)
+        self.reason = reason
+
+
 class AmbiguousFormatError(ConversionError):
     """Raised when two plugin format handlers claim one file and no pin decides.
 

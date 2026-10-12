@@ -152,8 +152,8 @@ class TestAddDirectory:
 
         with (
             patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.preparation.convert_vector") as mock_convert,
-            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.api.convert_vector") as mock_convert,
+            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
@@ -213,10 +213,12 @@ class TestAddDirectory:
 
         with (
             patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.preparation.convert_vector") as mock_convert_v,
-            patch("portolan_cli.preparation.convert_raster") as mock_convert_r,
-            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_meta_v,
-            patch("portolan_cli.preparation.extract_cog_metadata") as mock_meta_r,
+            patch("portolan_cli.api.convert_vector") as mock_convert_v,
+            patch("portolan_cli.api.convert_raster") as mock_convert_r,
+            patch("portolan_cli.api.validate_cog", return_value=None),
+            patch("portolan_cli.api.write_raster_thumbnail"),
+            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_meta_v,
+            patch("portolan_cli.api.extract_cog_metadata") as mock_meta_r,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
 
@@ -235,7 +237,9 @@ class TestAddDirectory:
                 output_path.write_bytes(b"fake")
                 return output_path
 
-            def convert_raster_side_effect(source: Path, dest: Path) -> Path:
+            def convert_raster_side_effect(
+                source: Path, dest: Path, catalog_root: Path | None = None
+            ) -> Path:
                 # Raster stays in place (already exists)
                 return source
 
@@ -306,8 +310,8 @@ class TestAddDirectory:
 
         with (
             patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.preparation.convert_vector") as mock_convert,
-            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.api.convert_vector") as mock_convert,
+            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET

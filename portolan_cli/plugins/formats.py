@@ -16,6 +16,7 @@ Precedence for one file, first match wins:
 from __future__ import annotations
 
 import warnings
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from portolan_cli.errors import AmbiguousFormatError, UnknownFormatHandlerError
@@ -27,6 +28,25 @@ BUILTIN_PREFIX = "builtin:"
 
 # The manager the handler list came from, and the list.
 _CACHE: list[Any] = []
+
+
+@dataclass(frozen=True)
+class FormatContext:
+    """Where a file sits, for the handler methods that describe STAC.
+
+    Attributes:
+        catalog_root: Directory that holds ``catalog.json``.
+        collection_dir: Directory that holds ``collection.json``.
+        source: The file the operator added. None for a collection.
+        defaults: The ``defaults`` section of the merged ``metadata.yaml``.
+        merge_strategy: How ``add`` merges detected values into existing ones.
+    """
+
+    catalog_root: Path
+    collection_dir: Path
+    source: Path | None = None
+    defaults: dict[str, Any] = field(default_factory=dict)
+    merge_strategy: Any = None
 
 
 @runtime_checkable
@@ -91,14 +111,48 @@ class FormatHandler(Protocol):
     def claims(self, path: Path) -> bool:
         """Return True when this handler reads ``path``. Read file contents if needed."""
 
+    def output_path(self, source: Path, output_dir: Path) -> Path:
+        """Return where ``convert`` writes the cloud-native file for ``source``.
+
+        ``add --force`` keeps an output that exists at this path.
+        """
+
     def convert(self, source: Path, output_dir: Path, catalog_root: Path | None) -> Path:
         """Write the cloud-native file into ``output_dir`` and return its path.
 
-        Return ``source`` when the source is already cloud-native.
+        Validate the result and raise ``InvalidOutputError`` when it fails.
+        Write a thumbnail here when the format has one. ``add`` and
+        ``check --fix`` both call this.
         """
 
     def read_metadata(self, path: Path) -> FormatMetadata:
         """Read the metadata of a converted file."""
+
+    def describe_item(self, item: Any, output: Path, metadata: Any, context: FormatContext) -> None:
+        """Add format fields to a new STAC item before Portolan saves it.
+
+        ``item`` is a ``pystac.Item``. Change it in place: properties,
+        assets, and ``stac_extensions``.
+        """
+
+    def describe_collection(
+        self, collection: Any, metadata: list[Any], context: FormatContext
+    ) -> None:
+        """Add format fields to a collection after an ``add``.
+
+        ``collection`` is a ``pystac.Collection``. ``metadata`` holds what
+        ``read_metadata`` returned for each file this ``add`` converted.
+        """
+
+    def inspect(self, path: Path, catalog_root: Path | None) -> Any:
+        """Return a ``FileInfo`` for ``portolan info``. Raise ValueError if unsupported."""
+
+
+# Optional handler methods, found with getattr:
+#   partition(path, catalog_root) -> list[Path]
+#       Split a converted file into Hive partitions. Return [] to keep it whole.
+#   reoptimize(source, catalog_root) -> Path
+#       Rewrite a file that is already cloud-native with the current settings.
 
 
 def format_handlers() -> list[tuple[str, FormatHandler]]:
@@ -134,6 +188,11 @@ def format_handlers() -> list[tuple[str, FormatHandler]]:
                 )
     _CACHE[:] = [manager, tuple(handlers)]
     return handlers
+
+
+def handler_named(name: str) -> FormatHandler | None:
+    """Return the handler with this ``name``, or None."""
+    return next((handler for _, handler in format_handlers() if handler.name == name), None)
 
 
 def is_builtin(plugin_name: str) -> bool:

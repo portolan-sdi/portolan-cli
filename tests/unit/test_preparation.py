@@ -14,14 +14,13 @@ from unittest.mock import MagicMock, patch
 import pystac
 import pytest
 
-from portolan_cli.plugins.builtin.formats import COG, GEOPARQUET
+from portolan_cli.plugins.builtin.formats import COG, FLATGEOBUF, GEOPARQUET, PMTILES
 from portolan_cli.preparation import (
     _add_statistics_to_properties,
     _convert_and_extract_metadata,
     _extract_bbox_wgs84,
     _extract_statistics_best_effort,
     _fix_collection_level_asset_hrefs,
-    _handle_cloud_native_vector,
     _scan_item_assets,
     _validate_collection_id,
 )
@@ -40,10 +39,8 @@ class TestConvertAndExtractRouting:
         item_dir.mkdir()
         sentinel = MagicMock(name="pmtiles-metadata")
 
-        with patch(
-            "portolan_cli.preparation.extract_pmtiles_metadata", return_value=sentinel
-        ) as extract:
-            output_path, metadata = _convert_and_extract_metadata(source, item_dir, GEOPARQUET)
+        with patch("portolan_cli.api.extract_pmtiles_metadata", return_value=sentinel) as extract:
+            output_path, metadata = _convert_and_extract_metadata(source, item_dir, PMTILES)
 
         assert output_path == item_dir / "tiles.pmtiles"
         assert output_path.read_bytes() == b"pmtiles-bytes"  # copied verbatim
@@ -59,9 +56,9 @@ class TestConvertAndExtractRouting:
         sentinel = MagicMock(name="fgb-metadata")
 
         with patch(
-            "portolan_cli.preparation.extract_flatgeobuf_metadata", return_value=sentinel
+            "portolan_cli.api.extract_flatgeobuf_metadata", return_value=sentinel
         ) as extract:
-            output_path, metadata = _convert_and_extract_metadata(source, item_dir, GEOPARQUET)
+            output_path, metadata = _convert_and_extract_metadata(source, item_dir, FLATGEOBUF)
 
         assert output_path == item_dir / "roads.fgb"
         assert metadata is sentinel
@@ -77,16 +74,14 @@ class TestConvertAndExtractRouting:
         meta = MagicMock(name="gpq-metadata")
 
         with (
-            patch("portolan_cli.preparation.convert_vector", return_value=converted) as convert,
-            patch(
-                "portolan_cli.preparation.extract_geoparquet_metadata", return_value=meta
-            ) as extract,
+            patch("portolan_cli.api.convert_vector", return_value=converted) as convert,
+            patch("portolan_cli.api.extract_geoparquet_metadata", return_value=meta) as extract,
         ):
             output_path, metadata = _convert_and_extract_metadata(source, item_dir, GEOPARQUET)
 
         assert output_path == converted
         assert metadata is meta
-        convert.assert_called_once_with(source, item_dir, None, reconvert=False)
+        convert.assert_called_once_with(source, item_dir, None)
         extract.assert_called_once_with(converted)
 
     def test_raster_converts_to_cog(self, tmp_path: Path) -> None:
@@ -99,57 +94,17 @@ class TestConvertAndExtractRouting:
         meta = MagicMock(name="cog-metadata")
 
         with (
-            patch("portolan_cli.preparation.convert_raster", return_value=converted) as convert,
-            patch("portolan_cli.preparation.extract_cog_metadata", return_value=meta) as extract,
+            patch("portolan_cli.api.convert_raster", return_value=converted) as convert,
+            patch("portolan_cli.api.extract_cog_metadata", return_value=meta) as extract,
+            patch("portolan_cli.api.validate_cog", return_value=None),
+            patch("portolan_cli.api.write_raster_thumbnail"),
         ):
             output_path, metadata = _convert_and_extract_metadata(source, item_dir, COG)
 
         assert output_path == converted
         assert metadata is meta
-        convert.assert_called_once_with(source, item_dir)
+        convert.assert_called_once_with(source, item_dir, None)
         extract.assert_called_once_with(converted)
-
-
-class TestHandleCloudNativeVector:
-    """Force/reconvert semantics for copy-as-is cloud-native vectors (issue #386)."""
-
-    def test_copies_when_output_absent(self, tmp_path: Path) -> None:
-        source = tmp_path / "a.pmtiles"
-        source.write_bytes(b"payload")
-        output = tmp_path / "item" / "a.pmtiles"
-        output.parent.mkdir()
-
-        result = _handle_cloud_native_vector(
-            source, output, lambda p: f"meta:{p.name}", force=False, reconvert=False
-        )
-
-        assert output.exists()
-        assert output.read_bytes() == b"payload"
-        assert result == "meta:a.pmtiles"
-
-    def test_existing_output_without_force_raises(self, tmp_path: Path) -> None:
-        source = tmp_path / "a.pmtiles"
-        source.write_bytes(b"new")
-        output = tmp_path / "item" / "a.pmtiles"
-        output.parent.mkdir()
-        output.write_bytes(b"old")
-
-        with pytest.raises(FileExistsError, match="already exists"):
-            _handle_cloud_native_vector(
-                source, output, lambda p: "meta", force=False, reconvert=False
-            )
-        assert output.read_bytes() == b"old"  # untouched
-
-    def test_force_reconvert_recopies_from_source(self, tmp_path: Path) -> None:
-        source = tmp_path / "a.pmtiles"
-        source.write_bytes(b"new")
-        output = tmp_path / "item" / "a.pmtiles"
-        output.parent.mkdir()
-        output.write_bytes(b"old")
-
-        _handle_cloud_native_vector(source, output, lambda p: "meta", force=True, reconvert=True)
-
-        assert output.read_bytes() == b"new"  # re-copied from source
 
 
 class TestStatisticsShaping:
@@ -443,62 +398,74 @@ class TestIsRewriteTemp:
         assert is_rewrite_temp(Path(name)) is False
 
 
-class TestEnsureConformingGeoparquet:
-    """`add --force` skips conversion, so it needs its own conformance check.
+class TestForceRule:
+    """`add --force` keeps an existing output, for every format handler (#386, #805, #947).
 
-    `--force` means "ignore change detection", not "convert again", and for a
-    single-file collection the output is the source. Without this the skip
-    handed back a file with no covering column (issue #805).
+    `--force` means "ignore change detection", not "convert again". The handler
+    converts the kept output again only when it reads that format, which brings
+    an existing GeoParquet up to the profile.
     """
 
-    @pytest.mark.unit
-    def test_it_rewrites_a_file_with_no_covering_column(self, tmp_path: Path) -> None:
-        """The rewrite runs and the operator is told."""
-        from portolan_cli.metadata import SpatialLayout
-        from portolan_cli.preparation import _ensure_conforming_geoparquet
-
-        target = tmp_path / "roads.parquet"
-        target.write_bytes(b"PAR1")
-        layout = SpatialLayout(is_geoparquet=True, has_bbox_covering=False)
+    @staticmethod
+    def _keep(target: Path, layout: object) -> MagicMock:
+        from portolan_cli.preparation import _convert_and_extract_metadata
 
         with (
             patch("portolan_cli.preparation.read_spatial_layout", return_value=layout),
             patch("portolan_cli.preparation._rewrite_parquet_in_place") as rewrite,
+            patch("portolan_cli.api.is_geoparquet", return_value=False),
+            patch("portolan_cli.api.extract_geoparquet_metadata"),
         ):
-            _ensure_conforming_geoparquet(target, None)
+            _convert_and_extract_metadata(target, target.parent, GEOPARQUET, force=True)
+        return rewrite
+
+    @pytest.mark.unit
+    def test_geoparquet_without_covering_column_is_rewritten(self, tmp_path: Path) -> None:
+        from portolan_cli.metadata import SpatialLayout
+
+        target = tmp_path / "roads.parquet"
+        target.write_bytes(b"PAR1")
+
+        rewrite = self._keep(target, SpatialLayout(is_geoparquet=True, has_bbox_covering=False))
 
         rewrite.assert_called_once()
 
     @pytest.mark.unit
-    def test_it_leaves_a_conforming_file_alone(self, tmp_path: Path) -> None:
-        """A file that already carries the column costs nothing."""
+    def test_conforming_geoparquet_is_left_alone(self, tmp_path: Path) -> None:
         from portolan_cli.metadata import SpatialLayout
-        from portolan_cli.preparation import _ensure_conforming_geoparquet
 
         target = tmp_path / "roads.parquet"
         target.write_bytes(b"PAR1")
-        layout = SpatialLayout(is_geoparquet=True, has_bbox_covering=True)
 
-        with (
-            patch("portolan_cli.preparation.read_spatial_layout", return_value=layout),
-            patch("portolan_cli.preparation._rewrite_parquet_in_place") as rewrite,
-        ):
-            _ensure_conforming_geoparquet(target, None)
+        rewrite = self._keep(target, SpatialLayout(is_geoparquet=True, has_bbox_covering=True))
 
         rewrite.assert_not_called()
 
     @pytest.mark.unit
-    def test_it_ignores_a_non_parquet_output(self, tmp_path: Path) -> None:
-        """A COG reaches this path too, and has no covering column to gain."""
-        from portolan_cli.preparation import _ensure_conforming_geoparquet
+    def test_plugin_output_is_kept_without_converting(self, tmp_path: Path) -> None:
+        """A plugin's own output is not a format it reads, so --force keeps it as it is."""
+        from dataclasses import dataclass
 
-        target = tmp_path / "dem.tif"
-        target.write_bytes(b"II*\x00")
+        from portolan_cli.preparation import _convert_and_extract_metadata
+        from tests.unit.plugins.stub_handler import StubHandler
 
-        with patch("portolan_cli.preparation.read_spatial_layout") as layout:
-            _ensure_conforming_geoparquet(target, None)
+        @dataclass
+        class _Xyz(StubHandler):
+            def output_path(self, source: Path, output_dir: Path) -> Path:
+                return output_dir / f"{source.stem}.parquet"
 
-        layout.assert_not_called()
+            def convert(self, source: Path, output_dir: Path, catalog_root: Path | None) -> Path:
+                raise AssertionError("convert must not run")
+
+        source = tmp_path / "survey.xyz"
+        source.write_text("1 2 3\n", encoding="utf-8")
+        (tmp_path / "survey.parquet").write_bytes(b"PAR1")
+
+        output, _ = _convert_and_extract_metadata(
+            source, tmp_path, _Xyz("xyz", frozenset({".xyz"})), force=True
+        )
+
+        assert output == tmp_path / "survey.parquet"
 
 
 class TestAssertRewriteKeptEverything:

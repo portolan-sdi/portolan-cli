@@ -31,7 +31,6 @@ import pystac
 from pystac.layout import AsIsLayoutStrategy
 
 from portolan_cli.config import load_merged_metadata, load_own_metadata
-from portolan_cli.format_families import VECTOR
 from portolan_cli.hookspecs import EnrichContext
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
@@ -70,6 +69,7 @@ from portolan_cli.versions import (
 )
 
 if TYPE_CHECKING:
+    from portolan_cli.plugins.formats import FormatContext
     from portolan_cli.preparation import PreparedItem
 
 logger = logging.getLogger(__name__)
@@ -1009,34 +1009,61 @@ def _emit_stale_asset_warnings(
         logger.debug(warning_msg)
 
 
-def _apply_table_extension_from_disk(
+def _describe_collection(
     collection: pystac.Collection,
+    catalog_root: Path,
     collection_dir: Path,
     items: list[PreparedItem],
     merge_strategy: MergeStrategy,
 ) -> None:
+    """Let each format handler in this batch add its collection fields (#947).
+
+    The GeoParquet handler aggregates the table extension, for example.
+
+    Args:
+        collection: The collection in memory.
+        catalog_root: Catalog root.
+        collection_dir: Directory holding collection.json.
+        items: Prepared items of this batch.
+        merge_strategy: How to merge detected values into existing ones.
+    """
+    from portolan_cli.plugins.formats import FormatContext, handler_named
+
+    by_handler: dict[str, list[Any]] = {}
+    for prepared in items:
+        if prepared.format_name and prepared.metadata is not None:
+            by_handler.setdefault(prepared.format_name, []).append(prepared.metadata)
+    context = FormatContext(
+        catalog_root=catalog_root, collection_dir=collection_dir, merge_strategy=merge_strategy
+    )
+    for name, metadata in by_handler.items():
+        handler = handler_named(name)
+        if handler is not None:
+            handler.describe_collection(collection, metadata, context)
+
+
+def aggregate_table_extension(
+    collection: pystac.Collection, metadata: list[Any], context: FormatContext
+) -> None:
     """Aggregate table:* metadata from tracked parquet on disk (issues #304/#447).
 
-    Only runs when the batch contains at least one NEW GeoParquet item.
+    Runs only when the batch holds at least one NEW GeoParquet file.
     Recomputes aggregates from ALL tracked parquet files on disk instead of
-    carrying forward stale counts — preventing double-counting on re-add and
-    stale counts when files are replaced. PMTiles/FlatGeobuf are collection-level
-    assets without table schema and are excluded.
-    """
-    new_geoparquet_metadata: list[GeoParquetMetadata] = [
-        p.metadata
-        for p in items
-        if p.format_type == VECTOR and isinstance(p.metadata, GeoParquetMetadata)
-    ]
-    if not new_geoparquet_metadata:
-        return
+    carrying forward stale counts. This prevents double-counting on re-add and
+    stale counts when files are replaced. The built-in GeoParquet handler
+    calls this from ``describe_collection``.
 
-    # Recompute from disk: scan tracked parquet assets in collection
-    # This is O(n) file metadata reads but always correct
-    all_parquet_metadata = _collect_parquet_metadata_from_disk(collection_dir, collection)
+    Args:
+        collection: The collection in memory.
+        metadata: What the handler read from each new file.
+        context: Where the collection sits, and the merge strategy.
+    """
+    if not any(isinstance(m, GeoParquetMetadata) for m in metadata):
+        return
+    all_parquet_metadata = _collect_parquet_metadata_from_disk(context.collection_dir, collection)
     if all_parquet_metadata:
         aggregated = aggregate_table_metadata(all_parquet_metadata)
-        add_table_extension(collection, aggregated, merge_strategy=merge_strategy)
+        add_table_extension(collection, aggregated, merge_strategy=context.merge_strategy)
 
 
 def _emit_partition_warnings(
@@ -1138,7 +1165,7 @@ def _finalize_collection(
     _emit_stale_asset_warnings(collection, collection_dir)
 
     # Add table extension if any items are GeoParquet format (Issue #304/#447)
-    _apply_table_extension_from_disk(collection, collection_dir, items, merge_strategy)
+    _describe_collection(collection, catalog_root, collection_dir, items, merge_strategy)
 
     # Add partition extension if any items have partition metadata (Issue #232/#443)
     _emit_partition_warnings(collection, collection_dir, items)

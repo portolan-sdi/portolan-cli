@@ -675,3 +675,102 @@ def _describe_schema_diff(
     )
 
     return "; ".join(diffs) if diffs else "Unknown schema difference"
+
+
+def partition_strategy(path: Path, catalog_root: Path | None) -> str | None:
+    """Decide whether and how to partition a converted GeoParquet file (#947).
+
+    This is the one partition rule for ``add`` and ``check --fix``:
+
+    1. ``conversion.vector.partition`` with a spatial index partitions by that
+       index.
+    2. Otherwise a file at or above ``partitioning.threshold_gb`` (2 GB by
+       default) partitions by ``partitioning.strategy`` (kdtree by default),
+       unless ``partitioning.enabled`` is false.
+
+    Settings resolve for the file's directory, so a collection can set its own.
+
+    Args:
+        path: The converted GeoParquet file.
+        catalog_root: Catalog root. None applies only the built-in defaults.
+
+    Returns:
+        The strategy name, or None to keep one file.
+    """
+    from portolan_cli.config import get_setting
+    from portolan_cli.conversion_config import get_vector_settings
+
+    settings = get_vector_settings(catalog_root)
+    if settings.partition and settings.spatial_index != "none":
+        return settings.spatial_index
+    if catalog_root is None:
+        return None
+
+    def _setting(key: str) -> Any:
+        return get_setting(key, catalog_path=catalog_root, collection_path=path.parent)
+
+    if _setting("partitioning.enabled") is False:
+        return None
+    threshold_gb = float(_setting("partitioning.threshold_gb") or 2.0)
+    if not should_partition(path, threshold_gb=threshold_gb):
+        return None
+    return str(_setting("partitioning.strategy") or DEFAULT_STRATEGY)
+
+
+def partition_vector_file(path: Path, catalog_root: Path | None) -> list[Path]:
+    """Partition a converted GeoParquet file when ``partition_strategy`` says so.
+
+    The partitions go next to the file in Hive directories, and the file is
+    removed. A spatial index from ``conversion.vector`` partitions through
+    geoparquet-io's index methods. A size-triggered partition uses
+    ``partition_geoparquet``.
+
+    Args:
+        path: The converted GeoParquet file.
+        catalog_root: Catalog root, for the settings.
+
+    Returns:
+        The partition files, or an empty list when the file stays whole.
+    """
+    strategy = partition_strategy(path, catalog_root)
+    if strategy is None:
+        return []
+
+    from portolan_cli.conversion_config import get_vector_settings
+
+    settings = get_vector_settings(catalog_root)
+    if settings.partition and strategy == settings.spatial_index:
+        import geoparquet_io as gpio  # type: ignore[import-untyped]
+
+        from portolan_cli.convert import _write_partitioned
+
+        before = set(path.parent.glob("*=*/*.parquet"))
+        _write_partitioned(gpio.read(str(path)), path.parent, settings)
+        files = sorted(set(path.parent.glob("*=*/*.parquet")) - before)
+    else:
+        from portolan_cli.config import get_setting
+
+        target_rows = get_setting(
+            "partitioning.target_rows", catalog_path=catalog_root, collection_path=path.parent
+        )
+        files = partition_geoparquet(
+            input_path=path,
+            output_dir=path.parent,
+            strategy=strategy,
+            target_rows=int(target_rows or 120_000),
+        )
+    path.unlink(missing_ok=True)
+    return files
+
+
+def partition_columns_of(files: list[Path]) -> list[str]:
+    """Return the Hive partition column names that ``files`` sit under."""
+    return sorted({f.parent.name.split("=", 1)[0] for f in files if "=" in f.parent.name})
+
+
+def strategy_of_column(column: str) -> str:
+    """Return the strategy that writes partitions under ``column``."""
+    for strategy, name in PARTITION_COLUMNS.items():
+        if column in (name, f"{name}_prefix"):
+            return strategy
+    return column.removesuffix("_cell")

@@ -30,15 +30,14 @@ from portolan_cli.conversion_config import (
     get_cog_settings,
     get_vector_settings,
     resolve_cog_settings,
+    settings_override,
 )
 from portolan_cli.errors import (
     ConversionFailedError,
+    InvalidOutputError,
 )
 from portolan_cli.formats import (
-    RASTER,
-    VECTOR,
     CloudNativeStatus,
-    detect_format,
     get_cloud_native_status,
 )
 from portolan_cli.viz.thumbnail import (
@@ -344,8 +343,11 @@ def _early_exit_result(
     Unsupported formats are accepted with no error.
     """
     if format_info.status == CloudNativeStatus.CLOUD_NATIVE:
-        force_raster = force and detect_format(source) == RASTER
-        if force_raster:
+        # --force re-optimizes a file whose handler can rewrite it (issue #530).
+        from portolan_cli.plugins.formats import handler_for
+
+        handler = handler_for(source) if force else None
+        if handler is not None and hasattr(handler, "reoptimize"):
             return None
         duration_ms = int((time.perf_counter() - start_time) * 1000)
         return ConversionResult(
@@ -376,39 +378,6 @@ def _early_exit_result(
         )
 
     return None
-
-
-def _convert_with_plugin(
-    handler: FormatHandler, source: Path, output_dir: Path, catalog_path: Path | None
-) -> ConversionResult:
-    """Convert ``source`` with a plugin format handler.
-
-    Args:
-        handler: The plugin handler that claims the file.
-        source: Source file.
-        output_dir: Directory for the converted file.
-        catalog_path: Catalog root, passed to the handler.
-
-    Returns:
-        SUCCESS with the output path, or FAILED with the handler's error.
-    """
-    start_time = time.perf_counter()
-    output_path: Path | None = None
-    error: str | None = None
-    status = ConversionStatus.SUCCESS
-    try:
-        output_path = handler.convert(source, output_dir, catalog_path)
-    except Exception as err:  # noqa: BLE001 - a plugin failure is a failed conversion
-        status, error = ConversionStatus.FAILED, str(err)
-    return ConversionResult(
-        source=source,
-        output=output_path,
-        format_from=handler.display_name,
-        format_to=output_path.suffix.lstrip(".").upper() if output_path else None,
-        status=status,
-        error=error,
-        duration_ms=int((time.perf_counter() - start_time) * 1000),
-    )
 
 
 def convert_file(
@@ -452,139 +421,193 @@ def convert_file(
     if not source.exists():
         raise FileNotFoundError(f"Source file not found: {source}")
 
-    # A plugin format handler converts the formats it claims (#947).
-    from portolan_cli.plugins.formats import plugin_handler_for
+    from portolan_cli.plugins.formats import handler_for, plugin_handler_for
 
-    plugin = plugin_handler_for(source, catalog_path)
-    if plugin is not None:
-        return _convert_with_plugin(plugin, source, output_dir or source.parent, catalog_path)
-
-    # Get format info
-    format_info = get_cloud_native_status(source)
-
-    # Cloud-native (skip, unless forcing raster re-optimization) and unsupported
-    # files exit early without conversion.
-    early_exit = _early_exit_result(source, format_info, force=force, start_time=start_time)
-    if early_exit is not None:
-        return early_exit
-
-    # Determine output directory and format type
-    out_dir = output_dir or source.parent
-    format_type = detect_format(source)
-
-    # Load COG settings: explicit arg > catalog config > defaults
-    if cog_settings is None:
-        cog_settings = get_cog_settings(catalog_path) if catalog_path else CogSettings()
-
-    # Load vector settings: explicit arg > catalog config > defaults
-    if vector_settings is None:
-        vector_settings = get_vector_settings(catalog_path) if catalog_path else VectorSettings()
-
-    # Convert based on format type
-    try:
-        if format_type == VECTOR:
-            output_path = _convert_vector(source, out_dir, vector_settings)
-            target_format = "GeoParquet"
-            # Validate output is valid GeoParquet
-            validation_error = _validate_geoparquet(output_path)
-            # Generate thumbnail next to the GeoParquet (Issue #13).
-            # Only on a successful, valid conversion to avoid orphan thumbnails.
-            # Thumbnail failure should not flip a successful conversion to FAILED.
-            if validation_error is None:
-                try:
-                    thumb_config = (
-                        get_thumbnail_config(catalog_path) if catalog_path else ThumbnailConfig()
-                    )
-                    if thumb_config.enabled and isinstance(output_path, Path):
-                        # Discover style for thumbnail (Issue #495)
-                        style_path = _discover_style_for_thumbnail(output_path.parent)
-                        generate_vector_thumbnail(
-                            pmtiles_path=None,  # PMTiles generated separately if enabled
-                            geoparquet_path=output_path,
-                            config=thumb_config,
-                            style_path=style_path,
-                        )
-                except Exception as e:
-                    logger.warning("Thumbnail generation failed for %s: %s", source.name, e)
-        elif format_type == RASTER:
-            output_path = _convert_raster(source, out_dir, cog_settings)
-            target_format = "COG"
-            # Validate output is valid COG
-            validation_error = _validate_cog(output_path)
-            # Generate thumbnail next to the COG (Issue #372).
-            # Only on a successful, valid conversion to avoid orphan thumbnails.
-            if validation_error is None and cog_settings.generate_thumbnail:
-                generate_cog_thumbnail(
-                    output_path,
-                    max_size=cog_settings.thumbnail_max_size,
-                    quality=cog_settings.thumbnail_quality,
-                )
-        else:
-            duration_ms = int((time.perf_counter() - start_time) * 1000)
-            return ConversionResult(
-                source=source,
-                output=None,
-                format_from=format_info.display_name,
-                format_to=None,
-                status=ConversionStatus.FAILED,
-                error=f"Unable to determine format type for {source.suffix}",
-                duration_ms=duration_ms,
-            )
-
-        duration_ms = int((time.perf_counter() - start_time) * 1000)
-
-        # Check validation result
-        if validation_error is not None:
-            logger.warning(
-                "Conversion completed but validation failed for %s: %s",
-                output_path,
-                validation_error,
-            )
-            return ConversionResult(
-                source=source,
-                output=output_path,  # Keep output for inspection
-                format_from=format_info.display_name,
-                format_to=target_format,
-                status=ConversionStatus.INVALID,
-                error=validation_error,
-                duration_ms=duration_ms,
-            )
-
-        return ConversionResult(
-            source=source,
-            output=output_path,
-            format_from=format_info.display_name,
-            format_to=target_format,
-            status=ConversionStatus.SUCCESS,
-            error=None,
-            duration_ms=duration_ms,
-        )
-
-    except Exception as e:
-        duration_ms = int((time.perf_counter() - start_time) * 1000)
-        # Use structured error for logging context
-        conversion_error = ConversionFailedError(str(source), e)
-        logger.exception(
-            "Conversion failed for %s [%s]: %s",
+    # A plugin format handler converts the formats it claims (#947). A built-in
+    # format first passes the cloud-native check.
+    handler = plugin_handler_for(source, catalog_path)
+    reoptimize = False
+    display_name = handler.display_name if handler is not None else ""
+    if handler is None:
+        format_info = get_cloud_native_status(source)
+        early_exit = _early_exit_result(source, format_info, force=force, start_time=start_time)
+        if early_exit is not None:
+            return early_exit
+        reoptimize = format_info.status == CloudNativeStatus.CLOUD_NATIVE
+        display_name = format_info.display_name
+        handler = handler_for(source, catalog_path)
+    if handler is None:
+        return _result(
             source,
-            conversion_error.code,
-            e,
-        )
-        return ConversionResult(
-            source=source,
-            output=None,
-            format_from=format_info.display_name,
-            format_to=format_info.target_format,
-            status=ConversionStatus.FAILED,
-            error=str(e),
-            duration_ms=duration_ms,
+            None,
+            display_name,
+            None,
+            ConversionStatus.FAILED,
+            f"Unable to determine format type for {source.suffix}",
+            start_time,
         )
 
+    with settings_override(cog=cog_settings, vector=vector_settings):
+        try:
+            output_path = convert_with_handler(
+                handler, source, output_dir or source.parent, catalog_path, reoptimize=reoptimize
+            )
+            output_path = partition_with_handler(handler, output_path, catalog_path)
+        except InvalidOutputError as err:
+            logger.warning("Conversion completed but validation failed: %s", err)
+            return _result(
+                source,
+                Path(str(err.context["path"])),
+                display_name,
+                handler.display_name,
+                ConversionStatus.INVALID,
+                err.reason,
+                start_time,
+            )
+        except Exception as e:
+            conversion_error = ConversionFailedError(str(source), e)
+            logger.exception("Conversion failed for %s [%s]: %s", source, conversion_error.code, e)
+            return _result(
+                source,
+                None,
+                display_name,
+                handler.display_name,
+                ConversionStatus.FAILED,
+                str(e),
+                start_time,
+            )
 
-#: Total attempts for a single vector conversion when it fails with a transient
-#: DuckDB interrupt (1 initial try + retries). Small on purpose: a genuine
-#: interrupt clears once raised, so one extra attempt almost always suffices.
+    return _result(
+        source,
+        output_path,
+        display_name,
+        handler.display_name,
+        ConversionStatus.SUCCESS,
+        None,
+        start_time,
+    )
+
+
+def _result(
+    source: Path,
+    output: Path | None,
+    format_from: str,
+    format_to: str | None,
+    status: ConversionStatus,
+    error: str | None,
+    start_time: float,
+) -> ConversionResult:
+    return ConversionResult(
+        source=source,
+        output=output,
+        format_from=format_from,
+        format_to=format_to,
+        status=status,
+        error=error,
+        duration_ms=int((time.perf_counter() - start_time) * 1000),
+    )
+
+
+def convert_with_handler(
+    handler: FormatHandler,
+    source: Path,
+    output_dir: Path,
+    catalog_root: Path | None,
+    *,
+    reoptimize: bool = False,
+) -> Path:
+    """Convert ``source`` with its format handler. ``add`` and ``check --fix`` both call this.
+
+    Args:
+        handler: The handler ``handler_for`` picked.
+        source: Source file.
+        output_dir: Directory for the converted file.
+        catalog_root: Catalog root, for settings.
+        reoptimize: Rewrite a file that is already cloud-native. Only a handler
+            with a ``reoptimize`` method supports it.
+
+    Returns:
+        The converted file.
+
+    Raises:
+        InvalidOutputError: The converted file fails the handler's validation.
+    """
+    reoptimize_method = getattr(handler, "reoptimize", None)
+    if reoptimize and reoptimize_method is not None:
+        output: Path = reoptimize_method(source, catalog_root)
+        return output
+    return handler.convert(source, output_dir, catalog_root)
+
+
+def partition_with_handler(handler: FormatHandler, path: Path, catalog_root: Path | None) -> Path:
+    """Partition a converted file when the handler's rule asks for it.
+
+    Returns:
+        The directory that holds the partitions, or ``path`` when nothing was
+        partitioned.
+    """
+    partition = getattr(handler, "partition", None)
+    if partition is None or not path.is_file():
+        return path
+    files = partition(path, catalog_root)
+    return path.parent if files else path
+
+
 _CONVERT_MAX_ATTEMPTS = 3
+
+
+def write_vector_thumbnail(
+    geoparquet_path: Path, catalog_root: Path | None, *, replace: bool = False
+) -> None:
+    """Write ``<stem>.thumb.jpg`` next to a GeoParquet file.
+
+    A thumbnail is optional, so a failure only warns.
+
+    Args:
+        geoparquet_path: The GeoParquet file.
+        catalog_root: Catalog root, for the thumbnail settings.
+        replace: Write over a thumbnail that exists. Pass True after the data
+            changed.
+    """
+    if geoparquet_path.with_name(f"{geoparquet_path.stem}.thumb.jpg").exists() and not replace:
+        return
+    try:
+        config = get_thumbnail_config(catalog_root) if catalog_root else ThumbnailConfig()
+        if config.enabled:
+            generate_vector_thumbnail(
+                pmtiles_path=None,
+                geoparquet_path=geoparquet_path,
+                config=config,
+                style_path=_discover_style_for_thumbnail(geoparquet_path.parent),
+            )
+    except Exception as e:  # noqa: BLE001 - the thumbnail is optional
+        logger.warning("Thumbnail generation failed for %s: %s", geoparquet_path.name, e)
+
+
+def write_raster_thumbnail(
+    cog_path: Path, catalog_root: Path | None, *, replace: bool = False
+) -> None:
+    """Write ``<stem>.thumb.jpg`` next to a COG when the COG settings ask for it.
+
+    A thumbnail is optional, so a failure only warns.
+
+    Args:
+        cog_path: The COG.
+        catalog_root: Catalog root, for the COG settings.
+        replace: Write over a thumbnail that exists. Pass True after the data
+            changed.
+    """
+    settings = get_cog_settings(catalog_root)
+    if not settings.generate_thumbnail:
+        return
+    if cog_path.with_name(f"{cog_path.stem}.thumb.jpg").exists() and not replace:
+        return
+    try:
+        generate_cog_thumbnail(
+            cog_path, max_size=settings.thumbnail_max_size, quality=settings.thumbnail_quality
+        )
+    except Exception as e:  # noqa: BLE001 - the thumbnail is optional
+        logger.warning("Thumbnail generation failed for %s: %s", cog_path.name, e)
 
 
 def _is_transient_conversion_error(exc: BaseException) -> bool:
@@ -707,62 +730,6 @@ def repair_shapefile_encoding_sidecar(shp: Path) -> Path | None:
         _output_info(f"Encoding sidecar {cpg.name} {what}: DBF records are not valid UTF-8")
         return cpg
     return None
-
-
-def _convert_vector(
-    source: Path,
-    output_dir: Path,
-    settings: VectorSettings | None = None,
-) -> Path:
-    """Convert a vector file to GeoParquet with optional spatial optimization.
-
-    Uses geoparquet-io's fluent Table API to apply spatial index columns,
-    sorting, and bbox based on VectorSettings configuration.
-
-    A transient DuckDB "Query interrupted" failure (see
-    :func:`_is_transient_conversion_error`) is retried up to
-    ``_CONVERT_MAX_ATTEMPTS`` times so a single interrupted query does not fail a
-    whole bulk ``add``; any other error propagates on the first occurrence.
-
-    Args:
-        source: Source vector file.
-        output_dir: Directory for output file.
-        settings: Vector conversion settings. If None, uses defaults (no optimization).
-
-    Returns:
-        Path to the output GeoParquet file (or directory if partitioned).
-    """
-    import geoparquet_io as gpio  # type: ignore[import-untyped]
-
-    if settings is None:
-        settings = VectorSettings()
-    resolved = settings
-
-    if source.suffix.lower() == ".shp":
-        repair_shapefile_encoding_sidecar(source)
-
-    output_path = output_dir / f"{source.stem}.parquet"
-
-    def _run() -> Path:
-        # Convert source to gpio Table
-        table = gpio.convert(str(source))
-
-        partitioned = resolved.partition and resolved.spatial_index != "none"
-
-        # Apply spatial optimizations based on settings
-        table = apply_vector_settings(table, resolved, partitioned=partitioned)
-
-        # Write output (partitioned or single file)
-        if partitioned:
-            # Partitioned output to directory
-            partition_dir = output_dir / source.stem
-            _write_partitioned(table, partition_dir, resolved)
-            return partition_dir
-        # Single file output
-        table.write(str(output_path))
-        return output_path
-
-    return run_with_transient_convert_retry(_run, source_name=source.name)
 
 
 def has_geometry(table: Any) -> bool:
@@ -927,8 +894,11 @@ def _write_partitioned(table: Any, output_dir: Path, settings: VectorSettings) -
     partition(str(output_dir), hive=True, **{f"keep_{index_type}_column": True}, **sizing)
 
 
-def _convert_raster(source: Path, output_dir: Path, settings: CogSettings | None = None) -> Path:
-    """Convert a raster file to COG.
+def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = None) -> Path:
+    """Write a raster file as a COG with the given settings.
+
+    ``preparation.convert_raster`` decides when to call this. It keeps a
+    source that is already a COG unless the operator asks to re-optimize.
 
     Uses COG settings from config if provided, otherwise the built-in defaults:
     - DEFLATE compression
@@ -1023,7 +993,7 @@ def _convert_raster(source: Path, output_dir: Path, settings: CogSettings | None
     return output_path
 
 
-def _validate_geoparquet(path: Path) -> str | None:
+def validate_geoparquet(path: Path) -> str | None:
     """Validate that the output is valid GeoParquet (file or partitioned directory).
 
     Args:
@@ -1070,7 +1040,7 @@ def _validate_partitioned_geoparquet(partition_dir: Path) -> str | None:
     return None
 
 
-def _validate_cog(path: Path) -> str | None:
+def validate_cog(path: Path) -> str | None:
     """Validate that the output file is a valid COG.
 
     Args:
@@ -1406,7 +1376,7 @@ def convert_multilayer_file(
             _convert_vector_layer(source, layer_name, output_path, settings)
 
             # Validate output
-            validation_error = _validate_geoparquet(output_path)
+            validation_error = validate_geoparquet(output_path)
             if validation_error:
                 results.append(
                     LayerConversionResult(
@@ -1461,7 +1431,7 @@ def _convert_vector_layer(
     Raises:
         Exception: If conversion fails.
     """
-    import geoparquet_io as gpio
+    import geoparquet_io as gpio  # type: ignore[import-untyped]
 
     if settings is None:
         settings = VectorSettings()

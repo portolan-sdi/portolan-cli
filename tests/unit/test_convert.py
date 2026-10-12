@@ -1818,13 +1818,13 @@ class TestVectorSettingsIntegration:
         import pyarrow.parquet as pq
 
         from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.convert import _convert_vector
+        from portolan_cli.preparation import convert_vector
 
         output_dir = tmp_path / "output"
         output_dir.mkdir()
 
         settings = VectorSettings(spatial_index="h3", resolution=6)
-        output = _convert_vector(sample_geojson, output_dir, settings)
+        output = convert_vector(sample_geojson, output_dir, settings=settings)
 
         assert output.exists()
         table = pq.read_table(output)
@@ -1838,13 +1838,13 @@ class TestVectorSettingsIntegration:
         import pyarrow.parquet as pq
 
         from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.convert import _convert_vector
+        from portolan_cli.preparation import convert_vector
 
         output_dir = tmp_path / "output"
         output_dir.mkdir()
 
         settings = VectorSettings(add_bbox=True)
-        output = _convert_vector(sample_geojson, output_dir, settings)
+        output = convert_vector(sample_geojson, output_dir, settings=settings)
 
         assert output.exists()
         table = pq.read_table(output)
@@ -1854,13 +1854,13 @@ class TestVectorSettingsIntegration:
     def test_convert_vector_with_hilbert_sort(self, sample_geojson: Path, tmp_path: Path) -> None:
         """Converting with sort=hilbert succeeds."""
         from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.convert import _convert_vector
+        from portolan_cli.preparation import convert_vector
 
         output_dir = tmp_path / "output"
         output_dir.mkdir()
 
         settings = VectorSettings(sort="hilbert")
-        output = _convert_vector(sample_geojson, output_dir, settings)
+        output = convert_vector(sample_geojson, output_dir, settings=settings)
 
         assert output.exists()
 
@@ -1872,13 +1872,13 @@ class TestVectorSettingsIntegration:
         import pyarrow.parquet as pq
 
         from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.convert import _convert_vector
+        from portolan_cli.preparation import convert_vector
 
         output_dir = tmp_path / "output"
         output_dir.mkdir()
 
         settings = VectorSettings(sort="quadkey", resolution=10)
-        output = _convert_vector(sample_geojson, output_dir, settings)
+        output = convert_vector(sample_geojson, output_dir, settings=settings)
 
         assert output.exists()
         # quadkey sort adds a quadkey column
@@ -1922,14 +1922,14 @@ class TestVectorSettingsIntegration:
         assert "s2_cell" in table.schema.names
 
     @pytest.mark.unit
-    def test_validate_geoparquet_handles_directory(self, tmp_path: Path) -> None:
-        """_validate_geoparquet handles partitioned directories correctly."""
-        from portolan_cli.convert import _validate_geoparquet
+    def testvalidate_geoparquet_handles_directory(self, tmp_path: Path) -> None:
+        """validate_geoparquet handles partitioned directories correctly."""
+        from portolan_cli.convert import validate_geoparquet
 
         # Empty directory should fail
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
-        error = _validate_geoparquet(empty_dir)
+        error = validate_geoparquet(empty_dir)
         assert error is not None
         assert "no parquet files" in error
 
@@ -1937,16 +1937,17 @@ class TestVectorSettingsIntegration:
     def test_validate_partitioned_geoparquet_with_valid_files(
         self, sample_geojson: Path, tmp_path: Path
     ) -> None:
-        """_validate_geoparquet succeeds for valid partitioned directory."""
+        """validate_geoparquet succeeds for valid partitioned directory."""
         from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.convert import _convert_vector, _validate_geoparquet
+        from portolan_cli.convert import validate_geoparquet
+        from portolan_cli.preparation import convert_vector
 
         output_dir = tmp_path / "output"
         output_dir.mkdir()
 
         # First convert to single file to get valid geoparquet
         settings = VectorSettings(spatial_index="h3", resolution=6)
-        single_file = _convert_vector(sample_geojson, output_dir, settings)
+        single_file = convert_vector(sample_geojson, output_dir, settings=settings)
 
         # Create mock partitioned directory structure with valid parquet file
         partition_dir = tmp_path / "partitioned"
@@ -1957,7 +1958,7 @@ class TestVectorSettingsIntegration:
         shutil.copy(single_file, partition_dir / "h3_cell=123" / "data.parquet")
 
         # Validation should succeed on directory with valid parquet files
-        error = _validate_geoparquet(partition_dir)
+        error = validate_geoparquet(partition_dir)
         assert error is None
 
 
@@ -2006,7 +2007,7 @@ class TestVectorConversionRetriesTransientInterrupt:
         """A single transient interrupt is retried and the conversion succeeds."""
         import geoparquet_io as gpio
 
-        from portolan_cli.convert import _convert_vector
+        from portolan_cli.preparation import convert_vector
 
         class InterruptException(Exception):
             pass
@@ -2031,7 +2032,7 @@ class TestVectorConversionRetriesTransientInterrupt:
 
         monkeypatch.setattr(gpio, "convert", fake_convert)
 
-        out = _convert_vector(tmp_path / "in.geojson", tmp_path)
+        out = convert_vector(tmp_path / "in.geojson", tmp_path)
 
         assert calls["n"] == 2, "should retry exactly once after the transient interrupt"
         assert out == tmp_path / "in.parquet"
@@ -2044,7 +2045,7 @@ class TestVectorConversionRetriesTransientInterrupt:
         """A persistent interrupt eventually propagates after the attempt cap."""
         import geoparquet_io as gpio
 
-        from portolan_cli.convert import _CONVERT_MAX_ATTEMPTS, _convert_vector
+        from portolan_cli.convert import _CONVERT_MAX_ATTEMPTS
 
         class InterruptException(Exception):
             pass
@@ -2057,8 +2058,10 @@ class TestVectorConversionRetriesTransientInterrupt:
 
         monkeypatch.setattr(gpio, "convert", fake_convert)
 
+        from portolan_cli.preparation import convert_vector
+
         with pytest.raises(InterruptException):
-            _convert_vector(tmp_path / "in.geojson", tmp_path)
+            convert_vector(tmp_path / "in.geojson", tmp_path)
 
         assert calls["n"] == _CONVERT_MAX_ATTEMPTS
 
@@ -2069,7 +2072,7 @@ class TestVectorConversionRetriesTransientInterrupt:
         """Non-transient errors fail on the first attempt (no wasted retries)."""
         import geoparquet_io as gpio
 
-        from portolan_cli.convert import _convert_vector
+        from portolan_cli.preparation import convert_vector
 
         calls = {"n": 0}
 
@@ -2080,7 +2083,7 @@ class TestVectorConversionRetriesTransientInterrupt:
         monkeypatch.setattr(gpio, "convert", fake_convert)
 
         with pytest.raises(ValueError, match="No CRS found"):
-            _convert_vector(tmp_path / "in.geojson", tmp_path)
+            convert_vector(tmp_path / "in.geojson", tmp_path)
 
         assert calls["n"] == 1
 
@@ -2376,17 +2379,25 @@ class TestPartitionedOutputWithGeoparquetIO:
         assert "h3_cell" in table.column_names
 
     @pytest.mark.integration
-    def test_convert_vector_partitions_with_auto_resolution(self, tmp_path: Path) -> None:
-        """`_convert_vector` writes Hive partitions for the default `auto` size."""
-        from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.convert import _convert_vector
+    def test_partition_rule_writes_auto_sized_partitions(self, tmp_path: Path) -> None:
+        """Convert, then partition by the one rule: Hive directories sized by `auto` (#947).
+
+        The partitions go next to the converted file, which the step removes.
+        """
+        from portolan_cli.conversion_config import VectorSettings, settings_override
+        from portolan_cli.partitioning import partition_vector_file
+        from portolan_cli.preparation import convert_vector
 
         settings = VectorSettings(spatial_index="h3", resolution="auto", partition=True)
+        out = tmp_path / "out"
+        out.mkdir()
 
-        output = _convert_vector(self._points(tmp_path), tmp_path / "out", settings)
+        with settings_override(vector=settings):
+            converted = convert_vector(self._points(tmp_path), out)
+            files = partition_vector_file(converted, None)
 
-        assert output == tmp_path / "out" / "points"
-        assert [p.name for p in output.glob("h3_cell=*")] == ["h3_cell=80b3fffffffffff"]
+        assert not converted.exists()
+        assert [f.parent.name for f in files] == ["h3_cell=80b3fffffffffff"]
 
     @pytest.mark.integration
     @pytest.mark.xfail(

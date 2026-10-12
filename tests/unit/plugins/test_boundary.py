@@ -21,6 +21,15 @@ PUBLIC_MODULES = frozenset({"portolan_cli.api", "portolan_cli.hookspecs", "porto
 PLUGIN_PACKAGES = {
     "example": (_REPO / "tests/plugins/portolan_example/src/portolan_example", "portolan_example"),
     "iceberg": (_REPO / "portolan_cli/backends/iceberg", "portolan_cli.backends.iceberg"),
+    "geoparquet": (
+        _REPO / "portolan_cli/formats_builtin/geoparquet",
+        "portolan_cli.formats_builtin.geoparquet",
+    ),
+    "cog": (_REPO / "portolan_cli/formats_builtin/cog", "portolan_cli.formats_builtin.cog"),
+    "cloud_native": (
+        _REPO / "portolan_cli/formats_builtin/cloud_native",
+        "portolan_cli.formats_builtin.cloud_native",
+    ),
 }
 
 

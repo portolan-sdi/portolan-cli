@@ -111,8 +111,8 @@ class TestAdd:
 
         with (
             patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.preparation.convert_vector") as mock_convert,
-            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.api.convert_vector") as mock_convert,
+            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
@@ -155,8 +155,10 @@ class TestAdd:
 
         with (
             patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.preparation.convert_raster") as mock_convert,
-            patch("portolan_cli.preparation.extract_cog_metadata") as mock_metadata,
+            patch("portolan_cli.api.convert_raster") as mock_convert,
+            patch("portolan_cli.api.extract_cog_metadata") as mock_metadata,
+            patch("portolan_cli.api.validate_cog", return_value=None),
+            patch("portolan_cli.api.write_raster_thumbnail"),
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = COG
@@ -226,8 +228,8 @@ class TestAdd:
 
         with (
             patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.preparation.convert_vector") as mock_convert,
-            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.api.convert_vector") as mock_convert,
+            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
@@ -282,8 +284,8 @@ class TestAdd:
 
         with (
             patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.preparation.convert_vector") as mock_convert,
-            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.api.convert_vector") as mock_convert,
+            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
@@ -614,8 +616,8 @@ class TestAddMissingBbox:
 
         with (
             patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.preparation.convert_vector") as mock_convert,
-            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.api.convert_vector") as mock_convert,
+            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
@@ -684,8 +686,8 @@ class TestAddItemIdDerivation:
 
         with (
             patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.preparation.convert_vector") as mock_convert,
-            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.api.convert_vector") as mock_convert,
+            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
@@ -746,8 +748,8 @@ class TestAddItemIdDerivation:
 
         with (
             patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.preparation.convert_vector") as mock_convert,
-            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.api.convert_vector") as mock_convert,
+            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
@@ -1186,8 +1188,8 @@ class TestMultiAssetAdd:
 
         with (
             patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.preparation.convert_vector") as mock_convert,
-            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.api.convert_vector") as mock_convert,
+            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
@@ -1233,8 +1235,8 @@ class TestMultiAssetAdd:
 
         with (
             patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.preparation.convert_vector") as mock_convert,
-            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.api.convert_vector") as mock_convert,
+            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
@@ -1281,8 +1283,8 @@ class TestMultiAssetAdd:
 
         with (
             patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.preparation.convert_vector") as mock_convert,
-            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.api.convert_vector") as mock_convert,
+            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
@@ -1328,8 +1330,8 @@ class TestMultiAssetAdd:
 
         with (
             patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.preparation.convert_vector") as mock_convert,
-            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.api.convert_vector") as mock_convert,
+            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET

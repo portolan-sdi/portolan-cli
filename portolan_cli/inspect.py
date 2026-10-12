@@ -14,8 +14,6 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.format_families import RASTER, VECTOR
-from portolan_cli.formats import detect_format
 from portolan_cli.stac_links import catalog_collections
 from portolan_cli.stac_parquet import count_items
 from portolan_cli.versions import read_versions
@@ -235,17 +233,17 @@ def inspect_file(path: Path, *, catalog_root: Path | None = None) -> FileInfo:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
-    # Detect format
-    format_type = detect_format(path)
+    # The format handler describes its own format (#947).
+    from portolan_cli.plugins.formats import handler_for
 
-    if format_type == VECTOR:
-        return _inspect_geoparquet(path, catalog_root=catalog_root)
-    if format_type == RASTER:
-        return _inspect_cog(path, catalog_root=catalog_root)
-    raise ValueError(f"Unsupported file format: {path.suffix}")
+    handler = handler_for(path, catalog_root)
+    if handler is None:
+        raise ValueError(f"Unsupported file format: {path.suffix}")
+    info: FileInfo = handler.inspect(path, catalog_root)
+    return info
 
 
-def _inspect_geoparquet(path: Path, *, catalog_root: Path | None = None) -> FileInfo:
+def inspect_geoparquet(path: Path, *, catalog_root: Path | None = None) -> FileInfo:
     """Extract metadata from a GeoParquet file.
 
     Args:
@@ -280,7 +278,7 @@ def _inspect_geoparquet(path: Path, *, catalog_root: Path | None = None) -> File
     )
 
 
-def _inspect_cog(path: Path, *, catalog_root: Path | None = None) -> FileInfo:
+def inspect_cog(path: Path, *, catalog_root: Path | None = None) -> FileInfo:
     """Extract metadata from a COG file.
 
     Args:
