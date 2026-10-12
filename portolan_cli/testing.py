@@ -10,6 +10,9 @@ plugin's own test suite::
     def test_backend_conforms(tmp_path):
         check_backend(ExampleBackend, tmp_path)
 
+``check_extractor`` checks an extractor the same way. Pass a source and an
+output directory to run ``extract()`` too.
+
 A failed check raises ``ConformanceError`` with one line per problem. This
 module follows semantic versioning, as ``portolan_cli.api`` does.
 """
@@ -17,13 +20,14 @@ module follows semantic versioning, as ``portolan_cli.api`` does.
 from __future__ import annotations
 
 import contextlib
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_type_hints
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-__all__ = ["ConformanceError", "check_backend", "check_format_handler"]
+__all__ = ["ConformanceError", "check_backend", "check_extractor", "check_format_handler"]
 
 _COLLECTION = "conformance"
 _ASSET_LEVELS = frozenset({"collection", "item"})
@@ -249,3 +253,58 @@ def _check_optional(backend: Any, first_version: str) -> list[str]:
         if not isinstance(rolled_back, Version):
             problems.append(f"rollback returned {type(rolled_back).__name__}, expected Version.")
     return problems
+
+
+def check_extractor(
+    extractor: Any,
+    source: str | None = None,
+    output_dir: Path | None = None,
+    **options: Any,
+) -> None:
+    """Check an extractor against ``Extractor``.
+
+    The check reads ``name`` and ``summary`` and builds the Click command.
+    With ``source`` and ``output_dir``, it also runs ``extract()`` and checks
+    the report.
+
+    Args:
+        extractor: What ``portolan_extractors`` returns.
+        source: A source to extract, or None to skip the run.
+        output_dir: An empty directory for the run.
+        **options: Options for ``extract()``, such as ``license``.
+
+    Raises:
+        ConformanceError: With one line per problem found.
+    """
+    import click
+
+    from portolan_cli.extract.common.report import ExtractionReport
+    from portolan_cli.plugins.extractors import Extractor
+
+    if not isinstance(extractor, Extractor):
+        raise ConformanceError(f"{type(extractor).__name__} does not implement Extractor.")
+
+    problems: list[str] = []
+    if not isinstance(extractor.name, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", extractor.name):
+        problems.append(f"name {extractor.name!r} is not a lowercase command name.")
+    if not isinstance(extractor.summary, str) or not extractor.summary.strip():
+        problems.append("summary is empty.")
+    command = extractor.cli_command()
+    if not isinstance(command, click.Command):
+        problems.append(
+            f"cli_command() returned {type(command).__name__}, expected a Click command."
+        )
+    elif command.name != extractor.name:
+        problems.append(f"cli_command() is named {command.name!r}, expected {extractor.name!r}.")
+
+    if source is not None and output_dir is not None:
+        report = extractor.extract(source, output_dir, **options)
+        if not isinstance(report, ExtractionReport):
+            problems.append(
+                f"extract() returned {type(report).__name__}, expected ExtractionReport."
+            )
+        elif not (output_dir / ".portolan" / "extraction-report.json").is_file():
+            problems.append("extract() wrote no .portolan/extraction-report.json.")
+
+    if problems:
+        raise ConformanceError("\n".join(problems))

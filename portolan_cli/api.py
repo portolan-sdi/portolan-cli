@@ -19,6 +19,9 @@ Groups:
   ``Version``, ``Asset``, ``SchemaInfo``, ``parse_version``, ``get_backend``.
 - Catalogs: ``find_catalog_root``, ``get_setting``, ``write_json_atomic``.
 - Extractors: ``Extractor``, ``ExtractionReport``.
+- Layer sources: ``LayerSource``, ``LayerRef``, ``LayerMetadata``,
+  ``LayerSourceOptions``, ``ExtractedMetadata``, ``run_layer_extraction``,
+  ``extractor_from``.
 - Remote storage: ``upload_file``, ``download_file``, ``PullResult``.
 - Terminal output: ``success``, ``info``, ``warn``, ``error``, ``detail``.
 - JSON output for commands: ``success_envelope``, ``error_envelope``,
@@ -54,6 +57,14 @@ if TYPE_CHECKING:
     )
     from portolan_cli.errors import InvalidOutputError
     from portolan_cli.extract.common.report import ExtractionReport
+    from portolan_cli.extract.common.source import (
+        LayerMetadata,
+        LayerRef,
+        LayerSource,
+        LayerSourceOptions,
+        extractor_from,
+        run_layer_extraction,
+    )
     from portolan_cli.finalization import aggregate_table_extension
     from portolan_cli.format_families import RASTER_EXTENSIONS, VECTOR_EXTENSIONS, is_geojson
     from portolan_cli.formats import is_geoparquet
@@ -65,6 +76,7 @@ if TYPE_CHECKING:
     from portolan_cli.metadata.flatgeobuf import extract_flatgeobuf_metadata
     from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
     from portolan_cli.metadata.pmtiles import extract_pmtiles_metadata
+    from portolan_cli.metadata_extraction import ExtractedMetadata
     from portolan_cli.output import detail, error, info, success, warn
     from portolan_cli.partitioning import partition_vector_file
     from portolan_cli.plugins.extractors import Extractor
@@ -86,6 +98,7 @@ __all__ = [
     "DriftReport",
     "EnrichContext",
     "ErrorDetail",
+    "ExtractedMetadata",
     "ExtractionReport",
     "Extractor",
     "FileInfo",
@@ -93,6 +106,10 @@ __all__ = [
     "FormatHandler",
     "FormatMetadata",
     "InvalidOutputError",
+    "LayerMetadata",
+    "LayerRef",
+    "LayerSource",
+    "LayerSourceOptions",
     "PluginWarning",
     "PostAddContext",
     "PostAddItemContext",
@@ -116,6 +133,7 @@ __all__ = [
     "extract_flatgeobuf_metadata",
     "extract_geoparquet_metadata",
     "extract_pmtiles_metadata",
+    "extractor_from",
     "find_catalog_root",
     "get_backend",
     "get_setting",
@@ -127,6 +145,7 @@ __all__ = [
     "is_geoparquet",
     "parse_version",
     "partition_vector_file",
+    "run_layer_extraction",
     "success",
     "success_envelope",
     "upload_file",
@@ -142,6 +161,7 @@ _EXPORTS = {
     "DriftReport": "portolan_cli.backends.protocol",
     "EnrichContext": "portolan_cli.hookspecs",
     "ErrorDetail": "portolan_cli.json_output",
+    "ExtractedMetadata": "portolan_cli.metadata_extraction",
     "ExtractionReport": "portolan_cli.extract.common.report",
     "Extractor": "portolan_cli.plugins.extractors",
     "FileInfo": "portolan_cli.inspect",
@@ -149,6 +169,10 @@ _EXPORTS = {
     "FormatHandler": "portolan_cli.plugins.formats",
     "FormatMetadata": "portolan_cli.plugins.formats",
     "InvalidOutputError": "portolan_cli.errors",
+    "LayerMetadata": "portolan_cli.extract.common.source",
+    "LayerRef": "portolan_cli.extract.common.source",
+    "LayerSource": "portolan_cli.extract.common.source",
+    "LayerSourceOptions": "portolan_cli.extract.common.source",
     "PluginWarning": "portolan_cli.plugins.manager",
     "PostAddContext": "portolan_cli.backends.protocol",
     "PostAddItemContext": "portolan_cli.backends.protocol",
@@ -172,6 +196,7 @@ _EXPORTS = {
     "extract_flatgeobuf_metadata": "portolan_cli.metadata.flatgeobuf",
     "extract_geoparquet_metadata": "portolan_cli.metadata.geoparquet",
     "extract_pmtiles_metadata": "portolan_cli.metadata.pmtiles",
+    "extractor_from": "portolan_cli.extract.common.source",
     "find_catalog_root": "portolan_cli.catalog",
     "get_backend": "portolan_cli.backends",
     "get_setting": "portolan_cli.config",
@@ -183,6 +208,7 @@ _EXPORTS = {
     "is_geoparquet": "portolan_cli.formats",
     "parse_version": "portolan_cli.versions",
     "partition_vector_file": "portolan_cli.partitioning",
+    "run_layer_extraction": "portolan_cli.extract.common.source",
     "success": "portolan_cli.output",
     "success_envelope": "portolan_cli.json_output",
     "upload_file": "portolan_cli.sync.upload",

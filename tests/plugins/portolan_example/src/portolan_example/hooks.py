@@ -53,3 +53,12 @@ def portolan_formats() -> list[Any]:
     from portolan_example.formats import XyzHandler
 
     return [XyzHandler()]
+
+
+@hookimpl
+def portolan_extractors() -> list[Any]:
+    """Register the ``example`` extractor, a LayerSource over GeoJSON files."""
+    from portolan_cli.api import extractor_from
+    from portolan_example.geojson_source import GeoJSONDirectory
+
+    return [extractor_from(GeoJSONDirectory())]

@@ -168,3 +168,48 @@ def test_check_fix_converts_an_xyz_file(conformant_catalog: Path) -> None:
 
     assert "Converted 1 file(s)" in result.output
     assert (collection_dir / "survey.parquet").exists()
+
+
+@pytest.fixture
+def geojson_dir(tmp_path: Path, fixtures_dir: Path) -> Path:
+    """A directory with two GeoJSON layers for the example extractor."""
+    source = tmp_path / "source"
+    source.mkdir()
+    for name in ("points", "lines"):
+        shutil.copy(
+            fixtures_dir / "vector" / "valid" / f"{name}.geojson", source / f"{name}.geojson"
+        )
+    return source
+
+
+def test_extract_help_lists_the_example_extractor() -> None:
+    result = CliRunner().invoke(_cli(), ["extract", "--help"])
+
+    assert result.exit_code == 0
+    assert "  example  Layers from a directory of GeoJSON files.\n" in result.output
+
+
+def test_example_extractor_builds_a_catalog(geojson_dir: Path, tmp_path: Path) -> None:
+    """`portolan extract example` runs the LayerSource through the shared driver."""
+    out = tmp_path / "catalog"
+
+    result = CliRunner().invoke(
+        _cli(),
+        ["extract", "example", str(geojson_dir), str(out), "--auto", "--license", "CC0-1.0"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Extracted 2/2 layers" in result.output
+    collection = _read(out / "points" / "collection.json")
+    vias = [link["href"] for link in collection["links"] if link["rel"] == "via"]
+    assert vias == [(geojson_dir / "points.geojson").resolve().as_uri()]
+    assert collection["sci:citation"].startswith("Example Agency (2026).")
+
+
+def test_example_extractor_conforms(geojson_dir: Path, tmp_path: Path) -> None:
+    from portolan_cli.plugins.extractors import registered_extractors
+    from portolan_cli.testing import check_extractor
+
+    extractor = registered_extractors()["example"]
+
+    check_extractor(extractor, str(geojson_dir), tmp_path / "out", license="CC0-1.0")

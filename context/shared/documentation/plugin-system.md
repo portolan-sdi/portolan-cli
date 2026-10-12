@@ -163,6 +163,30 @@ handler converts it again only when it reads that format. `--reconvert` on a
 file that is its own output calls the handler's `reconvert`. `check --fix
 --force` calls `reoptimize`, which only the COG handler has (issue #530).
 
+## Extractors
+
+`portolan extract` gets its subcommands from the `portolan_extractors` hook.
+`ExtractGroup` calls the hook on first use, so `portolan --help` builds no
+plugin manager. `portolan extract --help` imports the hook modules.
+
+`plugins/builtin/extractors.py` registers ArcGIS, Carto, and WFS through that
+hook. Each `BuiltinExtractor` wraps the source's catalog function and its
+Click command in `extract/<source>/cli.py`. The commands share the helpers
+in `extract/common/cli_helpers.py`. The help output of each command matches
+the output from before the move byte for byte.
+
+A layer-based source implements `LayerSource` and wraps it with
+`extractor_from`. `run_layer_extraction` then gives it the shared steps:
+filters, the license check, resume, retry, the report, catalog setup,
+styles, provenance links, and collection metadata. `layer_cli.build_command`
+makes its command from the same helpers as the built-in commands.
+
+The built-in sources keep their own drivers. WFS negotiates a protocol
+version, ArcGIS walks a services root, and both download layers in parallel.
+Their tests also patch private functions of each orchestrator. A move onto
+`run_layer_extraction` would change those code paths for no gain to a
+plugin.
+
 ## Enrichment runs on the files
 
 `portolan_enrich_item` and `portolan_enrich_collection` receive the STAC JSON

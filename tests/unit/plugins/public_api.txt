@@ -3,6 +3,7 @@ Asset
 DriftReport
 EnrichContext
 ErrorDetail
+ExtractedMetadata
 ExtractionReport
 Extractor
 FileInfo
@@ -10,6 +11,10 @@ FormatContext
 FormatHandler
 FormatMetadata
 InvalidOutputError
+LayerMetadata
+LayerRef
+LayerSource
+LayerSourceOptions
 PluginWarning
 PostAddContext
 PostAddItemContext
@@ -33,6 +38,7 @@ extract_cog_metadata
 extract_flatgeobuf_metadata
 extract_geoparquet_metadata
 extract_pmtiles_metadata
+extractor_from
 find_catalog_root
 get_backend
 get_setting
@@ -44,6 +50,7 @@ is_geojson
 is_geoparquet
 parse_version
 partition_vector_file
+run_layer_extraction
 success
 success_envelope
 upload_file
@@ -63,4 +70,5 @@ portolan_formats() -> 'list[FormatHandler]'
 # portolan_cli.testing
 ConformanceError
 check_backend(factory: 'Callable[..., Any]', catalog_root: 'Path') -> 'None'
+check_extractor(extractor: 'Any', source: 'str | None' = None, output_dir: 'Path | None' = None, **options: 'Any') -> 'None'
 check_format_handler(handler: 'Any', sample: 'Path', output_dir: 'Path') -> 'None'

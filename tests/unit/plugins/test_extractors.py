@@ -66,14 +66,15 @@ def test_builtin_extract_delegates_to_the_orchestrator(
     register_plugin: Callable[..., None], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """`extract()` calls the source's catalog function with the same arguments."""
-    orchestrator = MagicMock(return_value="report")
+    sentinel = object()
+    orchestrator = MagicMock(return_value=sentinel)
     monkeypatch.setattr("portolan_cli.extract.wfs.orchestrator.extract_wfs_catalog", orchestrator)
 
     result = registered_extractors()["wfs"].extract(
         "https://example.org/wfs", tmp_path, layer_filter=["roads"]
     )
 
-    assert result == "report"
+    assert result is sentinel
     orchestrator.assert_called_once_with(
         "https://example.org/wfs", tmp_path, layer_filter=["roads"]
     )
