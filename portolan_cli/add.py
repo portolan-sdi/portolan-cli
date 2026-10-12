@@ -88,6 +88,7 @@ from portolan_cli.formats import (
     is_multilayer,
     list_layers,
 )
+from portolan_cli.hookspecs import EnrichContext
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.licensing import LICENSE_REL, license_gap, resolve_license
@@ -163,6 +164,7 @@ from portolan_cli.stac import (
     set_temporal_extent,
     update_catalog_provenance,
 )
+from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
 from portolan_cli.stac_parquet import PARQUET_FILENAME
 from portolan_cli.sync.checksums import compute_checksum, file_fields
 from portolan_cli.viz.style import enrich_cog_assets
@@ -1325,6 +1327,7 @@ def add_files(
     )
 
     # Phase 3: Track deferred non-geo files as companion assets.
+    touched_items: list[tuple[str, str]] = []
     affected_collections = _process_deferred_non_geo_files(
         deferred_non_geo=proc.deferred_non_geo,
         source_to_item_dir=proc.source_to_item_dir,
@@ -1333,12 +1336,53 @@ def add_files(
         added=added,
         skipped=skipped,
         failures=failures,
+        touched_items=touched_items,
     )
 
     # Phase 3.5: re-check the file extension on collections with deferred assets (#501).
     _declare_file_extension_for_collections(affected_collections)
 
+    # Phase 4: run the enrichment hooks on the documents phase 3 changed (#947).
+    _enrich_deferred_documents(catalog_root, affected_collections, touched_items)
+
     return added, skipped, failures
+
+
+def _enrich_deferred_documents(
+    catalog_root: Path,
+    affected_collections: set[Path],
+    touched_items: list[tuple[str, str]],
+) -> None:
+    """Run the enrichment hooks on the items and collections phase 3 changed.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        affected_collections: Collection directories that received assets.
+        touched_items: ``(collection_id, item_id)`` of each updated item.
+    """
+    for coll_id, item_id in dict.fromkeys(touched_items):
+        item_path = catalog_root / coll_id / item_id / f"{item_id}.json"
+        if item_path.exists():
+            enrich_item_file(
+                item_path,
+                EnrichContext(
+                    catalog_root=catalog_root,
+                    collection_id=coll_id,
+                    document_path=item_path,
+                    item_id=item_id,
+                ),
+            )
+    for collection_dir in sorted(affected_collections):
+        collection_path = collection_dir / "collection.json"
+        if collection_path.exists():
+            enrich_collection_file(
+                collection_path,
+                EnrichContext(
+                    catalog_root=catalog_root,
+                    collection_id=collection_dir.relative_to(catalog_root).as_posix(),
+                    document_path=collection_path,
+                ),
+            )
 
 
 def _collection_aoi_bbox(collection_dir: Path) -> list[float]:
@@ -1374,6 +1418,7 @@ def _process_deferred_non_geo_files(
     added: list[ItemInfo],
     skipped: list[Path],
     failures: list[AddFailure],
+    touched_items: list[tuple[str, str]] | None = None,
 ) -> set[Path]:
     """Process deferred non-geospatial files.
 
@@ -1391,6 +1436,8 @@ def _process_deferred_non_geo_files(
             they attach to an item or collection that is already reported.
         skipped: List to append skipped files to (modified in place).
         failures: List to append failures to (modified in place).
+        touched_items: List to append each updated item's
+            ``(collection_id, item_id)`` to (modified in place).
 
     Returns:
         Set of collection directories that received deferred assets (for statistics recomputation).
@@ -1420,6 +1467,8 @@ def _process_deferred_non_geo_files(
                     collection_id=coll_id,
                     item_id=resolved_item_id,
                 )
+                if touched_items is not None:
+                    touched_items.append((coll_id, resolved_item_id))
 
                 # Track for statistics recomputation
                 affected_collections.add(catalog_root / coll_id)

@@ -155,3 +155,37 @@ def test_portolan_cli_uses_plugin_groups() -> None:
 
     assert len(groups) == 6
     assert all(isinstance(group, PluginGroup) for group in groups)
+
+
+def test_cli_shows_plugin_warnings_as_output_warnings(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The CLI prints a PluginWarning like any other warning line, without a source path."""
+    import importlib
+
+    cli_module = importlib.import_module("portolan_cli.cli")
+
+    cli_module.show_warning(
+        manager.PluginWarning("Plugin 'x' failed"), manager.PluginWarning, "/src/m.py", 3
+    )
+    cli_module.show_warning(UserWarning("other"), UserWarning, "/src/m.py", 3)
+
+    err = capsys.readouterr().err
+    assert err.startswith("⚠ Plugin 'x' failed\n")
+    assert "/src/m.py:3: UserWarning: other" in err
+
+
+def test_importing_the_cli_installs_show_warning() -> None:
+    """`import portolan_cli.cli` routes warnings through `show_warning`."""
+    import subprocess
+
+    code = (
+        "import importlib, warnings\n"
+        "c = importlib.import_module('portolan_cli.cli')\n"
+        "print(warnings.showwarning is c.show_warning)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+
+    assert result.stdout.strip() == "True"

@@ -32,6 +32,7 @@ from pystac.layout import AsIsLayoutStrategy
 
 from portolan_cli.config import load_merged_metadata, load_own_metadata
 from portolan_cli.formats import FormatType
+from portolan_cli.hookspecs import EnrichContext
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata import extract_geoparquet_metadata
@@ -56,6 +57,7 @@ from portolan_cli.stac import (
     update_catalog_provenance,
     update_collection_summaries,
 )
+from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
 from portolan_cli.stac_links import iter_links
 from portolan_cli.utils import href_root, relative_href
 from portolan_cli.versions import (
@@ -1053,6 +1055,46 @@ def _emit_partition_warnings(
         warn_output(warning_msg)
 
 
+def _enrich_saved_documents(
+    catalog_root: Path,
+    collection_id: str,
+    collection_dir: Path,
+    items: list[PreparedItem],
+) -> None:
+    """Run the item hook on each prepared item file, then the collection hook.
+
+    A collection-level asset has no item file, so only the collection hook
+    sees it.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection_id: Collection identifier (may be nested).
+        collection_dir: Directory holding collection.json.
+        items: Prepared items of this collection.
+    """
+    for prepared in items:
+        item_path = prepared.item_json_path
+        if item_path is not None and item_path.exists():
+            enrich_item_file(
+                item_path,
+                EnrichContext(
+                    catalog_root=catalog_root,
+                    collection_id=collection_id,
+                    document_path=item_path,
+                    item_id=prepared.item_id,
+                ),
+            )
+    collection_path = collection_dir / "collection.json"
+    enrich_collection_file(
+        collection_path,
+        EnrichContext(
+            catalog_root=catalog_root,
+            collection_id=collection_id,
+            document_path=collection_path,
+        ),
+    )
+
+
 def _finalize_collection(
     catalog_root: Path,
     collection_id: str,
@@ -1119,6 +1161,10 @@ def _finalize_collection(
 
     # Save collection.json ONCE for all items in this collection
     _save_collection_with_links(collection, collection_dir, catalog_root, collection_id)
+
+    # Run the enrichment hooks on the saved files. A backend may upload the
+    # STAC JSON when it publishes, so the hooks run first (#947).
+    _enrich_saved_documents(catalog_root, collection_id, collection_dir, items)
 
     # Route version snapshot to the active backend (plugin or file)
     _publish_collection_version(catalog_root, collection_id, collection_dir, collection, items)

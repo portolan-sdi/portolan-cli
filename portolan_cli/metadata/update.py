@@ -357,7 +357,38 @@ def create_missing_item(file_path: Path, collection_path: Path) -> Path:
         collection_id=collection.id,
     )
 
-    return write_item_json(item, item_dir)
+    item_path = write_item_json(item, item_dir)
+    _enrich_created_item(item_path, collection_path, item_id)
+    return item_path
+
+
+def _enrich_created_item(item_path: Path, collection_path: Path, item_id: str) -> None:
+    """Run the item enrichment hook on a created item (#947).
+
+    The hook context needs the catalog root. An item outside a catalog gets
+    no enrichment.
+
+    Args:
+        item_path: The written item JSON.
+        collection_path: Directory holding collection.json.
+        item_id: Item identifier.
+    """
+    from portolan_cli.catalog import find_catalog_root
+    from portolan_cli.hookspecs import EnrichContext
+    from portolan_cli.stac_enrich import enrich_item_file
+
+    catalog_root = find_catalog_root(collection_path)
+    if catalog_root is None:
+        return
+    enrich_item_file(
+        item_path,
+        EnrichContext(
+            catalog_root=catalog_root,
+            collection_id=collection_path.resolve().relative_to(catalog_root.resolve()).as_posix(),
+            document_path=item_path,
+            item_id=item_id,
+        ),
+    )
 
 
 def update_collection_extent(collection_path: Path) -> CollectionModel:

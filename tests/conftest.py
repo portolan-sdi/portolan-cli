@@ -822,3 +822,23 @@ def no_extract_side_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(wfs, "extract_wms_legend", lambda *a, **k: None)
     # _negotiate_version imports it inside the function.
     monkeypatch.setattr(gpio_wfs, "negotiate_wfs_version", lambda *a, **k: ("1.1.0", None))
+
+
+@pytest.fixture
+def register_plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., None]]:
+    """Register plugin objects on a fresh plugin manager (#947).
+
+    The manager sees no installed plugin, so only built-ins and the objects a
+    test registers take part.
+    """
+    from portolan_cli.plugins import manager
+
+    monkeypatch.setattr(manager, "entry_points", lambda *, group: [])
+    monkeypatch.delenv(manager.ENV_VAR, raising=False)
+    manager.reset_plugin_manager()
+
+    def _register(plugin: object, name: str = "test-plugin") -> None:
+        manager.get_plugin_manager().register(plugin, name=name)
+
+    yield _register
+    manager.reset_plugin_manager()

@@ -46,18 +46,18 @@ def _registered_factories() -> dict[str, Any]:
     Built-ins register first, so a built-in name keeps its built-in factory.
     A plugin that registers that name again produces a warning.
     """
-    from portolan_cli.plugins.manager import PluginLoadWarning, results_by_plugin
+    from portolan_cli.plugins.manager import PluginWarning, call_each
 
     factories: dict[str, Any] = {}
     owners: dict[str, str] = {}
-    for plugin_name, result in results_by_plugin("portolan_backends"):
+    for plugin_name, result in call_each("portolan_backends"):
         for name, factory in dict(result).items():
             if name in factories or name == _ICEBERG:
                 warnings.warn(
                     f"Plugin '{plugin_name}' registers backend '{name}', which "
                     f"'{owners.get(name, 'builtin:iceberg')}' already provides. "
                     "The first registration stays.",
-                    PluginLoadWarning,
+                    PluginWarning,
                     stacklevel=3,
                 )
                 continue

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, TextIO
@@ -53,6 +54,7 @@ from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.output import detail, error, set_writer, success, warn
 from portolan_cli.output import info as info_output
 from portolan_cli.plugins.commands import PluginGroup
+from portolan_cli.plugins.manager import PluginWarning
 from portolan_cli.remove import remove_files
 from portolan_cli.scan.core import (
     IssueType,
@@ -113,6 +115,30 @@ def click_writer(
 
 
 set_writer(click_writer)
+
+
+def show_warning(
+    message: Warning | str,
+    category: type[Warning],
+    filename: str,
+    lineno: int,
+    file: TextIO | None = None,
+    line: str | None = None,
+) -> None:
+    """Print a ``PluginWarning`` as an output warning. Pass other warnings on.
+
+    A plugin warning names the plugin and the problem. The source path and
+    line that Python adds point into Portolan, which does not help the user.
+    """
+    if issubclass(category, PluginWarning):
+        warn(str(message))
+        return
+    # The same output as Python's default `showwarning`.
+    stream = file if file is not None else sys.stderr
+    stream.write(warnings.formatwarning(message, category, filename, lineno, line))
+
+
+warnings.showwarning = show_warning
 
 
 def should_output_json(ctx: click.Context, json_flag: bool = False) -> bool:

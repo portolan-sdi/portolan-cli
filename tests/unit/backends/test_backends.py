@@ -19,7 +19,7 @@ from portolan_cli.hookspecs import hookimpl
 from portolan_cli.plugins import manager
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
 
 
 class TestVersioningBackendProtocol:
@@ -181,26 +181,12 @@ class _RaisingPlugin:
         raise RuntimeError("backend registry is broken")
 
 
-@pytest.fixture
-def register_plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[object, str], None]]:
-    """Register plugin objects on a fresh manager with no installed plugins."""
-    monkeypatch.setattr(manager, "entry_points", lambda *, group: [])
-    monkeypatch.delenv(manager.ENV_VAR, raising=False)
-    manager.reset_plugin_manager()
-
-    def _register(plugin: object, name: str = "test-plugin") -> None:
-        manager.get_plugin_manager().register(plugin, name=name)
-
-    yield _register
-    manager.reset_plugin_manager()
-
-
 class TestGetBackendPlugins:
     """`get_backend` finds backends through the `portolan_backends` hook (#947)."""
 
     @pytest.mark.unit
     def test_plugin_backend_receives_catalog_root(
-        self, register_plugin: Callable[[object, str], None]
+        self, register_plugin: Callable[..., None]
     ) -> None:
         """The factory is called with `catalog_root`."""
         from pathlib import Path
@@ -216,9 +202,7 @@ class TestGetBackendPlugins:
         assert backend is mock_backend
 
     @pytest.mark.unit
-    def test_unknown_name_lists_plugin_backends(
-        self, register_plugin: Callable[[object, str], None]
-    ) -> None:
+    def test_unknown_name_lists_plugin_backends(self, register_plugin: Callable[..., None]) -> None:
         """The error names every backend the hooks registered."""
         register_plugin(_BackendPlugin({"custom": MagicMock()}), "test-plugin")
 
@@ -229,26 +213,24 @@ class TestGetBackendPlugins:
 
     @pytest.mark.unit
     def test_hook_that_raises_is_skipped_with_a_warning(
-        self, register_plugin: Callable[[object, str], None]
+        self, register_plugin: Callable[..., None]
     ) -> None:
         """One broken plugin does not stop the built-in backends."""
         register_plugin(_RaisingPlugin(), "broken-plugin")
 
-        with pytest.warns(
-            manager.PluginLoadWarning, match="broken-plugin.*backend registry is broken"
-        ):
+        with pytest.warns(manager.PluginWarning, match="broken-plugin.*backend registry is broken"):
             backend = get_backend("file")
 
         assert isinstance(backend, JsonFileBackend)
 
     @pytest.mark.unit
     def test_builtin_file_backend_wins_a_name_collision(
-        self, register_plugin: Callable[[object, str], None]
+        self, register_plugin: Callable[..., None]
     ) -> None:
         """A plugin cannot replace the built-in `file` backend."""
         register_plugin(_BackendPlugin({"file": MagicMock()}), "shadow-plugin")
 
-        with pytest.warns(manager.PluginLoadWarning, match="shadow-plugin.*'file'"):
+        with pytest.warns(manager.PluginWarning, match="shadow-plugin.*'file'"):
             backend = get_backend("file")
 
         assert isinstance(backend, JsonFileBackend)
@@ -259,7 +241,7 @@ class TestGetBackendErrorHandling:
 
     @pytest.mark.unit
     def test_get_backend_handles_exception_on_instantiation(
-        self, register_plugin: Callable[[object, str], None]
+        self, register_plugin: Callable[..., None]
     ) -> None:
         """A factory that raises becomes a ValueError that names the backend."""
         register_plugin(
@@ -274,7 +256,7 @@ class TestGetBackendErrorHandling:
 
     @pytest.mark.unit
     def test_get_backend_validates_protocol_compliance(
-        self, register_plugin: Callable[[object, str], None]
+        self, register_plugin: Callable[..., None]
     ) -> None:
         """get_backend() validates that a plugin backend implements the protocol."""
 

@@ -26,11 +26,14 @@ import importlib
 import os
 import warnings
 from importlib.metadata import EntryPoint, entry_points
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pluggy
 
 from portolan_cli import hookspecs
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 ENTRY_POINT_GROUP = "portolan"
 COMMANDS_ENTRY_POINT_GROUP = "portolan.commands"
@@ -43,7 +46,11 @@ _BUILTIN_MODULES = ("portolan_cli.plugins.builtin.backends",)
 _manager: pluggy.PluginManager | None = None
 
 
-class PluginLoadWarning(UserWarning):
+class PluginWarning(UserWarning):
+    """A plugin misbehaved. The CLI keeps running without its contribution."""
+
+
+class PluginLoadWarning(PluginWarning):
     """A plugin failed to load. The CLI runs without it."""
 
 
@@ -184,10 +191,10 @@ def get_plugin_manager() -> pluggy.PluginManager:
     return pm
 
 
-def results_by_plugin(hook_name: str, **kwargs: Any) -> list[tuple[str, Any]]:
+def call_each(hook_name: str, **kwargs: Any) -> list[tuple[str, Any]]:
     """Call one hook plugin by plugin and keep the plugin name of each result.
 
-    A plugin whose hook raises produces a ``PluginLoadWarning``, and the call
+    A plugin whose hook raises produces a ``PluginWarning``, and the call
     continues with the next plugin. A None result is dropped.
 
     Args:
@@ -197,17 +204,47 @@ def results_by_plugin(hook_name: str, **kwargs: Any) -> list[tuple[str, Any]]:
     Returns:
         ``(plugin_name, result)`` pairs in registration order, built-ins first.
     """
-    pm = get_plugin_manager()
     results: list[tuple[str, Any]] = []
-    for impl in getattr(pm.hook, hook_name).get_hookimpls():
+    for plugin_name, call in hook_calls(hook_name):
         try:
-            result = impl.function(**{arg: kwargs[arg] for arg in impl.argnames})
+            result = call(**kwargs)
         except Exception as err:  # noqa: BLE001 - one broken plugin must not stop the CLI
-            _warn(f"Plugin '{impl.plugin_name}' failed in {hook_name}: {err}")
+            warn_hook_failure(plugin_name, hook_name, err)
             continue
         if result is not None:
-            results.append((impl.plugin_name, result))
+            results.append((plugin_name, result))
     return results
+
+
+def hook_calls(hook_name: str) -> list[tuple[str, Callable[..., Any]]]:
+    """Return one callable per plugin that implements ``hook_name``.
+
+    Each callable takes the full hook arguments as keywords and passes on the
+    ones the implementation names. The list is in registration order,
+    built-ins first. An empty list means no plugin implements the hook.
+
+    Args:
+        hook_name: Name of a hook in ``hookspecs``.
+
+    Returns:
+        ``(plugin_name, call)`` pairs.
+    """
+    pm = get_plugin_manager()
+    calls: list[tuple[str, Callable[..., Any]]] = []
+    for impl in getattr(pm.hook, hook_name).get_hookimpls():
+
+        def _call(_impl: Any = impl, **kwargs: Any) -> Any:
+            return _impl.function(**{arg: kwargs[arg] for arg in _impl.argnames})
+
+        calls.append((impl.plugin_name, _call))
+    return calls
+
+
+def warn_hook_failure(plugin_name: str, hook_name: str, err: Exception) -> None:
+    """Warn that a plugin's hook raised."""
+    warnings.warn(
+        f"Plugin '{plugin_name}' failed in {hook_name}: {err}", PluginWarning, stacklevel=3
+    )
 
 
 def reset_plugin_manager() -> None:
