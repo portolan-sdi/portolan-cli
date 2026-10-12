@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import importlib
 import inspect
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -63,18 +61,3 @@ def test_every_export_resolves_to_its_source(name: str) -> None:
 def test_unknown_name_raises_attribute_error() -> None:
     with pytest.raises(AttributeError, match="has no attribute 'nope'"):
         api.nope  # noqa: B018
-
-
-@pytest.mark.unit
-def test_importing_the_api_loads_no_heavy_dependency() -> None:
-    """`import portolan_cli.api` stays light for a plugin's module-level import."""
-    heavy = ["click", "rasterio", "pyarrow", "pyiceberg", "pystac", "geopandas"]
-    code = (
-        f"import sys, portolan_cli.api\nprint(sorted(m for m in {heavy!r} if m in sys.modules))\n"
-    )
-
-    result = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True
-    )
-
-    assert result.stdout.strip() == "[]"

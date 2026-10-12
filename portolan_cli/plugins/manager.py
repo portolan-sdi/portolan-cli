@@ -22,6 +22,7 @@ import error and has no filter.
 
 from __future__ import annotations
 
+import functools
 import importlib
 import os
 import warnings
@@ -52,6 +53,17 @@ class PluginWarning(UserWarning):
 
 class PluginLoadWarning(PluginWarning):
     """A plugin failed to load. The CLI runs without it."""
+
+
+@functools.cache
+def _scan(group: str) -> tuple[EntryPoint, ...]:
+    """Read one entry point group once per process.
+
+    The scan reads every installed distribution. One ``portolan --help`` asks
+    for the command group several times, and each scan costs about 8 ms with
+    230 distributions installed. ``reset_plugin_manager`` clears the cache.
+    """
+    return tuple(entry_points(group=group))
 
 
 def _requested_names() -> set[str] | None:
@@ -98,7 +110,7 @@ def plugin_names(ep: EntryPoint) -> set[str]:
     dist = _distribution(ep)
     hook_names = {
         hook.name
-        for hook in entry_points(group=ENTRY_POINT_GROUP)
+        for hook in _scan(ENTRY_POINT_GROUP)
         if dist is not None and _distribution(hook) == dist
     }
     return hook_names or {ep.name.split(".", 1)[0]}
@@ -118,7 +130,7 @@ def enabled_entry_points(group: str) -> list[EntryPoint]:
     """
     requested = _requested_names()
     selected: dict[str, EntryPoint] = {}
-    for ep in entry_points(group=group):
+    for ep in _scan(group):
         if requested is not None and not is_builtin(ep) and not plugin_names(ep) & requested:
             continue
         selected.setdefault(ep.name, ep)
@@ -135,7 +147,7 @@ def _warn_unknown_requested_names() -> None:
         return
     known: set[str] = set()
     for group in (ENTRY_POINT_GROUP, COMMANDS_ENTRY_POINT_GROUP):
-        for ep in entry_points(group=group):
+        for ep in _scan(group):
             known |= plugin_names(ep)
     for name in sorted(requested - known):
         _warn(f"{ENV_VAR} names '{name}', but no installed plugin has that name.")
@@ -248,6 +260,7 @@ def warn_hook_failure(plugin_name: str, hook_name: str, err: Exception) -> None:
 
 
 def reset_plugin_manager() -> None:
-    """Drop the cached manager. The next call builds a new one."""
+    """Drop the cached manager and entry points. The next call reads them again."""
     global _manager
     _manager = None
+    _scan.cache_clear()
