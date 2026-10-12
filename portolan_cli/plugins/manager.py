@@ -132,7 +132,8 @@ def enabled_entry_points(group: str) -> list[EntryPoint]:
     """Return the entry points in ``group`` that ``PORTOLAN_PLUGINS`` enables.
 
     Entry points that portolan-cli declares always load. Two distributions can
-    declare the same name. The first one wins.
+    declare the same name. An entry point that portolan-cli declares wins the
+    name. Otherwise the first one in discovery order wins.
 
     Args:
         group: Entry point group name.
@@ -140,13 +141,35 @@ def enabled_entry_points(group: str) -> list[EntryPoint]:
     Returns:
         Entry points in discovery order, one per name.
     """
-    requested = _requested_names()
     selected: dict[str, EntryPoint] = {}
-    for ep in _scan(group):
-        if requested is not None and not is_builtin(ep) and not plugin_names(ep) & requested:
-            continue
-        selected.setdefault(ep.name, ep)
+    for ep in _enabled(group):
+        if ep.name not in selected or (is_builtin(ep) and not is_builtin(selected[ep.name])):
+            selected[ep.name] = ep
     return list(selected.values())
+
+
+def shadowed_entry_points(group: str) -> list[EntryPoint]:
+    """Return the enabled outside entry points that lose a name to portolan-cli.
+
+    Args:
+        group: Entry point group name.
+
+    Returns:
+        Outside entry points whose name portolan-cli also declares in ``group``.
+    """
+    enabled = _enabled(group)
+    own = {ep.name for ep in enabled if is_builtin(ep)}
+    return [ep for ep in enabled if not is_builtin(ep) and ep.name in own]
+
+
+def _enabled(group: str) -> list[EntryPoint]:
+    """Return every entry point in ``group`` that ``PORTOLAN_PLUGINS`` enables."""
+    requested = _requested_names()
+    return [
+        ep
+        for ep in _scan(group)
+        if requested is None or is_builtin(ep) or plugin_names(ep) & requested
+    ]
 
 
 def _warn(message: str) -> None:

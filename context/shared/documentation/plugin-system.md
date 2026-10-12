@@ -79,6 +79,9 @@ A built-in name always wins:
 
 - A plugin command with the name of a built-in command does not run. Help
   warns about it.
+- A plugin command with the name of a command that `portolan-cli` declares
+  as an entry point, such as `version.rollback`, does not run. Discovery
+  order does not change this. Help warns about it.
 - A `portolan_backends` result named `file` or `iceberg` is ignored with a
   `PluginWarning`. `trylast` and `tryfirst` do not change this.
 - A `portolan_backends` result that is not a mapping is ignored with a

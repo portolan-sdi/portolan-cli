@@ -24,6 +24,7 @@ from portolan_cli.plugins.manager import (
     COMMANDS_ENTRY_POINT_GROUP,
     enabled_entry_points,
     is_builtin,
+    shadowed_entry_points,
 )
 
 if TYPE_CHECKING:
@@ -152,9 +153,18 @@ class PluginGroup(click.Group):
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         """Write the command list without importing a plugin."""
         plugins = self._plugin_entries(ctx)
-        for name in sorted(plugins.keys() & set(super().list_commands(ctx))):
+        collisions = [(name, plugins[name]) for name in plugins.keys() & set(self.commands)]
+        # An outside entry point can also lose its name to a portolan-cli one.
+        path = _group_path(ctx)
+        prefix = f"{path}." if path else ""
+        collisions += [
+            (ep.name[len(prefix) :], ep)
+            for ep in shadowed_entry_points(COMMANDS_ENTRY_POINT_GROUP)
+            if ep.name.startswith(prefix) and "." not in ep.name[len(prefix) :]
+        ]
+        for name, ep in sorted(collisions, key=lambda pair: pair[0]):
             warn(
-                f"Plugin command '{name}' from {_distribution(plugins[name])} has the "
+                f"Plugin command '{name}' from {_distribution(ep)} has the "
                 "name of a built-in command. The built-in command runs."
             )
         rows = self._rows(ctx)

@@ -560,6 +560,35 @@ class TestVersionRollbackCommand:
         assert data["success"] is False
 
 
+_MISSING_EXTRA = "The 'iceberg' backend requires the iceberg extra."
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "args",
+    [["rollback", "boundaries", "1.0.0"], ["prune", "boundaries"]],
+    ids=["rollback", "prune"],
+)
+def test_missing_iceberg_extra_reports_a_json_error(
+    runner: CliRunner, tmp_path: Path, args: list[str]
+) -> None:
+    """A backend setup error becomes a JSON envelope, not a traceback."""
+    catalog_root = _make_iceberg_catalog(tmp_path)
+
+    with (
+        patch("portolan_cli.config.get_setting", return_value="iceberg"),
+        patch("portolan_cli.backends.get_backend", side_effect=ValueError(_MISSING_EXTRA)),
+    ):
+        result = runner.invoke(
+            cli, ["--format", "json", "version", *args, "--catalog", str(catalog_root)]
+        )
+
+    assert result.exit_code == 1
+    assert json.loads(result.output)["errors"] == [
+        {"type": "BackendError", "message": _MISSING_EXTRA}
+    ]
+
+
 # ---------------------------------------------------------------------------
 # version prune
 # ---------------------------------------------------------------------------
