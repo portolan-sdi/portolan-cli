@@ -462,6 +462,79 @@ class TestPushS3Integration:
         assert stored == bytes_a
 
     @pytest.mark.integration
+    def test_force_push_without_new_versions_restores_bytes_on_s3(
+        self,
+        s3_bucket: tuple[str, str],
+        catalog_with_data: Path,
+        _aws_env: None,
+    ) -> None:
+        """Issue #962: a force push with no new local version must upload A.
+
+        The remote holds 1.0.0 (A) and 1.0.1 (B), so the store holds B. Local
+        holds only 1.0.0 (A). `push --force` writes the local versions.json,
+        so the store must hold A after it.
+        """
+        bucket_name, endpoint_url = s3_bucket
+
+        from portolan_cli.sync.push import push
+
+        collection_dir = catalog_with_data / "test-collection"
+        data_file = collection_dir / "data.parquet"
+        versions_path = collection_dir / "versions.json"
+        destination = f"s3://{bucket_name}/catalog"
+        bytes_a = data_file.read_bytes()
+        versions_a = versions_path.read_text()
+        bytes_b = b"Bytes B are longer, so a HEAD shows which bytes the key holds"
+
+        assert push(catalog_with_data, "test-collection", destination).success is True
+
+        versions_data = json.loads(versions_a)
+        versions_data["versions"].append(
+            {
+                "version": "1.0.1",
+                "created": "2024-02-01T00:00:00Z",
+                "breaking": False,
+                "changes": ["data.parquet"],
+                "assets": {
+                    "data.parquet": {
+                        "sha256": hashlib.sha256(bytes_b).hexdigest(),
+                        "size_bytes": len(bytes_b),
+                        "href": "test-collection/data.parquet",
+                    }
+                },
+            }
+        )
+        versions_data["current_version"] = "1.0.1"
+        versions_path.write_text(json.dumps(versions_data))
+        data_file.write_bytes(bytes_b)
+        assert push(catalog_with_data, "test-collection", destination).success is True
+
+        # Local goes back to 1.0.0 (A) only. Remote 1.0.1 is not local.
+        versions_path.write_text(versions_a)
+        data_file.write_bytes(bytes_a)
+        result = push(catalog_with_data, "test-collection", destination, force=True)
+        assert result.success is True, f"Force push failed: {result.errors}"
+
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",
+            region_name="us-east-1",
+        )
+        stored = client.get_object(Bucket=bucket_name, Key="catalog/test-collection/data.parquet")[
+            "Body"
+        ].read()
+        remote_versions = json.loads(
+            client.get_object(Bucket=bucket_name, Key="catalog/test-collection/versions.json")[
+                "Body"
+            ].read()
+        )
+
+        assert remote_versions["current_version"] == "1.0.0"
+        assert stored == bytes_a
+
+    @pytest.mark.integration
     def test_push_uploads_intermediate_catalogs_to_s3(
         self,
         s3_bucket: tuple[str, str],

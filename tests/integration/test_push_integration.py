@@ -973,7 +973,6 @@ class TestAssetPathResolution:
         assets = _get_assets_to_upload(
             catalog_root=catalog_with_versions,
             versions_data=versions_data,
-            versions_to_push=["1.1.0"],
         )
 
         # Should return list of asset paths

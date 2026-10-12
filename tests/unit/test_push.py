@@ -885,7 +885,6 @@ class TestMissingAssetDetection:
             _get_assets_to_upload(
                 catalog_root=local_catalog,
                 versions_data=versions_data,
-                versions_to_push=["1.0.0"],
             )
 
 
@@ -941,7 +940,6 @@ class TestMissingDerivedAsset:
                     "derived": missing_href,
                 }
             ),
-            versions_to_push=["1.0.0"],
         )
 
         assert assets == [source.resolve()]
@@ -956,7 +954,6 @@ class TestMissingDerivedAsset:
             _get_assets_to_upload(
                 catalog_root=local_catalog,
                 versions_data=self._versions_data({"scene1/scene1.tif": "test/scene1/scene1.tif"}),
-                versions_to_push=["1.0.0"],
             )
 
     @staticmethod
@@ -989,7 +986,6 @@ class TestMissingDerivedAsset:
             _get_assets_to_upload(
                 catalog_root=local_catalog,
                 versions_data=self._versions_data({"data.pmtiles": "test/data.pmtiles"}),
-                versions_to_push=["1.0.0"],
             )
 
     @pytest.mark.unit
@@ -1004,7 +1000,6 @@ class TestMissingDerivedAsset:
         assets = _get_assets_to_upload(
             catalog_root=local_catalog,
             versions_data=self._versions_data({"preview.webp": "test/preview.webp"}),
-            versions_to_push=["1.0.0"],
         )
 
         assert assets == []
@@ -1021,7 +1016,6 @@ class TestMissingDerivedAsset:
             _get_assets_to_upload(
                 catalog_root=local_catalog,
                 versions_data=self._versions_data({"original.gpkg": "test/original.gpkg"}),
-                versions_to_push=["1.0.0"],
             )
 
     @pytest.mark.unit
@@ -1038,7 +1032,6 @@ class TestMissingDerivedAsset:
             _get_assets_to_upload(
                 catalog_root=local_catalog,
                 versions_data=self._versions_data({"thumbnail.png": "test/thumbnail.png"}),
-                versions_to_push=["1.0.0"],
             )
 
 
@@ -2648,7 +2641,6 @@ class TestAssetDiffing:
         assets = _get_assets_to_upload(
             catalog_root=catalog_dir,
             versions_data=local_versions_data,
-            versions_to_push=["2.0.0"],
             remote_versions_data=remote_versions_data,
         )
 
@@ -2704,7 +2696,6 @@ class TestAssetDiffing:
         assets = _get_assets_to_upload(
             catalog_root=catalog_dir,
             versions_data=local_versions_data,
-            versions_to_push=["2.0.0"],
             remote_versions_data=remote_versions_data,
         )
 
@@ -2764,7 +2755,6 @@ class TestAssetDiffing:
         assets = _get_assets_to_upload(
             catalog_root=catalog_dir,
             versions_data=local_versions_data,
-            versions_to_push=["2.0.0"],
             remote_versions_data=remote_versions_data,
         )
 
@@ -2811,7 +2801,6 @@ class TestAssetDiffing:
         assets = _get_assets_to_upload(
             catalog_root=catalog_dir,
             versions_data=local_versions_data,
-            versions_to_push=["1.0.0"],
             remote_versions_data=None,
         )
 
@@ -2876,7 +2865,6 @@ class TestAssetDiffing:
         assets = _get_assets_to_upload(
             catalog_root=catalog_dir,
             versions_data=local_versions_data,
-            versions_to_push=["2.0.0"],
             remote_versions_data=remote_versions_data,
         )
 
@@ -2912,7 +2900,6 @@ class TestAssetDiffing:
         assets = _get_assets_to_upload(
             catalog_root=catalog_dir,
             versions_data=local_versions_data,
-            versions_to_push=["1.0.0"],
             remote_versions_data=remote_versions_data,
         )
 
@@ -2974,7 +2961,6 @@ class TestAssetDiffing:
         assets = _get_assets_to_upload(
             catalog_root=catalog_dir,
             versions_data=local_versions_data,
-            versions_to_push=["2.0.0"],
             remote_versions_data=remote_versions_data,
         )
 
@@ -3027,7 +3013,6 @@ class TestAssetDiffing:
         assets = _get_assets_to_upload(
             catalog_root=catalog_dir,
             versions_data=local_versions_data,
-            versions_to_push=["2.0.0"],
             remote_versions_data=remote_versions_data,
         )
 
@@ -3079,7 +3064,6 @@ class TestAssetDiffing:
         assets = _get_assets_to_upload(
             catalog_root=catalog_dir,
             versions_data=local_versions_data,
-            versions_to_push=["2.0.0"],
             remote_versions_data=remote_versions_data,
         )
 
@@ -3097,6 +3081,14 @@ def _snapshot(version: str, assets: dict[str, str]) -> dict[str, Any]:
     return {
         "version": version,
         "assets": {href: {"sha256": sha, "href": href} for href, sha in assets.items()},
+    }
+
+
+def _history(current: str, *entries: tuple[str, dict[str, str]]) -> dict[str, Any]:
+    """Build a versions.json document with the given current version."""
+    return {
+        "current_version": current,
+        "versions": [_snapshot(version, assets) for version, assets in entries],
     }
 
 
@@ -3120,28 +3112,22 @@ class TestAssetDiffingAgainstRemoteCurrent:
         data_file = tmp_path / "data.parquet"
         data_file.write_bytes(b"bytes A")
 
-        local = {
-            "current_version": "1.0.5",
-            "versions": [
-                _snapshot("1.0.3", {"data.parquet": "sha_A"}),
-                _snapshot("1.0.4", {"data.parquet": "sha_B"}),
-                _snapshot("1.0.5", {"data.parquet": "sha_A"}),
-            ],
-        }
-        remote = {
-            "current_version": "1.0.4",
-            "versions": [
-                _snapshot("1.0.3", {"data.parquet": "sha_A"}),
-                _snapshot("1.0.4", {"data.parquet": "sha_B"}),
-            ],
-        }
+        local = _history(
+            "1.0.5",
+            ("1.0.3", {"data.parquet": "sha_A"}),
+            ("1.0.4", {"data.parquet": "sha_B"}),
+            ("1.0.5", {"data.parquet": "sha_A"}),
+        )
+        remote = _history(
+            "1.0.4", ("1.0.3", {"data.parquet": "sha_A"}), ("1.0.4", {"data.parquet": "sha_B"})
+        )
 
-        assets = _get_assets_to_upload(tmp_path, local, ["1.0.5"], remote)
+        assets = _get_assets_to_upload(tmp_path, local, remote)
 
         assert assets == [data_file.resolve()]
 
     @pytest.mark.unit
-    def test_multi_version_push_compares_newest_pushed_sha(self, tmp_path: Path) -> None:
+    def test_multi_version_push_compares_local_current_sha(self, tmp_path: Path) -> None:
         """A push of 1.0.4 and 1.0.5 compares the sha256 that 1.0.5 records.
 
         The file on disk holds the 1.0.5 bytes (C). Before the fix, push read
@@ -3155,25 +3141,20 @@ class TestAssetDiffingAgainstRemoteCurrent:
         other_file = tmp_path / "other.parquet"
         other_file.write_bytes(b"other")
 
-        local = {
-            "current_version": "1.0.5",
-            "versions": [
-                _snapshot("1.0.3", {"data.parquet": "sha_A"}),
-                _snapshot("1.0.4", {"data.parquet": "sha_A", "other.parquet": "sha_X"}),
-                _snapshot("1.0.5", {"data.parquet": "sha_C", "other.parquet": "sha_X"}),
-            ],
-        }
-        remote = {
-            "current_version": "1.0.3",
-            "versions": [_snapshot("1.0.3", {"data.parquet": "sha_A"})],
-        }
+        local = _history(
+            "1.0.5",
+            ("1.0.3", {"data.parquet": "sha_A"}),
+            ("1.0.4", {"data.parquet": "sha_A", "other.parquet": "sha_X"}),
+            ("1.0.5", {"data.parquet": "sha_C", "other.parquet": "sha_X"}),
+        )
+        remote = _history("1.0.3", ("1.0.3", {"data.parquet": "sha_A"}))
 
-        assets = _get_assets_to_upload(tmp_path, local, ["1.0.4", "1.0.5"], remote)
+        assets = _get_assets_to_upload(tmp_path, local, remote)
 
         assert sorted(assets) == sorted([data_file.resolve(), other_file.resolve()])
 
     @pytest.mark.unit
-    def test_multi_version_push_skips_asset_whose_newest_sha_matches_remote(
+    def test_multi_version_push_skips_asset_whose_local_current_sha_matches_remote(
         self, tmp_path: Path
     ) -> None:
         """An asset that changed and then changed back is skipped.
@@ -3185,20 +3166,15 @@ class TestAssetDiffingAgainstRemoteCurrent:
 
         (tmp_path / "data.parquet").write_bytes(b"bytes A")
 
-        local = {
-            "current_version": "1.0.5",
-            "versions": [
-                _snapshot("1.0.3", {"data.parquet": "sha_A"}),
-                _snapshot("1.0.4", {"data.parquet": "sha_B"}),
-                _snapshot("1.0.5", {"data.parquet": "sha_A"}),
-            ],
-        }
-        remote = {
-            "current_version": "1.0.3",
-            "versions": [_snapshot("1.0.3", {"data.parquet": "sha_A"})],
-        }
+        local = _history(
+            "1.0.5",
+            ("1.0.3", {"data.parquet": "sha_A"}),
+            ("1.0.4", {"data.parquet": "sha_B"}),
+            ("1.0.5", {"data.parquet": "sha_A"}),
+        )
+        remote = _history("1.0.3", ("1.0.3", {"data.parquet": "sha_A"}))
 
-        assets = _get_assets_to_upload(tmp_path, local, ["1.0.4", "1.0.5"], remote)
+        assets = _get_assets_to_upload(tmp_path, local, remote)
 
         assert assets == []
 
@@ -3215,23 +3191,83 @@ class TestAssetDiffingAgainstRemoteCurrent:
         new_file = tmp_path / "new.parquet"
         new_file.write_bytes(b"new")
 
-        local = {
-            "current_version": "1.0.5",
-            "versions": [
-                _snapshot("1.0.5", {"data.parquet": "sha_B", "new.parquet": "sha_N"}),
-            ],
-        }
-        remote = {
-            "current_version": "1.0.4",
-            "versions": [
-                _snapshot("1.0.3", {"data.parquet": "sha_A"}),
-                _snapshot("1.0.4", {"data.parquet": "sha_B"}),
-            ],
-        }
+        local = _history("1.0.5", ("1.0.5", {"data.parquet": "sha_B", "new.parquet": "sha_N"}))
+        remote = _history(
+            "1.0.4", ("1.0.3", {"data.parquet": "sha_A"}), ("1.0.4", {"data.parquet": "sha_B"})
+        )
 
-        assets = _get_assets_to_upload(tmp_path, local, ["1.0.5"], remote)
+        assets = _get_assets_to_upload(tmp_path, local, remote)
 
         assert assets == [new_file.resolve()]
+
+    @pytest.mark.unit
+    def test_force_push_without_new_versions_restores_local_current(self, tmp_path: Path) -> None:
+        """A force push with no new local version uploads the local current bytes.
+
+        Local holds 1.0.0 (A). Remote holds 1.0.0 (A) and 1.0.1 (B), so the
+        store holds B. `push --force` writes the local versions.json, which
+        records A. So push must upload A, although no version is local only.
+        """
+        from portolan_cli.sync.push import _get_assets_to_upload
+
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"bytes A")
+
+        local = _history("1.0.0", ("1.0.0", {"data.parquet": "sha_A"}))
+        remote = _history(
+            "1.0.1", ("1.0.0", {"data.parquet": "sha_A"}), ("1.0.1", {"data.parquet": "sha_B"})
+        )
+
+        assets = _get_assets_to_upload(tmp_path, local, remote)
+
+        assert assets == [data_file.resolve()]
+
+    @pytest.mark.unit
+    def test_asset_removed_by_a_later_pushed_version_is_not_uploaded(self, tmp_path: Path) -> None:
+        """A file that 1.0.1 adds and 1.0.2 removes is not part of the push.
+
+        The user deleted x.parquet. The local current snapshot 1.0.2 does not
+        list it, so push must not look for it on disk.
+        """
+        from portolan_cli.sync.push import _get_assets_to_upload
+
+        (tmp_path / "data.parquet").write_bytes(b"bytes A")
+
+        local = _history(
+            "1.0.2",
+            ("1.0.0", {"data.parquet": "sha_A"}),
+            ("1.0.1", {"data.parquet": "sha_A", "x.parquet": "sha_X"}),
+            ("1.0.2", {"data.parquet": "sha_A"}),
+        )
+        remote = _history("1.0.0", ("1.0.0", {"data.parquet": "sha_A"}))
+
+        assets = _get_assets_to_upload(tmp_path, local, remote)
+
+        assert assets == []
+
+    @pytest.mark.unit
+    def test_remote_current_asset_without_sha256_uploads(self, tmp_path: Path) -> None:
+        """A remote current entry with no sha256 cannot prove a match, so it uploads.
+
+        An older remote entry records the local sha256. It must not cause a skip.
+        """
+        from portolan_cli.sync.push import _get_assets_to_upload
+
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"bytes A")
+
+        local = _history("1.0.2", ("1.0.2", {"data.parquet": "sha_A"}))
+        remote = {
+            "current_version": "1.0.1",
+            "versions": [
+                _snapshot("1.0.0", {"data.parquet": "sha_A"}),
+                {"version": "1.0.1", "assets": {"data.parquet": {"href": "data.parquet"}}},
+            ],
+        }
+
+        assets = _get_assets_to_upload(tmp_path, local, remote)
+
+        assert assets == [data_file.resolve()]
 
     @pytest.mark.unit
     @pytest.mark.parametrize(
@@ -3267,7 +3303,7 @@ class TestAssetDiffingAgainstRemoteCurrent:
         if current_version is not None:
             remote["current_version"] = current_version
 
-        assets = _get_assets_to_upload(tmp_path, local, ["1.0.2"], remote)
+        assets = _get_assets_to_upload(tmp_path, local, remote)
 
         assert assets == [a_file.resolve()]
 
@@ -3279,15 +3315,11 @@ class TestAssetDiffingAgainstRemoteCurrent:
         (tmp_path / "data.parquet").write_bytes(b"bytes A")
 
         local = {"versions": [_snapshot("2.0.0", {"data.parquet": "sha_A"})]}
-        remote = {
-            "current_version": "1.0.0",
-            "versions": [
-                _snapshot("1.0.0", {"data.parquet": "sha_A"}),
-                _snapshot("1.0.1", {"data.parquet": "sha_B"}),
-            ],
-        }
+        remote = _history(
+            "1.0.0", ("1.0.0", {"data.parquet": "sha_A"}), ("1.0.1", {"data.parquet": "sha_B"})
+        )
 
-        assets = _get_assets_to_upload(tmp_path, local, ["2.0.0"], remote)
+        assets = _get_assets_to_upload(tmp_path, local, remote)
 
         assert assets == []
 
@@ -3361,7 +3393,6 @@ class TestRealSHA256Diffing:
         assets = _get_assets_to_upload(
             catalog_root=catalog_dir,
             versions_data=local_versions_data,
-            versions_to_push=["1.0.0"],
             remote_versions_data=remote_versions_data,
         )
 
@@ -3432,7 +3463,6 @@ class TestRealSHA256Diffing:
         assets = _get_assets_to_upload(
             catalog_root=catalog_dir,
             versions_data=local_versions_data,
-            versions_to_push=["2.0.0"],
             remote_versions_data=remote_versions_data,
         )
 
@@ -3501,7 +3531,6 @@ class TestRealSHA256Diffing:
         assets = _get_assets_to_upload(
             catalog_root=catalog_dir,
             versions_data=local_versions_data,
-            versions_to_push=["2.0.0"],
             remote_versions_data=remote_versions_data,
         )
 

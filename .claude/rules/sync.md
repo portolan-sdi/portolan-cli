@@ -51,7 +51,7 @@ flowchart TD
         PB -->|no| PD[setup_store + fetch remote]
         PD --> PE{conflict and not force?}
         PE -->|yes| PF[raise PushConflictError]
-        PE -->|no| PG[skip only if href AND sha256 match]
+        PE -->|no| PG[upload local current snapshot minus remote current matches]
         PG --> PH[upload assets first]
         PH --> PI[items, collection.json, catalog.json]
         PI --> PJ[metadata: styles, thumbnails, items.parquet]
@@ -88,6 +88,21 @@ uploaded.
 "every asset in the current version" tries to push all 3000 files when you added
 one. Diff by sha256 against the remote `versions.json` and upload only new or
 changed assets. (See `_get_assets_to_upload` in `push.py`.)
+
+Push compares the local current snapshot with the remote current snapshot
+(#962). It skips an asset only when both snapshots record the same href and the
+same sha256. The entry that `current_version` names is the current snapshot. If
+that field is missing or names no entry, push uses the last entry.
+
+- Asset hrefs carry no version segment. Every version writes the same object
+  key. So only the remote current snapshot tells what each key holds now. An
+  older remote version can record bytes that a later push overwrote. Never skip
+  an upload because an older remote version records the same bytes.
+- After the push, the remote current version is the local current version. The
+  disk holds the bytes that the local current snapshot records. So the local
+  current snapshot is the upload set. Do not build the set from the versions
+  that are local only. A force push with no new version needs uploads too, and
+  an older local version can list a file that the user deleted.
 
 ## A missing optional derivative warns, a missing data asset raises
 

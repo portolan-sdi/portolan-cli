@@ -70,7 +70,7 @@ def catalog(raster_catalog: Path, tmp_path: Path) -> Path:
 def _push_assets(catalog_root: Path) -> list[Path]:
     """Drive the raise site the way ``push`` does, without a remote."""
     versions_data = json.loads((catalog_root / "imagery" / "versions.json").read_text())
-    return _get_assets_to_upload(catalog_root, versions_data, ["1.0.0"], None)
+    return _get_assets_to_upload(catalog_root, versions_data, None)
 
 
 def test_add_records_both_derived_artifacts(catalog: Path) -> None:
