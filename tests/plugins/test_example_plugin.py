@@ -2,7 +2,8 @@
 
 These tests need the example plugin installed:
 
-    uv run --with ./tests/plugins/portolan_example pytest tests/plugins -m plugin
+    uv pip install ./tests/plugins/portolan_example
+    uv run --no-sync pytest tests/plugins -m plugin
 """
 
 from __future__ import annotations

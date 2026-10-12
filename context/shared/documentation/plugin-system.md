@@ -129,6 +129,11 @@ uv-managed 3.12.13 build. That gap looked like a plugin cost at first.
 
 `tests/plugins/portolan_example` is a separate package. It adds a command, item
 and collection enrichment, and a versioning backend. The `plugin-test` CI job
-installs it with `uv run --with` and runs `pytest tests/plugins -m plugin`. Its
-`pyproject.toml` leaves out the `portolan-cli` dependency, so CI tests the
+installs it with `uv pip install` and runs `pytest tests/plugins -m plugin`.
+Its `pyproject.toml` leaves out the `portolan-cli` dependency, so CI tests the
 checkout and not a release.
+
+Do not install it with `uv run --with`. With uv 0.6.14 on CI, that overlay used
+the runner's system Python, and pytest skipped every test. Locally, uv keeps a
+cached build of the package and reuses it after a source change, because the
+cache key ignores the source files.

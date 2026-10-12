@@ -59,5 +59,6 @@ before you change the plugin code.
 
 - `tests/plugins/portolan_example` uses each extension point. When you add a
   hook, add it to the example and to `tests/plugins/test_example_plugin.py`.
-- Run it with
-  `uv run --with ./tests/plugins/portolan_example pytest tests/plugins -m plugin`.
+- Run it with `uv pip install ./tests/plugins/portolan_example`, then
+  `uv run --no-sync pytest tests/plugins -m plugin`. Do not use
+  `uv run --with` for it: uv keeps a stale build when only the source changes.

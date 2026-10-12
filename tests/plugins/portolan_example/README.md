@@ -16,6 +16,10 @@ The package imports only `portolan_cli.api`, `portolan_cli.hookspecs`, and
 Run its tests from the repository root:
 
 ```bash
-uv run --with ./tests/plugins/portolan_example \
-  pytest tests/plugins -m plugin
+uv pip install ./tests/plugins/portolan_example
+uv run --no-sync pytest tests/plugins -m plugin
 ```
+
+Install it again after you change its code. `uv run --with` keeps a cached
+build of a local package, and the cache key ignores the source files, so it
+can run the old code.
