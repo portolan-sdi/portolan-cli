@@ -90,11 +90,11 @@ A built-in name always wins:
 ## Format handlers
 
 Format handlers follow a different rule. A plugin handler comes before the
-built-in handler for the same extension. A plugin can therefore replace the
-COG conversion for `.tif`. `plugins/formats.py` `select_handler` applies this
+built-in handler for the same extension, so a plugin can replace the COG
+conversion for `.tif`. `plugins/formats.py` `select_handler` applies this
 order:
 
-1. A pin in `.portolan/config.yaml`, for example `conversion.handlers: {.tif: cog}`.
+1. A pin in `.portolan/config.yaml`, such as `conversion.handlers: {.tif: cog}`.
    A pin to a missing name raises `UnknownFormatHandlerError`.
 2. A plugin handler whose `extensions` hold the extension and whose `claims`
    returns True. Two such handlers raise `AmbiguousFormatError`, which names
@@ -132,8 +132,8 @@ the family only to group files in `scan` and to label them.
 The COG handler writes the raster thumbnail when it converts, because each
 raster is an item. The GeoParquet handler writes no thumbnail. A collection
 can hold thousands of vector files, and `add` writes one thumbnail for the
-collection. `check --fix` therefore no longer writes a thumbnail next to a
-converted vector file. A reference catalog built before and after the merge
+collection. `check --fix` no longer writes a thumbnail next to a converted
+vector file. A reference catalog built before and after the merge
 differs only in timestamps and in those `check --fix` thumbnails.
 
 `--force` without `--reconvert` keeps an existing output for every handler. The
