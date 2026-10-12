@@ -2,7 +2,7 @@
 
 **Status:** open upstream.
 **Upstream issue:** [geoparquet-io#1222](https://github.com/geoparquet/geoparquet-io/issues/1222), filed 2026-10-12.
-**Affected versions:** geoparquet-io 1.4.0 and 1.6.0. Both fail.
+**Affected versions:** geoparquet-io 1.4.0 through 1.6.0.
 **Portolan issue:** #953 found it.
 
 ## What happens
@@ -22,8 +22,8 @@ The converted table stores the geometry as Arrow `large_binary`.
 ## Where Portolan meets it
 
 A non-partitioned kdtree index fails: `conversion.vector.spatial_index: kdtree`
-with `partition: false`. `convert.apply_vector_settings` calls `add_kdtree`, and
-the `add` and `convert` paths both reach it.
+with `partition: false`. `convert.apply_vector_settings` calls `add_kdtree`.
+`portolan add` and `portolan check --fix` both reach that call.
 
 A partitioned kdtree write works. `convert._write_partitioned` lets
 `Table.partition_by_kdtree` add the column, and that method does not hit the bug.
