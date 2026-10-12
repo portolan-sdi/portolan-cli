@@ -181,11 +181,37 @@ filters, the license check, resume, retry, the report, catalog setup,
 styles, provenance links, and collection metadata. `layer_cli.build_command`
 makes its command from the same helpers as the built-in commands.
 
-The built-in sources keep their own drivers. WFS negotiates a protocol
-version, ArcGIS walks a services root, and both download layers in parallel.
-Their tests also patch private functions of each orchestrator. A move onto
-`run_layer_extraction` would change those code paths for no gain to a
-plugin.
+The built-in sources use the same driver. `WFSLayerSource`,
+`ArcGISLayerSource`, and `CartoLayerSource` live in each source's
+`orchestrator.py`. `extract_<source>_catalog` keeps its signature and maps
+the source's `ExtractionOptions` to `LayerSourceOptions`. ArcGIS ImageServer
+stays outside the driver, because it tiles one raster and has no layers.
+A plugin and a built-in source get the same lifecycle, so one fix in
+`source.py` reaches both.
+
+The source-specific steps fit the protocol with no extra method:
+
+| Step | Where it goes |
+|------|---------------|
+| WFS version negotiation | `discover` negotiates once and puts the version in each `LayerRef.data` |
+| ArcGIS services-root walk | `discover` walks the folders and gives each `LayerRef` a `path` below its service |
+| Per-layer service URL | `LayerRef.data` holds it, and `fetch`, `layer_metadata`, and `source_link` read it |
+| Parallel downloads | `LayerSourceOptions.workers` |
+| WFS per-layer deadline | `LayerSourceOptions.layer_timeout` |
+| Carto geometry probe | `discover` filters first, then probes only the kept tables |
+| ArcGIS folder coverage | `Discovery.folder_coverage` |
+| Root title on a new catalog | `Discovery.root_metadata` |
+
+`discover` receives `LayerSourceOptions`, so a source can filter before an
+expensive probe. The driver filters again, which costs nothing.
+
+Moving the built-ins changed some results. All sources now share these rules:
+
+- A failed layer records None for features, size, duration, and output path.
+- A resumed layer keeps its earlier result and emits only "skipped".
+- The progress index is the position of the layer in the run.
+- In an ArcGIS services root, the via link and the layer details use the URL
+  of the layer's own service.
 
 ## Enrichment runs on the files
 

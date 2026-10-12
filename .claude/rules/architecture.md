@@ -195,7 +195,7 @@ through the handler. Never put geometry or raster math in our layer.
 | Scan / check / metadata | `scan*.py`, `check.py`, `metadata/`, `clean.py` | `scan-check.md` (the four `metadata/{cog,geoparquet,pmtiles,flatgeobuf}.py` format extractors also load `conversion-and-visualization.md`) |
 | Versioning backends | `backends/`, `version_ops.py`, `versions.py` | this file + `stac-assets.md` |
 | Plugin system | `hookspecs.py`, `api.py`, `testing.py`, `plugins/`, `stac_enrich.py`, `lazy_exports.py` | `plugins.md` |
-| Extract / harvest | `extract/` (`arcgis`, `carto`, and `wfs` are commands from the `portolan_extractors` hook; each command is in `extract/<source>/cli.py`; `csw/` is a module dir not yet exposed as a subcommand) | `plugins.md` (reuse `extract/common/`, mock network in tests) |
+| Extract / harvest | `extract/` (`arcgis`, `carto`, and `wfs` are commands from the `portolan_extractors` hook; each command is in `extract/<source>/cli.py`; each source but ArcGIS ImageServer is a `LayerSource` that `extract/common/source.py` `run_layer_extraction` drives; `csw/` is a module dir not yet exposed as a subcommand) | `plugins.md` (reuse `extract/common/`, mock network in tests) |
 | Config / leaf utils | `config.py`, `constants.py`, `utils.py` | `python.md` (conventions, import contracts) |
 
 ## Where to investigate further
