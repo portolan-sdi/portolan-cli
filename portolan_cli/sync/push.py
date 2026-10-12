@@ -453,31 +453,74 @@ def _fetch_remote_versions(
 # =============================================================================
 
 
-def _build_remote_asset_set(
+def _remote_current_assets(
     remote_versions_data: dict[str, Any] | None,
-) -> set[tuple[str, str]]:
-    """Build set of (href, sha256) pairs from all assets in all remote versions.
+) -> dict[str, str]:
+    """Map each href in the remote current snapshot to its sha256.
+
+    Asset hrefs carry no version segment, so every version writes the same
+    object key. Only the current snapshot tells what each key holds now. An
+    older version can record bytes that a later push overwrote (Issue #962).
+
+    The entry that ``current_version`` names is the current snapshot. When that
+    field is missing or names no entry, the last entry in ``versions`` is used.
 
     Args:
         remote_versions_data: Remote versions.json data, or None if no remote.
 
     Returns:
-        Set of (href, sha256) tuples from all remote assets.
-        Both href and sha256 must match for an asset to be considered "already exists".
-        This ensures renamed files (same sha256, different href) are still uploaded.
+        A dict from href to sha256. It is empty when there is no remote or no
+        version. An asset without a sha256 is left out.
     """
     if remote_versions_data is None:
-        return set()
+        return {}
 
-    remote_assets: set[tuple[str, str]] = set()
-    for version_entry in remote_versions_data.get("versions", []):
-        for asset_name, asset_data in version_entry.get("assets", {}).items():
-            href = asset_data.get("href", asset_name)
-            sha256 = asset_data.get("sha256")
-            if sha256 and href:
-                remote_assets.add((href, sha256))
+    versions: list[dict[str, Any]] = remote_versions_data.get("versions", [])
+    if not versions:
+        return {}
+
+    current_name = remote_versions_data.get("current_version")
+    current = next((v for v in versions if v.get("version") == current_name), versions[-1])
+
+    remote_assets: dict[str, str] = {}
+    for asset_name, asset_data in current.get("assets", {}).items():
+        href = asset_data.get("href", asset_name)
+        sha256 = asset_data.get("sha256")
+        if sha256 and href:
+            remote_assets[href] = sha256
 
     return remote_assets
+
+
+def _newest_pushed_assets(
+    versions_data: dict[str, Any],
+    versions_to_push: list[str],
+) -> dict[str, tuple[str | None, str | None]]:
+    """Map each href in the pushed versions to its newest record.
+
+    The file on disk holds the bytes of the newest version that lists the
+    href. So this function reads the pushed versions newest first, and the
+    first record for an href wins (Issue #962).
+
+    Args:
+        versions_data: Local versions.json data.
+        versions_to_push: List of version strings to push.
+
+    Returns:
+        A dict from href to a tuple of the sha256 and the version string. A
+        malformed entry can give None for either value.
+    """
+    pushed = [v for v in versions_data.get("versions", []) if v.get("version") in versions_to_push]
+
+    newest: dict[str, tuple[str | None, str | None]] = {}
+    for version_entry in reversed(pushed):
+        version_str = version_entry.get("version")
+        for asset_name, asset_data in version_entry.get("assets", {}).items():
+            href = asset_data.get("href", asset_name)
+            if href not in newest:
+                newest[href] = (asset_data.get("sha256"), version_str)
+
+    return newest
 
 
 def _get_assets_to_upload(
@@ -488,9 +531,15 @@ def _get_assets_to_upload(
 ) -> list[Path]:
     """Get list of asset files that need to be uploaded.
 
-    Compares local assets against remote by sha256 hash. Only assets that are
-    new or changed (different sha256) are included. This prevents re-uploading
-    unchanged assets when adding a single file to a large catalog (Issue #329).
+    Compares each local asset with the remote current snapshot by href and
+    sha256. Only assets that are new or changed are included. This prevents
+    re-uploading unchanged assets when adding a single file to a large
+    catalog (Issue #329).
+
+    The local sha256 for an href comes from the newest pushed version that
+    lists it, because the file on disk holds those bytes. The remote sha256
+    comes from the remote current snapshot only, because every version writes
+    the same object key (Issue #962).
 
     A recorded asset that is absent from disk raises. One exception applies. An
     optional derivative only warns, and this function skips it (Issue #735). The
@@ -511,53 +560,37 @@ def _get_assets_to_upload(
         FileNotFoundError: If a referenced ``data`` or ``source`` asset file
             doesn't exist.
     """
-    # Build set of (href, sha256) pairs from all remote versions
-    remote_assets = _build_remote_asset_set(remote_versions_data)
+    remote_assets = _remote_current_assets(remote_versions_data)
 
     assets_to_upload: list[Path] = []
-    seen_hrefs: set[str] = set()
     skipped_count = 0
 
-    for version_entry in versions_data.get("versions", []):
-        version_str = version_entry.get("version")
-        if version_str not in versions_to_push:
+    for href, (local_sha256, version_str) in _newest_pushed_assets(
+        versions_data, versions_to_push
+    ).items():
+        # Skip the upload only if the remote current snapshot records the same
+        # sha256 for the same href. A renamed file (same sha256, new href)
+        # still uploads.
+        if local_sha256 and remote_assets.get(href) == local_sha256:
+            skipped_count += 1
             continue
 
-        for asset_name, asset_data in version_entry.get("assets", {}).items():
-            href = asset_data.get("href", asset_name)
-
-            # Skip if we've already processed this asset path
-            if href in seen_hrefs:
+        # Resolve path relative to catalog root
+        asset_path = catalog_root / href
+        if not asset_path.exists():
+            # The spec calls four roles optional derivatives, namely
+            # `visual`, `thumbnail`, `style` and `collection-mirror`. See
+            # portolan-spec specs/portolan/core.md, sections Assets and
+            # Single-File Collections. Portolan rebuilds each one from data
+            # the catalog still holds. An absent one must not fail a sound
+            # push (Issue #735). Conformance gaps belong to `portolan check`.
+            # Roles `data` and `source` stay a hard error, because nothing
+            # can reconstruct them.
+            if is_optional_derivative(catalog_root, href):
+                warn(f"Optional asset not found, skipped: {href} (version {version_str})")
                 continue
-            seen_hrefs.add(href)
-
-            # Get local sha256 (may be None if malformed)
-            local_sha256 = asset_data.get("sha256")
-
-            # Skip upload only if BOTH href AND sha256 match remote
-            # This ensures renamed files (same sha256, different href) are uploaded
-            if local_sha256 and (href, local_sha256) in remote_assets:
-                skipped_count += 1
-                continue
-
-            # Resolve path relative to catalog root
-            asset_path = catalog_root / href
-            if not asset_path.exists():
-                # The spec calls four roles optional derivatives, namely
-                # `visual`, `thumbnail`, `style` and `collection-mirror`. See
-                # portolan-spec specs/portolan/core.md, sections Assets and
-                # Single-File Collections. Portolan rebuilds each one from data
-                # the catalog still holds. An absent one must not fail a sound
-                # push (Issue #735). Conformance gaps belong to `portolan check`.
-                # Roles `data` and `source` stay a hard error, because nothing
-                # can reconstruct them.
-                if is_optional_derivative(catalog_root, href):
-                    warn(f"Optional asset not found, skipped: {href} (version {version_str})")
-                    continue
-                raise FileNotFoundError(
-                    f"Asset referenced in version {version_str} not found: {href}"
-                )
-            assets_to_upload.append(asset_path.resolve())
+            raise FileNotFoundError(f"Asset referenced in version {version_str} not found: {href}")
+        assets_to_upload.append(asset_path.resolve())
 
     # Log diffing results for user feedback (Issue #329)
     new_count = len(assets_to_upload)

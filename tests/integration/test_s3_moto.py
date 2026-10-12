@@ -386,6 +386,82 @@ class TestPushS3Integration:
         )
 
     @pytest.mark.integration
+    def test_push_restores_bytes_of_an_older_version_on_s3(
+        self,
+        s3_bucket: tuple[str, str],
+        catalog_with_data: Path,
+        _aws_env: None,
+    ) -> None:
+        """Issue #962: bytes A, then B, then A again. The store must hold A.
+
+        Every version writes the same object key. Before the fix, the third
+        push found A in remote version 1.0.0 and skipped the upload. The
+        store kept B while the remote current version recorded A.
+        """
+        bucket_name, endpoint_url = s3_bucket
+
+        from portolan_cli.sync.push import push
+
+        collection_dir = catalog_with_data / "test-collection"
+        data_file = collection_dir / "data.parquet"
+        versions_path = collection_dir / "versions.json"
+        bytes_a = data_file.read_bytes()
+        bytes_b = b"Bytes B are longer, so a HEAD shows which bytes the key holds"
+
+        def push_version(version: str, content: bytes) -> None:
+            data_file.write_bytes(content)
+            versions_data = json.loads(versions_path.read_text())
+            if version != "1.0.0":
+                versions_data["versions"].append(
+                    {
+                        "version": version,
+                        "created": "2024-02-01T00:00:00Z",
+                        "breaking": False,
+                        "changes": ["data.parquet"],
+                        "assets": {
+                            "data.parquet": {
+                                "sha256": hashlib.sha256(content).hexdigest(),
+                                "size_bytes": len(content),
+                                "href": "test-collection/data.parquet",
+                            }
+                        },
+                    }
+                )
+                versions_data["current_version"] = version
+                versions_path.write_text(json.dumps(versions_data))
+            result = push(
+                catalog_root=catalog_with_data,
+                collection="test-collection",
+                destination=f"s3://{bucket_name}/catalog",
+            )
+            assert result.success is True, f"Push {version} failed: {result.errors}"
+
+        push_version("1.0.0", bytes_a)
+        push_version("1.0.1", bytes_b)
+        push_version("1.0.2", bytes_a)
+
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",
+            region_name="us-east-1",
+        )
+        key = "catalog/test-collection/data.parquet"
+        stored = client.get_object(Bucket=bucket_name, Key=key)["Body"].read()
+        remote_versions = json.loads(
+            client.get_object(Bucket=bucket_name, Key="catalog/test-collection/versions.json")[
+                "Body"
+            ].read()
+        )
+
+        assert remote_versions["current_version"] == "1.0.2"
+        assert remote_versions["versions"][-1]["assets"]["data.parquet"]["sha256"] == (
+            hashlib.sha256(bytes_a).hexdigest()
+        )
+        assert stored == bytes_a
+
+    @pytest.mark.integration
     def test_push_uploads_intermediate_catalogs_to_s3(
         self,
         s3_bucket: tuple[str, str],

@@ -2818,12 +2818,14 @@ class TestAssetDiffing:
         assert len(assets) == 2
 
     @pytest.mark.unit
-    def test_considers_all_remote_versions_for_sha256_check(self, tmp_path: Path) -> None:
-        """Remote sha256 check should include ALL remote versions, not just latest.
+    def test_href_only_in_older_remote_version_uploads(self, tmp_path: Path) -> None:
+        """An href that the remote current snapshot omits must upload (Issue #962).
 
-        Scenario: Remote has versions 1.0.0 and 1.1.0 with different assets.
-        Local version 2.0.0 has an asset that matches 1.0.0's sha256.
-        It should be skipped even though it's not in 1.1.0.
+        This test replaces one that expected a skip. That test encoded the
+        any-version rule: a match in any remote version skipped the upload.
+        A versions.json entry is a complete snapshot. The remote current
+        version 1.1.0 does not list legacy.parquet, so nothing tells push
+        that the object key still holds those bytes.
         """
         from portolan_cli.sync.push import _get_assets_to_upload
 
@@ -2848,12 +2850,13 @@ class TestAssetDiffing:
         }
 
         remote_versions_data = {
+            "current_version": "1.1.0",
             "versions": [
                 {
                     "version": "1.0.0",
                     "assets": {
                         "legacy.parquet": {
-                            "sha256": "sha256_legacy",  # Same sha256!
+                            "sha256": "sha256_legacy",
                             "href": "legacy.parquet",
                         },
                     },
@@ -2867,7 +2870,7 @@ class TestAssetDiffing:
                         },
                     },
                 },
-            ]
+            ],
         }
 
         assets = _get_assets_to_upload(
@@ -2877,8 +2880,7 @@ class TestAssetDiffing:
             remote_versions_data=remote_versions_data,
         )
 
-        # legacy.parquet exists in 1.0.0 with same sha256, should be skipped
-        assert len(assets) == 0
+        assert assets == [asset.resolve()]
 
     @pytest.mark.unit
     def test_handles_empty_remote_versions_list(self, tmp_path: Path) -> None:
@@ -3083,6 +3085,211 @@ class TestAssetDiffing:
 
         # Should upload since local has no sha256 to compare
         assert len(assets) == 1
+
+
+# =============================================================================
+# Asset Diffing Against the Remote Current Version (Issue #962)
+# =============================================================================
+
+
+def _snapshot(version: str, assets: dict[str, str]) -> dict[str, Any]:
+    """Build one versions.json entry that maps each href to its sha256."""
+    return {
+        "version": version,
+        "assets": {href: {"sha256": sha, "href": href} for href, sha in assets.items()},
+    }
+
+
+class TestAssetDiffingAgainstRemoteCurrent:
+    """Push compares each asset with the remote CURRENT snapshot (Issue #962).
+
+    Every version writes the same object key for an href. So only the remote
+    current snapshot tells push what each key holds now. An older remote
+    version can record bytes that a later push overwrote.
+    """
+
+    @pytest.mark.unit
+    def test_revert_to_bytes_of_older_remote_version_uploads(self, tmp_path: Path) -> None:
+        """Bytes A, then B, then A again. The third push must upload A.
+
+        Before the fix, push found (data.parquet, A) in remote 1.0.3 and
+        skipped the upload. The store kept B while versions.json recorded A.
+        """
+        from portolan_cli.sync.push import _get_assets_to_upload
+
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"bytes A")
+
+        local = {
+            "current_version": "1.0.5",
+            "versions": [
+                _snapshot("1.0.3", {"data.parquet": "sha_A"}),
+                _snapshot("1.0.4", {"data.parquet": "sha_B"}),
+                _snapshot("1.0.5", {"data.parquet": "sha_A"}),
+            ],
+        }
+        remote = {
+            "current_version": "1.0.4",
+            "versions": [
+                _snapshot("1.0.3", {"data.parquet": "sha_A"}),
+                _snapshot("1.0.4", {"data.parquet": "sha_B"}),
+            ],
+        }
+
+        assets = _get_assets_to_upload(tmp_path, local, ["1.0.5"], remote)
+
+        assert assets == [data_file.resolve()]
+
+    @pytest.mark.unit
+    def test_multi_version_push_compares_newest_pushed_sha(self, tmp_path: Path) -> None:
+        """A push of 1.0.4 and 1.0.5 compares the sha256 that 1.0.5 records.
+
+        The file on disk holds the 1.0.5 bytes (C). Before the fix, push read
+        the oldest pushed entry (1.0.4, A), matched remote current A, and
+        skipped the upload. C never reached the store.
+        """
+        from portolan_cli.sync.push import _get_assets_to_upload
+
+        data_file = tmp_path / "data.parquet"
+        data_file.write_bytes(b"bytes C")
+        other_file = tmp_path / "other.parquet"
+        other_file.write_bytes(b"other")
+
+        local = {
+            "current_version": "1.0.5",
+            "versions": [
+                _snapshot("1.0.3", {"data.parquet": "sha_A"}),
+                _snapshot("1.0.4", {"data.parquet": "sha_A", "other.parquet": "sha_X"}),
+                _snapshot("1.0.5", {"data.parquet": "sha_C", "other.parquet": "sha_X"}),
+            ],
+        }
+        remote = {
+            "current_version": "1.0.3",
+            "versions": [_snapshot("1.0.3", {"data.parquet": "sha_A"})],
+        }
+
+        assets = _get_assets_to_upload(tmp_path, local, ["1.0.4", "1.0.5"], remote)
+
+        assert sorted(assets) == sorted([data_file.resolve(), other_file.resolve()])
+
+    @pytest.mark.unit
+    def test_multi_version_push_skips_asset_whose_newest_sha_matches_remote(
+        self, tmp_path: Path
+    ) -> None:
+        """An asset that changed and then changed back is skipped.
+
+        Pushed 1.0.4 records B and pushed 1.0.5 records A. The file on disk
+        holds A, and remote current also records A, so the key holds A.
+        """
+        from portolan_cli.sync.push import _get_assets_to_upload
+
+        (tmp_path / "data.parquet").write_bytes(b"bytes A")
+
+        local = {
+            "current_version": "1.0.5",
+            "versions": [
+                _snapshot("1.0.3", {"data.parquet": "sha_A"}),
+                _snapshot("1.0.4", {"data.parquet": "sha_B"}),
+                _snapshot("1.0.5", {"data.parquet": "sha_A"}),
+            ],
+        }
+        remote = {
+            "current_version": "1.0.3",
+            "versions": [_snapshot("1.0.3", {"data.parquet": "sha_A"})],
+        }
+
+        assets = _get_assets_to_upload(tmp_path, local, ["1.0.4", "1.0.5"], remote)
+
+        assert assets == []
+
+    @pytest.mark.unit
+    def test_asset_identical_to_remote_current_is_skipped(self, tmp_path: Path) -> None:
+        """An asset whose sha256 equals the remote current entry is skipped.
+
+        An older remote version records other bytes for the same href. That
+        older entry must not force an upload.
+        """
+        from portolan_cli.sync.push import _get_assets_to_upload
+
+        (tmp_path / "data.parquet").write_bytes(b"bytes B")
+        new_file = tmp_path / "new.parquet"
+        new_file.write_bytes(b"new")
+
+        local = {
+            "current_version": "1.0.5",
+            "versions": [
+                _snapshot("1.0.5", {"data.parquet": "sha_B", "new.parquet": "sha_N"}),
+            ],
+        }
+        remote = {
+            "current_version": "1.0.4",
+            "versions": [
+                _snapshot("1.0.3", {"data.parquet": "sha_A"}),
+                _snapshot("1.0.4", {"data.parquet": "sha_B"}),
+            ],
+        }
+
+        assets = _get_assets_to_upload(tmp_path, local, ["1.0.5"], remote)
+
+        assert assets == [new_file.resolve()]
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "current_version",
+        [None, "9.9.9"],
+        ids=["current_version-missing", "current_version-matches-no-entry"],
+    )
+    def test_unusable_current_version_falls_back_to_last_entry(
+        self, tmp_path: Path, current_version: str | None
+    ) -> None:
+        """Without a usable current_version, the last remote entry is current.
+
+        The last entry records B. So local A uploads and local B is skipped.
+        The first entry records A, and it must not cause a skip.
+        """
+        from portolan_cli.sync.push import _get_assets_to_upload
+
+        a_file = tmp_path / "a.parquet"
+        a_file.write_bytes(b"bytes A")
+        (tmp_path / "b.parquet").write_bytes(b"bytes B")
+
+        local = {
+            "versions": [
+                _snapshot("1.0.2", {"a.parquet": "sha_A", "b.parquet": "sha_B"}),
+            ],
+        }
+        remote: dict[str, Any] = {
+            "versions": [
+                _snapshot("1.0.0", {"a.parquet": "sha_A", "b.parquet": "sha_A"}),
+                _snapshot("1.0.1", {"a.parquet": "sha_B", "b.parquet": "sha_B"}),
+            ],
+        }
+        if current_version is not None:
+            remote["current_version"] = current_version
+
+        assets = _get_assets_to_upload(tmp_path, local, ["1.0.2"], remote)
+
+        assert assets == [a_file.resolve()]
+
+    @pytest.mark.unit
+    def test_current_version_selects_entry_that_is_not_last(self, tmp_path: Path) -> None:
+        """A current_version that names an earlier entry wins over the last entry."""
+        from portolan_cli.sync.push import _get_assets_to_upload
+
+        (tmp_path / "data.parquet").write_bytes(b"bytes A")
+
+        local = {"versions": [_snapshot("2.0.0", {"data.parquet": "sha_A"})]}
+        remote = {
+            "current_version": "1.0.0",
+            "versions": [
+                _snapshot("1.0.0", {"data.parquet": "sha_A"}),
+                _snapshot("1.0.1", {"data.parquet": "sha_B"}),
+            ],
+        }
+
+        assets = _get_assets_to_upload(tmp_path, local, ["2.0.0"], remote)
+
+        assert assets == []
 
 
 # =============================================================================
