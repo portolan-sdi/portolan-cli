@@ -54,6 +54,11 @@ before you change the plugin code.
 - Run them before `_publish_collection_version`. A new code path that creates or
   rebuilds a STAC document calls `stac_enrich.enrich_item_file` or
   `enrich_collection_file`.
+- A backend that changes STAC JSON after the hooks run merges into the file
+  on disk. Never call `pystac.Collection.save` there, because it drops the
+  hook fields. `IcebergBackend.on_post_add` shows the pattern.
+- Backend precedence comes from `hook_calls`, which lists built-ins first.
+  Do not depend on pluggy call order.
 
 ## Example plugin
 

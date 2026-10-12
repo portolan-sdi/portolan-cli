@@ -16,7 +16,12 @@ plugin module when it loads them. A command that came from a hook would make
 `portolan --help` import every installed plugin. The lazy group reads command
 names from entry point metadata and imports a command module only when the
 user runs that command. Help shows `(plugin: <distribution>)` in place of the
-help text, which lives in the module.
+help text, which lives in the module. Shell completion shows the same label
+and imports no plugin either.
+
+The group caches a loaded command by its entry point. After
+`reset_plugin_manager()`, a command that `PORTOLAN_PLUGINS` disables is not
+found, so it does not run.
 
 A dotted command name attaches to a built-in group. `version.rollback`
 becomes `portolan version rollback`.
@@ -33,11 +38,21 @@ The manager does not use `load_setuptools_entrypoints`. That method stops at
 the first import error and has no filter. The manager loop catches each
 failure and emits a `PluginLoadWarning`. `pm.check_pending()` catches a hook
 name that no hookspec declares. The manager unregisters that plugin and warns.
+`pm.register` adds hooks one by one and keeps the ones it added before an
+invalid hook. The manager unregisters the plugin in that case too, so a plugin
+that fails validation adds no hook. An outside entry point name cannot start
+with `builtin:`, which is reserved for the built-in modules.
 
 `call_each` and `hook_calls` call a hook plugin by plugin. They keep the
 plugin name of each result. A hook that raises produces a `PluginWarning`, and
 the next plugin still runs. The CLI prints a `PluginWarning` as an output
 warning, without the source path that Python adds.
+
+`hook_calls` lists the built-ins first and then the outside plugins in pluggy
+order. Pluggy puts a `trylast` implementation before a built-in, so the
+manager sorts by name and does not trust pluggy order. A hook wrapper
+(`wrapper=True` or `hookwrapper=True`) produces a `PluginWarning` and is
+skipped, because a plain call of a wrapper only creates a generator.
 
 ## Selecting plugins
 
@@ -56,7 +71,9 @@ A built-in name always wins:
 - A plugin command with the name of a built-in command does not run. Help
   warns about it.
 - A `portolan_backends` result named `file` or `iceberg` is ignored with a
-  `PluginWarning`.
+  `PluginWarning`. `trylast` and `tryfirst` do not change this.
+- A `portolan_backends` result that is not a mapping is ignored with a
+  `PluginWarning`. The built-in backends still resolve.
 
 ## Enrichment runs on the files
 
@@ -72,14 +89,32 @@ fields a hook added.
 
 `finalization._finalize_collection` runs the hooks after the collection save
 and before `_publish_collection_version`. A `VersioningBackend` can upload the
-STAC JSON when it publishes. `IcebergBackend.on_post_add` does this.
+STAC JSON when it publishes. `IcebergBackend.on_post_add` does this. It merges
+its `table:*` and `iceberg:*` fields into the `collection.json` on disk. A
+pystac save from the in-memory collection would drop the hook fields.
 
-`add` runs the hooks again on documents that the companion-asset phase
-changes. `metadata fix` runs the item hook on an item it creates. A hook must
-give the same result when it runs twice.
+`add` attaches companion assets (non-geospatial files) after the publish. It
+runs the hooks again on the documents that this phase changes. The local
+files then hold the enriched companion assets. The backend version does not
+hold them. This order was the same before the hooks existed: a non-file
+backend never received companion assets.
+
+`add --external` runs the collection hook on the collection it writes.
+`metadata fix` runs the item hook on an item it creates. A hook must give the
+same result when it runs twice.
 
 After each hook, `stac_enrich` restores `id`, `type`, `stac_version`, and
 `links` and warns. A hook that raises leaves no partial change.
+
+## Deprecated backend group
+
+v0.8.0 and v1.0.0b0 found plugin backends in the `portolan.backends` entry
+point group. The `portolan_backends` hook replaces it.
+`plugins/builtin/legacy_backends.py` reads the group for one more minor
+release. Each backend it finds produces a `PluginWarning`, and the backend
+class loads only when `get_backend` asks for it. `PORTOLAN_PLUGINS` selects
+these entry points like command entry points. A later minor release deletes
+the module.
 
 ## Layers
 
