@@ -121,3 +121,50 @@ def test_add_runs_every_hook(conformant_catalog: Path, fixtures_dir: Path) -> No
         _cli(), ["example", "versions", "imagery", "--catalog", str(conformant_catalog)]
     )
     assert result.output.startswith("✓ 1.0.0  ")
+
+
+_XYZ = "-70.0 -30.0 12.5\n-69.5 -29.8 14.0\n-69.9 -29.9 13.1\n"
+
+
+def test_xyz_handler_conforms(tmp_path: Path) -> None:
+    from portolan_example.formats import XyzHandler
+
+    from portolan_cli.testing import check_format_handler
+
+    sample = tmp_path / "points.xyz"
+    sample.write_text(_XYZ, encoding="utf-8")
+
+    check_format_handler(XyzHandler(), sample, tmp_path)
+
+
+def test_add_converts_an_xyz_file(conformant_catalog: Path) -> None:
+    """`add` routes `.xyz` to the plugin handler and tracks the GeoParquet."""
+    from portolan_cli.add import add_files
+
+    collection_dir = conformant_catalog / "heights"
+    collection_dir.mkdir()
+    source = collection_dir / "survey.xyz"
+    source.write_text(_XYZ, encoding="utf-8")
+
+    _, _, failures = add_files(
+        paths=[collection_dir], catalog_root=conformant_catalog, collection_id="heights"
+    )
+
+    assert failures == []
+    assert (collection_dir / "survey.parquet").exists()
+    collection = _read(collection_dir / "collection.json")
+    assert collection["extent"]["spatial"]["bbox"][0] == [-70.0, -30.0, -69.5, -29.8]
+    versions = _read(collection_dir / "versions.json")
+    assert "survey.parquet" in versions["versions"][-1]["assets"]
+
+
+def test_check_fix_converts_an_xyz_file(conformant_catalog: Path) -> None:
+    """`check --fix --geo-assets` converts a `.xyz` file with the plugin handler."""
+    collection_dir = conformant_catalog / "heights"
+    collection_dir.mkdir()
+    (collection_dir / "survey.xyz").write_text(_XYZ, encoding="utf-8")
+
+    result = CliRunner().invoke(_cli(), ["check", str(conformant_catalog), "--fix", "--geo-assets"])
+
+    assert "Converted 1 file(s)" in result.output
+    assert (collection_dir / "survey.parquet").exists()

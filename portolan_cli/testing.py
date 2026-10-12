@@ -16,19 +16,85 @@ module follows semantic versioning, as ``portolan_cli.api`` does.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_type_hints
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
-__all__ = ["ConformanceError", "check_backend"]
+__all__ = ["ConformanceError", "check_backend", "check_format_handler"]
 
 _COLLECTION = "conformance"
+_ASSET_LEVELS = frozenset({"collection", "item"})
 
 
 class ConformanceError(AssertionError):
     """A plugin object does not meet its protocol."""
+
+
+def check_format_handler(handler: Any, sample: Path, output_dir: Path) -> None:
+    """Check a format handler against ``FormatHandler`` with a sample file.
+
+    The check reads the handler attributes, converts ``sample`` into
+    ``output_dir``, and reads the metadata of the result.
+
+    Args:
+        handler: What ``portolan_formats`` returns.
+        sample: A small source file in a format the handler claims.
+        output_dir: An empty directory the handler may write to.
+
+    Raises:
+        ConformanceError: With one line per problem found.
+    """
+    from portolan_cli.plugins.formats import FormatHandler, FormatMetadata, extension_of
+
+    if not isinstance(handler, FormatHandler):
+        raise ConformanceError(f"{type(handler).__name__} does not implement FormatHandler.")
+
+    problems = _check_handler_attributes(handler)
+    if extension_of(sample) not in handler.extensions:
+        problems.append(f"extensions does not hold {extension_of(sample)}, the sample's.")
+    if not handler.claims(sample):
+        problems.append(f"claims returned False for the sample {sample.name}.")
+    if problems:
+        raise ConformanceError("\n".join(problems))
+
+    output = handler.convert(sample, output_dir, None)
+    if not isinstance(output, Path) or not output.exists():
+        raise ConformanceError(f"convert returned {output!r}, expected an existing Path.")
+
+    metadata = handler.read_metadata(output)
+    if not isinstance(metadata, FormatMetadata):
+        raise ConformanceError(
+            f"read_metadata returned {type(metadata).__name__}, expected FormatMetadata."
+        )
+    bbox = list(metadata.bbox or [])
+    if len(bbox) != 4 or not all(isinstance(v, (int, float)) for v in bbox):
+        problems.append(f"read_metadata bbox is {bbox!r}, expected four numbers.")
+    elif bbox[0] > bbox[2] or bbox[1] > bbox[3]:
+        problems.append(f"read_metadata bbox {bbox!r} has a minimum above its maximum.")
+    if not isinstance(metadata.to_stac_properties(), dict):
+        problems.append("to_stac_properties returned something other than a dict.")
+    if problems:
+        raise ConformanceError("\n".join(problems))
+
+
+def _check_handler_attributes(handler: Any) -> list[str]:
+    problems: list[str] = []
+    for attribute in ("name", "family", "display_name", "media_type"):
+        value = getattr(handler, attribute)
+        if not isinstance(value, str) or not value:
+            problems.append(f"{attribute} is {value!r}, expected a non-empty string.")
+    extensions = handler.extensions
+    if not isinstance(extensions, frozenset) or not extensions:
+        problems.append("extensions must be a non-empty frozenset.")
+    else:
+        wrong = sorted(e for e in extensions if not e.startswith(".") or e != e.lower())
+        if wrong:
+            problems.append(f"extensions must be lowercase and start with a dot: {wrong}.")
+    if handler.asset_level not in _ASSET_LEVELS:
+        problems.append(f"asset_level is {handler.asset_level!r}, expected collection or item.")
+    return problems
 
 
 def check_backend(factory: Callable[..., Any], catalog_root: Path) -> None:

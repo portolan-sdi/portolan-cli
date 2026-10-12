@@ -9,6 +9,7 @@ CI installs it and calls every hook, so a change to `portolan_cli.api` or
 | Command | `cli.py` | `portolan example versions` |
 | Item and collection metadata | `hooks.py` | Adds the STAC `sci` extension |
 | Version storage | `backend.py` | `ExampleBackend` under the name `example`, one JSON file per collection |
+| File format | `formats.py` | `.xyz` point lists convert to GeoParquet |
 
 The package imports only `portolan_cli.api`, `portolan_cli.hookspecs`, and
 `portolan_cli.testing`.

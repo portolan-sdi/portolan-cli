@@ -13,6 +13,7 @@ the plugin.
 Groups:
 
 - Hooks: ``hookimpl``, ``EnrichContext``.
+- Format handlers: ``FormatHandler``, ``FormatMetadata``.
 - Versioning backends: ``VersioningBackend``, ``DriftReport``,
   ``SchemaFingerprint``, ``PostAddContext``, ``PostAddItemContext``,
   ``Version``, ``Asset``, ``SchemaInfo``, ``parse_version``, ``get_backend``.
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
     from portolan_cli.json_io import write_json_atomic
     from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
     from portolan_cli.output import detail, error, info, success, warn
+    from portolan_cli.plugins.formats import FormatHandler, FormatMetadata
     from portolan_cli.plugins.manager import PluginWarning
     from portolan_cli.sync.download import download_file
     from portolan_cli.sync.pull import PullResult
@@ -56,6 +58,8 @@ __all__ = [
     "DriftReport",
     "EnrichContext",
     "ErrorDetail",
+    "FormatHandler",
+    "FormatMetadata",
     "PluginWarning",
     "PostAddContext",
     "PostAddItemContext",
@@ -86,6 +90,8 @@ _EXPORTS = {
     "DriftReport": "portolan_cli.backends.protocol",
     "EnrichContext": "portolan_cli.hookspecs",
     "ErrorDetail": "portolan_cli.json_output",
+    "FormatHandler": "portolan_cli.plugins.formats",
+    "FormatMetadata": "portolan_cli.plugins.formats",
     "PluginWarning": "portolan_cli.plugins.manager",
     "PostAddContext": "portolan_cli.backends.protocol",
     "PostAddItemContext": "portolan_cli.backends.protocol",

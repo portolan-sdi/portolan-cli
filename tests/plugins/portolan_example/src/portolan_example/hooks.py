@@ -45,3 +45,11 @@ def portolan_backends() -> dict[str, Callable[..., Any]]:
     from portolan_example.backend import ExampleBackend
 
     return {"example": ExampleBackend}
+
+
+@hookimpl
+def portolan_formats() -> list[Any]:
+    """Register the ``.xyz`` format handler."""
+    from portolan_example.formats import XyzHandler
+
+    return [XyzHandler()]

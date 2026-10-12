@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from portolan_cli.backends.json_file import JsonFileBackend
-from portolan_cli.testing import ConformanceError, check_backend
+from portolan_cli.testing import ConformanceError, check_backend, check_format_handler
 from portolan_cli.versions import Version
+from tests.unit.plugins.stub_handler import StubHandler
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -111,3 +112,30 @@ def test_nonconforming_backend_names_the_method(
 def test_factory_must_return_a_backend(tmp_path: Path) -> None:
     with pytest.raises(ConformanceError, match=r"does not implement VersioningBackend"):
         check_backend(lambda catalog_root: object(), tmp_path)
+
+
+def test_builtin_geoparquet_handler_conforms(tmp_path: Path, fixtures_dir: Path) -> None:
+    """The built-in GeoJSON-to-GeoParquet handler passes its own check."""
+    import shutil
+
+    from portolan_cli.plugins.builtin.formats import GEOPARQUET
+
+    sample = tmp_path / "points.geojson"
+    shutil.copy(fixtures_dir / "vector" / "valid" / "points.geojson", sample)
+
+    check_format_handler(GEOPARQUET, sample, tmp_path)
+
+
+def test_nonconforming_handler_lists_each_problem(tmp_path: Path) -> None:
+    sample = tmp_path / "a.bad"
+    sample.write_text("x", encoding="utf-8")
+
+    with pytest.raises(ConformanceError) as err:
+        handler = StubHandler("bad", frozenset({".BAD"}), asset_level="layer")
+        check_format_handler(handler, sample, tmp_path)
+
+    assert str(err.value).splitlines() == [
+        "extensions must be lowercase and start with a dot: ['.BAD'].",
+        "asset_level is 'layer', expected collection or item.",
+        "extensions does not hold .bad, the sample's.",
+    ]
