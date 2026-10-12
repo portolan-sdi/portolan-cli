@@ -525,22 +525,33 @@ class TestPushAsyncConcurrency:
 
     @pytest.mark.asyncio
     async def test_push_async_handles_rate_limit(self, async_catalog: Path) -> None:
-        """Verify push_async() handles rate limit errors gracefully."""
+        """Two rate-limited uploads abort the push and roll back the others.
+
+        The rollback deletes each uploaded asset. `obs.delete` must be mocked:
+        unmocked, it called the real S3 API for `s3://test-bucket` and the test
+        took 110 s waiting on the network.
+        """
         from portolan_cli.sync.push import push_async
 
-        call_count = 0
+        put_keys: list[str] = []
+        failed_keys: list[str] = []
+        deleted_keys: list[str] = []
 
         async def mock_put_with_rate_limit(
             store: Any, key: str, content: Any, **kwargs: Any
         ) -> None:
-            nonlocal call_count
-            call_count += 1
-            if call_count <= 2:
+            put_keys.append(key)
+            if len(put_keys) <= 2:
+                failed_keys.append(key)
                 raise Exception("SlowDown: Rate limit exceeded")
             await asyncio.sleep(0.001)
 
         with (
             patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_with_rate_limit),
+            patch(
+                "portolan_cli.sync.push.obs.delete",
+                side_effect=lambda store, key: deleted_keys.append(key),
+            ),
             patch("portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)),
         ):
             result = await push_async(
@@ -551,8 +562,14 @@ class TestPushAsyncConcurrency:
                 json_mode=True,
             )
 
-        # Should have some errors from rate limiting
-        assert len(result.errors) >= 0  # TDD: verify actual behavior once implemented
+        assert result.success is False
+        assert result.versions_pushed == 0
+        assert len(put_keys) == 10
+        assert len(result.errors) == 2
+        assert all("SlowDown: Rate limit exceeded" in error for error in result.errors)
+        # Exactly the uploads that succeeded are rolled back.
+        assert sorted(deleted_keys) == sorted(set(put_keys) - set(failed_keys))
+        assert len(deleted_keys) == 8
 
     @pytest.mark.asyncio
     async def test_push_async_circuit_breaker_on_failures(self, async_catalog: Path) -> None:
