@@ -1858,6 +1858,7 @@ async def _upload_metadata_files_async(
     collection: str,
     *,
     include_catalog_root: bool = False,
+    extra_files: list[Path] | None = None,
     concurrency: int = 50,
     verbose: bool = False,
 ) -> tuple[int, list[str]]:
@@ -1875,6 +1876,8 @@ async def _upload_metadata_files_async(
         prefix: Prefix in object storage.
         collection: Collection identifier.
         include_catalog_root: If True, include root-level metadata files.
+        extra_files: Files to upload in the same batch, such as the files of
+            the intermediate catalogs.
         concurrency: Maximum concurrent uploads.
         verbose: If True, print per-file upload details.
 
@@ -1887,6 +1890,7 @@ async def _upload_metadata_files_async(
         collection,
         include_catalog_root=include_catalog_root,
     )
+    metadata_files.extend(extra_files or [])
 
     if not metadata_files:
         return 0, []
@@ -2136,14 +2140,25 @@ async def _sync_collection_metadata_only(
     files that ``_discover_catalog_files`` finds, such as ``AGENTS.md``. Without
     it an edited agent guide never reaches the bucket.
 
+    A standalone push (``include_catalog_root``) also uploads the files of the
+    intermediate catalogs above a nested collection, such as their AGENTS.md
+    (Issue #905). A catalog-wide push leaves them to
+    ``_push_all_upload_root_files``, which uploads them once for all collections.
+
     A push with no new version and no metadata change uploads nothing.
     """
+    intermediate_files = (
+        _discover_intermediate_catalog_files(catalog_root, [collection])
+        if include_catalog_root
+        else []
+    )
     metadata_uploaded, metadata_errors = await _upload_metadata_files_async(
         store,
         catalog_root,
         prefix,
         collection,
         include_catalog_root=include_catalog_root,
+        extra_files=intermediate_files,
         concurrency=concurrency,
         verbose=verbose,
     )

@@ -329,3 +329,69 @@ class TestIntermediateSidecarFiles:
         }
 
         assert "tst/AGENTS.md" in uploaded
+
+
+def _push_unchanged_collection(
+    catalog_root: Path, collection: str, *, include_catalog: bool
+) -> tuple[PushResult, list[str]]:
+    """Push a collection whose remote versions.json equals the local one."""
+    import asyncio
+
+    from portolan_cli.sync.push import push_async
+
+    local_versions = json.loads((catalog_root / collection / "versions.json").read_text())
+    uploaded_keys: list[str] = []
+
+    async def record_put(store: object, key: str, content: object, **kwargs: object) -> None:
+        uploaded_keys.append(key)
+
+    remote = AsyncMock(return_value=(local_versions, "etag-1"))
+    store = MagicMock(return_value=(MagicMock(), "prefix"))
+    with (
+        patch.multiple(
+            "portolan_cli.sync.push", setup_store=store, _fetch_remote_versions_async=remote
+        ),
+        patch("portolan_cli.sync.push.obs.put_async", new=record_put),
+    ):
+        result = asyncio.run(
+            push_async(
+                catalog_root=catalog_root,
+                collection=collection,
+                destination="s3://bucket/catalog",
+                include_catalog=include_catalog,
+                json_mode=True,
+            )
+        )
+    return result, uploaded_keys
+
+
+class TestMetadataOnlyPushIntermediateFiles:
+    """A push with no new version still syncs intermediate files (#816, #905).
+
+    An edited intermediate AGENTS.md bumps no version. A standalone push takes
+    the metadata-only path, which must upload it like a root or collection file.
+    """
+
+    def test_standalone_push_uploads_intermediate_agents_md(self, nested_catalog: Path) -> None:
+        (nested_catalog / "tst" / "AGENTS.md").write_text("# edited agents\n")
+
+        result, keys = _push_unchanged_collection(
+            nested_catalog, "tst/latest/adm0", include_catalog=True
+        )
+
+        assert result.success is True
+        assert result.versions_pushed == 0
+        assert "prefix/tst/AGENTS.md" in keys, keys
+        assert "prefix/tst/latest/catalog.json" in keys, keys
+
+    def test_catalog_wide_member_push_leaves_intermediates_to_root_phase(
+        self, nested_catalog: Path
+    ) -> None:
+        """include_catalog=False: _push_all_upload_root_files uploads them once."""
+        (nested_catalog / "tst" / "AGENTS.md").write_text("# edited agents\n")
+
+        _result, keys = _push_unchanged_collection(
+            nested_catalog, "tst/latest/adm0", include_catalog=False
+        )
+
+        assert not any(k.startswith("prefix/tst/") and "/adm0/" not in k for k in keys), keys
