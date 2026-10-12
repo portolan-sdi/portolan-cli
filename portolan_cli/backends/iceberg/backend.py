@@ -25,7 +25,6 @@ from portolan_cli.backends.iceberg.versioning import (
     version_to_snapshot_properties,
 )
 from portolan_cli.backends.protocol import DriftReport, SchemaFingerprint
-from portolan_cli.utils import href_root
 from portolan_cli.versions import Asset, SchemaInfo, Version
 
 if TYPE_CHECKING:
@@ -33,6 +32,35 @@ if TYPE_CHECKING:
     from pyiceberg.table import Table
 
 NAMESPACE = "portolake"
+
+
+def _merge_into_collection_json(
+    path: Path,
+    fields: dict[str, Any],
+    extensions: tuple[str, ...],
+    assets: dict[str, dict[str, Any]],
+) -> None:
+    """Merge the Iceberg fields, extensions, and assets into ``collection.json``.
+
+    The merge keeps every other field in the file.
+
+    Args:
+        path: The collection.json file.
+        fields: ``table:*`` and ``iceberg:*`` fields. They replace earlier values.
+        extensions: Extension schema URLs to add when absent.
+        assets: Asset dicts by key. They replace an asset with the same key.
+    """
+    import json
+
+    from portolan_cli.json_io import write_json_atomic
+
+    document: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    document.update(fields)
+    declared = document.setdefault("stac_extensions", [])
+    declared.extend(url for url in extensions if url not in declared)
+    if assets:
+        document.setdefault("assets", {}).update(assets)
+    write_json_atomic(path, document)
 
 
 def _is_fetchable(href: str) -> bool:
@@ -396,8 +424,9 @@ class IcebergBackend:
             # reader can fetch, so a warehouse the catalog does not publish
             # over the web carries the connection fields alone.
             metadata_location = stac_metadata.get("iceberg:metadata_location")
+            new_assets: dict[str, pystac.Asset] = {}
             if metadata_location and _is_fetchable(str(metadata_location)):
-                collection.assets["iceberg"] = pystac.Asset(
+                new_assets["iceberg"] = pystac.Asset(
                     href=str(metadata_location),
                     media_type="application/vnd.apache.iceberg+json",
                     roles=["metadata"],
@@ -406,9 +435,17 @@ class IcebergBackend:
                         "iceberg_scan() or PyIceberg StaticTable"
                     ),
                 )
+            collection.assets.update(new_assets)
 
-            collection.normalize_hrefs(href_root(collection_dir))
-            collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
+            # Merge into the file on disk. The enrichment hooks already wrote
+            # plugin fields there, and the in-memory collection does not hold
+            # them. A pystac save would drop them (#947).
+            _merge_into_collection_json(
+                Path(collection_dir) / "collection.json",
+                fields=stac_metadata,
+                extensions=(STAC_TABLE_EXTENSION, STAC_ICEBERG_EXTENSION),
+                assets={key: asset.to_dict() for key, asset in new_assets.items()},
+            )
         except Exception:
             logger.warning(
                 "Could not update STAC extensions for collection %s",
