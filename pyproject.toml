@@ -47,6 +47,7 @@ dependencies = [
     "lxml>=6.1.0", # CVE-2026-41066 fix (transitive via owslib, pinned for security)
     "pillow>=12.3.0", # PYSEC-2026-2253..2257 fix (transitive via rasterio, pinned for security)
     "pmtiles>=3.0.0", # PMTiles metadata reading (header, bounds, zoom levels)
+    "pluggy>=1.5.0", # Plugin hooks (#947). Pure Python, no dependencies. 1.5 adds warn_on_impl_args for hook deprecation
     "pyogrio>=0.7.0", # FlatGeobuf metadata reading (transitive via geoparquet-io, but we import directly)
     "pygments>=2.20.0", # CVE-2026-4539 fix (transitive via rich, pinned for security)
     "requests>=2.33.0", # CVE-2026-25645 fix (transitive, pinned for security)
@@ -429,6 +430,7 @@ ignore_imports = [
     "portolan_cli.version_ops -> portolan_cli.backends",
     "portolan_cli.version_ops -> portolan_cli.backends.protocol",
     "portolan_cli.cli -> portolan_cli.backends.protocol", # TYPE_CHECKING only
+    "portolan_cli.hookspecs -> portolan_cli.backends.protocol", # TYPE_CHECKING only
 ]
 
 [[tool.importlinter.contracts]]
@@ -558,6 +560,7 @@ ignore_imports = [
     "portolan_cli.cli -> click",
     "portolan_cli.cli_types -> click",
     "portolan_cli.emit -> click",
+    "portolan_cli.plugins.commands -> click",
     # The package root names the Click group for type checkers only. It loads
     # the group lazily through __getattr__.
     "portolan_cli -> portolan_cli.cli",
@@ -573,6 +576,7 @@ protected_modules = [
     "portolan_cli.emit",
     "portolan_cli.add_progress",
     "portolan_cli.scan.progress",
+    "portolan_cli.plugins.commands",
 ]
 allowed_importers = [
     "portolan_cli.cli",
@@ -580,6 +584,7 @@ allowed_importers = [
     "portolan_cli.emit",
     "portolan_cli.add_progress",
     "portolan_cli.scan.progress",
+    "portolan_cli.plugins.commands",
 ]
 ignore_imports = [
     # The package root names the Click group for type checkers only. It loads

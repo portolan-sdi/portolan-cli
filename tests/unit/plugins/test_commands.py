@@ -1,0 +1,157 @@
+"""Tests for the lazy plugin command group (#947)."""
+
+from __future__ import annotations
+
+import sys
+from importlib.metadata import EntryPoint
+from types import SimpleNamespace
+from typing import cast
+
+import click
+import pytest
+from click.testing import CliRunner
+
+from portolan_cli.plugins import manager
+from portolan_cli.plugins.commands import PluginGroup
+
+pytestmark = pytest.mark.unit
+
+_FIXTURES = "tests.unit.plugin_fixtures"
+
+
+def _command(name: str, target: str, dist: str = "portolan-example") -> EntryPoint:
+    ep = EntryPoint(name=name, value=f"{_FIXTURES}.{target}", group="portolan.commands")
+    # `_for` attaches a distribution, as importlib.metadata does on discovery.
+    attach = getattr(ep, "_for")  # noqa: B009 - private, absent from the stubs
+    return cast("EntryPoint", attach(SimpleNamespace(name=dist)))
+
+
+def _root() -> click.Group:
+    """Build a small CLI with the same shape as `portolan`."""
+
+    @click.group(cls=PluginGroup)
+    def root() -> None:
+        """Root."""
+
+    @root.command()
+    def add() -> None:
+        """Built-in add."""
+        click.echo("built-in add")
+
+    @root.group()
+    def version() -> None:
+        """Version commands."""
+
+    @version.command(name="list")
+    def list_versions() -> None:
+        """List versions."""
+
+    return root
+
+
+def test_help_lists_plugin_command_without_importing_it(
+    installed: list[EntryPoint],
+) -> None:
+    """`--help` reads the name from metadata and imports nothing."""
+    installed.append(_command("lazy", "lazy_commands:lazy"))
+    sys.modules.pop(f"{_FIXTURES}.lazy_commands", None)
+
+    result = CliRunner().invoke(_root(), ["--help"])
+
+    assert result.exit_code == 0
+    assert "lazy     (plugin: portolan-example)" in result.output
+    assert f"{_FIXTURES}.lazy_commands" not in sys.modules
+
+
+def test_plugin_group_runs(installed: list[EntryPoint]) -> None:
+    """A plugin command group runs under its entry point name."""
+    installed.append(_command("example", "commands:group"))
+
+    result = CliRunner().invoke(_root(), ["example", "hello"])
+
+    assert result.exit_code == 0
+    assert result.output == "hello from the plugin\n"
+
+
+def test_dotted_name_attaches_to_a_builtin_group(installed: list[EntryPoint]) -> None:
+    """`version.rollback` becomes `portolan version rollback`."""
+    installed.append(_command("version.rollback", "commands:rollback"))
+    root = _root()
+
+    help_result = CliRunner().invoke(root, ["version", "--help"])
+    run_result = CliRunner().invoke(root, ["version", "rollback"])
+
+    assert "rollback  (plugin: portolan-example)" in help_result.output
+    assert "list      List versions." in help_result.output
+    assert run_result.output == "plugin rollback\n"
+    assert "version.rollback" not in CliRunner().invoke(root, ["--help"]).output
+
+
+def test_builtin_wins_a_name_collision_and_help_warns(installed: list[EntryPoint]) -> None:
+    """A plugin cannot replace a built-in command."""
+    installed.append(_command("add", "commands:add"))
+    root = _root()
+
+    run_result = CliRunner().invoke(root, ["add"])
+    help_result = CliRunner().invoke(root, ["--help"])
+
+    assert run_result.output == "built-in add\n"
+    assert "Plugin command 'add' from portolan-example has the name of a built-in" in (
+        help_result.output
+    )
+
+
+def test_load_failure_warns_and_leaves_no_command(installed: list[EntryPoint]) -> None:
+    """A command that fails to import produces a warning, then Click's usual error."""
+    installed.append(_command("broken", "broken:command"))
+
+    result = CliRunner().invoke(_root(), ["broken"])
+
+    assert result.exit_code == 2
+    assert "Plugin command 'broken' from portolan-example did not load" in result.output
+    assert "No such command 'broken'" in result.output
+
+
+def test_non_command_object_warns(installed: list[EntryPoint]) -> None:
+    """An entry point must name a Click command."""
+    installed.append(_command("odd", "commands:not_a_command"))
+
+    result = CliRunner().invoke(_root(), ["odd"])
+
+    assert result.exit_code == 2
+    assert "Plugin command 'odd' from portolan-example is not a Click command" in result.output
+
+
+def test_none_hides_plugin_commands(
+    installed: list[EntryPoint], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`PORTOLAN_PLUGINS=none` lists no plugin command."""
+    installed.append(_command("example", "commands:group"))
+    monkeypatch.setenv(manager.ENV_VAR, "none")
+
+    result = CliRunner().invoke(_root(), ["--help"])
+
+    assert "example" not in result.output
+    assert "add" in result.output
+
+
+def test_builtin_distribution_ignores_none(
+    installed: list[EntryPoint], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A command that portolan-cli declares loads with `PORTOLAN_PLUGINS=none`."""
+    installed.append(_command("version.rollback", "commands:rollback", dist="portolan-cli"))
+    monkeypatch.setenv(manager.ENV_VAR, "none")
+
+    result = CliRunner().invoke(_root(), ["version", "rollback"])
+
+    assert result.output == "plugin rollback\n"
+
+
+def test_portolan_cli_uses_plugin_groups() -> None:
+    """The root group and every built-in subgroup accept plugin commands."""
+    from portolan_cli.cli import cli
+
+    groups = [cli, *(c for c in cli.commands.values() if isinstance(c, click.Group))]
+
+    assert len(groups) == 6
+    assert all(isinstance(group, PluginGroup) for group in groups)

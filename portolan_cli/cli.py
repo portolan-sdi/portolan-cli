@@ -52,6 +52,7 @@ from portolan_cli.licensing import (
 from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.output import detail, error, set_writer, success, warn
 from portolan_cli.output import info as info_output
+from portolan_cli.plugins.commands import PluginGroup
 from portolan_cli.remove import remove_files
 from portolan_cli.scan.core import (
     IssueType,
@@ -365,7 +366,7 @@ def resolve_aws_region(
     )
 
 
-@click.group()
+@click.group(cls=PluginGroup)
 @click.version_option()
 @click.option(
     "--format",
