@@ -4,8 +4,9 @@ tests/conftest.py applies the guard to each test through an autouse fixture.
 The guard has two layers, because Portolan reaches the network through two
 kinds of client:
 
-- Python clients call ``socket.connect``. The guard replaces it. A remote
-  address raises ``NetworkBlockedError`` at once, with the test and the host.
+- Python clients call ``socket.connect``, or ``socket.sendto`` for UDP. The
+  guard replaces both. A remote address raises ``NetworkBlockedError`` at
+  once, with the test and the host.
 - Rust and C clients (obstore, GDAL through libcurl) open their own sockets.
   The guard points the proxy variables at a sentinel proxy on the loopback
   interface. The sentinel records the host that each request asks for and
@@ -149,6 +150,7 @@ class NetworkGuard:
         self._seen = len(self.sentinel.targets)
         connect = socket.socket.connect
         connect_ex = socket.socket.connect_ex
+        sendto = socket.socket.sendto
 
         def guarded_connect(sock: socket.socket, address: Any) -> None:
             self.check(address)
@@ -158,8 +160,15 @@ class NetworkGuard:
             self.check(address)
             return connect_ex(sock, address)
 
+        # A UDP socket sends without connect. sendto takes (data, address) or
+        # (data, flags, address), so the address is the last argument.
+        def guarded_sendto(sock: socket.socket, *args: Any) -> int:
+            self.check(args[-1])
+            return sendto(sock, *args)
+
         monkeypatch.setattr(socket.socket, "connect", guarded_connect)
         monkeypatch.setattr(socket.socket, "connect_ex", guarded_connect_ex)
+        monkeypatch.setattr(socket.socket, "sendto", guarded_sendto)
         for key in PROXY_KEYS:
             monkeypatch.setenv(key, self.sentinel.url)
         for key in NO_PROXY_KEYS:

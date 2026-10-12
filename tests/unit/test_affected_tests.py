@@ -185,3 +185,62 @@ def test_the_real_graph_selects_importers_and_skips_the_rest() -> None:
     assert selection.full is False
     assert "tests/unit/test_json_output.py" in selection.targets
     assert "tests/unit/test_push_async.py" not in selection.targets
+
+
+def test_referenced_names_resolve_parent_package_and_relative_imports() -> None:
+    source = (
+        "from portolan_cli import legacy\n"
+        "from .legacy import Item\n"
+        "from ..sync import push\n"
+        "import portolan_cli.versions\n"
+        "patch('portolan_cli.bbox.to_2d_bbox')\n"
+    )
+
+    names = at.referenced_names(source, "portolan_cli/sub/mod.py")
+
+    assert "portolan_cli.legacy" in names
+    assert "portolan_cli.sub.legacy" in names
+    assert "portolan_cli.sub.legacy.Item" in names
+    assert "portolan_cli.sync.push" in names
+    assert "portolan_cli.versions" in names
+    assert "portolan_cli.bbox.to_2d_bbox" in names
+
+
+def test_a_relative_import_in_a_package_init_resolves_from_the_package() -> None:
+    names = at.referenced_names("from .legacy import Item\n", "portolan_cli/sub/__init__.py")
+
+    assert "portolan_cli.sub.legacy" in names
+
+
+@pytest.mark.integration
+def test_deleted_importers_find_every_import_form(tmp_path: Path) -> None:
+    """The merge base holds three importers. A plain text search finds only the first."""
+    import subprocess
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
+    files = {
+        "portolan_cli/__init__.py": "",
+        "portolan_cli/legacy.py": "class Item: ...\n",
+        "portolan_cli/dotted.py": "import portolan_cli.legacy\n",
+        "portolan_cli/parent.py": "from portolan_cli import legacy\n",
+        "portolan_cli/relative.py": "from .legacy import Item\n",
+        "portolan_cli/unrelated.py": "legacy = 1\n",
+        "tests/unit/test_legacy.py": "from portolan_cli import legacy\n",
+    }
+    for path, text in files.items():
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text(text, encoding="utf-8")
+    git("init", "-q")
+    git("add", "-A")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base")
+
+    find = at._deleted_importers_at(tmp_path, "HEAD")
+
+    assert find("portolan_cli.legacy") == {
+        "portolan_cli.dotted",
+        "portolan_cli.parent",
+        "portolan_cli.relative",
+        "tests/unit/test_legacy.py",
+    }

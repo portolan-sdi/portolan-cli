@@ -143,3 +143,28 @@ def test_the_host_of_a_target() -> None:
 
     assert _host("example.com:443") == "example.com"
     assert _host("http://169.254.169.254/latest/api/token") == "169.254.169.254"
+
+
+def test_a_remote_datagram_is_blocked(network_guard: NetworkGuard) -> None:
+    """A UDP socket sends without connect, so sendto needs its own check."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        with pytest.raises(NetworkBlockedError):
+            sock.sendto(b"x", _REMOTE)
+        with pytest.raises(NetworkBlockedError):
+            sock.sendto(b"x", 0, _REMOTE)
+
+    assert network_guard.attempts == ["192.0.2.1:80", "192.0.2.1:80"]
+    network_guard.attempts.clear()
+
+
+def test_a_loopback_datagram_goes_through(network_guard: NetworkGuard) -> None:
+    with (
+        socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server,
+        socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client,
+    ):
+        server.bind(("127.0.0.1", 0))
+        server.settimeout(2)
+        client.sendto(b"ping", server.getsockname())
+        assert server.recv(16) == b"ping"
+
+    assert network_guard.attempts == []

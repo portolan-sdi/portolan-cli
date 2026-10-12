@@ -23,7 +23,8 @@ Selection:
   ``pyproject.toml``, ``uv.lock``, and any file under ``tests/fixtures`` select
   the full suite.
 - A deleted module selects the tests of each module that imported it at the
-  merge base.
+  merge base, in any form: ``import portolan_cli.legacy``, ``from portolan_cli
+  import legacy``, or ``from .legacy import Item``.
 - Any other changed file selects the test files whose source names it, such as
   a test that reads ``AGENTS.md``.
 """
@@ -77,6 +78,57 @@ def _longest_known_prefix(dotted: str, known: set[str]) -> str | None:
     return None
 
 
+def _package_of(path: str | None) -> list[str] | None:
+    """Return the package parts that a relative import in ``path`` starts from."""
+    name = module_name(path) if path is not None else None
+    if name is None:
+        return None
+    parts = name.split(".")
+    return parts if PurePosixPath(path or "").name == "__init__.py" else parts[:-1]
+
+
+def referenced_names(source: str, path: str | None = None) -> set[str]:
+    """Return the dotted names that a source file imports or names in a string.
+
+    Args:
+        source: Python source.
+        path: Repository path of the source. A ``portolan_cli`` path resolves
+            relative imports such as ``from .legacy import Item``.
+
+    Returns:
+        Each imported module, each ``module.name`` of a ``from`` import, and
+        each ``portolan_cli.`` string such as a patch target.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+    package = _package_of(path)
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0:
+                base = node.module or ""
+            elif package is not None and node.level - 1 <= len(package):
+                parts = package[: len(package) - (node.level - 1)]
+                base = ".".join([*parts, node.module] if node.module else parts)
+            else:
+                continue
+            if base:
+                names.add(base)
+                names.update(f"{base}.{alias.name}" for alias in node.names)
+        elif (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.startswith(f"{PACKAGE}.")
+            and " " not in node.value
+        ):
+            names.add(node.value)
+    return names
+
+
 def imported_modules(source: str, known: set[str]) -> set[str]:
     """Return the ``portolan_cli`` modules a test file's source refers to.
 
@@ -89,26 +141,8 @@ def imported_modules(source: str, known: set[str]) -> set[str]:
         package name is left out, because the package root imports nothing at
         run time.
     """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return set()
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            names.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            names.add(node.module)
-            names.update(f"{node.module}.{alias.name}" for alias in node.names)
-        elif (
-            isinstance(node, ast.Constant)
-            and isinstance(node.value, str)
-            and node.value.startswith(f"{PACKAGE}.")
-            and " " not in node.value
-        ):
-            names.add(node.value)
     found = set()
-    for name in names:
+    for name in referenced_names(source):
         if name.split(".")[0] != PACKAGE:
             continue
         module = _longest_known_prefix(name, known)
@@ -223,8 +257,11 @@ def _deleted_importers_at(repo: Path, base: str) -> Callable[[str], set[str]]:
         return _git(repo, "merge-base", base, "HEAD").strip()
 
     def find(module: str) -> set[str]:
+        # Each import form names the last part of the module, so a text search
+        # for it finds every candidate. The parse then drops the false matches.
+        leaf = module.rsplit(".", 1)[-1]
         result = subprocess.run(
-            ["git", "grep", "-l", "-w", "-F", module, merge_base(), "--", PACKAGE, TESTS_DIR],
+            ["git", "grep", "-l", "-w", "-F", leaf, merge_base(), "--", PACKAGE, TESTS_DIR],
             cwd=repo,
             capture_output=True,
             text=True,
@@ -233,6 +270,12 @@ def _deleted_importers_at(repo: Path, base: str) -> Callable[[str], set[str]]:
         found = set()
         for line in result.stdout.splitlines():
             path = line.split(":", 1)[1]
+            if not path.endswith(".py") or module_name(path) == module:
+                continue
+            source = _git(repo, "show", f"{merge_base()}:{path}")
+            names = referenced_names(source, path)
+            if not any(name == module or name.startswith(f"{module}.") for name in names):
+                continue
             name = module_name(path)
             found.add(name if name is not None else path)
         return found
