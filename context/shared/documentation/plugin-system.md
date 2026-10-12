@@ -156,16 +156,16 @@ factory's `ValueError` through unchanged.
 `portolan.commands`. They load with `PORTOLAN_PLUGINS=none`, because
 `portolan-cli` declares them.
 
-The package root loads `IcebergBackend` on first access. The `hooks` and `cli`
-modules therefore import no pyiceberg or pyarrow. The package imports only the
+The package root loads `IcebergBackend` on first access, so the `hooks` and
+`cli` modules import no pyiceberg or pyarrow. The package imports only the
 public modules, and `test_boundary.py` checks it. That rule replaced the
 `iceberg-backend-isolation` import-linter contract.
 
 ## Public surface
 
 `portolan_cli.api` reads each name from its source module on every access and
-keeps no copy. A test that patches the source module therefore reaches a
-plugin that imports the name from `api`.
+keeps no copy. A patch on the source module also changes the name that a
+plugin imports from `api`.
 
 `tests/unit/plugins/public_api.txt` records the names in `portolan_cli.api`
 and `portolan_cli.testing`, and every hookspec signature. A change to it
