@@ -29,6 +29,7 @@ from hypothesis import strategies as st
 from portolan_cli.add import add_files
 from portolan_cli.constants import TABULAR_EXTENSIONS
 from portolan_cli.errors import NoGeometryError
+from tests.unit.add_stubs import add_mixed_directory_without_raising, write_point_geojson
 
 
 @pytest.fixture
@@ -595,39 +596,9 @@ class TestTabularParquetHypothesis:
             # Create GeoJSON files
             for i in range(num_geo_files):
                 geojson_file = collection_dir / f"geo_{i}.geojson"
-                geojson_data = {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4 + i, 37.8]},
-                            "properties": {"name": f"Point {i}"},
-                        }
-                    ],
-                }
-                geojson_file.write_text(json.dumps(geojson_data))
+                write_point_geojson(geojson_file, i)
 
-            # Mock prepare_item and finalize_items to track calls
-            # Per Issue #281: add_files now calls prepare_item + finalize_items
-            with (
-                patch("portolan_cli.add.prepare_item") as mock_add,
-                patch("portolan_cli.add.finalize_items") as mock_finalize,
-            ):
-                mock_add.return_value = MagicMock(item_id="item", collection_id="collection")
-                mock_finalize.return_value = []
-
-                # This should NOT raise
-                try:
-                    added, skipped, failures = add_files(
-                        paths=[collection_dir],
-                        catalog_root=tmp_path,
-                        collection_id="collection",
-                    )
-                except Exception as e:
-                    pytest.fail(f"add_files raised for mixed directory: {e}")
-
-                # Should have attempted to add all geo files
-                # (actual count may differ due to mocking behavior)
+            add_mixed_directory_without_raising(collection_dir, tmp_path, "item")
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
