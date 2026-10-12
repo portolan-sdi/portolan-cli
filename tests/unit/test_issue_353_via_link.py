@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.extract import build_arcgis_catalog, make_layer_result, make_report
+
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("no_extract_side_requests")]
 
 
@@ -28,14 +30,7 @@ class TestViaLinkGeneration:
     """Tests for adding `via` provenance link to collection.json."""
 
     def test_auto_init_adds_via_link_to_collection(self, tmp_path: Path) -> None:
-        """_auto_init_catalog adds via link to each collection."""
-        from portolan_cli.extract.arcgis.orchestrator import _auto_init_catalog
-        from portolan_cli.extract.arcgis.report import (
-            ExtractionReport,
-            ExtractionSummary,
-            LayerResult,
-            MetadataExtracted,
-        )
+        """build_arcgis_catalog adds via link to each collection."""
         from portolan_cli.licensing import ResolvedLicense
 
         output_dir = tmp_path / "test_catalog"
@@ -45,54 +40,25 @@ class TestViaLinkGeneration:
         layer_dir = output_dir / "test_layer"
         layer_dir.mkdir()
         fixture_path = FIXTURES_DIR / "simple.parquet"
-        output_parquet = layer_dir / "data.parquet"
+        output_parquet = layer_dir / f"{layer_dir.name}.parquet"
         shutil.copy(fixture_path, output_parquet)
 
         source_url = (
             "https://services.arcgis.com/abc/arcgis/rest/services/TestService/FeatureServer"
         )
-        report = ExtractionReport(
-            extraction_date="2026-04-23T12:00:00Z",
-            source_url=source_url,
-            portolan_version="0.1.0",
-            gpio_version="0.5.0",
-            metadata_extracted=MetadataExtracted(
-                source_url=source_url,
-                description=None,
-                attribution=None,
-                keywords=None,
-                contact_name=None,
-                processing_notes=None,
-                known_issues=None,
-                license_info_raw=None,
-            ),
-            layers=[
-                LayerResult(
-                    id=0,
+        report = make_report(
+            [
+                make_layer_result(
+                    layer_id=0,
                     name="test_layer",
-                    status="success",
-                    output_path="test_layer/data.parquet",
-                    features=100,
+                    output_path="test_layer/test_layer.parquet",
                     size_bytes=output_parquet.stat().st_size,
-                    duration_seconds=1.0,
-                    warnings=[],
-                    error=None,
-                    attempts=1,
                 )
             ],
-            summary=ExtractionSummary(
-                total_layers=1,
-                succeeded=1,
-                failed=0,
-                skipped=0,
-                empty=0,
-                total_features=100,
-                total_size_bytes=output_parquet.stat().st_size,
-                total_duration_seconds=1.0,
-            ),
+            source_url,
         )
 
-        _auto_init_catalog(
+        build_arcgis_catalog(
             output_dir, report, ResolvedLicense(license_id="CC-BY-4.0", license_url=None)
         )
 
@@ -118,13 +84,6 @@ class TestViaLinkGeneration:
 
     def test_via_link_uses_layer_specific_url_when_available(self, tmp_path: Path) -> None:
         """When layer URL differs from service URL, use layer-specific URL."""
-        from portolan_cli.extract.arcgis.orchestrator import _auto_init_catalog
-        from portolan_cli.extract.arcgis.report import (
-            ExtractionReport,
-            ExtractionSummary,
-            LayerResult,
-            MetadataExtracted,
-        )
         from portolan_cli.licensing import ResolvedLicense
 
         output_dir = tmp_path / "test_catalog"
@@ -133,7 +92,7 @@ class TestViaLinkGeneration:
         layer_dir = output_dir / "census_tracts"
         layer_dir.mkdir()
         fixture_path = FIXTURES_DIR / "simple.parquet"
-        output_parquet = layer_dir / "data.parquet"
+        output_parquet = layer_dir / f"{layer_dir.name}.parquet"
         shutil.copy(fixture_path, output_parquet)
 
         # Service URL is the FeatureServer, but layer is index 3
@@ -142,48 +101,19 @@ class TestViaLinkGeneration:
         )
         layer_url = f"{service_url}/3"
 
-        report = ExtractionReport(
-            extraction_date="2026-04-23T12:00:00Z",
-            source_url=service_url,
-            portolan_version="0.1.0",
-            gpio_version="0.5.0",
-            metadata_extracted=MetadataExtracted(
-                source_url=service_url,
-                description=None,
-                attribution=None,
-                keywords=None,
-                contact_name=None,
-                processing_notes=None,
-                known_issues=None,
-                license_info_raw=None,
-            ),
-            layers=[
-                LayerResult(
-                    id=3,  # Layer index 3
+        report = make_report(
+            [
+                make_layer_result(
+                    layer_id=3,
                     name="Census Tracts",
-                    status="success",
-                    output_path="census_tracts/data.parquet",
-                    features=100,
+                    output_path="census_tracts/census_tracts.parquet",
                     size_bytes=output_parquet.stat().st_size,
-                    duration_seconds=1.0,
-                    warnings=[],
-                    error=None,
-                    attempts=1,
                 )
             ],
-            summary=ExtractionSummary(
-                total_layers=1,
-                succeeded=1,
-                failed=0,
-                skipped=0,
-                empty=0,
-                total_features=100,
-                total_size_bytes=output_parquet.stat().st_size,
-                total_duration_seconds=1.0,
-            ),
+            service_url,
         )
 
-        _auto_init_catalog(
+        build_arcgis_catalog(
             output_dir, report, ResolvedLicense(license_id="CC-BY-4.0", license_url=None)
         )
 
@@ -201,13 +131,6 @@ class TestViaLinkGeneration:
 
     def test_no_via_link_for_failed_layers(self, tmp_path: Path) -> None:
         """Failed layers don't get collections, so no via link needed."""
-        from portolan_cli.extract.arcgis.orchestrator import _auto_init_catalog
-        from portolan_cli.extract.arcgis.report import (
-            ExtractionReport,
-            ExtractionSummary,
-            LayerResult,
-            MetadataExtracted,
-        )
         from portolan_cli.licensing import ResolvedLicense
 
         output_dir = tmp_path / "test_catalog"
@@ -215,49 +138,21 @@ class TestViaLinkGeneration:
         (output_dir / ".portolan").mkdir()
 
         source_url = "https://services.arcgis.com/abc/arcgis/rest/services/Test/FeatureServer"
-        report = ExtractionReport(
-            extraction_date="2026-04-23T12:00:00Z",
-            source_url=source_url,
-            portolan_version="0.1.0",
-            gpio_version="0.5.0",
-            metadata_extracted=MetadataExtracted(
-                source_url=source_url,
-                description=None,
-                attribution=None,
-                keywords=None,
-                contact_name=None,
-                processing_notes=None,
-                known_issues=None,
-                license_info_raw=None,
-            ),
-            layers=[
-                LayerResult(
-                    id=0,
+        report = make_report(
+            [
+                make_layer_result(
+                    layer_id=0,
                     name="Failed Layer",
                     status="failed",
                     output_path=None,
-                    features=None,
-                    size_bytes=None,
-                    duration_seconds=None,
-                    warnings=[],
                     error="Network error",
-                    attempts=3,
                 )
             ],
-            summary=ExtractionSummary(
-                total_layers=1,
-                succeeded=0,
-                failed=1,
-                skipped=0,
-                empty=0,
-                total_features=0,
-                total_size_bytes=0,
-                total_duration_seconds=0.0,
-            ),
+            source_url,
         )
 
         # Should not create catalog (no successful extractions)
-        _auto_init_catalog(
+        build_arcgis_catalog(
             output_dir, report, ResolvedLicense(license_id="CC-BY-4.0", license_url=None)
         )
 

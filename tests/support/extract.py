@@ -8,15 +8,25 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from portolan_cli.extract.common.source import Discovery, build_report
+from portolan_cli.extract.arcgis.discovery import LayerInfo as ArcGISLayerInfo
+from portolan_cli.extract.arcgis.orchestrator import ArcGISLayer, ArcGISLayerSource
+from portolan_cli.extract.common.source import (
+    Discovery,
+    LayerRef,
+    build_catalog,
+    build_report,
+)
 from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from portolan_cli.extract.common.report import (
         ExtractionReport,
         LayerResult,
         MetadataExtracted,
     )
+    from portolan_cli.licensing import ResolvedLicense
 
 
 def make_report(
@@ -92,4 +102,42 @@ def make_wfs_discovery(
         contact_name="Test Contact",
         access_constraints=None,
         fees=None,
+    )
+
+
+def build_arcgis_catalog(
+    output_dir: Path,
+    report: ExtractionReport,
+    resolved_license: ResolvedLicense | None = None,
+    catalog_id: str | None = None,
+) -> None:
+    """Build the catalog for an ArcGIS ``report`` through the shared driver.
+
+    Each layer comes from the report. Its collection is the parent directory
+    of its output path, and its service URL is the report's source URL.
+    """
+    from pathlib import PurePath
+
+    layers = [
+        LayerRef(
+            id=r.id,
+            name=r.name,
+            path=PurePath(r.output_path).parent.as_posix() if r.output_path else None,
+            data=ArcGISLayer(
+                ArcGISLayerInfo(id=r.id, name=r.name, layer_type="Feature Layer"),
+                report.source_url,
+            ),
+        )
+        for r in report.layers
+    ]
+    discovery = ArcGISLayerSource.discovery_from(
+        report.source_url, report.metadata_extracted, layers
+    )
+    build_catalog(
+        ArcGISLayerSource(),
+        discovery,
+        output_dir,
+        report,
+        resolved_license=resolved_license,
+        catalog_id=catalog_id,
     )

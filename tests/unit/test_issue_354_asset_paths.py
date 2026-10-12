@@ -296,6 +296,7 @@ class TestAssetPathsInExtraction:
 
         from portolan_cli.extract.arcgis.discovery import LayerInfo, ServiceDiscoveryResult
         from portolan_cli.extract.arcgis.orchestrator import (
+            ArcGISLayerSource,
             ExtractionOptions,
             extract_arcgis_catalog,
         )
@@ -304,16 +305,15 @@ class TestAssetPathsInExtraction:
         fixture_src = FIXTURES_DIR / "simple.parquet"
 
         def mock_extract_side_effect(
-            service_url: str, layer: object, output_path: Path, options: object
-        ) -> tuple[int, int, float]:
+            self: object, service_url: str, layer: object, output_path: Path
+        ) -> int:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(fixture_src, output_path)
-            return (100, output_path.stat().st_size, 1.0)
+            return 100
 
         with (
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator._extract_single_layer",
-                side_effect=mock_extract_side_effect,
+            patch.object(
+                ArcGISLayerSource, "fetch", autospec=True, side_effect=mock_extract_side_effect
             ),
             patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock,
         ):
