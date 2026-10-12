@@ -3,6 +3,8 @@ Asset
 DriftReport
 EnrichContext
 ErrorDetail
+ExtractionReport
+Extractor
 FileInfo
 FormatContext
 FormatHandler
@@ -55,6 +57,7 @@ write_raster_thumbnail
 portolan_backends() -> 'dict[str, BackendFactory]'
 portolan_enrich_collection(collection: 'dict[str, Any]', context: 'EnrichContext') -> 'None'
 portolan_enrich_item(item: 'dict[str, Any]', context: 'EnrichContext') -> 'None'
+portolan_extractors() -> 'list[Extractor]'
 portolan_formats() -> 'list[FormatHandler]'
 
 # portolan_cli.testing

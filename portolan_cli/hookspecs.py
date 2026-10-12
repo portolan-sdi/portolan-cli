@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from portolan_cli.backends.protocol import VersioningBackend
+    from portolan_cli.plugins.extractors import Extractor
     from portolan_cli.plugins.formats import FormatHandler
 
     BackendFactory = Callable[..., VersioningBackend]
@@ -116,4 +117,21 @@ def portolan_enrich_collection(collection: dict[str, Any], context: EnrichContex
     Args:
         collection: STAC collection JSON.
         context: Where the collection lives.
+    """
+
+
+@hookspec
+def portolan_extractors() -> list[Extractor]:  # type: ignore[empty-body]
+    """Return data sources for ``portolan extract``.
+
+    Each extractor becomes ``portolan extract <name>``. ``portolan extract
+    --help`` imports the hook module, so keep it light. The extractor imports
+    its Click command inside ``cli_command()``.
+
+    A layer-based service can implement ``LayerSource`` and wrap it with
+    ``portolan_cli.api.extractor_from``. It then gets filters, resume,
+    retry, the report, and catalog setup from Portolan.
+
+    Returns:
+        Extractors. A name that a built-in extractor uses is ignored.
     """

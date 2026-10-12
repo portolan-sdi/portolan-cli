@@ -77,11 +77,19 @@ class PluginGroup(click.Group):
 
     def list_commands(self, ctx: click.Context) -> list[str]:
         """List built-in commands and plugin commands."""
-        return sorted(set(super().list_commands(ctx)) | set(self._plugin_entries(ctx)))
+        return sorted(set(self._builtin_names(ctx)) | set(self._plugin_entries(ctx)))
+
+    def _builtin_names(self, ctx: click.Context) -> list[str]:
+        """Names of the commands that win over a ``portolan.commands`` entry."""
+        return super().list_commands(ctx)
+
+    def _builtin_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        """Return a command that wins over a ``portolan.commands`` entry."""
+        return super().get_command(ctx, cmd_name)
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         """Return a built-in command, or load the plugin command of that name."""
-        builtin = super().get_command(ctx, cmd_name)
+        builtin = self._builtin_command(ctx, cmd_name)
         if builtin is not None:
             return builtin
         ep = self._plugin_entries(ctx).get(cmd_name)
@@ -104,7 +112,11 @@ class PluginGroup(click.Group):
         Returns:
             Command name to command.
         """
-        shipped = dict(self.commands)
+        shipped: dict[str, click.Command] = {}
+        for name in self._builtin_names(ctx):
+            builtin = self._builtin_command(ctx, name)
+            if builtin is not None:
+                shipped[name] = builtin
         for name, ep in self._plugin_entries(ctx).items():
             if name not in shipped and is_builtin(ep):
                 command = self.get_command(ctx, name)
@@ -134,7 +146,7 @@ class PluginGroup(click.Group):
         plugins = self._plugin_entries(ctx)
         rows: list[tuple[str, str | click.Command]] = []
         for name in self.list_commands(ctx):
-            builtin = super().get_command(ctx, name)
+            builtin = self._builtin_command(ctx, name)
             if builtin is None and is_builtin(plugins[name]):
                 # portolan-cli's own command modules import only Click and the
                 # public API, so loading one for its help text costs little.
@@ -153,7 +165,9 @@ class PluginGroup(click.Group):
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         """Write the command list without importing a plugin."""
         plugins = self._plugin_entries(ctx)
-        collisions = [(name, plugins[name]) for name in plugins.keys() & set(self.commands)]
+        collisions = [
+            (name, plugins[name]) for name in plugins.keys() & set(self._builtin_names(ctx))
+        ]
         # An outside entry point can also lose its name to a portolan-cli one.
         path = _group_path(ctx)
         prefix = f"{path}." if path else ""
@@ -192,3 +206,27 @@ class PluginGroup(click.Group):
         # click.Command.shell_complete completes the options of this group.
         results.extend(click.Command.shell_complete(self, ctx, incomplete))
         return results
+
+
+class ExtractGroup(PluginGroup):
+    """The ``portolan extract`` group. Its subcommands come from extractors.
+
+    The ``portolan_extractors`` hook supplies the extractors, the built-in
+    ones included. The group calls the hook on first use, so ``portolan
+    --help`` builds no plugin manager. An extractor command counts as a
+    built-in command of this group.
+    """
+
+    def _builtin_names(self, ctx: click.Context) -> list[str]:
+        from portolan_cli.plugins.extractors import registered_extractors
+
+        return sorted(set(super()._builtin_names(ctx)) | set(registered_extractors()))
+
+    def _builtin_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        command = super()._builtin_command(ctx, cmd_name)
+        if command is not None:
+            return command
+        from portolan_cli.plugins.extractors import registered_extractors
+
+        extractor = registered_extractors().get(cmd_name)
+        return extractor.cli_command() if extractor is not None else None

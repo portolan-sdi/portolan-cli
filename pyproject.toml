@@ -564,6 +564,11 @@ ignore_imports = [
     "portolan_cli.emit -> click",
     "portolan_cli.plugins.commands -> click",
     "portolan_cli.backends.iceberg.cli -> click",
+    "portolan_cli.extract.*.cli -> click",
+    "portolan_cli.extract.common.cli_helpers -> click",
+    # The Extractor protocol names click.Command for type checkers only.
+    "portolan_cli.plugins.extractors -> click",
+    "portolan_cli.plugins.builtin.extractors -> click",
     # The package root names the Click group for type checkers only. It loads
     # the group lazily through __getattr__.
     "portolan_cli -> portolan_cli.cli",
@@ -581,6 +586,8 @@ protected_modules = [
     "portolan_cli.scan.progress",
     "portolan_cli.plugins.commands",
     "portolan_cli.backends.iceberg.cli",
+    "portolan_cli.extract.*.cli",
+    "portolan_cli.extract.common.cli_helpers",
 ]
 allowed_importers = [
     "portolan_cli.cli",
@@ -590,6 +597,8 @@ allowed_importers = [
     "portolan_cli.scan.progress",
     "portolan_cli.plugins.commands",
     "portolan_cli.backends.iceberg.cli",
+    "portolan_cli.extract.*.cli",
+    "portolan_cli.extract.common.cli_helpers",
 ]
 ignore_imports = [
     # The package root names the Click group for type checkers only. It loads
