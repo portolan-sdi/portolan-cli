@@ -114,7 +114,10 @@ def test_companion_asset_reruns_the_item_hook(catalog: Path, fixtures_dir: Path)
     assert failures == []
     assert [path.name for path in skipped] == ["notes.csv"]
     item = _read(item_dir / "scene-a.json")
-    assert "notes" in item["assets"], sorted(item["assets"])
+    # The asset key for a companion file differs between environments
+    # (`notes` locally, `scene-a` on the CI runners), so find it by its file.
+    hrefs = {key: asset["href"] for key, asset in item["assets"].items()}
+    assert any(href.endswith("notes.csv") for href in hrefs.values()), hrefs
     assert item["properties"]["test:assets"] == sorted(item["assets"])
 
 
