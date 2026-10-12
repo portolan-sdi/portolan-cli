@@ -140,7 +140,16 @@ def cleared_environ(**overrides: str) -> Iterator[None]:
 # refuses that download, so a fresh CI runner could load none of them. Install
 # them once, before any test starts. Under xdist only the controller does it,
 # before it starts the workers. An installed extension costs no download.
-_DUCKDB_EXTENSIONS = ("spatial", "httpfs", "encodings")
+# Each entry is (name, repository). None is the core repository. geoparquet-io
+# loads h3, geography (s2), and a5 from the community repository.
+_DUCKDB_EXTENSIONS: tuple[tuple[str, str | None], ...] = (
+    ("spatial", None),
+    ("httpfs", None),
+    ("encodings", None),
+    ("h3", "community"),
+    ("geography", "community"),
+    ("a5", "community"),
+)
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -151,9 +160,9 @@ def pytest_configure(config: pytest.Config) -> None:
 
     connection = duckdb.connect()
     try:
-        for name in _DUCKDB_EXTENSIONS:
+        for name, repository in _DUCKDB_EXTENSIONS:
             try:
-                connection.install_extension(name)
+                connection.install_extension(name, repository=repository)
             except duckdb.Error as exc:
                 # Offline, or no build for this platform. A test that needs the
                 # extension then fails and names extensions.duckdb.org.
