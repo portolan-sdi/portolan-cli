@@ -377,14 +377,14 @@ class TestInferredCollectionIdField:
 
     def test_scanned_file_has_inferred_collection_id_attribute(self, tmp_path: Path) -> None:
         """ScannedFile dataclass has inferred_collection_id field."""
-        from portolan_cli.scan.core import FormatType, ScannedFile
+        from portolan_cli.scan.core import ScannedFile
 
         # TDD: This will fail until the field is added to ScannedFile
         sf = ScannedFile(
             path=tmp_path / "collection" / "data.parquet",
             relative_path="collection/data.parquet",
             extension=".parquet",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             size_bytes=1024,
             inferred_collection_id="collection",  # NEW field
         )
@@ -392,14 +392,14 @@ class TestInferredCollectionIdField:
 
     def test_inferred_collection_id_defaults_to_empty_string(self, tmp_path: Path) -> None:
         """ScannedFile.inferred_collection_id defaults to empty string for root files."""
-        from portolan_cli.scan.core import FormatType, ScannedFile
+        from portolan_cli.scan.core import ScannedFile
 
         # TDD: The default value should be empty string
         sf = ScannedFile(
             path=tmp_path / "data.parquet",
             relative_path="data.parquet",
             extension=".parquet",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             size_bytes=1024,
             # inferred_collection_id not provided - should default to ""
         )
@@ -407,13 +407,13 @@ class TestInferredCollectionIdField:
 
     def test_inferred_collection_id_is_derived_from_relative_path(self, tmp_path: Path) -> None:
         """Collection ID is the directory portion of relative_path."""
-        from portolan_cli.scan.core import FormatType, ScannedFile
+        from portolan_cli.scan.core import ScannedFile
 
         sf = ScannedFile(
             path=tmp_path / "theme" / "subtheme" / "data.parquet",
             relative_path="theme/subtheme/data.parquet",
             extension=".parquet",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             size_bytes=1024,
             inferred_collection_id="theme/subtheme",
         )

@@ -841,12 +841,11 @@ class TestAddFilesEdgeCases:
             patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             from portolan_cli.add import PreparedItem
-            from portolan_cli.formats import FormatType
 
             mock_prepare.return_value = PreparedItem(
                 item_id="real",
                 collection_id="data",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 bbox=[0, 0, 1, 1],
                 asset_files={},
                 item_json_path=collection / "real" / "real.json",

@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import pystac
 import pytest
 
-from portolan_cli.formats import FormatType
+from portolan_cli.plugins.builtin.formats import COG, GEOPARQUET
 from portolan_cli.preparation import (
     _add_statistics_to_properties,
     _convert_and_extract_metadata,
@@ -43,9 +43,7 @@ class TestConvertAndExtractRouting:
         with patch(
             "portolan_cli.preparation.extract_pmtiles_metadata", return_value=sentinel
         ) as extract:
-            output_path, metadata = _convert_and_extract_metadata(
-                source, item_dir, FormatType.VECTOR
-            )
+            output_path, metadata = _convert_and_extract_metadata(source, item_dir, GEOPARQUET)
 
         assert output_path == item_dir / "tiles.pmtiles"
         assert output_path.read_bytes() == b"pmtiles-bytes"  # copied verbatim
@@ -63,9 +61,7 @@ class TestConvertAndExtractRouting:
         with patch(
             "portolan_cli.preparation.extract_flatgeobuf_metadata", return_value=sentinel
         ) as extract:
-            output_path, metadata = _convert_and_extract_metadata(
-                source, item_dir, FormatType.VECTOR
-            )
+            output_path, metadata = _convert_and_extract_metadata(source, item_dir, GEOPARQUET)
 
         assert output_path == item_dir / "roads.fgb"
         assert metadata is sentinel
@@ -86,9 +82,7 @@ class TestConvertAndExtractRouting:
                 "portolan_cli.preparation.extract_geoparquet_metadata", return_value=meta
             ) as extract,
         ):
-            output_path, metadata = _convert_and_extract_metadata(
-                source, item_dir, FormatType.VECTOR
-            )
+            output_path, metadata = _convert_and_extract_metadata(source, item_dir, GEOPARQUET)
 
         assert output_path == converted
         assert metadata is meta
@@ -108,9 +102,7 @@ class TestConvertAndExtractRouting:
             patch("portolan_cli.preparation.convert_raster", return_value=converted) as convert,
             patch("portolan_cli.preparation.extract_cog_metadata", return_value=meta) as extract,
         ):
-            output_path, metadata = _convert_and_extract_metadata(
-                source, item_dir, FormatType.RASTER
-            )
+            output_path, metadata = _convert_and_extract_metadata(source, item_dir, COG)
 
         assert output_path == converted
         assert metadata is meta
@@ -166,7 +158,7 @@ class TestStatisticsShaping:
     def test_disabled_stats_returns_empty(self, tmp_path: Path) -> None:
         with patch("portolan_cli.preparation.get_setting", return_value=False):
             band_stats, parquet_stats = _extract_statistics_best_effort(
-                tmp_path / "x.parquet", FormatType.VECTOR, tmp_path
+                tmp_path / "x.parquet", "vector", tmp_path
             )
         assert band_stats == []
         assert parquet_stats == {}
@@ -181,7 +173,7 @@ class TestStatisticsShaping:
             ),
         ):
             band_stats, parquet_stats = _extract_statistics_best_effort(
-                tmp_path / "x.parquet", FormatType.VECTOR, tmp_path
+                tmp_path / "x.parquet", "vector", tmp_path
             )
         assert band_stats == []
         assert parquet_stats == {}
@@ -193,9 +185,7 @@ class TestStatisticsShaping:
         stat1 = MagicMock()
         stat1.to_stac_dict.return_value = {"minimum": 1, "maximum": 200}
 
-        _add_statistics_to_properties(
-            props, FormatType.RASTER, [stat0, stat1], {}, stats_enabled=True
-        )
+        _add_statistics_to_properties(props, "raster", [stat0, stat1], {}, stats_enabled=True)
 
         assert props["bands"][0]["statistics"] == {"minimum": 0, "maximum": 255}
         assert props["bands"][1]["statistics"] == {"minimum": 1, "maximum": 200}
@@ -205,9 +195,7 @@ class TestStatisticsShaping:
         stat = MagicMock()
         stat.to_stac_dict.return_value = {"min": 0, "max": 9}
 
-        _add_statistics_to_properties(
-            props, FormatType.VECTOR, [], {"pop": stat}, stats_enabled=True
-        )
+        _add_statistics_to_properties(props, "vector", [], {"pop": stat}, stats_enabled=True)
 
         assert props["table:column_statistics"] == {"pop": {"min": 0, "max": 9}}
 
@@ -216,7 +204,7 @@ class TestStatisticsShaping:
         stat = MagicMock()
         stat.to_stac_dict.return_value = {"minimum": 0}
 
-        _add_statistics_to_properties(props, FormatType.RASTER, [stat], {}, stats_enabled=False)
+        _add_statistics_to_properties(props, "raster", [stat], {}, stats_enabled=False)
 
         assert "statistics" not in props["bands"][0]
 

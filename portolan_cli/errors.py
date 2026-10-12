@@ -463,6 +463,43 @@ class RewriteFidelityError(ConversionError):
         self.lost = lost
 
 
+class AmbiguousFormatError(ConversionError):
+    """Raised when two plugin format handlers claim one file and no pin decides.
+
+    Error code: PRTLN-CNV006
+    """
+
+    code = "PRTLN-CNV006"
+
+    def __init__(self, path: str, extension: str, handlers: list[str]) -> None:
+        names = ", ".join(f"'{name}'" for name in handlers)
+        super().__init__(
+            f"{names} all claim {path}. Pin one in .portolan/config.yaml under "
+            f"conversion.handlers, for example '{extension}: {handlers[0]}'.",
+            path=path,
+            extension=extension,
+            handlers=handlers,
+        )
+
+
+class UnknownFormatHandlerError(ConversionError):
+    """Raised when conversion.handlers pins a handler that no plugin provides.
+
+    Error code: PRTLN-CNV007
+    """
+
+    code = "PRTLN-CNV007"
+
+    def __init__(self, extension: str, handler: str, available: list[str]) -> None:
+        super().__init__(
+            f"conversion.handlers pins '{handler}' for {extension}, but no installed "
+            f"format handler has that name. Available: {', '.join(available)}.",
+            extension=extension,
+            handler=handler,
+            available=available,
+        )
+
+
 # Logo Errors (PRTLN-LOG*)
 class LogoError(PortolanError):
     """Base class for catalog-logo errors."""

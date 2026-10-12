@@ -26,7 +26,6 @@ from portolan_cli.add import (
     add_files,
 )
 from portolan_cli.cli import cli
-from portolan_cli.formats import FormatType
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -127,7 +126,7 @@ class TestAddFilesContinuesOnErrors:
             return MagicMock(
                 item_id="good",
                 collection_id="collection",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 bbox=[-122.5, 37.5, -122.0, 38.0],
                 asset_files={"good.parquet": (path, "abc123", 1024)},
                 is_collection_level_asset=False,
@@ -186,7 +185,7 @@ class TestAddFilesContinuesOnErrors:
             return MagicMock(
                 item_id="file2",
                 collection_id="collection",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 bbox=[0, 0, 1, 1],
                 asset_files={"file2.parquet": (path, "abc123", 1024)},
                 is_collection_level_asset=False,
@@ -274,14 +273,14 @@ class TestCliOutputWithFailures:
                         ItemInfo(
                             item_id="good1",
                             collection_id="collection",
-                            format_type=FormatType.VECTOR,
+                            format_type="vector",
                             bbox=[0, 0, 1, 1],
                             asset_paths=["good1.parquet"],
                         ),
                         ItemInfo(
                             item_id="good2",
                             collection_id="collection",
-                            format_type=FormatType.VECTOR,
+                            format_type="vector",
                             bbox=[0, 0, 1, 1],
                             asset_paths=["good2.parquet"],
                         ),
@@ -364,7 +363,7 @@ class TestCliOutputWithFailures:
                         ItemInfo(
                             item_id="good",
                             collection_id="collection",
-                            format_type=FormatType.VECTOR,
+                            format_type="vector",
                             bbox=[0, 0, 1, 1],
                             asset_paths=["good.parquet"],
                         )
@@ -409,7 +408,7 @@ class TestCliOutputWithFailures:
                         ItemInfo(
                             item_id="test",
                             collection_id="collection",
-                            format_type=FormatType.VECTOR,
+                            format_type="vector",
                             bbox=[0, 0, 1, 1],
                             asset_paths=["test.parquet"],
                         )
@@ -453,7 +452,7 @@ class TestAddFilesReturnContract:
                 return_value=MagicMock(
                     item_id="test",
                     collection_id="collection",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     bbox=[0, 0, 1, 1],
                     asset_files={"test.parquet": (f, "abc123", 1024)},
                     is_collection_level_asset=False,

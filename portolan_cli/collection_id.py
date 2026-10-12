@@ -18,7 +18,6 @@ import re
 import unicodedata
 from typing import TYPE_CHECKING
 
-from portolan_cli.formats import FormatType, detect_format
 from portolan_cli.scan.detect import is_filegdb
 
 if TYPE_CHECKING:
@@ -280,11 +279,13 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
     if is_asset and len(parts) == 1:
         raise ValueError(f"Data asset {path} must be in a subdirectory (collection)")
 
-    # Detect format type to determine collection depth
-    # - Vector: parent directory = collection (collection-level asset)
-    # - Raster: grandparent = collection, parent = item (item-level asset)
-    format_type = detect_format(path)
-    is_raster = format_type == FormatType.RASTER
+    # The format handler decides the collection depth (#947)
+    # - asset_level "collection" (vector): parent directory = collection
+    # - asset_level "item" (raster): grandparent = collection, parent = item
+    from portolan_cli.plugins.formats import handler_for
+
+    handler = handler_for(path)
+    is_raster = handler is not None and handler.asset_level == "item"
 
     if is_raster:
         # Raster files need item subdirectory: collection/item/data.tif

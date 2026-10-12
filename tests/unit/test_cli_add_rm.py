@@ -20,7 +20,6 @@ from click.testing import CliRunner
 
 from portolan_cli.add import ItemInfo
 from portolan_cli.cli import cli
-from portolan_cli.formats import FormatType
 
 
 @pytest.fixture
@@ -71,7 +70,7 @@ class TestAdd:
                         ItemInfo(
                             item_id="census",
                             collection_id="demographics",
-                            format_type=FormatType.VECTOR,
+                            format_type="vector",
                             bbox=[-122.5, 37.5, -122.0, 38.0],
                             asset_paths=["census.parquet"],
                         )
@@ -270,7 +269,7 @@ class TestAdd:
                         ItemInfo(
                             item_id="custom-item-id",
                             collection_id="demographics",
-                            format_type=FormatType.VECTOR,
+                            format_type="vector",
                             bbox=[-122.5, 37.5, -122.0, 38.0],
                             asset_paths=["census.parquet"],
                         )
@@ -453,14 +452,14 @@ class TestAdd:
                         ItemInfo(
                             item_id="item1",
                             collection_id="data",
-                            format_type=FormatType.VECTOR,
+                            format_type="vector",
                             bbox=[0, 0, 1, 1],
                             asset_paths=["data1.parquet"],
                         ),
                         ItemInfo(
                             item_id="item2",
                             collection_id="data",
-                            format_type=FormatType.VECTOR,
+                            format_type="vector",
                             bbox=[0, 0, 1, 1],
                             asset_paths=["data2.parquet"],
                         ),
@@ -977,7 +976,7 @@ class TestAddJsonOutput:
                         ItemInfo(
                             item_id="test",
                             collection_id="data",
-                            format_type=FormatType.VECTOR,
+                            format_type="vector",
                             bbox=[0, 0, 1, 1],
                             asset_paths=["test.parquet"],
                         )

@@ -162,6 +162,29 @@ def get_conversion_overrides(catalog_path: Path) -> ConversionOverrides:
     )
 
 
+def get_handler_pins(catalog_path: Path) -> dict[str, str]:
+    """Load ``conversion.handlers``: the format handler to use per extension (#947).
+
+    A pin decides between format handlers that claim the same extension::
+
+        conversion:
+          handlers:
+            .tif: cog
+
+    Args:
+        catalog_path: Root path of the catalog.
+
+    Returns:
+        Lowercase extension with a leading dot, to handler name.
+    """
+    handlers = _get_dict(_get_dict(load_config(catalog_path), "conversion"), "handlers")
+    pins: dict[str, str] = {}
+    for extension, name in handlers.items():
+        ext = str(extension).strip().lower()
+        pins[ext if ext.startswith(".") else f".{ext}"] = str(name).strip()
+    return pins
+
+
 # =============================================================================
 # COG Settings (Issue #279)
 # =============================================================================

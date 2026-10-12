@@ -216,7 +216,6 @@ class TestBatchUpdateVersionsAssetKeys:
     def test_batch_update_collection_level_asset_keys(self, tmp_path: Path) -> None:
         """_batch_update_versions generates correct keys for collection-level assets."""
         from portolan_cli.add import PreparedItem, _batch_update_versions
-        from portolan_cli.formats import FormatType
 
         collection_dir = tmp_path / "my_collection"
         collection_dir.mkdir()
@@ -230,7 +229,7 @@ class TestBatchUpdateVersionsAssetKeys:
         prepared = PreparedItem(
             item_id="my_collection",
             collection_id="my_collection",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             bbox=[0, 0, 1, 1],
             asset_files={"my_collection.parquet": (asset_path, "abc123", 1024)},
             item_json_path=collection_dir / "item.json",
@@ -255,7 +254,6 @@ class TestBatchUpdateVersionsAssetKeys:
     def test_batch_update_item_level_asset_keys(self, tmp_path: Path) -> None:
         """_batch_update_versions generates correct keys for item-level assets."""
         from portolan_cli.add import PreparedItem, _batch_update_versions
-        from portolan_cli.formats import FormatType
 
         collection_dir = tmp_path / "my_collection"
         item_dir = collection_dir / "my_item"
@@ -268,7 +266,7 @@ class TestBatchUpdateVersionsAssetKeys:
         prepared = PreparedItem(
             item_id="my_item",
             collection_id="my_collection",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             bbox=[0, 0, 1, 1],
             asset_files={"data.parquet": (asset_path, "abc123", 1024)},
             item_json_path=item_dir / "item.json",

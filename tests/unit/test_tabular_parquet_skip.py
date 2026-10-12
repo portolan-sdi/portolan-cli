@@ -430,12 +430,11 @@ class TestGeoParquetSuccessPath:
         # Per Issue #281: add_files now calls prepare_item + finalize_items
         # The added list is populated from finalize_items return value
         from portolan_cli.add import ItemInfo
-        from portolan_cli.formats import FormatType
 
         mock_item_info = ItemInfo(
             item_id="item",
             collection_id="collection",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             bbox=[-180.0, -90.0, 180.0, 90.0],
             asset_paths=["boundaries.parquet"],
         )

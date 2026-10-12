@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from portolan_cli.constants import (
     MTIME_TOLERANCE_SECONDS,
 )
-from portolan_cli.format_types import FormatType
+from portolan_cli.format_families import family_of_asset
 from portolan_cli.stac_links import catalog_collections, owned_item_hrefs
 from portolan_cli.sync.checksums import compute_checksum, compute_dir_checksum
 from portolan_cli.versions import (
@@ -31,7 +31,7 @@ class ItemInfo:
     Attributes:
         item_id: STAC item identifier.
         collection_id: Parent collection identifier.
-        format_type: Vector or raster format.
+        format_type: Format family, for example "vector" or "raster". None if unknown.
         bbox: Bounding box [min_x, min_y, max_x, max_y].
         asset_paths: Paths to data assets.
         title: Optional display title.
@@ -41,7 +41,7 @@ class ItemInfo:
 
     item_id: str
     collection_id: str
-    format_type: FormatType
+    format_type: str | None
     bbox: list[float]
     asset_paths: list[str] = field(default_factory=list)
     title: str | None = None
@@ -52,15 +52,14 @@ class ItemInfo:
 def _item_info(item_data: dict[str, Any], collection_id: str, fallback_id: str) -> ItemInfo:
     """Build an ItemInfo from a parsed STAC item."""
     # Determine format from assets
-    format_type = FormatType.UNKNOWN
+    format_type: str | None = None
     asset_paths: list[str] = []
     for asset in item_data.get("assets", {}).values():
         href = asset.get("href", "")
         asset_paths.append(href)
-        if href.endswith(".parquet"):
-            format_type = FormatType.VECTOR
-        elif href.endswith(".tif"):
-            format_type = FormatType.RASTER
+        family = family_of_asset(asset.get("type"), href)
+        if family is not None:
+            format_type = family
 
     properties = item_data.get("properties", {})
     return ItemInfo(

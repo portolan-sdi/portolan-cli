@@ -346,7 +346,7 @@ def detect_dual_formats(files: list[ScannedFile]) -> list[DualFormatPair]:
     for f in files:
         stem = f.path.stem
         parent = f.path.parent
-        format_type = f.format_type.value
+        format_type = f.format_type or "unknown"
         groups[(parent, stem, format_type)].append(f)
 
     results: list[DualFormatPair] = []

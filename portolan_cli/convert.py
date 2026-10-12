@@ -35,8 +35,9 @@ from portolan_cli.errors import (
     ConversionFailedError,
 )
 from portolan_cli.formats import (
+    RASTER,
+    VECTOR,
     CloudNativeStatus,
-    FormatType,
     detect_format,
     get_cloud_native_status,
 )
@@ -49,6 +50,8 @@ from portolan_cli.viz.thumbnail import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from portolan_cli.plugins.formats import FormatHandler
 
 logger = logging.getLogger(__name__)
 
@@ -341,7 +344,7 @@ def _early_exit_result(
     Unsupported formats are accepted with no error.
     """
     if format_info.status == CloudNativeStatus.CLOUD_NATIVE:
-        force_raster = force and detect_format(source) == FormatType.RASTER
+        force_raster = force and detect_format(source) == RASTER
         if force_raster:
             return None
         duration_ms = int((time.perf_counter() - start_time) * 1000)
@@ -373,6 +376,39 @@ def _early_exit_result(
         )
 
     return None
+
+
+def _convert_with_plugin(
+    handler: FormatHandler, source: Path, output_dir: Path, catalog_path: Path | None
+) -> ConversionResult:
+    """Convert ``source`` with a plugin format handler.
+
+    Args:
+        handler: The plugin handler that claims the file.
+        source: Source file.
+        output_dir: Directory for the converted file.
+        catalog_path: Catalog root, passed to the handler.
+
+    Returns:
+        SUCCESS with the output path, or FAILED with the handler's error.
+    """
+    start_time = time.perf_counter()
+    output_path: Path | None = None
+    error: str | None = None
+    status = ConversionStatus.SUCCESS
+    try:
+        output_path = handler.convert(source, output_dir, catalog_path)
+    except Exception as err:  # noqa: BLE001 - a plugin failure is a failed conversion
+        status, error = ConversionStatus.FAILED, str(err)
+    return ConversionResult(
+        source=source,
+        output=output_path,
+        format_from=handler.display_name,
+        format_to=output_path.suffix.lstrip(".").upper() if output_path else None,
+        status=status,
+        error=error,
+        duration_ms=int((time.perf_counter() - start_time) * 1000),
+    )
 
 
 def convert_file(
@@ -416,6 +452,13 @@ def convert_file(
     if not source.exists():
         raise FileNotFoundError(f"Source file not found: {source}")
 
+    # A plugin format handler converts the formats it claims (#947).
+    from portolan_cli.plugins.formats import plugin_handler_for
+
+    plugin = plugin_handler_for(source, catalog_path)
+    if plugin is not None:
+        return _convert_with_plugin(plugin, source, output_dir or source.parent, catalog_path)
+
     # Get format info
     format_info = get_cloud_native_status(source)
 
@@ -439,7 +482,7 @@ def convert_file(
 
     # Convert based on format type
     try:
-        if format_type == FormatType.VECTOR:
+        if format_type == VECTOR:
             output_path = _convert_vector(source, out_dir, vector_settings)
             target_format = "GeoParquet"
             # Validate output is valid GeoParquet
@@ -463,7 +506,7 @@ def convert_file(
                         )
                 except Exception as e:
                     logger.warning("Thumbnail generation failed for %s: %s", source.name, e)
-        elif format_type == FormatType.RASTER:
+        elif format_type == RASTER:
             output_path = _convert_raster(source, out_dir, cog_settings)
             target_format = "COG"
             # Validate output is valid COG

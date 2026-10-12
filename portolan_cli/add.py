@@ -83,8 +83,8 @@ from portolan_cli.finalization import (
 from portolan_cli.finalization import (
     finalize_items as finalize_items,  # noqa: PLC0414
 )
+from portolan_cli.format_families import VECTOR
 from portolan_cli.formats import (
-    FormatType,
     is_multilayer,
     list_layers,
 )
@@ -93,6 +93,7 @@ from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.licensing import LICENSE_REL, license_gap, resolve_license
 from portolan_cli.metadata.tabular import extract_tabular_metadata
+from portolan_cli.plugins.formats import plugin_extensions
 from portolan_cli.preparation import (
     _MEDIA_TYPE_MAP as _MEDIA_TYPE_MAP,  # noqa: PLC0414
 )
@@ -287,7 +288,7 @@ def _maybe_partition_large_file(
     )
 
     # Only partition vector formats (GeoParquet)
-    if prepared.format_type != FormatType.VECTOR:
+    if prepared.format_type != VECTOR:
         return [prepared]
 
     # Skip if user declined interactive prompt
@@ -408,7 +409,7 @@ def _maybe_partition_large_file(
     glob_prepared = PreparedItem(
         item_id=glob_item_id,
         collection_id=prepared.collection_id,
-        format_type=FormatType.VECTOR,
+        format_type=VECTOR,
         bbox=prepared.bbox,
         asset_files={},  # No physical files - glob is a pattern reference
         item_json_path=None,
@@ -843,6 +844,7 @@ def _collect_files_for_add(
     """
     processed_paths: set[Path] = set()
     files_to_process: list[tuple[Path, str]] = []
+    geo_extensions = GEOSPATIAL_EXTENSIONS | plugin_extensions()
 
     for path in paths:
         files = iter_files_with_sidecars(path) if path.is_dir() else [path] + get_sidecars(path)
@@ -856,8 +858,9 @@ def _collect_files_for_add(
                 continue
             processed_paths.add(file_path)
 
-            # Skip non-geospatial files
-            if file_path.suffix.lower() not in GEOSPATIAL_EXTENSIONS:
+            # Skip non-geospatial files. A plugin format handler adds its
+            # extensions (#947).
+            if file_path.suffix.lower() not in geo_extensions:
                 continue
 
             # Never re-ingest the item mirror the add flow itself publishes.
@@ -1631,7 +1634,7 @@ def _process_deferred_non_geo_files(
                         ItemInfo(
                             item_id=asset_path.stem,
                             collection_id=coll_id,
-                            format_type=FormatType.UNKNOWN,
+                            format_type=None,
                             bbox=_collection_aoi_bbox(collection_dir),
                             asset_paths=asset_names,
                         )

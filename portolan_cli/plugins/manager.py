@@ -49,6 +49,7 @@ BUILTIN_PREFIX = "builtin:"
 # same hooks an outside plugin does.
 _BUILTIN_MODULES = {
     "backends": "portolan_cli.plugins.builtin.backends",
+    "formats": "portolan_cli.plugins.builtin.formats",
     "iceberg": "portolan_cli.backends.iceberg.hooks",
     "legacy_backends": "portolan_cli.plugins.builtin.legacy_backends",
 }

@@ -18,7 +18,7 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pystac
 from pyproj import CRS
@@ -30,7 +30,8 @@ from portolan_cli.conversion_config import VectorSettings, get_vector_settings
 from portolan_cli.convert import apply_vector_settings, run_with_transient_convert_retry
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
 from portolan_cli.errors import NoGeometryError, RewriteFidelityError
-from portolan_cli.formats import FormatType, detect_format, is_cloud_optimized_geotiff
+from portolan_cli.format_families import RASTER, VECTOR
+from portolan_cli.formats import is_cloud_optimized_geotiff
 from portolan_cli.metadata import (
     extract_band_statistics,
     extract_cog_metadata,
@@ -52,6 +53,8 @@ from portolan_cli.metadata_yaml import (
     apply_temporal_defaults,
     validate_metadata,
 )
+from portolan_cli.plugins.builtin.formats import BUILTIN_HANDLERS
+from portolan_cli.plugins.formats import handler_for
 from portolan_cli.scan.detect import is_filegdb
 from portolan_cli.stac import (
     add_projection_extension,
@@ -70,6 +73,8 @@ from portolan_cli.viz.style import enrich_cog_assets
 if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
+
+    from portolan_cli.plugins.formats import FormatHandler
 
 logger = logging.getLogger(__name__)
 
@@ -330,7 +335,7 @@ class PreparedItem:
 
     item_id: str
     collection_id: str
-    format_type: FormatType
+    format_type: str | None
     bbox: list[float]
     asset_files: dict[str, tuple[Path, str, int]]
     item_json_path: Path | None  # None for collection-level vector assets
@@ -671,7 +676,7 @@ def _handle_cloud_native_vector(
 def _convert_and_extract_metadata(
     path: Path,
     item_dir: Path,
-    format_type: FormatType,
+    handler: FormatHandler,
     *,
     catalog_root: Path | None = None,
     force: bool = False,
@@ -689,7 +694,7 @@ def _convert_and_extract_metadata(
     Args:
         path: Source file path.
         item_dir: Item directory for output.
-        format_type: Detected format type.
+        handler: The format handler that claims the file.
         catalog_root: Catalog root, for reading conversion settings.
         force: If True, bypass change detection (Issue #386).
         reconvert: If True, re-convert from source (requires force=True).
@@ -700,7 +705,13 @@ def _convert_and_extract_metadata(
     metadata: AllMetadata
     suffix = path.suffix.lower()
 
-    if format_type == FormatType.VECTOR:
+    if handler not in BUILTIN_HANDLERS:
+        # A plugin format handler (#947). Its FormatMetadata provides the bbox,
+        # crs, and to_stac_properties that the add path reads.
+        output_path = handler.convert(path, item_dir, catalog_root)
+        return output_path, cast("AllMetadata", handler.read_metadata(output_path))
+
+    if handler.family == VECTOR:
         # Check for cloud-native vector formats (skip conversion per issue #368)
         if suffix == ".pmtiles":
             output_path = item_dir / path.name
@@ -735,7 +746,7 @@ def _convert_and_extract_metadata(
 
 def _extract_statistics_best_effort(
     output_path: Path,
-    format_type: FormatType,
+    format_type: str | None,
     catalog_root: Path,
     collection_path: Path | None = None,
 ) -> tuple[list[Any], dict[str, Any]]:
@@ -761,7 +772,7 @@ def _extract_statistics_best_effort(
         return band_stats, parquet_stats
 
     try:
-        if format_type == FormatType.RASTER:
+        if format_type == RASTER:
             raster_mode = get_setting(
                 "statistics.raster_mode",
                 catalog_path=catalog_root,
@@ -779,7 +790,7 @@ def _extract_statistics_best_effort(
 
 def _add_statistics_to_properties(
     stac_properties: dict[str, Any],
-    format_type: FormatType,
+    format_type: str | None,
     band_stats: list[Any],
     parquet_stats: dict[str, Any],
     stats_enabled: bool,
@@ -796,11 +807,11 @@ def _add_statistics_to_properties(
     if not stats_enabled:
         return
 
-    if format_type == FormatType.RASTER and band_stats:
+    if format_type == RASTER and band_stats:
         for i, stats in enumerate(band_stats):
             if i < len(stac_properties.get("bands", [])):
                 stac_properties["bands"][i]["statistics"] = stats.to_stac_dict()
-    elif format_type == FormatType.VECTOR and parquet_stats:
+    elif format_type == VECTOR and parquet_stats:
         col_stats = {
             name: stat.to_stac_dict() for name, stat in parquet_stats.items() if stat.to_stac_dict()
         }
@@ -861,7 +872,7 @@ def _create_and_save_item(
     item_datetime: datetime | None,
     stac_properties: dict[str, Any],
     stac_assets: dict[str, pystac.Asset],
-    format_type: FormatType,
+    format_type: str | None,
     metadata: AllMetadata,
     item_dir: Path,
 ) -> tuple[pystac.Item, Path]:
@@ -890,9 +901,9 @@ def _create_and_save_item(
         assets=stac_assets,
     )
     add_projection_extension(item, metadata)
-    if format_type == FormatType.VECTOR:
+    if format_type == VECTOR:
         add_vector_extension(item, metadata)
-    elif format_type == FormatType.RASTER:
+    elif format_type == RASTER:
         add_raster_extension(item, metadata)
 
     item_json_path = item_dir / f"{item_id}.json"
@@ -997,9 +1008,10 @@ def prepare_item(
     # Step 1: Validate inputs
     _validate_collection_id(collection_id)
 
-    format_type = detect_format(path)
-    if format_type == FormatType.UNKNOWN:
+    handler = handler_for(path, catalog_root)
+    if handler is None:
         raise ValueError(f"Unsupported format: {path.suffix}")
+    format_type = handler.family
 
     _pre_validate_geometry(path)
 
@@ -1025,7 +1037,7 @@ def prepare_item(
     output_path, metadata = _convert_and_extract_metadata(
         path,
         item_dir,
-        format_type,
+        handler,
         catalog_root=catalog_root,
         force=force,
         reconvert=reconvert,
@@ -1072,7 +1084,7 @@ def prepare_item(
     )
 
     # Enrich COG assets with render extension properties (Issue #13)
-    if format_type == FormatType.RASTER:
+    if format_type == RASTER:
         enrich_cog_assets(stac_assets, catalog_root)
 
     band_stats, parquet_stats = _extract_statistics_best_effort(
@@ -1103,13 +1115,13 @@ def prepare_item(
         effective_datetime = apply_temporal_defaults(defaults)
 
     # Raster nodata defaults: applied to bands missing nodata values
-    if format_type == FormatType.RASTER and defaults and isinstance(metadata, COGMetadata):
+    if format_type == RASTER and defaults and isinstance(metadata, COGMetadata):
         _apply_nodata_defaults_to_bands(stac_properties, metadata, defaults, path)
 
     # Step 7: Create STAC item or collection-level assets
     # Collection-level vector assets: no item.json, assets go directly in collection.json
     # Item-level assets (rasters, partitioned vectors): create item.json as usual
-    if is_collection_level_asset and format_type == FormatType.VECTOR:
+    if is_collection_level_asset and handler.asset_level == "collection":
         # Collection-level vector asset: no item.json
         return PreparedItem(
             item_id=item_id_resolved,
@@ -1666,7 +1678,7 @@ def convert_raster(source: Path, dest_dir: Path) -> Path:
     return output_path
 
 
-def _generate_raster_thumbnail(cog_path: Path, catalog_root: Path, format_type: FormatType) -> None:
+def _generate_raster_thumbnail(cog_path: Path, catalog_root: Path, format_type: str | None) -> None:
     """Write a ``{stem}.thumb.jpg`` next to a COG so the asset scan registers it.
 
     Mirrors the thumbnail step in ``convert.convert_file`` for the add path,
@@ -1687,7 +1699,7 @@ def _generate_raster_thumbnail(cog_path: Path, catalog_root: Path, format_type: 
     from portolan_cli.conversion_config import get_cog_settings
     from portolan_cli.convert import generate_cog_thumbnail
 
-    if format_type != FormatType.RASTER:
+    if format_type != RASTER:
         return
 
     settings = get_cog_settings(catalog_root)

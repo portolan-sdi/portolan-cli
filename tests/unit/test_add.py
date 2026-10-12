@@ -23,7 +23,7 @@ from portolan_cli.add import (
     get_item_info,
     list_items,
 )
-from portolan_cli.formats import FormatType
+from portolan_cli.plugins.builtin.formats import COG, GEOPARQUET
 from portolan_cli.sync.checksums import compute_dir_size
 from portolan_cli.versions import read_versions
 
@@ -57,13 +57,13 @@ class TestItemInfo:
         info = ItemInfo(
             item_id="test-item",
             collection_id="test-collection",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             bbox=[-122.5, 37.5, -122.0, 38.0],
             asset_paths=["data.parquet"],
         )
         assert info.item_id == "test-item"
         assert info.collection_id == "test-collection"
-        assert info.format_type == FormatType.VECTOR
+        assert info.format_type == "vector"
 
     @pytest.mark.unit
     def test_item_info_with_metadata(self) -> None:
@@ -71,7 +71,7 @@ class TestItemInfo:
         info = ItemInfo(
             item_id="test-item",
             collection_id="test-collection",
-            format_type=FormatType.RASTER,
+            format_type="raster",
             bbox=[0, 0, 1, 1],
             asset_paths=["data.tif"],
             title="Test Dataset",
@@ -110,12 +110,12 @@ class TestAdd:
         output_file.write_bytes(b"fake parquet data")
 
         with (
-            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.preparation.convert_vector") as mock_convert,
             patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
-            mock_detect.return_value = FormatType.VECTOR
+            mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
             mock_metadata.return_value = MagicMock(
                 bbox=(-122.5, 37.5, -122.0, 38.0),
@@ -136,7 +136,7 @@ class TestAdd:
 
             assert result.collection_id == "test-collection"
             assert result.item_id == "data"  # From parent directory, not filename
-            assert result.format_type == FormatType.VECTOR
+            assert result.format_type == "vector"
             mock_detect.assert_called_once()
             mock_convert.assert_called_once()
 
@@ -154,12 +154,12 @@ class TestAdd:
         output_file = item_dir / "data.tif"
 
         with (
-            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.preparation.convert_raster") as mock_convert,
             patch("portolan_cli.preparation.extract_cog_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
-            mock_detect.return_value = FormatType.RASTER
+            mock_detect.return_value = COG
             mock_convert.return_value = output_file
             mock_metadata.return_value = MagicMock(
                 bbox=(0.0, 0.0, 1.0, 1.0),
@@ -180,7 +180,7 @@ class TestAdd:
 
             assert result.collection_id == "imagery"
             assert result.item_id == "satellite"  # From parent directory
-            assert result.format_type == FormatType.RASTER
+            assert result.format_type == "raster"
 
     @pytest.mark.unit
     def test_add_unknown_format_raises(self, initialized_catalog: Path, tmp_path: Path) -> None:
@@ -188,8 +188,8 @@ class TestAdd:
         unknown_path = tmp_path / "data.xyz"
         unknown_path.write_text("unknown format")
 
-        with patch("portolan_cli.preparation.detect_format") as mock_detect:
-            mock_detect.return_value = FormatType.UNKNOWN
+        with patch("portolan_cli.preparation.handler_for") as mock_detect:
+            mock_detect.return_value = None
 
             with pytest.raises(ValueError, match="Unsupported format"):
                 add(
@@ -225,12 +225,12 @@ class TestAdd:
         output_file.write_bytes(b"fake data")
 
         with (
-            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.preparation.convert_vector") as mock_convert,
             patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
-            mock_detect.return_value = FormatType.VECTOR
+            mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
             mock_metadata.return_value = MagicMock(
                 bbox=(-1, -1, 1, 1),
@@ -281,12 +281,12 @@ class TestAdd:
         output_file.write_bytes(b"fake data")
 
         with (
-            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.preparation.convert_vector") as mock_convert,
             patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
-            mock_detect.return_value = FormatType.VECTOR
+            mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
             mock_metadata.return_value = MagicMock(
                 bbox=(0, 0, 1, 1),
@@ -426,7 +426,7 @@ class TestListItems:
         items = list_items(initialized_catalog)
 
         assert len(items) == 1
-        assert items[0].format_type == FormatType.RASTER
+        assert items[0].format_type == "raster"
 
     @pytest.mark.unit
     def test_list_all_items(self, initialized_catalog: Path) -> None:
@@ -613,12 +613,12 @@ class TestAddMissingBbox:
         output_file.write_bytes(b"fake data")
 
         with (
-            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.preparation.convert_vector") as mock_convert,
             patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
-            mock_detect.return_value = FormatType.VECTOR
+            mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
             # Simulate missing bbox (None or empty tuple)
             mock_metadata.return_value = MagicMock(
@@ -683,12 +683,12 @@ class TestAddItemIdDerivation:
         geojson_path.write_text(json.dumps(geojson_data))
 
         with (
-            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.preparation.convert_vector") as mock_convert,
             patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
-            mock_detect.return_value = FormatType.VECTOR
+            mock_detect.return_value = GEOPARQUET
             # Simulate conversion output in the SAME directory (in-place)
             output_file = item_dir / "radios.parquet"
             output_file.write_bytes(b"fake parquet")
@@ -745,12 +745,12 @@ class TestAddItemIdDerivation:
         geojson_path.write_text(json.dumps(geojson_data))
 
         with (
-            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.preparation.convert_vector") as mock_convert,
             patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
-            mock_detect.return_value = FormatType.VECTOR
+            mock_detect.return_value = GEOPARQUET
             # Simulate conversion output in the SAME directory (in-place)
             output_file = item_dir / "radios.parquet"
             output_file.write_bytes(b"fake parquet")
@@ -1185,12 +1185,12 @@ class TestMultiAssetAdd:
         metadata_file.write_bytes(b"<metadata/>")
 
         with (
-            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.preparation.convert_vector") as mock_convert,
             patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
-            mock_detect.return_value = FormatType.VECTOR
+            mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
             mock_metadata.return_value = MagicMock(
                 bbox=(-122.5, 37.5, -122.0, 38.0),
@@ -1232,12 +1232,12 @@ class TestMultiAssetAdd:
         output_file.write_bytes(b"fake parquet data")
 
         with (
-            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.preparation.convert_vector") as mock_convert,
             patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
-            mock_detect.return_value = FormatType.VECTOR
+            mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
             mock_metadata.return_value = MagicMock(
                 bbox=(-1, -1, 1, 1),
@@ -1280,12 +1280,12 @@ class TestMultiAssetAdd:
         hidden_file.write_bytes(b"hidden data")
 
         with (
-            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.preparation.convert_vector") as mock_convert,
             patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
-            mock_detect.return_value = FormatType.VECTOR
+            mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
             mock_metadata.return_value = MagicMock(
                 bbox=(-1, -1, 1, 1),
@@ -1327,12 +1327,12 @@ class TestMultiAssetAdd:
         symlink.symlink_to(output_file)
 
         with (
-            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.preparation.convert_vector") as mock_convert,
             patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
-            mock_detect.return_value = FormatType.VECTOR
+            mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
             mock_metadata.return_value = MagicMock(
                 bbox=(-1, -1, 1, 1),

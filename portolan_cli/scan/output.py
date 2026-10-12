@@ -23,7 +23,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.formats import FormatType
+from portolan_cli.format_families import RASTER, VECTOR
 from portolan_cli.scan.classify import FileCategory, SkippedFile
 from portolan_cli.scan.core import (
     IssueType,
@@ -1032,8 +1032,8 @@ def detect_structure_pattern(result: ScanResult) -> StructurePattern:
     is_nested = any("/" in cid for cid in collection_list)
 
     # Check format types
-    has_vector = any(f.format_type == FormatType.VECTOR for f in result.ready)
-    has_raster = any(f.format_type == FormatType.RASTER for f in result.ready)
+    has_vector = any(f.format_type == VECTOR for f in result.ready)
+    has_raster = any(f.format_type == RASTER for f in result.ready)
 
     # Calculate path depths for pattern detection
     depths = [f.relative_path.count("/") for f in result.ready]
@@ -1239,7 +1239,7 @@ def format_ready_file_json(file: ScannedFile) -> dict[str, Any]:
         "path": str(file.path),
         "relative_path": file.relative_path,
         "extension": file.extension,
-        "format_type": file.format_type.value,
+        "format_type": file.format_type or "unknown",
         "size_bytes": file.size_bytes,
         "metadata": file.metadata,
         # Enhanced fields (extracted from metadata for convenience)

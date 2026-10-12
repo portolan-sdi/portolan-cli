@@ -28,8 +28,8 @@ from portolan_cli.convert import (
     convert_directory,
 )
 from portolan_cli.formats import (
+    RASTER,
     CloudNativeStatus,
-    FormatType,
     detect_format,
     get_cloud_native_status,
     get_effective_status,
@@ -446,7 +446,7 @@ def _forced_raster_paths(file_statuses: list[FileStatus]) -> list[Path]:
     return [
         f.path
         for f in file_statuses
-        if f.status == CloudNativeStatus.CLOUD_NATIVE and detect_format(f.path) == FormatType.RASTER
+        if f.status == CloudNativeStatus.CLOUD_NATIVE and detect_format(f.path) == RASTER
     ]
 
 
@@ -501,12 +501,16 @@ def _scan_for_files(path: Path) -> list[Path]:
     Returns:
         List of paths to geospatial files, sorted.
     """
+    from portolan_cli.plugins.formats import plugin_extensions
+
+    # A plugin format handler adds its extensions (#947).
+    extensions = CHECK_EXTENSIONS | plugin_extensions()
     files: list[Path] = []
     for item in path.rglob("*"):
         if not item.is_file():
             continue
         ext = item.suffix.lower()
-        if ext in CHECK_EXTENSIONS:
+        if ext in extensions:
             # For parquet, check if it's GeoParquet
             if ext == PARQUET_EXTENSION and not is_geoparquet(item):
                 continue

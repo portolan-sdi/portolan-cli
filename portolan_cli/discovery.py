@@ -19,8 +19,16 @@ logger = logging.getLogger(__name__)
 
 
 def _is_geospatial_file(item: Path) -> bool:
-    """Return True for a regular file with a recognized geospatial extension."""
-    return item.suffix.lower() in GEOSPATIAL_EXTENSIONS and item.is_file()
+    """Return True for a regular file with a recognized geospatial extension.
+
+    A plugin format handler adds its extensions (#947).
+    """
+    from portolan_cli.plugins.formats import plugin_extensions
+
+    extension = item.suffix.lower()
+    return (extension in GEOSPATIAL_EXTENSIONS or extension in plugin_extensions()) and (
+        item.is_file()
+    )
 
 
 def _iter_recursive(directory: Path, visited: set[Path] | None = None) -> Iterator[Path]:

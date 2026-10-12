@@ -15,7 +15,7 @@ from portolan_cli.add import (
     add_directory,
     iter_geospatial_files,
 )
-from portolan_cli.formats import FormatType
+from portolan_cli.plugins.builtin.formats import COG, GEOPARQUET
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -151,12 +151,12 @@ class TestAddDirectory:
         (item_dir / "data.geojson").write_text(valid_geojson)
 
         with (
-            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.preparation.convert_vector") as mock_convert,
             patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
-            mock_detect.return_value = FormatType.VECTOR
+            mock_detect.return_value = GEOPARQUET
 
             # Convert creates output file when called (not before add_directory)
             def convert_side_effect(
@@ -212,7 +212,7 @@ class TestAddDirectory:
         (item_dir / "b.tif").write_bytes(b"fake tiff")
 
         with (
-            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.preparation.convert_vector") as mock_convert_v,
             patch("portolan_cli.preparation.convert_raster") as mock_convert_r,
             patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_meta_v,
@@ -220,10 +220,10 @@ class TestAddDirectory:
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
 
-            def detect_side_effect(path: Path) -> FormatType:
+            def detect_side_effect(path: Path, catalog_root: Path | None = None) -> object:
                 if path.suffix == ".geojson":
-                    return FormatType.VECTOR
-                return FormatType.RASTER
+                    return GEOPARQUET
+                return COG
 
             mock_detect.side_effect = detect_side_effect
 
@@ -305,12 +305,12 @@ class TestAddDirectory:
         (deep_item_dir / "deep.geojson").write_text(valid_geojson)
 
         with (
-            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.preparation.convert_vector") as mock_convert,
             patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
-            mock_detect.return_value = FormatType.VECTOR
+            mock_detect.return_value = GEOPARQUET
 
             def convert_side_effect(
                 source: Path, dest: Path, catalog_root: Path | None = None, **kwargs: object

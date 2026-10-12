@@ -205,28 +205,28 @@ class TestInferCollections:
 
     def test_infers_from_numeric_pattern(self, tmp_path: Path) -> None:
         """infer_collections suggests groups from numeric patterns."""
-        from portolan_cli.scan.core import FormatType, ScannedFile
+        from portolan_cli.scan.core import ScannedFile
 
         files = [
             ScannedFile(
                 path=tmp_path / "flood_rp10.tif",
                 relative_path="flood_rp10.tif",
                 extension=".tif",
-                format_type=FormatType.RASTER,
+                format_type="raster",
                 size_bytes=100,
             ),
             ScannedFile(
                 path=tmp_path / "flood_rp50.tif",
                 relative_path="flood_rp50.tif",
                 extension=".tif",
-                format_type=FormatType.RASTER,
+                format_type="raster",
                 size_bytes=100,
             ),
             ScannedFile(
                 path=tmp_path / "flood_rp100.tif",
                 relative_path="flood_rp100.tif",
                 extension=".tif",
-                format_type=FormatType.RASTER,
+                format_type="raster",
                 size_bytes=100,
             ),
         ]
@@ -238,21 +238,21 @@ class TestInferCollections:
 
     def test_no_suggestions_for_unrelated(self, tmp_path: Path) -> None:
         """infer_collections returns empty for unrelated files."""
-        from portolan_cli.scan.core import FormatType, ScannedFile
+        from portolan_cli.scan.core import ScannedFile
 
         files = [
             ScannedFile(
                 path=tmp_path / "census.parquet",
                 relative_path="census.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=100,
             ),
             ScannedFile(
                 path=tmp_path / "imagery.tif",
                 relative_path="imagery.tif",
                 extension=".tif",
-                format_type=FormatType.RASTER,
+                format_type="raster",
                 size_bytes=100,
             ),
         ]
@@ -263,21 +263,21 @@ class TestInferCollections:
 
     def test_confidence_filtering(self, tmp_path: Path) -> None:
         """infer_collections respects min_confidence threshold."""
-        from portolan_cli.scan.core import FormatType, ScannedFile
+        from portolan_cli.scan.core import ScannedFile
 
         files = [
             ScannedFile(
                 path=tmp_path / "data_v1.parquet",
                 relative_path="data_v1.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=100,
             ),
             ScannedFile(
                 path=tmp_path / "data_v2.parquet",
                 relative_path="data_v2.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=100,
             ),
         ]
@@ -291,28 +291,28 @@ class TestInferCollections:
 
     def test_sorted_by_confidence(self, tmp_path: Path) -> None:
         """infer_collections returns results sorted by confidence descending."""
-        from portolan_cli.scan.core import FormatType, ScannedFile
+        from portolan_cli.scan.core import ScannedFile
 
         files = [
             ScannedFile(
                 path=tmp_path / "flood_rp10.tif",
                 relative_path="flood_rp10.tif",
                 extension=".tif",
-                format_type=FormatType.RASTER,
+                format_type="raster",
                 size_bytes=100,
             ),
             ScannedFile(
                 path=tmp_path / "flood_rp50.tif",
                 relative_path="flood_rp50.tif",
                 extension=".tif",
-                format_type=FormatType.RASTER,
+                format_type="raster",
                 size_bytes=100,
             ),
             ScannedFile(
                 path=tmp_path / "flood_rp100.tif",
                 relative_path="flood_rp100.tif",
                 extension=".tif",
-                format_type=FormatType.RASTER,
+                format_type="raster",
                 size_bytes=100,
             ),
         ]
@@ -331,7 +331,7 @@ class TestInferCollections:
         filename appeared in different directories (e.g., 2020/rivers.geojson
         and 2021/rivers.geojson). Now uses multimap to track all paths.
         """
-        from portolan_cli.scan.core import FormatType, ScannedFile
+        from portolan_cli.scan.core import ScannedFile
 
         # Create directory structure with duplicate filenames
         dir_2020 = tmp_path / "2020"
@@ -345,28 +345,28 @@ class TestInferCollections:
                 path=dir_2020 / "data_v1.parquet",
                 relative_path="2020/data_v1.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=100,
             ),
             ScannedFile(
                 path=dir_2020 / "data_v2.parquet",
                 relative_path="2020/data_v2.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=100,
             ),
             ScannedFile(
                 path=dir_2021 / "data_v1.parquet",  # DUPLICATE NAME
                 relative_path="2021/data_v1.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=100,
             ),
             ScannedFile(
                 path=dir_2021 / "data_v2.parquet",  # DUPLICATE NAME
                 relative_path="2021/data_v2.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=100,
             ),
         ]
@@ -391,7 +391,7 @@ class TestInferCollections:
         (e.g., ["rivers.geojson", "rivers.geojson"] from different dirs),
         paths_by_name[n] returns ALL paths for that name, causing duplicates.
         """
-        from portolan_cli.scan.core import FormatType, ScannedFile
+        from portolan_cli.scan.core import ScannedFile
 
         # Create directory structure with duplicate filenames
         dir_2020 = tmp_path / "2020"
@@ -405,28 +405,28 @@ class TestInferCollections:
                 path=dir_2020 / "data_v1.parquet",
                 relative_path="2020/data_v1.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=100,
             ),
             ScannedFile(
                 path=dir_2020 / "data_v2.parquet",
                 relative_path="2020/data_v2.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=100,
             ),
             ScannedFile(
                 path=dir_2021 / "data_v1.parquet",  # DUPLICATE NAME
                 relative_path="2021/data_v1.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=100,
             ),
             ScannedFile(
                 path=dir_2021 / "data_v2.parquet",  # DUPLICATE NAME
                 relative_path="2021/data_v2.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=100,
             ),
         ]

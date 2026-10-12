@@ -14,7 +14,8 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.formats import FormatType, detect_format
+from portolan_cli.format_families import RASTER, VECTOR
+from portolan_cli.formats import detect_format
 from portolan_cli.stac_links import catalog_collections
 from portolan_cli.stac_parquet import count_items
 from portolan_cli.versions import read_versions
@@ -237,9 +238,9 @@ def inspect_file(path: Path, *, catalog_root: Path | None = None) -> FileInfo:
     # Detect format
     format_type = detect_format(path)
 
-    if format_type == FormatType.VECTOR:
+    if format_type == VECTOR:
         return _inspect_geoparquet(path, catalog_root=catalog_root)
-    if format_type == FormatType.RASTER:
+    if format_type == RASTER:
         return _inspect_cog(path, catalog_root=catalog_root)
     raise ValueError(f"Unsupported file format: {path.suffix}")
 

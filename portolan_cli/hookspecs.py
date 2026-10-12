@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from portolan_cli.backends.protocol import VersioningBackend
+    from portolan_cli.plugins.formats import FormatHandler
 
     BackendFactory = Callable[..., VersioningBackend]
 
@@ -69,6 +70,20 @@ def portolan_backends() -> dict[str, BackendFactory]:  # type: ignore[empty-body
 
     Returns:
         Mapping of backend name to factory.
+    """
+
+
+@hookspec
+def portolan_formats() -> list[FormatHandler]:  # type: ignore[empty-body]
+    """Return format handlers.
+
+    A handler converts a source format to a cloud-native file and reads its
+    metadata. See ``portolan_cli.api.FormatHandler``. For one file, a
+    ``conversion.handlers`` pin wins, then a plugin handler, then a built-in
+    handler.
+
+    Returns:
+        Format handler objects.
     """
 
 

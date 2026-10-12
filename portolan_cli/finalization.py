@@ -31,7 +31,7 @@ import pystac
 from pystac.layout import AsIsLayoutStrategy
 
 from portolan_cli.config import load_merged_metadata, load_own_metadata
-from portolan_cli.formats import FormatType
+from portolan_cli.format_families import VECTOR
 from portolan_cli.hookspecs import EnrichContext
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
@@ -1026,7 +1026,7 @@ def _apply_table_extension_from_disk(
     new_geoparquet_metadata: list[GeoParquetMetadata] = [
         p.metadata
         for p in items
-        if p.format_type == FormatType.VECTOR and isinstance(p.metadata, GeoParquetMetadata)
+        if p.format_type == VECTOR and isinstance(p.metadata, GeoParquetMetadata)
     ]
     if not new_geoparquet_metadata:
         return

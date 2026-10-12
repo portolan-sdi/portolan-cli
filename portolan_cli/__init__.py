@@ -12,12 +12,11 @@ from portolan_cli.lazy_exports import lazy_exports
 if TYPE_CHECKING:
     from portolan_cli.catalog import Catalog, CatalogExistsError
     from portolan_cli.cli import cli
-    from portolan_cli.formats import FormatType, detect_format
+    from portolan_cli.formats import detect_format
 
 __all__ = [
     "Catalog",
     "CatalogExistsError",
-    "FormatType",
     "cli",
     "detect_format",
 ]
@@ -28,7 +27,6 @@ __all__ = [
 _EXPORTS = {
     "Catalog": "portolan_cli.catalog",
     "CatalogExistsError": "portolan_cli.catalog",
-    "FormatType": "portolan_cli.formats",
     "cli": "portolan_cli.cli",
     "detect_format": "portolan_cli.formats",
 }

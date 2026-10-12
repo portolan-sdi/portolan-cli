@@ -41,7 +41,7 @@ class TestJsonGeoJsonDetectionInScan:
 
     def test_json_with_geojson_content_has_vector_format_type(self, fixtures_dir: Path) -> None:
         """A .json file with GeoJSON content should have VECTOR format type."""
-        from portolan_cli.scan.core import FormatType, scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         scan_path = fixtures_dir / "scan" / "json_geojson"
         result = scan_directory(scan_path)
@@ -49,7 +49,7 @@ class TestJsonGeoJsonDetectionInScan:
         # Find rec_centers.json in ready list
         rec_centers = next((f for f in result.ready if f.path.name == "rec_centers.json"), None)
         assert rec_centers is not None, "rec_centers.json not found in ready list"
-        assert rec_centers.format_type == FormatType.VECTOR
+        assert rec_centers.format_type == "vector"
 
     def test_json_with_geojson_content_has_json_extension(self, fixtures_dir: Path) -> None:
         """A .json file with GeoJSON content should keep .json extension."""

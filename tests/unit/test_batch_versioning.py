@@ -23,13 +23,12 @@ class TestPreparedItem:
     def test_prepared_item_exists(self) -> None:
         """PreparedItem dataclass can be imported and instantiated."""
         from portolan_cli.add import PreparedItem
-        from portolan_cli.formats import FormatType
 
         # Should be able to create with required fields
         prepared = PreparedItem(
             item_id="test-item",
             collection_id="test-collection",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             bbox=[-122.5, 37.5, -122.0, 38.0],
             asset_files={"data.parquet": (Path("/tmp/data.parquet"), "abc123", 1024)},
             item_json_path=Path("/tmp/item.json"),
@@ -37,18 +36,17 @@ class TestPreparedItem:
 
         assert prepared.item_id == "test-item"
         assert prepared.collection_id == "test-collection"
-        assert prepared.format_type == FormatType.VECTOR
+        assert prepared.format_type == "vector"
 
     @pytest.mark.unit
     def test_prepared_item_optional_fields(self) -> None:
         """PreparedItem supports optional collection-level asset flag."""
         from portolan_cli.add import PreparedItem
-        from portolan_cli.formats import FormatType
 
         prepared = PreparedItem(
             item_id="test-item",
             collection_id="test-collection",
-            format_type=FormatType.RASTER,
+            format_type="raster",
             bbox=[0, 0, 1, 1],
             asset_files={"data.tif": (Path("/tmp/data.tif"), "def456", 2048)},
             item_json_path=Path("/tmp/item.json"),
@@ -61,7 +59,6 @@ class TestPreparedItem:
     def test_prepared_item_has_metadata_field(self) -> None:
         """PreparedItem should have optional metadata field for table extension (Issue #304)."""
         from portolan_cli.add import PreparedItem
-        from portolan_cli.formats import FormatType
         from portolan_cli.metadata.geoparquet import GeoParquetMetadata
 
         metadata = GeoParquetMetadata(
@@ -76,7 +73,7 @@ class TestPreparedItem:
         prepared = PreparedItem(
             item_id="test-item",
             collection_id="test-collection",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             bbox=[0, 0, 1, 1],
             asset_files={"data.parquet": (Path("/tmp/data.parquet"), "abc123", 1024)},
             item_json_path=Path("/tmp/item.json"),
@@ -227,7 +224,6 @@ class TestFinalizeItems:
         Even with multiple prepared items, only one write per collection.
         """
         from portolan_cli.add import PreparedItem, finalize_items
-        from portolan_cli.formats import FormatType
 
         collection_dir = initialized_catalog / "test-collection"
         collection_dir.mkdir(parents=True)
@@ -247,7 +243,7 @@ class TestFinalizeItems:
         prepared1 = PreparedItem(
             item_id="item-1",
             collection_id="test-collection",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             bbox=[-122.5, 37.5, -122.0, 38.0],
             asset_files={"data1.parquet": (asset1, "checksum1", 14)},
             item_json_path=item1_dir / "item-1.json",
@@ -255,7 +251,7 @@ class TestFinalizeItems:
         prepared2 = PreparedItem(
             item_id="item-2",
             collection_id="test-collection",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             bbox=[-122.0, 37.0, -121.5, 37.5],
             asset_files={"data2.parquet": (asset2, "checksum2", 14)},
             item_json_path=item2_dir / "item-2.json",
@@ -284,7 +280,6 @@ class TestFinalizeItems:
         Items in different collections get separate writes (one per collection).
         """
         from portolan_cli.add import PreparedItem, finalize_items
-        from portolan_cli.formats import FormatType
 
         # Set up two collections
         for coll in ["collection-a", "collection-b"]:
@@ -296,7 +291,7 @@ class TestFinalizeItems:
         prepared_a = PreparedItem(
             item_id="item-1",
             collection_id="collection-a",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             bbox=[0, 0, 1, 1],
             asset_files={
                 "data.parquet": (
@@ -310,7 +305,7 @@ class TestFinalizeItems:
         prepared_b = PreparedItem(
             item_id="item-1",
             collection_id="collection-b",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             bbox=[0, 0, 1, 1],
             asset_files={
                 "data.parquet": (
@@ -340,7 +335,6 @@ class TestFinalizeItems:
     ) -> None:
         """finalize_items() creates proper version entries for all items."""
         from portolan_cli.add import PreparedItem, finalize_items
-        from portolan_cli.formats import FormatType
 
         collection_dir = initialized_catalog / "test-collection"
         collection_dir.mkdir(parents=True)
@@ -355,7 +349,7 @@ class TestFinalizeItems:
             PreparedItem(
                 item_id=f"item-{i}",
                 collection_id="test-collection",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 bbox=[0, 0, 1, 1],
                 asset_files={
                     f"data{i}.parquet": (

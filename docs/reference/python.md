@@ -11,8 +11,6 @@ supported interface.
 
 ::: portolan_cli.CatalogExistsError
 
-::: portolan_cli.FormatType
-
 ::: portolan_cli.cli
 
 ::: portolan_cli.detect_format

@@ -44,7 +44,7 @@ def _loaded_after(statement: str) -> list[str]:
         "import portolan_cli.models",
         "import portolan_cli.stac_links",
         "import portolan_cli.inspect",
-        "from portolan_cli import FormatType, detect_format",
+        "from portolan_cli import detect_format",
     ],
 )
 def test_import_loads_no_heavy_module(statement: str) -> None:

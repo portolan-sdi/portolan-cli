@@ -20,7 +20,6 @@ from click.testing import CliRunner
 
 from portolan_cli.add import ItemInfo
 from portolan_cli.cli import cli
-from portolan_cli.formats import FormatType
 
 
 @pytest.fixture
@@ -132,7 +131,7 @@ class TestForceBypassesChangeDetection:
                         ItemInfo(
                             item_id="test",
                             collection_id="data",
-                            format_type=FormatType.VECTOR,
+                            format_type="vector",
                             bbox=[-180, -90, 180, 90],
                             asset_paths=["test.parquet"],
                         )

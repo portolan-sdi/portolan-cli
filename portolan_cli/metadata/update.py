@@ -24,7 +24,7 @@ from portolan_cli.collection import (
     read_collection_json,
     write_collection_json,
 )
-from portolan_cli.formats import RASTER_EXTENSIONS, FormatType
+from portolan_cli.formats import RASTER, RASTER_EXTENSIONS
 from portolan_cli.item import (
     _extract_geometry_from_file,
     _get_media_type,
@@ -215,13 +215,13 @@ def _extract_raster_bands(file_path: Path) -> list[dict[str, Any]]:
         catalog_root, collection_dir = _statistics_scope(file_path)
         if catalog_root is not None:
             band_stats, parquet_stats = _extract_statistics_best_effort(
-                file_path, FormatType.RASTER, catalog_root, collection_path=collection_dir
+                file_path, RASTER, catalog_root, collection_path=collection_dir
             )
             # `_extract_statistics_best_effort` already applied the
             # `statistics.enabled` gate, returning nothing when the setting is
             # off, so the flag here is always True.
             _add_statistics_to_properties(
-                stac_properties, FormatType.RASTER, band_stats, parquet_stats, stats_enabled=True
+                stac_properties, RASTER, band_stats, parquet_stats, stats_enabled=True
             )
 
     bands = stac_properties.get("bands")

@@ -662,22 +662,23 @@ def init(
 # =============================================================================
 
 
-def _get_format_display_name(format_type: Any) -> str:
+def _get_format_display_name(format_type: str | None) -> str:
     """Get human-readable format name.
 
     Args:
-        format_type: FormatType enum value.
+        format_type: Format family, for example "vector" or "raster".
 
     Returns:
-        Human-readable format name (e.g., "GeoParquet", "COG").
+        Human-readable format name (e.g., "GeoParquet", "COG"). A family
+        from a plugin format shows as written.
     """
-    from portolan_cli.formats import FormatType
+    from portolan_cli.format_families import RASTER, VECTOR
 
-    if format_type == FormatType.VECTOR:
+    if format_type == VECTOR:
         return "GeoParquet"
-    if format_type == FormatType.RASTER:
+    if format_type == RASTER:
         return "COG"
-    return "Unknown"
+    return format_type or "Unknown"
 
 
 def _get_asset_format_display_name(asset_href: str) -> str:
@@ -2888,7 +2889,7 @@ def _output_add_json(
             {
                 "item_id": ds.item_id,
                 "collection_id": ds.collection_id,
-                "format_type": ds.format_type.value,
+                "format_type": ds.format_type or "unknown",
                 "bbox": ds.bbox,
             }
             for ds in added

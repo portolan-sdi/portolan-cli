@@ -21,7 +21,6 @@ from click.testing import CliRunner
 
 from portolan_cli.add import ItemInfo
 from portolan_cli.cli import cli
-from portolan_cli.formats import FormatType
 
 
 @pytest.fixture
@@ -151,14 +150,14 @@ class TestAddAtCatalogRoot:
                 ItemInfo(
                     item_id="a",
                     collection_id="col1",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     bbox=[-1.0, -1.0, 1.0, 1.0],
                     asset_paths=["a.parquet"],
                 ),
                 ItemInfo(
                     item_id="b",
                     collection_id="col2",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     bbox=[-1.0, -1.0, 1.0, 1.0],
                     asset_paths=["b.parquet"],
                 ),
