@@ -20,6 +20,7 @@ PUBLIC_MODULES = frozenset({"portolan_cli.api", "portolan_cli.hookspecs", "porto
 # Each plugin package: its source directory and its own import name.
 PLUGIN_PACKAGES = {
     "example": (_REPO / "tests/plugins/portolan_example/src/portolan_example", "portolan_example"),
+    "iceberg": (_REPO / "portolan_cli/backends/iceberg", "portolan_cli.backends.iceberg"),
 }
 
 

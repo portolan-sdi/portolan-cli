@@ -26,8 +26,6 @@ from pyiceberg.types import (
     TimestamptzType,
 )
 
-from portolan_cli.constants import ICEBERG_EXTENSION_URI
-
 if TYPE_CHECKING:
     from pyiceberg.table import Table
 
@@ -54,7 +52,10 @@ _TYPE_MAP: dict[type, str] = {
 }
 
 STAC_TABLE_EXTENSION = "https://stac-extensions.github.io/table/v1.2.0/schema.json"
-STAC_ICEBERG_EXTENSION = ICEBERG_EXTENSION_URI
+# The Iceberg extension a collection published as an Iceberg table declares.
+# portolan-spec pins it under incubating/iceberg, next to the partition
+# extension, and serves it from the same host.
+STAC_ICEBERG_EXTENSION = "https://schemas.portolan-sdi.org/incubating/iceberg/v1.1.0/schema.json"
 
 # Map PyIceberg catalog class names to catalog type strings
 _CATALOG_TYPE_MAP: dict[str, str] = {

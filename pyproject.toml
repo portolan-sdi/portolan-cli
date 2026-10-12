@@ -61,6 +61,12 @@ dependencies = [
 [project.scripts]
 portolan = "portolan_cli:cli"
 
+# Built-in commands that use the plugin path (#947). An entry point that
+# portolan-cli declares always loads, whatever PORTOLAN_PLUGINS says.
+[project.entry-points."portolan.commands"]
+"version.rollback" = "portolan_cli.backends.iceberg.cli:rollback"
+"version.prune" = "portolan_cli.backends.iceberg.cli:prune"
+
 [project.urls]
 "Homepage" = "https://github.com/portolan-sdi/portolan-cli"
 "Bug Tracker" = "https://github.com/portolan-sdi/portolan-cli/issues"
@@ -433,16 +439,8 @@ ignore_imports = [
     "portolan_cli.finalization -> portolan_cli.backends",
     "portolan_cli.version_ops -> portolan_cli.backends",
     "portolan_cli.version_ops -> portolan_cli.backends.protocol",
-    "portolan_cli.cli -> portolan_cli.backends.protocol", # TYPE_CHECKING only
     "portolan_cli.hookspecs -> portolan_cli.backends.protocol", # TYPE_CHECKING only
 ]
-
-[[tool.importlinter.contracts]]
-id = "iceberg-backend-isolation"
-name = "Iceberg backend must not import CLI layer directly"
-type = "forbidden"
-source_modules = ["portolan_cli.backends.iceberg"]
-forbidden_modules = ["portolan_cli.cli"]
 
 [[tool.importlinter.contracts]]
 id = "validation-is-an-adapter"
@@ -565,6 +563,7 @@ ignore_imports = [
     "portolan_cli.cli_types -> click",
     "portolan_cli.emit -> click",
     "portolan_cli.plugins.commands -> click",
+    "portolan_cli.backends.iceberg.cli -> click",
     # The package root names the Click group for type checkers only. It loads
     # the group lazily through __getattr__.
     "portolan_cli -> portolan_cli.cli",
@@ -581,6 +580,7 @@ protected_modules = [
     "portolan_cli.add_progress",
     "portolan_cli.scan.progress",
     "portolan_cli.plugins.commands",
+    "portolan_cli.backends.iceberg.cli",
 ]
 allowed_importers = [
     "portolan_cli.cli",
@@ -589,6 +589,7 @@ allowed_importers = [
     "portolan_cli.add_progress",
     "portolan_cli.scan.progress",
     "portolan_cli.plugins.commands",
+    "portolan_cli.backends.iceberg.cli",
 ]
 ignore_imports = [
     # The package root names the Click group for type checkers only. It loads

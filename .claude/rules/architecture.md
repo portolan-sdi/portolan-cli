@@ -92,12 +92,17 @@ subsystem table below and the path-scoped rules for each.
 - `backends/protocol.py` defines `@runtime_checkable class VersioningBackend`
   with `get_current_version`, `list_versions`, `publish`, `rollback`, `prune`,
   `check_drift`. `backends/__init__.py` `get_backend(name)` is the factory.
-  It resolves names through the `portolan_backends` hook (#947): the built-in
-  hook module registers `"file"` -> `JsonFileBackend`, and a plugin can add a
-  name. `"iceberg"` -> `IcebergBackend` (needs the `[iceberg]` extra) is still
-  resolved directly. A built-in name always wins a collision. The CLI
-  reaches a backend only through `version_ops.py`, which resolves the name
-  CLI flag > config > `"file"`.
+  It resolves names through the `portolan_backends` hook (#947). Two built-in
+  hook modules register `"file"` -> `JsonFileBackend` and `"iceberg"` ->
+  `IcebergBackend` (needs the `[iceberg]` extra, in
+  `backends/iceberg/hooks.py`). A plugin can add a name. A built-in name always
+  wins a collision. The CLI reaches a backend only through `version_ops.py`,
+  which resolves the name CLI flag > config > `"file"`.
+- Iceberg is a built-in plugin. `backends/iceberg/` imports only
+  `portolan_cli.api` and `portolan_cli.hookspecs` (the boundary test enforces
+  it). `version rollback` and `version prune` live in
+  `backends/iceberg/cli.py` and load through `portolan.commands` entry points
+  in `pyproject.toml`.
 - **Optional hooks are duck-typed, NOT in the Protocol.** `on_post_add`, `pull`,
   `supports_push`, `push_blocked_message` are checked via `hasattr`. If you add
   one, document it in `protocol.py`, do not widen the Protocol.
@@ -105,9 +110,7 @@ subsystem table below and the path-scoped rules for each.
   import in `protocol.py`. Do not add a pystac import there.
 - The file backend is **single-writer** and not thread-safe, it relies on drift
   checking, not locking. Concurrency safety is an Iceberg-only property.
-- Import contracts (`uv run lint-imports`): `cli` must not import `backends`
-  (only `backends.protocol` under `TYPE_CHECKING`), `backends.iceberg` must not
-  import `cli`.
+- Import contracts (`uv run lint-imports`): `cli` must not import `backends`.
 - Three layer contracts (#944, #947). `layer-read` keeps the read modules
   (`versions`, `json_io`, `bbox`, `models`, `query`, `status`, `catalog_list`,
   `agents_md`) free of Click, rasterio, `cli`, and the write modules.

@@ -16,8 +16,10 @@ plugin module when it loads them. A command that came from a hook would make
 `portolan --help` import every installed plugin. The lazy group reads command
 names from entry point metadata and imports a command module only when the
 user runs that command. Help shows `(plugin: <distribution>)` in place of the
-help text, which lives in the module. Shell completion shows the same label
-and imports no plugin either.
+help text, which lives in the module. A command that `portolan-cli` itself
+declares is the exception. Help loads it and shows its help text, because its
+module imports only Click and the public API. Shell completion shows the same
+rows. It imports no outside plugin either.
 
 The group caches a loaded command by its entry point. After
 `reset_plugin_manager()`, a command that `PORTOLAN_PLUGINS` disables is not
@@ -30,7 +32,10 @@ becomes `portolan version rollback`.
 
 `get_plugin_manager()` builds one `pluggy.PluginManager` on the first hook
 call and caches it. Importing the CLI never builds it. The manager registers
-the built-in hook modules first, then each outside plugin. Pluggy calls the
+the built-in hook modules in `manager._BUILTIN_MODULES` first, as
+`builtin:<name>`, then each outside plugin. Built-ins register directly and
+not through entry points, so they come first whatever order the entry points
+have. Pluggy calls the
 plugin registered last first, so `PluginManager.hook.<name>()` returns plugin
 results before built-in results.
 
@@ -131,14 +136,36 @@ Import-linter contracts in `pyproject.toml` hold the layers:
 | `layer-cli` | Only the CLI layer imports a CLI module (a `protected` contract) |
 
 The CLI layer is `cli`, `cli_types`, `emit`, `add_progress`, `scan.progress`,
-and `plugins.commands`. `output.py` has a writer that uses no Click. `cli.py`
+`plugins.commands`, and `backends.iceberg.cli`. `output.py` has a writer that uses no Click. `cli.py`
 installs `click_writer` at import time, so CLI output does not change.
 
 `tests/unit/plugins/test_boundary.py` parses each plugin package and fails on
 a `portolan_cli` import outside `api`, `hookspecs`, and `testing`. If a
 built-in plugin needs a private module, widen the API.
 
+## Iceberg is a built-in plugin
+
+`backends/iceberg/hooks.py` registers the `iceberg` backend as
+`builtin:iceberg`. Its factory imports pyiceberg on the first request. On
+Python 3.10 it raises a `ValueError` that names the Python requirement. With
+no extra installed, the `ValueError` names the extra. `get_backend` passes a
+factory's `ValueError` through unchanged.
+
+`backends/iceberg/cli.py` holds `version rollback` and `version prune`.
+`pyproject.toml` declares them as `version.rollback` and `version.prune` in
+`portolan.commands`. They load with `PORTOLAN_PLUGINS=none`, because
+`portolan-cli` declares them.
+
+The package root loads `IcebergBackend` on first access. The `hooks` and `cli`
+modules therefore import no pyiceberg or pyarrow. The package imports only the
+public modules, and `test_boundary.py` checks it. That rule replaced the
+`iceberg-backend-isolation` import-linter contract.
+
 ## Public surface
+
+`portolan_cli.api` reads each name from its source module on every access and
+keeps no copy. A test that patches the source module therefore reaches a
+plugin that imports the name from `api`.
 
 `tests/unit/plugins/public_api.txt` records the names in `portolan_cli.api`
 and `portolan_cli.testing`, and every hookspec signature. A change to it

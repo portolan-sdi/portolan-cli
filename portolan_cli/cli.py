@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
 
-    from portolan_cli.backends.protocol import VersioningBackend
     from portolan_cli.convert import ConversionResult
     from portolan_cli.extract.arcgis.report import ExtractionReport
     from portolan_cli.extract.arcgis.url_parser import ParsedArcGISURL
@@ -8046,19 +8045,6 @@ def partition(
         raise SystemExit(1) from None
 
 
-def _require_iceberg_backend(
-    catalog_path: Path, use_json: bool, command_name: str
-) -> VersioningBackend:
-    """Load the iceberg backend or exit with an error."""
-    from portolan_cli.version_ops import BackendRequiredError, require_iceberg_backend
-
-    try:
-        return require_iceberg_backend(catalog_path, command_name)
-    except BackendRequiredError as e:
-        emit_error(f"version {command_name}", "BackendError", str(e), use_json=use_json)
-        raise SystemExit(1) from None
-
-
 @cli.group()
 def version() -> None:
     r"""Version management commands.
@@ -8391,143 +8377,6 @@ def bump(
         success(f"Created version {ver.version}")
         if ver.message:
             detail(f"  {ver.message}")
-
-
-@version.command()
-@click.argument("collection")
-@click.argument("target_version")
-@click.option(
-    "--catalog",
-    "catalog_path",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Path to catalog root (default: auto-detect).",
-)
-@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
-@click.pass_context
-def rollback(
-    ctx: click.Context,
-    collection: str,
-    target_version: str,
-    catalog_path: Path | None,
-    json_output: bool,
-) -> None:
-    r"""Rollback a collection to a previous version.
-
-    Uses Iceberg's native snapshot management to set the current snapshot
-    pointer back to TARGET_VERSION. No data is copied — this is instant.
-
-    \b
-    Examples:
-        portolan version rollback boundaries 1.0.0
-        portolan version rollback boundaries 2.0.0 --json
-    """
-    use_json = should_output_json(ctx, json_output)
-
-    if catalog_path is None:
-        catalog_path = require_catalog_root(use_json, "version rollback")
-
-    backend = _require_iceberg_backend(catalog_path, use_json, "rollback")
-
-    try:
-        restored = backend.rollback(collection, target_version)
-    except (FileNotFoundError, ValueError, Exception) as e:
-        emit_error("version rollback", type(e).__name__, str(e), use_json=use_json)
-        raise SystemExit(1) from None
-
-    if not emit_success(
-        "version rollback",
-        {
-            "collection": collection,
-            "restored_version": restored.version,
-            "created": restored.created.isoformat(),
-        },
-        use_json=use_json,
-    ):
-        success(f"Rolled back '{collection}' to version {restored.version}")
-
-
-@version.command()
-@click.argument("collection")
-@click.option(
-    "--keep",
-    "-k",
-    type=click.IntRange(min=1),
-    default=5,
-    show_default=True,
-    help="Number of recent versions to keep.",
-)
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    help="Show what would be pruned without deleting.",
-)
-@click.option(
-    "--catalog",
-    "catalog_path",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Path to catalog root (default: auto-detect).",
-)
-@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
-@click.pass_context
-def prune(
-    ctx: click.Context,
-    collection: str,
-    keep: int,
-    dry_run: bool,
-    catalog_path: Path | None,
-    json_output: bool,
-) -> None:
-    r"""Remove old versions, keeping the N most recent.
-
-    \b
-    Examples:
-        portolan version prune boundaries                # Keep 5 most recent
-        portolan version prune boundaries --keep 3       # Keep 3 most recent
-        portolan version prune boundaries --dry-run      # Preview without deleting
-    """
-    use_json = should_output_json(ctx, json_output)
-
-    if catalog_path is None:
-        catalog_path = require_catalog_root(use_json, "version prune")
-
-    backend = _require_iceberg_backend(catalog_path, use_json, "prune")
-
-    try:
-        pruned = backend.prune(collection, keep=keep, dry_run=dry_run)
-    except (FileNotFoundError, Exception) as e:
-        emit_error("version prune", type(e).__name__, str(e), use_json=use_json)
-        raise SystemExit(1) from None
-
-    if use_json:
-        pruned_data = [
-            {
-                "version": v.version,
-                "created": v.created.isoformat(),
-            }
-            for v in pruned
-        ]
-        envelope = success_envelope(
-            "version prune",
-            {
-                "collection": collection,
-                "pruned": pruned_data,
-                "kept": keep,
-                "dry_run": dry_run,
-            },
-        )
-        output_json_envelope(envelope)
-    else:
-        prefix = "[DRY RUN] " if dry_run else ""
-        if not pruned:
-            info_output(f"{prefix}Nothing to prune (≤{keep} versions exist)")
-        else:
-            action = "Would prune" if dry_run else "Pruned"
-            info_output(f"{prefix}{action} {len(pruned)} version(s), keeping {keep}:")
-            for v in pruned:
-                timestamp = v.created.strftime("%Y-%m-%d %H:%M:%S")
-                detail(f"  {v.version}  {timestamp}")
 
 
 # =============================================================================

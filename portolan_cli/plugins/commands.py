@@ -2,8 +2,9 @@
 
 Command names come from entry point metadata. The group imports a command
 module only when the user runs that command. ``portolan --help`` and shell
-completion import no plugin. Help lists a plugin command with its distribution name, not its help
-text, because the help text lives in the module it would have to import.
+completion import no plugin. Help lists a plugin command with its distribution
+name, not its help text, because the help text lives in the module it would
+have to import. A command that portolan-cli itself declares shows its help text.
 
 A dotted name attaches to a built-in group: ``version.rollback`` becomes
 ``portolan version rollback``. A plugin command never replaces a built-in
@@ -19,7 +20,11 @@ from typing import TYPE_CHECKING, Any
 import click
 
 from portolan_cli.output import warn
-from portolan_cli.plugins.manager import COMMANDS_ENTRY_POINT_GROUP, enabled_entry_points
+from portolan_cli.plugins.manager import (
+    COMMANDS_ENTRY_POINT_GROUP,
+    enabled_entry_points,
+    is_builtin,
+)
 
 if TYPE_CHECKING:
     from importlib.metadata import EntryPoint
@@ -108,6 +113,15 @@ class PluginGroup(click.Group):
         rows: list[tuple[str, str | click.Command]] = []
         for name in self.list_commands(ctx):
             builtin = super().get_command(ctx, name)
+            if builtin is None and is_builtin(plugins[name]):
+                # portolan-cli's own command modules import only Click and the
+                # public API, so loading one for its help text costs little.
+                own = self.get_command(ctx, name)
+                if own is None:
+                    rows.append((name, f"(plugin: {_distribution(plugins[name])})"))
+                elif not own.hidden:
+                    rows.append((name, own))
+                continue
             if builtin is None:
                 rows.append((name, f"(plugin: {_distribution(plugins[name])})"))
             elif not builtin.hidden:

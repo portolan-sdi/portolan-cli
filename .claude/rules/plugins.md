@@ -40,8 +40,13 @@ before you change the plugin code.
 
 ## Built-in plugins use the same path
 
-- Define a built-in hook module in `portolan_cli/plugins/builtin/` and list it
-  in `manager._BUILTIN_MODULES`.
+- List each built-in hook module in `manager._BUILTIN_MODULES`, under the
+  name it registers as (`builtin:<name>`). A small shim goes in
+  `portolan_cli/plugins/builtin/`. A built-in plugin package, such as
+  `backends/iceberg/`, keeps its `hooks.py` in the package.
+- A command that portolan-cli provides through the plugin path goes in the
+  `portolan.commands` entry points in `pyproject.toml`. Help loads it for its
+  help text, so its module imports only Click and the public modules.
 - A plugin package imports only the public modules.
   `tests/unit/plugins/test_boundary.py` enforces it for each package in
   `PLUGIN_PACKAGES`. When a built-in plugin needs a private module, widen the

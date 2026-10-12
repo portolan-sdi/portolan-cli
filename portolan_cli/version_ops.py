@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.backends.protocol import SchemaFingerprint, VersioningBackend
+    from portolan_cli.backends.protocol import SchemaFingerprint
     from portolan_cli.versions import Version
 
 
@@ -232,42 +232,3 @@ def try_backend_pull(
         remote_version=result.remote_version,
         up_to_date=getattr(result, "up_to_date", False),
     )
-
-
-class BackendRequiredError(Exception):
-    """Raised when a required backend is not configured."""
-
-    def __init__(self, command_name: str, required: str, current: str | None) -> None:
-        self.command_name = command_name
-        self.required = required
-        self.current = current or "file"
-        super().__init__(
-            f"'portolan version {command_name}' requires the '{required}' backend. "
-            f"Current backend: '{self.current}'"
-        )
-
-
-def require_iceberg_backend(
-    catalog_path: Path,
-    command_name: str,
-) -> VersioningBackend:
-    """Load the iceberg backend or raise BackendRequiredError.
-
-    Args:
-        catalog_path: Path to catalog root.
-        command_name: Name of the command (for error messages).
-
-    Returns:
-        The iceberg VersioningBackend instance.
-
-    Raises:
-        BackendRequiredError: If the current backend is not 'iceberg'.
-    """
-    from portolan_cli.backends import get_backend
-    from portolan_cli.config import get_setting
-
-    backend_name = get_setting("backend", catalog_path=catalog_path)
-    if backend_name != "iceberg":
-        raise BackendRequiredError(command_name, "iceberg", backend_name)
-
-    return get_backend("iceberg", catalog_root=catalog_path)

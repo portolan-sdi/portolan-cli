@@ -2,6 +2,7 @@
 Asset
 DriftReport
 EnrichContext
+ErrorDetail
 PluginWarning
 PostAddContext
 PostAddItemContext
@@ -13,10 +14,16 @@ VersioningBackend
 detail
 download_file
 error
+error_envelope
+find_catalog_root
+get_backend
+get_setting
 hookimpl
+href_root
 info
 parse_version
 success
+success_envelope
 upload_file
 warn
 

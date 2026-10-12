@@ -45,11 +45,13 @@ ENV_VAR = "PORTOLAN_PLUGINS"
 BUILTIN_DISTRIBUTION = "portolan-cli"
 BUILTIN_PREFIX = "builtin:"
 
-# Built-in hook modules. They implement the same hooks an outside plugin does.
-_BUILTIN_MODULES = (
-    "portolan_cli.plugins.builtin.backends",
-    "portolan_cli.plugins.builtin.legacy_backends",
-)
+# Built-in hook modules, registered as ``builtin:<name>``. They implement the
+# same hooks an outside plugin does.
+_BUILTIN_MODULES = {
+    "backends": "portolan_cli.plugins.builtin.backends",
+    "iceberg": "portolan_cli.backends.iceberg.hooks",
+    "legacy_backends": "portolan_cli.plugins.builtin.legacy_backends",
+}
 # Built-in modules that rank after the outside plugins. The deprecated backend
 # group holds third-party backends, so a hook plugin wins a name over it.
 _TRAILING_BUILTINS = frozenset({f"{BUILTIN_PREFIX}legacy_backends"})
@@ -210,11 +212,8 @@ def get_plugin_manager() -> pluggy.PluginManager:
 
     pm = pluggy.PluginManager(hookspecs.PROJECT_NAME)
     pm.add_hookspecs(hookspecs)
-    for module_name in _BUILTIN_MODULES:
-        pm.register(
-            importlib.import_module(module_name),
-            name=f"{BUILTIN_PREFIX}{module_name.rsplit('.', 1)[1]}",
-        )
+    for name, module_name in _BUILTIN_MODULES.items():
+        pm.register(importlib.import_module(module_name), name=f"{BUILTIN_PREFIX}{name}")
     _warn_unknown_requested_names()
     _register_outside_plugins(pm)
     _drop_plugins_with_unknown_hooks(pm)

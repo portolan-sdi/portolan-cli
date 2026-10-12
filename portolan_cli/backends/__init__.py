@@ -36,9 +36,6 @@ __all__ = ["DriftReport", "SchemaFingerprint", "VersioningBackend", "get_backend
 
 logger = logging.getLogger(__name__)
 
-# Built-in until the Iceberg backend moves to its own hook module.
-_ICEBERG = "iceberg"
-
 
 def _registered_factories() -> dict[str, Any]:
     """Collect backend factories from every ``portolan_backends`` hook.
@@ -63,10 +60,10 @@ def _registered_factories() -> dict[str, Any]:
             )
             continue
         for name, factory in result.items():
-            if name in factories or name == _ICEBERG:
+            if name in factories:
                 warnings.warn(
                     f"Plugin '{plugin_name}' registers backend '{name}', which "
-                    f"'{owners.get(name, 'builtin:iceberg')}' already provides. "
+                    f"'{owners[name]}' already provides. "
                     "The first registration stays.",
                     PluginWarning,
                     stacklevel=3,
@@ -93,35 +90,26 @@ def get_backend(name: str = "file", catalog_root: Path | None = None) -> Version
         VersioningBackend instance.
 
     Raises:
-        ValueError: If the backend is not found, its dependencies are missing,
-            its factory fails, or it does not implement VersioningBackend.
-            The message names the backend and the available backends.
+        ValueError: If the backend is not found, its factory fails, or it does
+            not implement VersioningBackend. A factory's own ValueError, such
+            as the missing iceberg extra, passes through unchanged.
 
     Example:
         >>> backend = get_backend()  # Default file backend
         >>> backend = get_backend("file")  # Explicit file backend
         >>> backend = get_backend("iceberg")  # Iceberg backend (requires [iceberg] extra)
     """
-    # Built-in iceberg backend (optional extra)
-    if name == _ICEBERG:
-        try:
-            from portolan_cli.backends.iceberg import IcebergBackend
-        except ImportError as e:
-            raise ValueError(
-                "The 'iceberg' backend requires the iceberg extra. "
-                "Install it with: pip install portolan-cli[iceberg]"
-            ) from e
-        logger.debug("Creating IcebergBackend instance")
-        return IcebergBackend(catalog_root=catalog_root)
-
     factories = _registered_factories()
     factory = factories.get(name)
     if factory is None:
-        available = ", ".join(sorted([*factories, _ICEBERG]))
+        available = ", ".join(sorted(factories))
         raise ValueError(f"Unknown backend: {name}. Available: {available}")
 
     try:
         backend = factory(catalog_root=catalog_root)
+    except ValueError:
+        # A factory states its own setup error, such as a missing extra.
+        raise
     except Exception as e:
         msg = f"Failed to instantiate backend '{name}': {e}"
         logger.error(msg)

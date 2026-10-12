@@ -3,9 +3,9 @@
 Covers:
 - ``portolan version current``
 - ``portolan version list``
-- ``portolan version rollback``
-- ``portolan version prune``
-- ``_require_iceberg_backend`` — backend guard
+- ``portolan version rollback`` and ``portolan version prune``, which
+  ``portolan_cli.backends.iceberg.cli`` provides through entry points (#947),
+  with their iceberg backend guard
 - ``_check_backend_push_support`` — push routing
 - ``_try_backend_pull`` — pull routing
 """

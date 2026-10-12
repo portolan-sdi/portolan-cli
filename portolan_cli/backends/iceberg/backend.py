@@ -6,6 +6,14 @@ data in Iceberg tables and version metadata in snapshot summary properties.
 
 from __future__ import annotations
 
+import sys
+
+if sys.version_info[:2] < (3, 11):
+    raise ImportError(
+        "The Iceberg backend requires Python 3.11+. "
+        f"You are running Python {sys.version_info[0]}.{sys.version_info[1]}."
+    )
+
 import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -16,6 +24,14 @@ from pyiceberg.exceptions import NoSuchTableError
 from pyiceberg.table import Transaction
 from pyiceberg.table.update.snapshot import ExpireSnapshots
 
+from portolan_cli.api import (
+    Asset,
+    DriftReport,
+    SchemaFingerprint,
+    SchemaInfo,
+    Version,
+    href_root,
+)
 from portolan_cli.backends.iceberg.config import create_catalog
 from portolan_cli.backends.iceberg.spatial import add_spatial_columns, detect_geohash_precision
 from portolan_cli.backends.iceberg.versioning import (
@@ -24,8 +40,6 @@ from portolan_cli.backends.iceberg.versioning import (
     snapshot_to_version,
     version_to_snapshot_properties,
 )
-from portolan_cli.backends.protocol import DriftReport, SchemaFingerprint
-from portolan_cli.versions import Asset, SchemaInfo, Version
 
 if TYPE_CHECKING:
     from pyiceberg.catalog import Catalog
@@ -480,7 +494,7 @@ class IcebergBackend:
         Only uploads STAC metadata (item JSON, collection JSON, catalog.json).
         Data files are NOT uploaded — they live in the Iceberg warehouse.
         """
-        from portolan_cli.sync.upload import upload_file
+        from portolan_cli.api import upload_file
 
         remote = remote.rstrip("/")
 
@@ -513,9 +527,7 @@ class IcebergBackend:
         Queries get_current_version() for asset info, then downloads each
         asset from {remote_url}/{href} to {local_root}/{href}.
         """
-        from portolan_cli.output import detail, error, info, success
-        from portolan_cli.sync.download import download_file
-        from portolan_cli.sync.pull import PullResult
+        from portolan_cli.api import PullResult, detail, download_file, error, info, success
 
         remote_url = remote_url.rstrip("/")
 
