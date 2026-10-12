@@ -704,11 +704,13 @@ def _convert_vector(
         # Convert source to gpio Table
         table = gpio.convert(str(source))
 
+        partitioned = resolved.partition and resolved.spatial_index != "none"
+
         # Apply spatial optimizations based on settings
-        table = apply_vector_settings(table, resolved)
+        table = apply_vector_settings(table, resolved, partitioned=partitioned)
 
         # Write output (partitioned or single file)
-        if resolved.partition and resolved.spatial_index != "none":
+        if partitioned:
             # Partitioned output to directory
             partition_dir = output_dir / source.stem
             _write_partitioned(table, partition_dir, resolved)
@@ -740,7 +742,9 @@ def has_geometry(table: Any) -> bool:
     return getattr(table, "geometry_column", "geometry") is not None
 
 
-def apply_vector_settings(table: Any, settings: VectorSettings) -> Any:
+def apply_vector_settings(
+    table: Any, settings: VectorSettings, *, partitioned: bool = False
+) -> Any:
     """Apply spatial optimization settings to a gpio Table.
 
     A table with no geometry column is returned untouched. Sorting and the
@@ -750,6 +754,9 @@ def apply_vector_settings(table: Any, settings: VectorSettings) -> Any:
     Args:
         table: geoparquet-io Table instance.
         settings: Vector conversion settings.
+        partitioned: True when the caller writes the table with
+            ``_write_partitioned``. The partition call then adds the spatial
+            index column itself, at the size it partitions by.
 
     Returns:
         Modified Table with optimizations applied.
@@ -761,8 +768,10 @@ def apply_vector_settings(table: Any, settings: VectorSettings) -> Any:
     if settings.add_bbox:
         table = table.add_bbox()
 
-    # Add spatial index column if specified
-    if settings.spatial_index != "none":
+    # Add spatial index column if specified. geoparquet-io partitions on an
+    # existing column at that column's resolution, so a column added here
+    # would bypass the `auto` sizing of a partitioned write.
+    if settings.spatial_index != "none" and not partitioned:
         resolution = _resolve_resolution(settings.resolution)
         table = _add_spatial_index(table, settings.spatial_index, resolution)
 
@@ -819,22 +828,51 @@ def _add_spatial_index(table: Any, index_type: str, resolution: int | None) -> A
     if index_type == "a5":
         return table.add_a5() if resolution is None else table.add_a5(resolution=resolution)
     if index_type == "kdtree":
-        return table.add_kdtree() if resolution is None else table.add_kdtree(iterations=resolution)
+        # geoparquet-io 1.5 requires a size or `auto` for kdtree (geoparquet-io#855).
+        if resolution is None:
+            return table.add_kdtree(auto=True)
+        return table.add_kdtree(iterations=resolution)
     raise ValueError(
         f"Unknown spatial index type: '{index_type}'. Valid types: h3, s2, quadkey, a5, kdtree"
     )
 
 
+# The keyword each geoparquet-io partition method uses for its cell size.
+_PARTITION_SIZE_KWARG = {
+    "h3": "resolution",
+    "s2": "level",
+    "quadkey": "resolution",
+    "a5": "resolution",
+    "kdtree": "iterations",
+}
+
+# Quadkey partitions group cells by a prefix of the quadkey column. geoparquet-io
+# 1.5 made the prefix length required next to an explicit resolution
+# (geoparquet-io#800). 6 is the length that geoparquet-io 1.4 used by default.
+_QUADKEY_PARTITION_RESOLUTION = 6
+
+
 def _write_partitioned(table: Any, output_dir: Path, settings: VectorSettings) -> None:
     """Write table as hive-partitioned output.
+
+    ``resolution: auto`` passes ``auto=True``, which sizes the cells from the
+    row count. geoparquet-io 1.5 refuses a partition call that names neither a
+    size nor ``auto`` (geoparquet-io#800, #855).
 
     Args:
         table: geoparquet-io Table instance with spatial index column.
         output_dir: Output directory for partitioned files.
         settings: Vector settings with partition strategy.
     """
-    resolution = _resolve_resolution(settings.resolution)
     index_type = settings.spatial_index
+    size_kwarg = _PARTITION_SIZE_KWARG.get(index_type)
+    if size_kwarg is None:
+        return
+
+    resolution = _resolve_resolution(settings.resolution)
+    sizing: dict[str, Any] = {"auto": True} if resolution is None else {size_kwarg: resolution}
+    if index_type == "quadkey" and resolution is not None:
+        sizing["partition_resolution"] = min(resolution, _QUADKEY_PARTITION_RESOLUTION)
 
     # geoparquet-io 1.4.0 changed the Python API default for `hive` from True to
     # False (gpio#661). Portolan needs the Hive layout: each partition directory
@@ -842,39 +880,8 @@ def _write_partitioned(table: Any, output_dir: Path, settings: VectorSettings) -
     # `<scheme>_cell=*`. Pass both flags at every call so a later default change
     # cannot alter the layout again. `keep_*_column` keeps partition pruning
     # available to a reader, which `partitioning.partition_file` already does.
-    if index_type == "h3":
-        if resolution is None:
-            table.partition_by_h3(str(output_dir), hive=True, keep_h3_column=True)
-        else:
-            table.partition_by_h3(
-                str(output_dir), resolution=resolution, hive=True, keep_h3_column=True
-            )
-    elif index_type == "s2":
-        if resolution is None:
-            table.partition_by_s2(str(output_dir), hive=True, keep_s2_column=True)
-        else:
-            table.partition_by_s2(str(output_dir), level=resolution, hive=True, keep_s2_column=True)
-    elif index_type == "quadkey":
-        if resolution is None:
-            table.partition_by_quadkey(str(output_dir), hive=True, keep_quadkey_column=True)
-        else:
-            table.partition_by_quadkey(
-                str(output_dir), resolution=resolution, hive=True, keep_quadkey_column=True
-            )
-    elif index_type == "a5":
-        if resolution is None:
-            table.partition_by_a5(str(output_dir), hive=True, keep_a5_column=True)
-        else:
-            table.partition_by_a5(
-                str(output_dir), resolution=resolution, hive=True, keep_a5_column=True
-            )
-    elif index_type == "kdtree":
-        if resolution is None:
-            table.partition_by_kdtree(str(output_dir), hive=True, keep_kdtree_column=True)
-        else:
-            table.partition_by_kdtree(
-                str(output_dir), iterations=resolution, hive=True, keep_kdtree_column=True
-            )
+    partition = getattr(table, f"partition_by_{index_type}")
+    partition(str(output_dir), hive=True, **{f"keep_{index_type}_column": True}, **sizing)
 
 
 def _convert_raster(source: Path, output_dir: Path, settings: CogSettings | None = None) -> Path:
