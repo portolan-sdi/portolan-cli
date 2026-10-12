@@ -59,14 +59,18 @@ def test_cli_export_is_the_group_after_the_submodule_loads() -> None:
     The import system binds a loaded submodule to the package attribute of the
     same name. Without the guard, this order returns the module object.
     """
-    script = "import portolan_cli.cli\nfrom portolan_cli import cli\nprint(type(cli).__name__)\n"
+    script = (
+        "import click, portolan_cli.cli\n"
+        "from portolan_cli import cli\n"
+        "print(isinstance(cli, click.Group))\n"
+    )
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
         check=True,
     )
-    assert result.stdout.strip() == "Group"
+    assert result.stdout.strip() == "True"
 
 
 @pytest.mark.unit
