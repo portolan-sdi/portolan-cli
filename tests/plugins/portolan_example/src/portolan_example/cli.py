@@ -9,10 +9,10 @@ from pathlib import Path
 
 import click
 
+# --8<-- [start:command]
 from portolan_cli.api import info, success
 
 
-# --8<-- [start:command]
 @click.group()
 def group() -> None:
     """Commands from the example plugin."""
@@ -30,7 +30,6 @@ def group() -> None:
 )
 def versions(collection: str, catalog_root: Path) -> None:
     """List the versions the example backend holds for COLLECTION."""
-    # --8<-- [end:command]
     from portolan_example.backend import ExampleBackend
 
     history = ExampleBackend(catalog_root=catalog_root).list_versions(collection)
@@ -39,3 +38,4 @@ def versions(collection: str, catalog_root: Path) -> None:
         return
     for version in history:
         success(f"{version.version}  {version.message}")
+    # --8<-- [end:command]

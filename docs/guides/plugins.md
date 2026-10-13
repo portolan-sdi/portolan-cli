@@ -24,7 +24,7 @@ A plugin imports from three modules and from nothing else in `portolan_cli`:
 These modules follow semantic versioning. A change that removes a name or
 breaks a signature needs a major release. A deprecated hook or hook argument
 stays for one minor release, and pluggy warns each plugin that still uses it.
-The [Python API reference](../reference/python.md#plugin-api) documents each
+The [Python API reference](../reference/python.md) documents each
 name.
 
 A published plugin declares `portolan-cli` as a dependency. Keep module-level
@@ -52,8 +52,9 @@ minor release stops reading the group.
 
 ## Add a command
 
-The entry point loads a Click group or command. A command uses the terminal
-helpers from `portolan_cli.api` so its output matches the built-in commands:
+The entry point loads a Click group or command. The command below prints
+through `info` and `success` from `portolan_cli.api`, so its output matches
+the built-in commands:
 
 ```python
 --8<-- "tests/plugins/portolan_example/src/portolan_example/cli.py:command"
@@ -80,7 +81,7 @@ or `portolan extract`. A second run must give the same result. Portolan restores
 
 The `portolan_backends` hook maps a name to a factory. Portolan calls
 `factory(catalog_root=path)` and expects a
-[`VersioningBackend`](../reference/python.md#versioning-backends).
+[`VersioningBackend`](../reference/python.md).
 A class satisfies this.
 
 ```python
@@ -93,7 +94,7 @@ A catalog selects it with `portolan init --backend example` or with
 ## Convert a file format
 
 The `portolan_formats` hook returns
-[`FormatHandler`](../reference/python.md#format-handlers)
+[`FormatHandler`](../reference/python.md)
 objects. A handler declares its name, family, extensions, media type, and
 asset level, then claims, converts, and describes files.
 
@@ -120,11 +121,11 @@ Portolan picks the handler for one file in this order:
 ## Add a data source
 
 The `portolan_extractors` hook returns
-[`Extractor`](../reference/python.md#extractors) objects. Each
+[`Extractor`](../reference/python.md) objects. Each
 one becomes `portolan extract <name>`.
 
 A service that serves named layers can implement
-[`LayerSource`](../reference/python.md#layer-sources) instead.
+[`LayerSource`](../reference/python.md) instead.
 `extractor_from` wraps it and gives it the layer filters, resume, retry, the
 extraction report, and catalog setup that the WFS, ArcGIS, and Carto sources
 use.
