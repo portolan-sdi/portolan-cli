@@ -442,17 +442,24 @@ def _rewrite_report(out: Path, **changes: Any) -> None:
 def test_resume_accepts_a_legacy_skipped_result(fixtures_dir: Path, tmp_path: Path) -> None:
     """An older Carto report marks a resumed table "skipped" with no output path."""
     out = tmp_path / "out"
-    run_layer_extraction(_FixtureSource(fixtures_dir), "src", out, _options(raw=True))
-    _rewrite_report(out, status="skipped", output_path=None)
+    first = run_layer_extraction(_FixtureSource(fixtures_dir), "src", out, _options(raw=True))
+    first_rows = first.layers[0].features
+    _rewrite_report(
+        out, status="skipped", output_path=None, features=0, size_bytes=0, error="Already extracted"
+    )
     second = _FixtureSource(fixtures_dir)
 
     report = run_layer_extraction(second, "src", out, _options(resume=True, raw=True))
 
     assert second.fetched == []
-    assert (report.layers[0].status, report.layers[0].output_path) == (
+    points = report.layers[0]
+    assert (points.status, points.output_path, points.error) == (
         "success",
         "points/points.parquet",
+        None,
     )
+    assert points.size_bytes == (out / "points" / "points.parquet").stat().st_size
+    assert points.features == first_rows
 
 
 def test_legacy_skipped_layer_joins_the_catalog(fixtures_dir: Path, tmp_path: Path) -> None:

@@ -468,9 +468,20 @@ def _resumed_result(
         return previous
     # A legacy "skipped" result counts only when its data file is still there.
     # It becomes "success", because the catalog build adds only those.
-    if not (output_dir / relative).is_file():
+    data_file = output_dir / relative
+    if not data_file.is_file():
         return None
-    return replace(previous, status="success", output_path=relative)
+    import pyarrow.parquet as pq
+
+    # The legacy result holds 0 rows, 0 bytes, and an "Already extracted" error.
+    return replace(
+        previous,
+        status="success",
+        output_path=relative,
+        features=pq.ParquetFile(data_file).metadata.num_rows,
+        size_bytes=data_file.stat().st_size,
+        error=None,
+    )
 
 
 def _fetch_sequential(
