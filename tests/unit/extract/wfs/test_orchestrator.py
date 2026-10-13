@@ -631,12 +631,15 @@ class TestTimeoutEnforcement:
         import time
 
         def slow_but_ok(source: str, layer: LayerRef, dest: Path) -> int:
-            # 0.5s < 1.0s timeout, but 4 rounds (8 layers / 2 workers) add up to ~2.0s.
-            time.sleep(0.5)
+            # 0.1s is far under the 2.0s timeout. A process-wide pause on a
+            # loaded CI runner stalls both workers at once, and each layer keeps
+            # 1.9s of margin for it. 24 rounds (48 layers / 2 workers) add up
+            # to ~2.4s, so a deadline from submission still fails the test.
+            time.sleep(0.1)
             return 10
 
-        report = self._run(tmp_path, [f"layer_{i}" for i in range(8)], slow_but_ok, timeout=1.0)
+        report = self._run(tmp_path, [f"layer_{i}" for i in range(48)], slow_but_ok, timeout=2.0)
 
-        assert len(report.layers) == 8
+        assert len(report.layers) == 48
         assert all(r.status == "success" for r in report.layers)
         assert all(r.error is None for r in report.layers)
