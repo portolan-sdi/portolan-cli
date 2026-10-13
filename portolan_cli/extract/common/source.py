@@ -27,8 +27,9 @@ import re
 import shutil
 import threading
 import time
+import uuid
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePath
@@ -374,24 +375,31 @@ class _Run:
     output_dir: Path
     options: LayerSourceOptions
     on_progress: Callable[[ExtractionProgress], None] | None
+    # Data files of the layers that timed out. Their retries stop.
+    abandoned: set[str] = field(default_factory=set)
 
     def fetch_layer(self, layer: LayerRef) -> LayerResult:
         """Fetch one layer with retry, move it into place, and return its result."""
-        return self.promote(layer, self.stage_layer(layer))
+        return self.promote(self.stage_layer(layer))
 
     def stage_layer(self, layer: LayerRef) -> _Staged:
-        """Fetch one layer with retry into ``.portolan/staging``.
+        """Fetch one layer with retry, and write its styles, into a staging tree.
 
-        A worker thread runs this step. The final data file and the styles
-        change only in ``promote``, so a timed-out fetch cannot change them.
+        A worker thread runs this step. Each layer gets its own tree under
+        ``.portolan/staging``, so nested collection paths do not mix. The
+        catalog changes only in ``promote``, so a timed-out fetch cannot
+        change it.
         """
         from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
 
         relative = layer_path(layer)
-        staged = self.output_dir / ".portolan" / "staging" / relative
+        root = self.output_dir / ".portolan" / "staging" / uuid.uuid4().hex
+        staged = root / relative
         source_url = self.discovery.source_url
 
         def attempt() -> tuple[int, float]:
+            if relative in self.abandoned:
+                raise TimeoutError(f"Layer {layer.name} timed out")
             staged.parent.mkdir(parents=True, exist_ok=True)
             start = time.monotonic()
             rows = self.source.fetch(source_url, layer, staged)
@@ -408,6 +416,7 @@ class _Run:
         )
         if outcome.success and outcome.value is not None:
             rows, duration = outcome.value
+            self._styles(layer, staged.parent)
             result = _result(
                 layer,
                 "success",
@@ -418,7 +427,7 @@ class _Run:
                 attempts=outcome.attempts,
             )
             return _Staged(result, staged)
-        staged.unlink(missing_ok=True)
+        shutil.rmtree(root, ignore_errors=True)
         error = str(outcome.error) if outcome.error else "Unknown error"
         if isinstance(outcome.error, EmptyLayerError):
             logger.warning("Layer %s is empty (0 features), skipping", layer.name)
@@ -437,16 +446,18 @@ class _Run:
             )
         return _Staged(_result(layer, "failed", error=error, attempts=outcome.attempts), None)
 
-    def promote(self, layer: LayerRef, staged: _Staged) -> LayerResult:
-        """Move a successful fetch to its data file, then write the styles."""
+    def promote(self, staged: _Staged) -> LayerResult:
+        """Move a successful layer's data file and styles into its collection."""
         result = staged.result
-        if result.status != "success" or result.output_path is None:
+        if staged.path is None or result.output_path is None:
             return result
-        dest = self.output_dir / result.output_path
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if staged.path is not None and staged.path.exists():
-            staged.path.replace(dest)
-        self._styles(layer, dest.parent)
+        collection = (self.output_dir / result.output_path).parent
+        for path in sorted(staged.path.parent.rglob("*")):
+            if path.is_file():
+                target = collection / path.relative_to(staged.path.parent)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                path.replace(target)
+        collection.mkdir(parents=True, exist_ok=True)
         return result
 
     def _styles(self, layer: LayerRef, collection_dir: Path) -> None:
@@ -581,7 +592,7 @@ def _fetch_parallel(
             for future in done:
                 index, layer = futures[future]
                 try:
-                    result = run.promote(layer, future.result())
+                    result = run.promote(future.result())
                 except Exception as err:  # noqa: BLE001 - one layer must not stop the run
                     logger.error("Layer %s failed: %s", layer.name, err)
                     result = _result(layer, "failed", error=str(err), attempts=1)
@@ -594,7 +605,11 @@ def _fetch_parallel(
                 )
                 results.append((index, result))
             now = time.monotonic()
-            for future in [f for f in pending if (d := deadline(f)) is not None and d <= now]:
+            # A future that ended while the main thread was busy counts as done.
+            expired = [
+                f for f in pending if not f.done() and (d := deadline(f)) is not None and d <= now
+            ]
+            for future in expired:
                 index, layer = futures[future]
                 with lock:
                     elapsed = now - started[index]
@@ -609,6 +624,7 @@ def _fetch_parallel(
                 )
                 future.cancel()
                 pending.discard(future)
+                run.abandoned.add(layer_path(layer))
                 timed_out = True
     finally:
         executor.shutdown(wait=not timed_out, cancel_futures=timed_out)
@@ -854,7 +870,8 @@ def run_layer_extraction(
     else:
         collected += _fetch_sequential(run, jobs, total)
     collected.sort(key=lambda item: item[0])
-    # A timed-out thread can still write here. It fails, and the run ignores it.
+    # A timed-out fetch can still write here. Its write then fails, and its
+    # retries stop before they make the directory again.
     shutil.rmtree(output_dir / ".portolan" / "staging", ignore_errors=True)
 
     report = build_report(discovery, [result for _, result in collected])

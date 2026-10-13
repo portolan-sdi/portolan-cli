@@ -284,10 +284,12 @@ class _CopySource(_FixtureSource):
     def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
         import shutil
 
-        time.sleep(self.slow.get(layer.name, 0.0))
-        shutil.copyfile(self.prepared, dest)
-        if layer.name in self.slow:
-            self.finished.set()
+        try:
+            time.sleep(self.slow.get(layer.name, 0.0))
+            shutil.copyfile(self.prepared, dest)
+        finally:
+            if layer.name in self.slow:
+                self.finished.set()
         return 1
 
     def styles(self, source: str, layer: LayerRef, collection_dir: Path) -> None:
@@ -543,3 +545,91 @@ def test_resume_fetches_a_legacy_layer_with_a_corrupt_file(
 
     assert second.fetched == ["points"]
     assert report.layers[0].status == "success"
+
+
+class _StyledSource(_FixtureSource):
+    """Write a style file and a legend next to each layer."""
+
+    def __init__(self, fixtures_dir: Path) -> None:
+        super().__init__(fixtures_dir)
+        self.style_threads: set[str] = set()
+
+    def styles(self, source: str, layer: LayerRef, collection_dir: Path) -> None:
+        self.style_threads.add(threading.current_thread().name)
+        (collection_dir / "styles").mkdir(parents=True, exist_ok=True)
+        (collection_dir / "styles" / "default.json").write_text("{}", encoding="utf-8")
+        (collection_dir / "legends").mkdir(exist_ok=True)
+        (collection_dir / "legends" / "default.png").write_bytes(b"png")
+
+
+def test_parallel_styles_run_on_workers_and_move_with_the_data(
+    fixtures_dir: Path, tmp_path: Path
+) -> None:
+    """Styles run beside the fetch, then move into the collection with the data file."""
+    source = _StyledSource(fixtures_dir)
+    out = tmp_path / "out"
+
+    run_layer_extraction(source, "src", out, _options(workers=2, raw=True))
+
+    for name in ("points", "lines"):
+        assert (out / name / f"{name}.parquet").is_file()
+        assert (out / name / "styles" / "default.json").read_text(encoding="utf-8") == "{}"
+        assert (out / name / "legends" / "default.png").read_bytes() == b"png"
+    assert threading.main_thread().name not in source.style_threads
+    assert not (out / ".portolan" / "staging").exists()
+
+
+def test_timeout_scan_skips_a_layer_that_finished(
+    fixtures_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A layer that ends while the main thread is busy is not reported as timed out."""
+    from portolan_cli.extract.common import source as driver
+
+    prepared = tmp_path / "prepared"
+    run_layer_extraction(
+        _FixtureSource(fixtures_dir), "src", prepared, _options(raw=True, layer_filter=["lines"])
+    )
+    copy = _CopySource(fixtures_dir, prepared / "lines" / "lines.parquet", slow={"lines": 0.5})
+    original = driver._Run.promote
+
+    def slow_promote(self: Any, staged: Any) -> Any:
+        # The main thread is busy past the other layer's deadline.
+        if staged.result.name == "points":
+            time.sleep(1.5)
+        return original(self, staged)
+
+    monkeypatch.setattr(driver._Run, "promote", slow_promote)
+
+    report = run_layer_extraction(
+        copy, "src", tmp_path / "out", _options(workers=2, layer_timeout=1.0, raw=True)
+    )
+
+    assert [(r.name, r.status) for r in report.layers] == [
+        ("points", "success"),
+        ("lines", "success"),
+    ]
+
+
+def test_timed_out_layer_stops_its_retries(fixtures_dir: Path, tmp_path: Path) -> None:
+    """A timed-out layer does not retry after the run, so it leaves no staged copy."""
+    calls: list[str] = []
+
+    class _FailSlowly(_FixtureSource):
+        def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
+            if layer.name == "points":
+                calls.append(layer.name)
+                time.sleep(1.5)
+                raise ConnectionError("points is down")
+            return super().fetch(source, layer, dest)
+
+    out = tmp_path / "out"
+    run_layer_extraction(
+        _FailSlowly(fixtures_dir),
+        "src",
+        out,
+        _options(workers=2, layer_timeout=1.0, retries=3, raw=True),
+    )
+    time.sleep(2.0)
+
+    assert calls == ["points"]
+    assert not (out / ".portolan" / "staging").exists()

@@ -133,6 +133,11 @@ def _seed_collections(output_dir: Path, report: ExtractionReport) -> None:
     seed_collections(ArcGISLayerSource(), discovery, output_dir, report)
 
 
+def _staged_relative(path: Path, catalog: Path) -> Path:
+    """Return the path a fetch wrote, relative to its .portolan/staging/<id> tree."""
+    return Path(*path.relative_to(catalog / ".portolan" / "staging").parts[1:])
+
+
 # =============================================================================
 # slugify tests
 # =============================================================================
@@ -784,8 +789,8 @@ class TestServicesRootExtraction:
         # (not nested: census_2020/block_groups/block_groups.parquet)
         call_args = mock_extract.call_args
         output_path = call_args[0][3]  # Fourth positional arg (after self) is dest
-        # The driver fetches into .portolan/staging, then moves the file into place.
-        relative_path = output_path.relative_to(tmp_path / ".portolan" / "staging")
+        # The driver fetches into .portolan/staging/<id>, then moves the file into place.
+        relative_path = _staged_relative(output_path, tmp_path)
         assert relative_path.as_posix() == "census_2020/census_2020.parquet"
 
     def test_services_root_applies_service_filter(self, tmp_path: Path) -> None:
@@ -845,8 +850,8 @@ class TestServicesRootExtraction:
         # NOT nested: service_name/layer_name/layer_name.parquet
         call_args = mock_extract.call_args
         output_path = call_args[0][3]  # Fourth positional arg (after self) is dest
-        # The driver fetches into .portolan/staging, then moves the file into place.
-        relative_path = output_path.relative_to(tmp_path / ".portolan" / "staging")
+        # The driver fetches into .portolan/staging/<id>, then moves the file into place.
+        relative_path = _staged_relative(output_path, tmp_path)
 
         # Should be: bag_woonfunctie/bag_woonfunctie.parquet (flattened)
         # NOT: bag_woonfunctie/bag_woonfunctie/bag_woonfunctie.parquet (nested)
@@ -889,7 +894,7 @@ class TestServicesRootExtraction:
         # Output paths should be NESTED: service_name/layer_name/layer_name.parquet
         # First layer: woontypering/woontypering_2020/woontypering_2020.parquet
         first_call_output = mock_extract.call_args_list[0][0][3]
-        relative_first = first_call_output.relative_to(tmp_path / ".portolan" / "staging")
+        relative_first = _staged_relative(first_call_output, tmp_path)
         assert (
             relative_first.as_posix() == "woontypering/woontypering_2020/woontypering_2020.parquet"
         )
