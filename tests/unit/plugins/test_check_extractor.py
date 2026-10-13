@@ -59,3 +59,20 @@ def test_extract_must_return_a_report(tmp_path: Path) -> None:
 def test_object_must_be_an_extractor() -> None:
     with pytest.raises(ConformanceError, match=r"object does not implement Extractor"):
         check_extractor(object())
+
+
+def test_cli_command_error_is_a_conformance_problem() -> None:
+    """A command that does not load is reported, not raised raw."""
+    extractor = _Mismatched()
+
+    def broken() -> click.Command:
+        raise ImportError("No module named 'missing_dependency'")
+
+    extractor.cli_command = broken  # type: ignore[method-assign]
+
+    with pytest.raises(ConformanceError) as caught:
+        check_extractor(extractor)
+
+    assert str(caught.value) == (
+        "cli_command() raised ImportError: No module named 'missing_dependency'."
+    )

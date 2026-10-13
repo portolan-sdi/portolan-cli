@@ -816,7 +816,7 @@ def no_extract_side_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     from portolan_cli.extract.wfs import orchestrator as wfs
 
     monkeypatch.setattr(arcgis, "extract_esri_style", lambda *a, **k: None)
-    # _seed_collection_metadata_arcgis imports it inside the function.
+    # ArcGISLayerSource.layer_metadata imports it inside the method.
     monkeypatch.setattr(discovery, "fetch_layer_details", lambda *a, **k: {})
     monkeypatch.setattr(wfs, "extract_wms_style", lambda *a, **k: None)
     monkeypatch.setattr(wfs, "extract_wms_legend", lambda *a, **k: None)

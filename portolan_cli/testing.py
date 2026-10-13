@@ -276,8 +276,6 @@ def check_extractor(
     Raises:
         ConformanceError: With one line per problem found.
     """
-    import click
-
     from portolan_cli.extract.common.report import ExtractionReport
     from portolan_cli.plugins.extractors import Extractor
 
@@ -289,13 +287,12 @@ def check_extractor(
         problems.append(f"name {extractor.name!r} is not a lowercase command name.")
     if not isinstance(extractor.summary, str) or not extractor.summary.strip():
         problems.append("summary is empty.")
-    command = extractor.cli_command()
-    if not isinstance(command, click.Command):
-        problems.append(
-            f"cli_command() returned {type(command).__name__}, expected a Click command."
-        )
-    elif command.name != extractor.name:
-        problems.append(f"cli_command() is named {command.name!r}, expected {extractor.name!r}.")
+    try:
+        command = extractor.cli_command()
+    except Exception as err:  # noqa: BLE001 - report any load failure as a problem
+        problems.append(f"cli_command() raised {type(err).__name__}: {err}.")
+    else:
+        _check_command(extractor.name, command, problems)
 
     if source is not None and output_dir is not None:
         report = extractor.extract(source, output_dir, **options)
@@ -308,3 +305,14 @@ def check_extractor(
 
     if problems:
         raise ConformanceError("\n".join(problems))
+
+
+def _check_command(name: str, command: object, problems: list[str]) -> None:
+    import click
+
+    if not isinstance(command, click.Command):
+        problems.append(
+            f"cli_command() returned {type(command).__name__}, expected a Click command."
+        )
+    elif command.name != name:
+        problems.append(f"cli_command() is named {command.name!r}, expected {name!r}.")
