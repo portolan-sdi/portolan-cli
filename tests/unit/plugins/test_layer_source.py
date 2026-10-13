@@ -355,3 +355,46 @@ def test_license_is_seeded_without_harvested_metadata(fixtures_dir: Path, tmp_pa
     metadata = yaml.safe_load((out / ".portolan" / "metadata.yaml").read_text(encoding="utf-8"))
     assert metadata["license"] == "CC0-1.0"
     assert (out / "points" / "collection.json").is_file()
+
+
+class _EscapingSource(_FixtureSource):
+    """A source that sets an unsafe collection path on its first layer."""
+
+    def __init__(self, fixtures_dir: Path, path: str) -> None:
+        super().__init__(fixtures_dir)
+        self.path = path
+
+    def discover(self, source: str, options: LayerSourceOptions) -> Discovery:
+        discovery = super().discover(source, options)
+        first = discovery.layers[0]
+        discovery.layers[0] = LayerRef(id=first.id, name=first.name, path=self.path)
+        return discovery
+
+
+@pytest.mark.parametrize(
+    "path", ["../escaped", "a/../../escaped", "/tmp/escaped", "a//b", "./a", "a\\..\\b"]
+)
+def test_unsafe_layer_path_stops_the_run_before_any_write(
+    fixtures_dir: Path, tmp_path: Path, path: str
+) -> None:
+    """A collection path must stay inside the catalog. The run writes nothing."""
+    from portolan_cli.input_hardening import InputValidationError
+
+    source = _EscapingSource(fixtures_dir, path)
+    out = tmp_path / "catalog" / "out"
+
+    with pytest.raises(InputValidationError, match="collection path"):
+        run_layer_extraction(source, "src", out, _options())
+
+    assert source.fetched == []
+    assert not (tmp_path / "catalog").exists()
+
+
+def test_nested_layer_path_is_accepted(fixtures_dir: Path, tmp_path: Path) -> None:
+    out = tmp_path / "out"
+
+    report = run_layer_extraction(
+        _EscapingSource(fixtures_dir, "group/points"), "src", out, _options()
+    )
+
+    assert report.layers[0].output_path == "group/points/points.parquet"

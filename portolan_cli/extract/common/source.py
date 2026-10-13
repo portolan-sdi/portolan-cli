@@ -234,9 +234,23 @@ def slugify(name: str) -> str:
 
 
 def layer_path(layer: LayerRef) -> str:
-    """Return the layer's data file, relative to the catalog."""
+    """Return the layer's data file, relative to the catalog.
+
+    Raises:
+        InputValidationError: When ``layer.path`` could leave the catalog. It
+            must be relative and ``/``-separated, with no empty, ``.``, or
+            ``..`` segment.
+    """
+    from portolan_cli.input_hardening import InputValidationError
+
     collection = layer.path or slugify(layer.name)
-    return f"{collection}/{PurePath(collection).name}.parquet"
+    segments = collection.split("/")
+    if "\\" in collection or any(part in ("", ".", "..") for part in segments):
+        raise InputValidationError(
+            f"Layer '{layer.name}' has the collection path {collection!r}, which is not "
+            "a relative /-separated path inside the catalog."
+        )
+    return f"{collection}/{segments[-1]}.parquet"
 
 
 def filter_refs(
@@ -711,12 +725,17 @@ def run_layer_extraction(
     Raises:
         MissingLicenseError: Before any download, when no license can be
             resolved and ``options.raw`` is not set.
+        InputValidationError: Before any write, when a layer's ``path`` could
+            leave the catalog.
     """
     from portolan_cli.extract.common.report import save_report
 
     options = options or LayerSourceOptions()
     discovery = layer_source.discover(source, options)
     layers = filter_refs(discovery.layers, options.layer_filter, options.layer_exclude)
+    # A plugin source sets LayerRef.path. Check every layer before any write.
+    for layer in layers:
+        layer_path(layer)
     if options.dry_run:
         return build_report(discovery, [_pending(layer) for layer in layers])
 
