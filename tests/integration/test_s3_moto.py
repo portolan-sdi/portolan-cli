@@ -541,12 +541,13 @@ class TestPushS3Integration:
         catalog_with_data: Path,
         _aws_env: None,
     ) -> None:
-        """Issue #965: a failed push must not delete keys that existed before it.
+        """Issues #965 and #971: a failed push restores the remote current version.
 
         Push 1.0.0. Then push 1.0.1 and make the versions.json write fail.
-        Before the fix, the rollback deleted every key that the push wrote.
-        That removed the 1.0.0 data, collection.json and catalog.json. The
-        rollback must delete only extra.parquet, which is new in 1.0.1.
+        The rollback must delete only extra.parquet, which is new in 1.0.1.
+        It must also restore the 1.0.0 bytes of data.parquet from the
+        server-side backup copy, and delete the backup. Before the #971 fix,
+        data.parquet kept the 1.0.1 bytes.
         """
         from unittest.mock import patch
 
@@ -573,6 +574,14 @@ class TestPushS3Integration:
             response = client.list_objects_v2(Bucket=bucket_name)
             return sorted(obj["Key"] for obj in response.get("Contents", []))
 
+        def stored_data() -> bytes:
+            """Return the bytes of the data.parquet key."""
+            response = client.get_object(
+                Bucket=bucket_name, Key="catalog/test-collection/data.parquet"
+            )
+            body: bytes = response["Body"].read()
+            return body
+
         keys_after_first_push = stored_keys()
         assert keys_after_first_push == [
             "catalog/catalog.json",
@@ -580,6 +589,7 @@ class TestPushS3Integration:
             "catalog/test-collection/data.parquet",
             "catalog/test-collection/versions.json",
         ]
+        bytes_a = stored_data()
 
         bytes_b = b"Bytes B overwrite the 1.0.0 data key"
         extra = b"A file that only version 1.0.1 has"
@@ -617,7 +627,10 @@ class TestPushS3Integration:
             "Failed to upload versions.json: simulated versions.json write failure"
         ]
         # Every key of 1.0.0 is still there. The key new in 1.0.1 is gone.
+        # The backup copies are gone too.
         assert stored_keys() == keys_after_first_push
+        assert bytes_a != bytes_b
+        assert stored_data() == bytes_a
 
     @pytest.mark.integration
     def test_push_uploads_intermediate_catalogs_to_s3(

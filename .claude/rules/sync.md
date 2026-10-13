@@ -140,22 +140,36 @@ catalog-wide push reaches sub-catalogs at any depth. A flat
   atomicity), so a reader never sees a manifest referencing
   not-yet-uploaded bytes.
 
-## Rollback deletes only the keys that the push created
+## Rollback restores overwritten keys and deletes created keys
 
-A push that fails before the `versions.json` write rolls back (#965). Most keys
-that a push writes are overwrites of keys that the remote current version uses.
-A rollback that deletes them removes the previous good catalog.
+A push that fails before the `versions.json` write rolls back (#965, #971).
+Most keys that a push writes are overwrites of keys that the remote current
+version uses. A rollback that deletes them removes the previous good catalog.
 
 - `_existing_keys_before_push` records the existing keys before the first
   upload. One paginated listing reads the collection prefix. One HEAD checks
   each planned key outside it, such as the root and intermediate catalog files.
   Never send one HEAD per asset, because a collection can hold 25k items.
-- `_cleanup_uploaded_assets` deletes only the uploaded keys that the set does
-  not hold. All four failure paths pass the same set, `PushConflictError` too.
-- When the listing or a HEAD fails, the set is None and rollback deletes
-  nothing. An orphan key is harmless. A deleted live key breaks the catalog.
-- An overwritten key keeps the new bytes. See
-  `context/shared/known-issues/push-rollback-overwritten-keys.md`.
+- `_backup_overwritten_keys` then copies each existing planned key to
+  `{prefix}/.portolan/push-backup/{token}/{key relative to prefix}`. The copy
+  runs on the server (`obs.copy_async`). The token is a new UUID for each push.
+  No STAC link or `versions.json` href points under `.portolan/`, and the
+  collection listing does not read it. A failed copy stops the push before
+  any upload.
+- A failure that is not a conflict calls `_rollback_failed_push`. It copies each
+  backup over the key that the push wrote, deletes the backups, and deletes the
+  keys that the push created (`_cleanup_uploaded_assets`). A backup that it
+  cannot restore stays, and a warning names it.
+- Success deletes the backups after the `versions.json` write. A failed delete
+  warns and does not fail the push.
+- `PushConflictError` deletes nothing and restores nothing. Another writer
+  won the race. A key that the listing did not hold can belong to that writer.
+  A restore can replace bytes that the winner's `versions.json` describes. The
+  backups stay, and a warning names their prefix. An overwritten key can then
+  keep the bytes of the losing push.
+- When the listing or a HEAD fails, the set is None. Push then makes no backup,
+  and rollback changes nothing in the store. An orphan key is harmless. A
+  deleted live key breaks the catalog.
 
 ## Dry-run does NO network I/O
 

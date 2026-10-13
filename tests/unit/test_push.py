@@ -1461,52 +1461,6 @@ class TestOrphanCleanup:
         assert "catalog/data.parquet" in cleanup_keys
         assert result.success is False
 
-    @pytest.mark.unit
-    def test_push_cleans_up_on_etag_conflict(self, local_catalog: Path) -> None:
-        """Push should clean up uploaded assets on etag mismatch."""
-        from portolan_cli.sync.push import PushConflictError, push
-
-        with patch(
-            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
-        ) as mock_fetch:
-            mock_fetch.return_value = (
-                {
-                    "spec_version": "1.0.0",
-                    "current_version": "1.0.0",
-                    "versions": [{"version": "1.0.0", "created": "2024-01-01T00:00:00Z"}],
-                },
-                "etag-123",
-            )
-
-            with patch(
-                "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
-            ) as mock_upload_assets:
-                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
-
-                with patch(
-                    "portolan_cli.sync.push._upload_stac_files_async", new_callable=AsyncMock
-                ) as mock_upload_stac:
-                    mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
-
-                    with patch(
-                        "portolan_cli.sync.push._upload_versions_json_async", new_callable=AsyncMock
-                    ) as mock_upload_versions:
-                        mock_upload_versions.side_effect = PushConflictError("Etag mismatch")
-
-                        with (
-                            patch(
-                                "portolan_cli.sync.push._cleanup_uploaded_assets"
-                            ) as mock_cleanup,
-                            pytest.raises(PushConflictError),
-                        ):
-                            push(
-                                catalog_root=local_catalog,
-                                collection="test",
-                                destination="s3://mybucket/catalog",
-                            )
-
-        mock_cleanup.assert_called_once()
-
 
 class TestRollbackKeepsExistingKeys:
     """Issue #965: a failed push deletes only the keys that it created.
@@ -1622,69 +1576,23 @@ class TestRollbackKeepsExistingKeys:
         collection prefix. Rollback must keep it, the root catalog.json, the
         collection.json and the 1.0.0 data. It must delete new.parquet only.
         """
-        import hashlib
-
-        import obstore
-        from obstore.store import MemoryStore
-
         from portolan_cli.sync import push as push_module
 
-        root = tmp_path / "catalog"
-        coll = root / "group" / "coll"
-        coll.mkdir(parents=True)
-        for path in (root / "catalog.json", root / "group" / "catalog.json"):
-            path.write_text(json.dumps({"type": "Catalog", "id": path.parent.name, "links": []}))
-        (coll / "collection.json").write_text(
-            json.dumps({"type": "Collection", "id": "coll", "links": []})
-        )
-        versions: list[dict[str, Any]] = []
-
-        def write_version(version: str, files: dict[str, bytes]) -> None:
-            """Write one version of the collection to the local catalog."""
-            for name, content in files.items():
-                (coll / name).write_bytes(content)
-            versions.append(
-                {
-                    "version": version,
-                    "created": "2024-01-01T00:00:00Z",
-                    "breaking": False,
-                    "changes": list(files),
-                    "assets": {
-                        name: {
-                            "sha256": hashlib.sha256(content).hexdigest(),
-                            "size_bytes": len(content),
-                            "href": f"group/coll/{name}",
-                        }
-                        for name, content in files.items()
-                    },
-                }
-            )
-            (coll / "versions.json").write_text(
-                json.dumps(
-                    {"spec_version": "1.0.0", "current_version": version, "versions": versions}
-                )
-            )
-
-        store = MemoryStore()
-
-        def stored_keys() -> list[str]:
-            """Return the keys that the store holds."""
-            return sorted(meta["path"] for batch in obstore.list(store) for meta in batch)
-
-        with patch.object(push_module, "setup_store", return_value=(store, "cat")):
-            write_version("1.0.0", {"data.parquet": b"bytes A"})
-            first = push_module.push(root, "group/coll", "s3://bucket/cat")
+        remote = _RollbackRemote(tmp_path)
+        with patch.object(push_module, "setup_store", return_value=(remote.store, "cat")):
+            remote.write_version("1.0.0", {"data.parquet": b"bytes A"})
+            first = push_module.push(remote.root, "group/coll", "s3://bucket/cat")
             assert first.success is True, first.errors
-            keys_after_first_push = stored_keys()
+            keys_after_first_push = remote.stored_keys()
 
-            write_version("1.0.1", {"data.parquet": b"bytes B", "new.parquet": b"new"})
+            remote.write_version("1.0.1", {"data.parquet": b"bytes B", "new.parquet": b"new"})
             with patch.object(
                 push_module,
                 "_upload_versions_json_async",
                 new_callable=AsyncMock,
                 side_effect=OSError("simulated failure"),
             ):
-                second = push_module.push(root, "group/coll", "s3://bucket/cat")
+                second = push_module.push(remote.root, "group/coll", "s3://bucket/cat")
 
         assert keys_after_first_push == [
             "cat/catalog.json",
@@ -1694,7 +1602,383 @@ class TestRollbackKeepsExistingKeys:
             "cat/group/coll/versions.json",
         ]
         assert second.success is False
-        assert stored_keys() == keys_after_first_push
+        assert remote.stored_keys() == keys_after_first_push
+
+
+class _RollbackRemote:
+    """A local catalog with one nested collection and an in-memory remote store."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        """Create the catalog files and an empty MemoryStore."""
+        from obstore.store import MemoryStore
+
+        self.root = tmp_path / "catalog"
+        self.coll = self.root / "group" / "coll"
+        self.coll.mkdir(parents=True)
+        for path in (self.root / "catalog.json", self.root / "group" / "catalog.json"):
+            path.write_text(json.dumps({"type": "Catalog", "id": path.parent.name, "links": []}))
+        (self.coll / "collection.json").write_text(
+            json.dumps({"type": "Collection", "id": "coll", "links": []})
+        )
+        self.versions: list[dict[str, Any]] = []
+        self.store = MemoryStore()
+
+    def write_version(self, version: str, files: dict[str, bytes]) -> None:
+        """Write one version of the collection to the local catalog."""
+        import hashlib
+
+        for name, content in files.items():
+            (self.coll / name).write_bytes(content)
+        self.versions.append(
+            {
+                "version": version,
+                "created": "2024-01-01T00:00:00Z",
+                "breaking": False,
+                "changes": list(files),
+                "assets": {
+                    name: {
+                        "sha256": hashlib.sha256(content).hexdigest(),
+                        "size_bytes": len(content),
+                        "href": f"group/coll/{name}",
+                    }
+                    for name, content in files.items()
+                },
+            }
+        )
+        (self.coll / "versions.json").write_text(
+            json.dumps(
+                {"spec_version": "1.0.0", "current_version": version, "versions": self.versions}
+            )
+        )
+
+    def stored_keys(self) -> list[str]:
+        """Return the keys that the store holds."""
+        import obstore
+
+        return sorted(meta["path"] for batch in obstore.list(self.store) for meta in batch)
+
+    def read(self, key: str) -> bytes:
+        """Return the bytes that the store holds for ``key``."""
+        import obstore
+
+        return bytes(obstore.get(self.store, key).bytes())
+
+    def push(self, **patches: Any) -> Any:
+        """Push the collection with ``setup_store`` and the given attributes patched."""
+        from contextlib import ExitStack
+
+        from portolan_cli.sync import push as push_module
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(push_module, "setup_store", return_value=(self.store, "cat"))
+            )
+            for name, value in patches.items():
+                stack.enter_context(patch.object(push_module, name, value))
+            return push_module.push(self.root, "group/coll", "s3://bucket/cat")
+
+
+_BACKUP_ROOT = "cat/.portolan/push-backup/"
+
+
+def _backup_token_root(backup_key: str) -> str:
+    """Return the per-push backup root of ``backup_key``, without a trailing slash."""
+    return backup_key[: backup_key.index("/", len(_BACKUP_ROOT))]
+
+
+class TestRollbackRestoresOverwrittenKeys:
+    """Issue #971: push backs up each key that it overwrites.
+
+    Before the upload, push copies each existing key to a backup key on the
+    server. A failed push restores the backups. A successful push and a failed
+    push both delete the backups. A push that loses the versions.json race
+    deletes nothing and keeps the backups.
+    """
+
+    @pytest.mark.unit
+    def test_failed_push_restores_the_overwritten_bytes(self, tmp_path: Path) -> None:
+        """A failed versions.json write restores the 1.0.0 bytes of each overwritten key.
+
+        Before the fix, data.parquet kept "bytes B" after the rollback.
+        """
+        remote = _RollbackRemote(tmp_path)
+        remote.write_version("1.0.0", {"data.parquet": b"bytes A"})
+        assert remote.push().success is True
+        keys_after_first_push = remote.stored_keys()
+        collection_json = remote.read("cat/group/coll/collection.json")
+
+        remote.write_version("1.0.1", {"data.parquet": b"bytes B", "new.parquet": b"new"})
+        (remote.coll / "collection.json").write_text(
+            json.dumps({"type": "Collection", "id": "coll", "links": [], "title": "1.0.1"})
+        )
+        failed = remote.push(
+            _upload_versions_json_async=AsyncMock(side_effect=OSError("simulated failure"))
+        )
+
+        assert failed.success is False
+        assert remote.read("cat/group/coll/data.parquet") == b"bytes A"
+        assert remote.read("cat/group/coll/collection.json") == collection_json
+        # The rollback removes the backups and the key that the push created.
+        assert remote.stored_keys() == keys_after_first_push
+
+    @pytest.mark.unit
+    def test_failed_asset_upload_restores_the_overwritten_bytes(self, tmp_path: Path) -> None:
+        """An asset upload error also restores the overwritten keys.
+
+        Before the fix, data.parquet kept "bytes B" after the rollback.
+        """
+        import obstore
+
+        remote = _RollbackRemote(tmp_path)
+        remote.write_version("1.0.0", {"data.parquet": b"bytes A", "other.parquet": b"o1"})
+        assert remote.push().success is True
+        keys_after_first_push = remote.stored_keys()
+
+        remote.write_version("1.0.1", {"data.parquet": b"bytes B", "other.parquet": b"o2"})
+        real_put = obstore.put_async
+
+        async def put_fails_for_other(store: Any, key: str, *args: Any, **kwargs: Any) -> Any:
+            """Fail the upload of other.parquet and pass every other put."""
+            if key.endswith("other.parquet"):
+                raise OSError("simulated upload failure")
+            return await real_put(store, key, *args, **kwargs)
+
+        with patch("portolan_cli.sync.push.obs.put_async", side_effect=put_fails_for_other):
+            failed = remote.push()
+
+        assert failed.success is False
+        assert remote.read("cat/group/coll/data.parquet") == b"bytes A"
+        assert remote.read("cat/group/coll/other.parquet") == b"o1"
+        assert remote.stored_keys() == keys_after_first_push
+
+    @pytest.mark.unit
+    def test_successful_push_backs_up_then_removes_the_backups(self, tmp_path: Path) -> None:
+        """A successful push copies each overwritten key to a backup, then deletes the backup.
+
+        Before the fix, push made no server-side copy.
+        """
+        import obstore
+
+        remote = _RollbackRemote(tmp_path)
+        remote.write_version("1.0.0", {"data.parquet": b"bytes A"})
+        assert remote.push().success is True
+
+        remote.write_version("1.0.1", {"data.parquet": b"bytes B"})
+        with patch("portolan_cli.sync.push.obs.copy_async", wraps=obstore.copy_async) as mock_copy:
+            result = remote.push()
+
+        assert result.success is True, result.errors
+        copies = sorted((c.args[1], c.args[2]) for c in mock_copy.call_args_list)
+        sources = [source for source, _ in copies]
+        assert sources == [
+            "cat/catalog.json",
+            "cat/group/catalog.json",
+            "cat/group/coll/collection.json",
+            "cat/group/coll/data.parquet",
+        ]
+        token = copies[0][1].removeprefix(_BACKUP_ROOT).split("/", 1)[0]
+        assert len(token) == 32
+        assert copies == [(source, f"{_BACKUP_ROOT}{token}/{source[4:]}") for source in sources]
+        assert remote.read("cat/group/coll/data.parquet") == b"bytes B"
+        assert not [key for key in remote.stored_keys() if key.startswith(_BACKUP_ROOT)]
+
+    @pytest.mark.unit
+    def test_two_pushes_use_different_backup_tokens(self, tmp_path: Path) -> None:
+        """Each push writes its backups under its own token."""
+        import obstore
+
+        remote = _RollbackRemote(tmp_path)
+        remote.write_version("1.0.0", {"data.parquet": b"bytes A"})
+        assert remote.push().success is True
+
+        with patch("portolan_cli.sync.push.obs.copy_async", wraps=obstore.copy_async) as mock_copy:
+            remote.write_version("1.0.1", {"data.parquet": b"bytes B"})
+            assert remote.push().success is True
+            remote.write_version("1.0.2", {"data.parquet": b"bytes C"})
+            assert remote.push().success is True
+
+        tokens = {
+            c.args[2].removeprefix(_BACKUP_ROOT).split("/", 1)[0] for c in mock_copy.call_args_list
+        }
+        assert len(tokens) == 2
+
+    @pytest.mark.unit
+    def test_backup_delete_failure_only_warns(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A backup that push cannot delete after success gives a warning, not a failure."""
+        remote = _RollbackRemote(tmp_path)
+        remote.write_version("1.0.0", {"data.parquet": b"bytes A"})
+        assert remote.push().success is True
+        capsys.readouterr()
+
+        remote.write_version("1.0.1", {"data.parquet": b"bytes B"})
+        with patch(
+            "portolan_cli.sync.push.obs.delete_async",
+            new_callable=AsyncMock,
+            side_effect=OSError("delete denied"),
+        ):
+            result = remote.push()
+
+        assert result.success is True, result.errors
+        assert remote.read("cat/group/coll/data.parquet") == b"bytes B"
+        backups = [key for key in remote.stored_keys() if key.startswith(_BACKUP_ROOT)]
+        assert len(backups) == 4
+        err = capsys.readouterr().err
+        assert f"Cannot delete 4 backup(s) under {_backup_token_root(backups[0])}/" in err
+
+    @pytest.mark.unit
+    def test_backup_copy_failure_aborts_before_any_upload(self, tmp_path: Path) -> None:
+        """A failed backup copy stops the push before it overwrites a key.
+
+        Before the fix, push made no copy and overwrote data.parquet.
+        """
+        remote = _RollbackRemote(tmp_path)
+        remote.write_version("1.0.0", {"data.parquet": b"bytes A"})
+        assert remote.push().success is True
+        keys_after_first_push = remote.stored_keys()
+
+        remote.write_version("1.0.1", {"data.parquet": b"bytes B"})
+        with patch(
+            "portolan_cli.sync.push.obs.copy_async",
+            new_callable=AsyncMock,
+            side_effect=OSError("copy denied"),
+        ):
+            result = remote.push()
+
+        assert result.success is False
+        assert result.files_uploaded == 0
+        assert result.errors == [
+            f"Cannot back up {key}: copy denied"
+            for key in (
+                "cat/catalog.json",
+                "cat/group/catalog.json",
+                "cat/group/coll/collection.json",
+                "cat/group/coll/data.parquet",
+            )
+        ]
+        assert remote.read("cat/group/coll/data.parquet") == b"bytes A"
+        assert remote.stored_keys() == keys_after_first_push
+
+    @pytest.mark.unit
+    def test_restore_failure_keeps_the_backup_and_warns(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A backup that rollback cannot restore stays in the store, and push names it."""
+        import obstore
+
+        remote = _RollbackRemote(tmp_path)
+        remote.write_version("1.0.0", {"data.parquet": b"bytes A"})
+        assert remote.push().success is True
+        capsys.readouterr()
+
+        real_copy = obstore.copy_async
+
+        async def restore_fails(store: Any, source: str, target: str, **kwargs: Any) -> None:
+            """Pass each backup copy and fail each restore copy."""
+            if source.startswith(_BACKUP_ROOT):
+                raise OSError("restore denied")
+            await real_copy(store, source, target, **kwargs)
+
+        remote.write_version("1.0.1", {"data.parquet": b"bytes B"})
+        with patch("portolan_cli.sync.push.obs.copy_async", side_effect=restore_fails):
+            result = remote.push(
+                _upload_versions_json_async=AsyncMock(side_effect=OSError("simulated failure"))
+            )
+
+        assert result.success is False
+        backups = [key for key in remote.stored_keys() if key.startswith(_BACKUP_ROOT)]
+        assert len(backups) == 4
+        data_backup = next(key for key in backups if key.endswith("/group/coll/data.parquet"))
+        assert remote.read(data_backup) == b"bytes A"
+        assert f"Cannot restore cat/group/coll/data.parquet from {data_backup}" in (
+            capsys.readouterr().err
+        )
+
+    @pytest.mark.unit
+    def test_conflict_keeps_the_key_of_the_winning_writer(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Issue #971: the losing push deletes nothing and restores nothing.
+
+        Push A lists the remote. Push B then creates new.parquet and writes
+        versions.json. Push A uploads new.parquet, and its versions.json write
+        fails with a conflict. Before the fix, the rollback of push A deleted
+        new.parquet, because the listing of push A did not hold it.
+        """
+        import obstore
+
+        from portolan_cli.sync import push as push_module
+        from portolan_cli.sync.push import PushConflictError
+
+        remote = _RollbackRemote(tmp_path)
+        remote.write_version("1.0.0", {"data.parquet": b"bytes A"})
+        assert remote.push().success is True
+        capsys.readouterr()
+
+        real_listing = push_module._existing_keys_before_push
+
+        async def listing_then_push_b(*args: Any, **kwargs: Any) -> set[str] | None:
+            """List the keys, then let push B write new.parquet and versions.json."""
+            existing = await real_listing(*args, **kwargs)
+            obstore.put(remote.store, "cat/group/coll/new.parquet", b"B new")
+            obstore.put(remote.store, "cat/group/coll/versions.json", b'{"writer": "B"}')
+            return existing
+
+        remote.write_version("1.0.1", {"data.parquet": b"A data", "new.parquet": b"A new"})
+        with (
+            patch("portolan_cli.sync.push.obs.delete_async", new_callable=AsyncMock) as del_async,
+            patch("portolan_cli.sync.push.obs.delete") as del_sync,
+            pytest.raises(PushConflictError),
+        ):
+            remote.push(_existing_keys_before_push=listing_then_push_b)
+
+        del_async.assert_not_called()
+        del_sync.assert_not_called()
+        assert "cat/group/coll/new.parquet" in remote.stored_keys()
+        assert remote.read("cat/group/coll/versions.json") == b'{"writer": "B"}'
+        # No restore: the overwritten key keeps the bytes of the losing push.
+        assert remote.read("cat/group/coll/data.parquet") == b"A data"
+        backups = [key for key in remote.stored_keys() if key.startswith(_BACKUP_ROOT)]
+        data_backup = next(key for key in backups if key.endswith("/group/coll/data.parquet"))
+        assert remote.read(data_backup) == b"bytes A"
+        err = capsys.readouterr().err
+        assert f"Keeping 4 backup(s) under {_backup_token_root(data_backup)}/" in err
+
+    @pytest.mark.unit
+    def test_unknown_existing_keys_make_no_backup(self, tmp_path: Path) -> None:
+        """When the listing fails, push makes no backup and rollback changes nothing."""
+        remote = _RollbackRemote(tmp_path)
+        remote.write_version("1.0.0", {"data.parquet": b"bytes A"})
+        assert remote.push().success is True
+
+        remote.write_version("1.0.1", {"data.parquet": b"bytes B", "new.parquet": b"new"})
+        with (
+            patch("portolan_cli.sync.push.obs.copy_async", new_callable=AsyncMock) as mock_copy,
+            patch("portolan_cli.sync.push.obs.delete") as mock_delete,
+        ):
+            result = remote.push(
+                _existing_keys_before_push=AsyncMock(return_value=None),
+                _upload_versions_json_async=AsyncMock(side_effect=OSError("simulated failure")),
+            )
+
+        assert result.success is False
+        mock_copy.assert_not_called()
+        mock_delete.assert_not_called()
+        assert "cat/group/coll/new.parquet" in remote.stored_keys()
+
+    @pytest.mark.unit
+    def test_dry_run_sends_no_copy(self, tmp_path: Path) -> None:
+        """A dry run makes no backup copy."""
+        from portolan_cli.sync import push as push_module
+
+        remote = _RollbackRemote(tmp_path)
+        remote.write_version("1.0.0", {"data.parquet": b"bytes A"})
+        with patch("portolan_cli.sync.push.obs.copy_async", new_callable=AsyncMock) as mock_copy:
+            result = push_module.push(remote.root, "group/coll", "s3://bucket/cat", dry_run=True)
+
+        assert result.dry_run is True
+        mock_copy.assert_not_called()
 
 
 # =============================================================================

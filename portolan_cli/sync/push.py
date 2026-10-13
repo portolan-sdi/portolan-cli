@@ -22,6 +22,7 @@ import fnmatch  # Module-level import for performance (used in hot path)
 import json
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -674,13 +675,8 @@ def _cleanup_uploaded_assets(
     Rollback deletes only a key that did not exist before the push (Issue #965).
     Asset hrefs carry no version segment. So most keys that a push writes are
     overwrites of keys that the remote current version uses. Rollback keeps
-    those keys, and the remote current version stays readable.
-
-    Known limitation: an overwritten key keeps the bytes of the failed push.
-    The store keeps no copy of the old bytes, so rollback cannot restore them.
-    The remote versions.json can then record a sha256 that the object does not
-    match. A later push uploads the key again only when the local current
-    sha256 differs from the remote current sha256.
+    those keys. ``_rollback_failed_push`` restores their bytes from the backups
+    before it calls this function (Issue #971).
 
     Args:
         store: Object store instance.
@@ -711,6 +707,256 @@ def _cleanup_uploaded_assets(
         except Exception as e:
             # Log but don't fail - best effort cleanup
             warn(f"Failed to delete {key} during rollback: {e}")
+
+
+# Backups live under {prefix}/.portolan/push-backup/{token}/. No STAC link and
+# no versions.json href points there. Push never uploads a local .portolan/
+# directory, and pull and clone read only the keys that STAC links and
+# versions.json name. The listing in _existing_keys_before_push reads only the
+# collection prefix, so it never sees a backup either.
+_BACKUP_DIR = ".portolan/push-backup"
+
+
+@dataclass
+class _PushBackups:
+    """Server-side copies of the keys that one push overwrites (Issue #971).
+
+    Attributes:
+        root: Key prefix of the backups of this push, without a trailing slash.
+        copies: Map of each original key to its backup key.
+    """
+
+    root: str
+    copies: dict[str, str] = field(default_factory=dict)
+
+
+def _new_push_backups(prefix: str) -> _PushBackups:
+    """Return an empty backup set under a new per-push token.
+
+    The token keeps the backups of two concurrent pushes apart.
+
+    Args:
+        prefix: Prefix in object storage.
+
+    Returns:
+        The backup set, with no copies yet.
+    """
+    root = f"{prefix}/{_BACKUP_DIR}/{uuid.uuid4().hex}".lstrip("/")
+    return _PushBackups(root=root)
+
+
+def _backup_key(backups: _PushBackups, prefix: str, key: str) -> str:
+    """Return the backup key for ``key``.
+
+    Args:
+        backups: Backup set of this push.
+        prefix: Prefix in object storage.
+        key: Original object key.
+
+    Returns:
+        ``{root}/{key relative to the prefix}``.
+    """
+    relative = key[len(prefix) + 1 :] if prefix and key.startswith(f"{prefix}/") else key
+    return f"{backups.root}/{relative}"
+
+
+async def _bounded_gather(concurrency: int, calls: list[Any]) -> list[Any]:
+    """Await the coroutine factories in ``calls`` with at most ``concurrency`` at once.
+
+    Args:
+        concurrency: Maximum number of calls in flight.
+        calls: Zero-argument callables that return awaitables.
+
+    Returns:
+        The results, in the order of ``calls``.
+    """
+    semaphore = asyncio.Semaphore(max(1, concurrency))
+
+    async def run(call: Any) -> Any:
+        """Run one call under the semaphore."""
+        async with semaphore:
+            return await call()
+
+    return list(await asyncio.gather(*(run(call) for call in calls)))
+
+
+async def _copy_or_error(store: ObjectStore, source: str, target: str) -> str | None:
+    """Copy ``source`` to ``target`` on the server.
+
+    Args:
+        store: Object store instance.
+        source: Key to copy from.
+        target: Key to copy to.
+
+    Returns:
+        None on success. The error text on failure. A missing source raises,
+        so that the caller can handle it.
+    """
+    try:
+        await obs.copy_async(store, source, target)
+    except (FileNotFoundError, NotFoundError):
+        raise
+    except Exception as e:
+        return str(e)
+    return None
+
+
+async def _backup_overwritten_keys(
+    store: ObjectStore,
+    backups: _PushBackups,
+    prefix: str,
+    planned_keys: list[str],
+    existing_keys: set[str] | None,
+    *,
+    concurrency: int,
+) -> list[str]:
+    """Copy each existing key that the push plans to overwrite to a backup key.
+
+    The copy runs on the server, so no object bytes pass through the client.
+    A key that disappears after the listing counts as a new key. The function
+    removes it from ``existing_keys``, so rollback deletes it.
+
+    When ``existing_keys`` is None, the function makes no backup. Then push
+    cannot tell which keys exist, and rollback changes nothing in the store.
+
+    Args:
+        store: Object store instance.
+        backups: Backup set of this push. The function fills ``copies``.
+        prefix: Prefix in object storage.
+        planned_keys: Keys that the push can roll back.
+        existing_keys: Keys that existed before the push, or None.
+        concurrency: Maximum number of copies in flight.
+
+    Returns:
+        One error message for each copy that failed. When a copy fails, the
+        function deletes the backups that it made, and the caller must stop
+        the push before any upload.
+    """
+    if existing_keys is None:
+        return []
+    targets = sorted({key for key in planned_keys if key in existing_keys})
+
+    async def backup_one(key: str) -> str | None:
+        """Copy one key to its backup key."""
+        target = _backup_key(backups, prefix, key)
+        try:
+            failure = await _copy_or_error(store, key, target)
+        except (FileNotFoundError, NotFoundError):
+            existing_keys.discard(key)
+            return None
+        if failure is not None:
+            return f"Cannot back up {key}: {failure}"
+        backups.copies[key] = target
+        return None
+
+    results = await _bounded_gather(
+        concurrency, [lambda key=key: backup_one(key) for key in targets]
+    )
+    errors = [message for message in results if message is not None]
+    if errors:
+        await _delete_backups(store, backups, list(backups.copies), concurrency=concurrency)
+    elif backups.copies:
+        detail(f"Backed up {len(backups.copies)} key(s) under {backups.root}/")
+    return errors
+
+
+async def _delete_backups(
+    store: ObjectStore, backups: _PushBackups, keys: list[str], *, concurrency: int
+) -> None:
+    """Delete the backups of ``keys``. A failed delete gives a warning.
+
+    Args:
+        store: Object store instance.
+        backups: Backup set of this push.
+        keys: Original keys whose backups to delete.
+        concurrency: Maximum number of deletes in flight.
+    """
+
+    async def delete_one(key: str) -> str | None:
+        """Delete one backup and return the original key on failure."""
+        try:
+            await obs.delete_async(store, backups.copies[key])
+        except Exception as e:
+            detail(f"Cannot delete {backups.copies[key]}: {e}")
+            return key
+        del backups.copies[key]
+        return None
+
+    results = await _bounded_gather(concurrency, [lambda key=key: delete_one(key) for key in keys])
+    failed = [key for key in results if key is not None]
+    if failed:
+        warn(
+            f"Cannot delete {len(failed)} backup(s) under {backups.root}/. "
+            "They hold old bytes that no catalog references. Delete them by hand."
+        )
+
+
+async def _rollback_failed_push(
+    store: ObjectStore,
+    uploaded_keys: list[str],
+    *,
+    existing_keys: set[str] | None,
+    backups: _PushBackups,
+    concurrency: int,
+) -> None:
+    """Undo the writes of a push that failed for a reason other than a conflict.
+
+    1. Copy each backup over the key that the push overwrote. The copy runs
+       on the server.
+    2. Delete the backups. A backup that rollback cannot restore stays, and
+       a warning names it.
+    3. Delete the keys that the push created (``_cleanup_uploaded_assets``).
+
+    Rollback restores only the keys that the push wrote. A key that the push
+    did not reach keeps its bytes.
+
+    Args:
+        store: Object store instance.
+        uploaded_keys: Keys that the failed push wrote.
+        existing_keys: Keys that existed before the push, or None.
+        backups: Backup set of this push.
+        concurrency: Maximum number of copies or deletes in flight.
+    """
+    uploaded = set(uploaded_keys)
+    to_restore = sorted(key for key in backups.copies if key in uploaded)
+    if to_restore:
+        warn(f"Restoring {len(to_restore)} overwritten key(s) from the backups...")
+
+    async def restore_one(key: str) -> str | None:
+        """Copy one backup over its original key and return the key on failure."""
+        try:
+            failure = await _copy_or_error(store, backups.copies[key], key)
+        except (FileNotFoundError, NotFoundError) as e:
+            failure = str(e)
+        if failure is None:
+            return None
+        warn(f"Cannot restore {key} from {backups.copies[key]}: {failure}")
+        return key
+
+    results = await _bounded_gather(
+        concurrency, [lambda key=key: restore_one(key) for key in to_restore]
+    )
+    unrestored = {key for key in results if key is not None}
+    await _delete_backups(
+        store,
+        backups,
+        [key for key in backups.copies if key not in unrestored],
+        concurrency=concurrency,
+    )
+    _cleanup_uploaded_assets(store, uploaded_keys, existing_keys=existing_keys)
+
+
+def _keep_backups_after_conflict(backups: _PushBackups) -> None:
+    """Tell the user where the backups of a push that lost a race stay.
+
+    Args:
+        backups: Backup set of this push.
+    """
+    if backups.copies:
+        warn(
+            f"Keeping {len(backups.copies)} backup(s) under {backups.root}/. "
+            "They hold the bytes from before this push."
+        )
 
 
 # =============================================================================
@@ -2073,6 +2319,26 @@ async def _execute_push_uploads_async(
     Handles assets, STAC files, versions.json, and READMEs in order.
     This is extracted from push_async to reduce cyclomatic complexity.
 
+    Before the first upload, the push copies each existing key that it
+    overwrites to a backup key on the server (Issue #971). The outcome then
+    decides what happens to the backups:
+
+    - Success: the push deletes the backups after the versions.json write.
+      A failed delete gives a warning. The push still succeeds.
+    - Failure before the versions.json write, or a failed write for a reason
+      other than a conflict: rollback copies each backup over its key, deletes
+      the backups, and deletes the keys that the push created.
+    - ``PushConflictError``: the push deletes nothing and restores nothing.
+      Another writer wrote versions.json after this push read it. A key that
+      the listing did not hold can belong to that writer, so a delete can
+      break its catalog. The winner can also have written an overwritten key
+      after this push did. Then the winner's versions.json describes the
+      current bytes, and a restore replaces them with older bytes. Object
+      ETags cannot tell the two writes apart when both hold the same bytes.
+      So the backups stay, and a warning names their prefix.
+    - Unknown existing keys (the listing failed): the push makes no backup,
+      and rollback changes nothing in the store.
+
     Args:
         store: Object store instance the upload writes to.
         catalog_root: Path to the catalog root directory.
@@ -2118,12 +2384,34 @@ async def _execute_push_uploads_async(
 
     # Record the keys that exist before the upload. Rollback deletes only the
     # keys that this push creates, never a key that it overwrites (Issue #965).
-    existing_keys = await _existing_keys_before_push(
-        store,
-        prefix,
-        collection,
-        _planned_upload_keys(catalog_root, prefix, assets, stac_files),
+    planned_keys = _planned_upload_keys(catalog_root, prefix, assets, stac_files)
+    existing_keys = await _existing_keys_before_push(store, prefix, collection, planned_keys)
+
+    # Copy each key that the push overwrites to a backup key on the server.
+    # Rollback restores the backups (Issue #971).
+    backups = _new_push_backups(prefix)
+    backup_errors = await _backup_overwritten_keys(
+        store, backups, prefix, planned_keys, existing_keys, concurrency=concurrency
     )
+    if backup_errors:
+        error("Cannot back up the keys that the push overwrites, aborting push")
+        return PushResult(
+            success=False,
+            files_uploaded=0,
+            versions_pushed=0,
+            conflicts=[],
+            errors=backup_errors,
+        )
+
+    async def rollback() -> None:
+        """Restore the overwritten keys and delete the created keys."""
+        await _rollback_failed_push(
+            store,
+            uploaded_keys,
+            existing_keys=existing_keys,
+            backups=backups,
+            concurrency=concurrency,
+        )
 
     # Upload assets first (async, manifest-last pattern)
     # chunk_concurrency now properly limits per-file multipart parallelism
@@ -2143,7 +2431,7 @@ async def _execute_push_uploads_async(
 
     if upload_errors:
         error("Asset upload failed, aborting push")
-        _cleanup_uploaded_assets(store, uploaded_keys, existing_keys=existing_keys)
+        await rollback()
         return PushResult(
             success=False,
             files_uploaded=files_uploaded,
@@ -2168,7 +2456,7 @@ async def _execute_push_uploads_async(
 
     if stac_errors:
         error("STAC metadata upload failed, aborting push")
-        _cleanup_uploaded_assets(store, uploaded_keys, existing_keys=existing_keys)
+        await rollback()
         return PushResult(
             success=False,
             files_uploaded=files_uploaded,
@@ -2210,10 +2498,14 @@ async def _execute_push_uploads_async(
             )
         success(msg)
     except PushConflictError as e:
-        _cleanup_uploaded_assets(store, uploaded_keys, existing_keys=existing_keys)
+        # Another writer wrote versions.json after this push read it (Issue #971).
+        # Delete nothing: a key that this push did not see in its listing can
+        # belong to the winning writer. Restore nothing: the winner's
+        # versions.json can describe the bytes that a restore would replace.
+        _keep_backups_after_conflict(backups)
         raise PushConflictError("Remote changed during push, re-run push to try again") from e
     except Exception as e:
-        _cleanup_uploaded_assets(store, uploaded_keys, existing_keys=existing_keys)
+        await rollback()
         error(f"Failed to upload versions.json: {e}")
         return PushResult(
             success=False,
@@ -2224,6 +2516,9 @@ async def _execute_push_uploads_async(
             metadata_errors=all_metadata_errors,
             metrics=metrics,
         )
+
+    # versions.json now describes the new bytes. The backups are not needed.
+    await _delete_backups(store, backups, list(backups.copies), concurrency=concurrency)
 
     # Upload READMEs last (async, parallel)
     readme_uploaded, readme_errors = await _upload_readmes_async(

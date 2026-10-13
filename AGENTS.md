@@ -246,7 +246,7 @@ Always research before implementing:
 - **ALL** non-obvious decisions are recorded where they apply (see `.claude/rules/documentation.md`)
 - **NO** new dependencies without discussion
 
-<!-- freshness: last-verified: 2026-10-12 -->
+<!-- freshness: last-verified: 2026-10-13 -->
 ## Design Principles
 
 | Principle | Meaning |
@@ -276,4 +276,3 @@ See `context/shared/known-issues/` for tracked issues. Key ones:
 | [geoparquet-io add_kdtree on a converted table](context/shared/known-issues/geoparquet-io-add-kdtree-convert.md) | A non-partitioned `kdtree` index fails with `ST_Centroid(BLOB)`. Partitioned kdtree works. Upstream geoparquet-io#1222 |
 | [ArcGIS ImageServer exportImage 5xx](context/shared/known-issues/arcgis-imageserver-export-5xx.md) | Large or parallel `exportImage` requests fail with HTTP 500 on some servers. Re-run with `--resume`, and lower `--tile-size` or `--max-concurrent` |
 | [lerc has no Linux aarch64 binary](context/shared/known-issues/lerc-platform-support.md) | `extract arcgis` cannot read a LERC tile cache on Linux aarch64. GDAL cannot decode LERC2 v6, so the path needs the `lerc` package, whose wheel includes no aarch64 binary |
-| [Push rollback keeps overwritten keys](context/shared/known-issues/push-rollback-overwritten-keys.md) | A failed push deletes only the keys it created. An asset key it overwrote keeps the new bytes until the next push |
