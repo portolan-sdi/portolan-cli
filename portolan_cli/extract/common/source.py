@@ -21,6 +21,7 @@ implementations too. Source-specific work goes through the protocol:
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import logging
 import re
@@ -414,9 +415,17 @@ class _Run:
                 "Retry %d for layer %s: %s", count, layer.name, err
             ),
         )
-        if outcome.success and outcome.value is not None:
+        if outcome.success and outcome.value is not None and relative not in self.abandoned:
             rows, duration = outcome.value
             self._styles(layer, staged.parent)
+        if relative in self.abandoned:
+            # The run gave up on the layer and can have cleaned up already.
+            shutil.rmtree(root, ignore_errors=True)
+            with contextlib.suppress(OSError):
+                root.parent.rmdir()  # Only when no other layer stages there.
+            return _Staged(_result(layer, "failed", error="Timed out"), None)
+        if outcome.success and outcome.value is not None:
+            rows, duration = outcome.value
             result = _result(
                 layer,
                 "success",

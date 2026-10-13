@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -632,4 +633,40 @@ def test_timed_out_layer_stops_its_retries(fixtures_dir: Path, tmp_path: Path) -
     time.sleep(2.0)
 
     assert calls == ["points"]
+    assert not (out / ".portolan" / "staging").exists()
+
+
+def test_late_success_of_a_timed_out_layer_writes_no_styles(
+    fixtures_dir: Path, tmp_path: Path
+) -> None:
+    """A timed-out fetch that ends later skips its styles and removes its tree."""
+    prepared = tmp_path / "prepared"
+    run_layer_extraction(
+        _FixtureSource(fixtures_dir), "src", prepared, _options(raw=True, layer_filter=["lines"])
+    )
+    done = threading.Event()
+
+    class _LateSource(_CopySource):
+        def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
+            if layer.name == "points":
+                # Wait out the deadline and the run's cleanup, then write.
+                time.sleep(2.0)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(self.prepared, dest)
+                return 1
+            return super().fetch(source, layer, dest)
+
+        def styles(self, source: str, layer: LayerRef, collection_dir: Path) -> None:
+            super().styles(source, layer, collection_dir)
+            if layer.name == "points":
+                done.set()
+
+    source = _LateSource(fixtures_dir, prepared / "lines" / "lines.parquet", slow={})
+    out = tmp_path / "out"
+
+    run_layer_extraction(source, "src", out, _options(workers=2, layer_timeout=1.0, raw=True))
+    time.sleep(2.0)
+
+    assert not done.is_set()
+    assert source.styled == ["lines"]
     assert not (out / ".portolan" / "staging").exists()
