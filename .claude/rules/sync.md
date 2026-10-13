@@ -154,8 +154,15 @@ version uses. A rollback that deletes them removes the previous good catalog.
   `{prefix}/.portolan/push-backup/{token}/{key relative to prefix}`. The copy
   runs on the server (`obs.copy_async`). The token is a new UUID for each push.
   No STAC link or `versions.json` href points under `.portolan/`, and the
-  collection listing does not read it. A failed copy stops the push before
-  any upload.
+  collection listing does not read it. Each push uploads every item STAC JSON,
+  so it copies and deletes each existing one. That is two extra requests per
+  overwritten key.
+- A failed backup copy warns, names the key, and the push continues. That key
+  gets no backup, so rollback leaves the new bytes in it. Do not abort the push
+  on a failed copy. On S3, object_store sends one CopyObject request, and
+  CopyObject cannot copy an object over 5 GiB. A credential with PutObject but
+  without GetObject cannot copy at all. An abort makes these pushes fail every
+  time.
 - A failure that is not a conflict calls `_rollback_failed_push`. It copies each
   backup over the key that the push wrote, deletes the backups, and deletes the
   keys that the push created (`_cleanup_uploaded_assets`). A backup that it

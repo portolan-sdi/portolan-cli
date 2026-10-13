@@ -1686,6 +1686,29 @@ def _backup_token_root(backup_key: str) -> str:
     return backup_key[: backup_key.index("/", len(_BACKUP_ROOT))]
 
 
+def _push_change_with_failing_call(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], name: str, message: str
+) -> tuple[_RollbackRemote, Any]:
+    """Push bytes A, then push bytes B with ``obs.<name>`` raising ``OSError(message)``.
+
+    Returns:
+        The remote and the result of the second push. The captured output
+        holds only the second push.
+    """
+    remote = _RollbackRemote(tmp_path)
+    remote.write_version("1.0.0", {"data.parquet": b"bytes A"})
+    assert remote.push().success is True
+    capsys.readouterr()
+
+    remote.write_version("1.0.1", {"data.parquet": b"bytes B"})
+    with patch(
+        f"portolan_cli.sync.push.obs.{name}",
+        new_callable=AsyncMock,
+        side_effect=OSError(message),
+    ):
+        return remote, remote.push()
+
+
 class TestRollbackRestoresOverwrittenKeys:
     """Issue #971: push backs up each key that it overwrites.
 
@@ -1807,18 +1830,9 @@ class TestRollbackRestoresOverwrittenKeys:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """A backup that push cannot delete after success gives a warning, not a failure."""
-        remote = _RollbackRemote(tmp_path)
-        remote.write_version("1.0.0", {"data.parquet": b"bytes A"})
-        assert remote.push().success is True
-        capsys.readouterr()
-
-        remote.write_version("1.0.1", {"data.parquet": b"bytes B"})
-        with patch(
-            "portolan_cli.sync.push.obs.delete_async",
-            new_callable=AsyncMock,
-            side_effect=OSError("delete denied"),
-        ):
-            result = remote.push()
+        remote, result = _push_change_with_failing_call(
+            tmp_path, capsys, "delete_async", "delete denied"
+        )
 
         assert result.success is True, result.errors
         assert remote.read("cat/group/coll/data.parquet") == b"bytes B"
@@ -1828,37 +1842,61 @@ class TestRollbackRestoresOverwrittenKeys:
         assert f"Cannot delete 4 backup(s) under {_backup_token_root(backups[0])}/" in err
 
     @pytest.mark.unit
-    def test_backup_copy_failure_aborts_before_any_upload(self, tmp_path: Path) -> None:
-        """A failed backup copy stops the push before it overwrites a key.
+    def test_backup_copy_failure_warns_and_the_push_continues(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A failed backup copy gives a warning, and the push uploads and succeeds.
 
-        Before the fix, push made no copy and overwrote data.parquet.
+        An S3 CopyObject cannot copy an object over 5 GiB, and a credential
+        without GetObject cannot copy. A failed copy must not block a push
+        that works without a backup.
         """
-        remote = _RollbackRemote(tmp_path)
-        remote.write_version("1.0.0", {"data.parquet": b"bytes A"})
-        assert remote.push().success is True
-        keys_after_first_push = remote.stored_keys()
+        remote, result = _push_change_with_failing_call(
+            tmp_path, capsys, "copy_async", "copy denied"
+        )
 
-        remote.write_version("1.0.1", {"data.parquet": b"bytes B"})
-        with patch(
-            "portolan_cli.sync.push.obs.copy_async",
-            new_callable=AsyncMock,
-            side_effect=OSError("copy denied"),
-        ):
-            result = remote.push()
+        assert result.success is True
+        assert result.files_uploaded >= 1
+        assert remote.read("cat/group/coll/data.parquet") == b"bytes B"
+        assert not [key for key in remote.stored_keys() if key.startswith(_BACKUP_ROOT)]
+        err = " ".join(capsys.readouterr().err.split())
+        assert (
+            "Cannot back up cat/group/coll/data.parquet: copy denied. "
+            "Rollback cannot restore this key." in err
+        )
+
+    @pytest.mark.unit
+    def test_rollback_restores_only_the_keys_with_a_backup(self, tmp_path: Path) -> None:
+        """Rollback restores each key that has a backup and leaves the others alone.
+
+        The backup of data.parquet fails, and the backup of other.parquet
+        succeeds. The versions.json write then fails. Rollback restores
+        other.parquet. data.parquet keeps the new bytes, as before Issue #971.
+        """
+        import obstore
+
+        remote = _RollbackRemote(tmp_path)
+        remote.write_version("1.0.0", {"data.parquet": b"data A", "other.parquet": b"other A"})
+        assert remote.push().success is True
+
+        real_copy = obstore.copy_async
+
+        async def data_backup_fails(store: Any, source: str, target: str, **kwargs: Any) -> None:
+            """Fail the backup copy of data.parquet and pass every other copy."""
+            if source == "cat/group/coll/data.parquet":
+                raise OSError("object too large")
+            await real_copy(store, source, target, **kwargs)
+
+        remote.write_version("1.0.1", {"data.parquet": b"data B", "other.parquet": b"other B"})
+        with patch("portolan_cli.sync.push.obs.copy_async", side_effect=data_backup_fails):
+            result = remote.push(
+                _upload_versions_json_async=AsyncMock(side_effect=OSError("simulated failure"))
+            )
 
         assert result.success is False
-        assert result.files_uploaded == 0
-        assert result.errors == [
-            f"Cannot back up {key}: copy denied"
-            for key in (
-                "cat/catalog.json",
-                "cat/group/catalog.json",
-                "cat/group/coll/collection.json",
-                "cat/group/coll/data.parquet",
-            )
-        ]
-        assert remote.read("cat/group/coll/data.parquet") == b"bytes A"
-        assert remote.stored_keys() == keys_after_first_push
+        assert remote.read("cat/group/coll/other.parquet") == b"other A"
+        assert remote.read("cat/group/coll/data.parquet") == b"data B"
+        assert not [key for key in remote.stored_keys() if key.startswith(_BACKUP_ROOT)]
 
     @pytest.mark.unit
     def test_restore_failure_keeps_the_backup_and_warns(

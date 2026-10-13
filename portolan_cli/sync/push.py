@@ -714,6 +714,12 @@ def _cleanup_uploaded_assets(
 # directory, and pull and clone read only the keys that STAC links and
 # versions.json name. The listing in _existing_keys_before_push reads only the
 # collection prefix, so it never sees a backup either.
+#
+# A backup copy can fail for a key that the push still can overwrite. On S3,
+# object_store sends one CopyObject request, and CopyObject cannot copy an
+# object over 5 GiB. A credential with PutObject but without GetObject cannot
+# copy at all. So a failed copy gives a warning, and the push continues
+# without a backup for that key.
 _BACKUP_DIR = ".portolan/push-backup"
 
 
@@ -809,12 +815,18 @@ async def _backup_overwritten_keys(
     existing_keys: set[str] | None,
     *,
     concurrency: int,
-) -> list[str]:
+) -> None:
     """Copy each existing key that the push plans to overwrite to a backup key.
 
     The copy runs on the server, so no object bytes pass through the client.
     A key that disappears after the listing counts as a new key. The function
     removes it from ``existing_keys``, so rollback deletes it.
+
+    A failed copy gives a warning that names the key, and the push continues.
+    That key gets no backup, so rollback leaves the new bytes in it. On S3 a
+    copy fails for an object over 5 GiB, because object_store sends a single
+    CopyObject request. A copy also fails when the credential has no
+    GetObject permission.
 
     When ``existing_keys`` is None, the function makes no backup. Then push
     cannot tell which keys exist, and rollback changes nothing in the store.
@@ -826,38 +838,27 @@ async def _backup_overwritten_keys(
         planned_keys: Keys that the push can roll back.
         existing_keys: Keys that existed before the push, or None.
         concurrency: Maximum number of copies in flight.
-
-    Returns:
-        One error message for each copy that failed. When a copy fails, the
-        function deletes the backups that it made, and the caller must stop
-        the push before any upload.
     """
     if existing_keys is None:
-        return []
+        return
     targets = sorted({key for key in planned_keys if key in existing_keys})
 
-    async def backup_one(key: str) -> str | None:
-        """Copy one key to its backup key."""
+    async def backup_one(key: str) -> None:
+        """Copy one key to its backup key. A failed copy gives a warning."""
         target = _backup_key(backups, prefix, key)
         try:
             failure = await _copy_or_error(store, key, target)
         except (FileNotFoundError, NotFoundError):
             existing_keys.discard(key)
-            return None
+            return
         if failure is not None:
-            return f"Cannot back up {key}: {failure}"
+            warn(f"Cannot back up {key}: {failure}. Rollback cannot restore this key.")
+            return
         backups.copies[key] = target
-        return None
 
-    results = await _bounded_gather(
-        concurrency, [lambda key=key: backup_one(key) for key in targets]
-    )
-    errors = [message for message in results if message is not None]
-    if errors:
-        await _delete_backups(store, backups, list(backups.copies), concurrency=concurrency)
-    elif backups.copies:
+    await _bounded_gather(concurrency, [lambda key=key: backup_one(key) for key in targets])
+    if backups.copies:
         detail(f"Backed up {len(backups.copies)} key(s) under {backups.root}/")
-    return errors
 
 
 async def _delete_backups(
@@ -2320,14 +2321,18 @@ async def _execute_push_uploads_async(
     This is extracted from push_async to reduce cyclomatic complexity.
 
     Before the first upload, the push copies each existing key that it
-    overwrites to a backup key on the server (Issue #971). The outcome then
-    decides what happens to the backups:
+    overwrites to a backup key on the server (Issue #971). A failed copy
+    gives a warning, and the push continues without a backup for that key.
+    Each push uploads every item STAC JSON, so it also copies and deletes
+    each existing one. That costs two extra requests per overwritten key.
+    The outcome then decides what happens to the backups:
 
     - Success: the push deletes the backups after the versions.json write.
       A failed delete gives a warning. The push still succeeds.
     - Failure before the versions.json write, or a failed write for a reason
       other than a conflict: rollback copies each backup over its key, deletes
-      the backups, and deletes the keys that the push created.
+      the backups, and deletes the keys that the push created. A key without
+      a backup keeps the bytes of this push.
     - ``PushConflictError``: the push deletes nothing and restores nothing.
       Another writer wrote versions.json after this push read it. A key that
       the listing did not hold can belong to that writer, so a delete can
@@ -2389,19 +2394,11 @@ async def _execute_push_uploads_async(
 
     # Copy each key that the push overwrites to a backup key on the server.
     # Rollback restores the backups (Issue #971).
+    # A failed copy gives a warning, and that key gets no backup.
     backups = _new_push_backups(prefix)
-    backup_errors = await _backup_overwritten_keys(
+    await _backup_overwritten_keys(
         store, backups, prefix, planned_keys, existing_keys, concurrency=concurrency
     )
-    if backup_errors:
-        error("Cannot back up the keys that the push overwrites, aborting push")
-        return PushResult(
-            success=False,
-            files_uploaded=0,
-            versions_pushed=0,
-            conflicts=[],
-            errors=backup_errors,
-        )
 
     async def rollback() -> None:
         """Restore the overwritten keys and delete the created keys."""
