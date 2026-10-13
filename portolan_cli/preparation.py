@@ -18,7 +18,7 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pystac
 from pyproj import CRS
@@ -30,14 +30,11 @@ from portolan_cli.conversion_config import VectorSettings, get_vector_settings
 from portolan_cli.convert import apply_vector_settings, run_with_transient_convert_retry
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
 from portolan_cli.errors import NoGeometryError, RewriteFidelityError
-from portolan_cli.formats import FormatType, detect_format, is_cloud_optimized_geotiff
+from portolan_cli.format_families import RASTER, VECTOR
+from portolan_cli.formats import is_cloud_optimized_geotiff
 from portolan_cli.metadata import (
     extract_band_statistics,
-    extract_cog_metadata,
-    extract_flatgeobuf_metadata,
-    extract_geoparquet_metadata,
     extract_parquet_statistics,
-    extract_pmtiles_metadata,
     read_extra_schema_metadata,
     read_rewrite_fidelity,
     read_spatial_layout,
@@ -52,6 +49,7 @@ from portolan_cli.metadata_yaml import (
     apply_temporal_defaults,
     validate_metadata,
 )
+from portolan_cli.plugins.formats import FormatContext, extension_of, handler_for
 from portolan_cli.scan.detect import is_filegdb
 from portolan_cli.stac import (
     add_projection_extension,
@@ -70,6 +68,8 @@ from portolan_cli.viz.style import enrich_cog_assets
 if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
+
+    from portolan_cli.plugins.formats import FormatHandler
 
 logger = logging.getLogger(__name__)
 
@@ -330,7 +330,7 @@ class PreparedItem:
 
     item_id: str
     collection_id: str
-    format_type: FormatType
+    format_type: str | None
     bbox: list[float]
     asset_files: dict[str, tuple[Path, str, int]]
     item_json_path: Path | None  # None for collection-level vector assets
@@ -339,6 +339,10 @@ class PreparedItem:
     stac_assets: dict[str, pystac.Asset] | None = None  # For collection-level addition
     metadata: AllMetadata | None = None
     partition_metadata: dict[str, object] | None = None
+    format_name: str | None = None  # The format handler that converted the file (#947)
+    # True when this run wrote the output and no file was there before. Only
+    # such a file is safe to remove when a later step fails.
+    created_output: bool = False
 
 
 def _pre_validate_geometry(path: Path) -> None:
@@ -626,116 +630,59 @@ def _warn_if_source_newer(source_path: Path, output_path: Path) -> None:
         )
 
 
-def _handle_cloud_native_vector(
-    source_path: Path,
-    output_path: Path,
-    extract_fn: Callable[[Path], AllMetadata],
-    force: bool,
-    reconvert: bool,
-) -> AllMetadata:
-    """Handle cloud-native vector formats (PMTiles, FlatGeobuf) with force/reconvert.
-
-    Args:
-        source_path: Source file path.
-        output_path: Target output path.
-        extract_fn: Metadata extraction function.
-        force: If True, allow overwriting existing output.
-        reconvert: If True, re-copy from source.
-
-    Returns:
-        Extracted metadata.
-    """
-    same_file = source_path.resolve() == output_path.resolve()
-
-    if output_path.exists() and not same_file:
-        if force and not reconvert:
-            # Re-extract metadata from existing, warn if source newer
-            _warn_if_source_newer(source_path, output_path)
-            return extract_fn(output_path)
-        if force and reconvert:
-            # Re-copy from source
-            shutil.copy2(source_path, output_path)
-            return extract_fn(output_path)
-        # No force — raise error to prevent accidental overwrite
-        raise FileExistsError(
-            f"File already exists: {output_path}. "
-            "Rename the source file or remove the existing file."
-        )
-
-    # Output doesn't exist or same file — copy if needed
-    if not same_file:
-        shutil.copy2(source_path, output_path)
-    return extract_fn(output_path)
-
-
 def _convert_and_extract_metadata(
     path: Path,
     item_dir: Path,
-    format_type: FormatType,
+    handler: FormatHandler,
     *,
     catalog_root: Path | None = None,
     force: bool = False,
     reconvert: bool = False,
 ) -> tuple[Path, AllMetadata]:
-    """Convert to cloud-native format and extract metadata.
+    """Convert with the format handler and read the metadata (#947).
 
-    For cloud-native vector formats (PMTiles, FlatGeobuf), copies the file
-    as-is and extracts format-specific metadata. For other vectors, converts
-    to GeoParquet.
+    The same rule applies to every handler, built-in or plugin:
 
-    Per Issue #386: When force=True and reconvert=False, skips conversion if
-    output already exists (extracts metadata from existing output).
+    - ``--force`` without ``--reconvert`` keeps an output that exists
+      (issue #386). The handler converts it again only when it reads that
+      format itself, which brings an existing GeoParquet up to the profile
+      (issue #805).
+    - ``--reconvert`` on a source that is its own output rewrites it with the
+      handler's ``reconvert``, when it has one.
+    - Otherwise the handler converts the source.
 
     Args:
         path: Source file path.
         item_dir: Item directory for output.
-        format_type: Detected format type.
+        handler: The format handler that claims the file.
         catalog_root: Catalog root, for reading conversion settings.
         force: If True, bypass change detection (Issue #386).
         reconvert: If True, re-convert from source (requires force=True).
 
     Returns:
-        Tuple of (output_path, metadata).
+        Tuple of (output_path, metadata). A plugin's FormatMetadata provides
+        the bbox, crs, and to_stac_properties that the add path reads.
     """
-    metadata: AllMetadata
-    suffix = path.suffix.lower()
+    expected = handler.output_path(path, item_dir)
+    in_place = expected.resolve() == path.resolve()
+    reconvert_method = getattr(handler, "reconvert", None)
 
-    if format_type == FormatType.VECTOR:
-        # Check for cloud-native vector formats (skip conversion per issue #368)
-        if suffix == ".pmtiles":
-            output_path = item_dir / path.name
-            metadata = _handle_cloud_native_vector(
-                path, output_path, extract_pmtiles_metadata, force, reconvert
-            )
-        elif suffix in (".fgb", ".flatgeobuf"):
-            output_path = item_dir / path.name
-            metadata = _handle_cloud_native_vector(
-                path, output_path, extract_flatgeobuf_metadata, force, reconvert
-            )
-        else:
-            # Convert to GeoParquet
-            output_path = item_dir / f"{path.stem}.parquet"
-            if force and not reconvert and output_path.exists():
-                _warn_if_source_newer(path, output_path)
-                _ensure_conforming_geoparquet(output_path, catalog_root)
-                metadata = extract_geoparquet_metadata(output_path)
-            else:
-                output_path = convert_vector(path, item_dir, catalog_root, reconvert=reconvert)
-                metadata = extract_geoparquet_metadata(output_path)
-    else:  # RASTER
-        output_path = item_dir / f"{path.stem}.tif"
-        if force and not reconvert and output_path.exists():
-            _warn_if_source_newer(path, output_path)
-            metadata = extract_cog_metadata(output_path)
-        else:
-            output_path = convert_raster(path, item_dir)
-            metadata = extract_cog_metadata(output_path)
-    return output_path, metadata
+    if force and not reconvert and expected.exists():
+        if not in_place:
+            _warn_if_source_newer(path, expected)
+        output = expected
+        if extension_of(expected) in handler.extensions:
+            output = handler.convert(expected, item_dir, catalog_root)
+    elif reconvert and in_place and reconvert_method is not None:
+        output = reconvert_method(path, catalog_root)
+    else:
+        output = handler.convert(path, item_dir, catalog_root)
+    return output, cast("AllMetadata", handler.read_metadata(output))
 
 
 def _extract_statistics_best_effort(
     output_path: Path,
-    format_type: FormatType,
+    format_type: str | None,
     catalog_root: Path,
     collection_path: Path | None = None,
 ) -> tuple[list[Any], dict[str, Any]]:
@@ -761,7 +708,7 @@ def _extract_statistics_best_effort(
         return band_stats, parquet_stats
 
     try:
-        if format_type == FormatType.RASTER:
+        if format_type == RASTER:
             raster_mode = get_setting(
                 "statistics.raster_mode",
                 catalog_path=catalog_root,
@@ -779,7 +726,7 @@ def _extract_statistics_best_effort(
 
 def _add_statistics_to_properties(
     stac_properties: dict[str, Any],
-    format_type: FormatType,
+    format_type: str | None,
     band_stats: list[Any],
     parquet_stats: dict[str, Any],
     stats_enabled: bool,
@@ -796,11 +743,11 @@ def _add_statistics_to_properties(
     if not stats_enabled:
         return
 
-    if format_type == FormatType.RASTER and band_stats:
+    if format_type == RASTER and band_stats:
         for i, stats in enumerate(band_stats):
             if i < len(stac_properties.get("bands", [])):
                 stac_properties["bands"][i]["statistics"] = stats.to_stac_dict()
-    elif format_type == FormatType.VECTOR and parquet_stats:
+    elif format_type == VECTOR and parquet_stats:
         col_stats = {
             name: stat.to_stac_dict() for name, stat in parquet_stats.items() if stat.to_stac_dict()
         }
@@ -861,11 +808,11 @@ def _create_and_save_item(
     item_datetime: datetime | None,
     stac_properties: dict[str, Any],
     stac_assets: dict[str, pystac.Asset],
-    format_type: FormatType,
+    describe: Callable[[pystac.Item], None],
     metadata: AllMetadata,
     item_dir: Path,
 ) -> tuple[pystac.Item, Path]:
-    """Create a STAC item with extensions and save it to disk.
+    """Create a STAC item, let the format handler describe it, and save it.
 
     Helper to reduce complexity in prepare_item().
 
@@ -875,8 +822,8 @@ def _create_and_save_item(
         item_datetime: Acquisition/creation datetime.
         stac_properties: Properties to include in the item.
         stac_assets: Assets to attach to the item.
-        format_type: Vector or raster format.
-        metadata: Extracted metadata for extension fields.
+        describe: Calls the format handler's ``describe_item`` (#947).
+        metadata: Extracted metadata for the projection extension.
         item_dir: Directory where item.json will be saved.
 
     Returns:
@@ -890,10 +837,7 @@ def _create_and_save_item(
         assets=stac_assets,
     )
     add_projection_extension(item, metadata)
-    if format_type == FormatType.VECTOR:
-        add_vector_extension(item, metadata)
-    elif format_type == FormatType.RASTER:
-        add_raster_extension(item, metadata)
+    describe(item)
 
     item_json_path = item_dir / f"{item_id}.json"
     item.set_self_href(str(item_json_path))
@@ -950,6 +894,63 @@ def _apply_nodata_defaults_to_bands(
             band["nodata"] = updated_nodatavals[i]
 
 
+def _stats_enabled(context: FormatContext) -> bool:
+    return bool(
+        get_setting(
+            "statistics.enabled",
+            catalog_path=context.catalog_root,
+            collection_path=context.collection_dir,
+        )
+    )
+
+
+def describe_raster_item(
+    item: pystac.Item, output: Path, metadata: Any, context: FormatContext
+) -> None:
+    """Add the raster fields to a new item: render, band statistics, nodata, extension.
+
+    The built-in COG handler calls this from ``describe_item`` (#947).
+
+    Args:
+        item: The new item.
+        output: The COG.
+        metadata: What ``extract_cog_metadata`` returned.
+        context: Where the file sits.
+    """
+    # Enrich COG assets with render extension properties (Issue #13)
+    enrich_cog_assets(item.assets, context.catalog_root)
+    band_stats, _ = _extract_statistics_best_effort(
+        output, RASTER, context.catalog_root, collection_path=context.collection_dir
+    )
+    _add_statistics_to_properties(item.properties, RASTER, band_stats, {}, _stats_enabled(context))
+    # Raster nodata defaults: applied to bands missing nodata values
+    if context.defaults and isinstance(metadata, COGMetadata) and context.source is not None:
+        _apply_nodata_defaults_to_bands(item.properties, metadata, context.defaults, context.source)
+    add_raster_extension(item, metadata)
+
+
+def describe_vector_item(
+    item: pystac.Item, output: Path, metadata: Any, context: FormatContext
+) -> None:
+    """Add the vector fields to a new item: column statistics and the vector extension.
+
+    The built-in GeoParquet handler calls this from ``describe_item`` (#947).
+
+    Args:
+        item: The new item.
+        output: The GeoParquet file.
+        metadata: What ``extract_geoparquet_metadata`` returned.
+        context: Where the file sits.
+    """
+    _, parquet_stats = _extract_statistics_best_effort(
+        output, VECTOR, context.catalog_root, collection_path=context.collection_dir
+    )
+    _add_statistics_to_properties(
+        item.properties, VECTOR, [], parquet_stats, _stats_enabled(context)
+    )
+    add_vector_extension(item, metadata)
+
+
 def prepare_item(
     *,
     path: Path,
@@ -997,9 +998,10 @@ def prepare_item(
     # Step 1: Validate inputs
     _validate_collection_id(collection_id)
 
-    format_type = detect_format(path)
-    if format_type == FormatType.UNKNOWN:
+    handler = handler_for(path, catalog_root)
+    if handler is None:
         raise ValueError(f"Unsupported format: {path.suffix}")
+    format_type = handler.family
 
     _pre_validate_geometry(path)
 
@@ -1022,10 +1024,11 @@ def prepare_item(
         ) from err
 
     # Step 3: Convert and extract metadata
+    created_output = not handler.output_path(path, item_dir).exists()
     output_path, metadata = _convert_and_extract_metadata(
         path,
         item_dir,
-        format_type,
+        handler,
         catalog_root=catalog_root,
         force=force,
         reconvert=reconvert,
@@ -1055,13 +1058,6 @@ def prepare_item(
         )
     bbox = _extract_bbox_wgs84(metadata, output_path)
 
-    # Step 4b: Generate the COG thumbnail sidecar so the scan below registers it
-    # (Issue #657). The add path converts via convert_raster(), which does not
-    # generate a thumbnail like convert_file() does, so without this rasters get
-    # no thumbnail asset. The raster check lives in the helper, not here, because
-    # prepare_item sits at the xenon complexity ceiling.
-    _generate_raster_thumbnail(output_path, catalog_root, format_type)
-
     # Step 5: Scan assets and compute statistics
     stac_assets, asset_files, _asset_paths = _scan_item_assets(
         item_dir=item_dir,
@@ -1071,26 +1067,9 @@ def prepare_item(
         exclude_names=exclude_sibling_names,
     )
 
-    # Enrich COG assets with render extension properties (Issue #13)
-    if format_type == FormatType.RASTER:
-        enrich_cog_assets(stac_assets, catalog_root)
-
-    band_stats, parquet_stats = _extract_statistics_best_effort(
-        output_path, format_type, catalog_root, collection_path=collection_dir
-    )
-
-    # Step 6: Build STAC properties
+    # Step 6: Build STAC properties. The handler adds its format fields when it
+    # describes the item (#947).
     stac_properties = metadata.to_stac_properties()
-    stats_enabled = bool(
-        get_setting(
-            "statistics.enabled",
-            catalog_path=catalog_root,
-            collection_path=collection_dir,
-        )
-    )
-    _add_statistics_to_properties(
-        stac_properties, format_type, band_stats, parquet_stats, stats_enabled
-    )
     if title:
         stac_properties["title"] = title
     if description:
@@ -1102,14 +1081,10 @@ def prepare_item(
     if effective_datetime is None and defaults:
         effective_datetime = apply_temporal_defaults(defaults)
 
-    # Raster nodata defaults: applied to bands missing nodata values
-    if format_type == FormatType.RASTER and defaults and isinstance(metadata, COGMetadata):
-        _apply_nodata_defaults_to_bands(stac_properties, metadata, defaults, path)
-
     # Step 7: Create STAC item or collection-level assets
     # Collection-level vector assets: no item.json, assets go directly in collection.json
     # Item-level assets (rasters, partitioned vectors): create item.json as usual
-    if is_collection_level_asset and format_type == FormatType.VECTOR:
+    if is_collection_level_asset and handler.asset_level == "collection":
         # Collection-level vector asset: no item.json
         return PreparedItem(
             item_id=item_id_resolved,
@@ -1122,6 +1097,8 @@ def prepare_item(
             stac_item=None,
             stac_assets=_fix_collection_level_asset_hrefs(stac_assets),
             metadata=metadata,
+            format_name=handler.name,
+            created_output=created_output,
         )
 
     # Item-level: create STAC item and save item.json
@@ -1131,7 +1108,17 @@ def prepare_item(
         item_datetime=effective_datetime,
         stac_properties=stac_properties,
         stac_assets=stac_assets,
-        format_type=format_type,
+        describe=lambda item: handler.describe_item(
+            item,
+            output_path,
+            metadata,
+            FormatContext(
+                catalog_root=catalog_root,
+                collection_dir=collection_dir,
+                source=path,
+                defaults=defaults,
+            ),
+        ),
         metadata=metadata,
         item_dir=item_dir,
     )
@@ -1146,6 +1133,8 @@ def prepare_item(
         is_collection_level_asset=is_collection_level_asset,
         stac_item=item,
         metadata=metadata,
+        format_name=handler.name,
+        created_output=created_output,
     )
 
 
@@ -1215,48 +1204,27 @@ def _needs_spatial_rewrite(
     return not layout.has_bbox_covering
 
 
-def _ensure_conforming_geoparquet(output_path: Path, catalog_root: Path | None) -> None:
-    """Add the bbox covering column to an output ``--force`` did not reconvert.
-
-    ``add --force`` skips conversion when the output already exists, because
-    ``--force`` means "ignore change detection", not "convert again"
-    (issue #386). For a single-file collection the output *is* the source, so
-    that skip used to hand back a file with no covering column and no warning.
-    The catalog then failed its own ``check`` on PTL-DAT-007, which is the
-    failure issue #805 set out to remove.
-
-    This runs the same footer test the conversion path runs, and rewrites the
-    file when it fails. Source bytes are untouched: the file is already the
-    catalog's own output.
-
-    Args:
-        output_path: Existing GeoParquet output.
-        catalog_root: Catalog root, for reading ``conversion.vector`` settings.
-            None uses the built-in defaults.
-    """
-    if output_path.suffix.lower() != ".parquet":
-        return
-
-    settings = get_vector_settings(catalog_root) if catalog_root else VectorSettings()
-    if not _needs_spatial_rewrite(output_path, settings):
-        return
-
-    _announce_rewrite(output_path, "it carries no bbox covering column")
-    _rewrite_or_keep(output_path, settings)
-
-
 def convert_vector(
     source: Path,
     dest_dir: Path,
     catalog_root: Path | None = None,
     *,
     reconvert: bool = False,
+    settings: VectorSettings | None = None,
+    partition_dir: Path | None = None,
 ) -> Path:
-    """Convert vector file to GeoParquet.
+    """Convert a vector file to GeoParquet. ``add`` and ``check --fix`` both use this (#947).
 
     Applies the catalog's ``conversion.vector`` settings, which sort rows and
     add a bbox covering column by default (issue #805). A ``.parquet`` source
     is copied unless :func:`_needs_spatial_rewrite` says it must be rewritten.
+
+    ``add`` writes one file. A configured spatial index becomes a column of
+    that file, whatever ``partition`` says. ``check --fix`` passes
+    ``partition_dir`` instead, and the table is written as Hive partitions by
+    that index. Each source gets its own ``partition_dir``, because two
+    sources in one directory share cells, and geoparquet-io does not write over
+    a cell that exists.
 
     Args:
         source: Source vector file.
@@ -1265,14 +1233,26 @@ def convert_vector(
             None uses the built-in defaults.
         reconvert: True when the operator asked to re-convert from source, which
             rewrites a Parquet file whatever its footer already declares.
+        settings: Explicit vector settings. None reads them from the catalog.
+        partition_dir: Directory for Hive partitions by the configured spatial
+            index. It applies only to a non-Parquet source, when the settings
+            set ``partition`` and a spatial index.
 
     Returns:
-        Path to the output GeoParquet file.
+        Path to the output GeoParquet file, or ``partition_dir`` when the
+        table was written as partitions.
     """
     import geoparquet_io as gpio  # type: ignore[import-untyped]
 
+    from portolan_cli.convert import _write_partitioned, repair_shapefile_encoding_sidecar
+
     output_path = dest_dir / f"{source.stem}.parquet"
-    settings = get_vector_settings(catalog_root) if catalog_root else VectorSettings()
+    if settings is None:
+        settings = get_vector_settings(catalog_root)
+
+    # A shapefile with a missing or wrong .cpg converts with the right encoding.
+    if source.suffix.lower() == ".shp":
+        repair_shapefile_encoding_sidecar(source)
 
     # Check if already GeoParquet
     if source.suffix.lower() == ".parquet":
@@ -1302,14 +1282,24 @@ def convert_vector(
     # A non-Parquet source. Convert with the geoparquet-io fluent API, wrapped
     # in the shared retry so a transient DuckDB "Query interrupted" does not
     # fail a bulk add (Issue #339 nightly test_add_1000_files_* flake); this is
-    # the code path add uses.
+    # the code path add and check --fix use. A partitioned write adds the index
+    # column at the size it partitions by, so the converter leaves it out.
+    if not (settings.partition and settings.spatial_index != "none"):
+        partition_dir = None
+    resolved = settings
+
     def _run() -> None:
-        table = apply_vector_settings(gpio.convert(str(source)), settings)
-        table.write(str(output_path))
+        table = apply_vector_settings(
+            gpio.convert(str(source)), resolved, partitioned=partition_dir is not None
+        )
+        if partition_dir is None:
+            table.write(str(output_path))
+        else:
+            _write_partitioned(table, partition_dir, resolved)
 
     run_with_transient_convert_retry(_run, source_name=source.name)
 
-    return output_path
+    return output_path if partition_dir is None else partition_dir
 
 
 # Above this size, the rewrite is slow enough that the operator should know why
@@ -1613,93 +1603,37 @@ def convert_tabular(source: Path, dest_dir: Path) -> Path:
     return output_path
 
 
-def convert_raster(source: Path, dest_dir: Path) -> Path:
-    """Convert raster file to COG.
+def convert_raster(
+    source: Path,
+    dest_dir: Path,
+    catalog_root: Path | None = None,
+    *,
+    reoptimize: bool = False,
+) -> Path:
+    """Convert a raster to a COG. ``add`` and ``check --fix`` both use this (#947).
 
-    Uses Portolan's opinionated COG defaults (see convert command design):
-    - DEFLATE compression (universal compatibility, lossless)
-    - 512x512 tiles (matches rio-cogeo default, fewer HTTP requests)
-    - Predictor and overview resampling derived from the source raster's dtype
-      (see derive_cog_defaults)
-
-    For fine-tuned control, power users should use rio_cogeo.cog_translate() directly.
+    A source that is already a COG is kept, unless ``reoptimize`` asks to
+    rewrite it with the current settings (issue #530). Otherwise
+    ``convert.write_cog`` writes the COG with the catalog's ``conversion.cog``
+    settings: DEFLATE, 512x512 tiles, and a predictor and overview resampling
+    derived from the source dtype by default (issue #690).
 
     Args:
         source: Source raster file.
         dest_dir: Destination directory.
+        catalog_root: Catalog root, for the COG settings. None uses the defaults.
+        reoptimize: Rewrite a source that is already a COG.
 
     Returns:
         Path to the output COG file.
     """
-    from rio_cogeo.cogeo import cog_translate
-    from rio_cogeo.profiles import cog_profiles
-
-    from portolan_cli.conversion_config import derive_cog_defaults
+    from portolan_cli.conversion_config import get_cog_settings
+    from portolan_cli.convert import write_cog
 
     output_path = dest_dir / f"{source.stem}.tif"
-
-    # Check if already a valid COG — skip conversion if so
-    if source.suffix.lower() in (".tif", ".tiff") and is_cloud_optimized_geotiff(source):
-        # If source is already at the destination, no copy needed (CodeRabbit review)
-        if source.resolve() == output_path.resolve():
-            return output_path
-        # Already a COG, just copy to destination
-        shutil.copy2(source, output_path)
+    is_cog = source.suffix.lower() in (".tif", ".tiff") and is_cloud_optimized_geotiff(source)
+    if is_cog and not reoptimize:
+        if source.resolve() != output_path.resolve():
+            shutil.copy2(source, output_path)
         return output_path
-
-    # Convert using rio-cogeo with Portolan's opinionated defaults
-    profile = cog_profiles.get("deflate")  # type: ignore[no-untyped-call]
-
-    # Derive predictor and overview resampling from the raster (Issue #690)
-    # Note: profile is a copy of the deflate profile dict
-    predictor, resampling = derive_cog_defaults(source)
-    profile["predictor"] = predictor
-
-    cog_translate(
-        str(source),
-        str(output_path),
-        profile,
-        quiet=True,
-        overview_resampling=resampling,  # type: ignore[arg-type]
-    )
-
-    return output_path
-
-
-def _generate_raster_thumbnail(cog_path: Path, catalog_root: Path, format_type: FormatType) -> None:
-    """Write a ``{stem}.thumb.jpg`` next to a COG so the asset scan registers it.
-
-    Mirrors the thumbnail step in ``convert.convert_file`` for the add path,
-    which converts through the bare ``convert_raster`` wrapper and would
-    otherwise leave rasters with no thumbnail asset (Issue #657). Gated on the
-    ``generate_thumbnail`` COG setting and best-effort: a thumbnail failure must
-    never fail the add. Skips generation when the sidecar already exists so a
-    hand-curated thumbnail or a re-add is left untouched.
-
-    Non-raster formats return immediately. The gate lives here rather than at the
-    call site to keep ``prepare_item`` inside the xenon complexity ceiling.
-
-    Args:
-        cog_path: Path to the converted file.
-        catalog_root: Catalog root, for loading COG settings.
-        format_type: Format of the converted file; only RASTER is handled.
-    """
-    from portolan_cli.conversion_config import get_cog_settings
-    from portolan_cli.convert import generate_cog_thumbnail
-
-    if format_type != FormatType.RASTER:
-        return
-
-    settings = get_cog_settings(catalog_root)
-    if not settings.generate_thumbnail:
-        return
-    if cog_path.with_name(f"{cog_path.stem}.thumb.jpg").exists():
-        return
-    try:
-        generate_cog_thumbnail(
-            cog_path,
-            max_size=settings.thumbnail_max_size,
-            quality=settings.thumbnail_quality,
-        )
-    except Exception as e:  # the thumbnail is optional, so a failure is not fatal
-        logger.warning("Thumbnail generation failed for %s: %s", cog_path.name, e)
+    return write_cog(source, dest_dir, get_cog_settings(catalog_root))

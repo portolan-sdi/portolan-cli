@@ -47,6 +47,7 @@ dependencies = [
     "lxml>=6.1.0", # CVE-2026-41066 fix (transitive via owslib, pinned for security)
     "pillow>=12.3.0", # PYSEC-2026-2253..2257 fix (transitive via rasterio, pinned for security)
     "pmtiles>=3.0.0", # PMTiles metadata reading (header, bounds, zoom levels)
+    "pluggy>=1.5.0", # Plugin hooks (#947). Pure Python, no dependencies. 1.5 adds warn_on_impl_args for hook deprecation
     "pyogrio>=0.7.0", # FlatGeobuf metadata reading (transitive via geoparquet-io, but we import directly)
     "pygments>=2.20.0", # CVE-2026-4539 fix (transitive via rich, pinned for security)
     "requests>=2.33.0", # CVE-2026-25645 fix (transitive, pinned for security)
@@ -59,6 +60,12 @@ dependencies = [
 
 [project.scripts]
 portolan = "portolan_cli:cli"
+
+# Built-in commands that use the plugin path (#947). An entry point that
+# portolan-cli declares always loads, whatever PORTOLAN_PLUGINS says.
+[project.entry-points."portolan.commands"]
+"version.rollback" = "portolan_cli.backends.iceberg.cli:rollback"
+"version.prune" = "portolan_cli.backends.iceberg.cli:prune"
 
 [project.urls]
 "Homepage" = "https://github.com/portolan-sdi/portolan-cli"
@@ -153,8 +160,10 @@ markers = [
     "unit: Fast, isolated, no I/O (< 100ms each)",
     "integration: Multi-component, may touch filesystem",
     "network: Requires network access (mocked locally, real in CI nightly)",
+    "refused_hosts: The network guard refuses these hosts without failing the test (child-process requests only)",
     "realdata: Uses real-world fixtures from tests/fixtures/realdata/ (tests orchestration, not geometry)",
     "snapshot: Compares output against golden files",
+    "plugin: Needs the example plugin installed (tests/plugins/portolan_example)",
     "benchmark: Performance measurement, tracked over time",
     "slow: Takes > 5 seconds",
     "e2e: End-to-end tests requiring Docker (REST catalog + RustFS)",
@@ -269,6 +278,8 @@ ignore = [
 "scripts/**/*.py" = [
     "T20", # scripts are CLIs of their own and print by design
     "S310", # a script opens an https URL it writes itself
+    "S603", # a script starts a tool or pytest with a literal argument list
+    "S607", # the script resolves its tools from PATH
 ]
 "examples/**/*.py" = ["T20"] # an example prints its result for the reader
 
@@ -314,6 +325,9 @@ docstring-code-format = true
 [tool.mypy]
 python_version = "3.10"
 strict = true # Enables all strict flags at once
+# The example plugin (#947) is a separate package. This path lets mypy check
+# its tests and its code without installing it.
+mypy_path = "tests/plugins/portolan_example/src"
 # pyarrow >=24 ships py.typed but leaves pyarrow.parquet helpers untyped, so
 # strict's disallow_untyped_calls trips on every read_table/write_table/
 # ParquetFile/read_metadata/read_schema call. Scope the suppression to pyarrow
@@ -405,7 +419,7 @@ pytest_add_cli_args = [
 
 [tool.importlinter]
 root_packages = ["portolan_cli"]
-# The read-modules-stay-light contract forbids click and rasterio.
+# The layer contracts forbid click and rasterio.
 # import-linter adds those external packages to the graph only with this flag.
 include_external_packages = true
 
@@ -425,15 +439,8 @@ ignore_imports = [
     "portolan_cli.finalization -> portolan_cli.backends",
     "portolan_cli.version_ops -> portolan_cli.backends",
     "portolan_cli.version_ops -> portolan_cli.backends.protocol",
-    "portolan_cli.cli -> portolan_cli.backends.protocol", # TYPE_CHECKING only
+    "portolan_cli.hookspecs -> portolan_cli.backends.protocol", # TYPE_CHECKING only
 ]
-
-[[tool.importlinter.contracts]]
-id = "iceberg-backend-isolation"
-name = "Iceberg backend must not import CLI layer directly"
-type = "forbidden"
-source_modules = ["portolan_cli.backends.iceberg"]
-forbidden_modules = ["portolan_cli.cli"]
 
 [[tool.importlinter.contracts]]
 id = "validation-is-an-adapter"
@@ -507,15 +514,22 @@ source_modules = ["portolan_cli.scan"]
 forbidden_modules = ["portolan_cli.sync", "portolan_cli.viz"]
 allow_indirect_imports = true
 
-# ---------- library boundary (#944) ----------
-# A library caller (a Cloud Run job, a notebook) reads a catalog without the
-# CLI shell. These modules read catalog state. They must not load Click, the
-# geospatial stack, or the modules that write a catalog. The check follows
-# transitive imports, and an import inside a function body counts too.
+# ---------- layers (#944, #947) ----------
+# The package has three layers. A library caller (a Cloud Run job, a notebook,
+# a plugin) imports the read and manage layers without the CLI shell.
+#
+#   read    catalog, collection, and item access. No Click, no rasterio,
+#           no module that writes a catalog.
+#   manage  STAC builders, conversion, extraction, versions.json, sync,
+#           backends. No Click.
+#   cli     cli, cli_types, emit, add_progress, scan.progress. Click and Rich.
+#
+# Each check follows transitive imports, and an import inside a function body
+# counts too.
 
 [[tool.importlinter.contracts]]
-id = "read-modules-stay-light"
-name = "Read modules must not import click, rasterio, or write modules"
+id = "layer-read"
+name = "Read layer: no click, rasterio, or write modules"
 type = "forbidden"
 source_modules = [
     "portolan_cli.versions",
@@ -535,6 +549,67 @@ forbidden_modules = [
     "portolan_cli.convert",
     "portolan_cli.preparation",
     "portolan_cli.finalization",
+]
+
+[[tool.importlinter.contracts]]
+id = "layer-manage"
+name = "Manage layer: no click"
+type = "forbidden"
+source_modules = ["portolan_cli", "portolan_cli.**"]
+forbidden_modules = ["click"]
+ignore_imports = [
+    # The CLI layer is the one place Click belongs.
+    "portolan_cli.cli -> click",
+    "portolan_cli.cli_types -> click",
+    "portolan_cli.emit -> click",
+    "portolan_cli.plugins.commands -> click",
+    "portolan_cli.backends.iceberg.cli -> click",
+    "portolan_cli.extract.*.cli -> click",
+    "portolan_cli.extract.common.cli_helpers -> click",
+    "portolan_cli.extract.common.layer_cli -> click",
+    # The Extractor protocol names click.Command for type checkers only.
+    "portolan_cli.plugins.extractors -> click",
+    "portolan_cli.plugins.builtin.extractors -> click",
+    "portolan_cli.extract.common.source -> click",
+    # check_extractor runs in a plugin's test suite and checks for a Click command.
+    "portolan_cli.testing -> click",
+    # The package root names the Click group for type checkers only. It loads
+    # the group lazily through __getattr__.
+    "portolan_cli -> portolan_cli.cli",
+]
+
+[[tool.importlinter.contracts]]
+id = "layer-cli"
+name = "CLI layer: only the CLI layer imports it"
+type = "protected"
+protected_modules = [
+    "portolan_cli.cli",
+    "portolan_cli.cli_types",
+    "portolan_cli.emit",
+    "portolan_cli.add_progress",
+    "portolan_cli.scan.progress",
+    "portolan_cli.plugins.commands",
+    "portolan_cli.backends.iceberg.cli",
+    "portolan_cli.extract.*.cli",
+    "portolan_cli.extract.common.cli_helpers",
+    "portolan_cli.extract.common.layer_cli",
+]
+allowed_importers = [
+    "portolan_cli.cli",
+    "portolan_cli.cli_types",
+    "portolan_cli.emit",
+    "portolan_cli.add_progress",
+    "portolan_cli.scan.progress",
+    "portolan_cli.plugins.commands",
+    "portolan_cli.backends.iceberg.cli",
+    "portolan_cli.extract.*.cli",
+    "portolan_cli.extract.common.cli_helpers",
+    "portolan_cli.extract.common.layer_cli",
+]
+ignore_imports = [
+    # The package root names the Click group for type checkers only. It loads
+    # the group lazily through __getattr__.
+    "portolan_cli -> portolan_cli.cli",
 ]
 
 # ---------- dependency checking ----------

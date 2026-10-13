@@ -10,122 +10,83 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from portolan_cli.extract.arcgis.orchestrator import _auto_init_catalog
+from portolan_cli.extract.arcgis.orchestrator import ExtractionOptions
 from portolan_cli.extract.arcgis.report import (
     ExtractionReport,
-    ExtractionSummary,
     LayerResult,
     MetadataExtracted,
 )
 from portolan_cli.licensing import ResolvedLicense
+from tests.support.extract import build_arcgis_catalog
+from tests.support.extract import make_layer_result as shared_layer_result
+from tests.support.extract import make_report as shared_make_report
 
-pytestmark = [pytest.mark.integration]
+
+def make_layer_result(
+    *,
+    name: str = "Test Layer",
+    output_path: str | None = "test_layer/test_layer.parquet",
+    **fields: Any,
+) -> LayerResult:
+    """Create a LayerResult with this file's default name and path."""
+    return shared_layer_result(name=name, output_path=output_path, **fields)
+
+
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_extract_side_requests")]
 
 
 # Path to real test fixtures
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures"
 
 
-def make_layer_result(
-    *,
-    layer_id: int = 0,
-    name: str = "Test Layer",
-    status: str = "success",
-    output_path: str | None = "test_layer/data.parquet",
-    features: int | None = 100,
-    size_bytes: int | None = 1000,
-    error: str | None = None,
-) -> LayerResult:
-    """Create a LayerResult with sensible defaults."""
-    return LayerResult(
-        id=layer_id,
-        name=name,
-        status=status,
-        output_path=output_path,
-        features=features if status == "success" else None,
-        size_bytes=size_bytes if status == "success" else None,
-        duration_seconds=1.0 if status == "success" else None,
-        warnings=[],
-        error=error,
-        attempts=1 if status != "failed" else 3,
-    )
-
-
 def make_report(
     layers: list[LayerResult],
     source_url: str = "https://example.com/arcgis/rest/services/Test/FeatureServer",
 ) -> ExtractionReport:
-    """Create an ExtractionReport with sensible defaults."""
-    succeeded = sum(1 for layer in layers if layer.status == "success")
-    failed = sum(1 for layer in layers if layer.status == "failed")
-    skipped = sum(1 for layer in layers if layer.status == "skipped")
-    empty = sum(1 for layer in layers if layer.status == "empty")
-    total_features = sum(layer.features or 0 for layer in layers)
-    total_bytes = sum(layer.size_bytes or 0 for layer in layers)
-
-    return ExtractionReport(
-        extraction_date="2026-03-30T12:00:00Z",
-        source_url=source_url,
-        portolan_version="0.1.0",
-        gpio_version="0.5.0",
-        metadata_extracted=MetadataExtracted(
-            source_url=source_url,
-            description=None,
-            attribution=None,
-            keywords=None,
-            contact_name=None,
-            processing_notes=None,
-            known_issues=None,
-            license_info_raw=None,
-        ),
-        layers=layers,
-        summary=ExtractionSummary(
-            total_layers=len(layers),
-            succeeded=succeeded,
-            failed=failed,
-            skipped=skipped,
-            empty=empty,
-            total_features=total_features,
-            total_size_bytes=total_bytes,
-            total_duration_seconds=float(len(layers)),
-        ),
-    )
+    """Create an ExtractionReport for ``layers``."""
+    return shared_make_report(layers, source_url)
 
 
-# Calling _auto_init_catalog directly skips the resolution the orchestrator does
+# Building the catalog directly skips the license resolution the driver does
 # before its download, so the license is passed in here (issue #686).
 TEST_LICENSE = ResolvedLicense(license_id="CC-BY-4.0", license_url=None)
+
+
+def _layer_report(
+    output_dir: Path,
+    directory: str = "test_layer",
+    *,
+    source_url: str | None = None,
+    **fields: Any,
+) -> ExtractionReport:
+    """Copy the fixture to ``directory/directory.parquet`` and report it as extracted."""
+    layer_dir = output_dir / directory
+    layer_dir.mkdir()
+    output_parquet = layer_dir / f"{directory}.parquet"
+    shutil.copy(FIXTURES_DIR / "simple.parquet", output_parquet)
+    layer = make_layer_result(
+        output_path=f"{directory}/{directory}.parquet",
+        size_bytes=output_parquet.stat().st_size,
+        **fields,
+    )
+    return make_report([layer], source_url) if source_url else make_report([layer])
 
 
 class TestAutoInitCatalog:
     """Tests for automatic catalog initialization after extraction."""
 
     def test_auto_init_creates_catalog_json(self, tmp_path: Path) -> None:
-        """_auto_init_catalog creates catalog.json at output root."""
+        """build_arcgis_catalog creates catalog.json at output root."""
         output_dir = tmp_path / "test_catalog"
         output_dir.mkdir()
 
-        # Copy a real fixture to simulate extracted file
-        layer_dir = output_dir / "test_layer"
-        layer_dir.mkdir()
-        fixture_path = FIXTURES_DIR / "simple.parquet"
-        output_parquet = layer_dir / "data.parquet"
-        shutil.copy(fixture_path, output_parquet)
+        report = _layer_report(output_dir)
 
-        # Create report pointing to real file
-        report = make_report(
-            layers=[
-                make_layer_result(
-                    output_path="test_layer/data.parquet",
-                    size_bytes=output_parquet.stat().st_size,
-                )
-            ],
-        )
-
-        _auto_init_catalog(output_dir, report, TEST_LICENSE)
+        build_arcgis_catalog(output_dir, report, TEST_LICENSE)
 
         # Should have catalog.json at root
         assert (output_dir / "catalog.json").exists(), "catalog.json should be created"
@@ -141,19 +102,19 @@ class TestAutoInitCatalog:
 
         layer_dir = output_dir / "test_layer"
         layer_dir.mkdir()
-        output_parquet = layer_dir / "data.parquet"
+        output_parquet = layer_dir / f"{layer_dir.name}.parquet"
         shutil.copy(FIXTURES_DIR / "simple.parquet", output_parquet)
 
         report = make_report(
             layers=[
                 make_layer_result(
-                    output_path="test_layer/data.parquet",
+                    output_path="test_layer/test_layer.parquet",
                     size_bytes=output_parquet.stat().st_size,
                 )
             ],
         )
 
-        _auto_init_catalog(output_dir, report, TEST_LICENSE, "phl-housing")
+        build_arcgis_catalog(output_dir, report, TEST_LICENSE, "phl-housing")
 
         catalog = json.loads((output_dir / "catalog.json").read_text(encoding="utf-8"))
         versions = json.loads((output_dir / "versions.json").read_text(encoding="utf-8"))
@@ -161,27 +122,13 @@ class TestAutoInitCatalog:
         assert versions["catalog_id"] == "phl-housing"
 
     def test_auto_init_creates_config_yaml(self, tmp_path: Path) -> None:
-        """_auto_init_catalog creates .portolan/config.yaml sentinel."""
+        """build_arcgis_catalog creates .portolan/config.yaml sentinel."""
         output_dir = tmp_path / "test_catalog"
         output_dir.mkdir()
 
-        # Copy a real fixture
-        layer_dir = output_dir / "test_layer"
-        layer_dir.mkdir()
-        fixture_path = FIXTURES_DIR / "simple.parquet"
-        output_parquet = layer_dir / "data.parquet"
-        shutil.copy(fixture_path, output_parquet)
+        report = _layer_report(output_dir)
 
-        report = make_report(
-            layers=[
-                make_layer_result(
-                    output_path="test_layer/data.parquet",
-                    size_bytes=output_parquet.stat().st_size,
-                )
-            ],
-        )
-
-        _auto_init_catalog(output_dir, report, TEST_LICENSE)
+        build_arcgis_catalog(output_dir, report, TEST_LICENSE)
 
         # Should have .portolan/config.yaml
         assert (output_dir / ".portolan" / "config.yaml").exists(), "config.yaml should exist"
@@ -200,21 +147,21 @@ class TestAutoInitCatalog:
             layer_dir.mkdir()
 
             fixture_path = FIXTURES_DIR / "simple.parquet"
-            output_parquet = layer_dir / "data.parquet"
+            output_parquet = layer_dir / f"{layer_dir.name}.parquet"
             shutil.copy(fixture_path, output_parquet)
 
             layers.append(
                 make_layer_result(
                     layer_id=i,
                     name=layer_name.replace("_", " ").title(),
-                    output_path=f"{layer_name}/data.parquet",
+                    output_path=f"{layer_name}/{layer_name}.parquet",
                     size_bytes=output_parquet.stat().st_size,
                 )
             )
 
         report = make_report(layers=layers)
 
-        _auto_init_catalog(output_dir, report, TEST_LICENSE)
+        build_arcgis_catalog(output_dir, report, TEST_LICENSE)
 
         # Each layer should have a collection.json
         assert (output_dir / "layer_0" / "collection.json").exists()
@@ -223,7 +170,7 @@ class TestAutoInitCatalog:
     def test_second_extraction_adds_collection_to_existing_catalog(self, tmp_path: Path) -> None:
         """A second extraction into an existing catalog adds a collection (issue #767).
 
-        Before the fix, the second _auto_init_catalog call raised
+        Before the fix, the second catalog build raised
         CatalogAlreadyExistsError after the data was already on disk, so the
         second layer's collection.json was never written.
         """
@@ -233,21 +180,8 @@ class TestAutoInitCatalog:
         output_dir.mkdir()
 
         def _extract_layer(name: str, layer_id: int) -> ExtractionReport:
-            layer_dir = output_dir / name
-            layer_dir.mkdir()
-            output_parquet = layer_dir / "data.parquet"
-            shutil.copy(FIXTURES_DIR / "simple.parquet", output_parquet)
-            report = make_report(
-                layers=[
-                    make_layer_result(
-                        layer_id=layer_id,
-                        name=name,
-                        output_path=f"{name}/data.parquet",
-                        size_bytes=output_parquet.stat().st_size,
-                    )
-                ],
-            )
-            _auto_init_catalog(output_dir, report, TEST_LICENSE)
+            report = _layer_report(output_dir, name, layer_id=layer_id, name=name)
+            build_arcgis_catalog(output_dir, report, TEST_LICENSE)
             return report
 
         # First layer creates the catalog.
@@ -285,20 +219,8 @@ class TestAutoInitCatalog:
         output_dir.mkdir()
 
         def _extract(name: str, layer_id: int, source_url: str, description: str) -> None:
-            layer_dir = output_dir / name
-            layer_dir.mkdir()
-            output_parquet = layer_dir / "data.parquet"
-            shutil.copy(FIXTURES_DIR / "simple.parquet", output_parquet)
-            report = make_report(
-                layers=[
-                    make_layer_result(
-                        layer_id=layer_id,
-                        name=name,
-                        output_path=f"{name}/data.parquet",
-                        size_bytes=output_parquet.stat().st_size,
-                    )
-                ],
-                source_url=source_url,
+            report = _layer_report(
+                output_dir, name, layer_id=layer_id, name=name, source_url=source_url
             )
             report.metadata_extracted = MetadataExtracted(
                 source_url=source_url,
@@ -310,7 +232,7 @@ class TestAutoInitCatalog:
                 known_issues=None,
                 license_info_raw=None,
             )
-            _auto_init_catalog(output_dir, report, TEST_LICENSE)
+            build_arcgis_catalog(output_dir, report, TEST_LICENSE)
 
         # First extraction seeds the root title and description.
         _extract(
@@ -353,7 +275,7 @@ class TestAutoInitCatalog:
             ],
         )
 
-        _auto_init_catalog(output_dir, report, TEST_LICENSE)
+        build_arcgis_catalog(output_dir, report, TEST_LICENSE)
 
         # Should NOT create catalog (no successful extractions)
         assert not (output_dir / "catalog.json").exists()
@@ -366,28 +288,41 @@ class TestAutoInitCatalog:
         output_dir = tmp_path / "test_catalog"
         output_dir.mkdir()
 
-        # Copy a real fixture
-        layer_dir = output_dir / "test_layer"
-        layer_dir.mkdir()
-        fixture_path = FIXTURES_DIR / "simple.parquet"
-        output_parquet = layer_dir / "data.parquet"
-        shutil.copy(fixture_path, output_parquet)
-
-        report = make_report(
-            layers=[
-                make_layer_result(
-                    output_path="test_layer/data.parquet",
-                    size_bytes=output_parquet.stat().st_size,
-                )
-            ],
+        report = _layer_report(
+            output_dir,
             source_url="https://services.arcgis.com/abc/arcgis/rest/services/DenHaagHousing/FeatureServer",
         )
 
-        _auto_init_catalog(output_dir, report, TEST_LICENSE)
+        build_arcgis_catalog(output_dir, report, TEST_LICENSE)
 
         # Check catalog title
         catalog_json = json.loads((output_dir / "catalog.json").read_text())
         assert catalog_json.get("title") == "DenHaagHousing"
+
+
+def _extract_test_layer(output_dir: Path, options: ExtractionOptions) -> None:
+    """Extract one fake layer, TestLayer, with the fixture as its data."""
+    from unittest.mock import patch
+
+    from portolan_cli.extract.arcgis.discovery import LayerInfo, ServiceDiscoveryResult
+    from portolan_cli.extract.arcgis.orchestrator import ArcGISLayerSource, extract_arcgis_catalog
+
+    def copy_fixture(self: object, service_url: str, layer: object, output_path: Path) -> int:
+        shutil.copy(FIXTURES_DIR / "simple.parquet", output_path)
+        return 100
+
+    discovery = ServiceDiscoveryResult(
+        layers=[LayerInfo(id=0, name="TestLayer", layer_type="Feature Layer")],
+    )
+    with (
+        patch.object(ArcGISLayerSource, "fetch", autospec=True, side_effect=copy_fixture),
+        patch("portolan_cli.extract.arcgis.orchestrator.discover_layers", return_value=discovery),
+    ):
+        extract_arcgis_catalog(
+            url="https://example.com/arcgis/rest/services/Test/FeatureServer",
+            output_dir=output_dir,
+            options=options,
+        )
 
 
 class TestExtractWithRawFlag:
@@ -398,43 +333,8 @@ class TestExtractWithRawFlag:
 
         This test verifies the orchestrator respects the raw flag.
         """
-        from unittest.mock import patch
-
-        from portolan_cli.extract.arcgis.discovery import LayerInfo, ServiceDiscoveryResult
-        from portolan_cli.extract.arcgis.orchestrator import (
-            ExtractionOptions,
-            extract_arcgis_catalog,
-        )
-
         output_dir = tmp_path / "raw_output"
-
-        # Copy fixture to use as "extracted" file
-        fixture_src = FIXTURES_DIR / "simple.parquet"
-
-        def mock_extract_side_effect(
-            service_url: str, layer: object, output_path: Path, options: object
-        ) -> tuple[int, int, float]:
-            """Copy real fixture to output path."""
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(fixture_src, output_path)
-            return (100, output_path.stat().st_size, 1.0)
-
-        with (
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator._extract_single_layer",
-                side_effect=mock_extract_side_effect,
-            ),
-            patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
-        ):
-            mock_discover.return_value = ServiceDiscoveryResult(
-                layers=[LayerInfo(id=0, name="TestLayer", layer_type="Feature Layer")],
-            )
-
-            extract_arcgis_catalog(
-                url="https://example.com/arcgis/rest/services/Test/FeatureServer",
-                output_dir=output_dir,
-                options=ExtractionOptions(dry_run=False, raw=True),
-            )
+        _extract_test_layer(output_dir, ExtractionOptions(dry_run=False, raw=True))
 
         # Should NOT have catalog.json (raw mode)
         assert not (output_dir / "catalog.json").exists(), "raw mode should not create catalog"
@@ -444,43 +344,10 @@ class TestExtractWithRawFlag:
 
     def test_default_extraction_creates_catalog(self, tmp_path: Path) -> None:
         """ExtractionOptions(raw=False, the default, license="CC-BY-4.0") creates catalog."""
-        from unittest.mock import patch
-
-        from portolan_cli.extract.arcgis.discovery import LayerInfo, ServiceDiscoveryResult
-        from portolan_cli.extract.arcgis.orchestrator import (
-            ExtractionOptions,
-            extract_arcgis_catalog,
-        )
-
         output_dir = tmp_path / "catalog_output"
-
-        # Copy fixture to use as "extracted" file
-        fixture_src = FIXTURES_DIR / "simple.parquet"
-
-        def mock_extract_side_effect(
-            service_url: str, layer: object, output_path: Path, options: object
-        ) -> tuple[int, int, float]:
-            """Copy real fixture to output path."""
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(fixture_src, output_path)
-            return (100, output_path.stat().st_size, 1.0)
-
-        with (
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator._extract_single_layer",
-                side_effect=mock_extract_side_effect,
-            ),
-            patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
-        ):
-            mock_discover.return_value = ServiceDiscoveryResult(
-                layers=[LayerInfo(id=0, name="TestLayer", layer_type="Feature Layer")],
-            )
-
-            extract_arcgis_catalog(
-                url="https://example.com/arcgis/rest/services/Test/FeatureServer",
-                output_dir=output_dir,
-                options=ExtractionOptions(dry_run=False, raw=False, license="CC-BY-4.0"),
-            )
+        _extract_test_layer(
+            output_dir, ExtractionOptions(dry_run=False, raw=False, license="CC-BY-4.0")
+        )
 
         # Should have catalog.json (default behavior)
         assert (output_dir / "catalog.json").exists(), "default extraction should create catalog"
@@ -502,21 +369,8 @@ class TestMetadataPropagation:
         output_dir = tmp_path / "test_catalog"
         output_dir.mkdir()
 
-        # Copy a real fixture
-        layer_dir = output_dir / "test_layer"
-        layer_dir.mkdir()
-        fixture_path = FIXTURES_DIR / "simple.parquet"
-        output_parquet = layer_dir / "data.parquet"
-        shutil.copy(fixture_path, output_parquet)
-
-        # Create report with rich service description
-        report = make_report(
-            layers=[
-                make_layer_result(
-                    output_path="test_layer/data.parquet",
-                    size_bytes=output_parquet.stat().st_size,
-                )
-            ],
+        report = _layer_report(
+            output_dir,
             source_url="https://services.arcgis.com/abc/arcgis/rest/services/Housing/FeatureServer",
         )
         # Add description to metadata
@@ -531,7 +385,7 @@ class TestMetadataPropagation:
             license_info_raw=None,
         )
 
-        _auto_init_catalog(output_dir, report, TEST_LICENSE)
+        build_arcgis_catalog(output_dir, report, TEST_LICENSE)
 
         # Check catalog.json has the description
         catalog_json = json.loads((output_dir / "catalog.json").read_text())
@@ -547,35 +401,19 @@ class TestMetadataPropagation:
         output_dir = tmp_path / "test_catalog"
         output_dir.mkdir()
 
-        # Copy a real fixture
-        layer_dir = output_dir / "buildings"
-        layer_dir.mkdir()
-        fixture_path = FIXTURES_DIR / "simple.parquet"
-        output_parquet = layer_dir / "data.parquet"
-        shutil.copy(fixture_path, output_parquet)
-
-        report = make_report(
-            layers=[
-                make_layer_result(
-                    layer_id=0,
-                    name="Buildings",
-                    output_path="buildings/data.parquet",
-                    size_bytes=output_parquet.stat().st_size,
-                )
-            ],
-        )
+        report = _layer_report(output_dir, "buildings", layer_id=0, name="Buildings")
 
         # Mock fetch_layer_details to return rich description
-        # Note: imported inside _seed_collection_metadata_arcgis, so patch at source
+        # Note: imported inside ArcGISLayerSource.layer_metadata, so patch at source
         with patch("portolan_cli.extract.arcgis.discovery.fetch_layer_details") as mock_fetch:
             mock_fetch.return_value = {
                 "name": "Buildings",
                 "description": "Building footprints with construction year and height attributes",
             }
-            _auto_init_catalog(output_dir, report, TEST_LICENSE)
+            build_arcgis_catalog(output_dir, report, TEST_LICENSE)
 
         # Check collection.json has the layer description
-        collection_json = json.loads((layer_dir / "collection.json").read_text())
+        collection_json = json.loads((output_dir / "buildings" / "collection.json").read_text())
         assert "building footprints" in collection_json.get("description", "").lower(), (
             "Collection description should contain layer description"
         )
@@ -587,24 +425,12 @@ class TestMetadataPropagation:
         output_dir = tmp_path / "test_catalog"
         output_dir.mkdir()
 
-        layer_dir = output_dir / "test_layer"
-        layer_dir.mkdir()
-        fixture_path = FIXTURES_DIR / "simple.parquet"
-        output_parquet = layer_dir / "data.parquet"
-        shutil.copy(fixture_path, output_parquet)
-
-        # URL with technical service name
-        report = make_report(
-            layers=[
-                make_layer_result(
-                    output_path="test_layer/data.parquet",
-                    size_bytes=output_parquet.stat().st_size,
-                )
-            ],
+        report = _layer_report(
+            output_dir,
             source_url="https://example.com/arcgis/rest/services/bu_building_emprise_v2/FeatureServer",
         )
 
-        _auto_init_catalog(output_dir, report, TEST_LICENSE)
+        build_arcgis_catalog(output_dir, report, TEST_LICENSE)
 
         catalog_json = json.loads((output_dir / "catalog.json").read_text())
         # Catalog should be created
@@ -628,33 +454,18 @@ class TestMetadataPropagation:
         output_dir = tmp_path / "test_catalog"
         output_dir.mkdir()
 
-        layer_dir = output_dir / "parcels"
-        layer_dir.mkdir()
-        fixture_path = FIXTURES_DIR / "simple.parquet"
-        output_parquet = layer_dir / "data.parquet"
-        shutil.copy(fixture_path, output_parquet)
-
-        report = make_report(
-            layers=[
-                make_layer_result(
-                    layer_id=0,
-                    name="Parcels",
-                    output_path="parcels/data.parquet",
-                    size_bytes=output_parquet.stat().st_size,
-                )
-            ],
-        )
+        report = _layer_report(output_dir, "parcels", layer_id=0, name="Parcels")
 
         # Mock fetch_layer_details to return title
-        # Note: imported inside _seed_collection_metadata_arcgis, so patch at source
+        # Note: imported inside ArcGISLayerSource.layer_metadata, so patch at source
         with patch("portolan_cli.extract.arcgis.discovery.fetch_layer_details") as mock_fetch:
             mock_fetch.return_value = {
                 "name": "Land Parcels",
                 "description": "Municipal land parcel boundaries",
             }
-            _auto_init_catalog(output_dir, report, TEST_LICENSE)
+            build_arcgis_catalog(output_dir, report, TEST_LICENSE)
 
-        collection_json = json.loads((layer_dir / "collection.json").read_text())
+        collection_json = json.loads((output_dir / "parcels" / "collection.json").read_text())
         # Title should be present (either from layer name or as set)
         assert collection_json.get("title") == "Land Parcels", (
             "Collection title should be set from layer metadata"

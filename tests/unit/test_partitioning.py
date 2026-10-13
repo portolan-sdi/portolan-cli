@@ -611,7 +611,6 @@ class TestFinalizeItemPartitionWiring:
         import pystac
 
         from portolan_cli.add import PreparedItem, finalize_items
-        from portolan_cli.formats import FormatType
         from portolan_cli.stac import EXTENSION_URLS
 
         # Initialize catalog structure
@@ -639,7 +638,7 @@ class TestFinalizeItemPartitionWiring:
         prepared = PreparedItem(
             item_id="test_partitioned",
             collection_id="test-collection",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             bbox=[-180, -90, 180, 90],
             asset_files={},
             item_json_path=None,

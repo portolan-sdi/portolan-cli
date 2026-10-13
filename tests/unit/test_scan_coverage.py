@@ -13,7 +13,6 @@ from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from portolan_cli.scan.core import (
-    FormatType,
     IssueType,
     ScanIssue,
     ScannedFile,
@@ -44,31 +43,31 @@ from portolan_cli.scan.detect import (
 
 
 @pytest.mark.unit
-class TestFormatTypeDetection:
+class TestFormatFamilyDetection:
     """Tests for _get_format_type edge cases."""
 
     def test_vector_extension_detection(self) -> None:
         """Vector extensions should return VECTOR format type."""
         for ext in [".geojson", ".shp", ".gpkg", ".fgb"]:
-            assert _get_format_type(ext) == FormatType.VECTOR
+            assert _get_format_type(ext) == "vector"
 
     def test_raster_extension_detection(self) -> None:
         """Raster extensions should return RASTER format type."""
         for ext in [".tif", ".tiff", ".jp2"]:
-            assert _get_format_type(ext) == FormatType.RASTER
+            assert _get_format_type(ext) == "raster"
 
     def test_case_insensitive_detection(self) -> None:
         """Extension detection should be case-insensitive."""
-        assert _get_format_type(".GEOJSON") == FormatType.VECTOR
-        assert _get_format_type(".TIF") == FormatType.RASTER
-        assert _get_format_type(".GeoJSON") == FormatType.VECTOR
+        assert _get_format_type(".GEOJSON") == "vector"
+        assert _get_format_type(".TIF") == "raster"
+        assert _get_format_type(".GeoJSON") == "vector"
 
     def test_unknown_extension_defaults_to_vector(self) -> None:
         """Unknown extensions should default to VECTOR (line 382 coverage)."""
         # This covers the default return statement
-        assert _get_format_type(".xyz") == FormatType.VECTOR
-        assert _get_format_type(".unknown") == FormatType.VECTOR
-        assert _get_format_type("") == FormatType.VECTOR
+        assert _get_format_type(".xyz") == "vector"
+        assert _get_format_type(".unknown") == "vector"
+        assert _get_format_type("") == "vector"
 
 
 @pytest.mark.unit
@@ -263,7 +262,7 @@ class TestScanResultSerialization:
                     path=tmp_path / "data.geojson",
                     relative_path="data.geojson",
                     extension=".geojson",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     size_bytes=100,
                 )
             ],
@@ -448,23 +447,23 @@ class TestPropertyBasedExtensionDetection:
     @settings(max_examples=20)
     def test_all_vector_extensions_return_vector(self, ext: str) -> None:
         """All known vector extensions should return VECTOR."""
-        assert _get_format_type(ext) == FormatType.VECTOR
+        assert _get_format_type(ext) == "vector"
 
     @given(ext=st.sampled_from([".tif", ".tiff", ".jp2"]))
     @settings(max_examples=20)
     def test_all_raster_extensions_return_raster(self, ext: str) -> None:
         """All known raster extensions should return RASTER."""
-        assert _get_format_type(ext) == FormatType.RASTER
+        assert _get_format_type(ext) == "raster"
 
     @given(ext=st.text(min_size=1, max_size=10).map(lambda x: "." + x))
     @settings(max_examples=50)
     def test_unknown_extensions_never_raise(self, ext: str) -> None:
-        """Unknown extensions should never raise, always return a FormatType."""
+        """Unknown extensions never raise and default to the vector family."""
         # Skip known extensions
         known = {".geojson", ".shp", ".gpkg", ".fgb", ".tif", ".tiff", ".jp2"}
         assume(ext.lower() not in known)
         result = _get_format_type(ext)
-        assert isinstance(result, FormatType)
+        assert result == "vector"
 
 
 @pytest.mark.unit

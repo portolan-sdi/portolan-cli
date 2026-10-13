@@ -9,7 +9,7 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,21 +21,24 @@ from portolan_cli.extract.arcgis.discovery import (
     ServiceInfo,
 )
 from portolan_cli.extract.arcgis.orchestrator import (
+    ArcGISLayer,
+    ArcGISLayerSource,
     ExtractionOptions,
-    ExtractionProgress,
     ServicesRootDiscoveryResult,
     _discover_and_filter_services,
     _ensure_geoparquet_crs,
-    _extract_single_layer,
     _is_wgs84_crs,
     _service_output_dir,
-    _slugify,
     extract_arcgis_catalog,
     list_services,
 )
+from portolan_cli.extract.common.progress import ExtractionProgress
+from portolan_cli.extract.common.source import Discovery, LayerRef, seed_collections, slugify
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from portolan_cli.extract.common.report import ExtractionReport
 
 pytestmark = pytest.mark.unit
 
@@ -46,40 +49,129 @@ TEST_FEATURE_SERVER_URL = (
 TEST_SERVICES_ROOT_URL = "https://services.arcgis.com/abc123/ArcGIS/rest/services"
 
 
+def _fake_fetch(rows: int = 100, size: int = 2048) -> Callable[..., int]:
+    """Build a stand-in for ArcGISLayerSource.fetch that writes ``size`` bytes."""
+
+    def fetch(self: ArcGISLayerSource, source: str, layer: LayerRef, dest: Path) -> int:
+        dest.write_bytes(b"x" * size)
+        return rows
+
+    return fetch
+
+
+def _extract_root(
+    output_dir: Path,
+    services: list[ServiceInfo],
+    layers: ServiceDiscoveryResult | list[ServiceDiscoveryResult],
+    **kwargs: Any,
+) -> tuple[ExtractionReport, MagicMock, MagicMock]:
+    """Extract a fake services root in raw mode.
+
+    ``layers`` is one discovery result for every service, or one per service
+    in order. Returns the report, the discover_layers mock, and the fetch mock.
+    """
+    traversal = FolderTraversal(visited=[], skipped=[], service_count=len(services))
+    with (
+        patch(
+            "portolan_cli.extract.arcgis.orchestrator.discover_services_recursive",
+            return_value=(services, traversal),
+        ),
+        patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover_layers,
+        patch.object(
+            ArcGISLayerSource, "fetch", autospec=True, side_effect=_fake_fetch(100, 2048)
+        ) as mock_fetch,
+    ):
+        if isinstance(layers, list):
+            mock_discover_layers.side_effect = layers
+        else:
+            mock_discover_layers.return_value = layers
+        # raw=True skips the catalog build, which the integration tests cover.
+        report = extract_arcgis_catalog(
+            url=TEST_SERVICES_ROOT_URL,
+            output_dir=output_dir,
+            options=ExtractionOptions(raw=True),
+            **kwargs,
+        )
+    return report, mock_discover_layers, mock_fetch
+
+
+def _fetch_layer(url: str, layer: LayerInfo, dest: Path, options: ExtractionOptions) -> int:
+    """Fetch one layer through ArcGISLayerSource.fetch and return its row count."""
+    ref = LayerRef(id=layer.id, name=layer.name, data=ArcGISLayer(layer, url))
+    return ArcGISLayerSource(options).fetch(url, ref, dest)
+
+
+def _install_gpio(monkeypatch: pytest.MonkeyPatch, extract_arcgis: Callable[..., object]) -> None:
+    """Install a fake geoparquet_io module whose extract_arcgis is ``extract_arcgis``."""
+    fake_gpio = types.ModuleType("geoparquet_io")
+    fake_gpio.extract_arcgis = extract_arcgis  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "geoparquet_io", fake_gpio)
+
+
+def _fetch_test_layer(dest: Path, options: ExtractionOptions) -> int:
+    """Fetch layer 0, named L, of a test FeatureServer into ``dest``."""
+    layer = LayerInfo(id=0, name="L", layer_type="Feature Layer")
+    return _fetch_layer("https://x/rest/services/F/FeatureServer", layer, dest, options)
+
+
+def _seed_collections(output_dir: Path, report: ExtractionReport) -> None:
+    """Seed collection metadata for ``report`` through the shared driver seam."""
+    from pathlib import PurePath
+
+    layers = [
+        LayerRef(
+            id=r.id,
+            name=r.name,
+            path=PurePath(r.output_path).parent.as_posix() if r.output_path else None,
+            data=ArcGISLayer(
+                LayerInfo(id=r.id, name=r.name, layer_type="Feature Layer"), report.source_url
+            ),
+        )
+        for r in report.layers
+    ]
+    discovery = Discovery(source_url=report.source_url, layers=layers)
+    seed_collections(ArcGISLayerSource(), discovery, output_dir, report)
+
+
+def _staged_relative(path: Path, catalog: Path) -> Path:
+    """Return the path a fetch wrote, relative to its .portolan/staging/<id> tree."""
+    return Path(*path.relative_to(catalog / ".portolan" / "staging").parts[1:])
+
+
 # =============================================================================
-# _slugify tests
+# slugify tests
 # =============================================================================
 
 
 class TestSlugify:
-    """Tests for _slugify helper function."""
+    """Tests for the shared slugify helper."""
 
     def test_converts_spaces_to_underscores(self) -> None:
         """Should convert spaces to underscores."""
-        assert _slugify("Census Block Groups") == "census_block_groups"
+        assert slugify("Census Block Groups") == "census_block_groups"
 
     def test_lowercases_text(self) -> None:
         """Should convert to lowercase."""
-        assert _slugify("CENSUS_TRACTS") == "census_tracts"
+        assert slugify("CENSUS_TRACTS") == "census_tracts"
 
     def test_replaces_special_chars(self) -> None:
         """Should replace special characters with underscores."""
-        assert _slugify("Layer (2024)") == "layer_2024"
-        assert _slugify("Data-Set/Version.1") == "data_set_version_1"
+        assert slugify("Layer (2024)") == "layer_2024"
+        assert slugify("Data-Set/Version.1") == "data_set_version_1"
 
     def test_strips_leading_trailing_underscores(self) -> None:
         """Should strip underscores from ends."""
-        assert _slugify("  Layer  ") == "layer"
-        assert _slugify("__test__") == "test"
+        assert slugify("  Layer  ") == "layer"
+        assert slugify("__test__") == "test"
 
     def test_returns_unnamed_for_empty_string(self) -> None:
         """Should return 'unnamed' for empty input."""
-        assert _slugify("") == "unnamed"
-        assert _slugify("___") == "unnamed"
+        assert slugify("") == "unnamed"
+        assert slugify("___") == "unnamed"
 
     def test_handles_complex_names(self) -> None:
         """Should handle complex layer names from real services."""
-        assert _slugify("2020 Census - Block Groups (PA)") == "2020_census_block_groups_pa"
+        assert slugify("2020 Census - Block Groups (PA)") == "2020_census_block_groups_pa"
 
 
 # =============================================================================
@@ -121,6 +213,7 @@ def mock_gpio() -> MagicMock:
 # =============================================================================
 
 
+@pytest.mark.usefixtures("no_extract_side_requests")
 class TestExtractArcgisCatalog:
     """Tests for extract_arcgis_catalog function."""
 
@@ -220,11 +313,12 @@ class TestExtractArcgisCatalog:
         with (
             patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
             patch("portolan_cli.extract.arcgis.orchestrator.geoparquet_io", mock_gpio, create=True),
-            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
+            patch.object(
+                ArcGISLayerSource, "fetch", autospec=True, side_effect=_fake_fetch(100, 1024)
+            ),
         ):
             mock_discover.return_value = mock_discovery_result
             # Return (feature_count, file_size, duration) for each extraction
-            mock_extract.return_value = (100, 1024, 1.5)
 
             # Use raw=True to skip auto-init (tested separately in integration tests)
             options = ExtractionOptions(raw=True)
@@ -373,6 +467,7 @@ class TestExtractionProgress:
 # =============================================================================
 
 
+@pytest.mark.usefixtures("no_extract_side_requests")
 class TestOrchestratorIntegration:
     """Integration tests for orchestrator with mocked external dependencies."""
 
@@ -384,10 +479,11 @@ class TestOrchestratorIntegration:
 
         with (
             patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
-            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
+            patch.object(
+                ArcGISLayerSource, "fetch", autospec=True, side_effect=_fake_fetch(100, 2048)
+            ) as mock_extract,
         ):
             mock_discover.return_value = mock_discovery_result
-            mock_extract.return_value = (100, 2048, 2.5)
 
             # Use raw=True to skip auto-init (tested separately in integration tests)
             options = ExtractionOptions(raw=True)
@@ -419,19 +515,12 @@ class TestOrchestratorIntegration:
         """Failed extractions should be recorded in report."""
         with (
             patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
-            patch("portolan_cli.extract.arcgis.orchestrator.retry_with_backoff") as mock_retry,
+            patch.object(
+                ArcGISLayerSource, "fetch", side_effect=ConnectionError("Connection timeout")
+            ),
+            patch("portolan_cli.extract.common.retry.time.sleep"),
         ):
             mock_discover.return_value = mock_discovery_result
-
-            # Mock retry to return failure
-            from portolan_cli.extract.arcgis.retry import RetryResult
-
-            mock_retry.return_value = RetryResult(
-                success=False,
-                value=None,
-                attempts=3,
-                error=Exception("Connection timeout"),
-            )
 
             progress_events: list[ExtractionProgress] = []
 
@@ -460,20 +549,13 @@ class TestOrchestratorIntegration:
         self, mock_discovery_result: ServiceDiscoveryResult, tmp_path: Path
     ) -> None:
         """Unexpected exceptions from extract_esri_style are caught; layer still succeeds."""
-        from portolan_cli.extract.arcgis.retry import RetryResult
 
         with (
             patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
-            patch("portolan_cli.extract.arcgis.orchestrator.retry_with_backoff") as mock_retry,
+            patch.object(ArcGISLayerSource, "fetch", _fake_fetch(50, 512)),
             patch("portolan_cli.extract.arcgis.orchestrator.extract_esri_style") as mock_style,
         ):
             mock_discover.return_value = mock_discovery_result
-            mock_retry.return_value = RetryResult(
-                success=True,
-                value=(50, 512, 0.5),
-                attempts=1,
-                error=None,
-            )
             mock_style.side_effect = RuntimeError("Unexpected style error")
 
             options = ExtractionOptions(raw=True, no_styles=False)
@@ -492,21 +574,14 @@ class TestOrchestratorIntegration:
         self, mock_discovery_result: ServiceDiscoveryResult, tmp_path: Path
     ) -> None:
         """A successful style extraction result is logged and does not affect the layer."""
-        from portolan_cli.extract.arcgis.retry import RetryResult
         from portolan_cli.extract.common.styles import ExtractedStyle
 
         with (
             patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
-            patch("portolan_cli.extract.arcgis.orchestrator.retry_with_backoff") as mock_retry,
+            patch.object(ArcGISLayerSource, "fetch", _fake_fetch(50, 512)),
             patch("portolan_cli.extract.arcgis.orchestrator.extract_esri_style") as mock_style,
         ):
             mock_discover.return_value = mock_discovery_result
-            mock_retry.return_value = RetryResult(
-                success=True,
-                value=(50, 512, 0.5),
-                attempts=1,
-                error=None,
-            )
             mock_style.return_value = ExtractedStyle(
                 path=tmp_path / "styles" / "layer.json",
                 name="layer",
@@ -529,20 +604,13 @@ class TestOrchestratorIntegration:
         self, mock_discovery_result: ServiceDiscoveryResult, tmp_path: Path
     ) -> None:
         """When no_styles is set, style extraction is skipped entirely."""
-        from portolan_cli.extract.arcgis.retry import RetryResult
 
         with (
             patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
-            patch("portolan_cli.extract.arcgis.orchestrator.retry_with_backoff") as mock_retry,
+            patch.object(ArcGISLayerSource, "fetch", _fake_fetch(50, 512)),
             patch("portolan_cli.extract.arcgis.orchestrator.extract_esri_style") as mock_style,
         ):
             mock_discover.return_value = mock_discovery_result
-            mock_retry.return_value = RetryResult(
-                success=True,
-                value=(50, 512, 0.5),
-                attempts=1,
-                error=None,
-            )
 
             options = ExtractionOptions(raw=True, no_styles=True)
             result = extract_arcgis_catalog(
@@ -689,6 +757,7 @@ class TestServicesRootDiscoveryResult:
         assert d["total_services"] == 2
 
 
+@pytest.mark.usefixtures("no_extract_side_requests")
 class TestServicesRootExtraction:
     """Tests for services root extraction (full extraction mode)."""
 
@@ -703,44 +772,26 @@ class TestServicesRootExtraction:
             ],
         )
 
-        mock_traversal = FolderTraversal(visited=[], skipped=[], service_count=1)
+        result, mock_discover_layers, mock_extract = _extract_root(
+            tmp_path, mock_services, mock_census_layers
+        )
 
-        with (
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator.discover_services_recursive"
-            ) as mock_discover_services,
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator.discover_layers"
-            ) as mock_discover_layers,
-            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
-        ):
-            mock_discover_services.return_value = (mock_services, mock_traversal)
-            mock_discover_layers.return_value = mock_census_layers
-            mock_extract.return_value = (100, 2048, 2.5)
+        # Should extract layers
+        assert mock_extract.call_count == 1
+        assert result.summary.succeeded == 1
 
-            # Use raw=True to skip auto-init (tested separately in integration tests)
-            options = ExtractionOptions(raw=True)
-            result = extract_arcgis_catalog(
-                url=TEST_SERVICES_ROOT_URL,
-                output_dir=tmp_path,
-                options=options,
-            )
+        # Should create .portolan directory with report
+        assert (tmp_path / ".portolan").exists()
+        assert (tmp_path / ".portolan" / "extraction-report.json").exists()
 
-            # Should extract layers
-            assert mock_extract.call_count == 1
-            assert result.summary.succeeded == 1
-
-            # Should create .portolan directory with report
-            assert (tmp_path / ".portolan").exists()
-            assert (tmp_path / ".portolan" / "extraction-report.json").exists()
-
-            # Verify _extract_single_layer was called with correct path structure
-            # Single-layer service is FLATTENED: census_2020/census_2020.parquet
-            # (not nested: census_2020/block_groups/block_groups.parquet)
-            call_args = mock_extract.call_args
-            output_path = call_args[0][2]  # Third positional arg is output_path
-            relative_path = output_path.relative_to(tmp_path)
-            assert relative_path.as_posix() == "census_2020/census_2020.parquet"
+        # Verify fetch was called with the correct path structure
+        # Single-layer service is FLATTENED: census_2020/census_2020.parquet
+        # (not nested: census_2020/block_groups/block_groups.parquet)
+        call_args = mock_extract.call_args
+        output_path = call_args[0][3]  # Fourth positional arg (after self) is dest
+        # The driver fetches into .portolan/staging/<id>, then moves the file into place.
+        relative_path = _staged_relative(output_path, tmp_path)
+        assert relative_path.as_posix() == "census_2020/census_2020.parquet"
 
     def test_services_root_applies_service_filter(self, tmp_path: Path) -> None:
         """Services root should apply service filter."""
@@ -754,35 +805,15 @@ class TestServicesRootExtraction:
             ],
         )
 
-        mock_traversal = FolderTraversal(visited=[], skipped=[], service_count=2)
+        result, mock_discover_layers, mock_extract = _extract_root(
+            tmp_path, mock_services, mock_census_layers, service_filter=["Census*"]
+        )
 
-        with (
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator.discover_services_recursive"
-            ) as mock_discover_services,
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator.discover_layers"
-            ) as mock_discover_layers,
-            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
-        ):
-            mock_discover_services.return_value = (mock_services, mock_traversal)
-            mock_discover_layers.return_value = mock_census_layers
-            mock_extract.return_value = (100, 2048, 2.5)
+        # Should only probe Census service for layers
+        assert mock_discover_layers.call_count == 1
 
-            # Use raw=True to skip auto-init (tested separately in integration tests)
-            options = ExtractionOptions(raw=True)
-            result = extract_arcgis_catalog(
-                url=TEST_SERVICES_ROOT_URL,
-                output_dir=tmp_path,
-                service_filter=["Census*"],
-                options=options,
-            )
-
-            # Should only probe Census service for layers
-            assert mock_discover_layers.call_count == 1
-
-            # Should only extract Census layers
-            assert result.summary.total_layers == 1
+        # Should only extract Census layers
+        assert result.summary.total_layers == 1
 
     def test_single_layer_service_flattened(self, tmp_path: Path) -> None:
         """Single-layer service should create collection directly (no subcatalog).
@@ -807,45 +838,28 @@ class TestServicesRootExtraction:
             ],
         )
 
-        mock_traversal = FolderTraversal(visited=[], skipped=[], service_count=1)
+        result, mock_discover_layers, mock_extract = _extract_root(
+            tmp_path, mock_services, mock_single_layer
+        )
 
-        with (
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator.discover_services_recursive"
-            ) as mock_discover_services,
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator.discover_layers"
-            ) as mock_discover_layers,
-            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
-        ):
-            mock_discover_services.return_value = (mock_services, mock_traversal)
-            mock_discover_layers.return_value = mock_single_layer
-            mock_extract.return_value = (100, 2048, 2.5)
+        # Should extract the layer
+        assert mock_extract.call_count == 1
+        assert result.summary.succeeded == 1
 
-            options = ExtractionOptions(raw=True)
-            result = extract_arcgis_catalog(
-                url=TEST_SERVICES_ROOT_URL,
-                output_dir=tmp_path,
-                options=options,
-            )
+        # Output path should be FLATTENED: service_name/service_name.parquet
+        # NOT nested: service_name/layer_name/layer_name.parquet
+        call_args = mock_extract.call_args
+        output_path = call_args[0][3]  # Fourth positional arg (after self) is dest
+        # The driver fetches into .portolan/staging/<id>, then moves the file into place.
+        relative_path = _staged_relative(output_path, tmp_path)
 
-            # Should extract the layer
-            assert mock_extract.call_count == 1
-            assert result.summary.succeeded == 1
+        # Should be: bag_woonfunctie/bag_woonfunctie.parquet (flattened)
+        # NOT: bag_woonfunctie/bag_woonfunctie/bag_woonfunctie.parquet (nested)
+        assert relative_path.as_posix() == "bag_woonfunctie/bag_woonfunctie.parquet"
 
-            # Output path should be FLATTENED: service_name/service_name.parquet
-            # NOT nested: service_name/layer_name/layer_name.parquet
-            call_args = mock_extract.call_args
-            output_path = call_args[0][2]  # Third positional arg is output_path
-            relative_path = output_path.relative_to(tmp_path)
-
-            # Should be: bag_woonfunctie/bag_woonfunctie.parquet (flattened)
-            # NOT: bag_woonfunctie/bag_woonfunctie/bag_woonfunctie.parquet (nested)
-            assert relative_path.as_posix() == "bag_woonfunctie/bag_woonfunctie.parquet"
-
-            # Verify the result output_path in report
-            layer_result = result.layers[0]
-            assert layer_result.output_path == "bag_woonfunctie/bag_woonfunctie.parquet"
+        # Verify the result output_path in report
+        layer_result = result.layers[0]
+        assert layer_result.output_path == "bag_woonfunctie/bag_woonfunctie.parquet"
 
     def test_multi_layer_service_keeps_nesting(self, tmp_path: Path) -> None:
         """Multi-layer service should keep subcatalog structure.
@@ -869,46 +883,27 @@ class TestServicesRootExtraction:
             ],
         )
 
-        mock_traversal = FolderTraversal(visited=[], skipped=[], service_count=1)
+        result, mock_discover_layers, mock_extract = _extract_root(
+            tmp_path, mock_services, mock_multi_layers
+        )
 
-        with (
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator.discover_services_recursive"
-            ) as mock_discover_services,
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator.discover_layers"
-            ) as mock_discover_layers,
-            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
-        ):
-            mock_discover_services.return_value = (mock_services, mock_traversal)
-            mock_discover_layers.return_value = mock_multi_layers
-            mock_extract.return_value = (100, 2048, 2.5)
+        # Should extract all 3 layers
+        assert mock_extract.call_count == 3
+        assert result.summary.succeeded == 3
 
-            options = ExtractionOptions(raw=True)
-            result = extract_arcgis_catalog(
-                url=TEST_SERVICES_ROOT_URL,
-                output_dir=tmp_path,
-                options=options,
-            )
+        # Output paths should be NESTED: service_name/layer_name/layer_name.parquet
+        # First layer: woontypering/woontypering_2020/woontypering_2020.parquet
+        first_call_output = mock_extract.call_args_list[0][0][3]
+        relative_first = _staged_relative(first_call_output, tmp_path)
+        assert (
+            relative_first.as_posix() == "woontypering/woontypering_2020/woontypering_2020.parquet"
+        )
 
-            # Should extract all 3 layers
-            assert mock_extract.call_count == 3
-            assert result.summary.succeeded == 3
-
-            # Output paths should be NESTED: service_name/layer_name/layer_name.parquet
-            # First layer: woontypering/woontypering_2020/woontypering_2020.parquet
-            first_call_output = mock_extract.call_args_list[0][0][2]
-            relative_first = first_call_output.relative_to(tmp_path)
-            assert (
-                relative_first.as_posix()
-                == "woontypering/woontypering_2020/woontypering_2020.parquet"
-            )
-
-            # Verify all layers have nested structure
-            for layer_result in result.layers:
-                parts = layer_result.output_path.split("/")
-                # Should have 3 parts: service/layer/file.parquet
-                assert len(parts) == 3, f"Expected nested path, got: {layer_result.output_path}"
+        # Verify all layers have nested structure
+        for layer_result in result.layers:
+            parts = (layer_result.output_path or "").split("/")
+            # Should have 3 parts: service/layer/file.parquet
+            assert len(parts) == 3, f"Expected nested path, got: {layer_result.output_path}"
 
     def test_mixed_services_flatten_and_nest_appropriately(self, tmp_path: Path) -> None:
         """Mix of single and multi-layer services should handle each correctly.
@@ -930,43 +925,25 @@ class TestServicesRootExtraction:
             ],
         )
 
-        mock_traversal = FolderTraversal(visited=[], skipped=[], service_count=2)
+        result, mock_discover_layers, mock_extract = _extract_root(
+            tmp_path, mock_services, [mock_single, mock_multi]
+        )
 
-        with (
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator.discover_services_recursive"
-            ) as mock_discover_services,
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator.discover_layers"
-            ) as mock_discover_layers,
-            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
-        ):
-            mock_discover_services.return_value = (mock_services, mock_traversal)
-            mock_discover_layers.side_effect = [mock_single, mock_multi]
-            mock_extract.return_value = (100, 2048, 2.5)
+        assert result.summary.succeeded == 3
 
-            options = ExtractionOptions(raw=True)
-            result = extract_arcgis_catalog(
-                url=TEST_SERVICES_ROOT_URL,
-                output_dir=tmp_path,
-                options=options,
-            )
+        # Find results by output path
+        output_paths = [r.output_path or "" for r in result.layers]
 
-            assert result.summary.succeeded == 3
+        # Single-layer service should be flattened
+        # Expected: singlelayer/singlelayer.parquet (2 parts)
+        single_path = [p for p in output_paths if "singlelayer" in p][0]
+        assert single_path.count("/") == 1, f"Single-layer should be flat: {single_path}"
 
-            # Find results by output path
-            output_paths = [r.output_path for r in result.layers]
-
-            # Single-layer service should be flattened
-            # Expected: singlelayer/singlelayer.parquet (2 parts)
-            single_path = [p for p in output_paths if "singlelayer" in p][0]
-            assert single_path.count("/") == 1, f"Single-layer should be flat: {single_path}"
-
-            # Multi-layer service should keep nesting
-            # Expected: multilayer/layer_a/layer_a.parquet (3 parts)
-            multi_paths = [p for p in output_paths if "multilayer" in p]
-            for path in multi_paths:
-                assert path.count("/") == 2, f"Multi-layer should be nested: {path}"
+        # Multi-layer service should keep nesting
+        # Expected: multilayer/layer_a/layer_a.parquet (3 parts)
+        multi_paths = [p for p in output_paths if "multilayer" in p]
+        for path in multi_paths:
+            assert path.count("/") == 2, f"Multi-layer should be nested: {path}"
 
 
 class TestArcGISCollectionMetadataSeeding:
@@ -974,7 +951,6 @@ class TestArcGISCollectionMetadataSeeding:
 
     def test_seed_collection_metadata_creates_file(self, tmp_path: Path) -> None:
         """Collection metadata seeding creates .portolan/metadata.yaml."""
-        from portolan_cli.extract.arcgis.orchestrator import _seed_collection_metadata_arcgis
         from portolan_cli.extract.common.report import (
             ExtractionReport,
             ExtractionSummary,
@@ -1034,7 +1010,7 @@ class TestArcGISCollectionMetadataSeeding:
                 "description": "A test layer with buildings",
             }
 
-            _seed_collection_metadata_arcgis(tmp_path, report)
+            _seed_collections(tmp_path, report)
 
         metadata_path = collection_dir / ".portolan" / "metadata.yaml"
         assert metadata_path.exists()
@@ -1043,7 +1019,6 @@ class TestArcGISCollectionMetadataSeeding:
 
     def test_seed_collection_metadata_graceful_on_fetch_failure(self, tmp_path: Path) -> None:
         """Collection seeding continues even if layer details fetch fails."""
-        from portolan_cli.extract.arcgis.orchestrator import _seed_collection_metadata_arcgis
         from portolan_cli.extract.common.report import (
             ExtractionReport,
             ExtractionSummary,
@@ -1101,7 +1076,7 @@ class TestArcGISCollectionMetadataSeeding:
             mock_fetch.side_effect = Exception("Network error")
 
             # Should not raise
-            _seed_collection_metadata_arcgis(tmp_path, report)
+            _seed_collections(tmp_path, report)
 
         # Metadata file should still be created with basic info
         metadata_path = collection_dir / ".portolan" / "metadata.yaml"
@@ -1111,7 +1086,6 @@ class TestArcGISCollectionMetadataSeeding:
 
     def test_seed_collection_metadata_skips_failed_layers(self, tmp_path: Path) -> None:
         """Collection seeding skips layers that failed extraction."""
-        from portolan_cli.extract.arcgis.orchestrator import _seed_collection_metadata_arcgis
         from portolan_cli.extract.common.report import (
             ExtractionReport,
             ExtractionSummary,
@@ -1162,12 +1136,11 @@ class TestArcGISCollectionMetadataSeeding:
 
         with patch("portolan_cli.extract.arcgis.discovery.fetch_layer_details") as mock_fetch:
             # Should not be called for failed layers
-            _seed_collection_metadata_arcgis(tmp_path, report)
+            _seed_collections(tmp_path, report)
             mock_fetch.assert_not_called()
 
     def test_seed_collection_metadata_arcgis_nested_output_path(self, tmp_path: Path) -> None:
         """Collection seeding handles nested output paths correctly."""
-        from portolan_cli.extract.arcgis.orchestrator import _seed_collection_metadata_arcgis
         from portolan_cli.extract.common.report import (
             ExtractionReport,
             ExtractionSummary,
@@ -1227,7 +1200,7 @@ class TestArcGISCollectionMetadataSeeding:
                 "name": "Nested Layer",
                 "description": "Description from ArcGIS API",
             }
-            _seed_collection_metadata_arcgis(tmp_path, report)
+            _seed_collections(tmp_path, report)
 
         # Metadata should be in the nested collection directory (parent of parquet)
         metadata_path = nested_dir / ".portolan" / "metadata.yaml"
@@ -1410,12 +1383,12 @@ def test_discover_and_filter_no_recurse_uses_flat_discovery(
 
 
 # =============================================================================
-# _extract_single_layer token-forwarding test
+# ArcGISLayerSource.fetch token-forwarding test
 # =============================================================================
 
 
 @pytest.mark.unit
-def test_extract_single_layer_passes_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_fetch_passes_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Token must be forwarded to gpio.extract_arcgis when the param is supported."""
     captured: dict[str, object] = {}
 
@@ -1423,37 +1396,25 @@ def test_extract_single_layer_passes_token(monkeypatch: pytest.MonkeyPatch, tmp_
         url: str, max_workers: int | None = None, token: str | None = None
     ) -> object:
         captured["token"] = token
+        captured["max_workers"] = max_workers
 
-        class _T:
-            num_rows = 1
-
-            def add_bbox(self) -> _T:
+        class _BboxTable(_StubTable):
+            def add_bbox(self) -> _StubTable:
                 captured["bbox"] = True
                 return self
 
-            def write(self, path: str) -> None:
-                Path(path).parent.mkdir(parents=True, exist_ok=True)
-                Path(path).write_bytes(b"PAR1")
+        return _BboxTable()
 
-        return _T()
+    _install_gpio(monkeypatch, fake_extract_arcgis)
 
-    fake_gpio = types.ModuleType("geoparquet_io")
-    fake_gpio.extract_arcgis = fake_extract_arcgis  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "geoparquet_io", fake_gpio)
-
-    layer = LayerInfo(id=0, name="L", layer_type="Feature Layer")
-    _extract_single_layer(
-        "https://x/rest/services/F/FeatureServer",
-        layer,
-        tmp_path / "out.parquet",
-        ExtractionOptions(token="TKN", sort_hilbert=False),
-    )
+    _fetch_test_layer(tmp_path / "out.parquet", ExtractionOptions(token="TKN", sort_hilbert=False))
     assert captured["token"] == "TKN"
+    assert captured["max_workers"] == 3  # ExtractionOptions.workers, gpio's page concurrency
     assert captured["bbox"] is True
 
 
 # =============================================================================
-# _extract_single_layer timeout-forwarding tests (issue #898)
+# ArcGISLayerSource.fetch timeout-forwarding tests (issue #898)
 # =============================================================================
 
 
@@ -1479,23 +1440,14 @@ def _extract_through_fake_gpio(
     tmp_path: Path,
     fake_extract_arcgis: Callable[..., object],
     options: ExtractionOptions,
-) -> tuple[int, int, float]:
+) -> int:
     """Install a fake geoparquet_io, then extract one layer through it."""
-    fake_gpio = types.ModuleType("geoparquet_io")
-    fake_gpio.extract_arcgis = fake_extract_arcgis  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "geoparquet_io", fake_gpio)
-    return _extract_single_layer(
-        "https://x/rest/services/F/FeatureServer",
-        LayerInfo(id=0, name="L", layer_type="Feature Layer"),
-        tmp_path / "out.parquet",
-        options,
-    )
+    _install_gpio(monkeypatch, fake_extract_arcgis)
+    return _fetch_test_layer(tmp_path / "out.parquet", options)
 
 
 @pytest.mark.unit
-def test_extract_single_layer_forwards_timeout(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_fetch_forwards_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The configured timeout must reach gpio.extract_arcgis (issue #898).
 
     Discovery already honored --timeout, but the feature-page requests stayed at
@@ -1513,7 +1465,7 @@ def test_extract_single_layer_forwards_timeout(
 
 
 @pytest.mark.unit
-def test_extract_single_layer_omits_timeout_when_gpio_lacks_it(
+def test_fetch_omits_timeout_when_gpio_lacks_it(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An older gpio without a timeout parameter must keep working (issue #898).
@@ -1527,7 +1479,7 @@ def test_extract_single_layer_omits_timeout_when_gpio_lacks_it(
         seen.update(rest)
         return _StubTable()
 
-    rows, _size, _secs = _extract_through_fake_gpio(
+    rows = _extract_through_fake_gpio(
         monkeypatch, tmp_path, gpio_without_timeout, _SLOW_LAYER_OPTIONS
     )
 
@@ -1536,33 +1488,28 @@ def test_extract_single_layer_omits_timeout_when_gpio_lacks_it(
 
 
 # =============================================================================
-# _extract_single_layer output-CRS forwarding tests (issue #802)
+# ArcGISLayerSource.fetch output-CRS forwarding tests (issue #802)
 # =============================================================================
 
 
-def _fake_gpio_capturing(captured: dict[str, object]) -> types.ModuleType:
-    """Build a fake geoparquet_io whose extract_arcgis records output_crs."""
+def _capturing_extract(captured: dict[str, object]) -> Callable[..., object]:
+    """Build a fake gpio.extract_arcgis that records output_crs."""
 
-    def fake_extract_arcgis(
-        url: str, max_workers: int | None = None, output_crs: str | None = None
-    ) -> object:
+    def fake_extract_arcgis(url: str, output_crs: str | None = None) -> object:
         captured["output_crs"] = output_crs
+        return _StubTable()
 
-        class _T:
-            num_rows = 1
+    return fake_extract_arcgis
 
-            def add_bbox(self) -> _T:
-                return self
 
-            def write(self, path: str) -> None:
-                Path(path).parent.mkdir(parents=True, exist_ok=True)
-                Path(path).write_bytes(b"PAR1")
+class _NullCrsTable(_StubTable):
+    """A gpio.Table stand-in with a CRS, whose write tags the file crs: null."""
 
-        return _T()
+    def __init__(self, crs: object) -> None:
+        self.crs = crs
 
-    fake_gpio = types.ModuleType("geoparquet_io")
-    fake_gpio.extract_arcgis = fake_extract_arcgis  # type: ignore[attr-defined]
-    return fake_gpio
+    def write(self, path: str) -> None:
+        _write_geoparquet_with_null_crs(Path(path))
 
 
 def test_output_crs_defaults_to_native() -> None:
@@ -1570,153 +1517,81 @@ def test_output_crs_defaults_to_native() -> None:
     assert ExtractionOptions().output_crs == "native"
 
 
-def test_extract_single_layer_forwards_native_output_crs(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_fetch_forwards_native_output_crs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The default keeps the service CRS by passing output_crs='native' to gpio."""
     captured: dict[str, object] = {}
-    monkeypatch.setitem(sys.modules, "geoparquet_io", _fake_gpio_capturing(captured))
+    _install_gpio(monkeypatch, _capturing_extract(captured))
 
-    layer = LayerInfo(id=0, name="L", layer_type="Feature Layer")
-    _extract_single_layer(
-        "https://x/rest/services/F/FeatureServer",
-        layer,
-        tmp_path / "out.parquet",
-        ExtractionOptions(sort_hilbert=False),
-    )
+    _fetch_test_layer(tmp_path / "out.parquet", ExtractionOptions(sort_hilbert=False))
     assert captured["output_crs"] == "native"
 
 
-def test_extract_single_layer_forwards_explicit_output_crs(
+def test_fetch_forwards_explicit_output_crs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An explicit --output-crs value reaches gpio.extract_arcgis unchanged."""
     captured: dict[str, object] = {}
-    monkeypatch.setitem(sys.modules, "geoparquet_io", _fake_gpio_capturing(captured))
+    _install_gpio(monkeypatch, _capturing_extract(captured))
 
-    layer = LayerInfo(id=0, name="L", layer_type="Feature Layer")
-    _extract_single_layer(
-        "https://x/rest/services/F/FeatureServer",
-        layer,
-        tmp_path / "out.parquet",
-        ExtractionOptions(output_crs="EPSG:28992", sort_hilbert=False),
+    _fetch_test_layer(
+        tmp_path / "out.parquet", ExtractionOptions(output_crs="EPSG:28992", sort_hilbert=False)
     )
     assert captured["output_crs"] == "EPSG:28992"
 
 
-def test_extract_single_layer_warns_when_gpio_lacks_output_crs(
+def test_fetch_warns_when_gpio_lacks_output_crs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """An older gpio without output_crs must warn that it reprojects to WGS84."""
 
-    def fake_extract_arcgis(url: str, max_workers: int | None = None) -> object:
-        class _T:
-            num_rows = 1
+    def fake_extract_arcgis(url: str) -> object:
+        return _StubTable()
 
-            def add_bbox(self) -> _T:
-                return self
+    _install_gpio(monkeypatch, fake_extract_arcgis)
 
-            def write(self, path: str) -> None:
-                Path(path).parent.mkdir(parents=True, exist_ok=True)
-                Path(path).write_bytes(b"PAR1")
-
-        return _T()
-
-    fake_gpio = types.ModuleType("geoparquet_io")
-    fake_gpio.extract_arcgis = fake_extract_arcgis  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "geoparquet_io", fake_gpio)
-
-    layer = LayerInfo(id=0, name="L", layer_type="Feature Layer")
-    _extract_single_layer(
-        "https://x/rest/services/F/FeatureServer",
-        layer,
-        tmp_path / "out.parquet",
-        ExtractionOptions(sort_hilbert=False),
-    )
+    _fetch_test_layer(tmp_path / "out.parquet", ExtractionOptions(sort_hilbert=False))
     assert "WGS84" in capsys.readouterr().err
 
 
-def test_extract_single_layer_restamps_projected_source_crs(
+def test_fetch_restamps_projected_source_crs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A native extraction with a projected table CRS ends up tagged with it.
 
-    This covers the capture-write-restamp chain in _extract_single_layer, not
+    This covers the capture-write-restamp chain in ArcGISLayerSource.fetch, not
     the isolated helpers (issue #802).
     """
     from pyproj import CRS
 
     rd_new = CRS.from_epsg(28992).to_json_dict()
 
-    def fake_extract_arcgis(
-        url: str, max_workers: int | None = None, output_crs: str | None = None
-    ) -> object:
-        class _T:
-            num_rows = 1
-            crs = rd_new
+    def fake_extract_arcgis(url: str, output_crs: str | None = None) -> object:
+        return _NullCrsTable(rd_new)
 
-            def add_bbox(self) -> _T:
-                return self
-
-            def write(self, path: str) -> None:
-                _write_geoparquet_with_null_crs(Path(path))
-
-        return _T()
-
-    fake_gpio = types.ModuleType("geoparquet_io")
-    fake_gpio.extract_arcgis = fake_extract_arcgis  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "geoparquet_io", fake_gpio)
+    _install_gpio(monkeypatch, fake_extract_arcgis)
 
     out = tmp_path / "out.parquet"
-    layer = LayerInfo(id=0, name="L", layer_type="Feature Layer")
-    _extract_single_layer(
-        "https://x/rest/services/F/FeatureServer",
-        layer,
-        out,
-        ExtractionOptions(sort_hilbert=False),
-    )
+    _fetch_test_layer(out, ExtractionOptions(sort_hilbert=False))
 
     stamped = _read_crs(out)
     assert isinstance(stamped, dict)
     assert stamped["id"] == {"authority": "EPSG", "code": 28992}
 
 
-def test_extract_single_layer_ignores_string_source_crs(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_fetch_ignores_string_source_crs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A string table CRS must not reach the metadata, which needs PROJJSON.
 
     gpio.Table.crs may return a string. A string CRS is not a valid PROJJSON
     dict, so the writer's null tag stays (issue #802).
     """
 
-    def fake_extract_arcgis(
-        url: str, max_workers: int | None = None, output_crs: str | None = None
-    ) -> object:
-        class _T:
-            num_rows = 1
-            crs = "EPSG:28992"
+    def fake_extract_arcgis(url: str, output_crs: str | None = None) -> object:
+        return _NullCrsTable("EPSG:28992")
 
-            def add_bbox(self) -> _T:
-                return self
-
-            def write(self, path: str) -> None:
-                _write_geoparquet_with_null_crs(Path(path))
-
-        return _T()
-
-    fake_gpio = types.ModuleType("geoparquet_io")
-    fake_gpio.extract_arcgis = fake_extract_arcgis  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "geoparquet_io", fake_gpio)
+    _install_gpio(monkeypatch, fake_extract_arcgis)
 
     out = tmp_path / "out.parquet"
-    layer = LayerInfo(id=0, name="L", layer_type="Feature Layer")
-    _extract_single_layer(
-        "https://x/rest/services/F/FeatureServer",
-        layer,
-        out,
-        ExtractionOptions(sort_hilbert=False),
-    )
+    _fetch_test_layer(out, ExtractionOptions(sort_hilbert=False))
 
     assert _read_crs(out) is None
 
@@ -1834,12 +1709,10 @@ def test_is_wgs84_crs_rejects_projected_crs() -> None:
 # =============================================================================
 
 
-def _fake_gpio_recording_ops(calls: list[str]) -> types.ModuleType:
-    """A geoparquet_io stand-in whose Table records the ops applied to it."""
+def _recording_ops_extract(calls: list[str]) -> Callable[..., object]:
+    """A fake gpio.extract_arcgis whose Table records the ops applied to it."""
 
-    class _Table:
-        num_rows = 1
-
+    class _Table(_StubTable):
         def add_bbox(self) -> _Table:
             calls.append("add_bbox")
             return self
@@ -1848,56 +1721,36 @@ def _fake_gpio_recording_ops(calls: list[str]) -> types.ModuleType:
             calls.append("sort_hilbert")
             return self
 
-        def write(self, path: str) -> None:
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-            Path(path).write_bytes(b"PAR1")
-
-    module = types.ModuleType("geoparquet_io")
-    module.extract_arcgis = lambda url, **kwargs: _Table()  # type: ignore[attr-defined]
-    return module
+    return lambda url, **kwargs: _Table()
 
 
 @pytest.mark.unit
-def test_extract_single_layer_adds_bbox_before_sorting(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_fetch_adds_bbox_before_sorting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """rashid reads PTL-DAT-006 and PTL-DAT-007 through the covering column.
 
     Without ``add_bbox`` the extractor's output fails PTL-DAT-007 outright, so
     the call is not optional. The order matches convert.apply_vector_settings.
     """
     calls: list[str] = []
-    monkeypatch.setitem(sys.modules, "geoparquet_io", _fake_gpio_recording_ops(calls))
+    _install_gpio(monkeypatch, _recording_ops_extract(calls))
 
-    _extract_single_layer(
-        "https://x/rest/services/F/FeatureServer",
-        LayerInfo(id=0, name="L", layer_type="Feature Layer"),
-        tmp_path / "out.parquet",
-        ExtractionOptions(),
-    )
+    _fetch_test_layer(tmp_path / "out.parquet", ExtractionOptions())
 
     assert calls == ["add_bbox", "sort_hilbert"]
 
 
 @pytest.mark.unit
-def test_extract_single_layer_honours_add_bbox_false(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_fetch_honours_add_bbox_false(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """An operator who turns the column off gets a file without it."""
     calls: list[str] = []
-    monkeypatch.setitem(sys.modules, "geoparquet_io", _fake_gpio_recording_ops(calls))
+    _install_gpio(monkeypatch, _recording_ops_extract(calls))
 
-    _extract_single_layer(
-        "https://x/rest/services/F/FeatureServer",
-        LayerInfo(id=0, name="L", layer_type="Feature Layer"),
-        tmp_path / "out.parquet",
-        ExtractionOptions(add_bbox=False),
-    )
+    _fetch_test_layer(tmp_path / "out.parquet", ExtractionOptions(add_bbox=False))
 
     assert calls == ["sort_hilbert"]
 
 
-def _fake_gpio_without_geometry(calls: list[str]) -> types.ModuleType:
+def _no_geometry_extract(calls: list[str]) -> Callable[..., object]:
     """A geoparquet_io stand-in whose Table reports no geometry column.
 
     `gpio.extract_arcgis` reads an ArcGIS Table layer as a plain table with
@@ -1905,8 +1758,7 @@ def _fake_gpio_without_geometry(calls: list[str]) -> types.ModuleType:
     binder error on such a table.
     """
 
-    class _Table:
-        num_rows = 1
+    class _Table(_StubTable):
         geometry_column = None
 
         def add_bbox(self) -> _Table:
@@ -1917,17 +1769,11 @@ def _fake_gpio_without_geometry(calls: list[str]) -> types.ModuleType:
             calls.append("sort_hilbert")
             raise AssertionError("sort_hilbert must not run on a table with no geometry")
 
-        def write(self, path: str) -> None:
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-            Path(path).write_bytes(b"PAR1")
-
-    module = types.ModuleType("geoparquet_io")
-    module.extract_arcgis = lambda url, **kwargs: _Table()  # type: ignore[attr-defined]
-    return module
+    return lambda url, **kwargs: _Table()
 
 
 @pytest.mark.unit
-def test_extract_single_layer_skips_spatial_ops_without_geometry(
+def test_fetch_skips_spatial_ops_without_geometry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An ArcGIS Table layer carries no geometry, so neither operation runs.
@@ -1937,9 +1783,9 @@ def test_extract_single_layer_skips_spatial_ops_without_geometry(
     extraction with a raw DuckDB binder error (issue #805).
     """
     calls: list[str] = []
-    monkeypatch.setitem(sys.modules, "geoparquet_io", _fake_gpio_without_geometry(calls))
+    _install_gpio(monkeypatch, _no_geometry_extract(calls))
 
-    _extract_single_layer(
+    _fetch_layer(
         "https://x/rest/services/F/FeatureServer",
         LayerInfo(id=1, name="Attributes", layer_type="Table"),
         tmp_path / "out.parquet",

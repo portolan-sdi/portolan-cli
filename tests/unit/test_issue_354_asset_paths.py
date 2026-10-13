@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = [pytest.mark.unit]
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("no_extract_side_requests")]
 
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
@@ -216,7 +216,6 @@ class TestBatchUpdateVersionsAssetKeys:
     def test_batch_update_collection_level_asset_keys(self, tmp_path: Path) -> None:
         """_batch_update_versions generates correct keys for collection-level assets."""
         from portolan_cli.add import PreparedItem, _batch_update_versions
-        from portolan_cli.formats import FormatType
 
         collection_dir = tmp_path / "my_collection"
         collection_dir.mkdir()
@@ -230,7 +229,7 @@ class TestBatchUpdateVersionsAssetKeys:
         prepared = PreparedItem(
             item_id="my_collection",
             collection_id="my_collection",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             bbox=[0, 0, 1, 1],
             asset_files={"my_collection.parquet": (asset_path, "abc123", 1024)},
             item_json_path=collection_dir / "item.json",
@@ -255,7 +254,6 @@ class TestBatchUpdateVersionsAssetKeys:
     def test_batch_update_item_level_asset_keys(self, tmp_path: Path) -> None:
         """_batch_update_versions generates correct keys for item-level assets."""
         from portolan_cli.add import PreparedItem, _batch_update_versions
-        from portolan_cli.formats import FormatType
 
         collection_dir = tmp_path / "my_collection"
         item_dir = collection_dir / "my_item"
@@ -268,7 +266,7 @@ class TestBatchUpdateVersionsAssetKeys:
         prepared = PreparedItem(
             item_id="my_item",
             collection_id="my_collection",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             bbox=[0, 0, 1, 1],
             asset_files={"data.parquet": (asset_path, "abc123", 1024)},
             item_json_path=item_dir / "item.json",
@@ -298,6 +296,7 @@ class TestAssetPathsInExtraction:
 
         from portolan_cli.extract.arcgis.discovery import LayerInfo, ServiceDiscoveryResult
         from portolan_cli.extract.arcgis.orchestrator import (
+            ArcGISLayerSource,
             ExtractionOptions,
             extract_arcgis_catalog,
         )
@@ -306,16 +305,15 @@ class TestAssetPathsInExtraction:
         fixture_src = FIXTURES_DIR / "simple.parquet"
 
         def mock_extract_side_effect(
-            service_url: str, layer: object, output_path: Path, options: object
-        ) -> tuple[int, int, float]:
+            self: object, service_url: str, layer: object, output_path: Path
+        ) -> int:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(fixture_src, output_path)
-            return (100, output_path.stat().st_size, 1.0)
+            return 100
 
         with (
-            patch(
-                "portolan_cli.extract.arcgis.orchestrator._extract_single_layer",
-                side_effect=mock_extract_side_effect,
+            patch.object(
+                ArcGISLayerSource, "fetch", autospec=True, side_effect=mock_extract_side_effect
             ),
             patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock,
         ):

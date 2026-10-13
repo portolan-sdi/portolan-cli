@@ -9,10 +9,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from portolan_cli.temporal import (
-    FLEXIBLE_DATETIME,
-    parse_flexible_datetime,
-)
+from portolan_cli.cli_types import FLEXIBLE_DATETIME
+from portolan_cli.temporal import parse_flexible_datetime
 
 # Mark all tests in this module as unit tests
 pytestmark = pytest.mark.unit

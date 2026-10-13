@@ -20,6 +20,11 @@ import yaml
 
 from portolan_cli.constants import TODO_MARKER
 from portolan_cli.extract.arcgis.discovery import LayerInfo, ServiceDiscoveryResult
+from portolan_cli.extract.arcgis.orchestrator import (
+    ArcGISLayerSource,
+    ExtractionOptions,
+    extract_arcgis_catalog,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,8 +41,8 @@ def _create_extraction_mock(
 ) -> tuple[int, int, float]:
     """Create mock extraction result and the parquet file.
 
-    The _extract_single_layer function writes the parquet file, so our mock
-    must also create it for downstream code (add_files) to work.
+    ArcGISLayerSource.fetch writes the parquet file, so our mock must also
+    create it for downstream code (add_files) to work.
     """
     layer_slug = layer_name
     collection_dir = output_dir / layer_slug
@@ -52,6 +57,24 @@ def _create_extraction_mock(
     return (100, 1024, 1.5)
 
 
+def _fake_fetch(self: object, service_url: str, layer: object, output_path: Path) -> int:
+    """Stand in for ArcGISLayerSource.fetch and write the parquet magic bytes."""
+    output_path.write_bytes(b"PAR1")
+    return 100
+
+
+def _extract(
+    output_dir: Path, discovery: ServiceDiscoveryResult, options: ExtractionOptions
+) -> None:
+    """Run the FeatureServer extraction with discovery and fetch faked."""
+    with (
+        patch("portolan_cli.extract.arcgis.orchestrator.discover_layers", return_value=discovery),
+        patch.object(ArcGISLayerSource, "fetch", _fake_fetch),
+    ):
+        extract_arcgis_catalog(url=TEST_FEATURE_SERVER_URL, output_dir=output_dir, options=options)
+
+
+@pytest.mark.usefixtures("no_extract_side_requests")
 class TestFeatureServerMetadataSeeding:
     """Integration tests for auto-seeding metadata.yaml from FeatureServer extraction."""
 
@@ -78,36 +101,11 @@ class TestFeatureServerMetadataSeeding:
         mock_discovery_result: ServiceDiscoveryResult,
     ) -> None:
         """Extraction creates .portolan/metadata.yaml from service metadata."""
-        from portolan_cli.extract.arcgis.orchestrator import (
-            ExtractionOptions,
-            extract_arcgis_catalog,
-        )
-
         output_dir = tmp_path / "output"
 
-        def mock_extract_side_effect(
-            service_url: str,
-            layer: LayerInfo,
-            output_path: Path,
-            options: ExtractionOptions,
-        ) -> tuple[int, int, float]:
-            """Side effect that creates the actual parquet file."""
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_bytes(b"PAR1")  # Minimal parquet magic bytes
-            return (100, 1024, 1.5)
-
-        with (
-            patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
-            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
-        ):
-            mock_discover.return_value = mock_discovery_result
-            mock_extract.side_effect = mock_extract_side_effect
-
-            extract_arcgis_catalog(
-                url=TEST_FEATURE_SERVER_URL,
-                output_dir=output_dir,
-                options=ExtractionOptions(raw=False, license="CC-BY-4.0"),
-            )
+        _extract(
+            output_dir, mock_discovery_result, ExtractionOptions(raw=False, license="CC-BY-4.0")
+        )
 
         # Verify metadata.yaml was created
         metadata_path = output_dir / ".portolan" / "metadata.yaml"
@@ -128,35 +126,11 @@ class TestFeatureServerMetadataSeeding:
         mock_discovery_result: ServiceDiscoveryResult,
     ) -> None:
         """Seeded metadata.yaml contains TODO markers for required human fields."""
-        from portolan_cli.extract.arcgis.orchestrator import (
-            ExtractionOptions,
-            extract_arcgis_catalog,
-        )
-
         output_dir = tmp_path / "output"
 
-        def mock_extract_side_effect(
-            service_url: str,
-            layer: LayerInfo,
-            output_path: Path,
-            options: ExtractionOptions,
-        ) -> tuple[int, int, float]:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_bytes(b"PAR1")
-            return (100, 1024, 1.5)
-
-        with (
-            patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
-            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
-        ):
-            mock_discover.return_value = mock_discovery_result
-            mock_extract.side_effect = mock_extract_side_effect
-
-            extract_arcgis_catalog(
-                url=TEST_FEATURE_SERVER_URL,
-                output_dir=output_dir,
-                options=ExtractionOptions(raw=False, license="CC-BY-4.0"),
-            )
+        _extract(
+            output_dir, mock_discovery_result, ExtractionOptions(raw=False, license="CC-BY-4.0")
+        )
 
         metadata_path = output_dir / ".portolan" / "metadata.yaml"
         content = metadata_path.read_text()
@@ -181,35 +155,11 @@ class TestFeatureServerMetadataSeeding:
         mock_discovery_result: ServiceDiscoveryResult,
     ) -> None:
         """Seeded metadata.yaml preserves fields extracted from service."""
-        from portolan_cli.extract.arcgis.orchestrator import (
-            ExtractionOptions,
-            extract_arcgis_catalog,
-        )
-
         output_dir = tmp_path / "output"
 
-        def mock_extract_side_effect(
-            service_url: str,
-            layer: LayerInfo,
-            output_path: Path,
-            options: ExtractionOptions,
-        ) -> tuple[int, int, float]:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_bytes(b"PAR1")
-            return (100, 1024, 1.5)
-
-        with (
-            patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
-            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
-        ):
-            mock_discover.return_value = mock_discovery_result
-            mock_extract.side_effect = mock_extract_side_effect
-
-            extract_arcgis_catalog(
-                url=TEST_FEATURE_SERVER_URL,
-                output_dir=output_dir,
-                options=ExtractionOptions(raw=False, license="CC-BY-4.0"),
-            )
+        _extract(
+            output_dir, mock_discovery_result, ExtractionOptions(raw=False, license="CC-BY-4.0")
+        )
 
         metadata_path = output_dir / ".portolan" / "metadata.yaml"
         metadata = yaml.safe_load(metadata_path.read_text())
@@ -227,11 +177,6 @@ class TestFeatureServerMetadataSeeding:
         mock_discovery_result: ServiceDiscoveryResult,
     ) -> None:
         """Existing metadata.yaml is NOT overwritten (overwrite=False default)."""
-        from portolan_cli.extract.arcgis.orchestrator import (
-            ExtractionOptions,
-            extract_arcgis_catalog,
-        )
-
         output_dir = tmp_path / "output"
 
         # Pre-create metadata.yaml with custom content
@@ -250,28 +195,9 @@ class TestFeatureServerMetadataSeeding:
         with metadata_path.open("w") as f:
             yaml.dump(existing_content, f)
 
-        def mock_extract_side_effect(
-            service_url: str,
-            layer: LayerInfo,
-            output_path: Path,
-            options: ExtractionOptions,
-        ) -> tuple[int, int, float]:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_bytes(b"PAR1")
-            return (100, 1024, 1.5)
-
-        with (
-            patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
-            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
-        ):
-            mock_discover.return_value = mock_discovery_result
-            mock_extract.side_effect = mock_extract_side_effect
-
-            extract_arcgis_catalog(
-                url=TEST_FEATURE_SERVER_URL,
-                output_dir=output_dir,
-                options=ExtractionOptions(raw=False, license="CC-BY-4.0"),
-            )
+        _extract(
+            output_dir, mock_discovery_result, ExtractionOptions(raw=False, license="CC-BY-4.0")
+        )
 
         # Verify original content was preserved
         metadata = yaml.safe_load(metadata_path.read_text())
@@ -288,38 +214,12 @@ class TestFeatureServerMetadataSeeding:
         mock_discovery_result: ServiceDiscoveryResult,
     ) -> None:
         """raw=True mode skips auto-init and metadata seeding."""
-        from portolan_cli.extract.arcgis.orchestrator import (
-            ExtractionOptions,
-            extract_arcgis_catalog,
-        )
-
         output_dir = tmp_path / "output"
 
-        def mock_extract_side_effect(
-            service_url: str,
-            layer: LayerInfo,
-            output_path: Path,
-            options: ExtractionOptions,
-        ) -> tuple[int, int, float]:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_bytes(b"PAR1")
-            return (100, 1024, 1.5)
-
-        with (
-            patch("portolan_cli.extract.arcgis.orchestrator.discover_layers") as mock_discover,
-            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
-        ):
-            mock_discover.return_value = mock_discovery_result
-            mock_extract.side_effect = mock_extract_side_effect
-
-            extract_arcgis_catalog(
-                url=TEST_FEATURE_SERVER_URL,
-                output_dir=output_dir,
-                options=ExtractionOptions(raw=True),  # Raw mode
-            )
+        _extract(output_dir, mock_discovery_result, ExtractionOptions(raw=True))  # Raw mode
 
         # metadata.yaml should NOT be created in raw mode
-        # (since _auto_init_catalog is skipped entirely)
+        # (the driver skips the catalog build entirely)
         metadata_path = output_dir / ".portolan" / "metadata.yaml"
         # Note: .portolan dir may still exist for extraction-report.json
         # but metadata.yaml should not be seeded

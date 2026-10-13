@@ -15,129 +15,107 @@ from __future__ import annotations
 
 import json
 import shutil
-from pathlib import Path
+from dataclasses import replace
+from pathlib import Path, PurePath
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
 
-from portolan_cli.extract.common.report import (
-    ExtractionReport,
-    ExtractionSummary,
-    LayerResult,
-    MetadataExtracted,
+from portolan_cli.extract.common.source import (
+    LayerRef,
+    LayerSourceOptions,
+    build_catalog,
 )
 from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult
 from portolan_cli.extract.wfs.orchestrator import (
     ExtractionOptions,
-    _auto_init_catalog,
+    WFSLayerSource,
     extract_wfs_catalog,
 )
 from portolan_cli.licensing import ResolvedLicense
+from tests.support.extract import (
+    make_layer_result,
+    make_report,
+    make_wfs_discovery,
+    make_wfs_layer,
+)
 
-pytestmark = [pytest.mark.integration]
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from portolan_cli.extract.common.report import (
+        ExtractionReport,
+    )
+
+make_layer_info = make_wfs_layer
+make_discovery_result = make_wfs_discovery
+
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_extract_side_requests")]
 
 FIXTURES_DIR = Path(__file__).parent.parent.parent.parent / "fixtures"
 
 
-def make_layer_info(name: str, layer_id: int = 0) -> LayerInfo:
-    """Create a LayerInfo for testing."""
-    return LayerInfo(
-        name=name,
-        typename=name,
-        title=name.title(),
-        abstract=f"Description of {name}",
-        bbox=None,
-        id=layer_id,
-    )
+def copy_fixture_fetch(
+    rows: int, calls: list[Any] | None = None, *, names: bool = False
+) -> Callable[[str, LayerRef, Path], int]:
+    """Build a WFSLayerSource.fetch fake that copies the fixture GeoParquet.
+
+    Args:
+        rows: Row count the fake reports.
+        calls: List that records each fetched layer, or its name when
+            ``names`` is True.
+        names: Record the layer name instead of the LayerRef.
+
+    Returns:
+        The fake fetch.
+    """
+
+    def fetch(service_url: str, layer: LayerRef, output_path: Path) -> int:
+        if calls is not None:
+            calls.append(layer.name if names else layer)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(FIXTURES_DIR / "simple.parquet", output_path)
+        return rows
+
+    return fetch
 
 
-def make_discovery_result(
-    layers: list[LayerInfo],
-    service_url: str = "https://example.com/wfs",
-) -> WFSDiscoveryResult:
-    """Create a WFSDiscoveryResult for testing."""
-    return WFSDiscoveryResult(
-        service_url=service_url,
-        layers=layers,
-        service_title="Test WFS Service",
-        service_abstract="A test WFS service",
-        provider="Test Provider",
-        keywords=["test", "wfs"],
-        contact_name="Test Contact",
-        access_constraints=None,
-        fees=None,
-    )
-
-
-def make_layer_result(
-    *,
-    layer_id: int = 0,
-    name: str = "test_layer",
-    status: str = "success",
-    output_path: str | None = "test_layer/test_layer.parquet",
-    features: int | None = 100,
-    size_bytes: int | None = 1000,
-    error: str | None = None,
-) -> LayerResult:
-    """Create a LayerResult with sensible defaults."""
-    return LayerResult(
-        id=layer_id,
-        name=name,
-        status=status,
-        output_path=output_path,
-        features=features if status == "success" else None,
-        size_bytes=size_bytes if status == "success" else None,
-        duration_seconds=1.0 if status == "success" else None,
-        warnings=[],
-        error=error,
-        attempts=1 if status != "failed" else 3,
-    )
-
-
-def make_report(
-    layers: list[LayerResult],
-    source_url: str = "https://example.com/wfs",
-) -> ExtractionReport:
-    """Create an ExtractionReport with sensible defaults."""
-    succeeded = sum(1 for layer in layers if layer.status == "success")
-    failed = sum(1 for layer in layers if layer.status == "failed")
-    skipped = sum(1 for layer in layers if layer.status == "skipped")
-    empty = sum(1 for layer in layers if layer.status == "empty")
-    total_features = sum(layer.features or 0 for layer in layers)
-    total_bytes = sum(layer.size_bytes or 0 for layer in layers)
-
-    return ExtractionReport(
-        extraction_date="2026-04-23T12:00:00Z",
-        source_url=source_url,
-        portolan_version="0.1.0",
-        gpio_version="0.5.0",
-        metadata_extracted=MetadataExtracted(
-            source_url=source_url,
-            description=None,
-            attribution=None,
-            keywords=None,
-            contact_name=None,
-            processing_notes=None,
-            known_issues=None,
-            license_info_raw=None,
-        ),
-        layers=layers,
-        summary=ExtractionSummary(
-            total_layers=len(layers),
-            succeeded=succeeded,
-            failed=failed,
-            skipped=skipped,
-            empty=empty,
-            total_features=total_features,
-            total_size_bytes=total_bytes,
-            total_duration_seconds=float(len(layers)),
-        ),
-    )
-
-
-# Calling _auto_init_catalog directly skips the resolution the orchestrator does
+# Building the catalog directly skips the license resolution the driver does
 # before its download, so the license is passed in here (issue #686).
 TEST_LICENSE = ResolvedLicense(license_id="CC-BY-4.0", license_url=None)
+
+
+def _auto_init_catalog(
+    output_dir: Path,
+    report: ExtractionReport,
+    discovery: WFSDiscoveryResult | None,
+    resolved_license: ResolvedLicense,
+) -> None:
+    """Build the catalog for ``report`` through the shared driver seam.
+
+    The WFS discovery maps each report layer to its collection directory, as
+    a run of ``extract_wfs_catalog`` would.
+    """
+    found = discovery or make_discovery_result(
+        [make_layer_info(r.name, r.id) for r in report.layers], service_url=report.source_url
+    )
+    built = WFSLayerSource().discovery_from(report.source_url, found, "1.1.0", LayerSourceOptions())
+    paths = {
+        r.name: PurePath(r.output_path).parent.as_posix() for r in report.layers if r.output_path
+    }
+    built.layers = [replace(ref, path=paths.get(ref.name, ref.path)) for ref in built.layers]
+    build_catalog(WFSLayerSource(), built, output_dir, report, resolved_license=resolved_license)
+
+
+def _extract_one_layer(output_dir: Path, options: ExtractionOptions) -> None:
+    """Extract one fake layer named 'test' into ``output_dir``."""
+    discovery = make_discovery_result([make_layer_info("test", 0)])
+    with (
+        patch("portolan_cli.extract.wfs.orchestrator.discover_layers", return_value=discovery),
+        patch.object(WFSLayerSource, "fetch", side_effect=copy_fixture_fetch(rows=100)),
+    ):
+        extract_wfs_catalog(url="https://example.com/wfs", output_dir=output_dir, options=options)
 
 
 class TestWFSAutoInitCatalog:
@@ -314,34 +292,7 @@ class TestWFSExtractOrchestrator:
     def test_raw_mode_skips_catalog_init(self, tmp_path: Path) -> None:
         """raw=True creates files but skips STAC catalog."""
         output_dir = tmp_path / "raw_output"
-        fixture_src = FIXTURES_DIR / "simple.parquet"
-
-        layers = [make_layer_info("test", 0)]
-        discovery = make_discovery_result(layers)
-
-        def mock_extract_side_effect(
-            service_url: str,
-            layer: object,
-            output_path: Path,
-            options: object,
-            negotiated_version: str,
-        ) -> tuple[int, int, float]:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(fixture_src, output_path)
-            return (100, output_path.stat().st_size, 1.0)
-
-        with patch("portolan_cli.extract.wfs.orchestrator.discover_layers") as mock_discover:
-            mock_discover.return_value = discovery
-
-            with patch(
-                "portolan_cli.extract.wfs.orchestrator._extract_single_layer",
-                side_effect=mock_extract_side_effect,
-            ):
-                extract_wfs_catalog(
-                    url="https://example.com/wfs",
-                    output_dir=output_dir,
-                    options=ExtractionOptions(raw=True),
-                )
+        _extract_one_layer(output_dir, ExtractionOptions(raw=True))
 
         assert not (output_dir / "catalog.json").exists(), "raw mode should not create catalog"
         assert (output_dir / ".portolan" / "extraction-report.json").exists()
@@ -349,34 +300,7 @@ class TestWFSExtractOrchestrator:
     def test_default_mode_creates_catalog(self, tmp_path: Path) -> None:
         """Default extraction creates STAC catalog."""
         output_dir = tmp_path / "catalog_output"
-        fixture_src = FIXTURES_DIR / "simple.parquet"
-
-        layers = [make_layer_info("test", 0)]
-        discovery = make_discovery_result(layers)
-
-        def mock_extract_side_effect(
-            service_url: str,
-            layer: object,
-            output_path: Path,
-            options: object,
-            negotiated_version: str,
-        ) -> tuple[int, int, float]:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(fixture_src, output_path)
-            return (100, output_path.stat().st_size, 1.0)
-
-        with patch("portolan_cli.extract.wfs.orchestrator.discover_layers") as mock_discover:
-            mock_discover.return_value = discovery
-
-            with patch(
-                "portolan_cli.extract.wfs.orchestrator._extract_single_layer",
-                side_effect=mock_extract_side_effect,
-            ):
-                extract_wfs_catalog(
-                    url="https://example.com/wfs",
-                    output_dir=output_dir,
-                    options=ExtractionOptions(raw=False, license="CC-BY-4.0"),
-                )
+        _extract_one_layer(output_dir, ExtractionOptions(raw=False, license="CC-BY-4.0"))
 
         assert (output_dir / "catalog.json").exists(), "default extraction should create catalog"
         assert (output_dir / ".portolan" / "config.yaml").exists()
@@ -435,8 +359,6 @@ class TestParallelExtraction:
     def test_parallel_workers_extract_concurrently(self, tmp_path: Path) -> None:
         """Multiple workers extract layers in parallel."""
         output_dir = tmp_path / "parallel_output"
-        fixture_src = FIXTURES_DIR / "simple.parquet"
-
         layers = [
             make_layer_info("layer_a", 0),
             make_layer_info("layer_b", 1),
@@ -447,25 +369,12 @@ class TestParallelExtraction:
 
         extracted_layers: list[str] = []
 
-        def mock_extract_side_effect(
-            service_url: str,
-            layer: LayerInfo,
-            output_path: Path,
-            options: object,
-            negotiated_version: str,
-        ) -> tuple[int, int, float]:
-            extracted_layers.append(layer.name)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(fixture_src, output_path)
-            return (100, output_path.stat().st_size, 0.1)
+        mock_extract_side_effect = copy_fixture_fetch(rows=100, calls=extracted_layers, names=True)
 
         with patch("portolan_cli.extract.wfs.orchestrator.discover_layers") as mock_discover:
             mock_discover.return_value = discovery
 
-            with patch(
-                "portolan_cli.extract.wfs.orchestrator._extract_single_layer",
-                side_effect=mock_extract_side_effect,
-            ):
+            with patch.object(WFSLayerSource, "fetch", side_effect=mock_extract_side_effect):
                 report = extract_wfs_catalog(
                     url="https://example.com/wfs",
                     output_dir=output_dir,
@@ -480,8 +389,6 @@ class TestParallelExtraction:
     def test_single_worker_extracts_sequentially(self, tmp_path: Path) -> None:
         """Single worker extracts layers in order."""
         output_dir = tmp_path / "sequential_output"
-        fixture_src = FIXTURES_DIR / "simple.parquet"
-
         layers = [
             make_layer_info("layer_a", 0),
             make_layer_info("layer_b", 1),
@@ -490,25 +397,12 @@ class TestParallelExtraction:
 
         extraction_order: list[str] = []
 
-        def mock_extract_side_effect(
-            service_url: str,
-            layer: LayerInfo,
-            output_path: Path,
-            options: object,
-            negotiated_version: str,
-        ) -> tuple[int, int, float]:
-            extraction_order.append(layer.name)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(fixture_src, output_path)
-            return (100, output_path.stat().st_size, 0.1)
+        mock_extract_side_effect = copy_fixture_fetch(rows=100, calls=extraction_order, names=True)
 
         with patch("portolan_cli.extract.wfs.orchestrator.discover_layers") as mock_discover:
             mock_discover.return_value = discovery
 
-            with patch(
-                "portolan_cli.extract.wfs.orchestrator._extract_single_layer",
-                side_effect=mock_extract_side_effect,
-            ):
+            with patch.object(WFSLayerSource, "fetch", side_effect=mock_extract_side_effect):
                 extract_wfs_catalog(
                     url="https://example.com/wfs",
                     output_dir=output_dir,
@@ -559,27 +453,14 @@ class TestWFSResume:
         ]
         discovery = make_discovery_result(layers)
 
-        extract_calls: list[LayerInfo] = []
+        extract_calls: list[LayerRef] = []
 
-        def mock_extract_side_effect(
-            service_url: str,
-            layer: LayerInfo,
-            output_path: Path,
-            options: object,
-            negotiated_version: str,
-        ) -> tuple[int, int, float]:
-            extract_calls.append(layer)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(fixture_src, output_path)
-            return (50, output_path.stat().st_size, 0.5)
+        mock_extract_side_effect = copy_fixture_fetch(rows=50, calls=extract_calls, names=False)
 
         with patch("portolan_cli.extract.wfs.orchestrator.discover_layers") as mock_discover:
             mock_discover.return_value = discovery
 
-            with patch(
-                "portolan_cli.extract.wfs.orchestrator._extract_single_layer",
-                side_effect=mock_extract_side_effect,
-            ):
+            with patch.object(WFSLayerSource, "fetch", side_effect=mock_extract_side_effect):
                 report = extract_wfs_catalog(
                     url="https://example.com/wfs",
                     output_dir=output_dir,

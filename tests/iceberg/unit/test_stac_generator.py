@@ -686,9 +686,7 @@ class TestExtensionShape:
     @pytest.mark.unit
     def test_the_extension_uri_is_the_canonical_one(self) -> None:
         from portolan_cli.backends.iceberg.stac_generator import STAC_ICEBERG_EXTENSION
-        from portolan_cli.constants import ICEBERG_EXTENSION_URI
 
-        assert STAC_ICEBERG_EXTENSION == ICEBERG_EXTENSION_URI
-        assert ICEBERG_EXTENSION_URI == (
+        assert STAC_ICEBERG_EXTENSION == (
             "https://schemas.portolan-sdi.org/incubating/iceberg/v1.1.0/schema.json"
         )

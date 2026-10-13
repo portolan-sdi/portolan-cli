@@ -61,8 +61,10 @@ All code must have type annotations (`mypy --strict`). The CLI is a thin Click l
 - **Architecture is enforced by import-linter** (`uv run lint-imports`).
   Among the contracts: `portolan_cli.cli` must not import `portolan_cli.backends`
   (only `backends.protocol` under `TYPE_CHECKING`), `backends.iceberg` must not
-  import `cli`, utility/leaf modules stay independent, and the read modules
-  stay free of Click and the geospatial stack (`read-modules-stay-light`). Check
+  import `cli`, utility/leaf modules stay independent, and three layer
+  contracts hold (`layer-read`, `layer-manage`, `layer-cli`). Only the CLI
+  layer (`cli`, `cli_types`, `emit`, `add_progress`, `scan.progress`) imports
+  Click. A Click parameter type goes in `cli_types.py`. Check
   `[tool.importlinter]` before adding any cross-module import.
 - **Ruff rule sets**: see `select` in `[tool.ruff.lint]`. It holds 37 groups.
   Read the comment on each one before you suppress it. Line length 100, double

@@ -1,23 +1,28 @@
 """VersioningBackend protocol for pluggable version storage.
 
-This module defines the VersioningBackend Protocol that allows external backends
-(like portolake's Iceberg implementation) to integrate with portolan-cli.
-
+This module defines the VersioningBackend Protocol. A backend can come from
+portolan-cli itself ("file", "iceberg") or from a plugin package.
 
 Thread Safety:
     The MVP assumes single-writer access. Backends do NOT provide thread-safety
-    guarantees. For concurrent multi-user access, use the portolake plugin with
-    IcebergBackend which provides ACID transactions and distributed locking.
+    guarantees. For concurrent multi-user access, use the IcebergBackend from
+    the [iceberg] extra, which provides ACID transactions.
 
-Example usage for plugin authors:
-    # In portolake/pyproject.toml:
-    [project.entry-points."portolan.backends"]
-    iceberg = "portolake:IcebergBackend"
+Example usage for plugin authors (#947):
+    # In example/pyproject.toml:
+    [project.entry-points."portolan"]
+    example = "portolan_example.hooks"
 
-    # In portolake/__init__.py:
-    class IcebergBackend:
-        def get_current_version(self, collection: str) -> Version: ...
-        # ... implement all protocol methods
+    # In portolan_example/hooks.py:
+    from portolan_cli.hookspecs import hookimpl
+
+    @hookimpl
+    def portolan_backends():
+        from portolan_example.backend import ExampleBackend
+
+        return {"example": ExampleBackend}
+
+    # ExampleBackend(catalog_root=...) implements every protocol method.
 """
 
 from __future__ import annotations

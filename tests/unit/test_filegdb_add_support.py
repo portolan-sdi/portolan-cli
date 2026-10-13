@@ -12,7 +12,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.scan.core import FormatType, ScanOptions, scan_directory
+from portolan_cli.scan.core import ScanOptions, scan_directory
 
 
 @pytest.mark.unit
@@ -50,7 +50,7 @@ class TestFileGDBInReadyList:
 
         scanned = filegdb_files[0]
         assert scanned.extension == ".gdb", f"Expected .gdb extension, got {scanned.extension}"
-        assert scanned.format_type == FormatType.VECTOR, (
+        assert scanned.format_type == "vector", (
             f"FileGDB should be VECTOR format, got {scanned.format_type}"
         )
         # Size should be total of internal files
@@ -92,7 +92,7 @@ class TestFileGDBInReadyList:
         # All should be VECTOR format
         filegdb_files = [f for f in result.ready if f.extension == ".gdb"]
         assert len(filegdb_files) == 3
-        assert all(f.format_type == FormatType.VECTOR for f in filegdb_files)
+        assert all(f.format_type == "vector" for f in filegdb_files)
 
     def test_filegdb_mixed_with_regular_files(self, tmp_path: Path) -> None:
         """FileGDBs should appear in ready alongside regular geospatial files."""
@@ -298,7 +298,7 @@ class TestFileGDBRealFixture:
 
         scanned = filegdb_files[0]
         assert scanned.extension == ".gdb"
-        assert scanned.format_type == FormatType.VECTOR
+        assert scanned.format_type == "vector"
         assert scanned.size_bytes > 0, "Real FileGDB should have non-zero size"
 
     def test_real_filegdb_has_metadata(self, real_filegdb: Path) -> None:
@@ -487,5 +487,5 @@ class TestFileGDBDuplicateDetection:
         assert geojson in ready_paths
 
         # Both should be counted as primary vector files
-        vector_files = [f for f in result.ready if f.format_type == FormatType.VECTOR]
+        vector_files = [f for f in result.ready if f.format_type == "vector"]
         assert len(vector_files) == 2, f"Expected 2 vector files, got {len(vector_files)}"

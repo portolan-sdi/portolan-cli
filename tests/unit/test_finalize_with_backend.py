@@ -13,7 +13,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from portolan_cli.add import PreparedItem, _finalize_with_backend
-from portolan_cli.formats import FormatType
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -41,7 +40,7 @@ def _make_item(
     return PreparedItem(
         item_id=item_id,
         collection_id=collection_id,
-        format_type=FormatType.VECTOR,
+        format_type="vector",
         bbox=[-10.0, -10.0, 10.0, 10.0],
         asset_files={filename: (asset_path, "abc123", 1024)},
         item_json_path=item_json,
@@ -236,7 +235,7 @@ class TestFinalizeWithBackend:
         item = PreparedItem(
             item_id="census",
             collection_id="boundaries",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             bbox=[0, 0, 1, 1],
             asset_files={
                 "data.parquet": (file_a, "hash1", 7),

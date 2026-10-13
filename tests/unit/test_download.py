@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.conftest import aws_files_environ
+from tests.conftest import aws_files_environ, cleared_environ
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -666,16 +666,7 @@ class TestCustomS3Endpoint:
             mock_obs.get.return_value = mock_response
 
             with (
-                patch.dict(
-                    os.environ,
-                    {
-                        # botocore reads ~/.aws itself; keep it away from
-                        # the developer's real profiles.
-                        k: os.environ.get(k, "")
-                        for k in ("AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE")
-                    },
-                    clear=True,
-                ),
+                cleared_environ(),
                 patch(
                     "portolan_cli.sync.upload._load_aws_credentials_from_profile",
                     return_value=(None, None, None, None),

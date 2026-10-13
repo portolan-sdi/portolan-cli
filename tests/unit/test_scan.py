@@ -40,7 +40,7 @@ def fixtures_dir() -> Path:
 
 @pytest.mark.unit
 class TestEnums:
-    """Tests for Severity, IssueType, and FormatType enums."""
+    """Tests for the Severity and IssueType enums and the format family names."""
 
     def test_severity_has_error_warning_info(self) -> None:
         """Severity enum has ERROR, WARNING, INFO values."""
@@ -81,12 +81,11 @@ class TestEnums:
         assert actual_values == expected_values, f"Missing: {expected_values - actual_values}"
         assert len(IssueType) == 20
 
-    def test_format_type_has_vector_and_raster(self) -> None:
-        """FormatType enum has VECTOR and RASTER values."""
-        from portolan_cli.scan.core import FormatType
+    def test_format_families_have_their_json_names(self) -> None:
+        """Scan JSON output writes the built-in families as "vector" and "raster"."""
+        from portolan_cli.format_families import RASTER, VECTOR
 
-        assert FormatType.VECTOR.value == "vector"
-        assert FormatType.RASTER.value == "raster"
+        assert (VECTOR, RASTER) == ("vector", "raster")
 
 
 @pytest.mark.unit
@@ -213,43 +212,43 @@ class TestScannedFile:
 
     def test_creation(self, tmp_path: Path) -> None:
         """ScannedFile can be created with required fields."""
-        from portolan_cli.scan.core import FormatType, ScannedFile
+        from portolan_cli.scan.core import ScannedFile
 
         sf = ScannedFile(
             path=tmp_path / "data.parquet",
             relative_path="data.parquet",
             extension=".parquet",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             size_bytes=1024,
         )
         assert sf.path == tmp_path / "data.parquet"
         assert sf.relative_path == "data.parquet"
         assert sf.extension == ".parquet"
-        assert sf.format_type == FormatType.VECTOR
+        assert sf.format_type == "vector"
         assert sf.size_bytes == 1024
 
     def test_basename_property(self, tmp_path: Path) -> None:
         """ScannedFile.basename returns filename without directory."""
-        from portolan_cli.scan.core import FormatType, ScannedFile
+        from portolan_cli.scan.core import ScannedFile
 
         sf = ScannedFile(
             path=tmp_path / "subdir" / "data.parquet",
             relative_path="subdir/data.parquet",
             extension=".parquet",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             size_bytes=1024,
         )
         assert sf.basename == "data.parquet"
 
     def test_is_frozen(self, tmp_path: Path) -> None:
         """ScannedFile is immutable (frozen dataclass)."""
-        from portolan_cli.scan.core import FormatType, ScannedFile
+        from portolan_cli.scan.core import ScannedFile
 
         sf = ScannedFile(
             path=tmp_path / "data.parquet",
             relative_path="data.parquet",
             extension=".parquet",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             size_bytes=1024,
         )
         with pytest.raises(AttributeError):
@@ -469,7 +468,7 @@ class TestScanResult:
 
     def test_classification_summary_counts_ready_as_geo_asset(self, tmp_path: Path) -> None:
         """ScanResult.classification_summary counts ready files as geo_asset."""
-        from portolan_cli.scan.core import FormatType, ScannedFile, ScanResult
+        from portolan_cli.scan.core import ScannedFile, ScanResult
 
         result = ScanResult(
             root=tmp_path,
@@ -478,14 +477,14 @@ class TestScanResult:
                     path=tmp_path / "a.geojson",
                     relative_path="a.geojson",
                     extension=".geojson",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     size_bytes=100,
                 ),
                 ScannedFile(
                     path=tmp_path / "b.geojson",
                     relative_path="b.geojson",
                     extension=".geojson",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     size_bytes=200,
                 ),
             ],
@@ -558,7 +557,6 @@ class TestScanResult:
     def test_to_dict_returns_json_serializable(self, tmp_path: Path) -> None:
         """ScanResult.to_dict returns JSON-serializable dictionary."""
         from portolan_cli.scan.core import (
-            FormatType,
             IssueType,
             ScanIssue,
             ScannedFile,
@@ -573,7 +571,7 @@ class TestScanResult:
                     path=tmp_path / "data.parquet",
                     relative_path="data.parquet",
                     extension=".parquet",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     size_bytes=1024,
                 )
             ],
@@ -616,7 +614,6 @@ class TestScanResult:
     def test_to_dict_includes_proposed_fixes(self, tmp_path: Path) -> None:
         """ScanResult.to_dict includes proposed_fixes when present."""
         from portolan_cli.scan.core import (
-            FormatType,
             IssueType,
             ScanIssue,
             ScannedFile,
@@ -648,7 +645,7 @@ class TestScanResult:
                     path=tmp_path / "data.parquet",
                     relative_path="data.parquet",
                     extension=".parquet",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     size_bytes=1024,
                 )
             ],
@@ -669,7 +666,6 @@ class TestScanResult:
     def test_to_dict_includes_applied_fixes(self, tmp_path: Path) -> None:
         """ScanResult.to_dict includes applied_fixes when present."""
         from portolan_cli.scan.core import (
-            FormatType,
             IssueType,
             ScanIssue,
             ScannedFile,
@@ -701,7 +697,7 @@ class TestScanResult:
                     path=tmp_path / "data.parquet",
                     relative_path="data.parquet",
                     extension=".parquet",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     size_bytes=1024,
                 )
             ],
@@ -822,22 +818,22 @@ class TestBasicScan:
 
     def test_scan_detects_vector_format(self, fixtures_dir: Path) -> None:
         """scan_directory correctly identifies vector formats."""
-        from portolan_cli.scan.core import FormatType, scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         result = scan_directory(fixtures_dir / "clean_flat")
 
         # All files in clean_flat are vector (parquet, geojson)
         for f in result.ready:
-            assert f.format_type == FormatType.VECTOR
+            assert f.format_type == "vector"
 
     def test_scan_detects_raster_format(self, fixtures_dir: Path) -> None:
         """scan_directory correctly identifies raster formats."""
-        from portolan_cli.scan.core import FormatType, scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         result = scan_directory(fixtures_dir / "mixed_formats")
 
         formats = {f.extension: f.format_type for f in result.ready}
-        assert formats.get(".tif") == FormatType.RASTER or formats.get(".tiff") == FormatType.RASTER
+        assert formats.get(".tif") == "raster" or formats.get(".tiff") == "raster"
 
     def test_scan_complete_shapefile_counts_as_one(self, fixtures_dir: Path) -> None:
         """scan_directory on complete_shapefile counts .shp as one file, sidecars skipped."""
@@ -1352,7 +1348,7 @@ class TestGeoParquetDetection:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        from portolan_cli.scan.core import FormatType, scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         # Create a minimal GeoParquet file with geo metadata
         table = pa.table({"name": ["test"], "value": [1]})
@@ -1369,7 +1365,7 @@ class TestGeoParquetDetection:
         # Should be recognized as a ready file
         assert len(result.ready) == 1
         assert result.ready[0].extension == ".parquet"
-        assert result.ready[0].format_type == FormatType.VECTOR
+        assert result.ready[0].format_type == "vector"
 
     def test_regular_parquet_file_is_skipped(self, tmp_path: Path) -> None:
         """Regular Parquet files (without 'geo' metadata) are skipped."""

@@ -15,11 +15,12 @@ from portolan_cli.extract.carto.discovery import (
     CartoTableInfo,
 )
 from portolan_cli.extract.carto.orchestrator import (
+    CartoLayerSource,
     ExtractionOptions,
-    _build_report,
     extract_carto_catalog,
 )
 from portolan_cli.extract.common.report import LayerResult, save_report
+from tests.support.extract import make_report
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -41,6 +42,16 @@ def _patch_discovery(monkeypatch: pytest.MonkeyPatch, tables: list[CartoTableInf
     monkeypatch.setattr(
         orchestrator, "table_has_geometry", lambda url, name, **k: geom_by_name[name]
     )
+
+
+def _record_fetches(monkeypatch: pytest.MonkeyPatch, extracted: list[str]) -> None:
+    """Replace CartoLayerSource.fetch with a fake that records each table name."""
+
+    def fake_fetch(self: CartoLayerSource, url: str, layer: Any, dest: Path) -> int:
+        extracted.append(layer.name)
+        return 1
+
+    monkeypatch.setattr(CartoLayerSource, "fetch", fake_fetch)
 
 
 def test_extracts_non_spatial_tables_as_tabular(
@@ -119,10 +130,10 @@ def test_dry_run_marks_pending_without_extracting(
 ) -> None:
     _patch_discovery(monkeypatch, [CartoTableInfo("parcels", id=0, has_geometry=True)])
 
-    def fail_single(*a: Any, **k: Any) -> tuple[int, int, float]:
+    def fail_fetch(*a: Any, **k: Any) -> int:
         raise AssertionError("extraction must not run during dry-run")
 
-    monkeypatch.setattr(orchestrator, "_extract_single_table", fail_single)
+    monkeypatch.setattr(CartoLayerSource, "fetch", fail_fetch)
 
     report = extract_carto_catalog(
         "https://phl.carto.com", tmp_path, options=ExtractionOptions(dry_run=True)
@@ -144,7 +155,7 @@ def test_fallback_to_explicit_tables_on_discovery_error(
         lambda url, names, **k: _result([CartoTableInfo(names[0], id=0)]),
     )
     monkeypatch.setattr(orchestrator, "table_has_geometry", lambda url, name, **k: True)
-    monkeypatch.setattr(orchestrator, "_extract_single_table", lambda *a, **k: (1, 10, 0.1))
+    monkeypatch.setattr(CartoLayerSource, "fetch", lambda *a, **k: 1)
 
     report = extract_carto_catalog(
         "https://phl.carto.com",
@@ -180,9 +191,7 @@ def test_resume_skips_previously_succeeded_tables(
         ],
     )
     # Seed a prior report marking "done" as already extracted.
-    prior = _build_report(
-        "https://phl.carto.com/api/v2/sql",
-        "phl",
+    prior = make_report(
         [
             LayerResult(
                 id=0,
@@ -197,25 +206,23 @@ def test_resume_skips_previously_succeeded_tables(
                 attempts=1,
             )
         ],
+        "https://phl.carto.com/api/v2/sql",
     )
     save_report(prior, tmp_path / ".portolan" / "extraction-report.json")
 
     extracted: list[str] = []
 
-    def fake_extract(url: str, table: Any, path: Path, opts: Any) -> tuple[int, int, float]:
-        extracted.append(table.name)
-        return (1, 10, 0.1)
-
-    monkeypatch.setattr(orchestrator, "_extract_single_table", fake_extract)
+    _record_fetches(monkeypatch, extracted)
 
     report = extract_carto_catalog(
         "https://phl.carto.com", tmp_path, options=ExtractionOptions(resume=True, raw=True)
     )
 
-    assert extracted == ["todo"]  # "done" is skipped on resume
-    by_name = {layer.name: layer.status for layer in report.layers}
-    assert by_name["done"] == "skipped"
-    assert by_name["todo"] == "success"
+    assert extracted == ["todo"]  # "done" is not extracted again on resume
+    by_name = {layer.name: layer for layer in report.layers}
+    # The resumed run keeps the earlier result for "done" (shared driver rule).
+    assert by_name["done"] == prior.layers[0]
+    assert by_name["todo"].status == "success"
 
 
 def test_workers_gt_one_extracts_all_tables(
@@ -227,11 +234,7 @@ def test_workers_gt_one_extracts_all_tables(
     )
     extracted: list[str] = []
 
-    def fake_extract(url: str, table: Any, path: Path, opts: Any) -> tuple[int, int, float]:
-        extracted.append(table.name)
-        return (1, 10, 0.1)
-
-    monkeypatch.setattr(orchestrator, "_extract_single_table", fake_extract)
+    _record_fetches(monkeypatch, extracted)
 
     report = extract_carto_catalog(
         "https://phl.carto.com", tmp_path, options=ExtractionOptions(workers=3, raw=True)

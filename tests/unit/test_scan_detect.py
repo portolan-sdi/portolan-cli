@@ -210,21 +210,21 @@ class TestDualFormat:
 
     def test_detect_dual_formats_finds_same_basename(self, tmp_path: Path) -> None:
         """detect_dual_formats finds files with same basename, different extensions."""
-        from portolan_cli.scan.core import FormatType, ScannedFile
+        from portolan_cli.scan.core import ScannedFile
 
         files = [
             ScannedFile(
                 path=tmp_path / "boundaries.geojson",
                 relative_path="boundaries.geojson",
                 extension=".geojson",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=100,
             ),
             ScannedFile(
                 path=tmp_path / "boundaries.parquet",
                 relative_path="boundaries.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=200,
             ),
         ]
@@ -237,21 +237,21 @@ class TestDualFormat:
 
     def test_detect_dual_formats_ignores_different_basenames(self, tmp_path: Path) -> None:
         """detect_dual_formats ignores files with different basenames."""
-        from portolan_cli.scan.core import FormatType, ScannedFile
+        from portolan_cli.scan.core import ScannedFile
 
         files = [
             ScannedFile(
                 path=tmp_path / "boundaries.geojson",
                 relative_path="boundaries.geojson",
                 extension=".geojson",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=100,
             ),
             ScannedFile(
                 path=tmp_path / "census.parquet",
                 relative_path="census.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=200,
             ),
         ]
@@ -261,21 +261,21 @@ class TestDualFormat:
 
     def test_detect_dual_formats_ignores_cross_type_pairs(self, tmp_path: Path) -> None:
         """detect_dual_formats ignores vector/raster pairs (intentional pairing)."""
-        from portolan_cli.scan.core import FormatType, ScannedFile
+        from portolan_cli.scan.core import ScannedFile
 
         files = [
             ScannedFile(
                 path=tmp_path / "landcover.geojson",
                 relative_path="landcover.geojson",
                 extension=".geojson",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=100,
             ),
             ScannedFile(
                 path=tmp_path / "landcover.tif",
                 relative_path="landcover.tif",
                 extension=".tif",
-                format_type=FormatType.RASTER,
+                format_type="raster",
                 size_bytes=200,
             ),
         ]

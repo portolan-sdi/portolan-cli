@@ -52,15 +52,16 @@ from portolan_cli.collection_id import (
 from portolan_cli.constants import PARQUET_EXTENSION, WINDOWS_RESERVED_NAMES
 
 # Import format detection from formats.py (delegate to upstream)
+from portolan_cli.format_families import RASTER, VECTOR, is_geojson
 from portolan_cli.formats import (
     CloudNativeStatus,
     FormatInfo,
-    FormatType,
-    _detect_json_type,
+    detect_format,
     get_cloud_native_status,
     is_geoparquet,
     is_valid_parquet,
 )
+from portolan_cli.plugins.formats import plugin_extensions
 from portolan_cli.scan.classify import (
     STAC_FILENAMES,
     FileCategory,
@@ -228,7 +229,7 @@ class ScannedFile:
     path: Path
     relative_path: str
     extension: str
-    format_type: FormatType
+    format_type: str | None
     size_bytes: int
     inferred_collection_id: str = ""
     format_status: CloudNativeStatus = CloudNativeStatus.CLOUD_NATIVE
@@ -335,7 +336,7 @@ class ScanResult:
                     "path": str(f.path),
                     "relative_path": f.relative_path,
                     "extension": f.extension,
-                    "format_type": f.format_type.value,
+                    "format_type": f.format_type or "unknown",
                     "size_bytes": f.size_bytes,
                     "inferred_collection_id": f.inferred_collection_id or None,
                     "format_status": f.format_status.value if f.format_status else None,
@@ -406,13 +407,15 @@ class _ScanContext:
     # For detecting duplicates and multiple primaries
     basenames: dict[str, list[Path]] = field(default_factory=lambda: defaultdict(list))
     primaries_by_dir: dict[Path, list[Path]] = field(default_factory=lambda: defaultdict(list))
-    formats_by_dir: dict[Path, set[FormatType]] = field(default_factory=lambda: defaultdict(set))
+    formats_by_dir: dict[Path, set[str]] = field(default_factory=lambda: defaultdict(set))
     # Track shapefile sidecars
     shapefile_sidecars: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
     # Track special formats (FileGDB, etc.)
     special_formats: list[SpecialFormat] = field(default_factory=list)
     # Progress callback (called for each directory scanned)
     progress_callback: Callable[[], None] | None = None
+    # Catalog that holds the scanned directory, for a conversion.handlers pin
+    catalog_root: Path | None = None
 
 
 # =============================================================================
@@ -430,15 +433,15 @@ def _is_sidecar_extension(ext: str) -> bool:
     return ext.lower() in SHAPEFILE_ALL_SIDECARS
 
 
-def _get_format_type(ext: str) -> FormatType:
+def _get_format_type(ext: str) -> str:
     """Get the format type (vector/raster) for an extension."""
     ext_lower = ext.lower()
     if ext_lower in RECOGNIZED_VECTOR_EXTENSIONS:
-        return FormatType.VECTOR
+        return VECTOR
     if ext_lower in RECOGNIZED_RASTER_EXTENSIONS:
-        return FormatType.RASTER
+        return RASTER
     # Default to vector for unknown (shouldn't happen with proper filtering)
-    return FormatType.VECTOR
+    return VECTOR
 
 
 def _is_hidden(name: str) -> bool:
@@ -512,7 +515,7 @@ def _infer_collection_id_from_relative_path(relative_path: str) -> str:
     return "/".join(non_partition_segments)
 
 
-def _get_format_info(path: Path, ext: str) -> FormatInfo:
+def _get_format_info(path: Path, ext: str, catalog_root: Path | None = None) -> FormatInfo:
     """Get cloud-native status and format info for a file.
 
     This is a lightweight wrapper around get_cloud_native_status() that
@@ -521,12 +524,13 @@ def _get_format_info(path: Path, ext: str) -> FormatInfo:
     Args:
         path: Path to the file.
         ext: File extension (lowercase).
+        catalog_root: Catalog root, for a ``conversion.handlers`` pin.
 
     Returns:
         FormatInfo with status, display_name, target_format, and error_message.
     """
     try:
-        return get_cloud_native_status(path)
+        return get_cloud_native_status(path, catalog_root)
     except (FileNotFoundError, IsADirectoryError):
         # Return a fallback for edge cases
         from portolan_cli.formats import FormatInfo as RuntimeFormatInfo
@@ -1194,6 +1198,18 @@ def _discover_files(
     yield from _walk_with_depth(root)
 
 
+def _other_format_type(path: Path, ext: str, catalog_root: Path | None = None) -> str | None:
+    """Return the family of a recognized or plugin extension, or None to skip.
+
+    A plugin format handler reads its own extensions (#947).
+    """
+    if _is_recognized_extension(ext):
+        return _get_format_type(ext)
+    if ext in plugin_extensions():
+        return detect_format(path, catalog_root)
+    return None
+
+
 def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
     """Process a single discovered file or FileGDB directory."""
     # Check for FileGDB directory FIRST - these are yielded by _discover_files
@@ -1214,7 +1230,7 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
             path=path,
             relative_path=relative_path,
             extension=".gdb",
-            format_type=FormatType.VECTOR,
+            format_type=VECTOR,
             size_bytes=size,
             inferred_collection_id=inferred_collection_id,
             format_status=CloudNativeStatus.CONVERTIBLE,
@@ -1226,7 +1242,7 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
         # Track for duplicate/multi-asset detection
         ctx.basenames[path.name.lower()].append(path)
         ctx.primaries_by_dir[path.parent].append(path)
-        ctx.formats_by_dir[path.parent].add(FormatType.VECTOR)
+        ctx.formats_by_dir[path.parent].add(VECTOR)
         return
 
     ext = path.suffix.lower()
@@ -1290,7 +1306,7 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
             )
             return
         # It's GeoParquet - treat as vector format
-        format_type = FormatType.VECTOR
+        format_type = VECTOR
     elif ext == ".json":
         # Handle .json files - need content inspection for GeoJSON detection
         # Issue #256: GeoJSON files are often saved with .json extension
@@ -1323,7 +1339,7 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
                 )
             )
             return
-        if _detect_json_type(path) != FormatType.VECTOR:
+        if not is_geojson(path):
             # Plain JSON, not GeoJSON - skip with informative message
             # We override classify_file here because we have specific knowledge:
             # we inspected the content and determined it's not GeoJSON.
@@ -1338,21 +1354,21 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
             )
             return
         # It's GeoJSON in a .json file - treat as vector format
-        format_type = FormatType.VECTOR
-    elif _is_recognized_extension(ext):
-        # Get format type for other recognized extensions
-        format_type = _get_format_type(ext)
+        format_type = VECTOR
     else:
-        # Unrecognized extension
-        ctx.skipped.append(_make_skipped_file(ctx, path, size))
-        return
+        other_type = _other_format_type(path, ext, ctx.catalog_root)
+        if other_type is None:
+            # Unrecognized extension
+            ctx.skipped.append(_make_skipped_file(ctx, path, size))
+            return
+        format_type = other_type
 
     # Compute relative path and inferred collection ID
     relative_path = _get_relative_path(path, ctx.root)
     inferred_collection_id = _infer_collection_id_from_relative_path(relative_path)
 
     # Get format info for cloud-native status and display name
-    format_info = _get_format_info(path, ext)
+    format_info = _get_format_info(path, ext, ctx.catalog_root)
 
     # Create scanned file
     scanned = ScannedFile(
@@ -1420,8 +1436,15 @@ def scan_directory(
     if options is None:
         options = ScanOptions()
 
-    # Create scan context
-    ctx = _ScanContext(root=path, options=options, progress_callback=progress_callback)
+    from portolan_cli.catalog import find_catalog_root
+
+    # Create scan context. A scan outside a catalog reads no handler pin.
+    ctx = _ScanContext(
+        root=path,
+        options=options,
+        progress_callback=progress_callback,
+        catalog_root=find_catalog_root(path, require_operational=False),
+    )
 
     # Discover and process files
     for file_path, file_size in _discover_files(ctx):

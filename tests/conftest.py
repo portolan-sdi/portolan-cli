@@ -13,12 +13,16 @@ except ModuleNotFoundError:
     pass  # Iceberg tests don't need matplotlib
 
 import os
+import sys
+from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
 
 import pytest
+
+from tests.network_guard import NO_PROXY_KEYS, PROXY_KEYS, NetworkGuard, SentinelProxy
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -39,8 +43,13 @@ _MUTMUT_ENV_KEY = "MUTANT_UNDER_TEST"
 
 # botocore reads ~/.aws itself, so these point it at an empty directory. A test
 # that clears the environment must keep them, or the developer's real profiles
-# reach the code under test.
-_AWS_ISOLATION_KEYS = ("AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE")
+# reach the code under test. It must also keep the IMDS switch, or botocore
+# asks 169.254.169.254 for instance credentials.
+_AWS_ISOLATION_KEYS = (
+    "AWS_CONFIG_FILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_EC2_METADATA_DISABLED",
+)
 
 # mutmut also re-invokes Hypothesis tests through its own runner, once per
 # mutant in the same process, so class-based property tests see more than one
@@ -116,14 +125,50 @@ def cleared_environ(**overrides: str) -> Iterator[None]:
     Drop-in replacement for ``mock.patch.dict(os.environ, {}, clear=True)`` that
     keeps the environment sandbox-stable under mutation testing. It also keeps
     the AWS isolation vars, so botocore cannot read the developer's real
-    profiles. Pass keyword ``overrides`` to seed specific variables into the
-    otherwise-empty environment.
+    profiles. It keeps the proxy vars of the network guard, so obstore and GDAL
+    cannot reach a remote host. Pass keyword ``overrides`` to seed specific
+    variables into the otherwise-empty environment.
     """
-    keep = (_MUTMUT_ENV_KEY, *_AWS_ISOLATION_KEYS)
+    keep = (_MUTMUT_ENV_KEY, *_AWS_ISOLATION_KEYS, *PROXY_KEYS, *NO_PROXY_KEYS)
     preserved = {k: v for k, v in os.environ.items() if k in keep}
     preserved.update(overrides)
     with mock.patch.dict(os.environ, preserved, clear=True):
         yield
+
+
+# geoparquet-io installs DuckDB extensions on first use. The network guard
+# refuses that download, so a fresh CI runner could load none of them. Install
+# them once, before any test starts. Under xdist only the controller does it,
+# before it starts the workers. An installed extension costs no download.
+# Each entry is (name, repository). None is the core repository. geoparquet-io
+# loads h3, geography (s2), and a5 from the community repository.
+_DUCKDB_EXTENSIONS: tuple[tuple[str, str | None], ...] = (
+    ("spatial", None),
+    ("httpfs", None),
+    ("encodings", None),
+    ("h3", "community"),
+    ("geography", "community"),
+    ("a5", "community"),
+)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Install the DuckDB extensions before the network guard starts."""
+    if hasattr(config, "workerinput"):
+        return
+    import duckdb
+
+    connection = duckdb.connect()
+    try:
+        for name, repository in _DUCKDB_EXTENSIONS:
+            try:
+                connection.install_extension(name, repository=repository)
+            except duckdb.Error as exc:
+                # Offline, or no build for this platform. A test that needs the
+                # extension then fails and names extensions.duckdb.org.
+                print(f"Could not install the DuckDB {name} extension: {exc}", file=sys.stderr)
+    finally:
+        connection.close()
 
 
 # mutmut drives pytest in-process and runs the suite several times per
@@ -694,3 +739,127 @@ def isolate_aws_config(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Non
         },
     ):
         yield
+
+
+@pytest.fixture(scope="session")
+def _sentinel_proxy() -> Iterator[SentinelProxy]:
+    yield from SentinelProxy().run()
+
+
+@pytest.fixture(autouse=True)
+def network_guard(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    _sentinel_proxy: SentinelProxy,
+) -> Iterator[NetworkGuard]:
+    """Fail a test without the network marker that connects to a remote host.
+
+    ``tests/network_guard.py`` describes the two layers. A test that expects a
+    block can read ``collect()`` and clear ``attempts``.
+    """
+    guard = NetworkGuard(test=request.node.nodeid, sentinel=_sentinel_proxy)
+    if request.node.get_closest_marker("network") is not None:
+        yield guard
+        return
+    guard.install(monkeypatch)
+    yield guard
+    marker = request.node.get_closest_marker("refused_hosts")
+    unexpected = guard.unexpected(marker.args if marker is not None else ())
+    if unexpected:
+        counts = Counter(unexpected)
+        targets = ", ".join(f"{t} ({n}x)" if n > 1 else t for t, n in counts.items())
+        pytest.fail(
+            f"{guard.test} tried to reach the network: {targets}. "
+            "Mock the call, or mark the test with @pytest.mark.network.",
+            pytrace=False,
+        )
+
+
+@pytest.fixture(autouse=True)
+def no_basemap_tiles(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Draw thumbnails without basemap tiles in a test without the network marker.
+
+    ``add_basemap`` fetches the tiles from the provider and logs a failure as a
+    warning, so about 170 tests fetched Carto tiles on each run without notice.
+    A test of the basemap code patches ``_ensure_contextily`` itself, and its
+    patch replaces this one.
+    """
+    if request.node.get_closest_marker("network") is not None:
+        return
+    try:
+        from portolan_cli.viz import thumbnail
+    except ImportError:
+        return  # the environment has no thumbnail extra, so no test draws one
+    monkeypatch.setattr(thumbnail, "_ensure_contextily", lambda: None)
+
+
+@pytest.fixture
+def no_extract_side_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the requests the extract orchestrators make next to the feature requests.
+
+    Each request logs a failure and goes on, so a test that mocks only the
+    feature requests still reaches the remote host:
+
+    - ``extract arcgis`` fetches the ESRI layer JSON for ``drawingInfo``.
+    - ``extract arcgis`` auto-init fetches the layer details for a description.
+    - ``extract wfs`` calls WMS GetStyles and GetLegendGraphic.
+    - ``extract wfs`` negotiates the WFS version with GetCapabilities.
+
+    Each stub returns the result that a failed request gives: no style, no
+    layer details, and WFS 1.1.0. A test of one of these requests patches it
+    itself, and its patch replaces this one.
+    """
+    from geoparquet_io.core import wfs as gpio_wfs  # type: ignore[import-untyped]
+
+    from portolan_cli.extract.arcgis import discovery
+    from portolan_cli.extract.arcgis import orchestrator as arcgis
+    from portolan_cli.extract.wfs import orchestrator as wfs
+
+    monkeypatch.setattr(arcgis, "extract_esri_style", lambda *a, **k: None)
+    # ArcGISLayerSource.layer_metadata imports it inside the method.
+    monkeypatch.setattr(discovery, "fetch_layer_details", lambda *a, **k: {})
+    monkeypatch.setattr(wfs, "extract_wms_style", lambda *a, **k: None)
+    monkeypatch.setattr(wfs, "extract_wms_legend", lambda *a, **k: None)
+    # _negotiate_version imports it inside the function.
+    monkeypatch.setattr(gpio_wfs, "negotiate_wfs_version", lambda *a, **k: ("1.1.0", None))
+
+
+@pytest.fixture(autouse=True)
+def isolate_installed_plugins(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    """Load no outside plugin, except in tests marked ``plugin`` (#947).
+
+    The plugin docs install the example plugin into the project environment.
+    It then stays installed, and its hooks write fields into every STAC file
+    that `add` produces. Without this fixture a developer machine and CI run
+    different tests. The ``installed`` and ``register_plugin`` fixtures clear
+    the variable again for the tests that control the plugin set.
+    """
+    from portolan_cli.plugins import manager
+
+    if request.node.get_closest_marker("plugin") is None:
+        monkeypatch.setenv(manager.ENV_VAR, "none")
+    manager.reset_plugin_manager()
+    yield
+    manager.reset_plugin_manager()
+
+
+@pytest.fixture
+def register_plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., None]]:
+    """Register plugin objects on a fresh plugin manager (#947).
+
+    The manager sees no installed plugin, so only built-ins and the objects a
+    test registers take part.
+    """
+    from portolan_cli.plugins import manager
+
+    monkeypatch.setattr(manager, "entry_points", lambda *, group: [])
+    monkeypatch.delenv(manager.ENV_VAR, raising=False)
+    manager.reset_plugin_manager()
+
+    def _register(plugin: object, name: str = "test-plugin") -> None:
+        manager.get_plugin_manager().register(plugin, name=name)
+
+    yield _register
+    manager.reset_plugin_manager()

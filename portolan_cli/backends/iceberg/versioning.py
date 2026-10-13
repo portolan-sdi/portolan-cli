@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.versions import Asset, SchemaInfo, Version, parse_version
+from portolan_cli.api import Asset, SchemaInfo, Version, parse_version
 
 if TYPE_CHECKING:
     from pyiceberg.table.snapshots import Snapshot

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "portolan-example"
+version = "0.1.0"
+description = "Example Portolan plugin. CI installs it and calls every hook."
+requires-python = ">=3.10"
+license = "Apache-2.0"
+# A published plugin declares its dependency on the CLI:
+#   dependencies = ["portolan-cli>=0.9"]
+# This copy leaves it out. CI installs it next to the checkout under test,
+# and a declared dependency could pull a released portolan-cli over it.
+dependencies = []
+
+# --8<-- [start:entry-points]
+[project.entry-points."portolan"]
+example = "portolan_example.hooks"
+
+[project.entry-points."portolan.commands"]
+example = "portolan_example.cli:group"
+# --8<-- [end:entry-points]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/portolan_example"]

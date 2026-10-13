@@ -139,6 +139,7 @@ prek install                            # Install git hooks (requires: uv tool i
 # Development
 uv run pytest                           # Run tests
 uv run pytest -m unit                   # Run only unit tests
+uv run python scripts/affected_tests.py --run -n 4  # Run tests this change can affect
 uv run pytest --cov-report=html         # Coverage report
 uv run ruff check .                     # Lint
 uv run ruff format .                    # Format
@@ -231,6 +232,7 @@ Always research before implementing:
 @pytest.mark.network     # Requires network (mocked locally, real in CI nightly)
 @pytest.mark.realdata    # Uses real-world fixtures from tests/fixtures/realdata/ (tests orchestration, not geometry)
 @pytest.mark.snapshot    # Compares output against golden files
+@pytest.mark.plugin      # Needs the example plugin installed (tests/plugins/portolan_example)
 @pytest.mark.benchmark   # Performance measurement, tracked over time
 @pytest.mark.slow        # Takes > 5 seconds
 @pytest.mark.e2e         # End-to-end tests requiring Docker (REST catalog + RustFS)
@@ -267,7 +269,7 @@ See `context/shared/known-issues/` for tracked issues. Key ones:
 | [geoparquet-io Windows segfault](context/shared/known-issues/geoparquet-io-windows-segfault.md) | Crashes on malformed input; test skipped on Windows |
 | [geoparquet-io macOS abort](context/shared/known-issues/geoparquet-io-macos-abort.md) | Aborts on multilayer conversion; test skipped on macOS |
 | [PySTAC absolute paths](context/shared/known-issues/pystac-absolute-paths.md) | Leaks local paths in output; use manual JSON construction |
-| [DuckDB "Query interrupted" transient](context/shared/known-issues/duckdb-query-interrupted-transient.md) | Rare (~1/1000) transient interrupt during bulk conversion; bounded retry in `_convert_vector` |
+| [DuckDB "Query interrupted" transient](context/shared/known-issues/duckdb-query-interrupted-transient.md) | Rare (~1/1000) transient interrupt during bulk conversion; bounded retry in `run_with_transient_convert_retry` |
 | [ESRI GDB rasters](context/shared/known-issues/esri-gdb-rasters.md) | Unreadable without GDAL and undetected; `.gdb` routes to the vector pipeline |
 | [geoparquet-io drops CRS on write](context/shared/known-issues/geoparquet-io-write-drops-crs.md) | Resolved in geoparquet-io 1.4.0. The rewrite fidelity gate stays, because it guards a destructive operation |
 | [DuckDB 1.5.5 ST_Read_Meta segfault](context/shared/known-issues/duckdb-155-st-read-meta-segfault.md) | Resolved in DuckDB 1.5.6. The `duckdb>=1.5.6` floor keeps 1.5.5 out |

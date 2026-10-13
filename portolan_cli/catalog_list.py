@@ -18,7 +18,7 @@ from pathlib import Path, PurePath
 
 from portolan_cli.config import get_ignored_files
 from portolan_cli.constants import MANAGED_FILES
-from portolan_cli.format_types import FORMAT_DISPLAY_NAMES, FormatType, _detect_json_type
+from portolan_cli.format_families import FORMAT_DISPLAY_NAMES, is_geojson
 from portolan_cli.stac_links import catalog_collections
 from portolan_cli.versions import read_versions
 
@@ -194,7 +194,7 @@ def _get_format_display_name(filename: str, file_path: Path | None = None) -> st
     # Special case: .json files need content inspection to distinguish
     # GeoJSON from plain JSON (PR #261)
     if ext == ".json" and file_path is not None and file_path.exists():
-        if _detect_json_type(file_path) == FormatType.VECTOR:
+        if is_geojson(file_path):
             return "GeoJSON"
         return "JSON"
 

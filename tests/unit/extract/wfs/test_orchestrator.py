@@ -11,48 +11,34 @@ from unittest.mock import patch
 
 import pytest
 
-from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult
+from portolan_cli.extract.common.report import ExtractionReport, LayerResult
+from portolan_cli.extract.common.source import (
+    Discovery,
+    LayerRef,
+    LayerSourceOptions,
+    build_report,
+    seed_collections,
+    slugify,
+)
+from portolan_cli.extract.wfs.discovery import LayerInfo
 from portolan_cli.extract.wfs.orchestrator import (
     ExtractionOptions,
+    WFSLayer,
+    WFSLayerSource,
     _assign_slugs,
-    _slugify,
     extract_wfs_catalog,
 )
+from tests.support.extract import make_wfs_discovery, make_wfs_layer
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = pytest.mark.unit
+    from portolan_cli.extract.common.progress import ExtractionProgress
 
+make_layer_info = make_wfs_layer
+make_discovery_result = make_wfs_discovery
 
-def make_discovery_result(
-    layers: list[LayerInfo],
-    service_url: str = "https://example.com/wfs",
-) -> WFSDiscoveryResult:
-    """Create a WFSDiscoveryResult for testing."""
-    return WFSDiscoveryResult(
-        service_url=service_url,
-        layers=layers,
-        service_title="Test WFS Service",
-        service_abstract="A test WFS service",
-        provider="Test Provider",
-        keywords=["test", "wfs"],
-        contact_name="Test Contact",
-        access_constraints=None,
-        fees=None,
-    )
-
-
-def make_layer_info(name: str, layer_id: int = 0) -> LayerInfo:
-    """Create a LayerInfo for testing."""
-    return LayerInfo(
-        name=name,
-        typename=name,
-        title=name.title(),
-        abstract=f"Description of {name}",
-        bbox=None,
-        id=layer_id,
-    )
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("no_extract_side_requests")]
 
 
 class TestExtractionOptions:
@@ -74,46 +60,48 @@ class TestExtractionOptions:
 
 
 class TestExtractSingleLayer:
-    """Tests for _extract_single_layer gpio delegation (Issue #529)."""
+    """Tests for WFSLayerSource.fetch gpio delegation (Issue #529)."""
+
+    @staticmethod
+    def _fetch(options: ExtractionOptions, name: str, dest: Path) -> None:
+        layer = make_layer_info(name, 0)
+        ref = LayerRef(id=0, name=name, data=WFSLayer(layer, "2.0.0"))
+        WFSLayerSource(options).fetch("https://example.com/wfs", ref, dest)
 
     def test_passes_page_size_and_auto_tile_to_gpio(self, tmp_path: Path) -> None:
         """page_size and auto_tile from options are forwarded to gpio."""
-        from portolan_cli.extract.wfs.orchestrator import _extract_single_layer
-
-        layer = make_layer_info("buildings", 0)
         options = ExtractionOptions(page_size=100000, auto_tile=True)
 
         with patch("geoparquet_io.core.wfs.convert_wfs_to_geoparquet") as mock_convert:
-            _extract_single_layer(
-                service_url="https://example.com/wfs",
-                layer=layer,
-                output_path=tmp_path / "buildings.parquet",
-                options=options,
-                negotiated_version="2.0.0",
-            )
+            self._fetch(options, "buildings", tmp_path / "buildings.parquet")
 
         mock_convert.assert_called_once()
         kwargs = mock_convert.call_args.kwargs
         assert kwargs["page_size"] == 100000
         assert kwargs["auto_tile"] is True
+        assert kwargs["version"] == "2.0.0"
 
     def test_auto_tile_disabled_is_forwarded(self, tmp_path: Path) -> None:
         """auto_tile=False is forwarded so users can opt out."""
-        from portolan_cli.extract.wfs.orchestrator import _extract_single_layer
-
-        layer = make_layer_info("roads", 1)
         options = ExtractionOptions(auto_tile=False)
 
         with patch("geoparquet_io.core.wfs.convert_wfs_to_geoparquet") as mock_convert:
-            _extract_single_layer(
-                service_url="https://example.com/wfs",
-                layer=layer,
-                output_path=tmp_path / "roads.parquet",
-                options=options,
-                negotiated_version="2.0.0",
-            )
+            self._fetch(options, "roads", tmp_path / "roads.parquet")
 
         assert mock_convert.call_args.kwargs["auto_tile"] is False
+
+    def test_empty_layer_error_becomes_empty_layer(self, tmp_path: Path) -> None:
+        """gpio's 'No features returned' error becomes EmptyLayerError (Issue #450)."""
+        from portolan_cli.extract.common.source import EmptyLayerError
+
+        with (
+            patch(
+                "geoparquet_io.core.wfs.convert_wfs_to_geoparquet",
+                side_effect=RuntimeError("No features returned from WFS service for layer 'x'."),
+            ),
+            pytest.raises(EmptyLayerError, match="No features returned"),
+        ):
+            self._fetch(ExtractionOptions(), "x", tmp_path / "x.parquet")
 
 
 class TestExtractWfsCatalog:
@@ -279,7 +267,7 @@ class TestExtractWfsCatalogListMode:
 
 
 class TestWFSMetadataSeeding:
-    """Tests for WFS metadata seeding functions."""
+    """Tests for WFS metadata seeding through the shared driver."""
 
     def test_report_metadata_to_wfs_metadata_conversion(self) -> None:
         """Converts MetadataExtracted to WFSMetadata correctly."""
@@ -305,263 +293,101 @@ class TestWFSMetadataSeeding:
         assert wfs_metadata.keywords == ["test", "wfs"]
         assert wfs_metadata.access_constraints == "CC-BY-4.0"
 
-    def test_seed_metadata_from_extraction_creates_file(self, tmp_path: Path) -> None:
-        """Service-level metadata seeding creates catalog metadata.yaml."""
-        from portolan_cli.extract.common.report import (
-            ExtractionReport,
-            ExtractionSummary,
-            MetadataExtracted,
-        )
-        from portolan_cli.extract.wfs.orchestrator import _seed_metadata_from_extraction
+    def test_discovery_seeds_catalog_metadata(self, tmp_path: Path) -> None:
+        """The discovered service metadata seeds the catalog metadata.yaml."""
+        from portolan_cli.extract.common.orchestrator_base import seed_catalog_metadata
 
-        # Create .portolan directory (normally created by extract_wfs_catalog)
         (tmp_path / ".portolan").mkdir()
+        with (
+            patch("portolan_cli.extract.wfs.orchestrator.discover_layers") as mock_discover,
+            patch("portolan_cli.extract.wfs.orchestrator._negotiate_version", return_value="2.0.0"),
+        ):
+            mock_discover.return_value = make_discovery_result([make_layer_info("roads", 0)])
+            found = WFSLayerSource().discover("https://example.com/wfs", LayerSourceOptions())
 
-        report = ExtractionReport(
-            extraction_date="2024-01-01T00:00:00Z",
-            source_url="https://example.com/wfs",
-            portolan_version="0.1.0",
-            gpio_version="1.0.0",
-            metadata_extracted=MetadataExtracted(
-                source_url="https://example.com/wfs",
-                description="Test WFS Service",
-                attribution="Test Provider",
-                keywords=["test"],
-                contact_name=None,
-                processing_notes=None,
-                known_issues=None,
-                license_info_raw=None,
-            ),
-            layers=[],
-            summary=ExtractionSummary(
-                total_layers=0,
-                succeeded=0,
-                failed=0,
-                skipped=0,
-                empty=0,
-                total_features=0,
-                total_size_bytes=0,
-                total_duration_seconds=0.0,
-            ),
+        seed_catalog_metadata(tmp_path, found.catalog_seed)
+
+        content = (tmp_path / ".portolan" / "metadata.yaml").read_text()
+        assert "Test Provider" in content
+
+    @staticmethod
+    def _report(name: str, status: str, output_path: str) -> ExtractionReport:
+        return build_report(
+            Discovery(source_url="https://example.com/wfs", layers=[]),
+            [
+                LayerResult(
+                    id=0,
+                    name=name,
+                    status=status,
+                    features=100 if status == "success" else None,
+                    size_bytes=1000 if status == "success" else None,
+                    duration_seconds=1.0 if status == "success" else None,
+                    output_path=output_path,
+                    warnings=[],
+                    error=None if status == "success" else "Connection timeout",
+                    attempts=1,
+                )
+            ],
         )
 
-        _seed_metadata_from_extraction(tmp_path, report)
-
-        metadata_path = tmp_path / ".portolan" / "metadata.yaml"
-        assert metadata_path.exists()
-        content = metadata_path.read_text()
-        assert "Test Provider" in content
+    @staticmethod
+    def _seed(tmp_path: Path, info: LayerInfo, path: str, report: ExtractionReport) -> None:
+        discovery = Discovery(
+            source_url="https://example.com/wfs",
+            layers=[LayerRef(id=info.id, name=info.name, path=path, data=WFSLayer(info, "2.0.0"))],
+        )
+        seed_collections(WFSLayerSource(), discovery, tmp_path, report)
 
     def test_seed_collection_metadata_wfs_creates_files(self, tmp_path: Path) -> None:
         """Collection-level metadata seeding creates per-collection metadata.yaml."""
-        from portolan_cli.extract.common.report import (
-            ExtractionReport,
-            ExtractionSummary,
-            LayerResult,
-            MetadataExtracted,
-        )
-        from portolan_cli.extract.wfs.orchestrator import _seed_collection_metadata_wfs
-
-        # Create collection directory structure
         collection_dir = tmp_path / "buildings_abc123"
-        collection_dir.mkdir()
-        (collection_dir / ".portolan").mkdir()
-
-        discovery = make_discovery_result(
-            [
-                LayerInfo(
-                    name="ns:buildings",
-                    typename="ns:buildings",
-                    title="Buildings Layer",
-                    abstract="All buildings in the city",
-                    bbox=None,
-                    id=0,
-                ),
-            ]
+        (collection_dir / ".portolan").mkdir(parents=True)
+        info = LayerInfo(
+            name="ns:buildings",
+            typename="ns:buildings",
+            title="Buildings Layer",
+            abstract="All buildings in the city",
+            bbox=None,
+            id=0,
         )
 
-        report = ExtractionReport(
-            extraction_date="2024-01-01T00:00:00Z",
-            source_url="https://example.com/wfs",
-            portolan_version="0.1.0",
-            gpio_version="1.0.0",
-            metadata_extracted=MetadataExtracted(
-                source_url="https://example.com/wfs",
-                description=None,
-                attribution=None,
-                keywords=None,
-                contact_name=None,
-                processing_notes=None,
-                known_issues=None,
-                license_info_raw=None,
-            ),
-            layers=[
-                LayerResult(
-                    id=0,
-                    name="ns:buildings",
-                    status="success",
-                    features=100,
-                    size_bytes=1000,
-                    duration_seconds=1.0,
-                    output_path="buildings_abc123/buildings_abc123.parquet",
-                    warnings=[],
-                    error=None,
-                    attempts=1,
-                ),
-            ],
-            summary=ExtractionSummary(
-                total_layers=1,
-                succeeded=1,
-                failed=0,
-                skipped=0,
-                empty=0,
-                total_features=100,
-                total_size_bytes=1000,
-                total_duration_seconds=1.0,
-            ),
+        self._seed(
+            tmp_path,
+            info,
+            "buildings_abc123",
+            self._report("ns:buildings", "success", "buildings_abc123/buildings_abc123.parquet"),
         )
 
-        _seed_collection_metadata_wfs(tmp_path, report, discovery)
-
-        metadata_path = collection_dir / ".portolan" / "metadata.yaml"
-        assert metadata_path.exists()
-        content = metadata_path.read_text()
+        content = (collection_dir / ".portolan" / "metadata.yaml").read_text()
         assert "All buildings in the city" in content
         assert "Buildings Layer" in content
 
     def test_seed_collection_metadata_wfs_skips_failed_layers(self, tmp_path: Path) -> None:
         """Collection seeding skips failed layer results."""
-        from portolan_cli.extract.common.report import (
-            ExtractionReport,
-            ExtractionSummary,
-            LayerResult,
-            MetadataExtracted,
-        )
-        from portolan_cli.extract.wfs.orchestrator import _seed_collection_metadata_wfs
-
-        discovery = make_discovery_result([make_layer_info("failed_layer", 0)])
-
-        report = ExtractionReport(
-            extraction_date="2024-01-01T00:00:00Z",
-            source_url="https://example.com/wfs",
-            portolan_version="0.1.0",
-            gpio_version="1.0.0",
-            metadata_extracted=MetadataExtracted(
-                source_url="https://example.com/wfs",
-                description=None,
-                attribution=None,
-                keywords=None,
-                contact_name=None,
-                processing_notes=None,
-                known_issues=None,
-                license_info_raw=None,
-            ),
-            layers=[
-                LayerResult(
-                    id=0,
-                    name="failed_layer",
-                    status="failed",
-                    features=0,
-                    size_bytes=0,
-                    duration_seconds=0.0,
-                    output_path="",
-                    warnings=[],
-                    error="Connection timeout",
-                    attempts=3,
-                ),
-            ],
-            summary=ExtractionSummary(
-                total_layers=1,
-                succeeded=0,
-                failed=1,
-                skipped=0,
-                empty=0,
-                total_features=0,
-                total_size_bytes=0,
-                total_duration_seconds=0.0,
-            ),
+        self._seed(
+            tmp_path,
+            make_layer_info("failed_layer", 0),
+            "failed_layer",
+            self._report("failed_layer", "failed", ""),
         )
 
-        # Should not raise, should just skip
-        _seed_collection_metadata_wfs(tmp_path, report, discovery)
-
-        # No collection directory created since layer failed
         assert not (tmp_path / "failed_layer" / ".portolan" / "metadata.yaml").exists()
 
     def test_seed_collection_metadata_wfs_uses_iso_metadata(self, tmp_path: Path) -> None:
         """ISO metadata from CSW takes precedence over WFS GetCapabilities metadata."""
-
-        from portolan_cli.extract.common.report import (
-            ExtractionReport,
-            ExtractionSummary,
-            LayerResult,
-            MetadataExtracted,
-        )
         from portolan_cli.extract.csw.models import ISOMetadata
-        from portolan_cli.extract.wfs.orchestrator import _seed_collection_metadata_wfs
 
-        # Create collection directory structure
         collection_dir = tmp_path / "buildings_abc123"
-        collection_dir.mkdir()
-        (collection_dir / ".portolan").mkdir()
-
-        # Layer with metadata_urls (triggers CSW fetch)
-        discovery = make_discovery_result(
-            [
-                LayerInfo(
-                    name="ns:buildings",
-                    typename="ns:buildings",
-                    title="WFS Title",
-                    abstract="WFS Abstract (should be overridden)",
-                    bbox=None,
-                    id=0,
-                    metadata_urls=[{"url": "https://csw.example.com/record"}],
-                ),
-            ]
+        (collection_dir / ".portolan").mkdir(parents=True)
+        info = LayerInfo(
+            name="ns:buildings",
+            typename="ns:buildings",
+            title="WFS Title",
+            abstract="WFS Abstract (should be overridden)",
+            bbox=None,
+            id=0,
+            metadata_urls=[{"url": "https://csw.example.com/record"}],
         )
-
-        report = ExtractionReport(
-            extraction_date="2024-01-01T00:00:00Z",
-            source_url="https://example.com/wfs",
-            portolan_version="0.1.0",
-            gpio_version="1.0.0",
-            metadata_extracted=MetadataExtracted(
-                source_url="https://example.com/wfs",
-                description=None,
-                attribution=None,
-                keywords=None,
-                contact_name=None,
-                processing_notes=None,
-                known_issues=None,
-                license_info_raw=None,
-            ),
-            layers=[
-                LayerResult(
-                    id=0,
-                    name="ns:buildings",
-                    status="success",
-                    features=100,
-                    size_bytes=1000,
-                    duration_seconds=1.0,
-                    output_path="buildings_abc123/buildings_abc123.parquet",
-                    warnings=[],
-                    error=None,
-                    attempts=1,
-                ),
-            ],
-            summary=ExtractionSummary(
-                total_layers=1,
-                succeeded=1,
-                failed=0,
-                skipped=0,
-                empty=0,
-                total_features=100,
-                total_size_bytes=1000,
-                total_duration_seconds=1.0,
-            ),
-        )
-
-        # Mock the CSW fetch to return rich ISO metadata
         mock_iso = ISOMetadata(
             file_identifier="test-iso-id",
             title="ISO Title",
@@ -574,125 +400,61 @@ class TestWFSMetadataSeeding:
             "portolan_cli.extract.wfs.orchestrator._try_fetch_iso_metadata",
             return_value=mock_iso,
         ):
-            _seed_collection_metadata_wfs(tmp_path, report, discovery)
+            self._seed(
+                tmp_path,
+                info,
+                "buildings_abc123",
+                self._report(
+                    "ns:buildings", "success", "buildings_abc123/buildings_abc123.parquet"
+                ),
+            )
 
-        metadata_path = collection_dir / ".portolan" / "metadata.yaml"
-        assert metadata_path.exists()
-        content = metadata_path.read_text()
-        # ISO metadata should be used, not WFS metadata
+        content = (collection_dir / ".portolan" / "metadata.yaml").read_text()
         assert "Rich ISO description from CSW" in content
         assert "WFS Abstract" not in content
 
     def test_seed_collection_metadata_wfs_nested_output_path(self, tmp_path: Path) -> None:
         """Collection seeding handles nested output paths correctly."""
-        from portolan_cli.extract.common.report import (
-            ExtractionReport,
-            ExtractionSummary,
-            LayerResult,
-            MetadataExtracted,
-        )
-        from portolan_cli.extract.wfs.orchestrator import _seed_collection_metadata_wfs
-
-        # Create nested collection directory structure (like multi-layer extract)
         nested_dir = tmp_path / "service" / "layer_abc123"
-        nested_dir.mkdir(parents=True)
-        (nested_dir / ".portolan").mkdir()
-
-        discovery = make_discovery_result(
-            [
-                LayerInfo(
-                    name="ns:layer",
-                    typename="ns:layer",
-                    title="Nested Layer",
-                    abstract="Layer in nested structure",
-                    bbox=None,
-                    id=0,
-                ),
-            ]
+        (nested_dir / ".portolan").mkdir(parents=True)
+        info = LayerInfo(
+            name="ns:layer",
+            typename="ns:layer",
+            title="Nested Layer",
+            abstract="Layer in nested structure",
+            bbox=None,
+            id=0,
         )
 
-        report = ExtractionReport(
-            extraction_date="2024-01-01T00:00:00Z",
-            source_url="https://example.com/wfs",
-            portolan_version="0.1.0",
-            gpio_version="1.0.0",
-            metadata_extracted=MetadataExtracted(
-                source_url="https://example.com/wfs",
-                description=None,
-                attribution=None,
-                keywords=None,
-                contact_name=None,
-                processing_notes=None,
-                known_issues=None,
-                license_info_raw=None,
-            ),
-            layers=[
-                LayerResult(
-                    id=0,
-                    name="ns:layer",
-                    status="success",
-                    features=50,
-                    size_bytes=500,
-                    duration_seconds=0.5,
-                    # Nested output path
-                    output_path="service/layer_abc123/layer_abc123.parquet",
-                    warnings=[],
-                    error=None,
-                    attempts=1,
-                ),
-            ],
-            summary=ExtractionSummary(
-                total_layers=1,
-                succeeded=1,
-                failed=0,
-                skipped=0,
-                empty=0,
-                total_features=50,
-                total_size_bytes=500,
-                total_duration_seconds=0.5,
-            ),
+        self._seed(
+            tmp_path,
+            info,
+            "service/layer_abc123",
+            self._report("ns:layer", "success", "service/layer_abc123/layer_abc123.parquet"),
         )
 
-        _seed_collection_metadata_wfs(tmp_path, report, discovery)
-
-        # Metadata should be in the nested collection directory
-        metadata_path = nested_dir / ".portolan" / "metadata.yaml"
-        assert metadata_path.exists()
-        content = metadata_path.read_text()
+        content = (nested_dir / ".portolan" / "metadata.yaml").read_text()
         assert "Layer in nested structure" in content
 
 
 class TestSlugify:
-    """Tests for _slugify function (Issue #379)."""
+    """Tests for the shared slugify that WFS collection names use (Issue #379)."""
 
     def test_basic_slug(self) -> None:
         """Basic name is slugified without hash."""
-        result = _slugify("my_layer", disambiguate=False)
-        assert result == "my_layer"
-        assert len(result.split("_")) == 2  # No hash appended
-
-    def test_slug_with_disambiguation(self) -> None:
-        """Hash appended when disambiguate=True."""
-        result = _slugify("my_layer", disambiguate=True)
-        parts = result.split("_")
-        assert len(parts) == 3  # my, layer, hash
-        assert len(parts[-1]) == 6  # 6-char hash
+        assert slugify("my_layer") == "my_layer"
 
     def test_slug_normalizes_special_chars(self) -> None:
         """Special characters converted to underscores."""
-        result = _slugify("ns:Feature-Type.Name", disambiguate=False)
-        assert result == "ns_feature_type_name"
+        assert slugify("ns:Feature-Type.Name") == "ns_feature_type_name"
 
     def test_slug_lowercase(self) -> None:
         """Names are lowercased."""
-        result = _slugify("MyLayer", disambiguate=False)
-        assert result == "mylayer"
+        assert slugify("MyLayer") == "mylayer"
 
-    def test_slug_unique_id_differentiates(self) -> None:
-        """Same name with different unique_ids produces different slugs."""
-        slug1 = _slugify("same_name", disambiguate=True, unique_id=0)
-        slug2 = _slugify("same_name", disambiguate=True, unique_id=1)
-        assert slug1 != slug2
+    def test_slug_empty_name(self) -> None:
+        """A name with no usable characters becomes 'unnamed'."""
+        assert slugify("::") == "unnamed"
 
 
 class TestAssignSlugs:
@@ -769,7 +531,7 @@ class TestExtractionProgressError:
 
     def test_progress_has_optional_error_field(self) -> None:
         """ExtractionProgress can carry an optional error message."""
-        from portolan_cli.extract.wfs.orchestrator import ExtractionProgress
+        from portolan_cli.extract.common.progress import ExtractionProgress
 
         # Without error
         progress_ok = ExtractionProgress(
@@ -792,41 +554,17 @@ class TestExtractionProgressError:
 
     def test_on_progress_receives_error_on_failure(self, tmp_path: Path) -> None:
         """Progress callback receives error message when layer fails."""
-        from portolan_cli.extract.wfs.orchestrator import ExtractionProgress
-
-        layers = [make_layer_info("fail_layer", 0)]
-        discovery = make_discovery_result(layers)
 
         progress_events: list[ExtractionProgress] = []
-
-        def capture_progress(progress: ExtractionProgress) -> None:
-            progress_events.append(progress)
-
         error_msg = "Unable to merge: Field has incompatible types"
 
         with (
             patch("portolan_cli.extract.wfs.orchestrator.discover_layers") as mock_discover,
-            patch("portolan_cli.extract.wfs.orchestrator._extract_layer_task") as mock_extract,
+            patch.object(WFSLayerSource, "fetch", side_effect=RuntimeError(error_msg)),
             patch("portolan_cli.extract.wfs.orchestrator._negotiate_version") as mock_version,
         ):
-            mock_discover.return_value = discovery
+            mock_discover.return_value = make_discovery_result([make_layer_info("fail_layer", 0)])
             mock_version.return_value = "1.1.0"
-
-            # Simulate a failed extraction with error message
-            from portolan_cli.extract.common.report import LayerResult
-
-            mock_extract.return_value = LayerResult(
-                id=0,
-                name="fail_layer",
-                status="failed",
-                features=None,
-                size_bytes=None,
-                duration_seconds=None,
-                output_path=None,
-                warnings=[],
-                error=error_msg,
-                attempts=3,
-            )
 
             # A non-raw extraction builds a catalog, which needs a license (issue #686).
             options = ExtractionOptions(workers=1, retries=1, license="CC-BY-4.0")
@@ -834,112 +572,54 @@ class TestExtractionProgressError:
                 url="https://example.com/wfs",
                 output_dir=tmp_path,
                 options=options,
-                on_progress=capture_progress,
+                on_progress=progress_events.append,
             )
 
-        # Find the "failed" progress event
         failed_events = [p for p in progress_events if p.status == "failed"]
         assert len(failed_events) == 1
         assert failed_events[0].error == error_msg
 
 
 class TestTimeoutEnforcement:
-    """Tests for per-layer timeout enforcement (Issue #508)."""
+    """Tests for per-layer timeout enforcement in a parallel run (Issue #508)."""
+
+    @staticmethod
+    def _run(tmp_path: Path, names: list[str], fetch: object, timeout: float) -> ExtractionReport:
+        with (
+            patch("portolan_cli.extract.wfs.orchestrator.discover_layers") as mock_discover,
+            patch("portolan_cli.extract.wfs.orchestrator._negotiate_version", return_value="1.1.0"),
+            patch.object(WFSLayerSource, "fetch", side_effect=fetch),
+        ):
+            mock_discover.return_value = make_discovery_result(
+                [make_layer_info(name, i) for i, name in enumerate(names)]
+            )
+            return extract_wfs_catalog(
+                url="https://example.com/wfs",
+                output_dir=tmp_path,
+                options=ExtractionOptions(workers=2, timeout=timeout, retries=1, raw=True),
+            )
 
     def test_slow_layer_times_out(self, tmp_path: Path) -> None:
         """A layer that exceeds the timeout is marked as timed out."""
         import time
 
-        from portolan_cli.extract.wfs.orchestrator import (
-            ExtractionProgress,
-            _extract_layers_parallel,
-        )
+        def fetch(source: str, layer: LayerRef, dest: Path) -> int:
+            if layer.name == "slow_layer":
+                time.sleep(3)  # Longer than the 1s timeout
+            return 1
 
-        # Create a layer that will be slow
-        slow_layer = make_layer_info("slow_layer", 0)
+        report = self._run(tmp_path, ["slow_layer", "fast_layer"], fetch, timeout=1.0)
 
-        progress_events: list[ExtractionProgress] = []
-
-        def capture_progress(progress: ExtractionProgress) -> None:
-            progress_events.append(progress)
-
-        # Patch the extraction task to simulate a slow layer
-        def slow_extraction(*args, **kwargs):
-            time.sleep(5)  # Longer than the 1s timeout we'll set
-            from portolan_cli.extract.common.report import LayerResult
-
-            return LayerResult(
-                id=0,
-                name="slow_layer",
-                status="success",
-                features=100,
-                size_bytes=1000,
-                duration_seconds=5.0,
-                output_path="slow_layer/slow_layer.parquet",
-                warnings=[],
-                error=None,
-                attempts=1,
-            )
-
-        with patch(
-            "portolan_cli.extract.wfs.orchestrator._extract_layer_task", side_effect=slow_extraction
-        ):
-            options = ExtractionOptions(workers=2, timeout=1.0)  # 1 second timeout
-            results = _extract_layers_parallel(
-                url="https://example.com/wfs",
-                layers_to_extract=[(0, slow_layer)],
-                output_dir=tmp_path,
-                options=options,
-                negotiated_version="1.1.0",
-                total=1,
-                layer_slugs={0: "slow_layer"},
-                on_progress=capture_progress,
-            )
-
-        # The layer should be marked as failed due to timeout
-        assert len(results) == 1
-        assert results[0].status == "failed"
-        assert "timeout" in results[0].error.lower()
+        slow = report.layers[0]
+        assert slow.status == "failed"
+        assert "timeout" in (slow.error or "").lower()
+        assert report.layers[1].status == "success"
 
     def test_fast_layers_complete_normally(self, tmp_path: Path) -> None:
         """Layers that complete within timeout succeed normally."""
-        from portolan_cli.extract.wfs.orchestrator import _extract_layers_parallel
+        report = self._run(tmp_path, ["fast_a", "fast_b"], lambda *_: 100, timeout=60.0)
 
-        fast_layer = make_layer_info("fast_layer", 0)
-
-        def fast_extraction(*args, **kwargs):
-            from portolan_cli.extract.common.report import LayerResult
-
-            return LayerResult(
-                id=0,
-                name="fast_layer",
-                status="success",
-                features=100,
-                size_bytes=1000,
-                duration_seconds=0.1,
-                output_path="fast_layer/fast_layer.parquet",
-                warnings=[],
-                error=None,
-                attempts=1,
-            )
-
-        with patch(
-            "portolan_cli.extract.wfs.orchestrator._extract_layer_task", side_effect=fast_extraction
-        ):
-            options = ExtractionOptions(workers=2, timeout=60.0)
-            results = _extract_layers_parallel(
-                url="https://example.com/wfs",
-                layers_to_extract=[(0, fast_layer)],
-                output_dir=tmp_path,
-                options=options,
-                negotiated_version="1.1.0",
-                total=1,
-                layer_slugs={0: "fast_layer"},
-                on_progress=None,
-            )
-
-        assert len(results) == 1
-        assert results[0].status == "success"
+        assert [r.status for r in report.layers] == ["success", "success"]
 
     def test_queued_layers_do_not_time_out(self, tmp_path: Path) -> None:
         """Queued layers must not time out while waiting for a worker (Issue #526).
@@ -947,57 +627,19 @@ class TestTimeoutEnforcement:
         With more layers than workers, total wall-clock exceeds the per-layer
         timeout even though each layer runs well under it. The deadline must be
         measured from execution start, not submission time.
-
-        Pre-fix red behavior: layers queued behind the first ``workers`` batch
-        start after the submission-time deadline has already elapsed, so they
-        come back ``status="failed"`` with a ``"Timeout after 1.0s"`` error
-        despite each running only ~0.5s.
         """
         import time
 
-        from portolan_cli.extract.common.report import LayerResult
-        from portolan_cli.extract.wfs.orchestrator import _extract_layers_parallel
+        def slow_but_ok(source: str, layer: LayerRef, dest: Path) -> int:
+            # 0.1s is far under the 2.0s timeout. A process-wide pause on a
+            # loaded CI runner stalls both workers at once, and each layer keeps
+            # 1.9s of margin for it. 24 rounds (48 layers / 2 workers) add up
+            # to ~2.4s, so a deadline from submission still fails the test.
+            time.sleep(0.1)
+            return 10
 
-        num_layers = 8
-        layers = [make_layer_info(f"layer_{i}", i) for i in range(num_layers)]
-        layers_to_extract = [(i, layer) for i, layer in enumerate(layers)]
-        slugs = {i: f"layer_{i}" for i in range(num_layers)}
+        report = self._run(tmp_path, [f"layer_{i}" for i in range(48)], slow_but_ok, timeout=2.0)
 
-        def slow_but_ok(*args: object, **kwargs: object) -> LayerResult:
-            layer = args[1]
-            assert isinstance(layer, LayerInfo)
-            # 0.5s < 1.0s timeout, but 4 sequential rounds (8 layers / 2 workers)
-            # add up to ~2.0s of wall-clock, exceeding the per-layer timeout.
-            time.sleep(0.5)
-            return LayerResult(
-                id=layer.id,
-                name=layer.name,
-                status="success",
-                features=10,
-                size_bytes=100,
-                duration_seconds=0.5,
-                output_path=f"{layer.name}/{layer.name}.parquet",
-                warnings=[],
-                error=None,
-                attempts=1,
-            )
-
-        with patch(
-            "portolan_cli.extract.wfs.orchestrator._extract_layer_task",
-            side_effect=slow_but_ok,
-        ):
-            options = ExtractionOptions(workers=2, timeout=1.0)
-            results = _extract_layers_parallel(
-                url="https://example.com/wfs",
-                layers_to_extract=layers_to_extract,
-                output_dir=tmp_path,
-                options=options,
-                negotiated_version="1.1.0",
-                total=num_layers,
-                layer_slugs=slugs,
-                on_progress=None,
-            )
-
-        assert len(results) == num_layers
-        assert all(r.status == "success" for r in results)
-        assert all(r.error is None for r in results)
+        assert len(report.layers) == 48
+        assert all(r.status == "success" for r in report.layers)
+        assert all(r.error is None for r in report.layers)

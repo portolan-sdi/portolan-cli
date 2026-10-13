@@ -73,7 +73,7 @@ module level, so `import portolan_cli.stac` does not load `cli.py` or Click
 lazy export. Top-level commands: `init`, `list`, `status`, `info`,
 `check`, `scan`, `add`, `rm`, `push`, `pull`, `sync`, `clone`, `clean`,
 `readme`, `logo`, `stac-geoparquet`. Command groups with subcommands: `config`
-(set/get/list/unset), `metadata` (init/validate), `extract` (arcgis/wfs),
+(set/get/list/unset), `metadata` (init/validate), `extract` (arcgis/carto/wfs),
 `version` (current/list/bump/rollback/prune), `skills` (list/show). When you add
 or rename a command, the AST in `scripts/validate_agents_md.py` re-reads these
 decorators, so the root `AGENTS.md` command references must stay accurate.
@@ -91,10 +91,18 @@ subsystem table below and the path-scoped rules for each.
 
 - `backends/protocol.py` defines `@runtime_checkable class VersioningBackend`
   with `get_current_version`, `list_versions`, `publish`, `rollback`, `prune`,
-  `check_drift`. `backends/__init__.py` `get_backend(name)` is the factory,
-  `"file"` -> `JsonFileBackend` (always available), `"iceberg"` ->
-  `IcebergBackend` (needs the `[iceberg]` extra). The CLI reaches a backend only
-  through `version_ops.py`, which resolves the name CLI flag > config > `"file"`.
+  `check_drift`. `backends/__init__.py` `get_backend(name)` is the factory.
+  It resolves names through the `portolan_backends` hook (#947). Two built-in
+  hook modules register `"file"` -> `JsonFileBackend` and `"iceberg"` ->
+  `IcebergBackend` (needs the `[iceberg]` extra, in
+  `backends/iceberg/hooks.py`). A plugin can add a name. A built-in name always
+  wins a collision. The CLI reaches a backend only through `version_ops.py`,
+  which resolves the name CLI flag > config > `"file"`.
+- Iceberg is a built-in plugin. `backends/iceberg/` imports only
+  `portolan_cli.api` and `portolan_cli.hookspecs` (the boundary test enforces
+  it). `version rollback` and `version prune` live in
+  `backends/iceberg/cli.py` and load through `portolan.commands` entry points
+  in `pyproject.toml`.
 - **Optional hooks are duck-typed, NOT in the Protocol.** `on_post_add`, `pull`,
   `supports_push`, `push_blocked_message` are checked via `hasattr`. If you add
   one, document it in `protocol.py`, do not widen the Protocol.
@@ -102,13 +110,15 @@ subsystem table below and the path-scoped rules for each.
   import in `protocol.py`. Do not add a pystac import there.
 - The file backend is **single-writer** and not thread-safe, it relies on drift
   checking, not locking. Concurrency safety is an Iceberg-only property.
-- Import contracts (`uv run lint-imports`): `cli` must not import `backends`
-  (only `backends.protocol` under `TYPE_CHECKING`), `backends.iceberg` must not
-  import `cli`.
-- `read-modules-stay-light` keeps the read modules (`versions`, `json_io`,
-  `bbox`, `models`, `query`, `status`, `catalog_list`, `agents_md`) free of
-  Click, rasterio, `cli`, and the write modules. The contract follows
-  imports inside function bodies too. A read module that needs a heavy
+- Import contracts (`uv run lint-imports`): `cli` must not import `backends`.
+- Three layer contracts (#944, #947). `layer-read` keeps the read modules
+  (`versions`, `json_io`, `bbox`, `models`, `query`, `status`, `catalog_list`,
+  `agents_md`) free of Click, rasterio, `cli`, and the write modules.
+  `layer-manage` keeps every module outside the CLI layer free of Click.
+  `layer-cli` lets only the CLI layer (`cli`, `cli_types`, `emit`,
+  `add_progress`, `scan.progress`) import a CLI module. Each contract follows
+  imports inside function bodies too. `output.py` writes without Click by
+  default, and `cli.py` installs `click_writer` at import time. A read module that needs a heavy
   dependency takes it as a parameter. `status.get_collection_status` takes
   `fetch_remote_versions` for this reason.
 
@@ -130,19 +140,37 @@ no directory listing exists. `validation/` uses rashid's own graph.
 
 ## Format detection and conversion routing (formats.py, convert.py)
 
-Two enums in `formats.py`: `CloudNativeStatus` (`CLOUD_NATIVE` / `CONVERTIBLE` /
-`UNSUPPORTED`) and `FormatType` (`VECTOR` routes to geoparquet-io, `RASTER`
-routes to rio-cogeo, `UNKNOWN`). The extension vocabulary (which set each
-extension belongs to, plus its media type / role / display name) is
-single-sourced in `extension_registry.py` and *derived* into `format_types.py`
-(the dependency-free extension detection, re-exported by `formats.py`), `formats.py`,
-`constants.py`, `scan_classify.py`, and `add.py` — edit the
-registry rows, not the frozensets. `CLOUD_NATIVE_EXTENSIONS` is the derived source of truth for "already
+`CloudNativeStatus` in `formats.py` is `CLOUD_NATIVE` / `CONVERTIBLE` /
+`UNSUPPORTED`. A format **family** is a plain string: `vector` routes to
+geoparquet-io and `raster` to rio-cogeo (`format_families.VECTOR`/`RASTER`).
+A plugin format brings its own family string, so never treat the families as a
+closed set. There is no format enum any more (#947).
+
+A **format handler** (`plugins/formats.py`) converts one format and reads its
+metadata. `handler_for(path, catalog_root)` picks one: a `conversion.handlers`
+pin, then a plugin handler, then a built-in handler from
+`plugins/builtin/formats.py` (GeoParquet, COG, PMTiles, FlatGeobuf).
+`prepare_item` and `convert_file` both ask the registry and call the
+handler's `convert` and `read_metadata`. The built-in handlers live in
+`formats_builtin/`, one package per format, and import only `portolan_cli.api`.
+The handler also owns `describe_item`, `describe_collection`, `inspect`, and
+the optional `partition` and `reoptimize`, so core code never branches on the
+family for them. The collection depth in `collection_id.py` comes from the
+handler's `asset_level`.
+
+`format_families.py` is the dependency-free half: built-in extension routing
+and the GeoJSON sniff, for the read modules that must not load a plugin.
+`formats.detect_format` adds the plugin handlers. The extension vocabulary
+(which set each extension belongs to, plus its media type / role / display
+name) is single-sourced in `extension_registry.py` and *derived* into
+`format_families.py`, `formats.py`, `constants.py`, `scan/classify.py`, and
+`add.py`. Edit the registry rows, not the frozensets.
+`CLOUD_NATIVE_EXTENSIONS` is the derived source of truth for "already
 cloud-native, skip conversion" (`.fgb`, `.pmtiles`; `.parquet`/`.tif` need
-content inspection; `.zarr`/`.copc.laz` are cloud-native via dedicated branches).
-`convert.py` orchestrates only: `CLOUD_NATIVE` -> SKIPPED, `UNSUPPORTED` -> returned with no error
-(accept with a warning), else route by `detect_format` to
-geoparquet-io or rio-cogeo. Never put geometry or raster math in our layer.
+content inspection; `.zarr`/`.copc.laz` are cloud-native via dedicated
+branches). `convert.py` orchestrates only: `CLOUD_NATIVE` -> SKIPPED,
+`UNSUPPORTED` -> returned with no error (accept with a warning), else route
+through the handler. Never put geometry or raster math in our layer.
 
 ## Source-of-truth model
 
@@ -166,7 +194,8 @@ geoparquet-io or rio-cogeo. Never put geometry or raster math in our layer.
 | Sync / remote | `push.py`, `pull.py`, `sync.py`, `upload.py`, `download.py`, `async_utils.py` | `sync.md` |
 | Scan / check / metadata | `scan*.py`, `check.py`, `metadata/`, `clean.py` | `scan-check.md` (the four `metadata/{cog,geoparquet,pmtiles,flatgeobuf}.py` format extractors also load `conversion-and-visualization.md`) |
 | Versioning backends | `backends/`, `version_ops.py`, `versions.py` | this file + `stac-assets.md` |
-| Extract / harvest | `extract/` (only `arcgis` and `wfs` are wired commands, `csw/` is a module dir not yet exposed as a subcommand) | (reuse `extract/common/`, mock network in tests) |
+| Plugin system | `hookspecs.py`, `api.py`, `testing.py`, `plugins/`, `stac_enrich.py`, `lazy_exports.py` | `plugins.md` |
+| Extract / harvest | `extract/` (`arcgis`, `carto`, and `wfs` are commands from the `portolan_extractors` hook; each command is in `extract/<source>/cli.py`; each source but ArcGIS ImageServer is a `LayerSource` that `extract/common/source.py` `run_layer_extraction` drives; `csw/` is a module dir not yet exposed as a subcommand) | `plugins.md` (reuse `extract/common/`, mock network in tests) |
 | Config / leaf utils | `config.py`, `constants.py`, `utils.py` | `python.md` (conventions, import contracts) |
 
 ## Where to investigate further

@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 import pystac
 
 from portolan_cli.finalization import _save_collection_with_links
+from portolan_cli.hookspecs import EnrichContext
 from portolan_cli.input_hardening import InputValidationError, validate_remote_url
 from portolan_cli.preparation import _validate_collection_id
 from portolan_cli.stac import (
@@ -38,6 +39,7 @@ from portolan_cli.stac import (
     apply_human_license,
     create_collection,
 )
+from portolan_cli.stac_enrich import enrich_collection_file
 
 # Role applied to external assets in addition to "data". This is what marks an
 # asset as referenced in place rather than downloaded and converted: a role is
@@ -279,6 +281,16 @@ def add_external(
 
     resolved_via = via_url or url
     add_via_link(collection_path, resolved_via, title=title or "Source data")
+
+    # Run the collection hook on the finished file (#947).
+    enrich_collection_file(
+        collection_path,
+        EnrichContext(
+            catalog_root=catalog_root,
+            collection_id=resolved_id,
+            document_path=collection_path,
+        ),
+    )
 
     return ExternalAddResult(
         collection_id=resolved_id,

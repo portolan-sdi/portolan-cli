@@ -675,3 +675,100 @@ def _describe_schema_diff(
     )
 
     return "; ".join(diffs) if diffs else "Unknown schema difference"
+
+
+def partition_strategy(path: Path, catalog_root: Path | None) -> str | None:
+    """Decide whether and how to partition a converted GeoParquet file (#947).
+
+    This is the size rule. Only ``add`` applies it, as before #947, because
+    ``check --fix`` converts a source again on every run. A file at or above
+    ``partitioning.threshold_gb`` (2 GB by default) partitions by
+    ``partitioning.strategy`` (kdtree by default), unless
+    ``partitioning.enabled`` is false.
+
+    ``conversion.vector.partition`` is a different rule. Only ``check --fix``
+    applies it, when it converts. See ``preparation.convert_vector``.
+
+    Settings resolve for the file's directory, so a collection can set its own.
+
+    Args:
+        path: The converted GeoParquet file.
+        catalog_root: Catalog root. None applies only the built-in defaults.
+
+    Returns:
+        The strategy name, or None to keep one file.
+    """
+    from portolan_cli.config import get_setting
+
+    if catalog_root is None:
+        return None
+
+    def _setting(key: str) -> Any:
+        return get_setting(key, catalog_path=catalog_root, collection_path=path.parent)
+
+    if _setting("partitioning.enabled") is False:
+        return None
+    threshold_gb = float(_setting("partitioning.threshold_gb") or 2.0)
+    if not should_partition(path, threshold_gb=threshold_gb):
+        return None
+    return str(_setting("partitioning.strategy") or DEFAULT_STRATEGY)
+
+
+def partition_vector_file(path: Path, catalog_root: Path | None) -> list[Path]:
+    """Partition a converted GeoParquet file when ``partition_strategy`` says so.
+
+    The partitions go next to the file in Hive directories, through
+    ``partition_geoparquet``. The file is removed only when the step wrote at
+    least one partition file.
+
+    The directory must hold no partitions for the strategy. geoparquet-io does
+    not write over a cell that exists, so a second source, or a re-add, would
+    lose the rows in each shared cell.
+
+    Args:
+        path: The converted GeoParquet file.
+        catalog_root: Catalog root, for the settings.
+
+    Returns:
+        The partition files, or an empty list when the file stays whole.
+
+    Raises:
+        PartitionCollisionError: The directory already holds partitions.
+    """
+    strategy = partition_strategy(path, catalog_root)
+    if strategy is None:
+        return []
+
+    from portolan_cli.config import get_setting
+    from portolan_cli.errors import PartitionCollisionError
+
+    column = PARTITION_COLUMNS.get(strategy, f"{strategy}_cell")
+    existing = sorted(p.name for p in path.parent.glob(f"{column}=*") if p.is_dir())
+    if existing:
+        raise PartitionCollisionError(str(path), str(path.parent), existing)
+
+    target_rows = get_setting(
+        "partitioning.target_rows", catalog_path=catalog_root, collection_path=path.parent
+    )
+    files = partition_geoparquet(
+        input_path=path,
+        output_dir=path.parent,
+        strategy=strategy,
+        target_rows=int(target_rows or 120_000),
+    )
+    if files:
+        path.unlink(missing_ok=True)
+    return files
+
+
+def partition_columns_of(files: list[Path]) -> list[str]:
+    """Return the Hive partition column names that ``files`` sit under."""
+    return sorted({f.parent.name.split("=", 1)[0] for f in files if "=" in f.parent.name})
+
+
+def strategy_of_column(column: str) -> str:
+    """Return the strategy that writes partitions under ``column``."""
+    for strategy, name in PARTITION_COLUMNS.items():
+        if column in (name, f"{name}_prefix"):
+            return strategy
+    return column.removesuffix("_cell")

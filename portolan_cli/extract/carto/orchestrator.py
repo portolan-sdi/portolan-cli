@@ -1,11 +1,13 @@
-"""Carto extraction orchestrator.
+"""Carto extraction through the shared LayerSource driver.
 
-Ties the Carto extraction components together:
-- Discovery (CDB_UserTables) → filtering → extraction (gpio) → report → auto-init.
+``CartoLayerSource`` implements ``LayerSource`` for a Carto SQL API account,
+and ``extract_carto_catalog`` runs it with ``run_layer_extraction``.
 
-The orchestrator is the main entry point for ``portolan extract carto``.
-Each table is extracted via geoparquet-io's ``convert_carto_to_geoparquet``;
-discovery and the surrounding catalog machinery live here.
+- ``discover`` lists the account's tables. When the account cannot be
+  listed, it falls back to the literal table names in the layer filter. It
+  then probes only the kept tables for a geometry column.
+- ``fetch`` calls geoparquet-io's ``convert_carto_to_geoparquet``. A table with
+  no geometry becomes plain Parquet in a tabular collection.
 
 Typical usage:
     from portolan_cli.extract.carto.orchestrator import extract_carto_catalog
@@ -20,12 +22,7 @@ Typical usage:
 from __future__ import annotations
 
 import logging
-import re
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 
@@ -38,31 +35,23 @@ from portolan_cli.extract.carto.discovery import (
     table_has_geometry,
     tables_from_names,
 )
-from portolan_cli.extract.common.filters import filter_layers
-from portolan_cli.extract.common.orchestrator_base import (
-    add_source_links,
-    init_extracted_catalog,
-    seed_catalog_metadata,
+from portolan_cli.extract.common.report import MetadataExtracted
+from portolan_cli.extract.common.source import (
+    Discovery,
+    LayerMetadata,
+    LayerRef,
+    LayerSourceOptions,
+    SourceLink,
+    filter_refs,
+    run_layer_extraction,
 )
-from portolan_cli.extract.common.progress import (
-    ExtractionProgress,
-    emit_progress,
-)
-from portolan_cli.extract.common.report import (
-    ExtractionReport,
-    ExtractionSummary,
-    LayerResult,
-    MetadataExtracted,
-    save_report,
-)
-from portolan_cli.extract.common.resume import ResumeState, get_resume_state, should_process_layer
-from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
-from portolan_cli.licensing import resolve_harvest_license
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
-    from portolan_cli.licensing import ResolvedLicense
+    from portolan_cli.extract.common.progress import ExtractionProgress
+    from portolan_cli.extract.common.report import ExtractionReport
 
 logger = logging.getLogger(__name__)
 
@@ -116,17 +105,6 @@ class ExtractionOptions:
     catalog_id: str | None = None
 
 
-def _slug_for_table(name: str) -> str:
-    """Convert a Carto table name to a filesystem-safe slug.
-
-    Carto table names are already SQL identifiers (unique within an account),
-    so no collision disambiguation is needed.
-    """
-    slug = re.sub(r"[^a-z0-9]+", "_", name.lower())
-    slug = re.sub(r"_+", "_", slug).strip("_")
-    return slug or "unnamed"
-
-
 def _build_table_query_url(sql_api_url: str, table_name: str) -> str:
     """Build a SQL API URL that selects a table (used as a provenance via-link).
 
@@ -136,40 +114,6 @@ def _build_table_query_url(sql_api_url: str, table_name: str) -> str:
     """
     query = f"SELECT * FROM {quote_table_identifier(table_name)}"  # noqa: S608
     return f"{sql_api_url}?{urlencode({'q': query})}"
-
-
-def _filter_discovered_tables(
-    tables: list[CartoTableInfo],
-    layer_filter: list[str] | None,
-    layer_exclude: list[str] | None,
-) -> list[CartoTableInfo]:
-    """Apply include/exclude glob filters to discovered tables."""
-    if not layer_filter and not layer_exclude:
-        return tables
-
-    filtered = filter_layers(
-        [t.to_filter_dict() for t in tables], include=layer_filter, exclude=layer_exclude
-    )
-    kept_ids = {d["id"] for d in filtered}
-    return [t for t in tables if t.id in kept_ids]
-
-
-def _resolve_geometry(
-    sql_api_url: str,
-    tables: list[CartoTableInfo],
-    options: ExtractionOptions,
-) -> list[CartoTableInfo]:
-    """Probe each table for a geometry column (run after filtering).
-
-    Probing only the post-filter set keeps discovery to a single request plus
-    one cheap ``LIMIT 0`` probe per *wanted* table, instead of probing the
-    whole account.
-    """
-    for table in tables:
-        table.has_geometry = table_has_geometry(
-            sql_api_url, table.name, api_key=options.api_key, timeout=options.timeout
-        )
-    return tables
 
 
 def _discover_tables(
@@ -195,177 +139,6 @@ def _discover_tables(
         return tables_from_names(url, literal, api_key=options.api_key, timeout=options.timeout)
 
 
-def _extract_single_table(
-    sql_api_url: str,
-    table: CartoTableInfo,
-    output_path: Path,
-    options: ExtractionOptions,
-) -> tuple[int, int, float]:
-    """Extract one Carto table via geoparquet-io.
-
-    Spatial tables become optimized GeoParquet; non-spatial tables become plain
-    Parquet (no ``geo`` metadata key) via gpio's ``geometry=False`` path, so they
-    can be routed into Portolan's tabular pipeline. ``bbox`` is dropped
-    for non-spatial tables because a bounding-box filter requires a geometry.
-
-    Returns:
-        Tuple of (feature_count, file_size_bytes, duration_seconds).
-    """
-    from geoparquet_io.core.carto import convert_carto_to_geoparquet  # type: ignore[import-untyped]
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    start_time = time.monotonic()
-
-    convert_carto_to_geoparquet(
-        url=sql_api_url,
-        table_name=table.name,
-        output_file=str(output_path),
-        where=options.where,
-        bbox=options.bbox if table.has_geometry else None,
-        limit=options.limit,
-        include_cols=options.include_cols,
-        exclude_cols=options.exclude_cols,
-        api_key=options.api_key,
-        timeout=options.timeout,
-        overwrite=True,
-        geometry=table.has_geometry,
-    )
-
-    duration = time.monotonic() - start_time
-
-    if output_path.exists():
-        import pyarrow.parquet as pq
-
-        metadata = pq.read_metadata(output_path)
-        feature_count = metadata.num_rows
-        file_size = output_path.stat().st_size
-    else:
-        feature_count = 0
-        file_size = 0
-
-    return feature_count, file_size, duration
-
-
-def _extract_table_task(
-    sql_api_url: str,
-    table: CartoTableInfo,
-    output_dir: Path,
-    options: ExtractionOptions,
-) -> LayerResult:
-    """Extract a single table with retry; return a LayerResult."""
-    slug = _slug_for_table(table.name)
-    output_path = output_dir / slug / f"{slug}.parquet"
-
-    retry_config = RetryConfig(max_attempts=options.retries)
-    result = retry_with_backoff(
-        _extract_single_table,
-        retry_config,
-        sql_api_url,
-        table,
-        output_path,
-        options,
-        on_retry=lambda attempt, err: logger.debug(
-            "Retry %d for table %s: %s", attempt, table.name, err
-        ),
-    )
-
-    if result.success:
-        features, size_bytes, duration = result.value  # type: ignore[misc]
-        return LayerResult(
-            id=table.id,
-            name=table.name,
-            status="success",
-            features=features,
-            size_bytes=size_bytes,
-            duration_seconds=duration,
-            output_path=str(output_path.relative_to(output_dir)),
-            warnings=[],
-            error=None,
-            attempts=result.attempts,
-        )
-
-    error_msg = str(result.error) if result.error else "Unknown error"
-    return LayerResult(
-        id=table.id,
-        name=table.name,
-        status="failed",
-        features=None,
-        size_bytes=None,
-        duration_seconds=None,
-        output_path=None,
-        warnings=[],
-        error=error_msg,
-        attempts=result.attempts,
-    )
-
-
-def _extract_tables(
-    sql_api_url: str,
-    tables_to_extract: list[CartoTableInfo],
-    output_dir: Path,
-    options: ExtractionOptions,
-    total: int,
-    on_progress: Callable[[ExtractionProgress], None] | None,
-) -> list[LayerResult]:
-    """Extract tables sequentially, or in parallel when workers > 1.
-
-    Per-table timeout is enforced inside gpio (the ``timeout`` argument), so no
-    external deadline tracking is needed.
-    """
-    results: list[LayerResult] = []
-
-    if options.workers > 1 and len(tables_to_extract) > 1:
-        max_workers = min(options.workers, len(tables_to_extract))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_table = {
-                executor.submit(_extract_table_task, sql_api_url, table, output_dir, options): table
-                for table in tables_to_extract
-            }
-            for future in as_completed(future_to_table):
-                table = future_to_table[future]
-                result = future.result()
-                results.append(result)
-                err = result.error if result.status == "failed" else None
-                emit_progress(on_progress, table.id, total, table.name, result.status, error=err)
-        return results
-
-    for table in tables_to_extract:
-        emit_progress(on_progress, table.id, total, table.name, "starting")
-        emit_progress(on_progress, table.id, total, table.name, "extracting")
-        result = _extract_table_task(sql_api_url, table, output_dir, options)
-        results.append(result)
-        err = result.error if result.status == "failed" else None
-        emit_progress(on_progress, table.id, total, table.name, result.status, error=err)
-
-    return results
-
-
-def _skipped_result(table: CartoTableInfo, reason: str) -> LayerResult:
-    """Build a skipped LayerResult (resume: already extracted)."""
-    return LayerResult(
-        id=table.id,
-        name=table.name,
-        status="skipped",
-        features=0,
-        size_bytes=0,
-        duration_seconds=0.0,
-        output_path=None,
-        warnings=[],
-        error=reason,
-        attempts=0,
-    )
-
-
-def _get_package_version(package_name: str) -> str:
-    """Get the installed version of a package, or 'unknown'."""
-    try:
-        from importlib.metadata import version
-
-        return version(package_name)
-    except Exception:
-        return "unknown"
-
-
 def _build_metadata(source_url: str, account_name: str | None) -> MetadataExtracted:
     """Build the harvested-metadata block for the report."""
     attribution = f"Carto account: {account_name}" if account_name else None
@@ -381,59 +154,100 @@ def _build_metadata(source_url: str, account_name: str | None) -> MetadataExtrac
     )
 
 
-def _build_summary(layer_results: list[LayerResult]) -> ExtractionSummary:
-    """Compute the aggregate summary from table results."""
-    return ExtractionSummary(
-        total_layers=len(layer_results),
-        succeeded=sum(1 for r in layer_results if r.status == "success"),
-        failed=sum(1 for r in layer_results if r.status == "failed"),
-        skipped=sum(1 for r in layer_results if r.status == "skipped"),
-        empty=sum(1 for r in layer_results if r.status == "empty"),
-        total_features=sum(r.features or 0 for r in layer_results),
-        total_size_bytes=sum(r.size_bytes or 0 for r in layer_results),
-        total_duration_seconds=sum(r.duration_seconds or 0.0 for r in layer_results),
-    )
+class CartoLayerSource:
+    """A Carto SQL API account as a ``LayerSource``. Each table is a layer."""
 
+    name = "carto"
+    summary = "Carto SQL API tables."
 
-def _build_report(
-    source_url: str,
-    account_name: str | None,
-    layer_results: list[LayerResult],
-) -> ExtractionReport:
-    """Build an ExtractionReport from table results."""
-    return ExtractionReport(
-        extraction_date=datetime.now(timezone.utc).isoformat(),
-        source_url=source_url,
-        portolan_version=_get_package_version("portolan-cli"),
-        gpio_version=_get_package_version("geoparquet-io"),
-        metadata_extracted=_build_metadata(source_url, account_name),
-        layers=layer_results,
-        summary=_build_summary(layer_results),
-    )
+    def __init__(self, options: ExtractionOptions | None = None) -> None:
+        self.options = options or ExtractionOptions()
 
+    def discover(self, source: str, options: LayerSourceOptions) -> Discovery:
+        """List and filter the tables, then probe the kept ones for geometry.
 
-def _build_dry_run_report(
-    source_url: str,
-    tables: list[CartoTableInfo],
-    account_name: str | None = None,
-) -> ExtractionReport:
-    """Build a report for dry-run mode (tables marked 'pending')."""
-    results = [
-        LayerResult(
-            id=t.id,
-            name=t.name,
-            status="pending",
-            features=0,
-            size_bytes=0,
-            duration_seconds=0.0,
-            output_path="",
-            warnings=[] if t.has_geometry else [_NON_SPATIAL_NOTE],
-            error=None,
-            attempts=0,
+        Probing only the kept tables costs one ``LIMIT 0`` request per wanted
+        table, not one per table in the account.
+        """
+        found = _discover_tables(source, options.layer_filter, self.options)
+        sql_api_url = found.service_url
+        refs = filter_refs(
+            [LayerRef(id=table.id, name=table.name, data=table) for table in found.tables],
+            options.layer_filter,
+            options.layer_exclude,
         )
-        for t in tables
-    ]
-    return _build_report(source_url, account_name, results)
+        layers = []
+        for ref in refs:
+            table: CartoTableInfo = ref.data
+            table.has_geometry = table_has_geometry(
+                sql_api_url, table.name, api_key=self.options.api_key, timeout=self.options.timeout
+            )
+            notes = () if table.has_geometry else (_NON_SPATIAL_NOTE,)
+            layers.append(replace(ref, notes=notes))
+        return self.discovery_from(found, layers)
+
+    @staticmethod
+    def discovery_from(found: CartoDiscoveryResult, layers: list[LayerRef]) -> Discovery:
+        """Build the driver's ``Discovery`` for a Carto account.
+
+        Carto publishes no license metadata, so ``--license`` is the only
+        source (issue #686). The account name titles the catalog.
+        """
+        from portolan_cli.extract.carto.metadata import extract_carto_metadata
+
+        sql_api_url = found.service_url
+        return Discovery(
+            source_url=sql_api_url,
+            layers=layers,
+            metadata=_build_metadata(sql_api_url, found.account_name),
+            catalog_seed=extract_carto_metadata(sql_api_url, found.account_name).to_extracted(),
+            catalog_title=found.account_name,
+        )
+
+    def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
+        """Write the table with geoparquet-io's ``convert_carto_to_geoparquet``.
+
+        A spatial table becomes optimized GeoParquet. A non-spatial table
+        becomes plain Parquet through gpio's ``geometry=False`` path, with no
+        bbox filter, because a bounding-box filter needs a geometry.
+        """
+        from geoparquet_io.core import carto as gpio_carto  # type: ignore[import-untyped]
+
+        table: CartoTableInfo = layer.data
+        options = self.options
+        gpio_carto.convert_carto_to_geoparquet(
+            url=source,
+            table_name=table.name,
+            output_file=str(dest),
+            where=options.where,
+            bbox=options.bbox if table.has_geometry else None,
+            limit=options.limit,
+            include_cols=options.include_cols,
+            exclude_cols=options.exclude_cols,
+            api_key=options.api_key,
+            timeout=options.timeout,
+            overwrite=True,
+            geometry=table.has_geometry,
+        )
+        if not dest.exists():
+            return 0
+        import pyarrow.parquet as pq
+
+        return int(pq.read_metadata(dest).num_rows)
+
+    def layer_metadata(self, source: str, layer: LayerRef) -> LayerMetadata:
+        """Seed table provenance. Carto has no per-table description."""
+        return LayerMetadata(source_url=_build_table_query_url(source, layer.name))
+
+    def styles(self, source: str, layer: LayerRef, collection_dir: Path) -> None:
+        """Carto publishes no styles."""
+
+    def source_link(self, source: str, layer: LayerRef) -> SourceLink:
+        """Link to a SQL API query that selects the table."""
+        return SourceLink(
+            href=_build_table_query_url(source, layer.name),
+            title=f"Source Carto table: {layer.name}",
+        )
 
 
 def extract_carto_catalog(
@@ -461,144 +275,22 @@ def extract_carto_catalog(
     Raises:
         CartoDiscoveryError: If the account cannot be enumerated and no explicit
             tables were provided as a fallback.
+        MissingLicenseError: If no license is given (issue #686).
     """
-    if options is None:
-        options = ExtractionOptions()
-
-    discovery = _discover_tables(url, layer_filter, options)
-    sql_api_url = discovery.service_url
-    tables = _filter_discovered_tables(discovery.tables, layer_filter, layer_exclude)
-    tables = _resolve_geometry(sql_api_url, tables, options)
-
-    if options.dry_run:
-        return _build_dry_run_report(sql_api_url, tables, discovery.account_name)
-
-    # Resolve the license before downloading anything (issue #686). Carto publishes
-    # no license metadata at all, so --license is the only source.
-    resolved_license = (
-        None
-        if options.raw
-        else resolve_harvest_license(
-            cli_license=options.license,
-            cli_license_url=options.license_url,
-            harvested_license_url=None,
-        )
+    options = options or ExtractionOptions()
+    # gpio enforces the per-table timeout, so the driver sets no deadline.
+    driver = LayerSourceOptions(
+        layer_filter=layer_filter,
+        layer_exclude=layer_exclude,
+        resume=options.resume,
+        dry_run=options.dry_run,
+        raw=options.raw,
+        retries=options.retries,
+        workers=options.workers,
+        catalog_id=options.catalog_id,
+        license=options.license,
+        license_url=options.license_url,
     )
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / ".portolan").mkdir(exist_ok=True)
-
-    report_path = output_dir / ".portolan" / "extraction-report.json"
-    resume_state: ResumeState | None = None
-    if options.resume and report_path.exists():
-        from portolan_cli.extract.common.report import load_report
-
-        resume_state = get_resume_state(load_report(report_path))
-
-    tables_to_extract: list[CartoTableInfo] = []
-    pre_results: list[LayerResult] = []
-    total = len(tables)
-
-    for table in tables:
-        if resume_state and not should_process_layer(table.id, resume_state, layer_name=table.name):
-            emit_progress(on_progress, table.id, total, table.name, "skipped")
-            pre_results.append(_skipped_result(table, reason="Already extracted"))
-            continue
-        tables_to_extract.append(table)
-
-    extracted_results = _extract_tables(
-        sql_api_url, tables_to_extract, output_dir, options, total, on_progress
+    return run_layer_extraction(
+        CartoLayerSource(options), url, output_dir, driver, on_progress=on_progress
     )
-
-    all_results = pre_results + extracted_results
-    all_results.sort(key=lambda r: r.id)
-
-    report = _build_report(sql_api_url, discovery.account_name, all_results)
-    save_report(report, report_path)
-
-    if not options.raw:
-        _auto_init_catalog(output_dir, report, discovery, resolved_license, options.catalog_id)
-
-    return report
-
-
-def _auto_init_catalog(
-    output_dir: Path,
-    report: ExtractionReport,
-    discovery: CartoDiscoveryResult,
-    resolved_license: ResolvedLicense | None = None,
-    catalog_id: str | None = None,
-) -> None:
-    """Initialize a Portolan catalog and add extracted tables.
-
-    Creates catalog.json/config.yaml/collection.json, adds provenance via-links,
-    and seeds metadata.yaml at catalog and collection level.
-    """
-
-    def _post_init(out: Path, parquet_files: list[Path], _fresh: bool) -> None:
-        # Non-geo (tabular) outputs carry no `geo` metadata key; add_files only
-        # accepts them as standalone collection-level assets when tabular support
-        # is enabled. Enable it before add_files when any output is
-        # non-geo.
-        from portolan_cli.config import set_setting
-        from portolan_cli.formats import is_geoparquet
-
-        if any(not is_geoparquet(path) for path in parquet_files):
-            set_setting(out, "tabular.enabled", True)
-
-        # Seed metadata.yaml here, between init_catalog and add_files, so the
-        # license is in place before add checks for one (issue #686).
-        _seed_metadata_from_extraction(out, report, discovery.account_name, resolved_license)
-
-    added = init_extracted_catalog(
-        output_dir,
-        report,
-        catalog_id=catalog_id,
-        title=discovery.account_name,
-        description=None,
-        post_init=_post_init,
-    )
-    if added is None:
-        return
-
-    _add_via_links_to_collections(output_dir, report)
-    _seed_collection_metadata_carto(output_dir, report)
-
-
-def _add_via_links_to_collections(output_dir: Path, report: ExtractionReport) -> None:
-    """Add a `via` provenance link (a Carto SQL query URL) to each collection."""
-    add_source_links(
-        output_dir,
-        report,
-        url_builder=lambda source_url, layer: _build_table_query_url(source_url, layer.name),
-        title_builder=lambda layer: f"Source Carto table: {layer.name}",
-    )
-
-
-def _seed_metadata_from_extraction(
-    output_dir: Path,
-    report: ExtractionReport,
-    account_name: str | None,
-    resolved_license: ResolvedLicense | None = None,
-) -> None:
-    """Seed catalog-level metadata.yaml from Carto account metadata."""
-    from portolan_cli.extract.carto.metadata import extract_carto_metadata
-
-    extracted = extract_carto_metadata(report.source_url, account_name).to_extracted()
-    seed_catalog_metadata(output_dir, extracted, resolved_license)
-
-
-def _seed_collection_metadata_carto(output_dir: Path, report: ExtractionReport) -> None:
-    """Seed per-collection metadata.yaml with table-specific provenance."""
-    from portolan_cli.extract.common.metadata_seeding import seed_collection_metadata
-
-    for layer in report.layers:
-        if layer.status != "success" or not layer.output_path:
-            continue
-        collection_dir = output_dir / Path(layer.output_path).parent
-        seed_collection_metadata(
-            collection_dir,
-            source_type="carto",
-            source_url=_build_table_query_url(report.source_url, layer.name),
-            layer_name=layer.name,
-        )

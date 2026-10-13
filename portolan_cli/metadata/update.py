@@ -24,7 +24,7 @@ from portolan_cli.collection import (
     read_collection_json,
     write_collection_json,
 )
-from portolan_cli.formats import RASTER_EXTENSIONS, FormatType
+from portolan_cli.formats import RASTER, RASTER_EXTENSIONS
 from portolan_cli.item import (
     _extract_geometry_from_file,
     _get_media_type,
@@ -215,13 +215,13 @@ def _extract_raster_bands(file_path: Path) -> list[dict[str, Any]]:
         catalog_root, collection_dir = _statistics_scope(file_path)
         if catalog_root is not None:
             band_stats, parquet_stats = _extract_statistics_best_effort(
-                file_path, FormatType.RASTER, catalog_root, collection_path=collection_dir
+                file_path, RASTER, catalog_root, collection_path=collection_dir
             )
             # `_extract_statistics_best_effort` already applied the
             # `statistics.enabled` gate, returning nothing when the setting is
             # off, so the flag here is always True.
             _add_statistics_to_properties(
-                stac_properties, FormatType.RASTER, band_stats, parquet_stats, stats_enabled=True
+                stac_properties, RASTER, band_stats, parquet_stats, stats_enabled=True
             )
 
     bands = stac_properties.get("bands")
@@ -357,7 +357,38 @@ def create_missing_item(file_path: Path, collection_path: Path) -> Path:
         collection_id=collection.id,
     )
 
-    return write_item_json(item, item_dir)
+    item_path = write_item_json(item, item_dir)
+    _enrich_created_item(item_path, collection_path, item_id)
+    return item_path
+
+
+def _enrich_created_item(item_path: Path, collection_path: Path, item_id: str) -> None:
+    """Run the item enrichment hook on a created item (#947).
+
+    The hook context needs the catalog root. An item outside a catalog gets
+    no enrichment.
+
+    Args:
+        item_path: The written item JSON.
+        collection_path: Directory holding collection.json.
+        item_id: Item identifier.
+    """
+    from portolan_cli.catalog import find_catalog_root
+    from portolan_cli.hookspecs import EnrichContext
+    from portolan_cli.stac_enrich import enrich_item_file
+
+    catalog_root = find_catalog_root(collection_path)
+    if catalog_root is None:
+        return
+    enrich_item_file(
+        item_path,
+        EnrichContext(
+            catalog_root=catalog_root,
+            collection_id=collection_path.resolve().relative_to(catalog_root.resolve()).as_posix(),
+            document_path=item_path,
+            item_id=item_id,
+        ),
+    )
 
 
 def update_collection_extent(collection_path: Path) -> CollectionModel:

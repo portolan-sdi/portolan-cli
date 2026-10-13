@@ -1,11 +1,17 @@
-"""Extraction orchestrator for ArcGIS services.
+"""ArcGIS extraction through the shared LayerSource driver.
 
-This module ties together all the extraction components:
-- URL parsing → Discovery → Filtering → Extraction → Report generation
+``ArcGISLayerSource`` implements ``LayerSource`` for ArcGIS FeatureServer and
+MapServer services, and ``extract_arcgis_catalog`` runs it with
+``run_layer_extraction``. ImageServer rasters take their own path in
+``imageserver/``.
 
-The orchestrator is the main entry point for `portolan extract arcgis`.
-It handles both single-service (FeatureServer) and multi-service (services root)
-extraction with resume capability.
+- ``discover`` handles a single service or a services root. For a root it
+  walks the folders, applies the service filters, and lists each service's
+  layers. A single-layer service becomes one collection at the service
+  directory. A multi-layer service nests one collection per layer.
+- ``fetch`` calls ``gpio.extract_arcgis``, adds the bbox covering column,
+  sorts, writes, and restores the source CRS (issues #802, #805).
+- ``styles`` converts the layer's ESRI drawingInfo (issue #490).
 
 Typical usage:
     from portolan_cli.extract.arcgis.orchestrator import extract_arcgis_catalog
@@ -14,18 +20,15 @@ Typical usage:
         url="https://services.arcgis.com/.../FeatureServer",
         output_dir=Path("./output"),
         layer_filter=["Census*"],
-        workers=3,
     )
     print(f"Extracted {result.summary.succeeded}/{result.summary.total_layers} layers")
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
-import re
-import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -40,41 +43,26 @@ from portolan_cli.extract.arcgis.discovery import (
     discover_services_recursive,
 )
 from portolan_cli.extract.arcgis.metadata import extract_arcgis_metadata
-from portolan_cli.extract.arcgis.url_parser import (
-    ArcGISURLType,
-    ParsedArcGISURL,
-    parse_arcgis_url,
+from portolan_cli.extract.arcgis.url_parser import ArcGISURLType, parse_arcgis_url
+from portolan_cli.extract.common.report import FolderCoverage, MetadataExtracted
+from portolan_cli.extract.common.source import (
+    Discovery,
+    LayerMetadata,
+    LayerRef,
+    LayerSourceOptions,
+    SourceLink,
+    run_layer_extraction,
+    slugify,
 )
-from portolan_cli.extract.common.filters import filter_layers
-from portolan_cli.extract.common.orchestrator_base import (
-    add_source_links,
-    init_extracted_catalog,
-    register_collection_styles,
-    seed_catalog_metadata,
-)
-from portolan_cli.extract.common.progress import (
-    ExtractionProgress,
-    emit_progress,
-)
-from portolan_cli.extract.common.report import (
-    ExtractionReport,
-    ExtractionSummary,
-    FolderCoverage,
-    LayerResult,
-    MetadataExtracted,
-    load_report,
-    save_report,
-)
-from portolan_cli.extract.common.resume import ResumeState, get_resume_state, should_process_layer
-from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
 from portolan_cli.extract.common.styles import extract_esri_style
-from portolan_cli.licensing import license_url_from_text, resolve_harvest_license
+from portolan_cli.licensing import license_url_from_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from portolan_cli.extract.arcgis.metadata import ArcGISMetadata
-    from portolan_cli.licensing import ResolvedLicense
+    from portolan_cli.extract.common.progress import ExtractionProgress
+    from portolan_cli.extract.common.report import ExtractionReport
 
 logger = logging.getLogger(__name__)
 
@@ -197,26 +185,6 @@ def list_services(
     )
 
 
-def _slugify(name: str) -> str:
-    """Convert a name to a filesystem-safe slug.
-
-    Args:
-        name: Original name (e.g., "Census Block Groups")
-
-    Returns:
-        Slugified name (e.g., "census_block_groups")
-    """
-    # Lowercase first
-    slug = name.lower()
-    # Replace all non-alphanumeric chars with underscore
-    slug = re.sub(r"[^a-z0-9]+", "_", slug)
-    # Collapse multiple underscores
-    slug = re.sub(r"_+", "_", slug)
-    # Strip leading/trailing underscores
-    slug = slug.strip("_")
-    return slug or "unnamed"
-
-
 def _service_output_dir(output_dir: Path, service_name: str) -> Path:
     """Map a (possibly folder-qualified) service name to a nested directory.
 
@@ -230,7 +198,7 @@ def _service_output_dir(output_dir: Path, service_name: str) -> Path:
     writes into the first one's directory. This is a known limitation and is not
     mitigated; no uniquifying suffix is appended.
     """
-    parts = [_slugify(p) for p in service_name.split("/") if p]
+    parts = [slugify(p) for p in service_name.split("/") if p]
     result = output_dir
     for part in parts:
         result = result / part
@@ -350,501 +318,6 @@ def _ensure_geoparquet_crs(output_path: Path, source_crs: dict[str, object] | No
     temp_path.replace(output_path)
 
 
-def _extract_single_layer(
-    service_url: str,
-    layer: LayerInfo,
-    output_path: Path,
-    options: ExtractionOptions,
-) -> tuple[int, int, float]:
-    """Extract a single layer using gpio.
-
-    Args:
-        service_url: Base service URL (without layer ID)
-        layer: Layer info
-        output_path: Path to write parquet file
-        options: Extraction options
-
-    Returns:
-        Tuple of (feature_count, file_size_bytes, duration_seconds)
-
-    Raises:
-        Exception: If extraction fails after retries
-    """
-    import inspect
-
-    import geoparquet_io as gpio  # type: ignore[import-untyped]
-
-    layer_url = f"{service_url.rstrip('/')}/{layer.id}"
-    start_time = time.monotonic()
-
-    # Check which optional parameters gpio.extract_arcgis supports (feature-detected
-    # so older gpio versions continue to work without modification).
-    sig = inspect.signature(gpio.extract_arcgis)
-    kwargs: dict[str, object] = {}
-    if "max_workers" in sig.parameters:
-        kwargs["max_workers"] = options.workers
-    if options.token and "token" in sig.parameters:
-        kwargs["token"] = options.token
-    # Apply the timeout to the feature-page requests too, not only to discovery.
-    # Slow layers with complex geometry time out at gpio's 60s default otherwise,
-    # and --timeout appears to do nothing (issue #898).
-    if "timeout" in sig.parameters:
-        kwargs["timeout"] = options.timeout
-    # Keep the service's source CRS instead of the silent WGS84 reprojection that
-    # the GeoJSON path forces (issue #802). Older gpio versions without output_crs
-    # cannot preserve the CRS, so warn that the output stays WGS84.
-    if "output_crs" in sig.parameters:
-        kwargs["output_crs"] = options.output_crs
-    else:
-        from portolan_cli.output import warn
-
-        warn(
-            "Installed geoparquet-io does not support output CRS selection. "
-            f"Output uses WGS84 (EPSG:4326), not '{options.output_crs}'."
-        )
-    table = gpio.extract_arcgis(layer_url, **kwargs)
-
-    # Capture the CRS the extractor detected before the write drops it. gpio.Table
-    # tags the native SR on the table but its writer emits crs: null, so a native
-    # extraction would declare WGS84 over projected coordinates (issue #802).
-    # gpio.Table.crs may return a dict, a string, or None. Only a PROJJSON dict
-    # restamps a valid CRS, so ignore the other forms.
-    captured_crs = getattr(table, "crs", None)
-    source_crs = captured_crs if isinstance(captured_crs, dict) else None
-
-    # Add the bbox covering column, then sort. Same order as
-    # convert.apply_vector_settings, so both writers produce the same layout.
-    # Portolan needs row-group spatial statistics for efficient remote reads.
-    # ArcGIS extraction writes GeoParquet directly, so the covering column is
-    # added here rather than by a later conversion pass.
-    #
-    # An ArcGIS service publishes non-spatial Table layers beside its Feature
-    # Layers, and both operations raise a DuckDB binder error on a table with
-    # no geometry column, so the same guard applies here (issue #805).
-    if has_geometry(table):
-        if options.add_bbox:
-            table = table.add_bbox()
-        if options.sort_hilbert:
-            table = table.sort_hilbert()
-
-    # Ensure parent directory exists
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Write to parquet
-    table.write(str(output_path))
-
-    # Restore the source CRS that gpio's writer discarded (issue #802).
-    _ensure_geoparquet_crs(output_path, source_crs)
-
-    duration = time.monotonic() - start_time
-    # gpio.Table uses num_rows property instead of __len__
-    feature_count = table.num_rows
-    file_size = output_path.stat().st_size if output_path.exists() else 0
-
-    return feature_count, file_size, duration
-
-
-def _filter_discovered_layers(
-    layers: list[LayerInfo],
-    layer_filter: list[str] | None,
-    layer_exclude: list[str] | None,
-) -> list[LayerInfo]:
-    """Apply include/exclude filters to discovered layers."""
-    if not layer_filter and not layer_exclude:
-        return layers
-
-    layers_dicts: list[dict[str, int | str]] = [
-        {"id": layer.id, "name": layer.name} for layer in layers
-    ]
-    filtered_dicts = filter_layers(layers_dicts, include=layer_filter, exclude=layer_exclude)
-    filtered_ids = {d["id"] for d in filtered_dicts}
-    return [layer for layer in layers if layer.id in filtered_ids]
-
-
-def _get_resume_context(
-    options: ExtractionOptions,
-    report_path: Path,
-) -> tuple[ResumeState | None, dict[int, LayerResult]]:
-    """Get resume state and existing results if resuming.
-
-    Returns:
-        Tuple of (resume_state, existing_results). resume_state is a ResumeState
-        object from get_resume_state() or None if not resuming.
-    """
-    if not options.resume or not report_path.exists():
-        return None, {}
-
-    existing_report = load_report(report_path)
-    resume_state = get_resume_state(existing_report)
-    existing_results = {r.id: r for r in existing_report.layers}
-    return resume_state, existing_results
-
-
-def _build_dry_run_report(
-    url: str,
-    discovery_result: ServiceDiscoveryResult,
-    layers: list[LayerInfo],
-) -> ExtractionReport:
-    """Build a report for dry-run mode."""
-    dry_run_results = [
-        LayerResult(
-            id=layer.id,
-            name=layer.name,
-            status="pending",
-            features=0,
-            size_bytes=0,
-            duration_seconds=0.0,
-            output_path="",
-            warnings=[],
-            error=None,
-            attempts=0,
-        )
-        for layer in layers
-    ]
-    return _build_report(url=url, discovery_result=discovery_result, layer_results=dry_run_results)
-
-
-def _extract_layers(
-    url: str,
-    output_dir: Path,
-    layers: list[LayerInfo],
-    options: ExtractionOptions,
-    resume_state: ResumeState | None,
-    existing_results: dict[int, LayerResult],
-    on_progress: Callable[[ExtractionProgress], None] | None,
-) -> list[LayerResult]:
-    """Extract all layers and return results."""
-    layer_results: list[LayerResult] = []
-    retry_config = RetryConfig(max_attempts=options.retries)
-    total = len(layers)
-
-    for i, layer in enumerate(layers):
-        result = _extract_one_layer(
-            url,
-            output_dir,
-            layer,
-            i,
-            total,
-            options,
-            retry_config,
-            resume_state,
-            existing_results,
-            on_progress,
-        )
-        layer_results.append(result)
-
-    return layer_results
-
-
-def _extract_one_layer(
-    url: str,
-    output_dir: Path,
-    layer: LayerInfo,
-    index: int,
-    total: int,
-    options: ExtractionOptions,
-    retry_config: RetryConfig,
-    resume_state: ResumeState | None,
-    existing_results: dict[int, LayerResult],
-    on_progress: Callable[[ExtractionProgress], None] | None,
-) -> LayerResult:
-    """Extract a single layer and return its result."""
-    layer_slug = _slugify(layer.name)
-    emit_progress(on_progress, index, total, layer.name, "starting")
-
-    # Check resume state - skip if already succeeded
-    if resume_state and not should_process_layer(layer.id, resume_state):
-        if layer.id in existing_results:
-            emit_progress(on_progress, index, total, layer.name, "skipped")
-            return existing_results[layer.id]
-        # Resume state says skip, but we have no cached result - re-extract with warning
-        logger.warning(
-            "Layer '%s' (id=%d) marked complete in resume state but result missing; re-extracting",
-            layer.name,
-            layer.id,
-        )
-
-    # Build output path: collection_name/collection_name.parquet
-    collection_dir = output_dir / layer_slug
-    output_path = collection_dir / f"{layer_slug}.parquet"
-
-    # Extract with retry
-    emit_progress(on_progress, index, total, layer.name, "extracting")
-
-    result = retry_with_backoff(
-        _extract_single_layer,
-        retry_config,
-        url,
-        layer,
-        output_path,
-        options,
-        on_retry=lambda _attempt, _err: None,
-    )
-
-    if result.success:
-        features, size_bytes, duration = result.value  # type: ignore[misc]
-        emit_progress(on_progress, index, total, layer.name, "success")
-
-        # Extract style from ESRI layer (Issue #490)
-        if not options.no_styles:
-            layer_url = f"{url.rstrip('/')}/{layer.id}"
-            try:
-                style_result = extract_esri_style(
-                    layer_url=layer_url,
-                    collection_path=collection_dir,
-                    source_layer=layer_slug,
-                )
-                if style_result:
-                    logger.debug("Extracted style for %s: %s", layer.name, style_result.path)
-            except Exception:
-                logger.warning(
-                    "Style extraction failed for layer '%s'; skipping style.",
-                    layer.name,
-                    exc_info=True,
-                )
-
-        return LayerResult(
-            id=layer.id,
-            name=layer.name,
-            status="success",
-            features=features,
-            size_bytes=size_bytes,
-            duration_seconds=duration,
-            output_path=str(output_path.relative_to(output_dir)),
-            warnings=[],
-            error=None,
-            attempts=result.attempts,
-        )
-
-    error_msg = str(result.error) if result.error else "Unknown error"
-    emit_progress(on_progress, index, total, layer.name, "failed", error=error_msg)
-    return LayerResult(
-        id=layer.id,
-        name=layer.name,
-        status="failed",
-        features=0,
-        size_bytes=0,
-        duration_seconds=0.0,
-        output_path="",
-        warnings=[],
-        error=error_msg,
-        attempts=result.attempts,
-    )
-
-
-def extract_arcgis_catalog(
-    url: str,
-    output_dir: Path,
-    *,
-    layer_filter: list[str] | None = None,
-    layer_exclude: list[str] | None = None,
-    service_filter: list[str] | None = None,
-    service_exclude: list[str] | None = None,
-    options: ExtractionOptions | None = None,
-    on_progress: Callable[[ExtractionProgress], None] | None = None,
-) -> ExtractionReport:
-    """Extract layers from an ArcGIS service to a Portolan catalog.
-
-    This is the main orchestration function that:
-    1. Parses the URL to determine service type
-    2. Discovers available layers (or services for services root)
-    3. Applies filters
-    4. Handles resume logic
-    5. Extracts each layer with retry
-    6. Generates extraction report
-
-    Args:
-        url: ArcGIS FeatureServer, MapServer, or services root URL
-        output_dir: Directory to write extracted data
-        layer_filter: Glob patterns to include layers (if None, include all)
-        layer_exclude: Glob patterns to exclude layers
-        service_filter: Glob patterns to include services (for services root URLs)
-        service_exclude: Glob patterns to exclude services (for services root URLs)
-        options: Extraction options (defaults to ExtractionOptions())
-        on_progress: Callback for progress updates
-
-    Returns:
-        ExtractionReport with results for all layers
-
-    Raises:
-        ValueError: If URL is invalid
-        ArcGISDiscoveryError: If service discovery fails
-    """
-    if options is None:
-        options = ExtractionOptions()
-
-    # Parse URL
-    parsed = parse_arcgis_url(url)
-
-    # Handle services root and folder URLs differently
-    if parsed.url_type in (ArcGISURLType.SERVICES_ROOT, ArcGISURLType.SERVICES_FOLDER):
-        return _extract_services_root(
-            url=url,
-            parsed=parsed,
-            output_dir=output_dir,
-            layer_filter=layer_filter,
-            layer_exclude=layer_exclude,
-            service_filter=service_filter,
-            service_exclude=service_exclude,
-            options=options,
-            on_progress=on_progress,
-        )
-
-    # Single service extraction (FeatureServer or MapServer)
-    discovery_result = discover_layers(url, timeout=options.timeout)
-
-    # Apply layer filters
-    layers = _filter_discovered_layers(discovery_result.layers, layer_filter, layer_exclude)
-
-    # Handle resume state
-    report_path = output_dir / ".portolan" / "extraction-report.json"
-    resume_state, existing_results = _get_resume_context(options, report_path)
-
-    # Dry run - just return what would be extracted
-    if options.dry_run:
-        return _build_dry_run_report(url, discovery_result, layers)
-
-    # Resolve the license before downloading anything, so a harvest that cannot be
-    # licensed costs one command re-run rather than a whole download (issue #686).
-    resolved_license = (
-        None
-        if options.raw
-        else resolve_harvest_license(
-            cli_license=options.license,
-            cli_license_url=options.license_url,
-            harvested_license_url=license_url_from_text(discovery_result.license_info),
-        )
-    )
-
-    # Create output directory structure
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / ".portolan").mkdir(exist_ok=True)
-
-    # Extract each layer
-    layer_results = _extract_layers(
-        url, output_dir, layers, options, resume_state, existing_results, on_progress
-    )
-
-    # Build and save report
-    report = _build_report(
-        url=url,
-        discovery_result=discovery_result,
-        layer_results=layer_results,
-    )
-    save_report(report, report_path)
-
-    # Auto-init catalog unless raw mode
-    if not options.raw:
-        _auto_init_catalog(output_dir, report, resolved_license, options.catalog_id)
-
-    return report
-
-
-def _auto_init_catalog(
-    output_dir: Path,
-    report: ExtractionReport,
-    resolved_license: ResolvedLicense | None = None,
-    catalog_id: str | None = None,
-) -> None:
-    """Initialize a Portolan catalog and add extracted files.
-
-    Called automatically after extraction unless raw=True.
-    Creates catalog.json, config.yaml, and collection.json for each layer.
-    Also seeds metadata.yaml from extracted service metadata and adds
-    provenance links (Issue #353).
-
-    Per Issue #369: Propagates rich metadata from ArcGIS service to STAC files,
-    avoiding generic placeholders.
-    """
-    from portolan_cli.stac import is_technical_name, update_stac_metadata
-
-    title, description = _derive_catalog_titles(report)
-
-    # Filter technical names BEFORE init_catalog to avoid writing them
-    # (update_stac_metadata can't overwrite if init_catalog already wrote them).
-    filtered_title = None if is_technical_name(title) else title
-    filtered_description = None if is_technical_name(description) else description
-
-    def _post_init(out: Path, _files: list[Path], fresh: bool) -> None:
-        # Per Issue #369: overwrite init_catalog defaults with the rich
-        # (unfiltered) service metadata now that catalog.json exists. Skip this
-        # when the catalog already existed, so a second extraction from a different
-        # service does not replace the root title/description (issue #832).
-        if fresh:
-            update_stac_metadata(out / "catalog.json", title=title, description=description)
-        # Seed metadata.yaml here, between init_catalog and add_files, so the
-        # harvested license is in place before add checks for one (issue #686).
-        _seed_metadata_from_extraction(out, report, resolved_license)
-
-    added = init_extracted_catalog(
-        output_dir,
-        report,
-        catalog_id=catalog_id,
-        title=filtered_title,
-        description=filtered_description,
-        post_init=_post_init,
-    )
-    if added is None:
-        return  # Nothing to add
-
-    # Register extracted styles as STAC assets (Issue #490)
-    register_collection_styles(output_dir, report)
-
-    # Add via links for provenance tracking (Issue #353)
-    _add_via_links_to_collections(output_dir, report)
-
-    # Seed collection-level metadata.yaml with layer details
-    # and update collection.json with rich metadata (Issue #369)
-    _seed_collection_metadata_arcgis(output_dir, report)
-
-
-def _derive_catalog_titles(report: ExtractionReport) -> tuple[str | None, str | None]:
-    """Derive catalog title/description from harvested ArcGIS service metadata.
-
-    The service name (parsed from the source URL) becomes the title and the
-    service description becomes the catalog description (Issue #369). Both may be
-    None when no metadata was harvested.
-    """
-    if not report.metadata_extracted:
-        return None, None
-
-    description = report.metadata_extracted.description
-    title = None
-    if report.metadata_extracted.source_url:
-        try:
-            parsed = parse_arcgis_url(report.metadata_extracted.source_url)
-            title = parsed.service_name
-        except ValueError:
-            pass
-    return title, description
-
-
-def _seed_metadata_from_extraction(
-    output_dir: Path,
-    report: ExtractionReport,
-    resolved_license: ResolvedLicense | None = None,
-) -> None:
-    """Seed metadata.yaml from extracted service metadata.
-
-    Called after catalog initialization to pre-populate metadata.yaml with
-    values extracted from the ArcGIS service. Fields that couldn't be
-    extracted are marked with TODO placeholders.
-
-    Args:
-        output_dir: The catalog output directory.
-        report: The extraction report containing metadata.
-        resolved_license: License resolved before the download, which wins over
-            anything the harvest found (issue #686).
-    """
-    if not report.metadata_extracted:
-        return
-
-    # Reconstruct ArcGISMetadata from the report data, then serialize to the
-    # source-agnostic ExtractedMetadata the shared seeder expects.
-    arcgis_metadata = _report_metadata_to_arcgis_metadata(report.metadata_extracted)
-    seed_catalog_metadata(output_dir, arcgis_metadata.to_extracted(), resolved_license)
-
-
 def _report_metadata_to_arcgis_metadata(
     report_metadata: MetadataExtracted,
 ) -> ArcGISMetadata:
@@ -872,82 +345,6 @@ def _report_metadata_to_arcgis_metadata(
         known_issues=report_metadata.known_issues,
         license_info_raw=report_metadata.license_info_raw,
     )
-
-
-def _add_via_links_to_collections(output_dir: Path, report: ExtractionReport) -> None:
-    """Add via provenance links to each extracted collection.
-
-    Per Issue #353: Each collection should have a `via` link pointing to
-    the original data source (ArcGIS layer URL). The layer-specific URL
-    (service URL + "/" + layer id) gives more precise provenance than the
-    bare service URL.
-
-    Args:
-        output_dir: The catalog output directory.
-        report: The extraction report with layer info and source URL.
-    """
-    add_source_links(
-        output_dir,
-        report,
-        url_builder=lambda source_url, layer: f"{source_url.rstrip('/')}/{layer.id}",
-        title_builder=lambda layer: f"Source ArcGIS layer: {layer.name}",
-    )
-
-
-def _seed_collection_metadata_arcgis(
-    output_dir: Path,
-    report: ExtractionReport,
-    timeout: float = 60.0,
-) -> None:
-    """Seed metadata.yaml for each collection with ArcGIS layer-specific info.
-
-    Fetches layer details from ArcGIS API to get description for each layer.
-    Falls back gracefully if layer details fetch fails.
-
-    Args:
-        output_dir: The catalog output directory.
-        report: The extraction report with layer results.
-        timeout: Request timeout for layer detail fetches.
-    """
-    from portolan_cli.extract.arcgis.discovery import fetch_layer_details
-    from portolan_cli.extract.common.metadata_seeding import seed_collection_metadata
-
-    source_url = report.source_url
-
-    for layer_result in report.layers:
-        if layer_result.status != "success" or not layer_result.output_path:
-            continue
-
-        # Derive collection directory from output_path's parent
-        # Handles nested paths like "service/layer/layer.parquet"
-        collection_dir = output_dir / Path(layer_result.output_path).parent
-
-        # Fetch layer details to get description
-        layer_description = None
-        layer_name = layer_result.name
-        try:
-            layer_details = fetch_layer_details(source_url, layer_result.id, timeout=timeout)
-            layer_description = layer_details.get("description")
-            layer_name = layer_details.get("name", layer_result.name)
-        except Exception as e:
-            logger.debug(
-                "Failed to fetch layer details for %s (id=%s) from %s: %s",
-                layer_result.name,
-                layer_result.id,
-                source_url,
-                e,
-            )
-
-        layer_url = f"{source_url.rstrip('/')}/{layer_result.id}"
-
-        seed_collection_metadata(
-            collection_dir,
-            source_type="arcgis_featureserver",
-            source_url=layer_url,
-            layer_name=layer_name,
-            title=layer_name,
-            description=layer_description,
-        )
 
 
 def _discover_and_filter_services(
@@ -1046,306 +443,20 @@ def _collect_layers_from_services(
     return all_layers, service_for_layer, layer_count_per_service, discovery_errors
 
 
-def _filter_layers_by_index(
-    all_layers: list[LayerInfo],
-    layer_filter: list[str] | None,
-    layer_exclude: list[str] | None,
-) -> list[tuple[int, LayerInfo]]:
-    """Filter layers and return (index, layer) tuples."""
-    if not layer_filter and not layer_exclude:
-        return list(enumerate(all_layers))
-
-    layers_dicts: list[dict[str, int | str]] = [
-        {"id": i, "name": layer.name} for i, layer in enumerate(all_layers)
-    ]
-    filtered_dicts = filter_layers(
-        layers_dicts,
-        include=layer_filter,
-        exclude=layer_exclude,
-    )
-    filtered_indices = {d["id"] for d in filtered_dicts}
-    return [(i, layer) for i, layer in enumerate(all_layers) if i in filtered_indices]
-
-
-def _get_services_root_resume_context(
-    options: ExtractionOptions,
-    report_path: Path,
-) -> dict[str, LayerResult]:
-    """Get resume context for services root extraction.
-
-    For services root, we use output_path as the unique identifier since
-    layer IDs are not unique across services (multiple services can have layer 0).
-
-    Returns:
-        Dict mapping output_path to LayerResult for succeeded layers.
-    """
-    if not options.resume or not report_path.exists():
-        return {}
-
-    existing_report = load_report(report_path)
-    # Map by output_path (unique across services) for succeeded/skipped layers
-    return {
-        r.output_path: r
-        for r in existing_report.layers
-        if r.status in ("success", "skipped") and r.output_path
-    }
-
-
-def _extract_services_root(
-    url: str,
-    parsed: ParsedArcGISURL,
-    output_dir: Path,
-    *,
-    layer_filter: list[str] | None = None,
-    layer_exclude: list[str] | None = None,
-    service_filter: list[str] | None = None,
-    service_exclude: list[str] | None = None,
-    options: ExtractionOptions | None = None,
-    on_progress: Callable[[ExtractionProgress], None] | None = None,
-) -> ExtractionReport:
-    """Extract from a services root URL.
-
-    Services root URLs create a nested catalog structure:
-    - Root = Catalog
-    - Services = Sub-catalogs
-    - Layers = Collections
-
-    Supports resume by tracking output_path (unique across services) rather than
-    layer ID (which can repeat across services).
-    """
-    if options is None:
-        options = ExtractionOptions()
-
-    # Discover and filter services
-    services, coverage = _discover_and_filter_services(
-        url,
-        service_filter,
-        service_exclude,
-        options.timeout,
-        token=options.token,
-        folder=parsed.folder,
-        recurse=options.recurse,
-    )
-
-    # Collect layers from all services
-    all_layers, service_for_layer, layer_count_per_service, _discovery_errors = (
-        _collect_layers_from_services(services, parsed.base_url, options.timeout)
-    )
-
-    # Apply layer filters
-    filtered_layers = _filter_layers_by_index(all_layers, layer_filter, layer_exclude)
-
-    # Dry run - just return what would be extracted
-    if options.dry_run:
-        dry_run_results = [
-            LayerResult(
-                id=layer.id,
-                name=layer.name,
-                status="pending",
-                features=0,
-                size_bytes=0,
-                duration_seconds=0.0,
-                output_path="",
-                warnings=[],
-                error=None,
-                attempts=0,
-            )
-            for _idx, layer in filtered_layers
-        ]
-        # Create a minimal discovery result for the report
-        combined_discovery = ServiceDiscoveryResult(
-            layers=[layer for _, layer in filtered_layers],
-        )
-        dry_report = _build_report(
-            url=url,
-            discovery_result=combined_discovery,
-            layer_results=dry_run_results,
-        )
-        dry_report.folder_coverage = coverage
-        return dry_report
-
-    # Resolve the license before downloading anything (issue #686). A services root
-    # spans many services with potentially different licenses, and the catalog carries
-    # one metadata.yaml, so nothing harvested can stand in for the human here.
-    resolved_license = (
-        None
-        if options.raw
-        else resolve_harvest_license(
-            cli_license=options.license,
-            cli_license_url=options.license_url,
-            harvested_license_url=None,
-        )
-    )
-
-    # Create output directory structure
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / ".portolan").mkdir(exist_ok=True)
-
-    # Handle resume state for services root
-    report_path = output_dir / ".portolan" / "extraction-report.json"
-    existing_results_by_path = _get_services_root_resume_context(options, report_path)
-
-    # Extract each layer
-    layer_results: list[LayerResult] = []
-    retry_config = RetryConfig(max_attempts=options.retries)
-    total = len(filtered_layers)
-
-    for progress_idx, (layer_idx, layer) in enumerate(filtered_layers):
-        service = service_for_layer[layer_idx]
-        service_url = service.get_url(parsed.base_url)
-        layer_slug = _slugify(layer.name)
-        service_dir = _service_output_dir(output_dir, service.name)
-        service_leaf_slug = service_dir.name
-
-        # Determine output path based on layer count:
-        # - Single-layer service: service_name/service_name.parquet (flattened - no subcatalog)
-        # - Multi-layer service: service_name/layer_name/layer_name.parquet (nested)
-        is_single_layer = layer_count_per_service.get(service.name, 0) == 1
-
-        if is_single_layer:
-            # Flatten: service becomes collection directly
-            output_path = service_dir / f"{service_leaf_slug}.parquet"
-        else:
-            # Nested: service is subcatalog, layer is collection
-            collection_dir = service_dir / layer_slug
-            output_path = collection_dir / f"{layer_slug}.parquet"
-
-        relative_output_path = output_path.relative_to(output_dir).as_posix()
-
-        emit_progress(on_progress, progress_idx, total, layer.name, "starting")
-
-        # Check resume state - skip if already succeeded
-        if relative_output_path in existing_results_by_path:
-            existing_result = existing_results_by_path[relative_output_path]
-            layer_results.append(existing_result)
-            emit_progress(on_progress, progress_idx, total, layer.name, "skipped")
-            logger.debug(
-                "Skipping already-completed layer: %s/%s",
-                service.name,
-                layer.name,
-            )
-            continue
-
-        # Extract with retry
-        emit_progress(on_progress, progress_idx, total, layer.name, "extracting")
-
-        result = retry_with_backoff(
-            _extract_single_layer,
-            retry_config,
-            service_url,
-            layer,
-            output_path,
-            options,
-            on_retry=lambda _attempt, _err: None,  # Silent retries
-        )
-
-        if result.success:
-            features, size_bytes, duration = result.value  # type: ignore[misc]
-
-            # Extract style from ESRI layer (Issue #490)
-            if not options.no_styles:
-                layer_url = f"{service_url}/{layer.id}"
-                # collection_dir is service_dir for single-layer, or nested dir for multi
-                coll_dir = service_dir if is_single_layer else service_dir / layer_slug
-                style_result = extract_esri_style(
-                    layer_url=layer_url,
-                    collection_path=coll_dir,
-                    source_layer=layer_slug,
-                )
-                if style_result:
-                    logger.debug("Extracted style for %s: %s", layer.name, style_result.path)
-
-            layer_results.append(
-                LayerResult(
-                    id=layer.id,
-                    name=layer.name,
-                    status="success",
-                    features=features,
-                    size_bytes=size_bytes,
-                    duration_seconds=duration,
-                    output_path=relative_output_path,
-                    warnings=[],
-                    error=None,
-                    attempts=result.attempts,
-                )
-            )
-            emit_progress(on_progress, progress_idx, total, layer.name, "success")
-        else:
-            error_msg = str(result.error) if result.error else "Unknown error"
-            layer_results.append(
-                LayerResult(
-                    id=layer.id,
-                    name=layer.name,
-                    status="failed",
-                    features=0,
-                    size_bytes=0,
-                    duration_seconds=0.0,
-                    output_path="",
-                    warnings=[],
-                    error=error_msg,
-                    attempts=result.attempts,
-                )
-            )
-            emit_progress(on_progress, progress_idx, total, layer.name, "failed", error=error_msg)
-
-    # Build and save report
-    combined_discovery = ServiceDiscoveryResult(
-        layers=[layer for _, layer in filtered_layers],
-    )
-    report = _build_report(
-        url=url,
-        discovery_result=combined_discovery,
-        layer_results=layer_results,
-    )
-    report.folder_coverage = coverage
-    report_path = output_dir / ".portolan" / "extraction-report.json"
-    save_report(report, report_path)
-
-    # Auto-init catalog unless raw mode
-    if not options.raw:
-        _auto_init_catalog(output_dir, report, resolved_license, options.catalog_id)
-
-    return report
-
-
-def _build_report(
-    url: str,
-    discovery_result: ServiceDiscoveryResult,
-    layer_results: list[LayerResult],
-) -> ExtractionReport:
-    """Build an ExtractionReport from extraction results."""
-    # Get versions
-    try:
-        from importlib.metadata import version
-
-        portolan_version = version("portolan-cli")
-    except Exception:
-        portolan_version = "unknown"
-
-    try:
-        from importlib.metadata import version
-
-        gpio_version = version("geoparquet-io")
-    except Exception:
-        gpio_version = "unknown"
-
-    # Extract metadata
+def _service_metadata(url: str, found: ServiceDiscoveryResult) -> MetadataExtracted:
+    """Read the service metadata that the extraction report records."""
     arcgis_metadata = extract_arcgis_metadata(
         {
-            "copyrightText": discovery_result.copyright_text,
-            "description": discovery_result.description,
-            "serviceDescription": discovery_result.service_description,
-            "documentInfo": {
-                "Author": discovery_result.author,
-                "Keywords": discovery_result.keywords,
-            },
-            "accessInformation": discovery_result.access_information,
-            "licenseInfo": discovery_result.license_info,
+            "copyrightText": found.copyright_text,
+            "description": found.description,
+            "serviceDescription": found.service_description,
+            "documentInfo": {"Author": found.author, "Keywords": found.keywords},
+            "accessInformation": found.access_information,
+            "licenseInfo": found.license_info,
         },
         source_url=url,
     )
-
-    metadata_extracted = MetadataExtracted(
+    return MetadataExtracted(
         source_url=url,
         description=arcgis_metadata.description,
         attribution=arcgis_metadata.attribution,
@@ -1356,29 +467,284 @@ def _build_report(
         license_info_raw=arcgis_metadata.license_info_raw,
     )
 
-    # Calculate summary
-    succeeded = sum(1 for r in layer_results if r.status == "success")
-    failed = sum(1 for r in layer_results if r.status == "failed")
-    skipped = sum(1 for r in layer_results if r.status == "skipped")
-    empty = sum(1 for r in layer_results if r.status == "empty")
 
-    summary = ExtractionSummary(
-        total_layers=len(layer_results),
-        succeeded=succeeded,
-        failed=failed,
-        skipped=skipped,
-        empty=empty,
-        total_features=sum(r.features or 0 for r in layer_results),
-        total_size_bytes=sum(r.size_bytes or 0 for r in layer_results),
-        total_duration_seconds=sum(r.duration_seconds or 0.0 for r in layer_results),
-    )
+@dataclass(frozen=True)
+class ArcGISLayer:
+    """What ``fetch`` and the metadata methods need for one ArcGIS layer."""
 
-    return ExtractionReport(
-        extraction_date=datetime.now(timezone.utc).isoformat(),
-        source_url=url,
-        portolan_version=portolan_version,
-        gpio_version=gpio_version,
-        metadata_extracted=metadata_extracted,
-        layers=layer_results,
-        summary=summary,
+    info: LayerInfo
+    service_url: str
+
+    @property
+    def url(self) -> str:
+        """The layer's REST URL: service URL plus layer id."""
+        return f"{self.service_url.rstrip('/')}/{self.info.id}"
+
+
+class ArcGISLayerSource:
+    """ArcGIS FeatureServer and MapServer layers as a ``LayerSource``."""
+
+    name = "arcgis"
+    summary = "ArcGIS FeatureServer, MapServer, and ImageServer services."
+
+    def __init__(
+        self,
+        options: ExtractionOptions | None = None,
+        *,
+        service_filter: list[str] | None = None,
+        service_exclude: list[str] | None = None,
+    ) -> None:
+        self.options = options or ExtractionOptions()
+        self.service_filter = service_filter
+        self.service_exclude = service_exclude
+
+    def discover(self, source: str, options: LayerSourceOptions) -> Discovery:  # noqa: ARG002 - LayerSource signature
+        """List the layers of a service, or of every service under a root."""
+        parsed = parse_arcgis_url(source)
+        if parsed.url_type in (ArcGISURLType.SERVICES_ROOT, ArcGISURLType.SERVICES_FOLDER):
+            return self._discover_root(source, parsed.base_url, parsed.folder)
+        found = discover_layers(source, timeout=self.options.timeout)
+        layers = [
+            LayerRef(id=layer.id, name=layer.name, data=ArcGISLayer(layer, source))
+            for layer in found.layers
+        ]
+        return self.discovery_from(
+            source, _service_metadata(source, found), layers, license_info=found.license_info
+        )
+
+    def _discover_root(self, source: str, base_url: str, folder: str | None) -> Discovery:
+        """Walk a services root. Each layer keeps the URL of its own service.
+
+        A services root spans services with different licenses and the
+        catalog carries one metadata.yaml, so no harvested license applies
+        (issue #686).
+        """
+        services, coverage = _discover_and_filter_services(
+            source,
+            self.service_filter,
+            self.service_exclude,
+            self.options.timeout,
+            token=self.options.token,
+            folder=folder,
+            recurse=self.options.recurse,
+        )
+        all_layers, service_for_layer, layer_counts, _errors = _collect_layers_from_services(
+            services, base_url, self.options.timeout
+        )
+        layers = []
+        for index, layer in enumerate(all_layers):
+            service = service_for_layer[index]
+            service_dir = _service_output_dir(Path(), service.name).as_posix()
+            # A single-layer service is one collection at the service directory.
+            # A multi-layer service is a subcatalog with one collection per layer.
+            single = layer_counts.get(service.name, 0) == 1
+            path = service_dir if single else f"{service_dir}/{slugify(layer.name)}"
+            layers.append(
+                LayerRef(
+                    id=layer.id,
+                    name=layer.name,
+                    path=path,
+                    data=ArcGISLayer(layer, service.get_url(base_url)),
+                )
+            )
+        combined = ServiceDiscoveryResult(layers=list(all_layers))
+        found = self.discovery_from(source, _service_metadata(source, combined), layers)
+        found.folder_coverage = coverage
+        return found
+
+    @staticmethod
+    def discovery_from(
+        source: str,
+        metadata: MetadataExtracted | None,
+        layers: list[LayerRef],
+        *,
+        license_info: str | None = None,
+    ) -> Discovery:
+        """Add the catalog metadata to the layers (issue #369).
+
+        The service name titles the catalog and the service description
+        describes it. A technical name is kept out of ``init_catalog`` and
+        written to ``catalog.json`` only after a new catalog exists.
+        """
+        from portolan_cli.stac import is_technical_name
+
+        title = None
+        with contextlib.suppress(ValueError):
+            title = parse_arcgis_url(source).service_name
+        description = metadata.description if metadata else None
+        seed = _report_metadata_to_arcgis_metadata(metadata).to_extracted() if metadata else None
+        return Discovery(
+            source_url=source,
+            layers=layers,
+            metadata=metadata,
+            catalog_seed=seed,
+            license_url=license_url_from_text(license_info),
+            catalog_title=None if is_technical_name(title) else title,
+            catalog_description=None if is_technical_name(description) else description,
+            root_metadata=(title, description),
+        )
+
+    def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:  # noqa: ARG002 - LayerSource signature
+        """Write the layer with ``gpio.extract_arcgis``, then restore its CRS."""
+        arcgis_layer: ArcGISLayer = layer.data
+        options = self.options
+        import inspect
+
+        import geoparquet_io as gpio  # type: ignore[import-untyped]
+
+        # Check which optional parameters gpio.extract_arcgis supports (feature-detected
+        # so older gpio versions continue to work without modification).
+        sig = inspect.signature(gpio.extract_arcgis)
+        kwargs: dict[str, object] = {}
+        if "max_workers" in sig.parameters:
+            kwargs["max_workers"] = options.workers
+        if options.token and "token" in sig.parameters:
+            kwargs["token"] = options.token
+        # Apply the timeout to the feature-page requests too, not only to discovery.
+        # Slow layers with complex geometry time out at gpio's 60s default otherwise,
+        # and --timeout appears to do nothing (issue #898).
+        if "timeout" in sig.parameters:
+            kwargs["timeout"] = options.timeout
+        # Keep the service's source CRS instead of the silent WGS84 reprojection that
+        # the GeoJSON path forces (issue #802). Older gpio versions without output_crs
+        # cannot preserve the CRS, so warn that the output stays WGS84.
+        if "output_crs" in sig.parameters:
+            kwargs["output_crs"] = options.output_crs
+        else:
+            from portolan_cli.output import warn
+
+            warn(
+                "Installed geoparquet-io does not support output CRS selection. "
+                f"Output uses WGS84 (EPSG:4326), not '{options.output_crs}'."
+            )
+        table = gpio.extract_arcgis(arcgis_layer.url, **kwargs)
+
+        # Capture the CRS the extractor detected before the write drops it. gpio.Table
+        # tags the native SR on the table but its writer emits crs: null, so a native
+        # extraction would declare WGS84 over projected coordinates (issue #802).
+        # gpio.Table.crs may return a dict, a string, or None. Only a PROJJSON dict
+        # restamps a valid CRS, so ignore the other forms.
+        captured_crs = getattr(table, "crs", None)
+        source_crs = captured_crs if isinstance(captured_crs, dict) else None
+
+        # Add the bbox covering column, then sort. Same order as
+        # convert.apply_vector_settings, so both writers produce the same layout.
+        # Portolan needs row-group spatial statistics for efficient remote reads.
+        # ArcGIS extraction writes GeoParquet directly, so the covering column is
+        # added here rather than by a later conversion pass.
+        #
+        # An ArcGIS service publishes non-spatial Table layers beside its Feature
+        # Layers, and both operations raise a DuckDB binder error on a table with
+        # no geometry column, so the same guard applies here (issue #805).
+        if has_geometry(table):
+            if options.add_bbox:
+                table = table.add_bbox()
+            if options.sort_hilbert:
+                table = table.sort_hilbert()
+
+        # Write to parquet
+        table.write(str(dest))
+
+        # Restore the source CRS that gpio's writer discarded (issue #802).
+        _ensure_geoparquet_crs(dest, source_crs)
+
+        # gpio.Table uses num_rows property instead of __len__
+        return int(table.num_rows)
+
+    def layer_metadata(self, source: str, layer: LayerRef) -> LayerMetadata:  # noqa: ARG002 - LayerSource signature
+        """Read the layer's name and description from its REST details."""
+        from portolan_cli.extract.arcgis.discovery import fetch_layer_details
+
+        arcgis_layer: ArcGISLayer = layer.data
+        name = layer.name
+        description = None
+        try:
+            details = fetch_layer_details(
+                arcgis_layer.service_url, layer.id, timeout=self.options.timeout
+            )
+            description = details.get("description")
+            name = details.get("name", layer.name)
+        except Exception as err:  # noqa: BLE001 - a missing description must not fail the catalog
+            logger.debug(
+                "Failed to fetch layer details for %s (id=%s) from %s: %s",
+                layer.name,
+                layer.id,
+                arcgis_layer.service_url,
+                err,
+            )
+        return LayerMetadata(
+            title=name,
+            description=description,
+            layer_name=name,
+            source_type="arcgis_featureserver",
+            source_url=arcgis_layer.url,
+        )
+
+    def styles(self, source: str, layer: LayerRef, collection_dir: Path) -> None:  # noqa: ARG002 - LayerSource signature
+        """Convert the layer's ESRI drawingInfo to a style (issue #490)."""
+        if self.options.no_styles:
+            return
+        arcgis_layer: ArcGISLayer = layer.data
+        style = extract_esri_style(
+            layer_url=arcgis_layer.url,
+            collection_path=collection_dir,
+            source_layer=slugify(layer.name),
+        )
+        if style:
+            logger.debug("Extracted style for %s: %s", layer.name, style.path)
+
+    def source_link(self, source: str, layer: LayerRef) -> SourceLink:  # noqa: ARG002 - LayerSource signature
+        """Link to the layer's REST endpoint (issue #353)."""
+        arcgis_layer: ArcGISLayer = layer.data
+        return SourceLink(href=arcgis_layer.url, title=f"Source ArcGIS layer: {layer.name}")
+
+
+def extract_arcgis_catalog(
+    url: str,
+    output_dir: Path,
+    *,
+    layer_filter: list[str] | None = None,
+    layer_exclude: list[str] | None = None,
+    service_filter: list[str] | None = None,
+    service_exclude: list[str] | None = None,
+    options: ExtractionOptions | None = None,
+    on_progress: Callable[[ExtractionProgress], None] | None = None,
+) -> ExtractionReport:
+    """Extract layers from an ArcGIS service to a Portolan catalog.
+
+    Args:
+        url: ArcGIS FeatureServer, MapServer, or services root URL
+        output_dir: Directory to write extracted data
+        layer_filter: Glob patterns to include layers (if None, include all)
+        layer_exclude: Glob patterns to exclude layers
+        service_filter: Glob patterns to include services (for services root URLs)
+        service_exclude: Glob patterns to exclude services (for services root URLs)
+        options: Extraction options (defaults to ExtractionOptions())
+        on_progress: Callback for progress updates
+
+    Returns:
+        ExtractionReport with results for all layers
+
+    Raises:
+        ValueError: If URL is invalid
+        ArcGISDiscoveryError: If service discovery fails
+        MissingLicenseError: If no license can be resolved (issue #686).
+    """
+    options = options or ExtractionOptions()
+    # ``workers`` is gpio's page concurrency inside one layer. Layers run one
+    # at a time.
+    driver = LayerSourceOptions(
+        layer_filter=layer_filter,
+        layer_exclude=layer_exclude,
+        resume=options.resume,
+        dry_run=options.dry_run,
+        raw=options.raw,
+        retries=options.retries,
+        catalog_id=options.catalog_id,
+        license=options.license,
+        license_url=options.license_url,
     )
+    layer_source = ArcGISLayerSource(
+        options, service_filter=service_filter, service_exclude=service_exclude
+    )
+    return run_layer_extraction(layer_source, url, output_dir, driver, on_progress=on_progress)

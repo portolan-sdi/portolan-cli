@@ -21,7 +21,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import click
 import pystac
 
 from portolan_cli.collection import (
@@ -41,7 +40,7 @@ from portolan_cli.constants import (
 from portolan_cli.conversion_config import get_vector_settings
 from portolan_cli.convert import convert_multilayer_file
 from portolan_cli.discovery import get_sidecars, iter_files_with_sidecars, iter_geospatial_files
-from portolan_cli.errors import MissingLicenseError, NoGeometryError
+from portolan_cli.errors import MissingLicenseError, NoGeometryError, PartitionCollisionError
 
 # Batch finalization (STAC-write + backend coordination) was extracted to
 # finalization.py (issue #624). add.py orchestrates on top of it: add_files /
@@ -84,15 +83,17 @@ from portolan_cli.finalization import (
 from portolan_cli.finalization import (
     finalize_items as finalize_items,  # noqa: PLC0414
 )
+from portolan_cli.format_families import VECTOR
 from portolan_cli.formats import (
-    FormatType,
     is_multilayer,
     list_layers,
 )
+from portolan_cli.hookspecs import EnrichContext
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.licensing import LICENSE_REL, license_gap, resolve_license
 from portolan_cli.metadata.tabular import extract_tabular_metadata
+from portolan_cli.plugins.formats import plugin_extensions
 from portolan_cli.preparation import (
     _MEDIA_TYPE_MAP as _MEDIA_TYPE_MAP,  # noqa: PLC0414
 )
@@ -128,9 +129,6 @@ from portolan_cli.preparation import (
     _get_media_type as _get_media_type,  # noqa: PLC0414
 )
 from portolan_cli.preparation import (
-    _handle_cloud_native_vector as _handle_cloud_native_vector,  # noqa: PLC0414
-)
-from portolan_cli.preparation import (
     _pre_validate_geometry as _pre_validate_geometry,  # noqa: PLC0414
 )
 from portolan_cli.preparation import (
@@ -164,6 +162,7 @@ from portolan_cli.stac import (
     set_temporal_extent,
     update_catalog_provenance,
 )
+from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
 from portolan_cli.stac_parquet import PARQUET_FILENAME
 from portolan_cli.sync.checksums import compute_checksum, file_fields
 from portolan_cli.viz.style import enrich_cog_assets
@@ -175,16 +174,6 @@ if TYPE_CHECKING:
     from portolan_cli.versions import Version
 
 logger = logging.getLogger(__name__)
-
-# Error message patterns from geoparquet-io for non-geospatial CSV/TSV files.
-# These specific patterns indicate the file lacks geometry columns (not other errors
-# like permission denied, encoding issues, or memory errors).
-# See: https://github.com/geoparquet/geoparquet-io (geometry detection logic)
-_GEOPARQUET_IO_NO_GEOMETRY_PATTERNS: tuple[str, ...] = (
-    "could not detect geometry columns",
-    "geometry columns in csv",
-    "geometry columns in tsv",
-)
 
 # Error message patterns for parquet files without geometry (Issue #177).
 # These patterns indicate a parquet file lacks GeoParquet metadata (no 'geo' key),
@@ -283,31 +272,32 @@ def _maybe_partition_large_file(
         skip_partitioning: If True, skip partitioning even if file exceeds threshold.
             Used when user declines interactive prompt.
 
+    Raises:
+        PartitionCollisionError: The collection already holds partitions.
+            A converted file that this run wrote is removed first, so no row
+            appears twice. A file that existed before the run stays.
+
     Returns:
         List of PreparedItems. If partitioning occurred, contains multiple
         items (one per partition). Otherwise, returns [prepared] unchanged.
     """
-    from portolan_cli.config import get_setting
     from portolan_cli.partitioning import (
         build_glob_pattern,
         get_partition_metadata,
-        partition_geoparquet,
-        should_partition,
+        partition_columns_of,
+        strategy_of_column,
     )
+    from portolan_cli.plugins.formats import handler_named
 
-    # Only partition vector formats (GeoParquet)
-    if prepared.format_type != FormatType.VECTOR:
-        return [prepared]
-
-    # Skip if user declined interactive prompt
     if skip_partitioning:
         return [prepared]
 
-    # Only partition item-level assets (collection-level means single file < 2GB)
-    # But wait - if file is > 2GB, it should NOT be collection-level, it should be partitioned
-    # So we check the actual file, not the is_collection_level_asset flag
+    # The format handler owns the size partition rule (#947).
+    handler = handler_named(prepared.format_name) if prepared.format_name else None
+    partition = getattr(handler, "partition", None)
+    if partition is None:
+        return [prepared]
 
-    # Find the primary parquet file in asset_files
     parquet_files = [
         path
         for filename, (path, _checksum, _size) in prepared.asset_files.items()
@@ -317,64 +307,18 @@ def _maybe_partition_large_file(
         return [prepared]
 
     primary_parquet = parquet_files[0]
-
-    # Check if partitioning is enabled and file exceeds threshold
-    collection_dir = catalog_root / Path(*prepared.collection_id.split("/"))
-    partitioning_enabled = get_setting(
-        "partitioning.enabled",
-        catalog_path=catalog_root,
-        collection_path=collection_dir,
-    )
-    if partitioning_enabled is False:
-        return [prepared]
-
-    threshold_gb = (
-        get_setting(
-            "partitioning.threshold_gb",
-            catalog_path=catalog_root,
-            collection_path=collection_dir,
-        )
-        or 2.0
-    )
-
-    if not should_partition(primary_parquet, threshold_gb=float(threshold_gb)):
-        return [prepared]
-
-    # File needs partitioning
-    strategy = (
-        get_setting(
-            "partitioning.strategy",
-            catalog_path=catalog_root,
-            collection_path=collection_dir,
-        )
-        or "kdtree"
-    )
-
-    target_rows = (
-        get_setting(
-            "partitioning.target_rows",
-            catalog_path=catalog_root,
-            collection_path=collection_dir,
-        )
-        or 120_000
-    )
-
-    # The partition directories sit beside the original file. A file at
-    # collection/data.parquet becomes collection/kdtree_cell=001/data.parquet.
     partition_output_dir = primary_parquet.parent
+    try:
+        partition_files: list[Path] = partition(primary_parquet, catalog_root)
+    except PartitionCollisionError:
+        if prepared.created_output:
+            primary_parquet.unlink(missing_ok=True)
+        raise
+    if not partition_files:
+        return [prepared]
+    columns = partition_columns_of(partition_files)
+    strategy = strategy_of_column(columns[0]) if columns else "kdtree"
 
-    # Partition the file FIRST, before any cleanup
-    # This ensures atomicity: if partitioning fails, original files remain intact
-    # Rollback on failure is handled by partition_geoparquet itself
-    partition_files = partition_geoparquet(
-        input_path=primary_parquet,
-        output_dir=partition_output_dir,
-        strategy=str(strategy),
-        target_rows=int(target_rows),
-    )
-
-    # Partitioning succeeded - now safe to clean up original artifacts
-    # Delete the item.json that was created for the single file
     if prepared.item_json_path and prepared.item_json_path.exists():
         prepared.item_json_path.unlink()
 
@@ -398,7 +342,7 @@ def _maybe_partition_large_file(
 
     # Add collection-level glob asset for bulk access (Issue #351)
     # This provides a single glob URL for DuckDB/PyArrow/GDAL to read all partitions
-    glob_pattern = build_glob_pattern(str(strategy))
+    glob_pattern = build_glob_pattern(strategy, partition_columns=columns)
     glob_asset = pystac.Asset(
         href=glob_pattern,
         media_type="application/vnd.apache.parquet",
@@ -409,7 +353,7 @@ def _maybe_partition_large_file(
     )
 
     # Extract partition metadata for STAC partition extension (Issue #232)
-    partition_meta = get_partition_metadata(partition_output_dir, str(strategy))
+    partition_meta = get_partition_metadata(partition_output_dir, strategy)
 
     # Create a PreparedItem for the glob asset (collection-level)
     # Use original item_id as base to avoid collisions across collections
@@ -417,7 +361,7 @@ def _maybe_partition_large_file(
     glob_prepared = PreparedItem(
         item_id=glob_item_id,
         collection_id=prepared.collection_id,
-        format_type=FormatType.VECTOR,
+        format_type=VECTOR,
         bbox=prepared.bbox,
         asset_files={},  # No physical files - glob is a pattern reference
         item_json_path=None,
@@ -781,23 +725,6 @@ def add_directory(
 # Note: SIDECAR_PATTERNS imported from portolan_cli.constants
 
 
-def _is_no_geometry_error(err: click.ClickException) -> bool:
-    """Check if a ClickException is specifically a 'no geometry columns' error from geoparquet-io.
-
-    This narrows the exception handling to ONLY geometry detection errors,
-    avoiding accidentally catching permission errors, encoding issues, or
-    memory errors that might also be wrapped in ClickException.
-
-    Args:
-        err: The ClickException to check.
-
-    Returns:
-        True if the error is specifically about missing geometry columns.
-    """
-    err_msg = (str(err.message) if hasattr(err, "message") else str(err)).lower()
-    return any(pattern in err_msg for pattern in _GEOPARQUET_IO_NO_GEOMETRY_PATTERNS)
-
-
 def _copy_non_geo_to_item_dir(
     file_path: Path,
     item_dir: Path,
@@ -869,6 +796,7 @@ def _collect_files_for_add(
     """
     processed_paths: set[Path] = set()
     files_to_process: list[tuple[Path, str]] = []
+    geo_extensions = GEOSPATIAL_EXTENSIONS | plugin_extensions()
 
     for path in paths:
         files = iter_files_with_sidecars(path) if path.is_dir() else [path] + get_sidecars(path)
@@ -882,8 +810,9 @@ def _collect_files_for_add(
                 continue
             processed_paths.add(file_path)
 
-            # Skip non-geospatial files
-            if file_path.suffix.lower() not in GEOSPATIAL_EXTENSIONS:
+            # Skip non-geospatial files. A plugin format handler adds its
+            # extensions (#947).
+            if file_path.suffix.lower() not in geo_extensions:
                 continue
 
             # Never re-ingest the item mirror the add flow itself publishes.
@@ -982,6 +911,9 @@ def _prepare_multilayer_file(
     try:
         # Load vector settings from catalog config, then convert all layers.
         vector_settings = get_vector_settings(opts.catalog_root)
+        # prepare_item sees each layer file after it exists, so it cannot tell
+        # a new layer file from an old one. Record the old ones here.
+        existing = set(file_path.parent.glob("*.parquet"))
         results = convert_multilayer_file(file_path, file_path.parent, settings=vector_settings)
 
         for result in results:
@@ -1001,6 +933,7 @@ def _prepare_multilayer_file(
                     reconvert=opts.reconvert,
                     exclude_sibling_names=opts.batch_exclude_names,
                 )
+                prepared.created_output = result.output not in existing
                 # Apply partitioning to each layer (Issue #352)
                 prepared_list.extend(
                     _maybe_partition_large_file(
@@ -1060,11 +993,6 @@ def _prepare_single_file(
             skip_partitioning=opts.skip_partitioning,
         )
         return (partitioned, [], None)
-
-    except click.ClickException as err:
-        if _is_no_geometry_error(err) and file_path.suffix.lower() in TABULAR_EXTENSIONS:
-            return ([], [], (file_path, file_path.parent, coll_id))
-        return ([], [AddFailure(path=file_path, error=str(err))], None)
 
     except NoGeometryError as err:
         if file_path.suffix.lower() in TABULAR_EXTENSIONS:
@@ -1358,6 +1286,7 @@ def add_files(
     )
 
     # Phase 3: Track deferred non-geo files as companion assets.
+    touched_items: list[tuple[str, str]] = []
     affected_collections = _process_deferred_non_geo_files(
         deferred_non_geo=proc.deferred_non_geo,
         source_to_item_dir=proc.source_to_item_dir,
@@ -1366,12 +1295,53 @@ def add_files(
         added=added,
         skipped=skipped,
         failures=failures,
+        touched_items=touched_items,
     )
 
     # Phase 3.5: re-check the file extension on collections with deferred assets (#501).
     _declare_file_extension_for_collections(affected_collections)
 
+    # Phase 4: run the enrichment hooks on the documents phase 3 changed (#947).
+    _enrich_deferred_documents(catalog_root, affected_collections, touched_items)
+
     return added, skipped, failures
+
+
+def _enrich_deferred_documents(
+    catalog_root: Path,
+    affected_collections: set[Path],
+    touched_items: list[tuple[str, str]],
+) -> None:
+    """Run the enrichment hooks on the items and collections phase 3 changed.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        affected_collections: Collection directories that received assets.
+        touched_items: ``(collection_id, item_id)`` of each updated item.
+    """
+    for coll_id, item_id in dict.fromkeys(touched_items):
+        item_path = catalog_root / coll_id / item_id / f"{item_id}.json"
+        if item_path.exists():
+            enrich_item_file(
+                item_path,
+                EnrichContext(
+                    catalog_root=catalog_root,
+                    collection_id=coll_id,
+                    document_path=item_path,
+                    item_id=item_id,
+                ),
+            )
+    for collection_dir in sorted(affected_collections):
+        collection_path = collection_dir / "collection.json"
+        if collection_path.exists():
+            enrich_collection_file(
+                collection_path,
+                EnrichContext(
+                    catalog_root=catalog_root,
+                    collection_id=collection_dir.relative_to(catalog_root).as_posix(),
+                    document_path=collection_path,
+                ),
+            )
 
 
 def _collection_aoi_bbox(collection_dir: Path) -> list[float]:
@@ -1407,6 +1377,7 @@ def _process_deferred_non_geo_files(
     added: list[ItemInfo],
     skipped: list[Path],
     failures: list[AddFailure],
+    touched_items: list[tuple[str, str]] | None = None,
 ) -> set[Path]:
     """Process deferred non-geospatial files.
 
@@ -1424,6 +1395,8 @@ def _process_deferred_non_geo_files(
             they attach to an item or collection that is already reported.
         skipped: List to append skipped files to (modified in place).
         failures: List to append failures to (modified in place).
+        touched_items: List to append each updated item's
+            ``(collection_id, item_id)`` to (modified in place).
 
     Returns:
         Set of collection directories that received deferred assets (for statistics recomputation).
@@ -1453,6 +1426,8 @@ def _process_deferred_non_geo_files(
                     collection_id=coll_id,
                     item_id=resolved_item_id,
                 )
+                if touched_items is not None:
+                    touched_items.append((coll_id, resolved_item_id))
 
                 # Track for statistics recomputation
                 affected_collections.add(catalog_root / coll_id)
@@ -1615,7 +1590,7 @@ def _process_deferred_non_geo_files(
                         ItemInfo(
                             item_id=asset_path.stem,
                             collection_id=coll_id,
-                            format_type=FormatType.UNKNOWN,
+                            format_type=None,
                             bbox=_collection_aoi_bbox(collection_dir),
                             asset_paths=asset_names,
                         )

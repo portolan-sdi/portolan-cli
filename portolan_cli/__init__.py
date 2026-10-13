@@ -7,15 +7,16 @@ import sys
 import types
 from typing import TYPE_CHECKING, Any
 
+from portolan_cli.lazy_exports import lazy_exports
+
 if TYPE_CHECKING:
     from portolan_cli.catalog import Catalog, CatalogExistsError
     from portolan_cli.cli import cli
-    from portolan_cli.formats import FormatType, detect_format
+    from portolan_cli.formats import detect_format
 
 __all__ = [
     "Catalog",
     "CatalogExistsError",
-    "FormatType",
     "cli",
     "detect_format",
 ]
@@ -26,25 +27,12 @@ __all__ = [
 _EXPORTS = {
     "Catalog": "portolan_cli.catalog",
     "CatalogExistsError": "portolan_cli.catalog",
-    "FormatType": "portolan_cli.formats",
     "cli": "portolan_cli.cli",
     "detect_format": "portolan_cli.formats",
 }
 
 
-def __getattr__(name: str) -> Any:
-    """Load a top-level export from its module on first access."""
-    module_name = _EXPORTS.get(name)
-    if module_name is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    value = getattr(importlib.import_module(module_name), name)
-    globals()[name] = value
-    return value
-
-
-def __dir__() -> list[str]:
-    """List the lazy exports with the module globals."""
-    return sorted([*globals(), *__all__])
+__getattr__, __dir__ = lazy_exports(__name__, _EXPORTS, __all__, globals())
 
 
 class _Package(types.ModuleType):

@@ -71,7 +71,7 @@ class TestMetadataFileExclusion:
         STAC items have "type": "Feature" like GeoJSON, but they also have
         "stac_version" which distinguishes them. They are JSON, not GeoJSON.
         """
-        from portolan_cli.formats import FormatType, _detect_json_type
+        from portolan_cli.format_families import is_geojson
 
         # Create a STAC item JSON file
         stac_item = tmp_path / "item.json"
@@ -91,7 +91,7 @@ class TestMetadataFileExclusion:
         )
 
         # Should NOT be detected as GeoJSON (VECTOR)
-        assert _detect_json_type(stac_item) == FormatType.UNKNOWN
+        assert not is_geojson(stac_item)
 
         # But actual GeoJSON should still be detected
         geojson = tmp_path / "points.json"
@@ -109,7 +109,7 @@ class TestMetadataFileExclusion:
                 }
             )
         )
-        assert _detect_json_type(geojson) == FormatType.VECTOR
+        assert is_geojson(geojson)
 
     @pytest.mark.unit
     def test_list_excludes_versions_json(self, runner: CliRunner) -> None:

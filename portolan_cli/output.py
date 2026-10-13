@@ -22,6 +22,11 @@ Dry-Run Mode:
     Use dry-run mode for commands that modify state (add, sync,
     prune, repair) to preview operations before execution.
 
+Writers:
+    A writer turns a styled message into terminal output. The default writer
+    imports no Click, so a library caller can use this module without the CLI
+    shell (#947). ``cli.py`` installs a writer that uses ``click.echo``, which
+    keeps the CLI behavior of CliRunner color handling and Windows consoles.
 """
 
 from __future__ import annotations
@@ -30,9 +35,7 @@ import sys
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, TextIO
-
-import click
+from typing import TYPE_CHECKING, Protocol, TextIO
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -63,7 +66,6 @@ def output_section() -> Generator[None, None, None]:
         yield
 
 
-# ANSI color codes via click's style system
 _STYLES: dict[str, dict[str, str | bool]] = {
     "success": {"fg": "green"},
     "info": {"fg": "blue"},
@@ -79,6 +81,68 @@ _PREFIXES = {
     "error": "\u2717",  # X
     "detail": " ",  # space (no prefix, just indent)
 }
+
+# The SGR codes that click.style emits for the colors above.
+_ANSI_FG = {"green": 32, "blue": 34, "yellow": 33, "red": 31}
+_ANSI_DIM = 2
+_ANSI_RESET = "\x1b[0m"
+
+
+class Writer(Protocol):
+    """Write one styled message to a stream."""
+
+    def __call__(
+        self,
+        prefix: str,
+        message: str,
+        *,
+        fg: str | None,
+        dim: bool,
+        file: TextIO | None,
+        nl: bool,
+    ) -> None:
+        """Write ``prefix`` and ``message``, styled with ``fg`` and ``dim``."""
+
+
+def _ansi(text: str, fg: str | None, dim: bool) -> str:
+    """Wrap text in the ANSI codes ``click.style(text, fg=fg, dim=dim)`` emits."""
+    codes = ([f"\x1b[{_ANSI_FG[fg]}m"] if fg else []) + ([f"\x1b[{_ANSI_DIM}m"] if dim else [])
+    return "".join(codes) + text + _ANSI_RESET
+
+
+def default_writer(
+    prefix: str,
+    message: str,
+    *,
+    fg: str | None,
+    dim: bool,
+    file: TextIO | None,
+    nl: bool,
+) -> None:
+    """Write without Click. Add color only when the stream is a terminal.
+
+    ``sys.stdout`` resolves at call time, as it does in ``click.echo``.
+    """
+    stream = file if file is not None else sys.stdout
+    isatty = getattr(stream, "isatty", None)
+    if callable(isatty) and isatty():
+        prefix, message = _ansi(prefix, fg, dim), _ansi(message, fg, dim)
+    stream.write(f"{prefix} {message}" + ("\n" if nl else ""))
+    stream.flush()
+
+
+_writer: Writer = default_writer
+
+
+def set_writer(writer: Writer) -> None:
+    """Install the writer that every output function uses."""
+    global _writer
+    _writer = writer
+
+
+def get_writer() -> Writer:
+    """Return the installed writer."""
+    return _writer
 
 
 def _output(
@@ -102,16 +166,13 @@ def _output(
     if dry_run:
         message = f"[DRY RUN] {message}"
 
-    prefix = _PREFIXES[style]
     style_kwargs = _STYLES[style]
     fg = str(style_kwargs["fg"]) if "fg" in style_kwargs else None
     dim = bool(style_kwargs.get("dim", False))
-    styled_prefix = click.style(prefix, fg=fg, dim=dim)
-    styled_message = click.style(message, fg=fg, dim=dim)
 
     # Thread-safe output to prevent interleaving from concurrent threads
     with _output_lock:
-        click.echo(f"{styled_prefix} {styled_message}", file=file, nl=nl)
+        _writer(_PREFIXES[style], message, fg=fg, dim=dim, file=file, nl=nl)
 
 
 def success(

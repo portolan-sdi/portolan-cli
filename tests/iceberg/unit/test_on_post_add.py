@@ -457,3 +457,76 @@ def test_on_post_add_preserves_existing_assets(iceberg_backend, parquet_file, ca
 
     assert "thumbnail" in collection.assets
     assert collection.assets["data"].href == "./roads.parquet"
+
+
+@pytest.mark.integration
+def test_on_post_add_keeps_fields_an_enrichment_hook_wrote(
+    iceberg_backend, parquet_file, catalog_with_stac
+):
+    """The hook merges into the JSON on disk and keeps plugin fields (#947).
+
+    The enrichment hooks write to collection.json and the item files before
+    the backend publishes. The in-memory collection never sees those fields.
+    A pystac save from memory would drop them from the files and the upload.
+    """
+    import json
+
+    catalog_root, item_dir, collection = catalog_with_stac
+    collection_json = catalog_root / "boundaries" / "collection.json"
+    item_json = item_dir / "item1.json"
+    collection_json.write_text(
+        json.dumps({"type": "Collection", "id": "boundaries", "sci:citation": "Agency (2026)"})
+    )
+    item_json.write_text(json.dumps({"type": "Feature", "id": "item1", "sci:doi": "10.1/x"}))
+
+    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
+
+    written = json.loads(collection_json.read_text())
+    assert written["sci:citation"] == "Agency (2026)"
+    assert written["iceberg:table_id"] == "portolake.boundaries"
+    assert STAC_TABLE_EXTENSION in written["stac_extensions"]
+    assert STAC_ICEBERG_EXTENSION in written["stac_extensions"]
+    assert json.loads(item_json.read_text()) == {
+        "type": "Feature",
+        "id": "item1",
+        "sci:doi": "10.1/x",
+    }
+
+
+@pytest.mark.integration
+def test_on_post_add_keeps_the_structural_links(iceberg_backend, parquet_file, catalog_with_stac):
+    """The hook must leave ``root`` and ``parent`` alone (issue #940).
+
+    The hook used to call ``normalize_hrefs`` and ``save(SELF_CONTAINED)``.
+    pystac points ``root`` at the object it saves, so that made the collection
+    its own root and dropped ``parent``. ``portolan check`` then reported
+    PTL-LNK-001 and PTL-LNK-006 on every collection the backend wrote.
+
+    #958 replaced that save with ``_merge_into_collection_json``, which fixed it
+    as a side effect of keeping the fields an enrichment hook writes. This test
+    pins the links, so a later change to how the hook writes cannot bring the
+    finding back without failing here.
+    """
+    import json
+
+    catalog_root, item_dir, collection = catalog_with_stac
+    collection_json = catalog_root / "boundaries" / "collection.json"
+    collection_json.write_text(
+        json.dumps(
+            {
+                "type": "Collection",
+                "id": "boundaries",
+                "links": [
+                    {"rel": "root", "href": "../catalog.json", "type": "application/json"},
+                    {"rel": "parent", "href": "../catalog.json", "type": "application/json"},
+                ],
+            }
+        )
+    )
+
+    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
+
+    rels = {link["rel"]: link["href"] for link in json.loads(collection_json.read_text())["links"]}
+
+    assert rels.get("parent") == "../catalog.json"
+    assert rels.get("root") == "../catalog.json"

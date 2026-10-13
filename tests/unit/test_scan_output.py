@@ -17,7 +17,6 @@ import pytest
 
 from portolan_cli.scan.classify import FileCategory, SkippedFile, SkipReasonType
 from portolan_cli.scan.core import (
-    FormatType,
     IssueType,
     ScanIssue,
     ScannedFile,
@@ -34,7 +33,7 @@ from portolan_cli.scan.infer import CollectionSuggestion
 def make_scanned_file(
     path: Path,
     ext: str = ".geojson",
-    format_type: FormatType = FormatType.VECTOR,
+    format_type: str | None = "vector",
     size: int = 1000,
 ) -> ScannedFile:
     """Create a ScannedFile for testing."""
@@ -1161,7 +1160,7 @@ class TestNestedCollectionIdDisplay:
             path=tmp_path / "climate" / "hittekaart" / "data.parquet",
             relative_path="climate/hittekaart/data.parquet",
             extension=".parquet",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             size_bytes=1000,
             metadata={
                 "inferred_collection_id": "climate/hittekaart",
@@ -1185,7 +1184,7 @@ class TestNestedCollectionIdDisplay:
             path=tmp_path / "census" / "data.parquet",
             relative_path="census/data.parquet",
             extension=".parquet",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             size_bytes=1000,
             metadata={
                 "inferred_collection_id": "census",
@@ -1223,7 +1222,7 @@ class TestFormatStatusDisplay:
             path=tmp_path / "data.parquet",
             relative_path="data.parquet",
             extension=".parquet",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             size_bytes=1000,
             metadata={
                 "format_status": "cloud_native",
@@ -1243,7 +1242,7 @@ class TestFormatStatusDisplay:
             path=tmp_path / "lookup.parquet",
             relative_path="lookup.parquet",
             extension=".parquet",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             size_bytes=1000,
             metadata={
                 "format_status": "companion",
@@ -1263,7 +1262,7 @@ class TestFormatStatusDisplay:
             path=tmp_path / "data.geojson",
             relative_path="data.geojson",
             extension=".geojson",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             size_bytes=1000,
             metadata={
                 "format_status": "convertible",
@@ -1291,7 +1290,7 @@ class TestGroupFilesByCollection:
                 path=tmp_path / "climate" / "hittekaart" / "data.parquet",
                 relative_path="climate/hittekaart/data.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=1000,
                 metadata={"inferred_collection_id": "climate/hittekaart"},
             ),
@@ -1299,7 +1298,7 @@ class TestGroupFilesByCollection:
                 path=tmp_path / "climate" / "hittekaart" / "lookup.parquet",
                 relative_path="climate/hittekaart/lookup.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=500,
                 metadata={"inferred_collection_id": "climate/hittekaart"},
             ),
@@ -1307,7 +1306,7 @@ class TestGroupFilesByCollection:
                 path=tmp_path / "census" / "data.parquet",
                 relative_path="census/data.parquet",
                 extension=".parquet",
-                format_type=FormatType.VECTOR,
+                format_type="vector",
                 size_bytes=2000,
                 metadata={"inferred_collection_id": "census"},
             ),
@@ -1349,7 +1348,7 @@ class TestStructureRecommendations:
                     path=tmp_path / "census" / "data.parquet",
                     relative_path="census/data.parquet",
                     extension=".parquet",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     size_bytes=1000,
                     metadata={"inferred_collection_id": "census"},
                 ),
@@ -1374,7 +1373,7 @@ class TestStructureRecommendations:
                     path=tmp_path / "imagery" / "2024-01-15" / "scene.tif",
                     relative_path="imagery/2024-01-15/scene.tif",
                     extension=".tif",
-                    format_type=FormatType.RASTER,
+                    format_type="raster",
                     size_bytes=1000000,
                     metadata={"inferred_collection_id": "imagery"},
                 ),
@@ -1382,7 +1381,7 @@ class TestStructureRecommendations:
                     path=tmp_path / "imagery" / "2024-01-16" / "scene.tif",
                     relative_path="imagery/2024-01-16/scene.tif",
                     extension=".tif",
-                    format_type=FormatType.RASTER,
+                    format_type="raster",
                     size_bytes=1000000,
                     metadata={"inferred_collection_id": "imagery"},
                 ),
@@ -1407,7 +1406,7 @@ class TestStructureRecommendations:
                     path=tmp_path / "census" / "data.parquet",
                     relative_path="census/data.parquet",
                     extension=".parquet",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     size_bytes=1000,
                     metadata={"inferred_collection_id": "census"},
                 ),
@@ -1490,7 +1489,7 @@ class TestEnhancedJsonOutput:
             path=tmp_path / "climate" / "hittekaart" / "data.parquet",
             relative_path="climate/hittekaart/data.parquet",
             extension=".parquet",
-            format_type=FormatType.VECTOR,
+            format_type="vector",
             size_bytes=1000,
             metadata={
                 "inferred_collection_id": "climate/hittekaart",
@@ -1516,7 +1515,7 @@ class TestEnhancedJsonOutput:
                     path=tmp_path / "census" / "data.parquet",
                     relative_path="census/data.parquet",
                     extension=".parquet",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     size_bytes=1000,
                     metadata={"inferred_collection_id": "census"},
                 ),
@@ -1543,7 +1542,7 @@ class TestEnhancedJsonOutput:
                     path=tmp_path / "census" / "data.parquet",
                     relative_path="census/data.parquet",
                     extension=".parquet",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     size_bytes=1000,
                     metadata={"inferred_collection_id": "census"},
                 ),
@@ -1578,7 +1577,7 @@ class TestFormatEnhancedSummary:
                     path=tmp_path / "climate" / "hittekaart" / "data.parquet",
                     relative_path="climate/hittekaart/data.parquet",
                     extension=".parquet",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     size_bytes=1000,
                     metadata={
                         "inferred_collection_id": "climate/hittekaart",
@@ -1590,7 +1589,7 @@ class TestFormatEnhancedSummary:
                     path=tmp_path / "census" / "data.parquet",
                     relative_path="census/data.parquet",
                     extension=".parquet",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     size_bytes=2000,
                     metadata={
                         "inferred_collection_id": "census",
@@ -1621,7 +1620,7 @@ class TestFormatEnhancedSummary:
                     path=tmp_path / "census" / "data.parquet",
                     relative_path="census/data.parquet",
                     extension=".parquet",
-                    format_type=FormatType.VECTOR,
+                    format_type="vector",
                     size_bytes=1000,
                     metadata={
                         "inferred_collection_id": "census",

@@ -1568,6 +1568,21 @@ class TestGenerateCogThumbnail:
         assert thumb.exists()
 
     @pytest.mark.unit
+    def test_convert_keeps_a_hand_made_thumbnail(self, non_cog_tif: Path, tmp_path: Path) -> None:
+        """A new COG keeps the ``.thumb.jpg`` that is already next to it."""
+        from portolan_cli.plugins.formats import handler_named
+
+        handler = handler_named("cog")
+        assert handler is not None
+        thumb = tmp_path / f"{non_cog_tif.stem}.thumb.jpg"
+        thumb.write_bytes(b"hand-made")
+
+        output = handler.convert(non_cog_tif, tmp_path, None)
+
+        assert output.exists()
+        assert thumb.read_bytes() == b"hand-made"
+
+    @pytest.mark.unit
     def test_convert_to_cog_skips_thumbnail_when_disabled(
         self, non_cog_tif: Path, tmp_path: Path
     ) -> None:
@@ -1818,13 +1833,13 @@ class TestVectorSettingsIntegration:
         import pyarrow.parquet as pq
 
         from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.convert import _convert_vector
+        from portolan_cli.preparation import convert_vector
 
         output_dir = tmp_path / "output"
         output_dir.mkdir()
 
         settings = VectorSettings(spatial_index="h3", resolution=6)
-        output = _convert_vector(sample_geojson, output_dir, settings)
+        output = convert_vector(sample_geojson, output_dir, settings=settings)
 
         assert output.exists()
         table = pq.read_table(output)
@@ -1838,13 +1853,13 @@ class TestVectorSettingsIntegration:
         import pyarrow.parquet as pq
 
         from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.convert import _convert_vector
+        from portolan_cli.preparation import convert_vector
 
         output_dir = tmp_path / "output"
         output_dir.mkdir()
 
         settings = VectorSettings(add_bbox=True)
-        output = _convert_vector(sample_geojson, output_dir, settings)
+        output = convert_vector(sample_geojson, output_dir, settings=settings)
 
         assert output.exists()
         table = pq.read_table(output)
@@ -1854,13 +1869,13 @@ class TestVectorSettingsIntegration:
     def test_convert_vector_with_hilbert_sort(self, sample_geojson: Path, tmp_path: Path) -> None:
         """Converting with sort=hilbert succeeds."""
         from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.convert import _convert_vector
+        from portolan_cli.preparation import convert_vector
 
         output_dir = tmp_path / "output"
         output_dir.mkdir()
 
         settings = VectorSettings(sort="hilbert")
-        output = _convert_vector(sample_geojson, output_dir, settings)
+        output = convert_vector(sample_geojson, output_dir, settings=settings)
 
         assert output.exists()
 
@@ -1872,13 +1887,13 @@ class TestVectorSettingsIntegration:
         import pyarrow.parquet as pq
 
         from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.convert import _convert_vector
+        from portolan_cli.preparation import convert_vector
 
         output_dir = tmp_path / "output"
         output_dir.mkdir()
 
         settings = VectorSettings(sort="quadkey", resolution=10)
-        output = _convert_vector(sample_geojson, output_dir, settings)
+        output = convert_vector(sample_geojson, output_dir, settings=settings)
 
         assert output.exists()
         # quadkey sort adds a quadkey column
@@ -1889,7 +1904,7 @@ class TestVectorSettingsIntegration:
     def test_convert_file_passes_vector_settings(
         self, sample_geojson: Path, tmp_path: Path
     ) -> None:
-        """convert_file correctly passes VectorSettings to _convert_vector."""
+        """convert_file correctly passes VectorSettings to the vector converter."""
         import pyarrow.parquet as pq
 
         from portolan_cli.conversion_config import VectorSettings
@@ -1922,14 +1937,14 @@ class TestVectorSettingsIntegration:
         assert "s2_cell" in table.schema.names
 
     @pytest.mark.unit
-    def test_validate_geoparquet_handles_directory(self, tmp_path: Path) -> None:
-        """_validate_geoparquet handles partitioned directories correctly."""
-        from portolan_cli.convert import _validate_geoparquet
+    def testvalidate_geoparquet_handles_directory(self, tmp_path: Path) -> None:
+        """validate_geoparquet handles partitioned directories correctly."""
+        from portolan_cli.convert import validate_geoparquet
 
         # Empty directory should fail
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
-        error = _validate_geoparquet(empty_dir)
+        error = validate_geoparquet(empty_dir)
         assert error is not None
         assert "no parquet files" in error
 
@@ -1937,16 +1952,17 @@ class TestVectorSettingsIntegration:
     def test_validate_partitioned_geoparquet_with_valid_files(
         self, sample_geojson: Path, tmp_path: Path
     ) -> None:
-        """_validate_geoparquet succeeds for valid partitioned directory."""
+        """validate_geoparquet succeeds for valid partitioned directory."""
         from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.convert import _convert_vector, _validate_geoparquet
+        from portolan_cli.convert import validate_geoparquet
+        from portolan_cli.preparation import convert_vector
 
         output_dir = tmp_path / "output"
         output_dir.mkdir()
 
         # First convert to single file to get valid geoparquet
         settings = VectorSettings(spatial_index="h3", resolution=6)
-        single_file = _convert_vector(sample_geojson, output_dir, settings)
+        single_file = convert_vector(sample_geojson, output_dir, settings=settings)
 
         # Create mock partitioned directory structure with valid parquet file
         partition_dir = tmp_path / "partitioned"
@@ -1957,7 +1973,7 @@ class TestVectorSettingsIntegration:
         shutil.copy(single_file, partition_dir / "h3_cell=123" / "data.parquet")
 
         # Validation should succeed on directory with valid parquet files
-        error = _validate_geoparquet(partition_dir)
+        error = validate_geoparquet(partition_dir)
         assert error is None
 
 
@@ -1967,7 +1983,7 @@ class TestVectorSettingsIntegration:
 
 
 class TestVectorConversionRetriesTransientInterrupt:
-    """`_convert_vector` retries a transient DuckDB "Query interrupted".
+    """`convert_file` retries a transient DuckDB "Query interrupted".
 
     geoparquet-io runs conversions through DuckDB, which non-deterministically
     raises ``InterruptException('Query interrupted')`` (~1/1000 files) during
@@ -2006,7 +2022,7 @@ class TestVectorConversionRetriesTransientInterrupt:
         """A single transient interrupt is retried and the conversion succeeds."""
         import geoparquet_io as gpio
 
-        from portolan_cli.convert import _convert_vector
+        from portolan_cli.preparation import convert_vector
 
         class InterruptException(Exception):
             pass
@@ -2031,7 +2047,7 @@ class TestVectorConversionRetriesTransientInterrupt:
 
         monkeypatch.setattr(gpio, "convert", fake_convert)
 
-        out = _convert_vector(tmp_path / "in.geojson", tmp_path)
+        out = convert_vector(tmp_path / "in.geojson", tmp_path)
 
         assert calls["n"] == 2, "should retry exactly once after the transient interrupt"
         assert out == tmp_path / "in.parquet"
@@ -2044,7 +2060,7 @@ class TestVectorConversionRetriesTransientInterrupt:
         """A persistent interrupt eventually propagates after the attempt cap."""
         import geoparquet_io as gpio
 
-        from portolan_cli.convert import _CONVERT_MAX_ATTEMPTS, _convert_vector
+        from portolan_cli.convert import _CONVERT_MAX_ATTEMPTS
 
         class InterruptException(Exception):
             pass
@@ -2057,8 +2073,10 @@ class TestVectorConversionRetriesTransientInterrupt:
 
         monkeypatch.setattr(gpio, "convert", fake_convert)
 
+        from portolan_cli.preparation import convert_vector
+
         with pytest.raises(InterruptException):
-            _convert_vector(tmp_path / "in.geojson", tmp_path)
+            convert_vector(tmp_path / "in.geojson", tmp_path)
 
         assert calls["n"] == _CONVERT_MAX_ATTEMPTS
 
@@ -2069,7 +2087,7 @@ class TestVectorConversionRetriesTransientInterrupt:
         """Non-transient errors fail on the first attempt (no wasted retries)."""
         import geoparquet_io as gpio
 
-        from portolan_cli.convert import _convert_vector
+        from portolan_cli.preparation import convert_vector
 
         calls = {"n": 0}
 
@@ -2080,7 +2098,7 @@ class TestVectorConversionRetriesTransientInterrupt:
         monkeypatch.setattr(gpio, "convert", fake_convert)
 
         with pytest.raises(ValueError, match="No CRS found"):
-            _convert_vector(tmp_path / "in.geojson", tmp_path)
+            convert_vector(tmp_path / "in.geojson", tmp_path)
 
         assert calls["n"] == 1
 
@@ -2363,8 +2381,8 @@ class TestPartitionedOutputWithGeoparquetIO:
         """`partition: true` alone still adds the column for a single-file write.
 
         `add` and the multilayer writer call `apply_vector_settings` and write
-        one file whatever `partition` says. Only `_convert_vector` passes
-        `partitioned=True`.
+        one file whatever `partition` says. Only `preparation.convert_vector`
+        passes `partitioned=True`, when the partition rule partitions next.
         """
         from portolan_cli.conversion_config import VectorSettings
         from portolan_cli.convert import apply_vector_settings
@@ -2375,18 +2393,216 @@ class TestPartitionedOutputWithGeoparquetIO:
 
         assert "h3_cell" in table.column_names
 
+    @staticmethod
+    def _catalog(tmp_path: Path, scheme: str = "h3") -> Path:
+        """Write a catalog config that asks for partitions by ``scheme``."""
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text(
+            "conversion:\n  vector:\n"
+            f"    spatial_index: {scheme}\n    resolution: auto\n    partition: true\n",
+            encoding="utf-8",
+        )
+        return tmp_path
+
     @pytest.mark.integration
-    def test_convert_vector_partitions_with_auto_resolution(self, tmp_path: Path) -> None:
-        """`_convert_vector` writes Hive partitions for the default `auto` size."""
-        from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.convert import _convert_vector
+    def test_add_keeps_one_file_with_the_index_column(self, tmp_path: Path) -> None:
+        """`add` writes one file with the index column, whatever `partition` says.
 
-        settings = VectorSettings(spatial_index="h3", resolution="auto", partition=True)
+        The partition rule that `add` runs is the size threshold only. A
+        400-row file stays whole.
+        """
+        import pyarrow.parquet as pq
 
-        output = _convert_vector(self._points(tmp_path), tmp_path / "out", settings)
+        from portolan_cli.partitioning import partition_strategy, partition_vector_file
+        from portolan_cli.preparation import convert_vector
 
-        assert output == tmp_path / "out" / "points"
-        assert [p.name for p in output.glob("h3_cell=*")] == ["h3_cell=80b3fffffffffff"]
+        root = self._catalog(tmp_path)
+
+        converted = convert_vector(self._points(tmp_path), root, root)
+
+        assert partition_strategy(converted, root) is None
+        assert partition_vector_file(converted, root) == []
+        assert converted.is_file()
+        assert "h3_cell" in pq.read_schema(converted).names
+
+    @pytest.mark.integration
+    def test_check_fix_partitions_each_source_in_its_own_directory(self, tmp_path: Path) -> None:
+        """`check --fix` writes each source's partitions under `<stem>/`.
+
+        Two sources in one directory share every cell. Each keeps all its rows.
+        """
+        import shutil
+
+        import pyarrow.parquet as pq
+
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        root = self._catalog(tmp_path)
+        first = self._points(root)
+        second = root / "second.csv"
+        shutil.copy(first, second)
+
+        results = [convert_file(source, catalog_path=root) for source in (first, second)]
+
+        assert [r.status for r in results] == [ConversionStatus.SUCCESS] * 2
+        assert [r.output for r in results] == [root / "points", root / "second"]
+        for output in (root / "points", root / "second"):
+            files = sorted(output.glob("h3_cell=*/*.parquet"))
+            assert files
+            assert sum(pq.read_metadata(f).num_rows for f in files) == 400
+        assert not (root / "points.parquet").exists()
+
+    @pytest.mark.unit
+    def test_size_partition_that_writes_nothing_keeps_the_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The converted file stays when the partition step writes no file."""
+        from portolan_cli import partitioning
+
+        converted = tmp_path / "big.parquet"
+        converted.write_bytes(b"PAR1")
+        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_: "kdtree")
+        monkeypatch.setattr(partitioning, "partition_geoparquet", lambda **_: [])
+
+        assert partitioning.partition_vector_file(converted, tmp_path) == []
+        assert converted.exists()
+
+    @pytest.mark.unit
+    def test_size_partition_refuses_a_directory_with_partitions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A second partitioned source in one directory raises and keeps its file.
+
+        geoparquet-io does not write over a cell that exists, so a write into
+        the same directory would lose the rows in each shared cell.
+        """
+        from portolan_cli import partitioning
+        from portolan_cli.errors import PartitionCollisionError
+
+        (tmp_path / "kdtree_cell=0000").mkdir()
+        (tmp_path / "kdtree_cell=0000" / "0000.parquet").write_bytes(b"PAR1")
+        converted = tmp_path / "second.parquet"
+        converted.write_bytes(b"PAR1")
+        called: list[str] = []
+        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_: "kdtree")
+        monkeypatch.setattr(
+            partitioning, "partition_geoparquet", lambda **_: called.append("write") or []
+        )
+
+        with pytest.raises(PartitionCollisionError, match="kdtree_cell=0000"):
+            partitioning.partition_vector_file(converted, tmp_path)
+
+        assert called == []
+        assert converted.exists()
+        assert (tmp_path / "kdtree_cell=0000" / "0000.parquet").exists()
+
+    @staticmethod
+    def _prepared(path: Path, created_output: bool) -> Any:
+        from portolan_cli.preparation import PreparedItem
+
+        return PreparedItem(
+            item_id=path.stem,
+            collection_id="coll",
+            format_type="vector",
+            bbox=[0.0, 0.0, 1.0, 1.0],
+            asset_files={path.name: (path, "x", 1)},
+            item_json_path=None,
+            is_collection_level_asset=True,
+            format_name="geoparquet",
+            created_output=created_output,
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("created_output", [True, False])
+    def test_add_collision_removes_only_a_new_copy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, created_output: bool
+    ) -> None:
+        """A collision in `add` removes the converted file only when this run wrote it.
+
+        A new copy goes, so the collection holds no row twice. A file that
+        existed before the run stays: a `.parquet` source that is its own
+        output, or an output that `add --force` kept.
+        """
+        from portolan_cli import partitioning
+        from portolan_cli.add import _maybe_partition_large_file
+        from portolan_cli.errors import PartitionCollisionError
+
+        coll = tmp_path / "coll"
+        (coll / "kdtree_cell=0000").mkdir(parents=True)
+        converted = coll / "big.parquet"
+        converted.write_bytes(b"PAR1")
+        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_: "kdtree")
+
+        with pytest.raises(PartitionCollisionError):
+            _maybe_partition_large_file(self._prepared(converted, created_output), tmp_path, None)
+
+        assert converted.exists() is not created_output
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("existed", [False, True])
+    def test_multilayer_collision_removes_only_a_new_layer_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existed: bool
+    ) -> None:
+        """A multilayer layer file that this run wrote goes on a collision.
+
+        A layer file that existed before the run stays.
+        """
+        from portolan_cli import add, partitioning
+        from portolan_cli.convert import LayerConversionResult
+
+        coll = tmp_path / "coll"
+        (coll / "kdtree_cell=0000").mkdir(parents=True)
+        gpkg = coll / "multi.gpkg"
+        gpkg.write_bytes(b"x")
+        layer = coll / "roads.parquet"
+        if existed:
+            layer.write_bytes(b"PAR1")
+
+        def _convert(source: Path, out: Path, settings: Any = None) -> list[Any]:
+            layer.write_bytes(b"PAR1")
+            return [LayerConversionResult(source, "roads", layer, True)]
+
+        monkeypatch.setattr(add, "convert_multilayer_file", _convert)
+        monkeypatch.setattr(
+            add, "prepare_item", lambda path, **_: self._prepared(path, created_output=False)
+        )
+        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_: "kdtree")
+        opts = add._PrepareOptions(
+            catalog_root=tmp_path,
+            item_id=None,
+            item_datetime=None,
+            force=True,
+            reconvert=False,
+            skip_partitioning=False,
+            batch_exclude_names=frozenset(),
+        )
+
+        prepared, failures = add._prepare_multilayer_file(gpkg, "coll", opts)
+
+        assert prepared == []
+        assert len(failures) == 1
+        assert layer.exists() is existed
+
+    @pytest.mark.integration
+    def test_prepare_item_reports_a_new_output(self, tmp_path: Path) -> None:
+        """`created_output` is True for a new conversion and False for a kept output."""
+        import shutil
+
+        from portolan_cli.preparation import prepare_item
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text("{}\n", encoding="utf-8")
+        coll = tmp_path / "coll"
+        coll.mkdir()
+        fixtures = Path(__file__).parents[1] / "fixtures" / "vector" / "valid"
+        source = coll / "points.geojson"
+        shutil.copy(fixtures / "points.geojson", source)
+
+        first = prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
+        kept = prepare_item(path=source, catalog_root=tmp_path, collection_id="coll", force=True)
+
+        assert first.created_output is True
+        assert kept.created_output is False
 
     @pytest.mark.integration
     @pytest.mark.xfail(

@@ -433,3 +433,6 @@ class TestSymlinkHandling:
         assert result.exit_code == 0, f"Add via symlink failed: {result.output}"
         # Verify the file was actually added
         assert (initialized_catalog / "data" / "collection.json").exists()
+        # The symlink sits inside the catalog and points at its root. The walk
+        # must not follow it around the cycle and add the file again each time.
+        assert "Added 1 file to 1 collection" in result.output, result.output

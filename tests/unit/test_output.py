@@ -11,13 +11,20 @@ specifically targeting mutations that survived initial testing:
 
 from __future__ import annotations
 
+import importlib
+import subprocess
+import sys
 from io import StringIO
+from typing import TYPE_CHECKING
 
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from portolan_cli.output import detail, error, info, success, warn
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class TestOutputFunctions:
@@ -306,3 +313,125 @@ class TestModesWithNewlineControl:
         result = output.getvalue()
         assert "[DRY RUN]" in result
         assert not result.endswith("\n")
+
+
+class _TTY(StringIO):
+    """A StringIO that reports itself as a terminal."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+@pytest.fixture
+def default_writer() -> Iterator[None]:
+    """Install the click-free writer for one test, then restore the previous one.
+
+    Importing ``portolan_cli.cli`` installs the click writer for the whole
+    session, so a test of the default writer installs it explicitly.
+    """
+    from portolan_cli import output
+
+    previous = output.get_writer()
+    output.set_writer(output.default_writer)
+    try:
+        yield
+    finally:
+        output.set_writer(previous)
+
+
+class TestWriter:
+    """The writer that turns a styled message into terminal output (#947).
+
+    Library callers must not load Click, so ``output`` has its own writer.
+    ``cli.py`` installs a writer that uses ``click.echo``.
+    """
+
+    @pytest.mark.unit
+    @pytest.mark.usefixtures("default_writer")
+    def test_default_writer_omits_color_when_not_a_terminal(self) -> None:
+        """A pipe or a file gets the plain prefix and message."""
+        stream = StringIO()
+
+        success("hello", file=stream)
+
+        assert stream.getvalue() == "✓ hello\n"
+
+    @pytest.mark.unit
+    @pytest.mark.usefixtures("default_writer")
+    def test_default_writer_colors_a_terminal_like_click(self) -> None:
+        """A terminal gets the same ANSI codes that ``click.style`` makes."""
+        import click
+
+        stream = _TTY()
+
+        success("hello", file=stream)
+        detail("step", file=stream, nl=False)
+
+        expected = (
+            f"{click.style('✓', fg='green')} {click.style('hello', fg='green')}\n"
+            f"{click.style(' ', dim=True)} {click.style('step', dim=True)}"
+        )
+        assert stream.getvalue() == expected
+
+    @pytest.mark.unit
+    @pytest.mark.usefixtures("default_writer")
+    def test_default_writer_resolves_stdout_at_call_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A replaced ``sys.stdout`` receives the message, as ``click.echo`` does."""
+        import sys
+
+        stream = StringIO()
+        monkeypatch.setattr(sys, "stdout", stream)
+
+        info("now")
+
+        assert stream.getvalue() == "→ now\n"
+
+    @pytest.mark.unit
+    def test_set_writer_routes_every_message(self) -> None:
+        """An installed writer receives the prefix, message, and style."""
+        from portolan_cli import output
+
+        calls: list[tuple[str, str, str | None, bool, bool]] = []
+
+        def _record(
+            prefix: str,
+            message: str,
+            *,
+            fg: str | None,
+            dim: bool,
+            file: object,
+            nl: bool,
+        ) -> None:
+            calls.append((prefix, message, fg, dim, nl))
+
+        previous = output.get_writer()
+        output.set_writer(_record)
+        try:
+            error("bad", nl=False)
+            detail("quiet")
+        finally:
+            output.set_writer(previous)
+
+        assert calls == [("✗", "bad", "red", False, False), (" ", "quiet", None, True, True)]
+
+    @pytest.mark.unit
+    def test_importing_cli_installs_the_click_writer(self) -> None:
+        """The CLI writes through ``click.echo``, so CliRunner and Windows behave as before."""
+        from portolan_cli import output
+
+        cli_module = importlib.import_module("portolan_cli.cli")
+
+        assert output.get_writer() is cli_module.click_writer
+
+    @pytest.mark.unit
+    def test_output_module_does_not_import_click(self) -> None:
+        """``import portolan_cli.output`` leaves Click unloaded."""
+        code = "import sys, portolan_cli.output; print('click' in sys.modules)"
+
+        result = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, check=True
+        )
+
+        assert result.stdout.strip() == "False"

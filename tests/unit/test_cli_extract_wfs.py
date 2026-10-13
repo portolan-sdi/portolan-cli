@@ -8,16 +8,14 @@ import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-from portolan_cli.extract.wfs.orchestrator import (
-    ExtractionOptions,
-    _build_dry_run_report,
-)
+from tests.support.extract import make_report
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
     from portolan_cli.extract.common.report import ExtractionReport
+    from portolan_cli.extract.wfs.orchestrator import ExtractionOptions
 
 
 def _make_capturing_fake(
@@ -38,7 +36,7 @@ def _make_capturing_fake(
         captured["page_size"] = options.page_size
         captured["auto_tile"] = options.auto_tile
         captured["catalog_id"] = options.catalog_id
-        return _build_dry_run_report(url=url, layers=[], discovery_result=None)
+        return make_report([], url)
 
     return fake_extract
 

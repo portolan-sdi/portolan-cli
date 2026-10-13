@@ -17,10 +17,8 @@ from __future__ import annotations
 import pytest
 
 from portolan_cli.extract.common.report import ExtractionSummary, LayerResult
-from portolan_cli.extract.wfs.orchestrator import (
-    _build_summary,
-    _is_empty_layer_error,
-)
+from portolan_cli.extract.common.source import Discovery, build_report
+from portolan_cli.extract.wfs.orchestrator import _is_empty_layer_error
 
 pytestmark = [pytest.mark.unit]
 
@@ -63,7 +61,7 @@ class TestIsEmptyLayerError:
 
 
 class TestBuildSummaryWithEmpty:
-    """Tests for _build_summary including empty layer counts."""
+    """Tests for the shared report summary including empty layer counts."""
 
     def test_counts_empty_layers(self) -> None:
         """Empty layers are counted separately from failed."""
@@ -106,7 +104,9 @@ class TestBuildSummaryWithEmpty:
             ),
         ]
 
-        summary = _build_summary(results)
+        summary = build_report(
+            Discovery(source_url="https://example.com/wfs", layers=[]), results
+        ).summary
 
         assert summary.total_layers == 3
         assert summary.succeeded == 1

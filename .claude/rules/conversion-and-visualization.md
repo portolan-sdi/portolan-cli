@@ -46,9 +46,9 @@ through the bbox covering column, so dropping `add_bbox` fails one rule and
 silently leaves the other unevaluated. Keep the two defaults together.
 
 Three writers must stay in agreement, and they have drifted before:
-`preparation.convert_vector` (single-file `add`), `convert._convert_vector`
-(multilayer `add`), and `extract/arcgis/orchestrator` (which builds its own
-table). WFS and Carto delegate to `geoparquet-io` helpers that already do both.
+`preparation.convert_vector` (`add` and `check --fix`, through the GeoParquet
+handler), `convert._convert_vector_layer` (multilayer `add`), and
+`extract/arcgis/orchestrator` (which builds its own table). WFS and Carto delegate to `geoparquet-io` helpers that already do both.
 When you change the layout, grep for every `add_bbox(` call and apply it to all
 of them. Every one of them must first test `convert.has_geometry`: a CSV of
 records and an ArcGIS **Table** layer both read as a table with
@@ -74,9 +74,10 @@ name it.
 conversion when the output exists (issue #386), and for a single-file
 collection the output *is* the source, so that skip once returned a file with
 no covering column and no warning — the exact failure #805 removes. The skip
-branch now calls `_ensure_conforming_geoparquet`, which runs the same footer
-test. If you add another early return to `_convert_and_extract_metadata`, carry
-that call with it.
+branch in `_convert_and_extract_metadata` now passes the existing output back
+through the handler's `convert` when the handler reads that format, and
+`preparation.convert_vector` runs the same footer test. If you add another
+early return there, keep that call.
 
 When the source is its own destination, `_rewrite_parquet_in_place` writes a
 sibling and swaps it in with `Path.replace`, so a failed write cannot destroy

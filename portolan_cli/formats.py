@@ -13,7 +13,7 @@ Additionally, it provides cloud-native status classification (see issue #10):
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -22,29 +22,31 @@ from portolan_cli import extension_registry as _reg
 # The extension-only detection lives in a leaf module that loads no third-party
 # package. The read modules import it directly (issue #944). This module
 # re-exports it, so `portolan_cli.formats.detect_format` keeps working.
-from portolan_cli.format_types import (
+from portolan_cli.format_families import (
     FORMAT_DISPLAY_NAMES as FORMAT_DISPLAY_NAMES,
 )
-from portolan_cli.format_types import (
+from portolan_cli.format_families import (
+    RASTER as RASTER,
+)
+from portolan_cli.format_families import (
     RASTER_EXTENSIONS as RASTER_EXTENSIONS,
 )
-from portolan_cli.format_types import (
+from portolan_cli.format_families import (
+    VECTOR as VECTOR,
+)
+from portolan_cli.format_families import (
     VECTOR_EXTENSIONS as VECTOR_EXTENSIONS,
 )
-from portolan_cli.format_types import (
-    FormatType as FormatType,
-)
-from portolan_cli.format_types import (
-    _detect_json_type as _detect_json_type,
-)
-from portolan_cli.format_types import (
-    detect_format as detect_format,
+from portolan_cli.format_families import (
+    detect_family,
+    is_geojson,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from portolan_cli.conversion_config import ConversionOverrides
+    from portolan_cli.plugins.formats import FormatHandler
 
 logger = logging.getLogger(__name__)
 
@@ -262,7 +264,7 @@ def _status_by_content(path: Path, extension: str) -> FormatInfo | None:
         )
 
     if extension == ".json":
-        if _detect_json_type(path) == FormatType.VECTOR:
+        if is_geojson(path):
             return FormatInfo(
                 status=CloudNativeStatus.CONVERTIBLE,
                 display_name="GeoJSON",
@@ -283,7 +285,60 @@ def _status_by_content(path: Path, extension: str) -> FormatInfo | None:
     return None
 
 
-def get_cloud_native_status(path: Path) -> FormatInfo:
+def detect_format(path: Path, catalog_root: Path | None = None) -> str | None:
+    """Return the format family of a file, asking the plugin format handlers first.
+
+    Args:
+        path: Path to the file or directory to detect.
+        catalog_root: Catalog root, for a ``conversion.handlers`` pin.
+
+    Returns:
+        The family of the handler that claims the file, for example
+        ``vector`` or ``raster``. None when no handler claims it.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        IsADirectoryError: If the path is a non-geospatial directory.
+    """
+    from portolan_cli.plugins.formats import extension_of, handler_for, plugin_extensions
+
+    if extension_of(path) in plugin_extensions():
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {path}")
+        handler = handler_for(path, catalog_root)
+        if handler is not None:
+            return handler.family
+    return detect_family(path)
+
+
+def _plugin_handler(
+    path: Path, catalog_root: Path | None = None
+) -> tuple[FormatHandler | None, bool]:
+    """Return the plugin handler for ``path``, and whether only plugins register its extension.
+
+    The lookup runs for every extension that a plugin registers, so an
+    ambiguous claim or a pin to a missing handler raises here, before
+    ``check --fix`` converts a file. A ``conversion.handlers`` pin that selects
+    a built-in hides the plugin.
+
+    Raises:
+        AmbiguousFormatError: Two plugin handlers claim the file and no pin decides.
+        UnknownFormatHandlerError: A pin names a handler that does not exist.
+    """
+    from portolan_cli.plugins.formats import (
+        builtin_extensions,
+        extension_of,
+        plugin_extensions,
+        plugin_handler_for,
+    )
+
+    extension = extension_of(path)
+    if extension not in plugin_extensions():
+        return None, False
+    return plugin_handler_for(path, catalog_root), extension not in builtin_extensions()
+
+
+def get_cloud_native_status(path: Path, catalog_root: Path | None = None) -> FormatInfo:
     """Determine cloud-native status and format info for a file.
 
     Classifies a file as CLOUD_NATIVE, CONVERTIBLE, or UNSUPPORTED based on
@@ -292,6 +347,7 @@ def get_cloud_native_status(path: Path) -> FormatInfo:
 
     Args:
         path: Path to the file to classify.
+        catalog_root: Catalog root, for a ``conversion.handlers`` pin.
 
     Returns:
         FormatInfo with status, display name, target format, and error message.
@@ -313,6 +369,26 @@ def get_cloud_native_status(path: Path) -> FormatInfo:
             )
         raise IsADirectoryError(f"Path is a directory: {path}")
 
+    # A plugin format handler converts the formats it claims (#947). For an
+    # extension that a built-in handler also registers, the built-in checks
+    # decide the status, so a valid COG stays CLOUD_NATIVE when a plugin
+    # claims .tif. The plugin still names the target format.
+    handler, plugin_only = _plugin_handler(path, catalog_root)
+    if handler is not None and plugin_only:
+        return FormatInfo(
+            status=CloudNativeStatus.CONVERTIBLE,
+            display_name=handler.display_name,
+            target_format=handler.display_name,
+            error_message=None,
+        )
+    info = _builtin_status(path)
+    if handler is not None and info.status == CloudNativeStatus.CONVERTIBLE:
+        return replace(info, target_format=handler.display_name)
+    return info
+
+
+def _builtin_status(path: Path) -> FormatInfo:
+    """Classify a file by the built-in format rules. See ``get_cloud_native_status``."""
     # Get the file extension (lowercase)
     extension = path.suffix.lower()
 
@@ -410,8 +486,9 @@ def get_effective_status(
         path: Path to the file to classify.
         overrides: Optional ConversionOverrides with user configuration.
             If None, returns the same result as get_cloud_native_status().
-        root: Catalog root for resolving relative paths in glob patterns.
-            Required if using path-based overrides.
+        root: Catalog root for resolving relative paths in glob patterns
+            and for a ``conversion.handlers`` pin. Required if using
+            path-based overrides.
 
     Returns:
         FormatInfo with potentially modified status based on overrides.
@@ -426,7 +503,7 @@ def get_effective_status(
         >>> result.status  # CONVERTIBLE instead of CLOUD_NATIVE
     """
     # Get original status
-    info = get_cloud_native_status(path)
+    info = get_cloud_native_status(path, root)
 
     # No overrides? Return original
     if overrides is None:

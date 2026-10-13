@@ -5,9 +5,13 @@ For collection-level single-file vector assets `item_dir` IS the
 collection dir, so adding N files re-checksums every sibling → O(n²) work. This
 made the 1000-file stress tests exceed the 300s nightly timeout.
 
-These are fast unit tests (copies of the cloud-native `simple.parquet` fixture,
-no GDAL conversion). Test 1 bounds the redundant scan; Test 2 guards against the
-fix over-skipping and dropping legitimate non-geo companion assets.
+Test 1 bounds the redundant scan; Test 2 guards against the fix over-skipping
+and dropping legitimate non-geo companion assets.
+
+Test 1 adds copies of a conformant GeoParquet (with a bbox covering column).
+A copy of the bare `simple.parquet` fixture lacks that column, so `add`
+rewrites every copy through geoparquet-io (issue #805). The rewrite has nothing
+to do with the scan bound and made the test take 8 s locally and 41 s on CI.
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
-import portolan_cli.add as add_mod
+import portolan_cli.preparation as prep_mod
 from portolan_cli.add import _batch_sibling_names, add_files
 
 if TYPE_CHECKING:
@@ -50,24 +54,48 @@ def _collection_assets(collection_dir: Path) -> dict[str, dict]:
     return data.get("assets", {})
 
 
+@pytest.fixture(scope="module")
+def conformant_parquet_bytes(tmp_path_factory: pytest.TempPathFactory, fixtures_dir: Path) -> bytes:
+    """`simple.parquet` with the bbox covering column that `add` asks for.
+
+    The test fails rather than silently paying for 20 rewrites when the
+    conformance rule changes and this file stops meeting it.
+    """
+    import geoparquet_io as gpio  # type: ignore[import-untyped]
+
+    from portolan_cli.conversion_config import VectorSettings
+    from portolan_cli.convert import apply_vector_settings
+    from portolan_cli.preparation import _needs_spatial_rewrite
+
+    path = tmp_path_factory.mktemp("conformant") / "simple.parquet"
+    settings = VectorSettings()
+    apply_vector_settings(gpio.read(str(fixtures_dir / "simple.parquet")), settings).write(
+        str(path)
+    )
+    assert not _needs_spatial_rewrite(path, settings)
+    return path.read_bytes()
+
+
 def test_collection_level_scan_is_bounded_not_quadratic(
-    initialized_catalog: Path, fixtures_dir: Path
+    initialized_catalog: Path, conformant_parquet_bytes: bytes
 ) -> None:
     """Adding N collection-level vectors must NOT re-checksum every sibling.
 
     Pre-fix, each file's scan re-checksums all N siblings, so `compute_checksum`
-    is called on the order of N·(N+1)/2 times (≈210 for N=20). Post-fix each file
-    checksums only itself (+ its own sidecars), so the count is O(N). The bound
-    3*N (60) sits far below the quadratic value and above the true linear count.
+    is called N*N times (400 for N=20, measured). Post-fix each file checksums
+    only itself (+ its own sidecars), so the count is O(N) (20, measured). The
+    bound 3*N (60) sits far below the quadratic value and above the linear count.
     """
     n = 20
     collection_dir = initialized_catalog / "many"
     collection_dir.mkdir()
-    fixture_bytes = (fixtures_dir / "simple.parquet").read_bytes()
     for i in range(n):
-        (collection_dir / f"f{i:04d}.parquet").write_bytes(fixture_bytes)
+        (collection_dir / f"f{i:04d}.parquet").write_bytes(conformant_parquet_bytes)
 
-    real_compute_checksum = add_mod.compute_checksum
+    # `_scan_item_assets` lives in preparation.py and checksums through that
+    # module's import. Counting `add.compute_checksum` saw 0 calls with or
+    # without the fix, so the bound below could never fail.
+    real_compute_checksum = prep_mod.compute_checksum
     call_count = 0
 
     def counting_checksum(path: Path) -> str:
@@ -75,7 +103,7 @@ def test_collection_level_scan_is_bounded_not_quadratic(
         call_count += 1
         return real_compute_checksum(path)
 
-    with patch.object(add_mod, "compute_checksum", side_effect=counting_checksum):
+    with patch.object(prep_mod, "compute_checksum", side_effect=counting_checksum):
         added, _skipped, failures = add_files(
             paths=[collection_dir],
             catalog_root=initialized_catalog,
@@ -84,10 +112,12 @@ def test_collection_level_scan_is_bounded_not_quadratic(
 
     assert not failures, f"unexpected failures: {failures}"
 
-    # Bound: linear, not quadratic. Pre-fix ≈ n*(n+1)/2 = 210 ≫ 60.
+    # The counter must see the scan: each file checksums at least itself.
+    assert call_count >= n, f"compute_checksum counted {call_count} calls for {n} files"
+    # Bound: linear, not quadratic. Without the fix the scan makes n*n = 400.
     assert call_count <= 3 * n, (
         f"compute_checksum called {call_count} times for {n} files "
-        f"(expected O(n) <= {3 * n}; quadratic would be ~{n * (n + 1) // 2}). "
+        f"(expected O(n) <= {3 * n}; quadratic would be ~{n * n}). "
         "The collection-level scan is re-checksumming siblings (issue #465)."
     )
 

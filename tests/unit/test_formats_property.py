@@ -21,7 +21,6 @@ from portolan_cli.formats import (
     VECTOR_EXTENSIONS,
     CloudNativeStatus,
     FormatInfo,
-    FormatType,
     detect_format,
     get_cloud_native_status,
 )
@@ -184,7 +183,7 @@ class TestHypothesisPMTilesConsistency:
     def test_pmtiles_always_detected_as_vector(self, filename_base: str) -> None:
         """PMTiles files with any valid filename are detected as VECTOR.
 
-        Property: For any valid filename base, {base}.pmtiles -> FormatType.VECTOR
+        Property: For any valid filename base, {base}.pmtiles -> "vector"
         """
         with tempfile.TemporaryDirectory() as tmp_dir:
             test_file = Path(tmp_dir) / f"{filename_base}.pmtiles"
@@ -192,7 +191,7 @@ class TestHypothesisPMTilesConsistency:
 
             result = detect_format(test_file)
 
-            assert result == FormatType.VECTOR, f"Failed for filename: {filename_base}.pmtiles"
+            assert result == "vector", f"Failed for filename: {filename_base}.pmtiles"
 
     @pytest.mark.unit
     @given(
@@ -245,7 +244,7 @@ class TestHypothesisCloudNativeVectorConsistency:
     def test_cloud_native_vectors_detect_as_vector(self, ext: str) -> None:
         """Cloud-native vector formats are detected as VECTOR type.
 
-        Property: detect_format(path.{ext}) == FormatType.VECTOR
+        Property: detect_format(path.{ext}) == "vector"
         """
         with tempfile.TemporaryDirectory() as tmp_dir:
             test_file = Path(tmp_dir) / f"test{ext}"
@@ -253,7 +252,7 @@ class TestHypothesisCloudNativeVectorConsistency:
 
             result = detect_format(test_file)
 
-            assert result == FormatType.VECTOR
+            assert result == "vector"
 
     @pytest.mark.unit
     @given(ext=st.sampled_from([".pmtiles", ".fgb"]))

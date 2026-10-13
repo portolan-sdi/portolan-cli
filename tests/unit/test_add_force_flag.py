@@ -20,7 +20,6 @@ from click.testing import CliRunner
 
 from portolan_cli.add import ItemInfo
 from portolan_cli.cli import cli
-from portolan_cli.formats import FormatType
 
 
 @pytest.fixture
@@ -132,7 +131,7 @@ class TestForceBypassesChangeDetection:
                         ItemInfo(
                             item_id="test",
                             collection_id="data",
-                            format_type=FormatType.VECTOR,
+                            format_type="vector",
                             bbox=[-180, -90, 180, 90],
                             asset_paths=["test.parquet"],
                         )
@@ -257,95 +256,34 @@ class TestCloudNativeFormatsWithForce:
     """Tests for PMTiles/FlatGeobuf handling with --force and --reconvert."""
 
     @pytest.mark.unit
-    def test_handle_cloud_native_vector_force_reuses_existing(self) -> None:
-        """--force with existing PMTiles/FlatGeobuf extracts metadata without re-copy."""
-        from portolan_cli.add import _handle_cloud_native_vector
+    def test_cloud_native_handler_copies_into_place(self, tmp_path: Path) -> None:
+        """A PMTiles file outside the target directory is copied there."""
+        from portolan_cli.plugins.builtin.formats import PMTILES
 
-        with pytest.importorskip("tempfile").TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            source = temp_path / "source.pmtiles"
-            output = temp_path / "output.pmtiles"
+        source = tmp_path / "in" / "tiles.pmtiles"
+        source.parent.mkdir()
+        source.write_bytes(b"pmtiles")
+        out = tmp_path / "out"
+        out.mkdir()
 
-            source.write_bytes(b"source content")
-            output.write_bytes(b"existing output")
+        result = PMTILES.convert(source, out, None)
 
-            def mock_extract(path: Path) -> dict:
-                return {"extracted_from": str(path)}
-
-            result = _handle_cloud_native_vector(
-                source, output, mock_extract, force=True, reconvert=False
-            )
-
-            assert result["extracted_from"] == str(output)
-            # Output should NOT be overwritten
-            assert output.read_bytes() == b"existing output"
+        assert result == out / "tiles.pmtiles"
+        assert result.read_bytes() == b"pmtiles"
 
     @pytest.mark.unit
-    def test_handle_cloud_native_vector_reconvert_overwrites(self) -> None:
-        """--force --reconvert with existing PMTiles/FlatGeobuf re-copies from source."""
-        from portolan_cli.add import _handle_cloud_native_vector
+    def test_cloud_native_handler_leaves_a_file_in_place(self, tmp_path: Path) -> None:
+        """A PMTiles file already in its directory is not copied or changed."""
+        from portolan_cli.plugins.builtin.formats import PMTILES
 
-        with pytest.importorskip("tempfile").TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            source = temp_path / "source.fgb"
-            output = temp_path / "output.fgb"
+        source = tmp_path / "tiles.pmtiles"
+        source.write_bytes(b"pmtiles")
+        before = source.stat().st_mtime_ns
 
-            source.write_bytes(b"new source content")
-            output.write_bytes(b"old output")
+        result = PMTILES.convert(source, tmp_path, None)
 
-            def mock_extract(path: Path) -> dict:
-                return {"extracted_from": str(path), "content": path.read_bytes()}
-
-            result = _handle_cloud_native_vector(
-                source, output, mock_extract, force=True, reconvert=True
-            )
-
-            assert result["extracted_from"] == str(output)
-            # Output SHOULD be overwritten with source content
-            assert output.read_bytes() == b"new source content"
-
-    @pytest.mark.unit
-    def test_handle_cloud_native_vector_no_force_raises_on_existing(self) -> None:
-        """Without --force, existing output raises FileExistsError."""
-        from portolan_cli.add import _handle_cloud_native_vector
-
-        with pytest.importorskip("tempfile").TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            source = temp_path / "source.pmtiles"
-            output = temp_path / "output.pmtiles"
-
-            source.write_bytes(b"source")
-            output.write_bytes(b"existing")
-
-            def mock_extract(path: Path) -> dict:
-                return {}
-
-            with pytest.raises(FileExistsError, match="already exists"):
-                _handle_cloud_native_vector(
-                    source, output, mock_extract, force=False, reconvert=False
-                )
-
-    @pytest.mark.unit
-    def test_handle_cloud_native_vector_no_existing_copies(self) -> None:
-        """When output doesn't exist, copies from source regardless of force."""
-        from portolan_cli.add import _handle_cloud_native_vector
-
-        with pytest.importorskip("tempfile").TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            source = temp_path / "source.fgb"
-            output = temp_path / "output.fgb"
-
-            source.write_bytes(b"source content")
-            # output does NOT exist
-
-            def mock_extract(path: Path) -> dict:
-                return {"content": path.read_bytes()}
-
-            _handle_cloud_native_vector(source, output, mock_extract, force=False, reconvert=False)
-
-            # Should have copied
-            assert output.exists()
-            assert output.read_bytes() == b"source content"
+        assert result == source
+        assert source.stat().st_mtime_ns == before
 
 
 class TestForceWithoutExistingOutput:
