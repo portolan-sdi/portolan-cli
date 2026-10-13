@@ -882,8 +882,8 @@ def run_layer_extraction(
     else:
         collected += _fetch_sequential(run, jobs, total)
     collected.sort(key=lambda item: item[0])
-    # A timed-out fetch can still write here. Its write then fails, and its
-    # retries stop before they make the directory again.
+    # A timed-out worker can still write here. After this event, that worker
+    # removes its own tree and the empty staging root.
     run.ended.set()
     shutil.rmtree(output_dir / ".portolan" / "staging", ignore_errors=True)
 
