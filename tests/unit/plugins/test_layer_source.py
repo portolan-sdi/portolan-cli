@@ -329,3 +329,29 @@ def test_extractor_from_command_reports_a_missing_license(
     envelope = json.loads(result.output)
     assert envelope["command"] == "extract-fixtures"
     assert envelope["errors"][0]["type"] == "MissingLicenseError"
+
+
+class _UnseededSource(_FixtureSource):
+    """A source whose discovery harvests no catalog metadata."""
+
+    def discover(self, source: str, options: LayerSourceOptions) -> Discovery:
+        return Discovery(
+            source_url=source,
+            layers=[LayerRef(id=i, name=name, data=name) for i, name in enumerate(_LAYERS)],
+        )
+
+
+def test_license_is_seeded_without_harvested_metadata(fixtures_dir: Path, tmp_path: Path) -> None:
+    """--license reaches the catalog when discovery harvests no catalog metadata."""
+    import yaml
+
+    out = tmp_path / "out"
+
+    report = run_layer_extraction(
+        _UnseededSource(fixtures_dir), "https://example.org/src", out, _options()
+    )
+
+    assert report.summary.succeeded == 2
+    metadata = yaml.safe_load((out / ".portolan" / "metadata.yaml").read_text(encoding="utf-8"))
+    assert metadata["license"] == "CC0-1.0"
+    assert (out / "points" / "collection.json").is_file()

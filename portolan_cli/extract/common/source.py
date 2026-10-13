@@ -526,12 +526,13 @@ def _resolve_license(discovery: Discovery, options: LayerSourceOptions) -> Resol
 
 
 def _post_init(
-    discovery: Discovery, resolved_license: ResolvedLicense | None
+    source_name: str, discovery: Discovery, resolved_license: ResolvedLicense | None
 ) -> Callable[[Path, list[Path], bool], None]:
     def post_init(out: Path, files: list[Path], fresh: bool) -> None:
         from portolan_cli.config import set_setting
         from portolan_cli.extract.common.orchestrator_base import seed_catalog_metadata
         from portolan_cli.formats import is_geoparquet
+        from portolan_cli.metadata_extraction import ExtractedMetadata
         from portolan_cli.stac import update_stac_metadata
 
         # A plain Parquet output, from a table with no geometry, becomes a
@@ -544,7 +545,12 @@ def _post_init(
             title, description = discovery.root_metadata
             update_stac_metadata(out / "catalog.json", title=title, description=description)
         # The license must be in place before add_files checks for it (issue #686).
-        seed_catalog_metadata(out, discovery.catalog_seed, resolved_license)
+        # A source that harvests no catalog metadata still gets a metadata.yaml
+        # for the --license value. Without it, add_files rejects the catalog.
+        seed = discovery.catalog_seed
+        if seed is None and resolved_license is not None:
+            seed = ExtractedMetadata(source_type=source_name, source_url=discovery.source_url)
+        seed_catalog_metadata(out, seed, resolved_license)
 
     return post_init
 
@@ -658,7 +664,7 @@ def build_catalog(
         catalog_id=catalog_id,
         title=discovery.catalog_title,
         description=discovery.catalog_description,
-        post_init=_post_init(discovery, resolved_license),
+        post_init=_post_init(layer_source.name, discovery, resolved_license),
     )
     if added is None:
         return
