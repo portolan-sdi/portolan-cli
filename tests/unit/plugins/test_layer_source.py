@@ -271,9 +271,29 @@ def test_workers_fetch_layers_in_parallel(fixtures_dir: Path, tmp_path: Path) ->
     assert all(name != threading.main_thread().name for name in source.threads)
 
 
+class _CopySource(_FixtureSource):
+    """Fetch a layer by copying a Parquet file made before the timed run."""
+
+    def __init__(self, fixtures_dir: Path, prepared: Path, slow: dict[str, float]) -> None:
+        super().__init__(fixtures_dir, slow=slow)
+        self.prepared = prepared
+
+    def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
+        import shutil
+
+        time.sleep(self.slow.get(layer.name, 0.0))
+        shutil.copyfile(self.prepared, dest)
+        return 1
+
+
 def test_layer_timeout_fails_a_slow_layer(fixtures_dir: Path, tmp_path: Path) -> None:
-    # The fast layer gets a full second, so a loaded test machine cannot time it out.
-    source = _FixtureSource(fixtures_dir, slow={"points": 3.0})
+    # A real conversion can take more than a second on a loaded CI runner. The
+    # fast layer copies a prepared file, so only the slow layer meets the deadline.
+    prepared = tmp_path / "prepared"
+    run_layer_extraction(
+        _FixtureSource(fixtures_dir), "src", prepared, _options(raw=True, layer_filter=["lines"])
+    )
+    source = _CopySource(fixtures_dir, prepared / "lines" / "lines.parquet", slow={"points": 3.0})
 
     report = run_layer_extraction(
         source, "src", tmp_path / "out", _options(workers=2, layer_timeout=1.0, raw=True)
