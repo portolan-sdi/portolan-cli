@@ -378,6 +378,8 @@ class _Run:
     on_progress: Callable[[ExtractionProgress], None] | None
     # Data files of the layers that timed out. Their retries stop.
     abandoned: set[str] = field(default_factory=set)
+    # Set after the fetch step. A late worker then removes the staging root.
+    ended: threading.Event = field(default_factory=threading.Event)
 
     def fetch_layer(self, layer: LayerRef) -> LayerResult:
         """Fetch one layer with retry, move it into place, and return its result."""
@@ -416,13 +418,14 @@ class _Run:
             ),
         )
         if outcome.success and outcome.value is not None and relative not in self.abandoned:
-            rows, duration = outcome.value
             self._styles(layer, staged.parent)
         if relative in self.abandoned:
             # The run gave up on the layer and can have cleaned up already.
             shutil.rmtree(root, ignore_errors=True)
-            with contextlib.suppress(OSError):
-                root.parent.rmdir()  # Only when no other layer stages there.
+            if self.ended.is_set():
+                # Other workers make their trees under it while the run lasts.
+                with contextlib.suppress(OSError):
+                    root.parent.rmdir()
             return _Staged(_result(layer, "failed", error="Timed out"), None)
         if outcome.success and outcome.value is not None:
             rows, duration = outcome.value
@@ -881,6 +884,7 @@ def run_layer_extraction(
     collected.sort(key=lambda item: item[0])
     # A timed-out fetch can still write here. Its write then fails, and its
     # retries stop before they make the directory again.
+    run.ended.set()
     shutil.rmtree(output_dir / ".portolan" / "staging", ignore_errors=True)
 
     report = build_report(discovery, [result for _, result in collected])
