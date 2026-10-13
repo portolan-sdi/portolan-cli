@@ -209,7 +209,7 @@ Moving the built-ins changed some results. All sources now share these rules:
 
 - A failed layer records None for features, size, duration, and output path.
 - A resumed layer keeps its earlier result. It emits "starting" and then
-  "skipped", so the text output names the layer.
+  "skipped". The text output then shows the layer name above the skip line.
 - The progress index is the position of the layer in the run.
 - In an ArcGIS services root, the via link and the layer details use the URL
   of the layer's own service.
