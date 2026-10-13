@@ -17,8 +17,8 @@ The package imports only `portolan_cli.api`, `portolan_cli.hookspecs`, and
 
 The [plugin guide](https://portolan-sdi.github.io/portolan-cli/guides/plugins/)
 includes this code through the `--8<--` section markers in these files. Keep
-each marker when you edit a file. `tests/docs/test_plugin_guide.py` fails on a
-missing one.
+each marker when you edit a file. If a marker is missing,
+`tests/docs/test_plugin_guide.py` fails.
 
 Run its tests from the repository root:
 

@@ -1,19 +1,18 @@
 # Write a plugin
 
-A plugin is a Python package that adds behavior to the Portolan CLI. It can
-add a command, enrich STAC metadata, store versions, convert a new file format,
-or pull layers from a remote service. Portolan finds a plugin through the
-entry points in its `pyproject.toml`, so the package needs no change to
-Portolan itself.
+Use a plugin to extend the Portolan CLI without changing Portolan itself. A
+plugin is a Python package that can add a command, enrich STAC metadata, store
+versions, convert another file format, or retrieve layers from a remote
+service. Portolan discovers plugins from entry points in `pyproject.toml`.
 
-Every example on this page comes from the
+The examples on this page come from the
 [example plugin](https://github.com/portolan-sdi/portolan-cli/tree/main/tests/plugins/portolan_example),
 which uses each extension point. CI installs that package and calls each of
 its hooks. A change to the CLI that breaks this code fails CI.
 
-## The public surface
+## Use the public API
 
-A plugin imports from three modules and from nothing else in `portolan_cli`:
+Import plugin interfaces from these three modules only:
 
 | Module | Holds |
 |---|---|
@@ -21,82 +20,79 @@ A plugin imports from three modules and from nothing else in `portolan_cli`:
 | `portolan_cli.hookspecs` | The hook signatures |
 | `portolan_cli.testing` | Conformance checks for plugin objects |
 
-These modules follow semantic versioning. A change that removes a name or
-breaks a signature needs a major release. A deprecated hook or hook argument
-stays for one minor release, and pluggy warns each plugin that still uses it.
-The [Python API reference](../reference/python.md) documents each
-name.
+These modules follow semantic versioning. Removing a name or breaking a
+signature requires a major release. A deprecated hook or hook argument remains
+available for one minor release. Pluggy warns you when your plugin uses one.
+See the [Python API reference](../reference/python.md) for each name.
 
-A published plugin declares `portolan-cli` as a dependency. Keep module-level
-imports light, because Portolan imports a hook module on the first hook call.
-Import a heavy library inside the function that needs it.
+Before you publish a plugin, declare `portolan-cli` as a dependency. Keep
+module-level imports light because Portolan imports a hook module on the first
+hook call. Import a heavy library inside the function that uses it.
 
 ## Entry points
 
-The plugin declares its entry points in `pyproject.toml`:
+Declare your plugin entry points in `pyproject.toml`:
 
 ```toml
 --8<-- "tests/plugins/portolan_example/pyproject.toml:entry-points"
 ```
 
-The `"portolan"` group names a module of hook implementations. The
-`"portolan.commands"` group maps a command name to a Click command. Portolan
-imports the command module only when you run the command, and
-`portolan --help` lists it with the name of its distribution. A dotted name
-attaches the command to a built-in group: `version.rollback` becomes
-`portolan version rollback`.
+Use the `"portolan"` group for a module of hook implementations. Use
+`"portolan.commands"` to map a command name to a Click command. Portolan
+imports the command module when you run the command. The output of
+`portolan --help` includes the command and its distribution name. To attach a
+command to a built-in group, use a dotted name such as `version.rollback`.
+This example becomes `portolan version rollback`.
 
-Portolan still reads the deprecated `portolan.backends` group. It warns each
-plugin that registers there to move to the `portolan_backends` hook. A future
-minor release stops reading the group.
+If your plugin uses the deprecated `portolan.backends` group, move it to the
+`portolan_backends` hook. Portolan supports the old group for one minor
+release and displays a warning when a plugin uses it.
 
 ## Add a command
 
-The entry point loads a Click group or command. The command below prints
-through `info` and `success` from `portolan_cli.api`, so its output matches
-the built-in commands:
+Point the entry point to a Click group or command. Use `info` and `success`
+from `portolan_cli.api` to match the output of built-in commands:
 
 ```python
 --8<-- "tests/plugins/portolan_example/src/portolan_example/cli.py:command"
 ```
 
-A command that prints JSON builds it with `success_envelope` or
-`error_envelope` and writes `envelope.to_json()` to stdout.
+For JSON output, build an envelope with `success_envelope` or
+`error_envelope`. Write `envelope.to_json()` to stdout.
 
 ## Enrich items and collections
 
-The `portolan_enrich_item` and `portolan_enrich_collection` hooks receive the
-STAC JSON as a dict and change it in place. `EnrichContext` gives the catalog
-root, the collection id, the document path, and the item id.
+Implement `portolan_enrich_item` or `portolan_enrich_collection` to change
+STAC JSON in place. Each hook receives the JSON as a dict. `EnrichContext`
+provides the catalog root, collection ID, document path, and item ID.
 
 ```python
 --8<-- "tests/plugins/portolan_example/src/portolan_example/hooks.py:enrich"
 ```
 
-The hooks run each time Portolan writes the document, during `portolan add`
-or `portolan extract`. A second run must give the same result. Portolan restores `id`, `type`, `stac_version`, and
-`links` after each hook. Portolan skips a hook wrapper with a warning.
+Portolan runs the hooks each time `portolan add` or `portolan extract` writes a
+document. Make each hook produce the same document when it runs more than
+once. After each hook, Portolan restores `id`, `type`, `stac_version`, and
+`links`. Portolan skips a hook wrapper and displays a warning.
 
 ## Store versions
 
-The `portolan_backends` hook maps a name to a factory. Portolan calls
-`factory(catalog_root=path)` and expects a
+Use the `portolan_backends` hook to map a name to a factory. Portolan calls
+`factory(catalog_root=path)`. Return a class that implements
 [`VersioningBackend`](../reference/python.md).
-A class satisfies this.
 
 ```python
 --8<-- "tests/plugins/portolan_example/src/portolan_example/hooks.py:backends"
 ```
 
-A catalog selects it with `portolan init --backend example` or with
+Configure the version store with `portolan init --backend example` or set
 `backend: example` in `.portolan/config.yaml`.
 
 ## Convert a file format
 
-The `portolan_formats` hook returns
-[`FormatHandler`](../reference/python.md)
-objects. A handler declares its name, family, extensions, media type, and
-asset level, then claims, converts, and describes files.
+Return [`FormatHandler`](../reference/python.md) objects from the
+`portolan_formats` hook. A handler declares its name, family, extensions,
+media type, and asset level. It also claims, converts, and describes files.
 
 ```python
 --8<-- "tests/plugins/portolan_example/src/portolan_example/hooks.py:formats"
@@ -106,29 +102,28 @@ asset level, then claims, converts, and describes files.
 --8<-- "tests/plugins/portolan_example/src/portolan_example/formats.py:handler"
 ```
 
-The family is any string. The built-in families are `vector` and `raster`. The
-helpers in `portolan_cli.api`, such as `convert_vector` and
-`describe_vector_item`, let a handler reuse the built-in conversion.
+Use any string for the family. Portolan provides the built-in `vector` and
+`raster` families. To reuse built-in conversion, call helpers such as
+`convert_vector` and `describe_vector_item` from `portolan_cli.api`.
 
 Portolan picks the handler for one file in this order:
 
 1. A pin in `.portolan/config.yaml` under `conversion.handlers`, such as
    `.xyz: xyz`.
-2. A plugin handler that claims the file. When two plugin handlers claim it,
-   Portolan raises `AmbiguousFormatError` until a pin decides.
+2. A plugin handler that claims the file. If two plugin handlers claim it,
+   Portolan raises `AmbiguousFormatError` until you configure a pin.
 3. A built-in handler that claims the file.
 
 ## Add a data source
 
-The `portolan_extractors` hook returns
-[`Extractor`](../reference/python.md) objects. Each
-one becomes `portolan extract <name>`.
+Return [`Extractor`](../reference/python.md) objects from the
+`portolan_extractors` hook. Portolan adds each extractor as
+`portolan extract <name>`.
 
-A service that serves named layers can implement
-[`LayerSource`](../reference/python.md) instead.
-`extractor_from` wraps it and gives it the layer filters, resume, retry, the
-extraction report, and catalog setup that the WFS, ArcGIS, and Carto sources
-use.
+If a service provides named layers, you can implement
+[`LayerSource`](../reference/python.md) instead. The `extractor_from` helper
+adds layer filters, resume, retry, an extraction report, and catalog setup.
+The WFS, ArcGIS, and Carto sources use the same helper.
 
 ```python
 --8<-- "tests/plugins/portolan_example/src/portolan_example/hooks.py:extractors"
@@ -138,14 +133,14 @@ use.
 --8<-- "tests/plugins/portolan_example/src/portolan_example/geojson_source.py:source"
 ```
 
-The class also implements `layer_metadata`, `styles`, and `source_link`.
-`portolan extract --help` imports the hook module, so import a heavy library
-inside the hook function.
+Implement `layer_metadata`, `styles`, and `source_link` on the class too.
+Because `portolan extract --help` imports the hook module, import heavy
+libraries inside the hook function.
 
 ## Test a plugin
 
-`portolan_cli.testing` checks a plugin object against its protocol. Each check
-raises `ConformanceError` with one line for each problem it finds:
+Use `portolan_cli.testing` to check a plugin object against its protocol. Each
+check raises `ConformanceError` with one line for each problem:
 
 - `check_backend(factory, catalog_root)` publishes two versions of one
   collection and reads them back.
@@ -158,26 +153,27 @@ raises `ConformanceError` with one line for each problem it finds:
 --8<-- "tests/plugins/test_example_plugin.py:check-backend"
 ```
 
-Install the plugin into the environment before you run its tests. With uv, use
-`uv pip install ./path/to/plugin`. `uv run --with` can reuse a cached build of
-a local package and run old code.
+Before you run the tests, install the plugin into the environment. With uv,
+run `uv pip install ./path/to/plugin`. The `uv run --with` command can reuse a
+cached build of a local package and run old code.
 
 ## Select plugins
 
-`PORTOLAN_PLUGINS` controls which outside plugins load. The built-in plugins
-always load.
+Set `PORTOLAN_PLUGINS` to control which third-party plugins load. Built-in
+plugins always load.
 
 | Value | Effect |
 |---|---|
 | unset | Every installed plugin loads. |
-| `none` | No outside plugin loads. |
+| `none` | No non-built-in plugin loads. |
 | `example,other` | Only the plugins with those entry point names load. |
 
-A name in the list that matches no installed plugin produces a warning. A
-plugin that fails to load also produces a warning, and the CLI keeps running.
+If a name does not match an installed plugin, Portolan displays a warning. If
+a plugin fails to load, Portolan displays a warning and continues to run.
 
-A built-in name wins a collision. A plugin command with the name of a built-in
-command does not run, and `portolan --help` warns about it. For backends and
-extractors, the first registration of a name stays and Portolan warns about
-each later one. The built-in plugins register first, so a plugin cannot replace
-`file` or `iceberg`.
+If names conflict, the built-in name takes precedence. Portolan does not run a
+plugin command that has the same name as a built-in command.
+`portolan --help` displays a warning about the conflict. For backends and
+extractors, Portolan keeps the first registration and warns about each later
+one. Built-in plugins register first, so a plugin cannot replace `file` or
+`iceberg`.
