@@ -14,11 +14,13 @@ license = "Apache-2.0"
 # and a declared dependency could pull a released portolan-cli over it.
 dependencies = []
 
+# --8<-- [start:entry-points]
 [project.entry-points."portolan"]
 example = "portolan_example.hooks"
 
 [project.entry-points."portolan.commands"]
 example = "portolan_example.cli:group"
+# --8<-- [end:entry-points]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/portolan_example"]

@@ -40,6 +40,7 @@ def _points(path: Path) -> list[tuple[float, float, float]]:
     return points
 
 
+# --8<-- [start:handler]
 @dataclass(frozen=True)
 class XyzHandler:
     """Convert ``.xyz`` point lists to GeoParquet."""
@@ -58,6 +59,7 @@ class XyzHandler:
             return len([float(part) for part in first.split()]) == 3
         except (OSError, UnicodeDecodeError, ValueError, StopIteration):
             return False
+            # --8<-- [end:handler]
 
     def convert(self, source: Path, output_dir: Path, catalog_root: Path | None) -> Path:
         """Write ``<stem>.parquet`` next to the source."""

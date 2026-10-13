@@ -18,8 +18,47 @@ def test_reference_pages_match_the_shipped_public_exports() -> None:
 
     python_reference = pages[Path("docs/reference/python.md")]
     assert "portolan_cli.Catalog" in python_reference
-    assert "portolan_cli.backends.VersioningBackend" in python_reference
     assert "portolan_cli.sync.push" not in python_reference
+
+
+def test_python_reference_documents_the_whole_plugin_surface() -> None:
+    """Each name a plugin may import has an entry, under the module it comes from."""
+    import portolan_cli.api
+    import portolan_cli.testing
+
+    python_reference = generated_pages(Path.cwd())[Path("docs/reference/python.md")]
+
+    for name in portolan_cli.api.__all__:
+        assert f"::: portolan_cli.api.{name}\n" in python_reference, name
+    for name in portolan_cli.testing.__all__:
+        assert f"::: portolan_cli.testing.{name}\n" in python_reference, name
+    for name in _hookspec_names():
+        assert f"::: portolan_cli.hookspecs.{name}\n" in python_reference, name
+
+
+def test_python_reference_points_plugins_away_from_internal_modules() -> None:
+    """A plugin imports backend names from portolan_cli.api, not portolan_cli.backends."""
+    python_reference = generated_pages(Path.cwd())[Path("docs/reference/python.md")]
+
+    assert "::: portolan_cli.backends." not in python_reference
+
+
+def test_each_plugin_api_name_appears_once() -> None:
+    """The docstring groups place each api name in exactly one section."""
+    import portolan_cli.api
+
+    python_reference = generated_pages(Path.cwd())[Path("docs/reference/python.md")]
+
+    for name in portolan_cli.api.__all__:
+        assert python_reference.count(f"::: portolan_cli.api.{name}\n") == 1, name
+
+
+def _hookspec_names() -> list[str]:
+    """Return the hook names that pluggy reads from portolan_cli.hookspecs."""
+    import portolan_cli.hookspecs as hookspecs
+
+    marker = f"{hookspecs.PROJECT_NAME}_spec"
+    return [name for name, value in vars(hookspecs).items() if hasattr(value, marker)]
 
 
 def test_checked_in_reference_pages_are_fresh() -> None:

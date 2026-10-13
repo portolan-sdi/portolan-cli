@@ -18,6 +18,7 @@ from portolan_cli.api import (
 )
 
 
+# --8<-- [start:source]
 class GeoJSONDirectory:
     """Layers from the ``*.geojson`` files in the directory ``source``."""
 
@@ -47,6 +48,7 @@ class GeoJSONDirectory:
         table = gpio.convert(str(layer.data))
         table.write(str(dest))
         return int(table.num_rows)
+        # --8<-- [end:source]
 
     def layer_metadata(self, source: str, layer: LayerRef) -> LayerMetadata:
         """Title each collection after its file."""

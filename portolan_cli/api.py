@@ -13,7 +13,7 @@ the plugin.
 Groups:
 
 - Hooks: ``hookimpl``, ``EnrichContext``.
-- Format handlers: ``FormatHandler``, ``FormatMetadata``.
+- Format handlers: ``FormatHandler``, ``FormatMetadata``, ``FormatContext``.
 - Versioning backends: ``VersioningBackend``, ``DriftReport``,
   ``SchemaFingerprint``, ``PostAddContext``, ``PostAddItemContext``,
   ``Version``, ``Asset``, ``SchemaInfo``, ``parse_version``, ``get_backend``.

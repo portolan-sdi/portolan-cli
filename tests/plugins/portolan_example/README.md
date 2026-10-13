@@ -10,9 +10,15 @@ CI installs it and calls every hook, so a change to `portolan_cli.api` or
 | Item and collection metadata | `hooks.py` | Adds the STAC `sci` extension |
 | Version storage | `backend.py` | `ExampleBackend` under the name `example`, one JSON file per collection |
 | File format | `formats.py` | `.xyz` point lists convert to GeoParquet |
+| Data source | `geojson_source.py` | `portolan extract example` reads a directory of GeoJSON files |
 
 The package imports only `portolan_cli.api`, `portolan_cli.hookspecs`, and
 `portolan_cli.testing`.
+
+The [plugin guide](https://portolan-sdi.github.io/portolan-cli/guides/plugins/)
+includes this code through the `--8<--` section markers in these files. Keep
+each marker when you edit a file. `tests/docs/test_plugin_guide.py` fails on a
+missing one.
 
 Run its tests from the repository root:
 

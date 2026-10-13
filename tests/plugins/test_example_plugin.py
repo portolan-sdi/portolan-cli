@@ -85,15 +85,17 @@ def test_none_hides_the_plugin(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "example" not in result.output
 
 
+# --8<-- [start:check-backend]
 def test_backend_conforms(tmp_path: Path) -> None:
     from portolan_example.backend import ExampleBackend
 
-    from portolan_cli.backends import get_backend
+    from portolan_cli.api import get_backend
     from portolan_cli.testing import check_backend
 
     check_backend(ExampleBackend, tmp_path / "direct")
 
     assert type(get_backend("example", catalog_root=tmp_path)) is ExampleBackend
+    # --8<-- [end:check-backend]
 
 
 def test_add_runs_every_hook(conformant_catalog: Path, fixtures_dir: Path) -> None:

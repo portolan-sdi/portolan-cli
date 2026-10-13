@@ -130,6 +130,41 @@ def test_the_python_reference_renders_real_signatures(built_site: Path) -> None:
     assert "doc-section-title" in page
 
 
+def test_the_python_reference_renders_the_plugin_surface(built_site: Path) -> None:
+    """griffe follows the lazy portolan_cli.api names to their source objects.
+
+    The api module imports its names only under TYPE_CHECKING. An alias that
+    griffe cannot resolve fails the strict build or renders an empty entry.
+    """
+    page = _page(built_site, "reference/python/index.html")
+
+    for anchor in (
+        "portolan_cli.api.FormatHandler",
+        "portolan_cli.api.LayerSource",
+        "portolan_cli.api.extractor_from",
+        "portolan_cli.hookspecs.portolan_backends",
+        "portolan_cli.testing.check_backend",
+    ):
+        assert f'id="{anchor}"' in page, anchor
+    assert "A data source that serves named layers." in page
+
+
+def test_the_plugin_guide_includes_the_example_plugin(built_site: Path) -> None:
+    """docs/guides/plugins.md takes its code from the example plugin that CI runs."""
+    page = _page(built_site, "guides/plugins/index.html")
+
+    for fragment in (
+        "portolan_example.hooks",
+        "portolan_enrich_item",
+        "portolan_extractors",
+        "GeoJSONDirectory",
+        "check_backend",
+    ):
+        assert fragment in page, fragment
+    assert SNIPPET_DIRECTIVE not in page
+    assert "[start:" not in page
+
+
 def test_the_readme_include_renders_its_source(built_site: Path) -> None:
     """docs/index.md includes README.md from outside docs_dir.
 
