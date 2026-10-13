@@ -491,3 +491,42 @@ def test_on_post_add_keeps_fields_an_enrichment_hook_wrote(
         "id": "item1",
         "sci:doi": "10.1/x",
     }
+
+
+@pytest.mark.integration
+def test_on_post_add_keeps_the_structural_links(iceberg_backend, parquet_file, catalog_with_stac):
+    """The hook must leave ``root`` and ``parent`` alone (issue #940).
+
+    The hook used to call ``normalize_hrefs`` and ``save(SELF_CONTAINED)``.
+    pystac points ``root`` at the object it saves, so that made the collection
+    its own root and dropped ``parent``. ``portolan check`` then reported
+    PTL-LNK-001 and PTL-LNK-006 on every collection the backend wrote.
+
+    #958 replaced that save with ``_merge_into_collection_json``, which fixed it
+    as a side effect of keeping the fields an enrichment hook writes. This test
+    pins the links, so a later change to how the hook writes cannot bring the
+    finding back without failing here.
+    """
+    import json
+
+    catalog_root, item_dir, collection = catalog_with_stac
+    collection_json = catalog_root / "boundaries" / "collection.json"
+    collection_json.write_text(
+        json.dumps(
+            {
+                "type": "Collection",
+                "id": "boundaries",
+                "links": [
+                    {"rel": "root", "href": "../catalog.json", "type": "application/json"},
+                    {"rel": "parent", "href": "../catalog.json", "type": "application/json"},
+                ],
+            }
+        )
+    )
+
+    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
+
+    rels = {link["rel"]: link["href"] for link in json.loads(collection_json.read_text())["links"]}
+
+    assert rels.get("parent") == "../catalog.json"
+    assert rels.get("root") == "../catalog.json"
