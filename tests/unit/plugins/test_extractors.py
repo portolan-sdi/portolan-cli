@@ -166,23 +166,23 @@ class _BrokenExtractor(_FakeExtractor):
 def test_broken_cli_command_leaves_the_other_sources_working(
     register_plugin: Callable[..., None],
 ) -> None:
-    """An extractor whose command does not load is left out of help and warns once."""
+    """Help lists the summary. Running the command warns and fails cleanly."""
     register_plugin(_Plugin([_BrokenExtractor()]), "broken-plugin")
 
     help_result = CliRunner().invoke(_cli(), ["extract", "--help"])
     run_result = CliRunner().invoke(_cli(), ["extract", "broken"])
+    wfs_result = CliRunner().invoke(_cli(), ["extract", "wfs", "--help"])
 
     assert help_result.exit_code == 0, help_result.output
-    commands = help_result.output.split("Commands:")[1].split()
-    assert "broken" not in commands
-    assert "wfs" in commands
+    assert "  broken  Extract from a fake source.\n" in help_result.output
     warning = (
         "Extractor 'broken' from broken-plugin did not load its command: "
         "No module named 'missing_dependency'"
     )
-    assert help_result.output.count(warning) == 1
+    assert run_result.output.count(warning) == 1
     assert run_result.exit_code == 2
     assert "No such command 'broken'" in run_result.output
+    assert wfs_result.exit_code == 0, wfs_result.output
 
 
 def test_registered_extractors_calls_the_hook_once(register_plugin: Callable[..., None]) -> None:

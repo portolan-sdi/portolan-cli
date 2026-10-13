@@ -78,3 +78,26 @@ __all__ = [
     "RetryResult",
     "retry_with_backoff",
 ]
+
+
+# The common names that the arcgis, carto, and wfs packages re-export, by the
+# module that defines each one. Each source package loads them on first access.
+SHARED_EXPORTS: dict[str, str] = {
+    "ExtractionProgress": "portolan_cli.extract.common.progress",
+    "ExtractionReport": "portolan_cli.extract.common.report",
+    "ExtractionSummary": "portolan_cli.extract.common.report",
+    "LayerResult": "portolan_cli.extract.common.report",
+    "MetadataExtracted": "portolan_cli.extract.common.report",
+    "ResumeState": "portolan_cli.extract.common.resume",
+    "RetryConfig": "portolan_cli.extract.common.retry",
+    "RetryError": "portolan_cli.extract.common.retry",
+    "RetryResult": "portolan_cli.extract.common.retry",
+    "apply_unified_filter": "portolan_cli.extract.common.filters",
+    "filter_layers": "portolan_cli.extract.common.filters",
+    "filter_services": "portolan_cli.extract.common.filters",
+    "get_resume_state": "portolan_cli.extract.common.resume",
+    "load_report": "portolan_cli.extract.common.report",
+    "retry_with_backoff": "portolan_cli.extract.common.retry",
+    "save_report": "portolan_cli.extract.common.report",
+    "should_process_layer": "portolan_cli.extract.common.resume",
+}

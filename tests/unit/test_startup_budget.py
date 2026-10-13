@@ -91,3 +91,32 @@ def test_api_import_loads_no_heavy_dependency() -> None:
     )
 
     assert _run(code).strip() == "[]"
+
+
+_EXTRACT_HELP_PROBE = """
+import importlib, sys
+cli = importlib.import_module("portolan_cli.cli").cli
+try:
+    cli(["extract", "--help"], prog_name="portolan")
+except SystemExit:
+    pass
+sources = ("arcgis", "carto", "wfs")
+print("SOURCE_MODULES", sorted(
+    m for m in sys.modules
+    if m.startswith("portolan_cli.extract.") and m.split(".")[2] in sources
+))
+print("HTTP_CLIENTS", sorted(m for m in ("httpx", "requests") if m in sys.modules))
+"""
+
+
+def test_extract_help_imports_no_extractor_command() -> None:
+    """`portolan extract --help` shows each summary and loads no source package.
+
+    An extractor imports its command and its HTTP client inside
+    `cli_command()`, so the help must not call it.
+    """
+    output = _run(_EXTRACT_HELP_PROBE)
+
+    assert "OGC Web Feature Service layers." in output
+    assert "SOURCE_MODULES []" in output
+    assert "HTTP_CLIENTS []" in output

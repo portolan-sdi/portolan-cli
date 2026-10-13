@@ -142,21 +142,25 @@ class PluginGroup(click.Group):
         plugins = self._plugin_entries(ctx)
         rows: list[tuple[str, str | click.Command]] = []
         for name in self.list_commands(ctx):
-            builtin = self._builtin_command(ctx, name)
-            if builtin is None and is_builtin(plugins[name]):
-                # portolan-cli's own command modules import only Click and the
-                # public API, so loading one for its help text costs little.
-                own = self.get_command(ctx, name)
-                if own is None:
-                    rows.append((name, f"(plugin: {_distribution(plugins[name])})"))
-                elif not own.hidden:
-                    rows.append((name, own))
-                continue
-            if builtin is None:
-                rows.append((name, f"(plugin: {_distribution(plugins[name])})"))
-            elif not builtin.hidden:
-                rows.append((name, builtin))
+            item = self._row(ctx, name, plugins)
+            if item is not None:
+                rows.append((name, item))
         return rows
+
+    def _row(
+        self, ctx: click.Context, name: str, plugins: dict[str, EntryPoint]
+    ) -> str | click.Command | None:
+        """Return the command or the label for one row. None hides the row."""
+        builtin = self._builtin_command(ctx, name)
+        if builtin is None and is_builtin(plugins[name]):
+            # portolan-cli's own command modules import only Click and the
+            # public API, so loading one for its help text costs little.
+            builtin = self.get_command(ctx, name)
+            if builtin is None:
+                return f"(plugin: {_distribution(plugins[name])})"
+        if builtin is None:
+            return f"(plugin: {_distribution(plugins[name])})"
+        return None if builtin.hidden else builtin
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         """Write the command list without importing a plugin."""
@@ -210,7 +214,8 @@ class ExtractGroup(PluginGroup):
     The ``portolan_extractors`` hook supplies the extractors, the built-in
     ones included. The group calls the hook on first use, so ``portolan
     --help`` builds no plugin manager. An extractor command counts as a
-    built-in command of this group.
+    built-in command of this group. Help and completion show the extractor
+    ``summary`` and do not call ``cli_command()``.
     """
 
     def shipped_commands(self, ctx: click.Context) -> dict[str, click.Command]:
@@ -232,9 +237,18 @@ class ExtractGroup(PluginGroup):
     def _builtin_names(self, ctx: click.Context) -> list[str]:
         from portolan_cli.plugins.extractors import registered_extractors
 
-        names = set(super()._builtin_names(ctx))
-        names |= {name for name in registered_extractors() if self._builtin_command(ctx, name)}
-        return sorted(names)
+        return sorted(set(super()._builtin_names(ctx)) | set(registered_extractors()))
+
+    def _row(
+        self, ctx: click.Context, name: str, plugins: dict[str, EntryPoint]
+    ) -> str | click.Command | None:
+        """Use the extractor summary, so help imports no extractor command."""
+        from portolan_cli.plugins.extractors import registered_extractors
+
+        extractor = registered_extractors().get(name)
+        if name in self.commands or extractor is None:
+            return super()._row(ctx, name, plugins)
+        return extractor.summary
 
     def _builtin_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         command = super()._builtin_command(ctx, cmd_name)
