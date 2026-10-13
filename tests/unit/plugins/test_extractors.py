@@ -138,3 +138,68 @@ def test_shipped_commands_list_the_builtin_sources_without_plugins(
 
     assert sorted(shipped) == ["arcgis", "carto", "wfs"]
     assert manager._manager is None
+
+
+class _SingleResultPlugin:
+    @hookimpl
+    def portolan_extractors(self) -> object:
+        return _FakeExtractor()
+
+
+def test_non_list_result_is_dropped_with_a_warning(register_plugin: Callable[..., None]) -> None:
+    """A hook that returns one extractor, not a list, cannot break `portolan extract`."""
+    register_plugin(_SingleResultPlugin(), "single-plugin")
+
+    with pytest.warns(PluginWarning, match=r"'single-plugin' returned _FakeExtractor from"):
+        extractors = registered_extractors()
+
+    assert sorted(extractors) == ["arcgis", "carto", "wfs"]
+
+
+class _BrokenExtractor(_FakeExtractor):
+    name = "broken"
+
+    def cli_command(self) -> click.Command:
+        raise ImportError("No module named 'missing_dependency'")
+
+
+def test_broken_cli_command_leaves_the_other_sources_working(
+    register_plugin: Callable[..., None],
+) -> None:
+    """An extractor whose command does not load is left out of help and warns once."""
+    register_plugin(_Plugin([_BrokenExtractor()]), "broken-plugin")
+
+    help_result = CliRunner().invoke(_cli(), ["extract", "--help"])
+    run_result = CliRunner().invoke(_cli(), ["extract", "broken"])
+
+    assert help_result.exit_code == 0, help_result.output
+    commands = help_result.output.split("Commands:")[1].split()
+    assert "broken" not in commands
+    assert "wfs" in commands
+    warning = (
+        "Extractor 'broken' from broken-plugin did not load its command: "
+        "No module named 'missing_dependency'"
+    )
+    assert help_result.output.count(warning) == 1
+    assert run_result.exit_code == 2
+    assert "No such command 'broken'" in run_result.output
+
+
+def test_registered_extractors_calls_the_hook_once(register_plugin: Callable[..., None]) -> None:
+    """The registry is cached per plugin manager, like the format handlers."""
+    calls: list[int] = []
+
+    class _CountingPlugin:
+        @hookimpl
+        def portolan_extractors(self) -> list[object]:
+            calls.append(1)
+            return [_FakeExtractor()]
+
+    register_plugin(_CountingPlugin(), "counting-plugin")
+
+    first = registered_extractors()
+    second = registered_extractors()
+
+    assert len(calls) == 1
+    assert first == second
+    assert first is not second

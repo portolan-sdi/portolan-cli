@@ -59,21 +59,42 @@ class Extractor(Protocol):
         ...
 
 
+# The plugin manager, the extractors by name, and their plugin names.
+# ``reset_plugin_manager`` makes a new manager, which drops the cache.
+_CACHE: list[Any] = []
+
+
 def registered_extractors() -> dict[str, Extractor]:
     """Collect extractors from every ``portolan_extractors`` hook.
 
     Built-ins register first, so a built-in name keeps its built-in
-    extractor. A result that is not an ``Extractor``, or a name that is
-    already registered, produces a ``PluginWarning``.
+    extractor. A hook result that is not a list, a list entry that is not an
+    ``Extractor``, or a name that is already registered produces a
+    ``PluginWarning``.
+
+    The registry is cached per plugin manager, because ``portolan extract
+    --help`` asks for it once per command name.
 
     Returns:
         Extractors by name.
     """
-    from portolan_cli.plugins.manager import PluginWarning, call_each
+    from portolan_cli.plugins.manager import PluginWarning, call_each, get_plugin_manager
+
+    manager = get_plugin_manager()
+    if _CACHE and _CACHE[0] is manager:
+        return dict(_CACHE[1])
 
     found: dict[str, Extractor] = {}
     owners: dict[str, str] = {}
     for plugin_name, result in call_each("portolan_extractors"):
+        if not isinstance(result, (list, tuple)):
+            warnings.warn(
+                f"Plugin '{plugin_name}' returned {type(result).__name__} from "
+                "portolan_extractors, which is not a list of extractors.",
+                PluginWarning,
+                stacklevel=2,
+            )
+            continue
         for extractor in result:
             if not isinstance(extractor, Extractor):
                 warnings.warn(
@@ -93,4 +114,19 @@ def registered_extractors() -> dict[str, Extractor]:
                 continue
             found[extractor.name] = extractor
             owners[extractor.name] = plugin_name
+    _CACHE[:] = [manager, dict(found), owners]
     return found
+
+
+def extractor_owner(name: str) -> str | None:
+    """Return the name of the plugin that registers extractor ``name``.
+
+    Args:
+        name: The extractor name.
+
+    Returns:
+        The plugin name, or None when no plugin registers the extractor.
+    """
+    registered_extractors()
+    owners: dict[str, str] = _CACHE[2]
+    return owners.get(name)

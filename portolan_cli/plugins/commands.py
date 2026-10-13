@@ -222,16 +222,37 @@ class ExtractGroup(PluginGroup):
             commands.setdefault(extractor.name, extractor.cli_command())
         return commands
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # Keyed by id(extractor). The value keeps the extractor alive, so its id
+        # stays unique. A pluggable extractor need not be hashable. None records
+        # a command that did not load, so help and the run warn about it once.
+        self._extractor_commands: dict[int, tuple[object, click.Command | None]] = {}
+
     def _builtin_names(self, ctx: click.Context) -> list[str]:
         from portolan_cli.plugins.extractors import registered_extractors
 
-        return sorted(set(super()._builtin_names(ctx)) | set(registered_extractors()))
+        names = set(super()._builtin_names(ctx))
+        names |= {name for name in registered_extractors() if self._builtin_command(ctx, name)}
+        return sorted(names)
 
     def _builtin_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         command = super()._builtin_command(ctx, cmd_name)
         if command is not None:
             return command
-        from portolan_cli.plugins.extractors import registered_extractors
+        from portolan_cli.plugins.extractors import extractor_owner, registered_extractors
 
         extractor = registered_extractors().get(cmd_name)
-        return extractor.cli_command() if extractor is not None else None
+        if extractor is None:
+            return None
+        if id(extractor) not in self._extractor_commands:
+            try:
+                loaded: click.Command | None = extractor.cli_command()
+            except Exception as err:  # noqa: BLE001 - one broken extractor must not break the group
+                warn(
+                    f"Extractor '{cmd_name}' from {extractor_owner(cmd_name)} did not load "
+                    f"its command: {err}"
+                )
+                loaded = None
+            self._extractor_commands[id(extractor)] = (extractor, loaded)
+        return self._extractor_commands[id(extractor)][1]
