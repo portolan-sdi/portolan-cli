@@ -488,3 +488,19 @@ def test_resume_normalizes_a_windows_output_path(fixtures_dir: Path, tmp_path: P
     collection = json.loads((out / "points" / "collection.json").read_text(encoding="utf-8"))
     vias = [link["href"] for link in collection["links"] if link["rel"] == "via"]
     assert vias == ["src/points"]
+
+
+def test_resume_fetches_a_legacy_layer_with_a_corrupt_file(
+    fixtures_dir: Path, tmp_path: Path
+) -> None:
+    """A partial file from an interrupted older run is fetched again."""
+    out = tmp_path / "out"
+    run_layer_extraction(_FixtureSource(fixtures_dir), "src", out, _options(raw=True))
+    _rewrite_report(out, status="skipped", output_path=None)
+    (out / "points" / "points.parquet").write_bytes(b"PAR1 truncated")
+    second = _FixtureSource(fixtures_dir)
+
+    report = run_layer_extraction(second, "src", out, _options(resume=True, raw=True))
+
+    assert second.fetched == ["points"]
+    assert report.layers[0].status == "success"

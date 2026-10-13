@@ -471,14 +471,20 @@ def _resumed_result(
     data_file = output_dir / relative
     if not data_file.is_file():
         return None
+    import pyarrow as pa
     import pyarrow.parquet as pq
 
+    try:
+        rows = pq.ParquetFile(data_file).metadata.num_rows
+    except (pa.ArrowInvalid, OSError):
+        # An interrupted older run can leave a partial file. Fetch it again.
+        return None
     # The legacy result holds 0 rows, 0 bytes, and an "Already extracted" error.
     return replace(
         previous,
         status="success",
         output_path=relative,
-        features=pq.ParquetFile(data_file).metadata.num_rows,
+        features=rows,
         size_bytes=data_file.stat().st_size,
         error=None,
     )
