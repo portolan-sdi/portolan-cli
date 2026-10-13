@@ -416,3 +416,43 @@ def test_json_envelope_reports_null_fields_for_a_failed_layer(
     assert (layers["lines"]["status"], layers["lines"]["features"]) == ("failed", None)
     assert layers["lines"]["output_path"] is None
     assert layers["points"]["output_path"] == "points/points.parquet"
+
+
+def _rewrite_report(out: Path, **changes: Any) -> None:
+    """Change the first layer of the saved report, as an older version wrote it."""
+    path = out / ".portolan" / "extraction-report.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["layers"][0].update(changes)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_resume_accepts_a_legacy_skipped_result(fixtures_dir: Path, tmp_path: Path) -> None:
+    """An older Carto report marks a resumed table "skipped" with no output path."""
+    out = tmp_path / "out"
+    run_layer_extraction(_FixtureSource(fixtures_dir), "src", out, _options(raw=True))
+    _rewrite_report(out, status="skipped", output_path=None)
+    second = _FixtureSource(fixtures_dir)
+
+    report = run_layer_extraction(second, "src", out, _options(resume=True, raw=True))
+
+    assert second.fetched == []
+    assert (report.layers[0].status, report.layers[0].output_path) == (
+        "skipped",
+        "points/points.parquet",
+    )
+
+
+def test_resume_normalizes_a_windows_output_path(fixtures_dir: Path, tmp_path: Path) -> None:
+    """A report written on Windows holds backslashes. The resumed result uses /."""
+    out = tmp_path / "out"
+    run_layer_extraction(_FixtureSource(fixtures_dir), "src", out, _options(raw=True))
+    _rewrite_report(out, output_path="points\\points.parquet")
+    second = _FixtureSource(fixtures_dir)
+
+    report = run_layer_extraction(second, "src", out, _options(resume=True))
+
+    assert second.fetched == []
+    assert report.layers[0].output_path == "points/points.parquet"
+    collection = json.loads((out / "points" / "collection.json").read_text(encoding="utf-8"))
+    vias = [link["href"] for link in collection["links"] if link["rel"] == "via"]
+    assert vias == ["src/points"]

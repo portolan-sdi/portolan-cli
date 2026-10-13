@@ -27,7 +27,7 @@ import re
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePath
@@ -430,17 +430,41 @@ class _Run:
 
 
 def _previous_results(report_path: Path) -> tuple[dict[str, LayerResult], dict[str, LayerResult]]:
-    """Read the previous report: done layers by data file, empty layers by name."""
+    """Read the previous report: done layers by data file, other layers by name.
+
+    A done layer's output path is normalized to ``/``, because a report
+    written on Windows holds backslashes. The by-name map holds the empty
+    layers. It also holds the "skipped" layers with no output path, which an
+    older Carto report wrote for a table from an earlier run.
+    """
     from portolan_cli.extract.common.report import load_report
 
     by_path: dict[str, LayerResult] = {}
-    empty_by_name: dict[str, LayerResult] = {}
+    by_name: dict[str, LayerResult] = {}
     for result in load_report(report_path).layers:
         if result.status in ("success", "skipped") and result.output_path:
-            by_path[PurePath(result.output_path.replace("\\", "/")).as_posix()] = result
-        elif result.status == "empty":
-            empty_by_name[result.name] = result
-    return by_path, empty_by_name
+            output_path = PurePath(result.output_path.replace("\\", "/")).as_posix()
+            by_path[output_path] = replace(result, output_path=output_path)
+        elif result.status in ("empty", "skipped"):
+            by_name[result.name] = result
+    return by_path, by_name
+
+
+def _resumed_result(
+    layer: LayerRef,
+    output_dir: Path,
+    done_by_path: dict[str, LayerResult],
+    by_name: dict[str, LayerResult],
+) -> LayerResult | None:
+    """Return the earlier result that a resumed run keeps, or None to fetch."""
+    relative = layer_path(layer)
+    if relative in done_by_path:
+        return done_by_path[relative]
+    previous = by_name.get(layer.name)
+    if previous is None or previous.status == "empty":
+        return previous
+    # A legacy "skipped" result counts only when its data file is still there.
+    return replace(previous, output_path=relative) if (output_dir / relative).is_file() else None
 
 
 def _fetch_sequential(
@@ -742,7 +766,7 @@ def run_layer_extraction(
     resolved_license = _resolve_license(discovery, options)
     report_path = output_dir / ".portolan" / "extraction-report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    done_by_path, empty_by_name = (
+    done_by_path, by_name = (
         _previous_results(report_path) if options.resume and report_path.exists() else ({}, {})
     )
 
@@ -751,7 +775,7 @@ def run_layer_extraction(
     collected: list[tuple[int, LayerResult]] = []
     jobs: list[tuple[int, LayerRef]] = []
     for index, layer in enumerate(layers):
-        previous = done_by_path.get(layer_path(layer)) or empty_by_name.get(layer.name)
+        previous = _resumed_result(layer, output_dir, done_by_path, by_name)
         if previous is not None:
             # "starting" prints the "[i/N] <name>" line that the skip line follows.
             run.emit(index, total, layer, "starting")
