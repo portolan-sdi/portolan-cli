@@ -188,7 +188,8 @@ def test_resume_reuses_succeeded_layers(fixtures_dir: Path, tmp_path: Path) -> N
     )
 
     assert second.fetched == ["lines"]
-    assert seen[0] == ("points", "skipped")
+    # "starting" prints the layer name above the skip line.
+    assert seen[:2] == [("points", "starting"), ("points", "skipped")]
     assert report.layers[0] == first.layers[0]
     assert [r.status for r in report.layers] == ["success", "success"]
 
@@ -398,3 +399,20 @@ def test_nested_layer_path_is_accepted(fixtures_dir: Path, tmp_path: Path) -> No
     )
 
     assert report.layers[0].output_path == "group/points/points.parquet"
+
+
+def test_json_envelope_reports_null_fields_for_a_failed_layer(
+    fixtures_dir: Path, tmp_path: Path
+) -> None:
+    """A failed layer reports null features and output path in every source's --json."""
+    command = extractor_from(_FixtureSource(fixtures_dir, fail={"lines"})).cli_command()
+
+    result = CliRunner().invoke(
+        command,
+        ["src", str(tmp_path / "out"), "--auto", "--json", "--raw", "--retries", "1"],
+    )
+
+    layers = {layer["name"]: layer for layer in json.loads(result.output)["data"]["layers"]}
+    assert (layers["lines"]["status"], layers["lines"]["features"]) == ("failed", None)
+    assert layers["lines"]["output_path"] is None
+    assert layers["points"]["output_path"] == "points/points.parquet"

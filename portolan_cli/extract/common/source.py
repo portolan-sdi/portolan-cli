@@ -753,6 +753,8 @@ def run_layer_extraction(
     for index, layer in enumerate(layers):
         previous = done_by_path.get(layer_path(layer)) or empty_by_name.get(layer.name)
         if previous is not None:
+            # "starting" prints the "[i/N] <name>" line that the skip line follows.
+            run.emit(index, total, layer, "starting")
             run.emit(index, total, layer, "skipped")
             collected.append((index, previous))
         else:
