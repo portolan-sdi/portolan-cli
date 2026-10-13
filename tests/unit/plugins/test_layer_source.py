@@ -373,7 +373,8 @@ class _EscapingSource(_FixtureSource):
 
 
 @pytest.mark.parametrize(
-    "path", ["../escaped", "a/../../escaped", "/tmp/escaped", "a//b", "./a", "a\\..\\b"]
+    "path",
+    ["../escaped", "a/../../escaped", "/tmp/escaped", "a//b", "./a", "a\\..\\b", "C:/x", "C:x"],
 )
 def test_unsafe_layer_path_stops_the_run_before_any_write(
     fixtures_dir: Path, tmp_path: Path, path: str
@@ -389,6 +390,18 @@ def test_unsafe_layer_path_stops_the_run_before_any_write(
 
     assert source.fetched == []
     assert not (tmp_path / "catalog").exists()
+
+
+def test_unsafe_layer_path_fails_even_when_filtered_out(fixtures_dir: Path, tmp_path: Path) -> None:
+    """The catalog build reads every discovered layer, so each one is checked first."""
+    from portolan_cli.input_hardening import InputValidationError
+
+    source = _EscapingSource(fixtures_dir, "../escaped")
+
+    with pytest.raises(InputValidationError, match="collection path"):
+        run_layer_extraction(source, "src", tmp_path / "out", _options(layer_exclude=["points"]))
+
+    assert source.fetched == []
 
 
 def test_nested_layer_path_is_accepted(fixtures_dir: Path, tmp_path: Path) -> None:
@@ -437,9 +450,21 @@ def test_resume_accepts_a_legacy_skipped_result(fixtures_dir: Path, tmp_path: Pa
 
     assert second.fetched == []
     assert (report.layers[0].status, report.layers[0].output_path) == (
-        "skipped",
+        "success",
         "points/points.parquet",
     )
+
+
+def test_legacy_skipped_layer_joins_the_catalog(fixtures_dir: Path, tmp_path: Path) -> None:
+    """An older Carto run that stopped before the catalog build still gets a collection."""
+    out = tmp_path / "out"
+    run_layer_extraction(_FixtureSource(fixtures_dir), "src", out, _options(raw=True))
+    _rewrite_report(out, status="skipped", output_path=None)
+
+    run_layer_extraction(_FixtureSource(fixtures_dir), "src", out, _options(resume=True))
+
+    collection = json.loads((out / "points" / "collection.json").read_text(encoding="utf-8"))
+    assert [link["href"] for link in collection["links"] if link["rel"] == "via"] == ["src/points"]
 
 
 def test_resume_normalizes_a_windows_output_path(fixtures_dir: Path, tmp_path: Path) -> None:

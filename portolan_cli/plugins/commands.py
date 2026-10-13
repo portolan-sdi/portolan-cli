@@ -268,5 +268,11 @@ class ExtractGroup(PluginGroup):
                     f"its command: {err}"
                 )
                 loaded = None
+            if loaded is not None and not isinstance(loaded, click.Command):
+                warn(
+                    f"Extractor '{cmd_name}' from {extractor_owner(cmd_name)} is not a "
+                    "Click command."
+                )
+                loaded = None
             self._extractor_commands[id(extractor)] = (extractor, loaded)
         return self._extractor_commands[id(extractor)][1]

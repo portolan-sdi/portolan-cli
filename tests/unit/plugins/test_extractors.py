@@ -203,3 +203,26 @@ def test_registered_extractors_calls_the_hook_once(register_plugin: Callable[...
     assert len(calls) == 1
     assert first == second
     assert first is not second
+
+
+def _undecorated() -> None:
+    """A command function that lacks @click.command."""
+
+
+class _UndecoratedExtractor(_FakeExtractor):
+    name = "plain"
+
+    def cli_command(self) -> Any:
+        return _undecorated
+
+
+def test_cli_command_that_is_not_a_click_command_is_refused(
+    register_plugin: Callable[..., None],
+) -> None:
+    register_plugin(_Plugin([_UndecoratedExtractor()]), "plain-plugin")
+
+    result = CliRunner().invoke(_cli(), ["extract", "plain"])
+
+    assert result.exit_code == 2
+    assert "Extractor 'plain' from plain-plugin is not a Click command." in result.output
+    assert "No such command 'plain'" in result.output

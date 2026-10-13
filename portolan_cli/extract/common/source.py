@@ -239,13 +239,16 @@ def layer_path(layer: LayerRef) -> str:
     Raises:
         InputValidationError: When ``layer.path`` could leave the catalog. It
             must be relative and ``/``-separated, with no empty, ``.``, or
-            ``..`` segment.
+            ``..`` segment. A ``:`` is refused too, because ``C:x`` names a
+            Windows drive.
     """
     from portolan_cli.input_hardening import InputValidationError
 
     collection = layer.path or slugify(layer.name)
     segments = collection.split("/")
-    if "\\" in collection or any(part in ("", ".", "..") for part in segments):
+    if any(char in collection for char in "\\:") or any(
+        part in ("", ".", "..") for part in segments
+    ):
         raise InputValidationError(
             f"Layer '{layer.name}' has the collection path {collection!r}, which is not "
             "a relative /-separated path inside the catalog."
@@ -464,7 +467,10 @@ def _resumed_result(
     if previous is None or previous.status == "empty":
         return previous
     # A legacy "skipped" result counts only when its data file is still there.
-    return replace(previous, output_path=relative) if (output_dir / relative).is_file() else None
+    # It becomes "success", because the catalog build adds only those.
+    if not (output_dir / relative).is_file():
+        return None
+    return replace(previous, status="success", output_path=relative)
 
 
 def _fetch_sequential(
@@ -756,10 +762,11 @@ def run_layer_extraction(
 
     options = options or LayerSourceOptions()
     discovery = layer_source.discover(source, options)
-    layers = filter_refs(discovery.layers, options.layer_filter, options.layer_exclude)
-    # A plugin source sets LayerRef.path. Check every layer before any write.
-    for layer in layers:
+    # A plugin source sets LayerRef.path. Check every discovered layer before
+    # any write, because the catalog build reads the unfiltered list too.
+    for layer in discovery.layers:
         layer_path(layer)
+    layers = filter_refs(discovery.layers, options.layer_filter, options.layer_exclude)
     if options.dry_run:
         return build_report(discovery, [_pending(layer) for layer in layers])
 
