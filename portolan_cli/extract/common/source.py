@@ -24,6 +24,7 @@ from __future__ import annotations
 import importlib
 import logging
 import re
+import shutil
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
@@ -356,6 +357,14 @@ def _pending(layer: LayerRef) -> LayerResult:
     )
 
 
+@dataclass(frozen=True)
+class _Staged:
+    """A fetched layer before it moves into the catalog."""
+
+    result: LayerResult
+    path: Path | None
+
+
 @dataclass
 class _Run:
     """One extraction: the source, its discovery, and where it writes."""
@@ -367,17 +376,25 @@ class _Run:
     on_progress: Callable[[ExtractionProgress], None] | None
 
     def fetch_layer(self, layer: LayerRef) -> LayerResult:
-        """Fetch one layer with retry and return its result."""
+        """Fetch one layer with retry, move it into place, and return its result."""
+        return self.promote(layer, self.stage_layer(layer))
+
+    def stage_layer(self, layer: LayerRef) -> _Staged:
+        """Fetch one layer with retry into ``.portolan/staging``.
+
+        A worker thread runs this step. The final data file and the styles
+        change only in ``promote``, so a timed-out fetch cannot change them.
+        """
         from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
 
         relative = layer_path(layer)
-        dest = self.output_dir / relative
+        staged = self.output_dir / ".portolan" / "staging" / relative
         source_url = self.discovery.source_url
 
         def attempt() -> tuple[int, float]:
-            dest.parent.mkdir(parents=True, exist_ok=True)
+            staged.parent.mkdir(parents=True, exist_ok=True)
             start = time.monotonic()
-            rows = self.source.fetch(source_url, layer, dest)
+            rows = self.source.fetch(source_url, layer, staged)
             return rows, time.monotonic() - start
 
         outcome = retry_with_backoff(
@@ -391,30 +408,46 @@ class _Run:
         )
         if outcome.success and outcome.value is not None:
             rows, duration = outcome.value
-            self._styles(layer, dest.parent)
-            return _result(
+            result = _result(
                 layer,
                 "success",
                 features=rows,
-                size_bytes=dest.stat().st_size if dest.exists() else 0,
+                size_bytes=staged.stat().st_size if staged.exists() else 0,
                 duration_seconds=duration,
                 output_path=relative,
                 attempts=outcome.attempts,
             )
+            return _Staged(result, staged)
+        staged.unlink(missing_ok=True)
         error = str(outcome.error) if outcome.error else "Unknown error"
         if isinstance(outcome.error, EmptyLayerError):
             logger.warning("Layer %s is empty (0 features), skipping", layer.name)
-            return _result(
-                layer,
-                "empty",
-                features=0,
-                size_bytes=0,
-                duration_seconds=0.0,
-                warnings=["Layer has no features"],
-                error=error,
-                attempts=outcome.attempts,
+            return _Staged(
+                _result(
+                    layer,
+                    "empty",
+                    features=0,
+                    size_bytes=0,
+                    duration_seconds=0.0,
+                    warnings=["Layer has no features"],
+                    error=error,
+                    attempts=outcome.attempts,
+                ),
+                None,
             )
-        return _result(layer, "failed", error=error, attempts=outcome.attempts)
+        return _Staged(_result(layer, "failed", error=error, attempts=outcome.attempts), None)
+
+    def promote(self, layer: LayerRef, staged: _Staged) -> LayerResult:
+        """Move a successful fetch to its data file, then write the styles."""
+        result = staged.result
+        if result.status != "success" or result.output_path is None:
+            return result
+        dest = self.output_dir / result.output_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if staged.path is not None and staged.path.exists():
+            staged.path.replace(dest)
+        self._styles(layer, dest.parent)
+        return result
 
     def _styles(self, layer: LayerRef, collection_dir: Path) -> None:
         try:
@@ -512,7 +545,9 @@ def _fetch_parallel(
 
     A layer's deadline starts when a worker picks it up, not when it is
     queued, so a queued layer is never timed out (issues #508, #526). A
-    timed-out thread runs on, but its result is discarded.
+    timed-out thread runs on, but the run does not wait for it. Its staged
+    file never moves into the catalog. Python joins the thread when the
+    process exits.
     """
     workers = min(run.options.workers, len(jobs))
     timeout = run.options.layer_timeout
@@ -521,20 +556,23 @@ def _fetch_parallel(
     started: dict[int, float] = {}
     results: list[tuple[int, LayerResult]] = []
 
-    def task(index: int, layer: LayerRef) -> LayerResult:
+    def task(index: int, layer: LayerRef) -> _Staged:
         with lock:
             started[index] = time.monotonic()
-        return run.fetch_layer(layer)
+        return run.stage_layer(layer)
 
-    def deadline(future: Future[LayerResult]) -> float | None:
+    def deadline(future: Future[_Staged]) -> float | None:
         index = futures[future][0]
         with lock:
             start = started.get(index)
         return None if start is None or timeout is None else start + timeout
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
+    # No context manager: its exit waits for a timed-out thread.
+    executor = ThreadPoolExecutor(max_workers=workers)
+    timed_out = False
+    try:
         futures = {executor.submit(task, index, layer): (index, layer) for index, layer in jobs}
-        pending: set[Future[LayerResult]] = set(futures)
+        pending: set[Future[_Staged]] = set(futures)
         while pending:
             now = time.monotonic()
             deadlines = [d for f in pending if (d := deadline(f)) is not None]
@@ -543,7 +581,7 @@ def _fetch_parallel(
             for future in done:
                 index, layer = futures[future]
                 try:
-                    result = future.result()
+                    result = run.promote(layer, future.result())
                 except Exception as err:  # noqa: BLE001 - one layer must not stop the run
                     logger.error("Layer %s failed: %s", layer.name, err)
                     result = _result(layer, "failed", error=str(err), attempts=1)
@@ -571,6 +609,9 @@ def _fetch_parallel(
                 )
                 future.cancel()
                 pending.discard(future)
+                timed_out = True
+    finally:
+        executor.shutdown(wait=not timed_out, cancel_futures=timed_out)
     return results
 
 
@@ -813,6 +854,8 @@ def run_layer_extraction(
     else:
         collected += _fetch_sequential(run, jobs, total)
     collected.sort(key=lambda item: item[0])
+    # A timed-out thread can still write here. It fails, and the run ignores it.
+    shutil.rmtree(output_dir / ".portolan" / "staging", ignore_errors=True)
 
     report = build_report(discovery, [result for _, result in collected])
     save_report(report, report_path)

@@ -211,6 +211,9 @@ Moving the built-ins changed some results. All sources now share these rules:
 - A resumed layer keeps its earlier result. It emits "starting" and then
   "skipped". The text output then shows the layer name above the skip line.
 - The progress index is the position of the layer in the run.
+- A layer fetches into `.portolan/staging`. The driver moves the file into
+  place and writes the styles after the fetch ends in time. A timed-out fetch
+  never changes the catalog, and the run does not wait for its thread.
 - In an ArcGIS services root, the via link and the layer details use the URL
   of the layer's own service.
 

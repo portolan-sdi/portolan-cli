@@ -127,6 +127,7 @@ def test_run_writes_layers_report_and_catalog(fixtures_dir: Path, tmp_path: Path
     assert collection["title"] == "Fixture points"
     catalog = json.loads((out / "catalog.json").read_text(encoding="utf-8"))
     assert (catalog["title"], catalog["description"]) == ("Fixture catalog", "Fixture layers.")
+    assert not (out / ".portolan" / "staging").exists()
 
 
 def test_layer_path_sets_the_collection_directory(fixtures_dir: Path, tmp_path: Path) -> None:
@@ -277,13 +278,20 @@ class _CopySource(_FixtureSource):
     def __init__(self, fixtures_dir: Path, prepared: Path, slow: dict[str, float]) -> None:
         super().__init__(fixtures_dir, slow=slow)
         self.prepared = prepared
+        self.finished = threading.Event()
+        self.styled: list[str] = []
 
     def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
         import shutil
 
         time.sleep(self.slow.get(layer.name, 0.0))
         shutil.copyfile(self.prepared, dest)
+        if layer.name in self.slow:
+            self.finished.set()
         return 1
+
+    def styles(self, source: str, layer: LayerRef, collection_dir: Path) -> None:
+        self.styled.append(layer.name)
 
 
 def test_layer_timeout_fails_a_slow_layer(fixtures_dir: Path, tmp_path: Path) -> None:
@@ -295,13 +303,24 @@ def test_layer_timeout_fails_a_slow_layer(fixtures_dir: Path, tmp_path: Path) ->
     )
     source = _CopySource(fixtures_dir, prepared / "lines" / "lines.parquet", slow={"points": 3.0})
 
+    out = tmp_path / "out"
+
+    started = time.monotonic()
     report = run_layer_extraction(
-        source, "src", tmp_path / "out", _options(workers=2, layer_timeout=1.0, raw=True)
+        source, "src", out, _options(workers=2, layer_timeout=1.0, raw=True)
     )
+    elapsed = time.monotonic() - started
 
     points = report.layers[0]
     assert (points.status, points.error) == ("failed", "Timeout after 1.0s")
     assert report.layers[1].status == "success"
+    # The run does not wait for the slow thread to end.
+    assert elapsed < 2.5
+    # The timed-out fetch ends later, but it cannot write the final output.
+    assert source.finished.wait(10)
+    time.sleep(0.2)
+    assert not (out / "points" / "points.parquet").exists()
+    assert source.styled == ["lines"]
 
 
 def test_raw_builds_no_catalog(fixtures_dir: Path, tmp_path: Path) -> None:
