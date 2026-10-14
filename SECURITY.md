@@ -21,7 +21,7 @@ We take the security of portolan-cli seriously. If you believe you have found a 
 ### Please DO:
 
 1. **Report via GitHub Security Advisories** (preferred):
-   - Go to the [Security tab](https://github.com/portolan/portolan-cli/security/advisories)
+   - Go to the [Security tab](https://github.com/portolan-sdi/portolan-cli/security/advisories)
    - Click "Report a vulnerability"
    - Fill in the details
 
