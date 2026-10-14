@@ -39,10 +39,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from rashid import validate
 from rashid.data.reader import LocalOnlyReader
 
+from portolan_cli.errors import InvalidLiveUrlError
 from portolan_cli.validation.config import load_public_url, load_rules_config
 from portolan_cli.validation.legacy import detect_legacy_notes
 
@@ -116,6 +118,24 @@ def _resolve_root(path: Path) -> Path:
     from portolan_cli.scan.check import resolve_catalog_root_for_check
 
     return resolve_catalog_root_for_check(path) or path
+
+
+def validate_live_base_url(path: Path, public_url: str | None) -> None:
+    """Reject invalid live URLs before validation or any requested repair.
+
+    Match rashid's HTTPS-only policy. The error names the URL's source and
+    does not expose the URL, which can contain credentials.
+    """
+    base_url = public_url or load_public_url(_resolve_root(path))
+    if base_url is None:
+        return
+    source = "--url" if public_url else "publish.public_url"
+    try:
+        parsed = urlparse(base_url)
+    except ValueError as err:
+        raise InvalidLiveUrlError(source) from err
+    if parsed.scheme.lower() != "https" or not parsed.netloc:
+        raise InvalidLiveUrlError(source)
 
 
 def _live_hint(root: Path, public_url: str | None, *, live: bool) -> LiveHint | None:
@@ -240,6 +260,8 @@ def run_check(
     report: Report | None = None
     notice: WorkflowNotice | None = None
     if metadata:
+        if live:
+            validate_live_base_url(root, public_url)
         # One extra manifest walk per run. `run_fix_workflow` walks separately
         # under --fix; deduping the two is a later refactor, not this change.
         notice = _workflow_notice(root)

@@ -9,8 +9,10 @@ import pytest
 import yaml
 from rashid.model import Severity
 
+from portolan_cli.errors import InvalidLiveUrlError
 from portolan_cli.validation import run_check
 from portolan_cli.validation.config import load_public_url, load_rules_config
+from portolan_cli.validation.runner import validate_live_base_url
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -79,6 +81,35 @@ class TestLoadPublicUrl:
     def test_non_string_value_is_ignored(self, tmp_path: Path) -> None:
         _write_config(tmp_path, {"publish": {"public_url": 42}})
         assert load_public_url(tmp_path) is None
+
+
+class TestLiveBaseUrl:
+    @pytest.mark.parametrize("url", ["http://example.org/", "https:///demo", "https://[bad/"])
+    def test_invalid_url_has_typed_error(self, tmp_path: Path, url: str) -> None:
+        with pytest.raises(InvalidLiveUrlError, match="Set --url to an https URL"):
+            run_check(tmp_path, live=True, public_url=url, geo_assets=False)
+
+    @pytest.mark.parametrize("url", [None, "https://example.org/", "HTTPS://example.org/"])
+    def test_valid_or_absent_url_is_allowed(self, tmp_path: Path, url: str | None) -> None:
+        validate_live_base_url(tmp_path, url)
+
+    def test_config_resolves_from_nested_path(self, tmp_path: Path) -> None:
+        _minimal_catalog(tmp_path)
+        _write_config(tmp_path, {"publish": {"public_url": "http://example.org/"}})
+        nested = tmp_path / "roads"
+        nested.mkdir()
+        with pytest.raises(InvalidLiveUrlError, match="Set publish.public_url to an https URL"):
+            validate_live_base_url(nested, None)
+
+    def test_flag_takes_precedence_over_invalid_config(self, tmp_path: Path) -> None:
+        _write_config(tmp_path, {"publish": {"public_url": "http://example.org/"}})
+        validate_live_base_url(tmp_path, "https://example.org/")
+
+    def test_offline_check_still_accepts_http_url(self, tmp_path: Path) -> None:
+        _minimal_catalog(tmp_path)
+        outcome = run_check(tmp_path, public_url="http://example.org/", geo_assets=False)
+        assert outcome.live_hint is not None
+        assert outcome.live_hint.base_url == "http://example.org/"
 
 
 def _minimal_catalog(root: Path) -> None:

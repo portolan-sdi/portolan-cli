@@ -38,7 +38,7 @@ from portolan_cli.cli_types import FLEXIBLE_DATETIME
 from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.discovery import get_sidecars
 from portolan_cli.emit import emit_error, emit_success
-from portolan_cli.errors import MissingLicenseError
+from portolan_cli.errors import InvalidLiveUrlError, MissingLicenseError
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.licensing import (
     CLI_LICENSE_REMEDIATION,
@@ -86,6 +86,7 @@ from portolan_cli.validation import (
     run_check,
     validate_safe_path,
 )
+from portolan_cli.validation.runner import validate_live_base_url
 
 
 def click_writer(
@@ -1692,6 +1693,12 @@ def _execute_check_workflow(
     skips the re-check: with no writes there is nothing new to find.
     """
     validate_metadata = _should_validate(path, run_metadata=run_metadata, fix=fix)
+    if live and validate_metadata:
+        try:
+            validate_live_base_url(path, public_url)
+        except InvalidLiveUrlError as err:
+            emit_error("check", type(err).__name__, str(err), use_json=use_json, code=err.code)
+            raise SystemExit(2) from err
     check_kwargs: dict[str, Any] = {
         "data": data,
         "data_scope": data_scope,

@@ -345,6 +345,20 @@ class MissingLicenseError(ValidationError):
         super().__init__(f"No usable license for {target}: {reason}", target=target, reason=reason)
 
 
+class InvalidLiveUrlError(ValidationError):
+    """The live pass requires an HTTPS base URL with a host.
+
+    Error code: PRTLN-VAL005
+    """
+
+    code = "PRTLN-VAL005"
+
+    def __init__(self, source: str) -> None:
+        super().__init__(
+            f"--live needs an https base URL. Set {source} to an https URL.", source=source
+        )
+
+
 # Conversion Errors (PRTLN-CNV*)
 class ConversionError(PortolanError):
     """Base class for conversion-related errors."""
