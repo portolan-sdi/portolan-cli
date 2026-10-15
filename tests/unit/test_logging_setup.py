@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
 import warnings
 from typing import TYPE_CHECKING
@@ -16,11 +17,26 @@ import pytest
 from portolan_cli import logging_setup, trace
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
 
 PKG = logging.getLogger("portolan_cli")
+
+
+@pytest.fixture(autouse=True)
+def default_root_level() -> Iterator[None]:
+    """Start from Python's default root level, and restore the level after.
+
+    Another test in the same worker can leave the root logger at a different
+    level. These tests assert levels relative to the default.
+    """
+    root = logging.getLogger()
+    saved = root.level
+    root.setLevel(logging.WARNING)
+    yield
+    root.setLevel(saved)
 
 
 def _our_handlers() -> list[logging.Handler]:
@@ -140,7 +156,13 @@ class TestGdalDebug:
 
 
 def test_package_logger_has_null_handler() -> None:
-    import portolan_cli
-
-    assert portolan_cli is not None
-    assert any(isinstance(h, logging.NullHandler) for h in PKG.handlers)
+    """A fresh interpreter sees the NullHandler that the package adds on import."""
+    code = (
+        "import logging, portolan_cli; "
+        "print(any(isinstance(h, logging.NullHandler) "
+        "for h in logging.getLogger('portolan_cli').handlers))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "True"
