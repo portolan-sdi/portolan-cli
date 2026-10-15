@@ -292,7 +292,7 @@ def sync_file_extension(
 
     ``stac.declare_file_extension`` does this for the add and finalize paths, but
     it needs a ``pystac.Collection`` and this module works on raw JSON on purpose
-    (pystac leaks absolute paths, see known-issues/pystac-absolute-paths.md).
+    (pystac ``to_dict()`` can write absolute local paths into links).
 
     ``collection_thumbnail.register_collection_thumbnail`` needs the same logic
     too: it writes ``file:size`` and ``file:checksum`` on the thumbnail after

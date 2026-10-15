@@ -41,12 +41,12 @@ Test markers are documented in the root `AGENTS.md` (kept there because
 `scripts/validate_agents_md.py` and `scripts/generate_agents_md_sections.py`
 keep them in sync with `pyproject.toml`).
 
-**Real-world fixtures:** See `context/shared/documentation/test-fixtures.md` for details.
+**Real-world fixtures:** `tests/fixtures/realdata/README.md` records the source of each one.
 These test Portolan's **orchestration** with production data, they do NOT test geometry conversion (that's upstream's job).
 
 ## Defending Against Tautological Tests
 
-Three layers of defense (see `context/shared/documentation/ci.md` for details):
+Three layers of defense:
 
 1. **Mutation testing**, Nightly `mutmut` runs verify tests catch real bugs
 2. **Property-based testing**, Use `hypothesis` for invariant verification

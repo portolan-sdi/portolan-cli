@@ -1,5 +1,4 @@
 # Tier 3 CI - Scheduled nightly checks
-# See context/shared/documentation/ci.md for the full CI strategy
 #
 # Philosophy: These are the "expensive" checks that would slow down PRs.
 # They still fail the build - we track trends but don't accept regressions.

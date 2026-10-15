@@ -194,7 +194,6 @@ cython_debug/
 
 # Working plans and design docs are local scratch, not repo content.
 # They date fast and describe intent rather than what shipped.
-context/shared/plans/
 
 # Portolan catalog files (test artifacts)
 # These are created during testing but should not be committed to the repository

@@ -1,5 +1,4 @@
 # Tier 2 CI - Runs on every PR and push to main
-# See context/shared/documentation/ci.md for the full CI strategy
 #
 # Philosophy: Starting from zero, all quality gates are STRICT.
 # Nothing passes with warnings - fix issues or they block the PR.
@@ -207,7 +206,7 @@ jobs:
           command: uv sync --all-extras
 
       - name: Run tests (unit + integration, no network, no iceberg)
-        # Speed decisions (see context/shared/documentation/ci.md):
+        # Speed decisions:
         # - `-n logical`: `-n auto` counts physical cores and started only 2
         #   workers on the 4-vCPU ubuntu/windows runners. Logical count starts 4.
         # - Coverage only on the one cell that uploads to Codecov. Branch

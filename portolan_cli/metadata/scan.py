@@ -13,6 +13,31 @@ Both `MetadataFreshRule.check()` and the `--fix` flow consume the
 `check` could report MISSING for files `--fix` never saw (issue #384) and
 where collection-level rollup assets like `items.parquet` were treated as
 items-needing-JSON (issue #345).
+
+The scanner assumes the layout that `portolan add` writes. Change `add` and
+this module in the same commit:
+
+    {collection_dir}/
+      collection.json     registers collection-level assets
+      versions.json       freshness truth for the whole collection
+      data.parquet        single-file vector collection, no item JSON
+      items.parquet       rollup from `add --stac-geoparquet`
+      {item_id}/
+        {item_id}.json    item manifest
+        <asset>           item assets, next to the item JSON
+
+Items in a nested sub-catalog still belong to the enclosing collection.
+`versions.json` and their assets resolve against `collection_dir`.
+
+Three rules follow from this layout:
+
+- A subdirectory is an item only when it holds a data file whose stem is the
+  directory name. Other loose files are ORPHANED. Without this anchor,
+  `--fix` would write a `{dir_name}.json` for an item that does not exist.
+- A registered collection-level asset with no `versions.json` entry is not
+  STALE. A new rollup has nothing to be stale against.
+- The legacy flat layout, an item JSON next to its data file in the
+  collection root, is ORPHANED. Migrate it with `portolan add`.
 """
 
 from __future__ import annotations

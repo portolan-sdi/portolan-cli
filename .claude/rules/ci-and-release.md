@@ -8,11 +8,12 @@ paths:
 
 ## CI Pipeline
 
-**Source of truth:** `context/shared/documentation/ci.md`
+**Source of truth:** the workflow files in `.github/workflows/` and
+`prek.toml`. Each job and hook records its own rationale in comments.
 
 | Tier | When | What |
 |------|------|------|
-| Tier 1 | Local hooks | ruff, vulture, xenon, mypy at pre-commit, fast tests at pre-push (`prek.toml`) |
+| Tier 1 | Local hooks | ruff, mypy, import-linter, vulture, jscpd, deptry at pre-commit, fast tests at pre-push (`prek.toml`) |
 | Tier 2 | Every PR | lint, mypy, security, full tests, docs build |
 | Tier 3 | Nightly | mutation testing, benchmarks, live network tests |
 

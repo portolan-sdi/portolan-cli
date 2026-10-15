@@ -2,8 +2,7 @@
   "_comment": [
     "Per-shard mutation kill rates for the nightly sweep (nightly.yml). A shard",
     "must hold its own recorded rate, minus 'tolerance' percentage points, on top",
-    "of the repo-wide floor in .mutation-baseline. See scripts/mutation_score.py",
-    "and context/shared/documentation/ci.md.",
+    "of the repo-wide floor in .mutation-baseline. See scripts/mutation_score.py.",
     "",
     "'shards' starts empty on purpose. Shard membership is a hash of each file's",
     "path (scripts/shard_select.py), so the one rate measured before this file",

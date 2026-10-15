@@ -22,7 +22,10 @@ theme:
     primary: custom
     accent: custom
   # Google Fonts serves both families. Hanken Grotesk sets prose and
-  # headlines. JetBrains Mono sets code, labels, data, and paths.
+  # headlines. JetBrains Mono sets code, labels, data, and paths. The
+  # portolan-ops sync copies text files only, so self-hosted fonts wait for
+  # a binary transport. The brand's Cairo face is for Arabic. Add it when
+  # the site adds an Arabic page.
   font:
     text: Hanken Grotesk
     code: JetBrains Mono

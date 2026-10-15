@@ -198,9 +198,8 @@ sources of successful conversions whose output exists, plus their sidecars.
 
 ## Where to investigate further
 
-- `context/shared/documentation/catalog-layout-contract.md` for the layout the
-  scanner assumes and the two boundaries it refuses to cross.
-- `metadata/scan.py` module docstring, it spells out the MISSING/ORPHANED split.
+- `metadata/scan.py` module docstring, for the layout the scanner assumes and
+  the MISSING/ORPHANED split.
 - `portolan_cli/validation/`, the adapter in front of rashid, and
   rashid itself for the rules. Rule ids are rashid's `PTL-*`, shown verbatim;
   each cites the `PORTO-*` spec requirements it enforces.

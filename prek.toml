@@ -1,5 +1,4 @@
 # prek configuration - Tier 1 CI
-# See context/shared/documentation/ci.md for the full CI strategy
 #
 # All hooks BLOCK on failure. No warnings, no skips.
 # Install: prek install (requires: uv tool install prek)
@@ -125,7 +124,7 @@ hooks = [
     name = "auto-update AGENTS.md sections",
     entry = "uv run python scripts/generate_agents_md_sections.py --update",
     language = "system",
-    files = { glob = ["AGENTS.md", "context/shared/known-issues/*.md", "pyproject.toml", "portolan_cli/cli.py"] },
+    files = { glob = ["AGENTS.md", "pyproject.toml", "portolan_cli/cli.py"] },
     pass_filenames = false,
   },
   {
@@ -143,7 +142,7 @@ hooks = [
     name = "validate AGENTS.md references",
     entry = "uv run python scripts/validate_agents_md.py",
     language = "system",
-    files = { glob = ["AGENTS.md", "context/shared/known-issues/*.md"] },
+    files = { glob = ["AGENTS.md"] },
     pass_filenames = false,
   },
   {

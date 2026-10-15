@@ -201,10 +201,10 @@ number moves to 1 only when a human decides the interface is stable.
 
 - All code requires type annotations (`mypy --strict`)
 - Use `portolan_cli/output.py` for all user-facing terminal messages
-- Non-obvious design decisions are recorded next to what they govern: user-facing
-  behavior in `docs/`, maintainer rationale in `context/shared/documentation/`,
-  accepted limitations in `context/shared/known-issues/`, and call-site gotchas in
-  the relevant docstring
+- Record a non-obvious decision next to what it governs. User-facing behavior
+  goes in `docs/`. Maintainer rationale goes in the docstring or comment at the
+  site that enforces it. An accepted upstream limit goes in its `skipif` or
+  `xfail(strict=True)` reason, with the upstream issue URL
 
 ## Spec Changes
 

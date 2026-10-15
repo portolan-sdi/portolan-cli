@@ -28,14 +28,12 @@ reimplement geometry or raster math.
 - Conversion goes through `geoparquet-io` (vector) and `rio-cogeo` (raster).
 - `geoparquet-io` crashes on edge inputs: multilayer conversion **aborts on
   macOS**, malformed input **segfaults on Windows**. The tests that hit those
-  paths are `skipif`-guarded by platform, do not remove the guards. See
-  `context/shared/known-issues/geoparquet-io-macos-abort.md` and
-  `geoparquet-io-windows-segfault.md`.
-- PyArrow is pinned `<22.0.0` (abseil ABI break on Ubuntu 22.04). Do not bump it
-  without reading `context/shared/known-issues/pyarrow-abseil-abi.md`.
+  paths are `skipif`-guarded by platform, do not remove the guards. The skip
+  reason names the crashing function.
 - Some "bugs" here are upstream `geoparquet-io` issues (FileGDB CRS, projected-CRS
-  metadata). When you suspect that, pin/verify the upstream version and document
-  in `context/shared/known-issues/`, do not patch around it in our layer.
+  metadata). When you suspect that, file the upstream issue, pin/verify the
+  upstream version, and put the upstream URL in a comment or `xfail` reason at
+  the affected site. Do not patch around it in our layer.
 
 ## Vector conversion writes conforming GeoParquet by default (#805)
 
@@ -102,7 +100,7 @@ OGC:CRS84, so an ungated rewrite relabelled projected data as lon/lat. That is
 fixed in geoparquet-io 1.4.0 (geoparquet-io#625, `ff02db8`), so the gate is now
 silent on the normal path. Do **not** "fix" a future writer bug by writing the
 CRS back into gpio's output — that is the patch-around-upstream this repo
-refuses. See `context/shared/known-issues/geoparquet-io-write-drops-crs.md`.
+refuses.
 
 The fix means gpio now hands Portolan the source CRS, including a PROJJSON dict
 when the CRS carries no authority code (an ESRI `.prj` such as POSGAR 1994).
@@ -268,7 +266,6 @@ Raster band metadata lands on the data asset, see `.claude/rules/stac-assets.md`
 - The portolan-spec repo (vector and raster formats, best practices), and
   rashid's PTL-DAT-* / PTL-VIZ-* rules, which enforce classification, PMTiles,
   and styles.
-- The three `context/shared/known-issues/` files named above.
 - The `stac-partition-extension` repo schema for partition field shapes.
 - Tests: `tests/integration/test_gpio_integration.py`,
   `test_add_multilayer_integration.py`, the thumbnail render tests.

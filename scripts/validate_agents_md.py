@@ -2,13 +2,11 @@
 """Validate AGENTS.md references match actual files.
 
 This script checks that:
-2. All known issues in context/shared/known-issues/ are listed in AGENTS.md
-3. All links in AGENTS.md point to files that exist
-4. All file path references point to existing files
-5. All CLI command references match actual Click commands
-6. All test markers match pyproject.toml definitions
-7. All code import examples are valid
-8. Freshness markers are not stale (warn only)
+1. All file path references point to existing files
+2. All CLI command references match actual Click commands
+3. All test markers match pyproject.toml definitions
+4. All code import examples are valid
+5. Freshness markers are not stale (warn only)
 
 Exit codes:
     0: All validations pass
@@ -50,55 +48,6 @@ def get_project_root() -> Path:
 
 
 # =============================================================================
-# Known Issues Validators
-# =============================================================================
-
-
-def extract_known_issue_links(claude_md: str) -> set[str]:
-    """Extract known issue file paths from AGENTS.md."""
-    # Match: | [title](context/shared/known-issues/*.md) |
-    pattern = r"\[([^\]]+)\]\((context/shared/known-issues/[^)]+\.md)\)"
-    return {match[1] for match in re.findall(pattern, claude_md)}
-
-
-def get_actual_known_issues(root: Path) -> set[str]:
-    """Get all known issue files (excluding example)."""
-    issues_dir = root / "context" / "shared" / "known-issues"
-    if not issues_dir.exists():
-        return set()
-    return {
-        f"context/shared/known-issues/{f.name}"
-        for f in issues_dir.glob("*.md")
-        if f.name != "example.md"
-    }
-
-
-def validate_known_issues(claude_md: str, root: Path) -> ValidationResult:
-    """Check all known issues are documented in AGENTS.md."""
-    result = ValidationResult(validator="Known Issues")
-
-    linked_issues = extract_known_issue_links(claude_md)
-    actual_issues = get_actual_known_issues(root)
-
-    missing_issues = actual_issues - linked_issues
-    broken_links = linked_issues - actual_issues
-
-    if missing_issues:
-        result.errors.append(
-            f"Known issues not in {INSTRUCTIONS_FILE}:\n"
-            + "\n".join(f"  - {issue}" for issue in sorted(missing_issues))
-        )
-
-    if broken_links:
-        result.errors.append(
-            f"Known issue links in {INSTRUCTIONS_FILE} point to non-existent files:\n"
-            + "\n".join(f"  - {issue}" for issue in sorted(broken_links))
-        )
-
-    return result
-
-
-# =============================================================================
 # FilePathValidator - Check that referenced paths exist
 # =============================================================================
 
@@ -108,7 +57,6 @@ def validate_file_paths(claude_md: str, root: Path) -> ValidationResult:
 
     Matches patterns like:
     - `path/to/file.py`
-    - `context/shared/known-issues/example.md`
     - `pyproject.toml`
 
     Excludes:
@@ -526,7 +474,6 @@ def validate_freshness(claude_md: str, _root: Path, stale_days: int = 30) -> Val
 # =============================================================================
 
 VALIDATORS = [
-    validate_known_issues,
     validate_file_paths,
     validate_cli_commands,
     validate_test_markers,
@@ -574,11 +521,7 @@ def main() -> int:
         print(f"Fix: Update {INSTRUCTIONS_FILE} to fix references, or update source files.")
         return 1
 
-    issue_count = len(extract_known_issue_links(claude_md))
-    print(
-        f"{INSTRUCTIONS_FILE} validation passed: {issue_count} known issues, "
-        f"{len(all_warnings)} warnings"
-    )
+    print(f"{INSTRUCTIONS_FILE} validation passed: {len(all_warnings)} warnings")
     return 0
 
 

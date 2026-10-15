@@ -134,6 +134,11 @@ EXTENSION_REGISTRY: tuple[ExtensionSpec, ...] = (
         ".gdb",
         # FileGDB directory. Display falls back to the generic upper-cased stem
         # in formats.py; no media type (a directory, not a file we type).
+        # A .gdb always routes as vector. Only GDAL's OpenFileGDB driver reads
+        # a GDB raster, and Portolan does not depend on GDAL, because system
+        # GDAL and conda-forge both break `uv tool install portolan`. A raster
+        # geodatabase therefore fails at conversion. Convert it to a COG with
+        # `gdal_translate -of COG` first.
         convert_target="GeoParquet",
         routes_as="vector",
         is_dir=True,

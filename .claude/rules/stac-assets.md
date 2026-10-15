@@ -135,7 +135,7 @@ or double-count machine metadata. This caused repeated data-loss bugs.
   which is defined but not yet implemented) on **both** item-level and
   collection-level extent/asset updates, not just one.
 
-## pystac leaks absolute paths and mis-detects dirs (known-issues/pystac-absolute-paths.md)
+## pystac leaks absolute paths and mis-detects dirs
 
 The catalog type is SELF_CONTAINED, so write `root`/`self`/`parent`/`child`
 links relative, with no leading `/`, no `file://`, no `C:\` and no URI scheme.
@@ -236,5 +236,7 @@ Pair the fix with a regression test that fails before and passes after.
 
 - The portolan-spec repo (structure, core, versions, vector formats), and
   rashid's rule set, which is what `portolan check` enforces.
-- `context/shared/known-issues/pystac-absolute-paths.md`.
+- pystac self links:
+  [concepts](https://pystac.readthedocs.io/en/stable/concepts.html) and
+  [pystac#574](https://github.com/stac-utils/pystac/pull/574).
 - Tests: `tests/integration/test_add_*`, the STAC snapshot/compliance tests.

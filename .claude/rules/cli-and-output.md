@@ -92,8 +92,8 @@ the executor.
 
 ## Where to investigate further
 
-- `context/shared/documentation/agent-threat-model.md` for the failure patterns
-  `input_hardening.py` defends against, and why it rejects valid-looking input.
+- The `input_hardening.py` module docstring for the failure patterns it
+  defends against, and why it rejects valid-looking input.
 
   and input hardening), 0040 (progress and summary).
 - `json_output.py` (`OutputEnvelope`, `ErrorDetail`), `errors.py` (the

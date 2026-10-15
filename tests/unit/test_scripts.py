@@ -2,9 +2,9 @@
 
 These tests verify that the scripts in scripts/ work correctly:
 - update_freshness.py: Auto-updates freshness markers
-- generate_agents_md_sections.py: Generates the known-issues table and command surface.
+- generate_agents_md_sections.py: Generates the test-marker and command-surface sections.
 - generate_skill_md.py: Generates CLI commands, Python API sections
-- validate_agents_md.py: Validates CLAUDE.md references
+- validate_agents_md.py: Validates AGENTS.md references
 - validate_skill_md.py: Validates SKILL.md structure
 """
 

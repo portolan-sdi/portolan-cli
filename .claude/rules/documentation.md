@@ -1,7 +1,6 @@
 ---
 paths:
   - "docs/**"
-  - "context/**"
   - "**/*.md"
 ---
 
@@ -19,14 +18,14 @@ When documenting CLI commands:
 
 **Example:** `portolan sync` orchestrates `pull → init → scan → check → push`. Do NOT describe it as just "pull + push", that misrepresents the command's purpose.
 
-## docs/ vs context/ distinction
+## docs/ vs code-adjacent notes
 
 - **`docs/`**, Public-facing, human-readable documentation (tutorials, visual guides, user-oriented). Built with Zensical and published.
-- **`context/`**, Internal, AI-oriented context (maintainer rationale, known issues, CI and tooling notes). Dense, structured, co-located with development. NOT published.
+- **Internal rationale** lives in docstrings and comments at the site it governs. There is no separate notes directory.
 
 Do NOT put architectural plans or design documents in `docs/`. Working plans are
-local scratch and are git-ignored; once a decision holds, record it in one of the
-four destinations below rather than leaving it in a plan.
+local scratch and are not committed. Once a decision holds, record it in one of
+the destinations below rather than leaving it in a plan.
 
 ## Documentation Bias
 
@@ -37,8 +36,8 @@ four destinations below rather than leaving it in a plan.
 | What | Where | When |
 |------|-------|------|
 | User-facing behavior and its reasoning | `docs/` | Anything an operator needs to predict what the CLI does |
-| Maintainer rationale | `context/shared/documentation/` | Why the code is shaped this way, rejected alternatives |
-| Known bugs/issues | `context/shared/known-issues/` | When a bug or environment constraint is identified but not fixed |
+| Maintainer rationale | Module docstring or comment at the enforcing site | Why the code is shaped this way, rejected alternatives |
+| Known upstream bugs | Upstream issue URL in a comment, `skipif`, or `xfail(strict=True)` reason at the affected site | When a bug or environment constraint is identified but not fixed |
 | Non-obvious code | Inline comments | Code that would confuse a future reader |
 | API contracts, gotchas at the call site | Docstrings | All public functions/classes |
 | Catalog conformance rules | portolan-spec repo | Anything normative about catalog shape |
@@ -56,14 +55,18 @@ Write the decision where someone will hit it while changing the thing:
   `PTL-*` rule. Not here.
 - **A rule about how the CLI behaves** belongs in `docs/`, next to the setting or
   command it governs.
-- **A constraint you accepted and did not fix** belongs in
-  `context/shared/known-issues/`, stated as a limitation with its workaround.
-- **A trade-off or rejected alternative** belongs in
-  `context/shared/documentation/` when it spans modules, or in the module's
-  docstring when it does not.
+- **A constraint you accepted and did not fix** belongs at the workaround: a
+  comment on the pin, the `skipif` reason, or the `xfail(strict=True)` reason,
+  with the upstream issue URL. A strict `xfail` fails CI when upstream fixes the
+  bug, so the record cannot outlive the bug.
+- **A trade-off or rejected alternative** belongs in the docstring of the module
+  or function that enforces it. When it spans modules, put it in the module
+  that owns the entry point, and point to it from the others.
+- **A CI decision** belongs in a comment on the job or hook in
+  `.github/workflows/` or `prek.toml`.
 
-Prefer the docstring. A rationale attached to the function it explains cannot
-drift away from it.
+This repo has no free-standing notes directory. It had one (`context/`), and
+it drifted the same way the ADRs did.
 
 ### Two Documentation Audiences
 

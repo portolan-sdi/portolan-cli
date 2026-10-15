@@ -27,8 +27,11 @@ pytestmark = pytest.mark.benchmark
 EXTRA_DISTRIBUTIONS = 300
 RUNS = 5
 # A ceiling well above the measured cost, to catch a regression rather than
-# to describe the normal case. The measurement is recorded in
-# context/shared/documentation/plugin-system.md.
+# to describe the normal case. In October 2026 on Linux with CPython 3.12.13
+# and 230 installed distributions, one scan took 7 to 9 ms. The first scan
+# with 300 extra distributions (528 in total) took 24.5 ms. Compare timings
+# with the same interpreter on both sides: a pyenv CPython 3.12.2 build
+# imported portolan_cli.cli about 110 ms slower than uv's 3.12.13 build.
 CEILING_SECONDS = 0.25
 
 _PROBE = """

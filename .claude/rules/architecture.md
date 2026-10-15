@@ -201,6 +201,4 @@ through the handler. Never put geometry or raster math in our layer.
 ## Where to investigate further
 
 - `pyproject.toml` `[tool.importlinter]` for the exact contracts.
-- `context/shared/documentation/iceberg-as-optional-extra.md` for why the
-  catalog layer is STAC and Iceberg ships as an optional extra.
 - The per-subsystem rules in the table above for the gotchas in each area.

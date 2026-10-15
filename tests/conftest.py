@@ -267,7 +267,12 @@ def valid_points_parquet(fixtures_dir: Path) -> Path:
 
 @pytest.fixture(scope="session")
 def projected_parquet(fixtures_dir: Path) -> Path:
-    """Path to GeoParquet with projected CRS (EPSG:32631 UTM Zone 31N)."""
+    """Path to GeoParquet with projected CRS (EPSG:32631 UTM Zone 31N).
+
+    The file is ``realdata/open-buildings.parquet`` reprojected with DuckDB
+    ``ST_Transform(geometry, 'EPSG:4326', 'EPSG:32631')``. DuckDB writes no
+    GeoParquet CRS, so the PROJJSON CRS was added with PyArrow after the write.
+    """
     return fixtures_dir / "vector" / "open-buildings-utm31n.parquet"
 
 
@@ -348,7 +353,16 @@ def invalid_truncated_tif(fixtures_dir: Path) -> Path:
 
 @pytest.fixture(scope="session")
 def non_cog_tif(fixtures_dir: Path) -> Path:
-    """Path to non-cloud-optimized GeoTIFF (Natural Earth data)."""
+    """Path to non-cloud-optimized GeoTIFF (Natural Earth data).
+
+    The source is Natural Earth 50m shaded relief (``SR_50M.zip`` from
+    naciscdn.org). It is a 1000x1000 crop with no tiles and overviews added
+    after the write, so ``rio cogeo validate`` rejects it::
+
+        gdal_translate -co TILED=NO -srcwin 0 0 1000 1000 \
+            SR_50M.tif natural-earth-non-cog.tif
+        gdaladdo -r average natural-earth-non-cog.tif 2 4 8
+    """
     return fixtures_dir / "raster" / "natural-earth-non-cog.tif"
 
 

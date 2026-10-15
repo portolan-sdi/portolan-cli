@@ -1,5 +1,4 @@
 # Tag-based release workflow using commitizen
-# See context/shared/documentation/ci.md for the full CI strategy
 #
 # This workflow:
 # 1. Detects if the merged commit is a version bump (from `cz bump` in PR)

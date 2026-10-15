@@ -159,10 +159,7 @@ The lakehouse above stores the rows itself, and you select it at `init`.
 
 A second mode is planned and not built: a static Iceberg table over the
 GeoParquet a catalog already publishes. It copies no rows, needs no server, and
-leaves the STAC `data` asset alone. The Portolan specification describes that
-mode is proposed for the specification in
-[portolan-spec#201](https://github.com/portolan-sdi/portolan-spec/pull/201), and
-is not part of the specification yet.
-
-The reasoning behind both is recorded in
-[`context/shared/documentation/iceberg-as-optional-extra.md`](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/documentation/iceberg-as-optional-extra.md).
+leaves the STAC `data` asset alone.
+[portolan-spec#201](https://github.com/portolan-sdi/portolan-spec/pull/201)
+proposes that mode for the specification. It is not part of the specification
+yet.

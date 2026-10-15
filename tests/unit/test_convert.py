@@ -2608,9 +2608,10 @@ class TestPartitionedOutputWithGeoparquetIO:
     @pytest.mark.xfail(
         strict=True,
         reason=(
-            "geoparquet-io#1222: Table.add_kdtree raises ST_Centroid(BLOB) on a "
-            "table from gpio.convert(). See "
-            "context/shared/known-issues/geoparquet-io-add-kdtree-convert.md"
+            "https://github.com/geoparquet/geoparquet-io/issues/1222: "
+            "Table.add_kdtree raises ST_Centroid(BLOB) on a table from "
+            "gpio.convert(). When a release fixes it, raise the pin and "
+            "remove this marker."
         ),
     )
     def test_single_file_kdtree_index(self, tmp_path: Path) -> None:

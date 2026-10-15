@@ -38,7 +38,10 @@ def initialized_catalog(tmp_path: Path) -> Path:
 
 @pytest.mark.skipif(
     sys.platform == "darwin",
-    reason="geoparquet-io aborts on multilayer conversion on macOS (upstream bug)",
+    reason=(
+        "geoparquet-io aborts on multilayer conversion on macOS, in "
+        "read_spatial_to_arrow (upstream bug)"
+    ),
 )
 class TestAddMultilayerIntegration:
     """Integration tests for adding multi-layer files."""

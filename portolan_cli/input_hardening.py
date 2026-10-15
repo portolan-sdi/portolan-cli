@@ -13,6 +13,14 @@ Reference: https://jpoehnelt.dev/blog/agent-native-cli/
 
 All user-facing inputs should be validated through these functions before
 use in file operations, API calls, or database queries.
+
+The rules are stricter than a human-only CLI needs. They reject some valid
+inputs, such as an uppercase collection id. Agents are primary users, and a
+rule they cannot bend serves them better than a parser that sometimes accepts
+a hallucination. Do not relax a validator to accept an edge case.
+
+The JSON error envelope reports the error class name. ``InputValidationError``
+is therefore part of the agent contract, and a rename breaks agents.
 """
 
 from __future__ import annotations

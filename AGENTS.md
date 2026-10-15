@@ -120,10 +120,9 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | **Roadmap** | [GitHub Issues](https://github.com/portolan-sdi/portolan-cli/issues?q=label%3Aroadmap%3Amvp%2Croadmap%3Anext%2Croadmap%3Afuture) |
 | Contributing guide | `docs/contributing.md` |
 | Architecture | `pyproject.toml` [tool.importlinter] + `.claude/rules/architecture.md` |
-| CI/CD documentation | `context/shared/documentation/ci.md` |
-| **Real-world test fixtures** | `context/shared/documentation/test-fixtures.md` |
-| Maintainer rationale | `context/shared/documentation/` |
-| Plans & research | `context/shared/` |
+| CI/CD | `.github/workflows/` and `prek.toml`, with rationale in comments |
+| **Real-world test fixtures** | `tests/fixtures/realdata/README.md` |
+| Maintainer rationale | Module docstrings and comments at the enforcing site |
 
 **Target Python version:** 3.10+ (matches geoparquet-io dependency)
 
@@ -184,15 +183,12 @@ portolan-cli/
 │   ├── snapshot/          # Snapshot tests
 │   └── iceberg/           # Iceberg backend tests (unit, integration, e2e)
 ├── docs/                  # PUBLIC documentation (Zensical) - tutorials, user guides
-├── context/               # AI/INTERNAL development context
-│   └── shared/            # Plans, research, reports
-│       ├── documentation/ # CI, tooling, maintainer rationale
-│       └── known-issues/  # Tracked issues and environment constraints
 └── .github/workflows/     # CI/CD pipelines
 ```
 
-`docs/` is public (Zensical); `context/` is internal AI-oriented context. See
-`.claude/rules/documentation.md` for the full distinction and where to file things.
+`docs/` is public (Zensical). Internal rationale lives in docstrings and
+comments next to the code it governs. See `.claude/rules/documentation.md` for
+where to file things.
 
 ## Synced brand files
 
@@ -206,7 +202,8 @@ let the sync run.
 - `docs/assets/images/portolan-logomark-fcfcfa.svg`
 - `docs/assets/images/portolan-logo-horizontal-light.svg`
 
-`context/shared/documentation/branding.md` records how the site applies them.
+Comments in `mkdocs.yml` and `docs/assets/stylesheets/extra.css` record how
+the site applies them.
 
 ## Before Writing Code
 
@@ -216,8 +213,8 @@ Always research before implementing:
 2. **Search for patterns** — Check if similar functionality exists
 3. **Check utilities** — Review `portolan_cli/` first
 4. **Review existing tests** — Look at tests for the area you're modifying
-5. **Check the rationale** — Read `context/shared/documentation/` and the
-   relevant `.claude/rules/*.md` to understand past decisions
+5. **Check the rationale** — Read the module docstrings and the relevant
+   `.claude/rules/*.md` to understand past decisions
 
 ## Testing
 
@@ -261,18 +258,13 @@ Always research before implementing:
 
 ## Known Issues
 
-See `context/shared/known-issues/` for tracked issues. Key ones:
+Each upstream bug and accepted limit is recorded at its workaround, with the
+upstream issue URL where one exists. The record is a dependency pin comment in
+`pyproject.toml`, a comment or docstring at the workaround in `portolan_cli/`, a
+`skipif` reason, or an `xfail(strict=True)` reason. A strict `xfail` fails CI once
+upstream fixes the bug. List them with:
 
-| Issue | Impact |
-|-------|--------|
-| [PyArrow v22+ ABI](context/shared/known-issues/pyarrow-abseil-abi.md) | Import failures on Ubuntu 22.04; pinned to `<22.0.0` |
-| [geoparquet-io Windows segfault](context/shared/known-issues/geoparquet-io-windows-segfault.md) | Crashes on malformed input; test skipped on Windows |
-| [geoparquet-io macOS abort](context/shared/known-issues/geoparquet-io-macos-abort.md) | Aborts on multilayer conversion; test skipped on macOS |
-| [PySTAC absolute paths](context/shared/known-issues/pystac-absolute-paths.md) | Leaks local paths in output; use manual JSON construction |
-| [DuckDB "Query interrupted" transient](context/shared/known-issues/duckdb-query-interrupted-transient.md) | Rare (~1/1000) transient interrupt during bulk conversion; bounded retry in `run_with_transient_convert_retry` |
-| [ESRI GDB rasters](context/shared/known-issues/esri-gdb-rasters.md) | Unreadable without GDAL and undetected; `.gdb` routes to the vector pipeline |
-| [geoparquet-io drops CRS on write](context/shared/known-issues/geoparquet-io-write-drops-crs.md) | Resolved in geoparquet-io 1.4.0. The rewrite fidelity gate stays, because it guards a destructive operation |
-| [DuckDB 1.5.5 ST_Read_Meta segfault](context/shared/known-issues/duckdb-155-st-read-meta-segfault.md) | Resolved in DuckDB 1.5.6. The `duckdb>=1.5.6` floor keeps 1.5.5 out |
-| [geoparquet-io add_kdtree on a converted table](context/shared/known-issues/geoparquet-io-add-kdtree-convert.md) | A non-partitioned `kdtree` index fails with `ST_Centroid(BLOB)`. Partitioned kdtree works. Upstream geoparquet-io#1222 |
-| [ArcGIS ImageServer exportImage 5xx](context/shared/known-issues/arcgis-imageserver-export-5xx.md) | Large or parallel `exportImage` requests fail with HTTP 500 on some servers. Re-run with `--resume`, and lower `--tile-size` or `--max-concurrent` |
-| [lerc has no Linux aarch64 binary](context/shared/known-issues/lerc-platform-support.md) | `extract arcgis` cannot read a LERC tile cache on Linux aarch64. GDAL cannot decode LERC2 v6, so the path needs the `lerc` package, whose wheel includes no aarch64 binary |
+```bash
+git grep -nE "xfail\(|skipif\(|upstream" -- \
+  pyproject.toml portolan_cli tests
+```

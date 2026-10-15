@@ -126,7 +126,10 @@ class TestGpioErrorHandling:
     @pytest.mark.integration
     @pytest.mark.skipif(
         sys.platform == "win32",
-        reason="geoparquet-io segfaults on malformed input on Windows (upstream bug)",
+        reason=(
+            "geoparquet-io segfaults on malformed input on Windows, in "
+            "detect_crs_from_spatial_file (upstream bug)"
+        ),
     )
     def test_malformed_geojson_raises(
         self, invalid_malformed_geojson: Path, tmp_path: Path

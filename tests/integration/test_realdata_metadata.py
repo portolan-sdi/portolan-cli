@@ -3,7 +3,7 @@
 These tests verify Portolan's orchestration layer correctly handles
 production data. They do NOT test geometry validity (upstream's job).
 
-See context/shared/documentation/test-fixtures.md for fixture details.
+tests/fixtures/realdata/README.md records the source of each fixture.
 """
 
 from __future__ import annotations

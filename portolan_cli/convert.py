@@ -581,6 +581,10 @@ def _convert_partitioned_by_index(
     return output
 
 
+# A transient interrupt clears after one attempt. If a file fails all three,
+# the signal source is sustained. Find what delivers signals to the process
+# during the run, such as subprocess reaping or a timeout. Do not raise this
+# count.
 _CONVERT_MAX_ATTEMPTS = 3
 
 

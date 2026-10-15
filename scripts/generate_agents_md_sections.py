@@ -2,9 +2,8 @@
 """Generate auto-updated sections for AGENTS.md.
 
 This script generates sections that should stay in sync with the codebase:
-2. Known Issues - from context/shared/known-issues/
-3. Test Markers - from pyproject.toml
-4. CLI Commands - from portolan_cli/cli.py
+1. Test Markers - from pyproject.toml
+2. CLI Commands - from portolan_cli/cli.py
 
 Usage:
     python scripts/generate_agents_md_sections.py [--section SECTION] [--dry-run]
@@ -36,63 +35,6 @@ def get_project_root() -> Path:
             return current
         current = current.parent
     return Path.cwd()
-
-
-# =============================================================================
-# Known Issues Generator
-# =============================================================================
-
-
-@dataclass
-class IssueInfo:
-    """Information about a known issue."""
-
-    name: str
-    impact: str
-    path: str
-
-
-def extract_issue_impact(issue_path: Path) -> str:
-    """Extract impact summary from known issue file."""
-    try:
-        content = issue_path.read_text()
-        # Look for ## Impact or ## Summary section
-        match = re.search(r"##\s+(?:Impact|Summary)\s*\n+([^\n#]+)", content, re.IGNORECASE)
-        if match:
-            return match.group(1).strip()[:80]  # Truncate to 80 chars
-        # Fallback: first non-heading line
-        for line in content.split("\n"):
-            line = line.strip()
-            if line and not line.startswith("#"):
-                return line[:80]
-        return "See file for details"
-    except (FileNotFoundError, UnicodeDecodeError):
-        return "See file for details"
-
-
-def generate_known_issues(root: Path) -> str:
-    """Generate known issues table."""
-    issues_dir = root / "context" / "shared" / "known-issues"
-    if not issues_dir.exists():
-        return "No known issues documented."
-
-    issues: list[IssueInfo] = []
-    for issue_file in sorted(issues_dir.glob("*.md")):
-        if issue_file.name == "example.md":
-            continue
-
-        name = issue_file.stem.replace("-", " ").title()
-        impact = extract_issue_impact(issue_file)
-        rel_path = f"context/shared/known-issues/{issue_file.name}"
-        issues.append(IssueInfo(name=name, impact=impact, path=rel_path))
-
-    if not issues:
-        return "No known issues documented."
-
-    lines = ["| Issue | Impact |", "|-------|--------|"]
-    lines.extend(f"| [{issue.name}]({issue.path}) | {issue.impact} |" for issue in issues)
-
-    return "\n".join(lines)
 
 
 # =============================================================================
@@ -271,7 +213,6 @@ def add_freshness_marker(section_header: str, date: str | None = None) -> str:
 
 
 GENERATORS = {
-    "known-issues": generate_known_issues,
     "test-markers": generate_test_markers,
     "cli-commands": generate_cli_commands,
 }

@@ -12,8 +12,10 @@ paths:
 
 # Plugin system (#947)
 
-The design record is `context/shared/documentation/plugin-system.md`. Read it
-before you change the plugin code.
+The module docstrings in `plugins/manager.py`, `plugins/commands.py`,
+`plugins/formats.py`, `stac_enrich.py`, and `extract/common/source.py` record
+how the plugin system works and why. Read them before you change the plugin
+code. `docs/guides/plugins.md` is the author guide.
 
 ## The public surface is a contract
 

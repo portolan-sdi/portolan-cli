@@ -411,8 +411,7 @@ class TestTheRewriteNeverLosesData:
 
     geoparquet-io 1.4.0 fixed the Table API dropping the source CRS on write
     (gpio#625). A projected file now keeps its CRS through the rewrite, so the
-    gate lets that swap through. See
-    ``context/shared/known-issues/geoparquet-io-write-drops-crs.md``.
+    gate lets that swap through.
     """
 
     def test_a_projected_file_keeps_its_crs_through_the_rewrite(self, tmp_path: Path) -> None:
