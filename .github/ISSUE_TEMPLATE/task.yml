@@ -5,42 +5,49 @@ body:
   - type: markdown
     attributes:
       value: >-
-        State the outcome, not a list of instructions. Someone picking this up
-        should know what "done" looks like without reading the whole issue.
+        Please explain what needs to change, why it matters, and how to
+        confirm it's done. For large changes, discuss the proposal here
+        before starting implementation. For small changes with a clear
+        solution, we'd really appreciate a fix PR alongside the issue.
+
   - type: textarea
     id: what
     attributes:
       label: What needs doing?
       description: >-
-        The outcome you want. Name the files or systems involved. Two or three
-        sentences.
+        Describe the intended outcome and the files or systems involved.
+        For example, "All Python repos should run the same lint checks,"
+        rather than a list of edits to individual workflow files.
     validations:
       required: true
+
   - type: textarea
     id: why-now
     attributes:
-      label: Why now?
+      label: Why is this needed?
       description: >-
-        What this unblocks, or what breaks if it waits. Link the issue or pull
-        request that prompted it.
+        Explain what this would improve or unblock, or what could go wrong
+        if it waits. Link any issue or pull request that prompted the task.
     validations:
       required: true
+
   - type: textarea
     id: implementation
     attributes:
-      label: Implementation details
+      label: Implementation notes
       description: >-
-        Optional. Constraints, the order steps have to run in, and anything
-        that will surprise whoever picks this up.
+        Optional. Include constraints, dependencies between steps, and
+        anything else someone would need to know before starting.
     validations:
       required: false
+
   - type: textarea
     id: done
     attributes:
-      label: Done when
+      label: How to confirm it's done
       description: >-
-        The command a reviewer runs to confirm it, and what passing looks
-        like. If the work changes behavior, say which data it gets exercised
-        against.
+        What steps or command should a reviewer run, and what result
+        would confirm the task is complete? If the work changes behavior,
+        include the data or example used to check it.
     validations:
       required: true

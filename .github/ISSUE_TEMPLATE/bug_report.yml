@@ -1,65 +1,76 @@
 name: Bug report
-description: Something is wrong or crashes
+description: Report a problem or crash
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: >-
-        Write the top for a human. Someone who has not followed your
-        investigation should understand the first two answers in about a
-        minute. Put files, causes, and edge cases lower down. Length is fine.
-        Paste evidence rather than describing it.
+        Thanks for reporting a bug! Please explain what went wrong and how
+        it affects your work before getting into implementation details.
+        Include commands, output, and links where they help us understand
+        or reproduce the problem.
+
+
+        If the fix is small and clear, we'd really appreciate a fix PR
+        alongside the issue. Please report security issues privately,
+        following our security policy.
+
   - type: textarea
     id: what-happened
     attributes:
       label: What happened?
       description: >-
-        The user-visible failure, in plain words. What you ran, and what it
-        did instead of what you wanted.
+        What were you trying to do, what did you expect, and what happened
+        instead?
     validations:
       required: true
+
   - type: textarea
     id: why-it-matters
     attributes:
       label: Why it matters
       description: >-
-        What this blocks or breaks. Who hits it, and how often. One or two
-        sentences.
+        How does this affect your work? Let us know who encounters the
+        problem, how often it happens, and whether you have a workaround.
     validations:
       required: true
+
   - type: textarea
     id: evidence
     attributes:
-      label: Evidence
+      label: How to reproduce
       description: >-
-        Show the failure. Paste the command and its output, and name the data
-        it read: a URL or a catalog path. A real dataset, a migration, or a
-        failing run all count. A smaller case is welcome when you have one,
-        but do not spend hours reducing it. Strip anything private.
+        Include the steps or command that caused the problem, the output,
+        and a link or path to the data you used. A failing run or a real
+        dataset is fine; a smaller example helps if you already have one.
+        Remove private information before posting.
     validations:
       required: true
+
   - type: textarea
     id: implementation
     attributes:
-      label: Implementation details
+      label: Implementation notes
       description: >-
-        Optional. The files involved, what you think the cause is, related
-        code paths, and edge cases a fix must handle.
+        Optional. Include any suspected causes, relevant files or code
+        paths, and edge cases a fix should handle.
     validations:
       required: false
+
   - type: textarea
     id: done
     attributes:
-      label: Done when
+      label: How to confirm the fix
       description: >-
-        The command a reviewer runs to confirm the fix, and what passing looks
-        like.
+        What steps or command should a reviewer run, and what result
+        would confirm that the problem is fixed?
     validations:
       required: true
+
   - type: input
     id: version
     attributes:
       label: Version
-      description: Tool version, or commit SHA for unreleased builds.
+      description: Tool version, or commit SHA for an unreleased build.
     validations:
       required: true
