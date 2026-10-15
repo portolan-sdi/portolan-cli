@@ -20,6 +20,7 @@
 
 <!-- Demonstrate that the PR has been run on real data/a real reprex to confirm that it works. Passing tests alone are not sufficient validation.-->
 
+<!-- ste-ok: PERFECT_TENSE GERUND a maintainer wrote this line by hand -->
 - [ ] I have read and complied with the [contributing guide](https://github.com/portolan-sdi/portolan-ops/blob/main/policies/CONTRIBUTING.md) and [AI policy](https://github.com/portolan-sdi/portolan-ops/blob/main/policies/AI_POLICY.md).
 - [ ] This change does not alter behavior (docs, chore, or CI only).
 
