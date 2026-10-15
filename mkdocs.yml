@@ -102,6 +102,7 @@ nav:
   - Guides:
     - Iceberg: guides/iceberg.md
     - Write a plugin: guides/plugins.md
+    - Diagnose a run: guides/diagnostics.md
   - Reference:
     - Overview: reference/index.md
     - CLI Reference: reference/cli.md

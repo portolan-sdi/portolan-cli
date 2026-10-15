@@ -24,6 +24,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.config import load_config
+from portolan_cli.trace import count
 from portolan_cli.utils import get_dict
 
 if TYPE_CHECKING:
@@ -845,6 +846,7 @@ def _render_geometries(
             crs="EPSG:4326",  # PMTiles are always WGS84
         )
 
+    count("thumbnail.draws")
     plt.savefig(
         output_path,
         bbox_inches="tight",
@@ -1149,6 +1151,7 @@ def _render_geoparquet(
                 crs=crs_str,
             )
 
+        count("thumbnail.draws")
         plt.savefig(
             output_path,
             bbox_inches="tight",

@@ -209,6 +209,12 @@ versioning.
     options:
       heading_level: 4
 
+### Timings
+
+::: portolan_cli.api.span
+    options:
+      heading_level: 4
+
 ### Format handler helpers
 
 ::: portolan_cli.api.FileInfo

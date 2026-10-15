@@ -73,6 +73,7 @@ from portolan_cli.sync.upload import (
     _setup_store_and_kwargs,
     parse_object_store_url,
 )
+from portolan_cli.trace import submit
 
 # Type alias for all supported object stores (same as upload.py)
 ObjectStore = S3Store | GCSStore | AzureStore | HTTPStore | LocalStore | MemoryStore
@@ -515,8 +516,14 @@ def _execute_parallel_downloads(
 
             # Submit initial batch up to max_files
             for remote_key, file_size, local_path in files_iter:
-                future: DownloadResultFuture = executor.submit(
-                    _download_one_file, store, remote_key, local_path, file_size, verbose=verbose
+                future: DownloadResultFuture = submit(
+                    executor,
+                    _download_one_file,
+                    store,
+                    remote_key,
+                    local_path,
+                    file_size,
+                    verbose=verbose,
                 )
                 pending[future] = remote_key
                 if len(pending) >= max_files:
@@ -538,7 +545,8 @@ def _execute_parallel_downloads(
                 # Submit next file if available
                 try:
                     remote_key, file_size, local_path = next(files_iter)
-                    new_future: DownloadResultFuture = executor.submit(
+                    new_future: DownloadResultFuture = submit(
+                        executor,
                         _download_one_file,
                         store,
                         remote_key,
@@ -553,8 +561,14 @@ def _execute_parallel_downloads(
         # For non-fail_fast mode, submit all futures upfront for maximum parallelism
         with ThreadPoolExecutor(max_workers=max_files) as executor:
             future_to_file = {
-                executor.submit(
-                    _download_one_file, store, remote_key, local_path, file_size, verbose=verbose
+                submit(
+                    executor,
+                    _download_one_file,
+                    store,
+                    remote_key,
+                    local_path,
+                    file_size,
+                    verbose=verbose,
                 ): remote_key
                 for remote_key, file_size, local_path in files_to_download
             }

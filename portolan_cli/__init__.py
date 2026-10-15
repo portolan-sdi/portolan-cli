@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import sys
 import types
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.lazy_exports import lazy_exports
+
+# A library user who sets no handler sees no Portolan records (issue #991).
+logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 if TYPE_CHECKING:
     from portolan_cli.catalog import Catalog, CatalogExistsError

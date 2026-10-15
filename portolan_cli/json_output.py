@@ -9,7 +9,8 @@ Envelope Structure:
         "success": true|false,
         "command": "command_name",
         "data": { ... },
-        "errors": [ ... ]  # Only present when success=false
+        "errors": [ ... ],  # Only present when success=false
+        "meta": { ... }     # Only present when tracing is on (issue #991)
     }
 
 Usage:
@@ -30,6 +31,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from typing import Any
+
+from portolan_cli import trace
 
 
 @dataclass
@@ -73,7 +76,9 @@ class OutputEnvelope:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization.
 
-        The errors field is excluded when None (for success cases).
+        The errors field is excluded when None (for success cases). The meta
+        field holds the span tree and counters, and is present only when
+        tracing is on.
         """
         result: dict[str, Any] = {
             "success": self.success,
@@ -83,6 +88,10 @@ class OutputEnvelope:
 
         if self.errors is not None:
             result["errors"] = [e.to_dict() for e in self.errors]
+
+        meta = trace.meta()
+        if meta is not None:
+            result["meta"] = meta
 
         return result
 

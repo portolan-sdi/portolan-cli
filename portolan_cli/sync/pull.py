@@ -43,6 +43,7 @@ from portolan_cli.output import detail, error, info, output_section, success, wa
 from portolan_cli.sync.checksums import compute_checksum
 from portolan_cli.sync.download import download_file, get_remote_file_size_async
 from portolan_cli.sync.upload import _setup_store_and_kwargs, parse_object_store_url
+from portolan_cli.trace import count, span
 from portolan_cli.versions import (
     VersionsFile,
     _parse_versions_file,
@@ -718,6 +719,7 @@ async def _fetch_remote_versions_async(
 
         # Parse JSON content using canonical parser for validation
         # content is obstore.Bytes, convert to bytes then decode
+        count("versions_json.reads")
         data = json.loads(bytes(content).decode("utf-8"))
 
         # Use canonical parser (validates schema and required fields)
@@ -1100,7 +1102,8 @@ async def pull_async(
 
     # Fetch remote versions asynchronously
     try:
-        remote_versions = await _fetch_remote_versions_async(remote_url, collection, profile)
+        with span("pull.fetch_remote", collection=collection):
+            remote_versions = await _fetch_remote_versions_async(remote_url, collection, profile)
     except PullError as e:
         error(f"Failed to fetch remote: {e}")
         return PullResult(
@@ -1151,16 +1154,20 @@ async def pull_async(
     _report_pull_plan(remote_url, diff.files_to_download, files_to_restore, concurrency)
 
     # Download assets concurrently (reuses store connection)
-    downloaded, failed = await _download_assets_async(
-        store=store,
-        prefix=base_prefix,
-        local_root=local_root,
-        files_to_download=all_files_to_download,
-        remote_assets=diff.remote_assets,
-        concurrency=concurrency,
-        verbose=verbose,
-        json_mode=json_mode,
-    )
+    with span(
+        "pull.download_assets", collection=collection, files=len(all_files_to_download)
+    ) as stage:
+        downloaded, failed = await _download_assets_async(
+            store=store,
+            prefix=base_prefix,
+            local_root=local_root,
+            files_to_download=all_files_to_download,
+            remote_assets=diff.remote_assets,
+            concurrency=concurrency,
+            verbose=verbose,
+            json_mode=json_mode,
+        )
+        stage.set(downloaded=downloaded, failed=failed)
 
     # Handle failures
     if failed > 0:
@@ -1175,12 +1182,13 @@ async def pull_async(
         )
 
     # Issue #501: Populate missing file:size values via HTTP HEAD
-    await _enrich_file_sizes_safe(
-        local_root=local_root,
-        collection=collection,
-        remote_url=remote_url,
-        verbose=verbose,
-    )
+    with span("pull.populate_sizes", collection=collection):
+        await _enrich_file_sizes_safe(
+            local_root=local_root,
+            collection=collection,
+            remote_url=remote_url,
+            verbose=verbose,
+        )
 
     # Update local versions.json (only if version actually changed)
     versions_path.parent.mkdir(parents=True, exist_ok=True)

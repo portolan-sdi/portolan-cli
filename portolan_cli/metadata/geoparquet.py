@@ -15,6 +15,7 @@ from pyproj import CRS
 from pyproj.exceptions import CRSError
 
 from portolan_cli.models.schema import ColumnSchema, SchemaModel
+from portolan_cli.trace import count
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -118,6 +119,7 @@ def extract_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
         raise FileNotFoundError(f"File not found: {path}")
 
     # Open parquet file (metadata only)
+    count("parquet.opens")
     pf = pq.ParquetFile(path)
     metadata = pf.schema_arrow.metadata or {}
 
@@ -193,6 +195,7 @@ def read_spatial_layout(path: Path) -> SpatialLayout:
         ``has_bbox_covering`` is False for a plain Parquet file.
     """
     try:
+        count("parquet.opens")
         parquet = pq.ParquetFile(path)
     except Exception:  # noqa: BLE001 - an unreadable file is not a conformant one
         return SpatialLayout(is_geoparquet=False, has_bbox_covering=False)
@@ -280,6 +283,7 @@ def read_rewrite_fidelity(path: Path) -> RewriteFidelity | None:
         The fidelity fields, or None when the file cannot be read.
     """
     try:
+        count("parquet.opens")
         parquet = pq.ParquetFile(path)
     except Exception:  # noqa: BLE001 - an unreadable file cannot be compared
         return None
@@ -315,6 +319,7 @@ def read_extra_schema_metadata(path: Path) -> dict[bytes, bytes]:
         extra keys, and empty for an unreadable file.
     """
     try:
+        count("parquet.opens")
         parquet = pq.ParquetFile(path)
     except Exception:  # noqa: BLE001 - an unreadable file has nothing to preserve
         return {}
@@ -435,6 +440,7 @@ def extract_schema_from_geoparquet(
     warnings: list[str] = []
 
     # Open parquet file (metadata only)
+    count("parquet.opens")
     pf = pq.ParquetFile(path)
     metadata = pf.schema_arrow.metadata or {}
 

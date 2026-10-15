@@ -101,7 +101,12 @@ class ExtractionSummary:
         empty: Number of empty layers (0 features, skipped with warning).
         total_features: Total features across all succeeded layers.
         total_size_bytes: Total output size in bytes.
-        total_duration_seconds: Total extraction time.
+        total_duration_seconds: The sum of the per-layer fetch durations. With
+            parallel workers the layers overlap, so this sum is larger than
+            the time the run took.
+        wall_duration_seconds: The wall-clock time of the fetch stage (issue
+            #991). None for a dry run and for a report written before the
+            field existed.
     """
 
     total_layers: int
@@ -112,10 +117,11 @@ class ExtractionSummary:
     total_features: int
     total_size_bytes: int
     total_duration_seconds: float
+    wall_duration_seconds: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
-        return {
+        result: dict[str, Any] = {
             "total_layers": self.total_layers,
             "succeeded": self.succeeded,
             "failed": self.failed,
@@ -125,6 +131,9 @@ class ExtractionSummary:
             "total_size_bytes": self.total_size_bytes,
             "total_duration_seconds": self.total_duration_seconds,
         }
+        if self.wall_duration_seconds is not None:
+            result["wall_duration_seconds"] = self.wall_duration_seconds
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ExtractionSummary:
@@ -142,6 +151,7 @@ class ExtractionSummary:
             total_features=data["total_features"],
             total_size_bytes=data["total_size_bytes"],
             total_duration_seconds=data["total_duration_seconds"],
+            wall_duration_seconds=data.get("wall_duration_seconds"),
         )
 
 

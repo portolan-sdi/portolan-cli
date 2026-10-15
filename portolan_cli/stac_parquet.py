@@ -37,6 +37,7 @@ from portolan_cli.constants import ROLE_COLLECTION_MIRROR
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.stac_links import owned_item_hrefs, resolve_href
 from portolan_cli.sync.checksums import file_fields
+from portolan_cli.trace import count
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -518,7 +519,10 @@ def track_parquet_in_versions(
         if versions_file.versions:
             tracked = versions_file.versions[-1].assets.get(PARQUET_FILENAME)
             if tracked is not None:
-                sha256 = hashlib.sha256(parquet_path.read_bytes()).hexdigest()
+                content = parquet_path.read_bytes()
+                count("checksum.files")
+                count("checksum.bytes", len(content))
+                sha256 = hashlib.sha256(content).hexdigest()
                 if tracked.sha256 == sha256:
                     return
 

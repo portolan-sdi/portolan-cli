@@ -40,6 +40,7 @@ from portolan_cli.formats import (
     CloudNativeStatus,
     get_cloud_native_status,
 )
+from portolan_cli.trace import current_span, span
 from portolan_cli.viz.thumbnail import (
     thumbnail_path_for,
 )
@@ -347,32 +348,25 @@ def _early_exit_result(
         handler = handler_for(source, catalog_path) if force else None
         if handler is not None and hasattr(handler, "reoptimize"):
             return None
-        duration_ms = int((time.perf_counter() - start_time) * 1000)
-        return ConversionResult(
-            source=source,
-            output=None,
-            format_from=format_info.display_name,
-            format_to=None,
-            status=ConversionStatus.SKIPPED,
-            error=None,
-            duration_ms=duration_ms,
+        return _result(
+            source, None, format_info.display_name, None, ConversionStatus.SKIPPED, None, start_time
         )
 
     if format_info.status == CloudNativeStatus.UNSUPPORTED:
-        duration_ms = int((time.perf_counter() - start_time) * 1000)
         logger.info(
             "Unsupported format, skipping: %s (%s)",
             source,
             format_info.display_name,
         )
-        return ConversionResult(
-            source=source,
-            output=None,
-            format_from=format_info.display_name,
-            format_to=None,
-            status=ConversionStatus.UNSUPPORTED,
-            error=None,  # Not an error - just unsupported
-            duration_ms=duration_ms,
+        # Not an error: the format is unsupported.
+        return _result(
+            source,
+            None,
+            format_info.display_name,
+            None,
+            ConversionStatus.UNSUPPORTED,
+            None,
+            start_time,
         )
 
     return None
@@ -414,86 +408,89 @@ def convert_file(
     Raises:
         FileNotFoundError: If the source file does not exist.
     """
-    start_time = time.perf_counter()
+    with span("convert.file", file=source.name):
+        start_time = time.perf_counter()
 
-    if not source.exists():
-        raise FileNotFoundError(f"Source file not found: {source}")
+        if not source.exists():
+            raise FileNotFoundError(f"Source file not found: {source}")
 
-    from portolan_cli.plugins.formats import handler_for, plugin_handler_for
+        from portolan_cli.plugins.formats import handler_for, plugin_handler_for
 
-    # A plugin format handler converts the formats it claims (#947). A built-in
-    # format first passes the cloud-native check.
-    handler = plugin_handler_for(source, catalog_path)
-    reoptimize = False
-    display_name = handler.display_name if handler is not None else ""
-    if handler is None:
-        format_info = get_cloud_native_status(source, catalog_path)
-        early_exit = _early_exit_result(
-            source, format_info, force=force, start_time=start_time, catalog_path=catalog_path
-        )
-        if early_exit is not None:
-            return early_exit
-        reoptimize = format_info.status == CloudNativeStatus.CLOUD_NATIVE
-        display_name = format_info.display_name
-        handler = handler_for(source, catalog_path)
-    if handler is None:
-        return _result(
-            source,
-            None,
-            display_name,
-            None,
-            ConversionStatus.FAILED,
-            f"Unable to determine format type for {source.suffix}",
-            start_time,
-        )
-
-    out_dir = output_dir or source.parent
-    with settings_override(cog=cog_settings, vector=vector_settings):
-        try:
-            partitioned = (
-                None
-                if reoptimize
-                else _convert_partitioned_by_index(handler, source, out_dir, catalog_path)
+        # A plugin format handler converts the formats it claims (#947). A built-in
+        # format first passes the cloud-native check.
+        handler = plugin_handler_for(source, catalog_path)
+        reoptimize = False
+        display_name = handler.display_name if handler is not None else ""
+        if handler is None:
+            format_info = get_cloud_native_status(source, catalog_path)
+            early_exit = _early_exit_result(
+                source, format_info, force=force, start_time=start_time, catalog_path=catalog_path
             )
-            # The size partition rule belongs to `add` only, as before #947.
-            # This path converts a source again on every run, and a second
-            # size partition into the same directory would collide.
-            output_path = partitioned or convert_with_handler(
-                handler, source, out_dir, catalog_path, reoptimize=reoptimize
-            )
-        except InvalidOutputError as err:
-            logger.warning("Conversion completed but validation failed: %s", err)
-            return _result(
-                source,
-                Path(str(err.context["path"])),
-                display_name,
-                handler.display_name,
-                ConversionStatus.INVALID,
-                err.reason,
-                start_time,
-            )
-        except Exception as e:
-            conversion_error = ConversionFailedError(str(source), e)
-            logger.exception("Conversion failed for %s [%s]: %s", source, conversion_error.code, e)
+            if early_exit is not None:
+                return early_exit
+            reoptimize = format_info.status == CloudNativeStatus.CLOUD_NATIVE
+            display_name = format_info.display_name
+            handler = handler_for(source, catalog_path)
+        if handler is None:
             return _result(
                 source,
                 None,
                 display_name,
-                handler.display_name,
+                None,
                 ConversionStatus.FAILED,
-                str(e),
+                f"Unable to determine format type for {source.suffix}",
                 start_time,
             )
 
-    return _result(
-        source,
-        output_path,
-        display_name,
-        handler.display_name,
-        ConversionStatus.SUCCESS,
-        None,
-        start_time,
-    )
+        out_dir = output_dir or source.parent
+        with settings_override(cog=cog_settings, vector=vector_settings):
+            try:
+                partitioned = (
+                    None
+                    if reoptimize
+                    else _convert_partitioned_by_index(handler, source, out_dir, catalog_path)
+                )
+                # The size partition rule belongs to `add` only, as before #947.
+                # This path converts a source again on every run, and a second
+                # size partition into the same directory would collide.
+                output_path = partitioned or convert_with_handler(
+                    handler, source, out_dir, catalog_path, reoptimize=reoptimize
+                )
+            except InvalidOutputError as err:
+                logger.warning("Conversion completed but validation failed: %s", err)
+                return _result(
+                    source,
+                    Path(str(err.context["path"])),
+                    display_name,
+                    handler.display_name,
+                    ConversionStatus.INVALID,
+                    err.reason,
+                    start_time,
+                )
+            except Exception as e:
+                conversion_error = ConversionFailedError(str(source), e)
+                logger.exception(
+                    "Conversion failed for %s [%s]: %s", source, conversion_error.code, e
+                )
+                return _result(
+                    source,
+                    None,
+                    display_name,
+                    handler.display_name,
+                    ConversionStatus.FAILED,
+                    str(e),
+                    start_time,
+                )
+
+        return _result(
+            source,
+            output_path,
+            display_name,
+            handler.display_name,
+            ConversionStatus.SUCCESS,
+            None,
+            start_time,
+        )
 
 
 def _result(
@@ -505,7 +502,7 @@ def _result(
     error: str | None,
     start_time: float,
 ) -> ConversionResult:
-    return ConversionResult(
+    result = ConversionResult(
         source=source,
         output=output,
         format_from=format_from,
@@ -514,6 +511,13 @@ def _result(
         error=error,
         duration_ms=int((time.perf_counter() - start_time) * 1000),
     )
+    current_span().set(
+        format_from=format_from,
+        format_to=format_to,
+        status=status.value,
+        duration_ms=result.duration_ms,
+    )
+    return result
 
 
 def convert_with_handler(

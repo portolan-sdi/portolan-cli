@@ -28,6 +28,7 @@ from portolan_cli.scan.core import ScanResult, scan_directory
 from portolan_cli.sync.download import download_file
 from portolan_cli.sync.pull import PullError, PullResult, pull
 from portolan_cli.sync.push import PushConflictError, PushResult, push_async
+from portolan_cli.trace import span
 
 # =============================================================================
 # Exceptions
@@ -666,9 +667,10 @@ def sync(
         )
 
     # Step 1: Pull
-    pull_result, pull_error = _step_pull(
-        destination, catalog_root, collection, force, dry_run, profile
-    )
+    with span("sync.pull"):
+        pull_result, pull_error = _step_pull(
+            destination, catalog_root, collection, force, dry_run, profile
+        )
     if pull_error:
         error(pull_error)
         return SyncResult(
@@ -682,7 +684,8 @@ def sync(
         )
 
     # Step 2: Init
-    init_performed, init_error = _step_init(catalog_root, force)
+    with span("sync.init"):
+        init_performed, init_error = _step_init(catalog_root, force)
     if init_error:
         error(init_error)
         return SyncResult(
@@ -696,7 +699,8 @@ def sync(
         )
 
     # Step 3: Scan
-    scan_result, scan_error = _step_scan(catalog_root)
+    with span("sync.scan"):
+        scan_result, scan_error = _step_scan(catalog_root)
     if scan_error:
         error(scan_error)
         return SyncResult(
@@ -710,7 +714,8 @@ def sync(
         )
 
     # Step 4: Check
-    check_result, check_error = _step_check(catalog_root, fix, dry_run)
+    with span("sync.check"):
+        check_result, check_error = _step_check(catalog_root, fix, dry_run)
     if check_error:
         error(check_error)
         return SyncResult(
@@ -724,9 +729,10 @@ def sync(
         )
 
     # Step 5: Push
-    push_result, push_error = _step_push(
-        catalog_root, collection, destination, force, dry_run, profile, region
-    )
+    with span("sync.push"):
+        push_result, push_error = _step_push(
+            catalog_root, collection, destination, force, dry_run, profile, region
+        )
     if push_error:
         error(push_error)
         return SyncResult(

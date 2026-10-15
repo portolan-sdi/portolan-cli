@@ -23,6 +23,7 @@ from portolan_cli.input_hardening import validate_catalog_id
 from portolan_cli.json_io import write_json_atomic, write_text_atomic
 from portolan_cli.models.catalog import CatalogModel
 from portolan_cli.stac_links import iter_links, iter_stac_objects, visible_stac_files
+from portolan_cli.trace import count
 from portolan_cli.utils import href_root, relative_href
 
 if sys.version_info >= (3, 11):
@@ -1225,6 +1226,7 @@ def update_catalog_versions(
         try:
             # Read existing catalog versions.json with error handling
             try:
+                count("versions_json.reads")
                 content = json.loads(versions_path.read_text(encoding="utf-8"))
             except json.JSONDecodeError as e:
                 # Clear error message for corrupted file

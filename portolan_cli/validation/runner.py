@@ -45,6 +45,7 @@ from rashid import validate
 from rashid.data.reader import LocalOnlyReader
 
 from portolan_cli.errors import InvalidLiveUrlError
+from portolan_cli.trace import span
 from portolan_cli.validation.config import load_public_url, load_rules_config
 from portolan_cli.validation.legacy import detect_legacy_notes
 
@@ -269,31 +270,34 @@ def run_check(
         # One extra manifest walk per run. `run_fix_workflow` walks separately
         # under --fix; deduping the two is a later refactor, not this change.
         notice = _workflow_notice(root)
-        report = validate(
-            root,
-            config=load_rules_config(root),
-            structural=structural,
-            structural_validator=structural_validator,
-            schema=schema,
-            schema_validator=schema_validator,
-            data=data,
-            data_reader_factory=LocalOnlyReader if data_scope == "local" else None,
-            live=live,
-            live_prober=live_prober,
-            live_base_url=public_url or load_public_url(root),
-        )
+        # rashid runs every rule in one call, so the span covers all validators.
+        with span("check.validate", structural=structural, schema=schema, data=data, live=live):
+            report = validate(
+                root,
+                config=load_rules_config(root),
+                structural=structural,
+                structural_validator=structural_validator,
+                schema=schema,
+                schema_validator=schema_validator,
+                data=data,
+                data_reader_factory=LocalOnlyReader if data_scope == "local" else None,
+                live=live,
+                live_prober=live_prober,
+                live_base_url=public_url or load_public_url(root),
+            )
 
     format_report = None
     if geo_assets:
         from portolan_cli.scan.check import check_directory
 
-        format_report = check_directory(
-            path,
-            fix=False,
-            dry_run=False,
-            workers=workers,
-            catalog_path=path,
-        )
+        with span("check.geo_assets"):
+            format_report = check_directory(
+                path,
+                fix=False,
+                dry_run=False,
+                workers=workers,
+                catalog_path=path,
+            )
 
     return CheckOutcome(
         report=report,

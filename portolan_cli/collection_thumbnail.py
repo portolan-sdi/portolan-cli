@@ -37,6 +37,7 @@ from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import detail, warn
 from portolan_cli.stac_parquet import sync_file_extension
 from portolan_cli.sync.checksums import compute_checksum, multihash_sha256
+from portolan_cli.trace import span
 from portolan_cli.versions import track_generated_assets
 from portolan_cli.viz.thumbnail import (
     generate_vector_thumbnail,
@@ -479,25 +480,27 @@ def ensure_collection_thumbnails(
             a snapshot that may already be published.
         verbose: Emit a line per collection touched.
     """
-    if not affected_collections:
-        return
-    # Resolve the flag against config once, then hand the answer down, so the
-    # config read does not repeat per collection.
-    if not _thumbnails_wanted(catalog_root, generate):
-        return
+    with span("add.thumbnails", collections=len(affected_collections)):
+        if not affected_collections:
+            return
+        # Resolve the flag against config once, then hand the answer down, so the
+        # config read does not repeat per collection.
+        if not _thumbnails_wanted(catalog_root, generate):
+            return
 
-    for collection_id in sorted(affected_collections):
-        collection_path = catalog_root / collection_id
-        if not (collection_path / "collection.json").exists():
-            continue
-        ensure_collection_thumbnail(
-            collection_path,
-            catalog_root,
-            generate=True,
-            force=force,
-            amend_latest=collection_id in (versioned_collections or set()),
-            verbose=verbose,
-        )
+        for collection_id in sorted(affected_collections):
+            collection_path = catalog_root / collection_id
+            if not (collection_path / "collection.json").exists():
+                continue
+            with span("thumbnail.collection", collection=collection_id):
+                ensure_collection_thumbnail(
+                    collection_path,
+                    catalog_root,
+                    generate=True,
+                    force=force,
+                    amend_latest=collection_id in (versioned_collections or set()),
+                    verbose=verbose,
+                )
 
 
 __all__ = [

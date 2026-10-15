@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from portolan_cli.metadata.cog import extract_cog_metadata
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+from portolan_cli.trace import count
 
 if TYPE_CHECKING:
     from portolan_cli.metadata.cog import COGMetadata
@@ -184,6 +185,7 @@ def get_stored_metadata(
     versions_path = collection_dir / "versions.json"
     if versions_path.exists():
         try:
+            count("versions_json.reads")
             with Path(versions_path).open(encoding="utf-8") as f:
                 versions_data = json.load(f)
 
@@ -306,6 +308,7 @@ def compute_schema_fingerprint(
         import pyarrow.parquet as pq
 
         # Use ParquetFile to read only schema, not the full table (O(1) vs O(n))
+        count("parquet.opens")
         pf = pq.ParquetFile(file_path)
         schema_str = str(pf.schema_arrow)
         return hashlib.sha256(schema_str.encode()).hexdigest()[:16]

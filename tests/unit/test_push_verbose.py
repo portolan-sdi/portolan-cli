@@ -133,6 +133,25 @@ class TestUploadMetrics:
 # =============================================================================
 
 
+class TestUploadMetricsAttrs:
+    """UploadMetrics feeds the push.assets span attributes (issue #991)."""
+
+    @pytest.mark.unit
+    def test_to_attrs(self) -> None:
+        metrics = UploadMetrics()
+        metrics.record(2 * 1024 * 1024, 1.0)
+        metrics.record(2 * 1024 * 1024, 1.0)
+        metrics.record_elapsed(2.0)
+
+        assert metrics.to_attrs() == {
+            "files": 2,
+            "bytes": 4 * 1024 * 1024,
+            "elapsed_seconds": 2.0,
+            "upload_seconds_sum": 2.0,
+            "mb_per_s": 2.0,
+        }
+
+
 class TestUploadAssetsVerboseMode:
     """Tests for quiet-by-default upload behavior."""
 

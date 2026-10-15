@@ -28,6 +28,7 @@ Groups:
 - JSON output for commands: ``success_envelope``, ``error_envelope``,
   ``ErrorDetail``. A command writes ``envelope.to_json()`` to stdout.
 - Warnings: ``PluginWarning``.
+- Timings: ``span``. A stage wrapped in it shows in ``--timings`` output.
 - Format handler helpers: the converters, metadata readers, describe and
   inspect helpers, thumbnails, validation, and partitioning that the built-in
   format handlers in ``portolan_cli.formats_builtin`` use. A plugin handler
@@ -95,6 +96,7 @@ if TYPE_CHECKING:
     from portolan_cli.sync.download import download_file
     from portolan_cli.sync.pull import PullResult
     from portolan_cli.sync.upload import upload_file
+    from portolan_cli.trace import span
     from portolan_cli.versions import Asset, SchemaInfo, Version, parse_version
 
 __all__ = [
@@ -153,6 +155,7 @@ __all__ = [
     "parse_version",
     "partition_vector_file",
     "run_layer_extraction",
+    "span",
     "success",
     "success_envelope",
     "upload_file",
@@ -219,6 +222,7 @@ _EXPORTS = {
     "parse_version": "portolan_cli.versions",
     "partition_vector_file": "portolan_cli.partitioning",
     "run_layer_extraction": "portolan_cli.extract.common.source",
+    "span": "portolan_cli.trace",
     "success": "portolan_cli.output",
     "success_envelope": "portolan_cli.json_output",
     "upload_file": "portolan_cli.sync.upload",

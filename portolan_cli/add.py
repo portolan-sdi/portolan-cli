@@ -165,6 +165,7 @@ from portolan_cli.stac import (
 from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
 from portolan_cli.stac_parquet import PARQUET_FILENAME
 from portolan_cli.sync.checksums import compute_checksum, file_fields
+from portolan_cli.trace import span, submit
 from portolan_cli.viz.style import enrich_cog_assets
 
 if TYPE_CHECKING:
@@ -959,6 +960,16 @@ def _prepare_single_file(
     coll_id: str,
     opts: _PrepareOptions,
 ) -> tuple[list[PreparedItem], list[AddFailure], tuple[Path, Path, str] | None]:
+    """Prepare one source file inside an ``add.file`` span (issue #991)."""
+    with span("add.file", file=file_path.name, collection=coll_id):
+        return _prepare_file(file_path, coll_id, opts)
+
+
+def _prepare_file(
+    file_path: Path,
+    coll_id: str,
+    opts: _PrepareOptions,
+) -> tuple[list[PreparedItem], list[AddFailure], tuple[Path, Path, str] | None]:
     """Prepare one source file for finalization (phase 2, parallelizable).
 
     Runs ``prepare_item()`` (GDAL work + item.json) but writes no versions.json
@@ -1073,7 +1084,7 @@ def _phase_process(
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         future_to_file = {
-            executor.submit(_prepare_single_file, fp, cid, opts): (fp, cid)
+            submit(executor, _prepare_single_file, fp, cid, opts): (fp, cid)
             for fp, cid in files_to_process
         }
         # Process results as they complete (main thread)
@@ -1245,15 +1256,18 @@ def add_files(
     setup_collections: set[str] = set()
 
     # Phase 1: Collect + filter the files to process (fast, no GDAL).
-    files_to_process = _collect_files_for_add(
-        paths, catalog_root, collection_id, skipped, setup_collections, force=force
-    )
+    with span("add.collect") as stage:
+        files_to_process = _collect_files_for_add(
+            paths, catalog_root, collection_id, skipped, setup_collections, force=force
+        )
+        stage.set(files=len(files_to_process), skipped=len(skipped))
     if not files_to_process:
         return [], skipped, []
 
     # Phase 1.5: refuse the add before any GDAL work when a target collection would
     # end up with no usable license (issue #686).
-    _require_licenses(catalog_root, {coll_id for _, coll_id in files_to_process})
+    with span("add.licenses"):
+        _require_licenses(catalog_root, {coll_id for _, coll_id in files_to_process})
 
     # Issue #465: filenames of every batch item (sources + converted outputs) so a
     # collection-level asset scan can skip siblings that are tracked as their own
@@ -1269,40 +1283,45 @@ def add_files(
     )
 
     # Phase 2: Prepare each file (GDAL work), accumulating prepared items (Issue #281).
-    proc = _phase_process(
-        files_to_process,
-        opts,
-        workers=workers,
-        json_mode=json_mode,
-        on_progress=on_progress,
-    )
+    with span("add.process", files=len(files_to_process), workers=workers) as stage:
+        proc = _phase_process(
+            files_to_process,
+            opts,
+            workers=workers,
+            json_mode=json_mode,
+            on_progress=on_progress,
+        )
+        stage.set(prepared=len(proc.prepared_items), failures=len(proc.failures))
     failures = proc.failures
 
     # Phase 2.5: Batch finalize — ONE write per collection instead of O(n) (Issue #281).
-    added: list[ItemInfo] = (
-        finalize_items(catalog_root, proc.prepared_items, merge_strategy)
-        if proc.prepared_items
-        else []
-    )
+    with span("add.finalize", items=len(proc.prepared_items)):
+        added: list[ItemInfo] = (
+            finalize_items(catalog_root, proc.prepared_items, merge_strategy)
+            if proc.prepared_items
+            else []
+        )
 
     # Phase 3: Track deferred non-geo files as companion assets.
     touched_items: list[tuple[str, str]] = []
-    affected_collections = _process_deferred_non_geo_files(
-        deferred_non_geo=proc.deferred_non_geo,
-        source_to_item_dir=proc.source_to_item_dir,
-        source_to_collection_dir=proc.source_to_collection_dir,
-        catalog_root=catalog_root,
-        added=added,
-        skipped=skipped,
-        failures=failures,
-        touched_items=touched_items,
-    )
+    with span("add.deferred_non_geo", files=len(proc.deferred_non_geo)):
+        affected_collections = _process_deferred_non_geo_files(
+            deferred_non_geo=proc.deferred_non_geo,
+            source_to_item_dir=proc.source_to_item_dir,
+            source_to_collection_dir=proc.source_to_collection_dir,
+            catalog_root=catalog_root,
+            added=added,
+            skipped=skipped,
+            failures=failures,
+            touched_items=touched_items,
+        )
 
-    # Phase 3.5: re-check the file extension on collections with deferred assets (#501).
-    _declare_file_extension_for_collections(affected_collections)
+        # Phase 3.5: re-check the file extension on collections with deferred assets (#501).
+        _declare_file_extension_for_collections(affected_collections)
 
     # Phase 4: run the enrichment hooks on the documents phase 3 changed (#947).
-    _enrich_deferred_documents(catalog_root, affected_collections, touched_items)
+    with span("add.enrich", items=len(touched_items)):
+        _enrich_deferred_documents(catalog_root, affected_collections, touched_items)
 
     return added, skipped, failures
 

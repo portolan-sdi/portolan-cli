@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from portolan_cli.trace import count
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -227,6 +229,7 @@ def load_config(catalog_path: Path) -> dict[str, Any]:
     if not content.strip():
         return {}
 
+    count("config.yaml_parses")
     try:
         data = yaml.safe_load(content)
     except yaml.YAMLError as e:
@@ -767,6 +770,7 @@ def _load_validated_mapping(file_path: Path) -> dict[str, Any] | None:
     if not content.strip():
         return None
 
+    count("config.yaml_parses")
     try:
         data = yaml.safe_load(content)
     except yaml.YAMLError as e:

@@ -41,6 +41,7 @@ from portolan_cli.logo import LOGO_ASSETS_DIRNAME
 from portolan_cli.output import detail, error, info, output_section, success, warn
 from portolan_cli.sync.upload import ObjectStore, setup_store
 from portolan_cli.sync.upload_progress import UploadProgressReporter
+from portolan_cli.trace import count, span, submit
 
 __all__ = [
     "get_default_workers",
@@ -212,6 +213,17 @@ class UploadMetrics:
         if self.total_duration == 0:
             return 0.0
         return self.total_bytes / self.total_duration
+
+    def to_attrs(self) -> dict[str, float | int]:
+        """Return the metrics as span attributes for ``push.assets`` (issue #991)."""
+        with self._lock:
+            return {
+                "files": self.file_count,
+                "bytes": self.total_bytes,
+                "elapsed_seconds": round(self.elapsed_seconds, 6),
+                "upload_seconds_sum": round(self.total_duration, 6),
+                "mb_per_s": round(self.average_speed / (1024 * 1024), 3),
+            }
 
     def merge(self, other: UploadMetrics) -> None:
         """Merge metrics from another instance (thread-safe).
@@ -391,6 +403,7 @@ def _read_local_versions(catalog_root: Path, collection: str) -> dict[str, Any]:
         raise FileNotFoundError(f"versions.json not found: {versions_path}")
 
     try:
+        count("versions_json.reads")
         data: dict[str, Any] = json.loads(versions_path.read_text(encoding="utf-8"))
         return data
     except json.JSONDecodeError as e:
@@ -426,26 +439,34 @@ def _fetch_remote_versions(
     try:
         # Single atomic get() - includes metadata with e_tag
         result = obs.get(store, key)
-        content_bytes: bytes = bytes(result.bytes())
-
-        # Extract etag from result metadata (avoids TOCTOU race)
-        etag = result.meta.get("e_tag") if result.meta else None
-
-        versions_data: dict[str, Any] = json.loads(content_bytes)
-        return versions_data, etag
-
+        return _parse_remote_versions(bytes(result.bytes()), result.meta)
     except FileNotFoundError:
         return None, None
     except Exception as e:
-        # Check if it's a "not found" error (various cloud providers report differently)
-        error_str = str(e).lower()
-        error_type = type(e).__name__.lower()
-        if any(
-            x in error_str or x in error_type
-            for x in ["notfound", "404", "nosuchkey", "does not exist"]
-        ):
+        if _is_not_found(e):
             return None, None
         raise
+
+
+def _parse_remote_versions(content_bytes: bytes, meta: Any) -> tuple[dict[str, Any], str | None]:
+    """Parse a fetched remote versions.json and read its ETag.
+
+    The ETag comes from the same get() result, which avoids a TOCTOU race.
+    """
+    etag = meta.get("e_tag") if meta else None
+    count("versions_json.reads")
+    versions_data: dict[str, Any] = json.loads(content_bytes)
+    return versions_data, etag
+
+
+def _is_not_found(e: Exception) -> bool:
+    """Return True for a "not found" error. Cloud providers report it differently."""
+    error_str = str(e).lower()
+    error_type = type(e).__name__.lower()
+    return any(
+        x in error_str or x in error_type
+        for x in ["notfound", "404", "nosuchkey", "does not exist"]
+    )
 
 
 # =============================================================================
@@ -839,6 +860,7 @@ def _load_versioned_asset_paths(catalog_root: Path, collection: str) -> set[str]
         return set()
 
     try:
+        count("versions_json.reads")
         data = json.loads(versions_file.read_text(encoding="utf-8"))
         versioned_paths: set[str] = set()
 
@@ -1462,23 +1484,11 @@ async def _fetch_remote_versions_async(
     try:
         # Use obstore's async get
         result = await obs.get_async(store, key)
-        content_bytes: bytes = bytes(await result.bytes_async())
-
-        # Extract etag from result metadata
-        etag = result.meta.get("e_tag") if result.meta else None
-
-        versions_data: dict[str, Any] = json.loads(content_bytes)
-        return versions_data, etag
-
+        return _parse_remote_versions(bytes(await result.bytes_async()), result.meta)
     except FileNotFoundError:
         return None, None
     except Exception as e:
-        error_str = str(e).lower()
-        error_type = type(e).__name__.lower()
-        if any(
-            x in error_str or x in error_type
-            for x in ["notfound", "404", "nosuchkey", "does not exist"]
-        ):
+        if _is_not_found(e):
             return None, None
         raise
 
@@ -1521,7 +1531,6 @@ async def _upload_assets_async(
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys, metrics).
     """
-    import functools
     from concurrent.futures import ThreadPoolExecutor
 
     metrics = UploadMetrics()
@@ -1547,7 +1556,8 @@ async def _upload_assets_async(
         """Upload large file with multipart concurrency (sync, runs in thread)."""
         size_bytes = file_sizes[file_path]
         start = time.perf_counter()
-        obs.put(store, target_key, file_path, max_concurrency=max_conc)
+        with span("push.upload_file", key=target_key, bytes=size_bytes, multipart=True):
+            obs.put(store, target_key, file_path, max_concurrency=max_conc)
         duration = time.perf_counter() - start
         return target_key, size_bytes, duration
 
@@ -1562,17 +1572,21 @@ async def _upload_assets_async(
         if size_bytes >= MULTIPART_THRESHOLD:
             # Large file: use sync put() with multipart in thread pool
             # This respects chunk_concurrency for per-file parallelism
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(
-                thread_pool,
-                functools.partial(
-                    _upload_large_file_sync, asset_path, target_key, chunk_concurrency
-                ),
+            # trace.submit hands the open span to the worker thread.
+            return await asyncio.wrap_future(
+                submit(
+                    thread_pool,
+                    _upload_large_file_sync,
+                    asset_path,
+                    target_key,
+                    chunk_concurrency,
+                )
             )
         # Small file: use put_async (more efficient, no multipart needed)
         start = time.perf_counter()
-        content = asset_path.read_bytes()
-        await obs.put_async(store, target_key, content)
+        with span("push.upload_file", key=target_key, bytes=size_bytes, multipart=False):
+            content = asset_path.read_bytes()
+            await obs.put_async(store, target_key, content)
         duration = time.perf_counter() - start
         return target_key, size_bytes, duration
 
@@ -1981,23 +1995,25 @@ async def _execute_push_uploads_async(
         PushResult with success or failure status and metrics.
     """
     # Get assets to upload (only new/changed, per Issue #329)
-    assets = _get_assets_to_upload(catalog_root, local_data, remote_versions_data=remote_data)
+    with span("push.assets", collection=collection) as stage:
+        assets = _get_assets_to_upload(catalog_root, local_data, remote_versions_data=remote_data)
 
-    # Upload assets first (async, manifest-last pattern)
-    # chunk_concurrency now properly limits per-file multipart parallelism
-    # for files >5MB (Issue #344)
-    files_uploaded, upload_errors, uploaded_keys, metrics = await _upload_assets_async(
-        store,
-        catalog_root,
-        prefix,
-        assets,
-        concurrency=concurrency,
-        chunk_concurrency=chunk_concurrency,
-        json_mode=json_mode,
-        suppress_progress=suppress_progress,
-        verbose=verbose,
-        adaptive=adaptive,
-    )
+        # Upload assets first (async, manifest-last pattern)
+        # chunk_concurrency now properly limits per-file multipart parallelism
+        # for files >5MB (Issue #344)
+        files_uploaded, upload_errors, uploaded_keys, metrics = await _upload_assets_async(
+            store,
+            catalog_root,
+            prefix,
+            assets,
+            concurrency=concurrency,
+            chunk_concurrency=chunk_concurrency,
+            json_mode=json_mode,
+            suppress_progress=suppress_progress,
+            verbose=verbose,
+            adaptive=adaptive,
+        )
+        stage.set(**metrics.to_attrs())
 
     if upload_errors:
         error("Asset upload failed, aborting push")
@@ -2015,96 +2031,102 @@ async def _execute_push_uploads_async(
     # include_catalog controls whether catalog.json and root README.md are included.
     # - True for standalone push() so remote is a complete clonable catalog
     # - False when called from push_all_collections() (uploads once at end)
-    try:
-        stac_files = _discover_stac_files(catalog_root, collection, include_catalog=include_catalog)
-    except FileNotFoundError as e:
-        error(str(e))
-        _cleanup_uploaded_assets(store, uploaded_keys)
-        return PushResult(
-            success=False,
-            files_uploaded=files_uploaded,
-            versions_pushed=0,
-            conflicts=[],
-            errors=[str(e)],
-            metrics=metrics,
-        )
+    with span("push.stac_files", collection=collection):
+        try:
+            stac_files = _discover_stac_files(
+                catalog_root, collection, include_catalog=include_catalog
+            )
+        except FileNotFoundError as e:
+            error(str(e))
+            _cleanup_uploaded_assets(store, uploaded_keys)
+            return PushResult(
+                success=False,
+                files_uploaded=files_uploaded,
+                versions_pushed=0,
+                conflicts=[],
+                errors=[str(e)],
+                metrics=metrics,
+            )
 
-    stac_uploaded, stac_errors, stac_keys = await _upload_stac_files_async(
-        store,
-        catalog_root,
-        prefix,
-        stac_files,
-        concurrency=concurrency,
-        json_mode=json_mode,
-        verbose=verbose,
-    )
-    uploaded_keys.extend(stac_keys)
-    files_uploaded += stac_uploaded
-
-    if stac_errors:
-        error("STAC metadata upload failed, aborting push")
-        _cleanup_uploaded_assets(store, uploaded_keys)
-        return PushResult(
-            success=False,
-            files_uploaded=files_uploaded,
-            versions_pushed=0,
-            conflicts=[],
-            errors=stac_errors,
-            metrics=metrics,
+        stac_uploaded, stac_errors, stac_keys = await _upload_stac_files_async(
+            store,
+            catalog_root,
+            prefix,
+            stac_files,
+            concurrency=concurrency,
+            json_mode=json_mode,
+            verbose=verbose,
         )
+        uploaded_keys.extend(stac_keys)
+        files_uploaded += stac_uploaded
+
+        if stac_errors:
+            error("STAC metadata upload failed, aborting push")
+            _cleanup_uploaded_assets(store, uploaded_keys)
+            return PushResult(
+                success=False,
+                files_uploaded=files_uploaded,
+                versions_pushed=0,
+                conflicts=[],
+                errors=stac_errors,
+                metrics=metrics,
+            )
 
     # Upload metadata files (style.json, thumbnails, etc.) - Issue #426
     # This happens after STAC files, before versions.json (manifest-last)
-    metadata_uploaded, metadata_errors = await _upload_metadata_files_async(
-        store,
-        catalog_root,
-        prefix,
-        collection,
-        include_catalog_root=include_catalog,
-        concurrency=concurrency,
-        verbose=verbose,
-    )
-    files_uploaded += metadata_uploaded
+    with span("push.metadata", collection=collection):
+        metadata_uploaded, metadata_errors = await _upload_metadata_files_async(
+            store,
+            catalog_root,
+            prefix,
+            collection,
+            include_catalog_root=include_catalog,
+            concurrency=concurrency,
+            verbose=verbose,
+        )
+        files_uploaded += metadata_uploaded
 
     # Metadata errors are warnings, not fatal (push continues)
     # But we surface them in PushResult so callers can act on partial sync
     all_metadata_errors: list[str] = list(metadata_errors)
 
     # Upload versions.json (async, manifest-last)
-    info("Uploading versions.json...")
-    try:
-        await _upload_versions_json_async(store, prefix, collection, local_data, etag, force=force)
-        if diff.local_only:
-            msg = f"Pushed {len(diff.local_only)} version(s): {diff.local_only}"
-        else:
-            # Force re-push with no version delta refreshes metadata only (Issue #496)
-            msg = "Refreshed metadata (no new versions)"
-        if metrics.total_bytes > 0:
-            msg += (
-                f" ({format_file_size(metrics.total_bytes)}, {format_speed(metrics.average_speed)})"
+    with span("push.versions_json", collection=collection):
+        info("Uploading versions.json...")
+        try:
+            await _upload_versions_json_async(
+                store, prefix, collection, local_data, etag, force=force
             )
-        success(msg)
-    except PushConflictError as e:
-        _cleanup_uploaded_assets(store, uploaded_keys)
-        raise PushConflictError("Remote changed during push, re-run push to try again") from e
-    except Exception as e:
-        _cleanup_uploaded_assets(store, uploaded_keys)
-        error(f"Failed to upload versions.json: {e}")
-        return PushResult(
-            success=False,
-            files_uploaded=files_uploaded,
-            versions_pushed=0,
-            conflicts=[],
-            errors=[f"Failed to upload versions.json: {e}"],
-            metadata_errors=all_metadata_errors,
-            metrics=metrics,
-        )
+            if diff.local_only:
+                msg = f"Pushed {len(diff.local_only)} version(s): {diff.local_only}"
+            else:
+                # Force re-push with no version delta refreshes metadata only (Issue #496)
+                msg = "Refreshed metadata (no new versions)"
+            if metrics.total_bytes > 0:
+                msg += f" ({format_file_size(metrics.total_bytes)}, {format_speed(metrics.average_speed)})"
+            success(msg)
+        except PushConflictError as e:
+            _cleanup_uploaded_assets(store, uploaded_keys)
+            raise PushConflictError("Remote changed during push, re-run push to try again") from e
+        except Exception as e:
+            _cleanup_uploaded_assets(store, uploaded_keys)
+            error(f"Failed to upload versions.json: {e}")
+            return PushResult(
+                success=False,
+                files_uploaded=files_uploaded,
+                versions_pushed=0,
+                conflicts=[],
+                errors=[f"Failed to upload versions.json: {e}"],
+                metadata_errors=all_metadata_errors,
+                metrics=metrics,
+            )
 
     # Upload READMEs last (async, parallel)
-    readme_uploaded, readme_errors = await _upload_readmes_async(
-        store, catalog_root, prefix, stac_files, concurrency=concurrency
-    )
-    files_uploaded += readme_uploaded
+    with span("push.readmes", collection=collection):
+        readme_uploaded, readme_errors = await _upload_readmes_async(
+            store, catalog_root, prefix, stac_files, concurrency=concurrency
+        )
+        files_uploaded += readme_uploaded
     # README errors are also non-fatal metadata issues
     all_metadata_errors.extend(readme_errors)
 
@@ -2251,9 +2273,10 @@ async def push_async(
         return _handle_push_dry_run(catalog_root, collection, local_data, local_versions)
 
     # Setup store and fetch remote versions
-    store, prefix = setup_store(destination, profile=profile, region=region)
-    info(f"Checking remote state: {destination}")
-    remote_data, etag = await _fetch_remote_versions_async(store, prefix, collection)
+    with span("push.fetch_remote", collection=collection):
+        store, prefix = setup_store(destination, profile=profile, region=region)
+        info(f"Checking remote state: {destination}")
+        remote_data, etag = await _fetch_remote_versions_async(store, prefix, collection)
 
     # Extract remote versions
     if remote_data is None:

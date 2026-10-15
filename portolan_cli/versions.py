@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from portolan_cli.json_io import write_json_atomic
+from portolan_cli.trace import count
 
 # Spec version constant (MINOR #12)
 SPEC_VERSION = "1.0.0"
@@ -148,6 +149,7 @@ def read_versions(path: Path) -> VersionsFile:
     if not path.exists():
         raise FileNotFoundError(f"versions.json not found: {path}")
 
+    count("versions_json.reads")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
@@ -522,9 +524,13 @@ def _compute_sha256(path: Path) -> str:
     Chunked to avoid loading large PMTiles/thumbnail files fully into memory.
     """
     hasher = hashlib.sha256()
+    size = 0
     with Path(path).open("rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
             hasher.update(chunk)
+            size += len(chunk)
+    count("checksum.files")
+    count("checksum.bytes", size)
     return hasher.hexdigest()
 
 

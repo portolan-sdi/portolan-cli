@@ -64,6 +64,9 @@ portolan [OPTIONS] COMMAND [ARGS]...
 | ---- | ---- | ----------- | ------- |
 | `--version` | boolean | Show the version and exit. | `False` |
 | `--format` | choice (`json` &#x7C; `text`) | Output format (json for machine parsing, text for humans). | `text` |
+| `-v`, `--verbose` | integer range (`0` and above) | Log level for stderr: -v for INFO, -vv for DEBUG. Put it before the command (portolan -v check). The --verbose flag of a command such as check controls how much that command prints, not the log level. | `0` |
+| `-q`, `--quiet` | boolean | Log only errors to stderr. | `False` |
+| `--timings` | boolean | Record stage timings and counters. JSON output gets a meta block. Text output prints a table to stderr. Same as PORTOLAN_TIMINGS=1. | `False` |
 | `--help` | boolean | Show this message and exit. | `False` |
 
 #### portolan add { #portolan-add data-toc-label='add' }
@@ -278,7 +281,7 @@ portolan check [OPTIONS] [PATH]
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
 | `--json` | boolean | Output results as JSON | `False` |
-| `--verbose`, `-v` | boolean | Show all validation rules, not just failures | `False` |
+| `--verbose`, `-v` | boolean | Show all validation rules, not just failures. For log messages, use the root flag: portolan -v check. | `False` |
 | `--fix` | boolean | Fix issues: convert geo-assets to cloud-native, update stale metadata | `False` |
 | `--dry-run` | boolean | Preview what would be fixed (use with --fix) | `False` |
 | `--remove-legacy` | boolean | Remove source files after successful conversion (use with --fix) | `False` |
@@ -1344,7 +1347,7 @@ portolan readme [OPTIONS] [PATH]
 | `--stdout` | boolean | Print README to stdout instead of writing file. | `False` |
 | `--check` | boolean | Check if README is up-to-date (for CI). Exits 1 if stale. | `False` |
 | `--no-recursive` | boolean | Only generate README at the specified path (skip subdirectories). | `False` |
-| `--verbose`, `-v` | boolean | Show detailed output. | `False` |
+| `--verbose`, `-v` | boolean | Show detailed output. For log messages, use the root flag: portolan -v readme. | `False` |
 | `--json` | boolean | Output as JSON. | `False` |
 | `--help` | boolean | Show this message and exit. | `False` |
 

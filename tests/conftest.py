@@ -839,6 +839,31 @@ def no_extract_side_requests(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def isolate_trace_and_logging(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Start each test with tracing off and no Portolan log handler (#991).
+
+    The root ``cli`` group turns tracing on and installs log handlers for one
+    run. Both are process-wide, so a test that invokes the CLI would leak them
+    into the next test.
+    """
+    from portolan_cli import logging_setup, trace
+
+    for name in (
+        trace.TIMINGS_ENV,
+        trace.TRACE_FILE_ENV,
+        logging_setup.LOG_ENV,
+        logging_setup.LOG_FILE_ENV,
+        logging_setup.GDAL_DEBUG_ENV,
+    ):
+        monkeypatch.delenv(name, raising=False)
+    trace.reset()
+    logging_setup.reset_logging()
+    yield
+    trace.reset()
+    logging_setup.reset_logging()
+
+
+@pytest.fixture(autouse=True)
 def isolate_installed_plugins(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:

@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from portolan_cli.trace import count
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -55,6 +57,7 @@ def extract_tabular_metadata(path: Path) -> TabularMetadata | None:
     if path.suffix.lower() != ".parquet":
         return None
     try:
+        count("parquet.opens")
         parquet = pq.ParquetFile(path)
     except Exception:  # noqa: BLE001 - unreadable Parquet: the format checks own it
         return None

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 import rasterio
 
 from portolan_cli.models.schema import BandSchema, SchemaModel
+from portolan_cli.trace import count
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -118,6 +119,7 @@ def extract_cog_metadata(path: Path) -> COGMetadata:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
+    count("raster.opens")
     with rasterio.open(path) as src:
         # Extract CRS
         crs = None
@@ -211,6 +213,7 @@ def extract_schema_from_cog(
     warnings: list[str] = []
     crs_value: str | None = None
 
+    count("raster.opens")
     with rasterio.open(path) as src:
         # Extract CRS as schema-level spatial metadata
         if src.crs:

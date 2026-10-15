@@ -30,6 +30,7 @@ from portolan_cli.api import (
     SchemaFingerprint,
     SchemaInfo,
     Version,
+    span,
     write_json_atomic,
 )
 from portolan_cli.backends.iceberg.config import create_catalog
@@ -202,47 +203,51 @@ class IcebergBackend:
         Reads actual Parquet data from asset files and writes it into the
         Iceberg table. Version metadata is stored in snapshot properties.
         """
-        table_id = self._table_id(collection)
+        with span("iceberg.metadata", collection=collection):
+            table_id = self._table_id(collection)
 
-        if version:
-            next_ver = version
-        else:
-            current_version = self._get_current_version_str_safe(table_id)
-            next_ver = compute_next_version(current_version, breaking)
+            if version:
+                next_ver = version
+            else:
+                current_version = self._get_current_version_str_safe(table_id)
+                next_ver = compute_next_version(current_version, breaking)
 
-        # Build asset metadata (sha256, size, href)
-        new_asset_objects, changes = build_assets(assets, collection=collection)
+            # Build asset metadata (sha256, size, href)
+            new_asset_objects, changes = build_assets(assets, collection=collection)
 
-        # Merge with previous snapshot's assets if we have history
-        merged_assets = self._get_merged_assets(table_id, new_asset_objects, removed)
+            # Merge with previous snapshot's assets if we have history
+            merged_assets = self._get_merged_assets(table_id, new_asset_objects, removed)
 
-        schema_info = SchemaInfo(
-            type=schema.get("hash", "unknown"),
-            fingerprint={
-                "columns": schema.get("columns", []),
-                "types": schema.get("types", {}),
-            },
-        )
-
-        props = version_to_snapshot_properties(
-            next_ver, breaking, message, merged_assets, schema_info, changes
-        )
-
-        # Read actual Parquet data from asset files
-        arrow_data = _read_parquet_assets(assets)
-
-        if arrow_data is not None:
-            table = self._load_or_create_table(
-                table_id, arrow_data.schema, row_count=len(arrow_data)
+            schema_info = SchemaInfo(
+                type=schema.get("hash", "unknown"),
+                fingerprint={
+                    "columns": schema.get("columns", []),
+                    "types": schema.get("types", {}),
+                },
             )
-            table.append(arrow_data, snapshot_properties=props)
-        else:
-            # No parquet data to ingest (e.g., only removals)
-            table = self._load_or_create_table_from_existing(table_id)
-            table.append(_empty_table(table.schema().as_arrow()), snapshot_properties=props)
 
-        # Reload to get the committed snapshot
-        table = self._catalog.load_table(table_id)
+            props = version_to_snapshot_properties(
+                next_ver, breaking, message, merged_assets, schema_info, changes
+            )
+
+        with span("iceberg.read_parquet", assets=len(assets)):
+            # Read actual Parquet data from asset files
+            arrow_data = _read_parquet_assets(assets)
+
+        with span("iceberg.upload", rows=0 if arrow_data is None else len(arrow_data)):
+            if arrow_data is not None:
+                table = self._load_or_create_table(
+                    table_id, arrow_data.schema, row_count=len(arrow_data)
+                )
+                table.append(arrow_data, snapshot_properties=props)
+            else:
+                # No parquet data to ingest (e.g., only removals)
+                table = self._load_or_create_table_from_existing(table_id)
+                table.append(_empty_table(table.schema().as_arrow()), snapshot_properties=props)
+
+        with span("iceberg.load_table"):
+            # Reload to get the committed snapshot
+            table = self._catalog.load_table(table_id)
         snap = table.current_snapshot()
         if snap is None:
             raise RuntimeError(f"No snapshot found after publish for: {table_id}")
@@ -530,7 +535,8 @@ class IcebergBackend:
         remote_url = remote_url.rstrip("/")
 
         try:
-            version = self.get_current_version(collection)
+            with span("iceberg.load_table", collection=collection):
+                version = self.get_current_version(collection)
         except FileNotFoundError:
             info(f"No versions found for collection '{collection}'")
             return PullResult(
@@ -557,16 +563,19 @@ class IcebergBackend:
 
         downloaded = 0
         failed = 0
-        for asset in version.assets.values():
-            source = f"{remote_url}/{asset.href}"
-            dest = local_root / Path(asset.href)
-            dest.parent.mkdir(parents=True, exist_ok=True)
+        with span("iceberg.download", assets=len(version.assets)) as stage:
+            for asset in version.assets.values():
+                source = f"{remote_url}/{asset.href}"
+                dest = local_root / Path(asset.href)
+                dest.parent.mkdir(parents=True, exist_ok=True)
 
-            result = download_file(source=source, destination=dest)
-            if result.success:
-                downloaded += result.files_downloaded
-            else:
-                failed += 1
+                with span("iceberg.download_file", href=asset.href):
+                    result = download_file(source=source, destination=dest)
+                if result.success:
+                    downloaded += result.files_downloaded
+                else:
+                    failed += 1
+            stage.set(downloaded=downloaded, failed=failed)
 
         if failed > 0:
             error(f"Failed to download {failed} file(s)")

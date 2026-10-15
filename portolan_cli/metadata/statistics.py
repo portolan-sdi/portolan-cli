@@ -19,6 +19,8 @@ import pyarrow.parquet as pq
 import rasterio
 from rasterio import Statistics as RasterioStats
 
+from portolan_cli.trace import count
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -124,6 +126,7 @@ def extract_band_statistics(
     Returns:
         List of BandStatistics, one per band.
     """
+    count("raster.opens")
     with rasterio.open(path) as src:
         results: list[BandStatistics] = []
         computed_stats: list[RasterioStats] | None = None  # Lazy-computed via stats()
@@ -209,6 +212,7 @@ def extract_parquet_statistics(path: Path) -> dict[str, ColumnStatistics]:
         Dict mapping column name to ColumnStatistics.
         Binary/geometry columns are excluded.
     """
+    count("parquet.opens")
     pf = pq.ParquetFile(path)
     schema = pf.schema_arrow
     num_row_groups = pf.metadata.num_row_groups

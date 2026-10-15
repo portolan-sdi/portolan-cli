@@ -92,3 +92,34 @@ def test_extraction_report_folder_coverage_save_load_roundtrip(tmp_path: Path) -
     assert loaded.folder_coverage.folders_visited == ["NationalDatasets", "Boundaries"]
     assert loaded.folder_coverage.folders_skipped == [("Restricted", "499 Token Required")]
     assert loaded.folder_coverage.services_found == 7
+
+
+def _summary(wall_duration_seconds: float | None = None) -> ExtractionSummary:
+    return ExtractionSummary(
+        total_layers=2,
+        succeeded=2,
+        failed=0,
+        skipped=0,
+        empty=0,
+        total_features=10,
+        total_size_bytes=100,
+        total_duration_seconds=3.0,
+        wall_duration_seconds=wall_duration_seconds,
+    )
+
+
+@pytest.mark.unit
+def test_summary_wall_duration_roundtrip() -> None:
+    """The fetch wall time survives a save and a load (issue #991)."""
+    summary = _summary(wall_duration_seconds=1.75)
+    data = summary.to_dict()
+    assert data["wall_duration_seconds"] == 1.75
+    assert ExtractionSummary.from_dict(data) == summary
+
+
+@pytest.mark.unit
+def test_summary_without_wall_duration_keeps_the_old_shape() -> None:
+    """A report written before issue #991 loads, and writes no new key."""
+    data = _summary().to_dict()
+    assert "wall_duration_seconds" not in data
+    assert ExtractionSummary.from_dict(data).wall_duration_seconds is None

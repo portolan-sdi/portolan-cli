@@ -10,6 +10,8 @@ from typing import Any
 
 from rashid.api import SHA2_256, encode_multihash
 
+from portolan_cli.trace import count
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,9 +69,13 @@ def compute_checksum(path: Path) -> str:
         raise ValueError(f"Not a regular file: {path} (resolves to {resolved})")
 
     sha256 = hashlib.sha256()
+    size = 0
     with Path(resolved).open("rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
             sha256.update(chunk)
+            size += len(chunk)
+    count("checksum.files")
+    count("checksum.bytes", size)
     return sha256.hexdigest()
 
 

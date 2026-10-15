@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 import click
 from rashid.model import Severity as RashidSeverity
 
+from portolan_cli import trace
 from portolan_cli.add import AddFailure, add_files
 from portolan_cli.add_progress import AddProgressReporter, count_files
 from portolan_cli.catalog import find_catalog_root
@@ -46,6 +47,7 @@ from portolan_cli.licensing import (
     OTHER_LICENSE,
     license_gap,
 )
+from portolan_cli.logging_setup import configure_logging
 from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.output import detail, error, set_writer, success, warn
 from portolan_cli.output import info as info_output
@@ -397,16 +399,65 @@ def resolve_aws_region(
     default="text",
     help="Output format (json for machine parsing, text for humans).",
 )
+@click.option(
+    "-v",
+    "--verbose",
+    "verbosity",
+    count=True,
+    help=(
+        "Log level for stderr: -v for INFO, -vv for DEBUG. Put it before the "
+        "command (portolan -v check). The --verbose flag of a command such as "
+        "check controls how much that command prints, not the log level."
+    ),
+)
+@click.option(
+    "-q",
+    "--quiet",
+    is_flag=True,
+    default=False,
+    help="Log only errors to stderr.",
+)
+@click.option(
+    "--timings",
+    is_flag=True,
+    default=False,
+    help=(
+        "Record stage timings and counters. JSON output gets a meta block. "
+        "Text output prints a table to stderr. Same as PORTOLAN_TIMINGS=1."
+    ),
+)
 @click.pass_context
-def cli(ctx: click.Context, output_format: str) -> None:
+def cli(ctx: click.Context, output_format: str, verbosity: int, quiet: bool, timings: bool) -> None:
     """Portolan - Publish and manage cloud-native geospatial data catalogs."""
     # Store format in context for subcommands
     ctx.ensure_object(dict)
     ctx.obj["format"] = output_format
 
+    configure_logging(verbosity=verbosity, quiet=quiet)
+    trace.enable_from_env(timings_flag=timings)
+    if trace.is_enabled():
+        # The close callbacks run last in, first out. The root span closes
+        # first, so the trace file and the table hold its final duration.
+        ctx.call_on_close(lambda: _finish_trace(output_format))
+        ctx.with_resource(trace.span(f"portolan.{ctx.invoked_subcommand}"))
+
     # Note: .env loading moved to individual commands after catalog path resolution
     # to ensure correct .env is loaded when --catalog/--portolan-dir is used.
     # See load_dotenv_and_warn_sensitive() helper.
+
+
+def _finish_trace(output_format: str) -> None:
+    """Write the trace file and, in text mode, the timing table to stderr.
+
+    Click runs this when the root context closes, after a success and after
+    ``SystemExit``. The JSON envelope prints before this point, so its root
+    span reports the duration up to the print.
+    """
+    trace_file = os.environ.get(trace.TRACE_FILE_ENV)
+    if trace_file:
+        trace.write_chrome_trace(Path(trace_file))
+    if output_format == "text":
+        click.echo(trace.format_table(), err=True)
 
 
 def _prompt_init_metadata(
@@ -1342,7 +1393,15 @@ def _output_check_json(payload: dict[str, Any], *, failed: bool) -> None:
 @cli.command()
 @click.argument("path", type=click.Path(path_type=Path), default=".")
 @click.option("--json", "json_output", is_flag=True, help="Output results as JSON")
-@click.option("--verbose", "-v", is_flag=True, help="Show all validation rules, not just failures")
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help=(
+        "Show all validation rules, not just failures. "
+        "For log messages, use the root flag: portolan -v check."
+    ),
+)
 @click.option(
     "--fix",
     is_flag=True,
@@ -1713,30 +1772,33 @@ def _execute_check_workflow(
     fix_failed = False
     pre_outcome = None
     if fix:
-        pre_outcome = run_check(path, live=False, geo_assets=False, **check_kwargs)
-        fix_data, fix_failed = _run_fix_and_repairs(
-            path=path,
-            findings=list(pre_outcome.report.findings) if pre_outcome.report else [],
-            run_metadata=run_metadata,
-            run_geo_assets=run_geo_assets,
-            dry_run=dry_run,
-            remove_legacy=remove_legacy,
-            use_json=use_json,
-            verbose=verbose,
-            force=force,
-            workers=workers,
-        )
+        with trace.span("check.pre"):
+            pre_outcome = run_check(path, live=False, geo_assets=False, **check_kwargs)
+        with trace.span("check.fix", dry_run=dry_run):
+            fix_data, fix_failed = _run_fix_and_repairs(
+                path=path,
+                findings=list(pre_outcome.report.findings) if pre_outcome.report else [],
+                run_metadata=run_metadata,
+                run_geo_assets=run_geo_assets,
+                dry_run=dry_run,
+                remove_legacy=remove_legacy,
+                use_json=use_json,
+                verbose=verbose,
+                force=force,
+                workers=workers,
+            )
 
     if fix and dry_run and pre_outcome is not None:
         outcome = pre_outcome
     else:
-        outcome = run_check(
-            path,
-            live=live,
-            # --fix already ran the geo-asset conversion; re-scanning would repeat it.
-            geo_assets=run_geo_assets and not fix,
-            **check_kwargs,
-        )
+        with trace.span("check.recheck" if fix else "check.run"):
+            outcome = run_check(
+                path,
+                live=live,
+                # --fix already ran the geo-asset conversion; re-scanning would repeat it.
+                geo_assets=run_geo_assets and not fix,
+                **check_kwargs,
+            )
     payload = build_check_payload(outcome, mode=mode, fix_failed=fix_failed)
     if fix_data is not None:
         if dry_run:
@@ -1960,18 +2022,20 @@ def _run_fix_and_repairs(
         # rashid grades catalog.json alone and never reads metadata.yaml. The
         # sweep therefore runs on its own, like the item-freshness pass below,
         # and not through the finding-driven registry.
-        title_results = [
-            FixResult(
-                file_path=catalog_path,
-                action=FixAction.UPDATED,
-                success=True,
-                message="Applied the metadata.yaml title/description",
-            )
-            for catalog_path in apply_catalog_human_titles(catalog_root, dry_run=dry_run)
-        ]
+        with trace.span("check.fix.title_sweep"):
+            title_results = [
+                FixResult(
+                    file_path=catalog_path,
+                    action=FixAction.UPDATED,
+                    success=True,
+                    message="Applied the metadata.yaml title/description",
+                )
+                for catalog_path in apply_catalog_human_titles(catalog_root, dry_run=dry_run)
+            ]
         if findings:
             skip = {"convert"} if run_geo_assets else set()
-            run = apply_fixers(catalog_root, findings, dry_run=dry_run, skip=skip)
+            with trace.span("check.fix.fixers", findings=len(findings)):
+                run = apply_fixers(catalog_root, findings, dry_run=dry_run, skip=skip)
             fixer_report = run.report
             # What the fixers *did*, not what the findings asked for: a fixer
             # that ran and changed nothing is a skip with a reason, never an
@@ -1982,17 +2046,18 @@ def _run_fix_and_repairs(
         if title_results:
             fixer_report = FixReport(results=[*title_results, *fixer_report.results])
 
-    legacy_data, legacy_failed, written_items = _run_legacy_fix_workflow(
-        path=path,
-        run_metadata=run_metadata,
-        run_geo_assets=run_geo_assets,
-        dry_run=dry_run,
-        remove_legacy=remove_legacy,
-        use_json=use_json,
-        verbose=verbose,
-        force=force,
-        workers=workers,
-    )
+    with trace.span("check.fix.freshness"):
+        legacy_data, legacy_failed, written_items = _run_legacy_fix_workflow(
+            path=path,
+            run_metadata=run_metadata,
+            run_geo_assets=run_geo_assets,
+            dry_run=dry_run,
+            remove_legacy=remove_legacy,
+            use_json=use_json,
+            verbose=verbose,
+            force=force,
+            workers=workers,
+        )
 
     # The registry above ran against findings from the pre-fix check, so it never
     # saw an item the freshness pass has only just written. Repair those now, or
@@ -2002,7 +2067,8 @@ def _run_fix_and_repairs(
         from portolan_cli.validation.fixers import repair_written_items
 
         catalog_root = resolve_catalog_root_for_check(path) or path
-        repairs = repair_written_items(catalog_root, written_items, dry_run=dry_run)
+        with trace.span("check.fix.repair", items=len(written_items)):
+            repairs = repair_written_items(catalog_root, written_items, dry_run=dry_run)
         if repairs:
             fixer_report = FixReport(results=[*fixer_report.results, *repairs])
 
@@ -3501,6 +3567,7 @@ def add_cmd(
         _fail_on_missing_license("add", err, use_json=use_json)
     except (ValueError, FileNotFoundError) as err:
         _fail_on_add_error(err, resolved_paths, use_json=use_json)
+    trace.current_span().set(elapsed_seconds=progress_reporter.elapsed_seconds)
 
     # Compute affected collections before any post-processing
     # Include both added AND skipped assets so --pmtiles works on already-tracked files
@@ -3527,25 +3594,27 @@ def add_cmd(
 
     # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state)
     # Always run parquet generation if --stac-geoparquet flag was passed, regardless of output mode
-    _generate_add_mirrors(
-        catalog_root,
-        affected,
-        generate_parquet=generate_parquet,
-        verbose=verbose,
-        versioned_collections=versioned,
-    )
+    with trace.span("add.mirrors"):
+        _generate_add_mirrors(
+            catalog_root,
+            affected,
+            generate_parquet=generate_parquet,
+            verbose=verbose,
+            versioned_collections=versioned,
+        )
 
     # Handle PMTiles generation BEFORE output (so JSON reflects final state)
     from portolan_cli.viz.pmtiles import generate_or_suggest_pmtiles
 
-    generate_or_suggest_pmtiles(
-        catalog_root,
-        affected,
-        generate_pmtiles=generate_pmtiles,
-        force=force_pmtiles,
-        verbose=verbose,
-        use_json=use_json,
-    )
+    with trace.span("add.pmtiles"):
+        generate_or_suggest_pmtiles(
+            catalog_root,
+            affected,
+            generate_pmtiles=generate_pmtiles,
+            force=force_pmtiles,
+            verbose=verbose,
+            use_json=use_json,
+        )
 
     # Thumbnails last, so a higher-fidelity render from the PMTiles above is
     # adopted rather than replaced. Every geospatial collection needs a
@@ -6200,7 +6269,12 @@ def _readme_recursive(
     default=False,
     help="Only generate README at the specified path (skip subdirectories).",
 )
-@click.option("--verbose", "-v", is_flag=True, help="Show detailed output.")
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show detailed output. For log messages, use the root flag: portolan -v readme.",
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def readme(

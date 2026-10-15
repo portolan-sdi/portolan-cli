@@ -36,6 +36,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from portolan_cli.trace import span, submit
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -283,12 +285,18 @@ def _package_version(name: str) -> str:
         return "unknown"
 
 
-def build_report(discovery: Discovery, results: list[LayerResult]) -> ExtractionReport:
+def build_report(
+    discovery: Discovery,
+    results: list[LayerResult],
+    *,
+    wall_duration_seconds: float | None = None,
+) -> ExtractionReport:
     """Build the extraction report for ``results``.
 
     Args:
         discovery: The discovery the results come from.
         results: One result per layer, in discovery order.
+        wall_duration_seconds: The wall-clock time of the fetch stage.
 
     Returns:
         The report with its summary.
@@ -308,6 +316,7 @@ def build_report(discovery: Discovery, results: list[LayerResult]) -> Extraction
         total_features=sum(r.features or 0 for r in results),
         total_size_bytes=sum(r.size_bytes or 0 for r in results),
         total_duration_seconds=sum(r.duration_seconds or 0.0 for r in results),
+        wall_duration_seconds=wall_duration_seconds,
     )
     metadata = discovery.metadata or MetadataExtracted(
         source_url=discovery.source_url,
@@ -386,6 +395,19 @@ class _Run:
         return self.promote(self.stage_layer(layer))
 
     def stage_layer(self, layer: LayerRef) -> _Staged:
+        """Stage one layer inside an ``extract.layer`` span (issue #991)."""
+        with span("extract.layer", layer=layer.name) as stage:
+            staged = self._stage_layer(layer)
+            result = staged.result
+            stage.set(
+                status=result.status,
+                features=result.features,
+                duration_seconds=result.duration_seconds,
+                attempts=result.attempts,
+            )
+            return staged
+
+    def _stage_layer(self, layer: LayerRef) -> _Staged:
         """Fetch one layer with retry, and write its styles, into a staging tree.
 
         A worker thread runs this step. Each layer gets its own tree under
@@ -594,7 +616,7 @@ def _fetch_parallel(
     executor = ThreadPoolExecutor(max_workers=workers)
     timed_out = False
     try:
-        futures = {executor.submit(task, index, layer): (index, layer) for index, layer in jobs}
+        futures = {submit(executor, task, index, layer): (index, layer) for index, layer in jobs}
         pending: set[Future[_Staged]] = set(futures)
         while pending:
             now = time.monotonic()
@@ -847,12 +869,16 @@ def run_layer_extraction(
     from portolan_cli.extract.common.report import save_report
 
     options = options or LayerSourceOptions()
-    discovery = layer_source.discover(source, options)
-    # A plugin source sets LayerRef.path. Check every discovered layer before
-    # any write, because the catalog build reads the unfiltered list too.
-    for layer in discovery.layers:
-        layer_path(layer)
-    layers = filter_refs(discovery.layers, options.layer_filter, options.layer_exclude)
+    with span("extract.discover") as stage:
+        discovery = layer_source.discover(source, options)
+        # A plugin source sets LayerRef.path. Check every discovered layer before
+        # any write, because the catalog build reads the unfiltered list too.
+        for layer in discovery.layers:
+            layer_path(layer)
+        stage.set(layers=len(discovery.layers))
+    with span("extract.filter") as stage:
+        layers = filter_refs(discovery.layers, options.layer_filter, options.layer_exclude)
+        stage.set(layers=len(layers))
     if options.dry_run:
         return build_report(discovery, [_pending(layer) for layer in layers])
 
@@ -877,27 +903,36 @@ def run_layer_extraction(
         else:
             jobs.append((index, layer))
 
-    if options.workers > 1 and len(jobs) > 1:
-        collected += _fetch_parallel(run, jobs, total)
-    else:
-        collected += _fetch_sequential(run, jobs, total)
+    fetch_start = time.monotonic()
+    with span("extract.fetch", layers=len(jobs), workers=options.workers):
+        if options.workers > 1 and len(jobs) > 1:
+            collected += _fetch_parallel(run, jobs, total)
+        else:
+            collected += _fetch_sequential(run, jobs, total)
+    wall_duration = time.monotonic() - fetch_start
     collected.sort(key=lambda item: item[0])
     # A timed-out worker can still write here. After this event, that worker
     # removes its own tree and the empty staging root.
     run.ended.set()
     shutil.rmtree(output_dir / ".portolan" / "staging", ignore_errors=True)
 
-    report = build_report(discovery, [result for _, result in collected])
-    save_report(report, report_path)
-    if not options.raw:
-        build_catalog(
-            layer_source,
+    with span("extract.report"):
+        report = build_report(
             discovery,
-            output_dir,
-            report,
-            resolved_license=resolved_license,
-            catalog_id=options.catalog_id,
+            [result for _, result in collected],
+            wall_duration_seconds=round(wall_duration, 3),
         )
+        save_report(report, report_path)
+    if not options.raw:
+        with span("extract.build_catalog"):
+            build_catalog(
+                layer_source,
+                discovery,
+                output_dir,
+                report,
+                resolved_license=resolved_license,
+                catalog_id=options.catalog_id,
+            )
     return report
 
 

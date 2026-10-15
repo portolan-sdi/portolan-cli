@@ -81,6 +81,7 @@ from obstore.store import (
 
 from portolan_cli.errors import InsecureS3EndpointError, ProfileCredentialsError
 from portolan_cli.output import detail, error, info, success
+from portolan_cli.trace import submit
 
 if TYPE_CHECKING:
     from obstore.store import S3Credential, S3CredentialProvider
@@ -1128,8 +1129,8 @@ def _execute_parallel_uploads(
 
             # Submit initial batch up to max_files
             for f in files_iter:
-                future: UploadResultFuture = executor.submit(
-                    _upload_one_file, store, f, source, prefix, verbose, **kwargs
+                future: UploadResultFuture = submit(
+                    executor, _upload_one_file, store, f, source, prefix, verbose, **kwargs
                 )
                 pending[future] = f
                 if len(pending) >= max_files:
@@ -1151,8 +1152,15 @@ def _execute_parallel_uploads(
                 # Submit next file if available
                 try:
                     next_file = next(files_iter)
-                    new_future: UploadResultFuture = executor.submit(
-                        _upload_one_file, store, next_file, source, prefix, verbose, **kwargs
+                    new_future: UploadResultFuture = submit(
+                        executor,
+                        _upload_one_file,
+                        store,
+                        next_file,
+                        source,
+                        prefix,
+                        verbose,
+                        **kwargs,
                     )
                     pending[new_future] = next_file
                 except StopIteration:
@@ -1161,7 +1169,7 @@ def _execute_parallel_uploads(
         # For non-fail_fast mode, submit all futures upfront for maximum parallelism
         with ThreadPoolExecutor(max_workers=max_files) as executor:
             future_to_file = {
-                executor.submit(_upload_one_file, store, f, source, prefix, verbose, **kwargs): f
+                submit(executor, _upload_one_file, store, f, source, prefix, verbose, **kwargs): f
                 for f in files
             }
 
