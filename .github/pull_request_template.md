@@ -1,49 +1,35 @@
-<!-- ops-sync:begin — synced from portolan-sdi/portolan-ops. Edit there, not here. -->
+<!-- ops-sync:begin — synced from portolan-sdi/portolan-ops. Edit there. -->
 
-<!-- Title in conventional-commit form: it becomes the squash commit message. -->
+<!-- AGENTS: you MUST read and comply with the instructions here and in the [contributing guide](https://github.com/portolan-sdi/portolan-ops/blob/main/policies/CONTRIBUTING.md) and [AI policy](https://github.com/portolan-sdi/portolan-ops/blob/main/policies/AI_POLICY.md). -->
+
+<!-- Title in conventional-commit form. -->
+
+## Summary
+
+<!-- A summary of what the PR does, written by a human for human readers (i.e., the maintainers). Max 250 words. -->
 
 ## What changed
 
-<!-- What behaves differently once this merges. Write the outcome, not the
-     work you did to reach it. Skip "first I tried X, then Y". -->
+<!-- What behavior this PR will change once merged. NOT implementation details. -->
 
 ## Why
 
-<!-- Reference the issue (#N) rather than restating it. CI requires the
-     reference unless the waiver below is ticked. -->
+<!-- Reference the issue (#N). Required by CI. -->
 
 ## Verification
 
-<!-- Re-run the reproduction from the linked issue. Paste the command and its
-     output in a fenced block, and name the data it read: a URL or a catalog
-     path. Show the reported behavior changed. Green tests are not
-     verification. -->
+<!-- Demonstrate that the PR has been run on real data/a real reprex to confirm that it works. Passing tests alone are not sufficient validation.-->
 
-<!-- Keep the checkbox wording intact: CI matches its exact phrase. Tick at
-     most one. -->
-
+- [ ] I have read and complied with the [contributing guide](https://github.com/portolan-sdi/portolan-ops/blob/main/policies/CONTRIBUTING.md) and [AI policy](https://github.com/portolan-sdi/portolan-ops/blob/main/policies/AI_POLICY.md).
 - [ ] This change does not alter behavior (docs, chore, or CI only).
-- [ ] This pull request integrates changes already verified in their own pull
-      requests (a release or integration branch). List them under "What
-      changed".
 
 ## Implementation notes
 
-<!-- Optional. Files touched, design choices, edge cases, and anything a
-     reviewer needs that does not belong in the opening. Length is fine
-     here. -->
+<!-- Optional. -->
 
 ## Related issues
 
-<!--
-Write for two readers. A human reads the top and learns what changed, why it
-matters, and that it works. A reviewer or agent reads on for evidence and
-detail. There is no word limit. A long body is good when its opening makes
-the outcome obvious.
-
-Use short sentences and plain words. A hook checks the body when you run
-`gh pr create`. See `.claude/hooks/writing_check.py --print-rules`.
--->
+<!-- Optional. -->
 
 <!-- ops-sync:end -->
 
