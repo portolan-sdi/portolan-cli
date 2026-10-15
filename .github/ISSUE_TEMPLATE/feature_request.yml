@@ -5,50 +5,70 @@ body:
   - type: markdown
     attributes:
       value: >-
-        Write the top for a human. Show the gap rather than arguing for it.
-        Put design detail lower down. Length is fine when the opening makes
-        the outcome obvious.
+        Thanks for proposing a feature! Please include a concrete use case
+        that explains who needs it and what they want to do. For large
+        changes, discuss the proposal here before starting implementation.
+        For small changes with a clear solution, we'd really appreciate
+        a fix PR alongside the issue.
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: >-
+        Describe who would use this feature, what they want to accomplish,
+        and why. For example, "A user wants to visualize PMTiles with
+        different styles for different audiences," and not, "It would be good if the Portolan spec supported listing multiple styles as assets in the STAC JSON."
+    validations:
+      required: true
+
   - type: textarea
     id: problem
     attributes:
-      label: What problem does this solve?
+      label: Current limitations
       description: >-
-        The situation where current behavior falls short, and who it affects.
-        For spec-related features, name the spec requirement involved.
+        What prevents this use case today? For spec-related features,
+        include the relevant requirement.
     validations:
       required: true
+
   - type: textarea
     id: evidence
     attributes:
-      label: Show the gap
+      label: Example
       description: >-
-        Run the thing against real data and paste what you got. Name the
-        dataset: a URL or a catalog path. If the capability is missing
-        entirely, show the workaround you use today and what it costs.
+        Include an example using real data, with the command, output, and
+        dataset URL or catalog path. If the capability is missing entirely,
+        describe your current workaround and the time or effort it takes.
     validations:
       required: true
+
   - type: textarea
     id: proposal
     attributes:
       label: Proposed behavior
-      description: What the tool should do instead. Name the command or the output.
+      description: >-
+        What should a user be able to do with this feature? Include an
+        example command or output where useful.
     validations:
       required: true
+
   - type: textarea
     id: implementation
     attributes:
-      label: Implementation details
+      label: Implementation notes
       description: >-
-        Optional. Where this would live, options you considered, and edge
-        cases the design must handle.
+        Optional. Describe possible approaches, where the change would
+        belong, alternatives you considered, and edge cases to handle.
     validations:
       required: false
+
   - type: textarea
     id: done
     attributes:
-      label: Done when
+      label: How to confirm it works
       description: >-
-        Optional. The command that proves the capability works, and the data
-        it runs against.
+        Optional. Suggest a command or example a reviewer could run,
+        the data it would use, and the expected result.
     validations:
       required: false
