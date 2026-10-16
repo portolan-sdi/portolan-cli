@@ -346,7 +346,7 @@ class MissingLicenseError(ValidationError):
 
 
 class InvalidLiveUrlError(ValidationError):
-    """The live pass requires an HTTPS base URL with a host.
+    """The live pass requires an HTTPS base URL with a host and a valid port.
 
     Error code: PRTLN-VAL005
     """
@@ -355,7 +355,8 @@ class InvalidLiveUrlError(ValidationError):
 
     def __init__(self, source: str) -> None:
         super().__init__(
-            f"--live needs an https base URL. Set {source} to an https URL.", source=source
+            f"--live needs a valid https base URL. Set {source} to a valid https URL.",
+            source=source,
         )
 
 

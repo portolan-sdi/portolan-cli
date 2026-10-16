@@ -123,8 +123,10 @@ def _resolve_root(path: Path) -> Path:
 def validate_live_base_url(path: Path, public_url: str | None) -> None:
     """Reject invalid live URLs before validation or any requested repair.
 
-    Match rashid's HTTPS-only policy. The error names the URL's source and
-    does not expose the URL, which can contain credentials.
+    Match rashid's HTTPS-only policy. Also require a host and a valid port.
+    rashid accepts a URL without them, and every probe then fails one by one.
+    The error names the URL's source and does not expose the URL, which can
+    contain credentials.
     """
     base_url = public_url or load_public_url(_resolve_root(path))
     if base_url is None:
@@ -132,9 +134,11 @@ def validate_live_base_url(path: Path, public_url: str | None) -> None:
     source = "--url" if public_url else "publish.public_url"
     try:
         parsed = urlparse(base_url)
+        # urlparse defers port parsing. Reading .port raises on a bad port.
+        _ = parsed.port
     except ValueError as err:
         raise InvalidLiveUrlError(source) from err
-    if parsed.scheme.lower() != "https" or not parsed.netloc:
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
         raise InvalidLiveUrlError(source)
 
 

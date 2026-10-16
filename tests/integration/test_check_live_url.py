@@ -36,7 +36,7 @@ def test_http_live_url_reports_usage_error(
 
     assert result.exit_code == 2
     assert isinstance(result.exception, SystemExit)
-    message = f"--live needs an https base URL. Set {source} to an https URL."
+    message = f"--live needs a valid https base URL. Set {source} to a valid https URL."
     if use_json:
         envelope = json.loads(result.output)
         assert envelope["success"] is False

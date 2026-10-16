@@ -84,12 +84,24 @@ class TestLoadPublicUrl:
 
 
 class TestLiveBaseUrl:
-    @pytest.mark.parametrize("url", ["http://example.org/", "https:///demo", "https://[bad/"])
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://example.org/",
+            "https:///demo",
+            "https://[bad/",
+            "https://:443/",
+            "https://example.org:abc/",
+            "https://example.org:99999/",
+        ],
+    )
     def test_invalid_url_has_typed_error(self, tmp_path: Path, url: str) -> None:
-        with pytest.raises(InvalidLiveUrlError, match="Set --url to an https URL"):
+        with pytest.raises(InvalidLiveUrlError, match="Set --url to a valid https URL"):
             run_check(tmp_path, live=True, public_url=url, geo_assets=False)
 
-    @pytest.mark.parametrize("url", [None, "https://example.org/", "HTTPS://example.org/"])
+    @pytest.mark.parametrize(
+        "url", [None, "https://example.org/", "HTTPS://example.org/", "https://example.org:8443/"]
+    )
     def test_valid_or_absent_url_is_allowed(self, tmp_path: Path, url: str | None) -> None:
         validate_live_base_url(tmp_path, url)
 
@@ -98,7 +110,9 @@ class TestLiveBaseUrl:
         _write_config(tmp_path, {"publish": {"public_url": "http://example.org/"}})
         nested = tmp_path / "roads"
         nested.mkdir()
-        with pytest.raises(InvalidLiveUrlError, match="Set publish.public_url to an https URL"):
+        with pytest.raises(
+            InvalidLiveUrlError, match="Set publish.public_url to a valid https URL"
+        ):
             validate_live_base_url(nested, None)
 
     def test_flag_takes_precedence_over_invalid_config(self, tmp_path: Path) -> None:
