@@ -434,6 +434,10 @@ def cli(ctx: click.Context, output_format: str, verbosity: int, quiet: bool, tim
     ctx.obj["format"] = output_format
 
     configure_logging(verbosity=verbosity, quiet=quiet)
+    # Tracing state is process-wide. A second run in the same process (a
+    # notebook, an agent harness, a test) must not report the spans of the
+    # first run, or get a meta block it did not ask for.
+    trace.reset()
     trace.enable_from_env(timings_flag=timings)
     if trace.is_enabled():
         # The close callbacks run last in, first out. The root span closes

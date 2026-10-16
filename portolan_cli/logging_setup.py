@@ -14,7 +14,8 @@ Levels:
 
 Without a flag, ``PORTOLAN_LOG`` (``debug``, ``info``, or ``warning``) sets the level.
 ``PORTOLAN_LOG_FILE=<path>`` also writes one JSON object for each record.
-``PORTOLAN_GDAL_DEBUG=1`` sets ``CPL_DEBUG=ON`` for GDAL.
+``PORTOLAN_GDAL_DEBUG=1`` sets ``CPL_DEBUG=ON`` for GDAL and shows the GDAL
+debug messages that rasterio logs, at any verbosity.
 
 This module uses no click, so library code can call it too.
 """
@@ -36,6 +37,8 @@ GDAL_DEBUG_ENV = "PORTOLAN_GDAL_DEBUG"
 
 PACKAGE_LOGGER = "portolan_cli"
 THIRD_PARTY_LOGGERS = ("urllib3", "httpx", "obstore")
+# Rasterio sends GDAL messages to this logger. A CPL_DEBUG message arrives at DEBUG.
+GDAL_LOGGER = "rasterio._env"
 
 _ENV_LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warning": logging.WARNING}
 
@@ -108,7 +111,7 @@ def reset_logging() -> None:
         root.setLevel(_saved_root_level)
         _saved_root_level = None
     logging.getLogger(PACKAGE_LOGGER).setLevel(logging.NOTSET)
-    for name in THIRD_PARTY_LOGGERS:
+    for name in (*THIRD_PARTY_LOGGERS, GDAL_LOGGER):
         logging.getLogger(name).setLevel(logging.NOTSET)
     logging.captureWarnings(False)
 
@@ -123,12 +126,15 @@ def configure_logging(*, verbosity: int = 0, quiet: bool = False) -> None:
     global _saved_root_level
     reset_logging()
     level = _resolve_level(verbosity, quiet)
+    gdal_debug = os.environ.get(GDAL_DEBUG_ENV, "").strip() in ("1", "true", "on", "yes")
     root = logging.getLogger()
 
     # The handler level keeps records below the chosen level off stderr,
     # also when another handler (pytest's caplog) lowers the root level.
+    # With GDAL debug on, the handler passes DEBUG records. The logger levels
+    # below still keep the DEBUG records of other loggers off stderr.
     stderr_handler = _StderrHandler()
-    stderr_handler.setLevel(level)
+    stderr_handler.setLevel(logging.DEBUG if gdal_debug else level)
     stderr_handler.setFormatter(_RelativeFormatter())
     stderr_handler._portolan = True  # type: ignore[attr-defined]
     root.addHandler(stderr_handler)
@@ -154,5 +160,6 @@ def configure_logging(*, verbosity: int = 0, quiet: bool = False) -> None:
             logging.getLogger(name).setLevel(logging.DEBUG)
         logging.captureWarnings(True)
 
-    if os.environ.get(GDAL_DEBUG_ENV, "").strip() in ("1", "true", "on", "yes"):
+    if gdal_debug:
         os.environ["CPL_DEBUG"] = "ON"
+        logging.getLogger(GDAL_LOGGER).setLevel(logging.DEBUG)

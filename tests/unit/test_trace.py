@@ -72,6 +72,7 @@ class TestSpans:
         assert node["open"] is True
         assert node["wall_s"] >= 0
 
+    @pytest.mark.skipif(trace.resource is None, reason="Windows has no resource module")
     def test_span_records_rss_high_water(self) -> None:
         trace.enable()
         with trace.span("rss"):

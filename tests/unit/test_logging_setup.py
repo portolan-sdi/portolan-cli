@@ -154,6 +154,35 @@ class TestGdalDebug:
         logging_setup.configure_logging(verbosity=0, quiet=False)
         assert "CPL_DEBUG" not in os.environ
 
+    def test_gdal_debug_records_reach_stderr(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Rasterio logs GDAL debug messages at DEBUG on ``rasterio._env``."""
+        monkeypatch.delenv("CPL_DEBUG", raising=False)
+        monkeypatch.setenv("PORTOLAN_GDAL_DEBUG", "1")
+        logging_setup.configure_logging(verbosity=0, quiet=False)
+        logging.getLogger("rasterio._env").debug("CPLE_None in GDAL: GDALOpen(x.tif) succeeds")
+        assert re.search(
+            r"^\+\d+\.\d{3}s DEBUG rasterio\._env: CPLE_None in GDAL: GDALOpen\(x\.tif\) succeeds$",
+            capsys.readouterr().err,
+            re.MULTILINE,
+        )
+
+    def test_gdal_records_stay_hidden_without_gdal_debug(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.delenv("CPL_DEBUG", raising=False)
+        logging_setup.configure_logging(verbosity=2, quiet=False)
+        logging.getLogger("rasterio._env").debug("hidden gdal record")
+        assert "hidden gdal record" not in capsys.readouterr().err
+
+    def test_reset_restores_gdal_logger_level(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("CPL_DEBUG", raising=False)
+        monkeypatch.setenv("PORTOLAN_GDAL_DEBUG", "1")
+        logging_setup.configure_logging(verbosity=0, quiet=False)
+        logging_setup.reset_logging()
+        assert logging.getLogger("rasterio._env").level == logging.NOTSET
+
 
 def test_package_logger_has_null_handler() -> None:
     """A fresh interpreter sees the NullHandler that the package adds on import."""

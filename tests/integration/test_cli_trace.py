@@ -149,6 +149,38 @@ class TestTimings:
         assert "wall s" not in result.stdout
 
 
+class TestRunIsolation:
+    """Each invocation of ``cli`` in one process starts with fresh trace state."""
+
+    @staticmethod
+    def _failing_add(tmp_path: Path, *root_flags: str) -> dict[str, Any]:
+        result = CliRunner().invoke(
+            cli,
+            [
+                *root_flags,
+                "--format",
+                "json",
+                "add",
+                "--portolan-dir",
+                str(tmp_path),
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code != 0
+        envelope: dict[str, Any] = json.loads(result.stdout)
+        return envelope
+
+    def test_run_without_timings_after_a_timed_run_has_no_meta(self, tmp_path: Path) -> None:
+        assert "meta" in self._failing_add(tmp_path, "--timings")
+        assert set(self._failing_add(tmp_path)) == {"success", "command", "data", "errors"}
+
+    def test_timed_run_reports_only_its_own_spans(self, tmp_path: Path) -> None:
+        first = self._failing_add(tmp_path, "--timings")["meta"]
+        second = self._failing_add(tmp_path, "--timings")["meta"]
+        assert [node["name"] for node in second["timings"]] == ["portolan.add"]
+        assert second["run_id"] != first["run_id"]
+
+
 class TestTraceFile:
     def test_trace_file_holds_chrome_events(
         self, catalog_with_data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -29,8 +29,8 @@ Each line shows the seconds since start, the level, and the logger name:
 At `-vv`, Python warnings also go through the log as the `py.warnings` logger.
 
 Some commands, such as `check`, `add`, and `readme`, have their own `--verbose`
-flag. That flag controls how much the command prints. It does not change the
-log level. `portolan -v check --verbose` sets both.
+flag. That flag controls how much the command prints, and the root flag
+controls the log level. `portolan -v check --verbose` sets both.
 
 These environment variables also control logging:
 
@@ -38,7 +38,7 @@ These environment variables also control logging:
 |---|---|
 | `PORTOLAN_LOG` | Sets the level to `debug`, `info`, or `warning` when you give no flag. A flag takes precedence. |
 | `PORTOLAN_LOG_FILE` | Also writes each record to this path as one JSON object per line, with the run ID. |
-| `PORTOLAN_GDAL_DEBUG` | Set to `1` to turn on GDAL debug output (`CPL_DEBUG=ON`). |
+| `PORTOLAN_GDAL_DEBUG` | Set to `1` to turn on GDAL debug output (`CPL_DEBUG=ON`). The GDAL messages go to stderr as `rasterio._env` records at any verbosity. |
 
 ## Timings
 
@@ -58,7 +58,8 @@ portolan.add           4.210  5.902   412.3
   add.process          3.104  4.880   412.3
 ```
 
-Wall time is elapsed time. CPU time covers every thread in the process.
+Wall time is elapsed time. CPU time is the CPU time of the whole process,
+worker threads included.
 `rss MB` is the resident memory high-water mark of the process at the end of
 the stage.
 
@@ -107,7 +108,7 @@ PORTOLAN_TRACE_FILE=trace.json portolan add demographics/
 ```
 
 Open the file in [Perfetto](https://ui.perfetto.dev). Each thread gets its own
-row, so you can see how the worker threads of `add`, `push`, and `extract`
+row. The rows show how the worker threads of `add`, `push`, and `extract`
 overlap.
 
 ### Limits
@@ -116,5 +117,8 @@ overlap.
 - With more than one worker, `check --fix` converts files in worker
   processes. Spans and counters inside those processes do not reach the
   parent run.
-- rashid runs all validation rules in one call, so `check.validate` covers
-  every rule.
+- rashid runs all validation rules in one call, so `check.validate` is one
+  span for all the rules.
+- In `mem` mode, the `tracemalloc` peak is for the whole process. With more
+  than one worker, the peak of a span can include memory that other threads
+  allocated.
