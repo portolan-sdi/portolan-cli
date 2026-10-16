@@ -614,12 +614,19 @@ def test_timeout_scan_skips_a_layer_that_finished(
 def test_timed_out_layer_stops_its_retries(fixtures_dir: Path, tmp_path: Path) -> None:
     """A timed-out layer does not retry after the run, so it leaves no staged copy."""
     calls: list[str] = []
+    workers: list[threading.Thread] = []
+    run_returned = threading.Event()
 
     class _FailSlowly(_FixtureSource):
         def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
             if layer.name == "points":
                 calls.append(layer.name)
-                time.sleep(1.5)
+                workers.append(threading.current_thread())
+                # Fail only after the run gave up on the layer. A fixed sleep
+                # raced the deadline check on a loaded CI runner, and the
+                # first failure then reached a retry before the run marked
+                # the layer abandoned.
+                run_returned.wait(timeout=30)
                 raise ConnectionError("points is down")
             return super().fetch(source, layer, dest)
 
@@ -630,8 +637,12 @@ def test_timed_out_layer_stops_its_retries(fixtures_dir: Path, tmp_path: Path) -
         out,
         _options(workers=2, layer_timeout=1.0, retries=3, raw=True),
     )
-    time.sleep(2.0)
+    run_returned.set()
+    # The run shut its executor down, so the worker exits after its last
+    # attempt and its cleanup.
+    workers[0].join(timeout=30)
 
+    assert not workers[0].is_alive()
     assert calls == ["points"]
     assert not (out / ".portolan" / "staging").exists()
 
