@@ -3989,6 +3989,20 @@ def _prepare_push_concurrency(
     return effective_file, effective_chunk
 
 
+def _verify_payload(result: Any) -> dict[str, Any]:
+    """Return the ``--verify`` counts for a JSON envelope.
+
+    Args:
+        result: PushResult or PushAllResult.
+
+    Returns:
+        A dict with a ``verify`` key when push verified, otherwise an empty dict.
+    """
+    if result.verify is None:
+        return {}
+    return {"verify": {"checked": result.verify.checked, "mismatched": result.verify.mismatched}}
+
+
 def _report_push_all_result(all_result: Any, *, use_json: bool) -> None:
     """Report the outcome of a push that covered every collection.
 
@@ -4015,6 +4029,7 @@ def _report_push_all_result(all_result: Any, *, use_json: bool) -> None:
                 "total_would_push_files": all_result.total_would_push_files,
                 "total_would_push_versions": all_result.total_would_push_versions,
                 "collection_errors": all_result.collection_errors,
+                **_verify_payload(all_result),
             },
         )
         output_json_envelope(envelope)
@@ -4056,6 +4071,7 @@ def _report_push_result(result: Any, *, dry_run: bool, use_json: bool) -> None:
             "versions_pushed": result.versions_pushed,
             "conflicts": result.conflicts,
             "errors": result.errors,
+            **_verify_payload(result),
         },
         use_json=use_json,
     ):
@@ -4142,6 +4158,14 @@ def _report_push_result(result: Any, *, dry_run: bool, use_json: bool) -> None:
     help="Enable adaptive concurrency (default: on). Starts with low concurrency, "
     "ramps up on success, backs off on errors. Safer for home networks.",
 )
+@click.option(
+    "--verify",
+    is_flag=True,
+    help="Send a HEAD for each asset that push skips as unchanged. Upload the asset "
+    "again when the object is missing or its size differs from the manifest. "
+    "Works with no new version. A size check cannot find a wrong object of the "
+    "same size. Without this flag, push sends no request for a skipped asset.",
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 @click.option(
@@ -4165,6 +4189,7 @@ def push(
     chunk_concurrency: int,
     max_connections: int | None,
     adaptive: bool,
+    verify: bool,
 ) -> None:
     r"""Push local catalog changes to cloud object storage.
 
@@ -4181,6 +4206,15 @@ def push(
     If --collection is specified, pushes that collection only.
     If --collection is omitted, pushes all collections in the catalog.
 
+    Push skips an asset when the remote manifest records the same sha256.
+    Push does not read the object for that decision. Use --verify to check
+    each skipped asset in the store. Push then sends one HEAD per skipped
+    asset. It uploads the asset again when the object is missing or its size
+    differs from the manifest. This works with no new version, and it adds
+    no version. With no new version and no --force, push uploads only those
+    assets and keeps the remote versions.json as is. The check compares
+    sizes only. It cannot find a wrong object of the same size.
+
     \b
     Examples:
         # Push a single collection
@@ -4190,10 +4224,13 @@ def push(
         # Push all collections
         portolan push s3://mybucket/catalog
         portolan push --dry-run  # Uses configured remote
+
+        # Repair objects that disagree with the manifest
+        portolan push s3://mybucket/catalog -c demographics --verify
     """
     import asyncio
 
-    from portolan_cli.errors import ProfileCredentialsError
+    from portolan_cli.errors import ProfileCredentialsError, PushVerifyError
     from portolan_cli.sync.push import PushConflictError, push_all_collections, push_async
 
     use_json = should_output_json(ctx, json_output)
@@ -4264,6 +4301,7 @@ def push(
                 adaptive=adaptive,
                 verbose=verbose,
                 json_mode=use_json,
+                verify=verify,
             )
 
             _report_push_all_result(all_result, use_json=use_json)
@@ -4290,6 +4328,7 @@ def push(
                 chunk_concurrency=effective_chunk_conc,
                 adaptive=adaptive,
                 json_mode=use_json,
+                verify=verify,
             )
         )
 
@@ -4307,7 +4346,7 @@ def push(
             info_output("Use --force to overwrite, or pull remote changes first")
         raise SystemExit(1) from err
 
-    except (ProfileCredentialsError, FileNotFoundError) as err:
+    except (ProfileCredentialsError, PushVerifyError, FileNotFoundError) as err:
         code = getattr(err, "code", None)
         emit_error("push", type(err).__name__, str(err), use_json=use_json, code=code)
         raise SystemExit(1) from err
