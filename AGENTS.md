@@ -139,8 +139,8 @@ portolan-cli/
 └── .github/workflows/     # CI/CD pipelines
 ```
 
-`docs/` is public (Zensical). Internal rationale lives in docstrings and
-comments next to the code it governs. See `.claude/rules/documentation.md` for
+`docs/` is public (Zensical). Docstrings and comments next to the code record
+the internal rationale. See `.claude/rules/documentation.md` for
 where to file things.
 
 ## Synced brand files

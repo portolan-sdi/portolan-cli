@@ -161,5 +161,4 @@ A second mode is planned and not built: a static Iceberg table over the
 GeoParquet a catalog already publishes. It copies no rows, needs no server, and
 leaves the STAC `data` asset alone.
 [portolan-spec#201](https://github.com/portolan-sdi/portolan-spec/pull/201)
-proposes that mode for the specification. It is not part of the specification
-yet.
+proposes that mode for the specification, which does not include it yet.
