@@ -688,7 +688,7 @@ become GeoParquet; non-spatial tables become plain Parquet in tabular
 collections.
 
 URL is the Carto SQL API endpoint or account domain
-(e.g. https://phl.carto.com or https://phl.carto.com/api/v2/sql).
+(e.g. `https://phl.carto.com` or `https://phl.carto.com/api/v2/sql`).
 OUTPUT_DIR is the directory to write extracted data (default: 'carto_extract').
 
 The catalog id comes from the output directory name. Pass --id to set it
