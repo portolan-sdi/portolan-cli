@@ -863,3 +863,39 @@ def register_plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., N
 
     yield _register
     manager.reset_plugin_manager()
+
+
+@pytest.fixture(autouse=True)
+def no_remote_key_listing(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Stop a test from listing a real bucket before a push (Issue #965).
+
+    Push lists the remote keys before it uploads, so that a rollback keeps the
+    keys that existed. Many tests push to ``s3://mybucket`` with mocked
+    uploads. The listing then goes to the network and blocks for seconds.
+
+    A remote store gets None here. That means "state unknown", so a rollback
+    deletes nothing and sends no DELETE either. Three cases run the real
+    listing. An in-process store, such as MemoryStore, runs it. A test that
+    uses the ``moto_server`` fixture runs it against moto. A test with the
+    ``network`` marker runs it against the real store.
+    """
+    if "moto_server" in request.fixturenames or request.node.get_closest_marker("network"):
+        yield
+        return
+
+    from obstore.store import LocalStore, MemoryStore
+
+    from portolan_cli.sync import push as push_module
+
+    real = push_module._existing_keys_before_push
+
+    async def in_process_only(
+        store: object, prefix: str, collection: str, planned_keys: list[str]
+    ) -> set[str] | None:
+        """Run the real key read for an in-process store, else report the state unknown."""
+        if isinstance(store, MemoryStore | LocalStore):
+            return await real(store, prefix, collection, planned_keys)
+        return None
+
+    with mock.patch.object(push_module, "_existing_keys_before_push", in_process_only):
+        yield

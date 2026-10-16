@@ -529,7 +529,9 @@ class TestPushAsyncConcurrency:
 
         The rollback deletes each uploaded asset. `obs.delete` must be mocked:
         unmocked, it called the real S3 API for `s3://test-bucket` and the test
-        took 110 s waiting on the network.
+        took 110 s waiting on the network. The listing of existing keys is
+        mocked for the same reason. It returns an empty set, because this is a
+        first push. Unmocked, the listing fails, and rollback deletes nothing.
         """
         from portolan_cli.sync.push import push_async
 
@@ -553,6 +555,7 @@ class TestPushAsyncConcurrency:
                 side_effect=lambda store, key: deleted_keys.append(key),
             ),
             patch("portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)),
+            patch("portolan_cli.sync.push._existing_keys_before_push", return_value=set()),
         ):
             result = await push_async(
                 catalog_root=async_catalog,
