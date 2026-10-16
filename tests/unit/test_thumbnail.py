@@ -670,8 +670,17 @@ class TestGeoparquetMetadataBounds:
     """Tests for GeoParquet metadata-based bbox reading (Issue #423 Performance)."""
 
     @pytest.mark.unit
-    def test_read_bounds_from_metadata(self, tmp_path: Path) -> None:
-        """_read_geoparquet_bounds extracts bbox from GeoParquet metadata (O(1))."""
+    @pytest.mark.parametrize(
+        "bbox",
+        [
+            pytest.param([-60.5, -32.5, -60.0, -32.0], id="2d"),
+            # Distinct z values, so a slice of the first four cannot pass by coincidence.
+            # A 6-element 3D bbox reduces to 2D rather than keeping minz (issue #854).
+            pytest.param([-60.5, -32.5, 120.0, -60.0, -32.0, 480.0], id="3d"),
+        ],
+    )
+    def test_read_bounds_from_metadata(self, tmp_path: Path, bbox: list[float]) -> None:
+        """_read_geoparquet_bounds extracts the XY bbox from GeoParquet metadata (O(1))."""
         import json
         from unittest.mock import MagicMock, patch
 
@@ -681,7 +690,7 @@ class TestGeoparquetMetadataBounds:
 
         # Mock ParquetFile with geo metadata containing bbox
         mock_pq_file = MagicMock()
-        geo_metadata = {"columns": {"geometry": {"bbox": [-60.5, -32.5, -60.0, -32.0]}}}
+        geo_metadata = {"columns": {"geometry": {"bbox": bbox}}}
         mock_pq_file.schema_arrow.metadata = {b"geo": json.dumps(geo_metadata).encode("utf-8")}
 
         with patch("pyarrow.parquet.ParquetFile", return_value=mock_pq_file):
