@@ -405,6 +405,7 @@ def _collect_layers_from_services(
     services: list[ServiceInfo],
     base_url: str,
     timeout: float,
+    skipped_out: list[tuple[ServiceInfo, LayerInfo, str]] | None = None,
 ) -> tuple[list[LayerInfo], dict[int, ServiceInfo], dict[str, int], list[tuple[str, str]]]:
     """Collect all layers from multiple services.
 
@@ -414,6 +415,9 @@ def _collect_layers_from_services(
         - service_for_layer: Maps layer index to its source service
         - layer_count_per_service: Maps service name to total layer count (for flatten logic)
         - discovery_errors: List of (service_name, error_message) tuples
+
+    Layers of services without Query capability are not returned as extractable.
+    When skipped_out is given, they are appended to it as (service, layer, reason).
     """
     all_layers: list[LayerInfo] = []
     service_for_layer: dict[int, ServiceInfo] = {}
@@ -424,6 +428,11 @@ def _collect_layers_from_services(
         service_url = service.get_url(base_url)
         try:
             service_discovery = discover_layers(service_url, timeout=timeout)
+            if skipped_out is not None and service_discovery.skip_reason:
+                skipped_out.extend(
+                    (service, layer, service_discovery.skip_reason)
+                    for layer in service_discovery.skipped_layers
+                )
             # Track layer count for this service (for flatten logic)
             layer_count_per_service[service.name] = len(service_discovery.layers)
             for layer in service_discovery.layers:
@@ -508,6 +517,15 @@ class ArcGISLayerSource:
             LayerRef(id=layer.id, name=layer.name, data=ArcGISLayer(layer, source))
             for layer in found.layers
         ]
+        layers += [
+            LayerRef(
+                id=layer.id,
+                name=layer.name,
+                data=ArcGISLayer(layer, source),
+                skip_reason=found.skip_reason,
+            )
+            for layer in found.skipped_layers
+        ]
         return self.discovery_from(
             source, _service_metadata(source, found), layers, license_info=found.license_info
         )
@@ -528,8 +546,9 @@ class ArcGISLayerSource:
             folder=folder,
             recurse=self.options.recurse,
         )
+        skipped: list[tuple[ServiceInfo, LayerInfo, str]] = []
         all_layers, service_for_layer, layer_counts, _errors = _collect_layers_from_services(
-            services, base_url, self.options.timeout
+            services, base_url, self.options.timeout, skipped_out=skipped
         )
         layers = []
         for index, layer in enumerate(all_layers):
@@ -545,6 +564,17 @@ class ArcGISLayerSource:
                     name=layer.name,
                     path=path,
                     data=ArcGISLayer(layer, service.get_url(base_url)),
+                )
+            )
+        for service, layer, reason in skipped:
+            service_dir = _service_output_dir(Path(), service.name).as_posix()
+            layers.append(
+                LayerRef(
+                    id=layer.id,
+                    name=layer.name,
+                    path=f"{service_dir}/{slugify(layer.name)}",
+                    data=ArcGISLayer(layer, service.get_url(base_url)),
+                    skip_reason=f"{service.name}: {reason}",
                 )
             )
         combined = ServiceDiscoveryResult(layers=list(all_layers))

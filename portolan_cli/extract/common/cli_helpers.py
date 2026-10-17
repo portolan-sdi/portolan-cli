@@ -144,7 +144,7 @@ def make_extract_progress_callback(
             # Issue #504: show the error inline instead of "Failed" alone.
             warn(f"  ✗ Failed: {progress.error}" if progress.error else "  ✗ Failed")
         elif progress.status == "skipped":
-            detail(skipped_message)
+            detail(f"  ↪ {progress.error}" if progress.error else skipped_message)
 
     return on_progress
 
@@ -310,9 +310,7 @@ def output_extract_result(
         return
 
     if dry_run:
-        info_output(f"\nDry run - would extract {report.summary.total_layers} layers:")
-        for layer in report.layers:
-            click.echo(f"  • {layer.name} (ID: {layer.id})")
+        _print_dry_run(report)
         return
 
     click.echo()
@@ -322,6 +320,8 @@ def output_extract_result(
         status_parts.append(f"{report.summary.failed} failed")
     if report.summary.empty > 0:
         status_parts.append(f"{report.summary.empty} empty")
+    if report.summary.skipped > 0:
+        status_parts.append(f"{report.summary.skipped} skipped")
 
     if report.summary.failed > 0:
         # Partial failure: warn and list failed layers
@@ -354,6 +354,21 @@ def output_extract_result(
         )
         for folder, reason in coverage.folders_skipped:
             warn(f"Skipped folder {folder}: {reason}")
+
+
+def _print_dry_run(report: Any) -> None:
+    """List the layers a dry run would extract, then the ones it would skip."""
+    extract = [layer for layer in report.layers if layer.status != "skipped"]
+    skipped = [layer for layer in report.layers if layer.status == "skipped"]
+    noun = "layer" if len(extract) == 1 else "layers"
+    info_output(f"\nDry run - would extract {len(extract)} {noun}:")
+    for layer in extract:
+        click.echo(f"  • {layer.name} (ID: {layer.id})")
+    if skipped:
+        info_output(f"\nWould skip {len(skipped)} {'layer' if len(skipped) == 1 else 'layers'}:")
+        for layer in skipped:
+            reason = f": {layer.error}" if layer.error else ""
+            click.echo(f"  • {layer.name} (ID: {layer.id}){reason}")
 
 
 def _apply(command: Callable[..., Any], decorators: list[Any]) -> Callable[..., Any]:

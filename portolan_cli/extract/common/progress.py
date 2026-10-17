@@ -36,7 +36,8 @@ class ExtractionProgress:
         total_layers: Total number of layers to extract.
         layer_name: Name of current layer.
         status: Current status ("starting", "extracting", "success", "failed", "skipped").
-        error: Error message when status is "failed" (Issue #504).
+        error: Error message when status is "failed" (Issue #504), or the reason
+            when status is "skipped" without a download attempt.
     """
 
     layer_index: int
