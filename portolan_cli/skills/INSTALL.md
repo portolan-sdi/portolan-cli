@@ -1,72 +1,47 @@
-## Install
+## Installation
 
-### Claude Code (CLI & Desktop)
+Choose the instructions for your agent. Copy whole skill directories so the agent can use their scripts and reference files.
+
+### Claude CLI
+
+For Claude Code, use the plugin commands in the [quickstart](#quickstart), then start a new session. Skills use the `portolan:` prefix: `/portolan:portolan-bootstrap` builds a catalog, and `/portolan:reading-portolan` helps you use one.
+
+See [Claude Code plugin installation](https://code.claude.com/docs/en/discover-plugins) for installation scopes and updates.
+
+### Claude web and desktop apps
+
+1. Open **Customize**, then **Plugins**.
+2. Select **Add**, **Add marketplace**, then **Add from a repository**.
+3. Enter `portolan-sdi/portolan-skills` and install the **Portolan** plugin.
+
+See [Use plugins in Claude](https://support.claude.com/en/articles/13837440-use-plugins-in-claude) for account and workspace requirements. For workflows that run local tools or process files, use Cowork or Claude Code with access to your working directory.
+
+### Codex
+
+From the root of the project where you want to use the skills, run:
 
 ```bash
-claude plugin marketplace add portolan-sdi/portolan-skills
-claude plugin install portolan
+skills_checkout=$(mktemp -d)
+git clone https://github.com/portolan-sdi/portolan-skills.git "$skills_checkout"
+mkdir -p .agents/skills
+cp -R "$skills_checkout"/skills/. .agents/skills/
 ```
 
-Skills become available under the `portolan:` prefix: `portolan:customize-portolan-browser`, `portolan:git-backed-catalog`, `portolan:portolan-bootstrap`, `portolan:portolan-cli`, `portolan:portolan-migrate`, `portolan:portolan-thumbnails`, `portolan:reading-portolan`, `portolan:register-catalog`, `portolan:report-catalog-issue`, and `portolan:sourcecoop`.
-
-### Claude.ai (web and desktop apps)
-
-Claude.ai supports plugin marketplaces directly, including in Cowork:
-
-1. Open **Settings → Customize** (or the **Customize** panel in Cowork)
-2. Go to the **Plugins** tab
-3. Select **Add → Add marketplace → Add from a repository**
-4. Enter `portolan-sdi/portolan-skills`
-5. Install the **Portolan** plugin from the marketplace
-
-The skills then become available in your Claude sessions, including Cowork.
+Codex discovers skills in `.agents/skills/`. Invoke one by name, for example `$portolan-bootstrap`, or describe your task so Codex can select it. For installation across your projects, use `~/.agents/skills/` as the destination. See the [official skill documentation](https://learn.chatgpt.com/docs/build-skills) for discovery and invocation details.
 
 ### Gemini CLI
 
-Gemini CLI natively supports the same `SKILL.md` format:
+Install a skill at user scope:
 
 ```bash
-# Install skills at user scope
-gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
-  --path skills/customize-portolan-browser --consent
-gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
-  --path skills/git-backed-catalog --consent
 gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
   --path skills/portolan-bootstrap --consent
-gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
-  --path skills/portolan-cli --consent
-gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
-  --path skills/portolan-migrate --consent
-gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
-  --path skills/portolan-thumbnails --consent
-gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
-  --path skills/reading-portolan --consent
-gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
-  --path skills/register-catalog --consent
-gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
-  --path skills/report-catalog-issue --consent
-gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
-  --path skills/sourcecoop --consent
-
-# Or at workspace scope (shared via version control)
-gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
-  --path skills/reading-portolan --scope workspace --consent
 ```
 
-### OpenAI Codex CLI
+Repeat the command with a directory from the [skills list](#skills) for each skill you need. For the quickstart, also install `git-backed-catalog`, `portolan-cli`, `portolan-thumbnails`, and `sourcecoop`. Add `--scope workspace` to install for the current project. See [Gemini CLI skills](https://geminicli.com/docs/cli/skills/) for discovery and management.
 
-Codex CLI also supports `SKILL.md` files. Copy the skills into your project's `.agents/skills/` directory:
+### Other agents
 
-```bash
-# Clone and copy into your project
-git clone https://github.com/portolan-sdi/portolan-skills.git /tmp/portolan-skills
-mkdir -p .agents/skills
-cp -r /tmp/portolan-skills/skills/* .agents/skills/
-```
+If your agent supports Agent Skills, install the skill directories in its documented location. Otherwise, add the relevant `SKILL.md` content to its custom instructions and make the supporting scripts and references available in the workspace.
 
-### Any AI Agent (Manual)
-
-The skills are just markdown files. For any AI coding tool that supports custom instructions or system prompts:
-
-1. Copy the content of the relevant `SKILL.md` file
-2. Add it to your tool's custom instructions, system prompt, or project context file (`CLAUDE.md`, `GEMINI.md`, `AGENTS.md`, `.cursorrules`, etc.)
+<!-- BEGIN GENERATED: skills -->
