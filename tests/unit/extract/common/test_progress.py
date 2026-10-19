@@ -50,3 +50,16 @@ def test_emit_progress_forwards_error_message() -> None:
 def test_emit_progress_is_noop_without_callback() -> None:
     # Must not raise when no callback is registered.
     emit_progress(None, 0, 1, "parcels", "starting")
+
+
+def test_skipped_progress_shows_the_reason_when_given(capsys: pytest.CaptureFixture[str]) -> None:
+    from portolan_cli.extract.common.cli_helpers import make_extract_progress_callback
+
+    callback = make_extract_progress_callback()
+    callback(ExtractionProgress(0, 2, "punten", "skipped", error="skipped: no Query capability"))
+    callback(ExtractionProgress(1, 2, "lijnen", "skipped"))
+
+    captured = capsys.readouterr()
+    out = captured.out + captured.err
+    assert "skipped: no Query capability" in out
+    assert "Skipped (already extracted)" in out

@@ -535,3 +535,43 @@ def test_recursive_builds_full_path_for_nested_folders(monkeypatch: pytest.Monke
     services, traversal = discover_services_recursive(root, max_depth=2)
     assert sorted(s.name for s in services) == ["L1/A", "L1/L2/B"]
     assert traversal.visited == ["L1", "L1/L2"]
+
+
+# =============================================================================
+# Query capability detection (issue #1001)
+# =============================================================================
+
+
+def _discover_with(monkeypatch: pytest.MonkeyPatch, body: dict[str, Any]) -> ServiceDiscoveryResult:
+    monkeypatch.setattr(
+        "portolan_cli.extract.arcgis.discovery._fetch_json", lambda url, timeout=60.0: body
+    )
+    return discover_layers("https://x/rest/services/S/MapServer")
+
+
+@pytest.mark.unit
+def test_discover_layers_skips_tiles_only_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    result = _discover_with(
+        monkeypatch,
+        {
+            "capabilities": "Map,ChangeTracking,TilesOnly,Tilemap",
+            "layers": [{"id": 0, "name": "punten", "type": "Feature Layer"}],
+        },
+    )
+    assert result.layers == []
+    assert [layer.name for layer in result.skipped_layers] == ["punten"]
+    assert result.skip_reason == "skipped: no Query capability (tiles-only)"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("capabilities", ["Map,Query,Data", "Query", " map , QUERY ", None, "", 5])
+def test_discover_layers_keeps_layers_when_query_or_unknown(
+    monkeypatch: pytest.MonkeyPatch, capabilities: Any
+) -> None:
+    body: dict[str, Any] = {"layers": [{"id": 0, "name": "roads", "type": "Feature Layer"}]}
+    if capabilities is not None:
+        body["capabilities"] = capabilities
+    result = _discover_with(monkeypatch, body)
+    assert [layer.name for layer in result.layers] == ["roads"]
+    assert result.skipped_layers == []
+    assert result.skip_reason is None

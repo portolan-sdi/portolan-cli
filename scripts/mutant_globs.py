@@ -6,9 +6,8 @@ module path plus the mangled function name mutmut generates::
 
     portolan_cli/backends/iceberg/backend.py  ->  portolan_cli.backends.iceberg.backend.x_push__mutmut_1
 
-Both mutation jobs (the PR-scoped diff run and the nightly rotating shard) select
-work by file, so both need this translation. Passing a file path as the filter
-matches nothing: mutmut raises ``AssertionError: Filtered for specific mutants,
+The nightly sweep selects its shard by file, so it needs this translation.
+Passing a file path as the filter matches nothing: mutmut raises ``AssertionError: Filtered for specific mutants,
 but nothing matches`` and the run tests zero mutants. See
 portolan-sdi/portolan-cli#612.
 

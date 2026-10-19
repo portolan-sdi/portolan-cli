@@ -124,9 +124,8 @@ every gate above — so adding a Python/OS never drops a required check),
 To keep PR feedback fast, the expensive gates run on a schedule and don't block
 your PR:
 
-- **Mutation testing** (`mutmut`) — verifies tests actually catch injected bugs
-  (currently being repaired, see
-  [#612](https://github.com/portolan-sdi/portolan-cli/issues/612)).
+- **Mutation testing** (`mutmut`) — verifies tests actually catch injected bugs.
+  "Tests and the mutation sandbox" under Testing gives the rules for its tests.
 - **Benchmark regression** — flags performance regressions.
 - **Live-network tests** — hit real third-party services; because those can be
   flaky, this job is **non-blocking** and a failure opens a single self-closing
@@ -165,6 +164,45 @@ uv run pytest --cov=portolan_cli --cov-report=html
 ```
 
 **Test-driven development is required.** Write tests before implementation. Tests must fail before the implementation exists and pass after. This is not optional.
+
+### Tests and the mutation sandbox
+
+The nightly mutation sweep runs the fast suite in `mutants/`, a partial copy of
+the repository. The copy holds `portolan_cli/`, `tests/`, `pyproject.toml`, and
+the paths in `also_copy` under `[tool.mutmut]`. A test that reads another
+repository file, such as a page in `docs/`, fails there. The sweep then stops
+before it tests a mutant.
+
+Each pytest run outside mutmut checks this rule. A test in the mutation selection
+fails when it opens a repository path that the copy does not hold. The failure
+message gives the path. To fix it, do one of these:
+
+- Move a test that checks repository files, such as the docs, to `tests/docs/`.
+  The sweep does not run that directory.
+- Make a test of `portolan_cli` behavior read a fixture under `tests/`.
+- Add the path to `also_copy` when the test must read it from the repository root.
+
+A test that clears the environment uses `cleared_environ` from `tests/conftest.py`.
+A bare `patch.dict(os.environ, {}, clear=True)` removes `MUTANT_UNDER_TEST`, and
+each mutated function then fails with `KeyError`.
+
+To run one shard the way the nightly job does, select its files and pass their
+mutant globs to `mutmut run`:
+
+```bash
+uv run python scripts/shard_select.py \
+  --root portolan_cli --num-shards 25 --shard 17 \
+  > shard_files.txt
+xargs uv run python scripts/mutant_globs.py \
+  < shard_files.txt > globs.txt
+xargs uv run mutmut run --max-children 4 < globs.txt
+uv run mutmut export-cicd-stats
+uv run python scripts/mutation_score.py \
+  --stats mutants/mutmut-cicd-stats.json \
+  --baseline .mutation-baseline \
+  --shards .mutation-shards.json \
+  --shard 17 --num-shards 25
+```
 
 ## Release Process
 

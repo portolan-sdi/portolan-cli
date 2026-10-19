@@ -24,6 +24,7 @@ import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
+from portolan_cli.conversion_config import get_vector_settings
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -1198,6 +1199,77 @@ class TestCatalogVersionsEdgeCases:
 # =============================================================================
 
 
+@pytest.fixture(scope="module")
+def scale_1000_add(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run one `add` of 1000 files and return the parsed versions.json pair.
+
+    The first item is the collection-level versions.json. The second item is
+    the catalog-level versions.json. The two tests in TestScaleAt1000Files
+    only read the result. One CLI invocation serves both of them.
+
+    The catalog turns off the Hilbert sort and the bbox covering column. These
+    tests check the versions.json records at the #339 scale. They do not
+    check the GeoParquet output. The sort and the bbox column cost the same
+    for each file at any file count. The tests in
+    tests/integration/test_add_spatial_optimization.py cover both settings.
+    With the defaults, each one-point file takes about 48% longer to convert.
+    SCALE_1000_TIMEOUT_S gives the measured times.
+    """
+    catalog_root = tmp_path_factory.mktemp("scale-1000")
+    result = CliRunner().invoke(
+        cli, ["init", str(catalog_root), "--auto", "--license", "CC-BY-4.0"]
+    )
+    assert result.exit_code == 0, f"Init failed: {result.output}"
+
+    # The documented opt-out block (docs/reference/configuration.md).
+    config = catalog_root / ".portolan" / "config.yaml"
+    config.write_text(
+        config.read_text() + "conversion:\n  vector:\n    sort: none\n    add_bbox: false\n",
+        encoding="utf-8",
+    )
+    # A wrong key path falls back to the slow defaults without an error.
+    settings = get_vector_settings(catalog_root)
+    assert (settings.sort, settings.add_bbox) == ("none", False), settings
+
+    collection_dir = catalog_root / "large-collection"
+    collection_dir.mkdir()
+    for i in range(1000):
+        (collection_dir / f"file_{i:04d}.geojson").write_text(
+            create_geojson(
+                coords=(float(i % 360 - 180), float(i % 180 - 90)),
+                props={"id": i, "batch": i // 100},
+            )
+        )
+
+    result = CliRunner().invoke(
+        cli, ["add", "--portolan-dir", str(catalog_root), str(collection_dir)]
+    )
+    assert result.exit_code == 0, f"Add failed: {result.output}"
+
+    collection_versions: dict[str, Any] = json.loads((collection_dir / "versions.json").read_text())
+    catalog_versions: dict[str, Any] = json.loads((catalog_root / "versions.json").read_text())
+    return collection_versions, catalog_versions
+
+
+# Timeout for the 1000-file scale tests. The nightly Slow Tests job runs with a
+# global --timeout=300. The 1000-file add takes longer than 300 s. The shared
+# add runs in the setup of the first test, and that test's timeout covers it.
+#
+# Measurements from October 2026, for one-point files on an idle dev machine:
+# - With sort and bbox on, the add costs about 294 ms for each file.
+# - With sort and bbox off, the add costs about 200 ms for each file.
+# The 1000-file fixture took 270 s on a dev machine under heavy load.
+#
+# The nightly add with sort and bbox on took 840 s to 1281 s. That is 2.9x to
+# 4.4x the dev machine time. The old 900 s limit failed on about half the
+# nights. With sort and bbox off, the slowest projected CI add is 880 s
+# (200 s x 4.4). 1800 s gives twice that time. It also stops a hung test
+# before the 50 minute job limit.
+SCALE_1000_TIMEOUT_S = 1800
+
+
 @pytest.mark.slow
 @pytest.mark.integration
 class TestScaleAt1000Files:
@@ -1207,54 +1279,14 @@ class TestScaleAt1000Files:
     Marked slow - skipped in normal CI, run in nightly.
     """
 
-    @pytest.fixture
-    def catalog_with_1000_files(self, tmp_path: Path) -> tuple[Path, Path]:
-        """Catalog with 1000 files matching #339 scale."""
-        catalog_root = tmp_path / "scale-1000"
-        result = CliRunner().invoke(
-            cli, ["init", str(catalog_root), "--auto", "--license", "CC-BY-4.0"]
-        )
-        assert result.exit_code == 0
-
-        collection_dir = catalog_root / "large-collection"
-        collection_dir.mkdir()
-
-        # Create 1000 minimal GeoJSON files
-        for i in range(1000):
-            (collection_dir / f"file_{i:04d}.geojson").write_text(
-                create_geojson(
-                    coords=(float(i % 360 - 180), float(i % 180 - 90)),
-                    props={"id": i, "batch": i // 100},
-                )
-            )
-
-        return catalog_root, collection_dir
-
-    # Per-test timeout override for the 1000-file scale tests. The nightly Slow
-    # Tests job runs with a global --timeout=300, but converting 1000 files is
-    # legitimately O(n): the add alone measured ~291s on a dev machine (fixture
-    # generation is extra, and CI runners are slower), so 300s false-times-out.
-    # This is a headroom bump, not masking a regression — the work is linear
-    # per-file conversion. The job-level `timeout-minutes: 30` still catches a
-    # genuine hang.
     @pytest.mark.integration
     @pytest.mark.slow
-    @pytest.mark.timeout(900)
+    @pytest.mark.timeout(SCALE_1000_TIMEOUT_S)
     def test_add_1000_files_populates_versions(
-        self, catalog_with_1000_files: tuple[Path, Path], runner: CliRunner
+        self, scale_1000_add: tuple[dict[str, Any], dict[str, Any]]
     ) -> None:
         """1000 files all appear in versions.json (Issue #339 scenario)."""
-        catalog_root, collection_dir = catalog_with_1000_files
-
-        result = runner.invoke(
-            cli,
-            ["add", "--portolan-dir", str(catalog_root), str(collection_dir)],
-        )
-        assert result.exit_code == 0, f"Add failed: {result.output}"
-
-        # Verify collection-level versions.json
-        versions_path = collection_dir / "versions.json"
-        versions_data = json.loads(versions_path.read_text())
+        versions_data, _ = scale_1000_add
 
         latest = versions_data["versions"][-1]
         asset_count = len(latest["assets"])
@@ -1264,22 +1296,12 @@ class TestScaleAt1000Files:
 
     @pytest.mark.integration
     @pytest.mark.slow
-    @pytest.mark.timeout(900)  # See note above: 1000-file add is O(n) (~291s), 300s is too tight.
+    @pytest.mark.timeout(SCALE_1000_TIMEOUT_S)
     def test_add_1000_files_updates_catalog_versions(
-        self, catalog_with_1000_files: tuple[Path, Path], runner: CliRunner
+        self, scale_1000_add: tuple[dict[str, Any], dict[str, Any]]
     ) -> None:
         """Catalog-level versions.json shows correct asset_count for 1000 files."""
-        catalog_root, collection_dir = catalog_with_1000_files
-
-        result = runner.invoke(
-            cli,
-            ["add", "--portolan-dir", str(catalog_root), str(collection_dir)],
-        )
-        assert result.exit_code == 0, f"Add failed: {result.output}"
-
-        # Verify catalog-level versions.json
-        catalog_versions_path = catalog_root / "versions.json"
-        catalog_data = json.loads(catalog_versions_path.read_text())
+        _, catalog_data = scale_1000_add
 
         collections = catalog_data.get("collections", {})
         assert "large-collection" in collections, f"Missing collection: {collections.keys()}"

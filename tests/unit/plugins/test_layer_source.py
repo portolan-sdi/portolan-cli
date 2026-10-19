@@ -684,6 +684,64 @@ def test_late_success_of_a_timed_out_layer_writes_no_styles(
     assert not (out / ".portolan" / "staging").exists()
 
 
+class _SkippingSource(_FixtureSource):
+    """A source whose `lines` layer cannot be fetched (issue #1001)."""
+
+    def discover(self, source: str, options: LayerSourceOptions) -> Discovery:
+        found = super().discover(source, options)
+        found.layers[1] = LayerRef(
+            id=1, name="lines", data="lines", skip_reason="skipped: no Query capability"
+        )
+        return found
+
+
+def test_skip_reason_records_a_skipped_layer_without_fetching(
+    fixtures_dir: Path, tmp_path: Path
+) -> None:
+    source = _SkippingSource(fixtures_dir)
+    out = tmp_path / "out"
+    steps: list[tuple[str, str, str | None]] = []
+
+    report = run_layer_extraction(
+        source,
+        "https://example.org/src",
+        out,
+        _options(),
+        on_progress=lambda p: steps.append((p.layer_name, p.status, p.error)),
+    )
+
+    assert source.fetched == ["points"]
+    assert [(r.name, r.status) for r in report.layers] == [
+        ("points", "success"),
+        ("lines", "skipped"),
+    ]
+    assert report.layers[1].error == "skipped: no Query capability"
+    assert (report.summary.succeeded, report.summary.skipped, report.summary.failed) == (1, 1, 0)
+    assert ("lines", "skipped", "skipped: no Query capability") in steps
+    assert (out / "points" / "collection.json").is_file()
+    assert not (out / "lines").exists()
+
+
+def test_skip_reason_shows_in_a_dry_run(fixtures_dir: Path, tmp_path: Path) -> None:
+    report = run_layer_extraction(
+        _SkippingSource(fixtures_dir), "src", tmp_path / "out", LayerSourceOptions(dry_run=True)
+    )
+
+    assert [r.status for r in report.layers] == ["pending", "skipped"]
+
+
+def test_skipped_layer_stays_skipped_on_resume(fixtures_dir: Path, tmp_path: Path) -> None:
+    source = _SkippingSource(fixtures_dir)
+    out = tmp_path / "out"
+    run_layer_extraction(source, "https://example.org/src", out, _options())
+    source.fetched.clear()
+
+    report = run_layer_extraction(source, "https://example.org/src", out, _options(resume=True))
+
+    assert source.fetched == []
+    assert [r.status for r in report.layers] == ["success", "skipped"]
+
+
 def test_report_holds_the_fetch_wall_time(fixtures_dir: Path, tmp_path: Path) -> None:
     """The summary holds the fetch wall time next to the per-layer sum (#991)."""
     source = _FixtureSource(fixtures_dir, slow={"points": 0.2, "lines": 0.2})

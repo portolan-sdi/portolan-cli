@@ -22,7 +22,7 @@ Typical usage:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 class ArcGISDiscoveryError(Exception):
     """Error during ArcGIS service/layer discovery."""
+
+
+NO_QUERY_SKIP_REASON = "skipped: no Query capability (tiles-only)"
 
 
 @dataclass(frozen=True)
@@ -95,6 +98,8 @@ class ServiceDiscoveryResult:
     keywords: str | None = None
     license_info: str | None = None
     access_information: str | None = None
+    skipped_layers: list[LayerInfo] = field(default_factory=list)
+    skip_reason: str | None = None
 
 
 def _append_query_param(url: str, key: str, value: str) -> str:
@@ -181,6 +186,17 @@ def _fetch_json(url: str, timeout: float = 60.0, token: str | None = None) -> di
     return data
 
 
+def _supports_query(capabilities: Any) -> bool:
+    """Return False only when the service advertises capabilities without Query.
+
+    A missing or empty capabilities value is treated as supported, because older
+    servers do not report it.
+    """
+    if not isinstance(capabilities, str) or not capabilities.strip():
+        return True
+    return "query" in {c.strip().lower() for c in capabilities.split(",")}
+
+
 def discover_layers(
     url: str,
     *,
@@ -227,11 +243,20 @@ def discover_layers(
             for table_data in data.get("tables", [])
         )
 
+    # Tiles-only / cached map services list "Feature Layer" layers but reject /query
+    skipped_layers: list[LayerInfo] = []
+    skip_reason: str | None = None
+    if not _supports_query(data.get("capabilities")):
+        skip_reason = NO_QUERY_SKIP_REASON
+        skipped_layers, layers = layers, []
+
     # Extract service-level metadata
     document_info = data.get("documentInfo", {})
 
     return ServiceDiscoveryResult(
         layers=layers,
+        skipped_layers=skipped_layers,
+        skip_reason=skip_reason,
         service_description=data.get("serviceDescription"),
         description=data.get("description"),
         copyright_text=data.get("copyrightText"),

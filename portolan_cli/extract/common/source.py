@@ -80,6 +80,9 @@ class LayerRef:
         data: The source's own data for the layer, for ``fetch`` and the
             other methods. The driver does not read it.
         notes: Warnings that a dry run reports for the layer.
+        skip_reason: Why the layer cannot be fetched, such as a source with
+            no query support. The driver records the layer as ``skipped``
+            and does not call ``fetch``. None means fetch the layer.
     """
 
     id: int
@@ -87,6 +90,7 @@ class LayerRef:
     path: str | None = None
     data: Any = None
     notes: tuple[str, ...] = ()
+    skip_reason: str | None = None
 
 
 @dataclass
@@ -356,7 +360,21 @@ def _result(layer: LayerRef, status: str, **fields: Any) -> LayerResult:
     return LayerResult(id=layer.id, name=layer.name, status=status, **values)
 
 
+def _skipped(layer: LayerRef) -> LayerResult:
+    return _result(
+        layer,
+        "skipped",
+        features=0,
+        size_bytes=0,
+        duration_seconds=0.0,
+        output_path="",
+        error=layer.skip_reason,
+    )
+
+
 def _pending(layer: LayerRef) -> LayerResult:
+    if layer.skip_reason:
+        return _skipped(layer)
     return _result(
         layer,
         "pending",
@@ -894,6 +912,11 @@ def run_layer_extraction(
     collected: list[tuple[int, LayerResult]] = []
     jobs: list[tuple[int, LayerRef]] = []
     for index, layer in enumerate(layers):
+        if layer.skip_reason:
+            run.emit(index, total, layer, "starting")
+            run.emit(index, total, layer, "skipped", layer.skip_reason)
+            collected.append((index, _skipped(layer)))
+            continue
         previous = _resumed_result(layer, output_dir, done_by_path, by_name)
         if previous is not None:
             # "starting" prints the "[i/N] <name>" line that the skip line follows.

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 r"""Score a mutmut run against the ``.mutation-baseline`` floor.
 
-Both mutation jobs share this module so the parse-and-enforce logic lives in one
-tested place instead of duplicated shell: the nightly sweep and the PR-scoped
-diff job each run ``mutmut``, export ``mutmut-cicd-stats.json``, then call this
-script to enforce the floor and render a GitHub step-summary table.
+The nightly sweep (nightly.yml) runs ``mutmut``, exports
+``mutmut-cicd-stats.json``, then calls this script to enforce the floor and
+render a GitHub step-summary table. The parse-and-enforce logic lives here, in
+one tested place, instead of in workflow shell.
 
 Scoring:
     killed_total = killed + timeout + suspicious   # the suite reacted

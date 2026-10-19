@@ -404,12 +404,23 @@ also_copy = [
 # - --no-cov: keeps coverage instrumentation off even when a caller or config
 # adds --cov (it conflicts with mutmut's); addopts no longer injects it.
 # - --tb=short: a stats-phase failure must show WHERE it broke.
+# - --ignore=tests/docs: the docs tests check docs/, mkdocs.yml, and README.md,
+# not portolan_cli behavior. The sandbox holds none of those files (#997).
 # - marker filter: exclude network/slow/benchmark/e2e (mutation of portolan_cli
 # is validated by the fast, offline suite; e2e needs Docker, network needs a
 # live server).
+#
+# The sandbox rule (#997): a test that mutmut runs reads only paths that
+# mutmut copies into mutants/. tests/mutation_sandbox.py enforces it in every
+# ordinary pytest run. It reads this table and fails a test in the selection
+# that opens any other repo-root path. A test that checks repository files goes
+# in tests/docs/. A test of portolan_cli behavior reads a fixture under tests/.
+# Add a path to also_copy only when such a test must read it from the root.
+# The guard reads the -m filter only in the form "not a and not b".
 pytest_add_cli_args = [
     "--no-cov",
     "--tb=short",
+    "--ignore=tests/docs",
     "-m", "not network and not slow and not benchmark and not e2e and not e2e_slow and not source_scan",
 ]
 
