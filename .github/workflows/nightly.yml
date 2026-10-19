@@ -427,11 +427,12 @@ jobs:
   slow-tests:
     name: Slow Tests (Stress/Scale)
     runs-on: ubuntu-latest
-    # The stress/scale suite runs right at the wall: it passed in 28m on
-    # 2026-07-23 and was cancelled at the 30m limit on 2026-07-24. Individual
-    # tests are already capped by --timeout=300, so a cancellation here is the
-    # aggregate suite exceeding the job budget, not a hung test. Give headroom
-    # above the observed ~30m runtime (Live Network uses 45, Mutation 60).
+    # Most tests here are capped by --timeout=300. The two 1000-file tests in
+    # tests/integration/test_versioning_stress.py share one add and carry a
+    # 1800s cap (SCALE_1000_TIMEOUT_S explains the number). The job took 32m
+    # to 46m in October 2026, when each of those tests ran its own add. One
+    # shared add with sort and bbox off took 28% of the old time on a dev
+    # machine. 50m still holds a full 30m scale test and the rest of the suite.
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
