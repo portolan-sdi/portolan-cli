@@ -1,7 +1,7 @@
 # Repo-wide minimum mutation kill rate (%). Enforced by scripts/mutation_score.py
-# for both the PR-scoped job (ci.yml, changed files) and the nightly sweep
-# (nightly.yml, rotating shard). Rate = (killed + timeout + suspicious) /
-# testable, where testable excludes no_tests mutants.
+# for the nightly sweep (nightly.yml, rotating shard), the only job that runs
+# mutation. Rate = (killed + timeout + suspicious) / testable, where testable
+# excludes no_tests mutants.
 #
 # This is the catastrophe floor: any run under it means the suite stopped
 # reacting to whole modules. Regression detection at shard granularity lives in

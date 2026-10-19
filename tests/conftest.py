@@ -22,10 +22,15 @@ from unittest import mock
 
 import pytest
 
+from tests.mutation_sandbox import (
+    MutationSandbox,
+    SandboxReadGuard,
+    reset_stats_mode_in_children,
+)
 from tests.network_guard import NO_PROXY_KEYS, PROXY_KEYS, NetworkGuard, SentinelProxy
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator, Iterator
 
 
 # =============================================================================
@@ -207,6 +212,63 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             ],
             database=None,
         )
+
+
+# A test in the mutation selection must not read a repo-root path that mutmut
+# leaves out of mutants/ (#997). tests/mutation_sandbox.py explains the guard.
+# Under mutmut the run already happens in the sandbox, so the guard stays off.
+_SANDBOX_GUARD: SandboxReadGuard | None = None
+if _MUTMUT_ENV_KEY not in os.environ:
+    _SANDBOX_GUARD = SandboxReadGuard(MutationSandbox.from_pyproject(Path(__file__).parent.parent))
+    sys.addaudithook(_SANDBOX_GUARD.audit)
+
+
+def _watch_sandbox_reads(item: pytest.Item) -> Generator[None, object, object]:
+    """Fail ``item`` when its setup or body opens a path outside the sandbox."""
+    guard = _SANDBOX_GUARD
+    if guard is None or not guard.sandbox.selects(
+        item.path, (marker.name for marker in item.iter_markers())
+    ):
+        return (yield)
+    guard.start(item.nodeid)
+    try:
+        result = yield
+    finally:
+        reads = guard.stop()
+    if reads:
+        pytest.fail(guard.message(item.nodeid, reads), pytrace=False)
+    return result
+
+
+# The phase hooks, not an autouse fixture: a session fixture that reads a file
+# runs inside the setup phase of the first test that uses it.
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_setup(item: pytest.Item) -> Generator[None, object, object]:
+    return (yield from _watch_sandbox_reads(item))
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item: pytest.Item) -> Generator[None, object, object]:
+    return (yield from _watch_sandbox_reads(item))
+
+
+@pytest.fixture
+def sandbox_guard() -> SandboxReadGuard:
+    """The session's sandbox read guard. A test that expects a record clears ``reads``."""
+    if _SANDBOX_GUARD is None:
+        pytest.skip("the sandbox guard is off under mutmut")
+    return _SANDBOX_GUARD
+
+
+@pytest.fixture(autouse=True)
+def _mutmut_stats_children(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep child interpreters out of mutmut's stats mode.
+
+    ``reset_stats_mode_in_children`` in tests/mutation_sandbox.py gives the
+    reason. Outside the stats phase this fixture does nothing.
+    """
+    if os.environ.get(_MUTMUT_ENV_KEY) == "stats":
+        reset_stats_mode_in_children(monkeypatch)
 
 
 # =============================================================================

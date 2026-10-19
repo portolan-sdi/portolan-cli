@@ -6,19 +6,19 @@ published with the catalog.
 
 from __future__ import annotations
 
-import os
 from unittest.mock import patch
 
 import pytest
 
 from portolan_cli.config import resolve_s3_endpoint_settings
+from tests.conftest import cleared_environ
 
 pytestmark = pytest.mark.unit
 
 
 def test_s3_endpoint_settings_default_to_public_s3() -> None:
     """Endpoint settings use public S3 defaults when no environment exists."""
-    with patch.dict("os.environ", {}, clear=True):
+    with cleared_environ():
         settings = resolve_s3_endpoint_settings()
 
     assert settings.endpoint is None
@@ -27,13 +27,9 @@ def test_s3_endpoint_settings_default_to_public_s3() -> None:
 
 def test_s3_endpoint_settings_read_environment() -> None:
     """Endpoint settings read a MinIO endpoint and HTTP mode from the environment."""
-    with patch.dict(
-        "os.environ",
-        {
-            "PORTOLAN_S3_ENDPOINT": "minio.example.test:9000",
-            "PORTOLAN_S3_USE_SSL": "false",
-        },
-        clear=True,
+    with cleared_environ(
+        PORTOLAN_S3_ENDPOINT="minio.example.test:9000",
+        PORTOLAN_S3_USE_SSL="false",
     ):
         settings = resolve_s3_endpoint_settings()
 
@@ -45,7 +41,7 @@ def test_s3_endpoint_settings_read_environment() -> None:
 def test_s3_endpoint_settings_reject_invalid_ssl_values(value: str) -> None:
     """Endpoint settings reject ambiguous TLS values."""
     with (
-        patch.dict("os.environ", {"PORTOLAN_S3_USE_SSL": value}, clear=True),
+        cleared_environ(PORTOLAN_S3_USE_SSL=value),
         pytest.raises(ValueError, match="PORTOLAN_S3_USE_SSL"),
     ):
         resolve_s3_endpoint_settings()
@@ -56,16 +52,11 @@ def test_object_store_uses_environment_endpoint() -> None:
     from portolan_cli.sync.upload import _setup_store_and_kwargs
 
     with (
-        patch.dict(
-            "os.environ",
-            {
-                "PORTOLAN_S3_ENDPOINT": "http://minio.example.test:9000",
-                "PORTOLAN_S3_USE_SSL": "false",
-                # botocore reads ~/.aws itself; keep it away from real profiles.
-                "AWS_CONFIG_FILE": os.environ.get("AWS_CONFIG_FILE", ""),
-                "AWS_SHARED_CREDENTIALS_FILE": os.environ.get("AWS_SHARED_CREDENTIALS_FILE", ""),
-            },
-            clear=True,
+        # cleared_environ keeps the AWS isolation variables, so botocore
+        # cannot read the developer's real profiles.
+        cleared_environ(
+            PORTOLAN_S3_ENDPOINT="http://minio.example.test:9000",
+            PORTOLAN_S3_USE_SSL="false",
         ),
         patch("portolan_cli.sync.upload.S3Store") as s3_store,
         patch("portolan_cli.sync.upload._load_aws_credentials_from_profile") as credentials,
@@ -95,7 +86,7 @@ def test_object_store_rejects_credentials_over_http(
     from portolan_cli.sync.upload import _setup_store_and_kwargs
 
     with (
-        patch.dict("os.environ", {}, clear=True),
+        cleared_environ(),
         patch("portolan_cli.sync.upload.S3Store") as s3_store,
         patch(
             "portolan_cli.sync.upload._resolve_s3_credentials",
@@ -121,13 +112,9 @@ def test_default_profile_preserves_environment_credentials() -> None:
     from portolan_cli.sync.upload import _setup_store_and_kwargs
 
     with (
-        patch.dict(
-            "os.environ",
-            {
-                "AWS_ACCESS_KEY_ID": "minioadmin",
-                "AWS_SECRET_ACCESS_KEY": "minioadmin",
-            },
-            clear=True,
+        cleared_environ(
+            AWS_ACCESS_KEY_ID="minioadmin",
+            AWS_SECRET_ACCESS_KEY="minioadmin",
         ),
         patch("portolan_cli.sync.upload.S3Store") as s3_store,
         patch("portolan_cli.sync.upload._load_aws_credentials_from_profile") as credentials,

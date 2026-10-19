@@ -175,12 +175,12 @@ jobs:
           uv run mutmut run "${GLOBS[@]}" 2>&1 | tee mutmut-run.log || STATUS=$?
           if grep -q "Filtered for specific mutants, but nothing matches" mutmut-run.log; then
             echo "::error::mutmut matched no mutants for this shard's globs — the" \
-                 "glob format is wrong, not the code. See portolan-sdi/portolan-cli#612."
+                 "glob format is wrong, not the code. See scripts/mutant_globs.py (#612)."
             exit 1
           fi
           if [ "$STATUS" -ne 0 ]; then
             echo "::error::mutmut run failed with status ${STATUS}; the sweep is" \
-                 "incomplete. See portolan-sdi/portolan-cli#612."
+                 "incomplete. See 'Tests and the mutation sandbox' in docs/contributing.md (#997)."
             exit "$STATUS"
           fi
 
