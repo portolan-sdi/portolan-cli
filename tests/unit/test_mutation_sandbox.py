@@ -190,7 +190,10 @@ def test_the_installed_guard_records_a_repo_root_read(sandbox_guard: SandboxRead
     readme.read_bytes()
 
     root = sandbox_guard.sandbox.root
-    assert [os.path.relpath(path, root) for path in sandbox_guard.reads] == ["README.md"]
+    # The guard records case-folded paths. On Windows this gives readme.md.
+    assert [os.path.relpath(path, root) for path in sandbox_guard.reads] == [
+        os.path.normcase("README.md")
+    ]
     # The test expected the record. Clear it, or the call phase fails the test.
     sandbox_guard.reads.clear()
 

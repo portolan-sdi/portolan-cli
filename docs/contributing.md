@@ -173,9 +173,9 @@ the paths in `also_copy` under `[tool.mutmut]`. A test that reads another
 repository file, such as a page in `docs/`, fails there. The sweep then stops
 before it tests a mutant.
 
-Every pytest run checks this rule. A test in the mutation selection fails when it
-opens a repository path that the copy does not hold. The message names the path.
-To fix it, do one of these:
+Each pytest run outside mutmut checks this rule. A test in the mutation selection
+fails when it opens a repository path that the copy does not hold. The failure
+message gives the path. To fix it, do one of these:
 
 - Move a test that checks repository files, such as the docs, to `tests/docs/`.
   The sweep does not run that directory.

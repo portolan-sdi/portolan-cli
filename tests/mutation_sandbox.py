@@ -268,7 +268,7 @@ def stats_free_env(env: Mapping[str, str] | None) -> dict[str, str] | None:
 
 
 def reset_stats_mode_in_children(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Start each child process of this test outside mutmut's stats mode.
+    """Start each ``subprocess.Popen`` child of this test outside stats mode.
 
     In the stats phase mutmut sets ``MUTANT_UNDER_TEST=stats``. Each mutated
     function then calls ``mutmut.__main__.record_trampoline_hit``, which reads
@@ -279,6 +279,16 @@ def reset_stats_mode_in_children(monkeypatch: pytest.MonkeyPatch) -> None:
     ``mutmut.__main__`` also loads Click. A child cannot report hits to the
     parent in any case, so the child runs the unmutated code instead. The
     mutant phases keep their value, and a child still runs the mutant there.
+
+    The patch does not reach a ``multiprocessing`` worker. A "spawn" worker
+    starts through ``multiprocessing.util.spawnv_passfds`` and not through
+    ``Popen``. Under mutmut that worker never reaches a trampoline. It
+    re-imports the ``mutmut`` entry script as ``__mp_main__``. That import
+    loads ``mutmut.__main__``, which calls ``set_start_method('fork')``. The
+    call raises ``RuntimeError`` because the worker already has a context.
+    The pool breaks, and ``convert_directory`` then converts the files
+    serially in the test process. The parallel tests in
+    tests/integration/test_cog_reoptimize.py pass the stats phase this way.
     """
     original = subprocess.Popen.__init__
 
