@@ -6,11 +6,14 @@ including layer filtering, extraction, and catalog initialization.
 
 from __future__ import annotations
 
+import threading
+import time
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
+from portolan_cli.extract.common import source as source_module
 from portolan_cli.extract.common.report import ExtractionReport, LayerResult
 from portolan_cli.extract.common.source import (
     Discovery,
@@ -31,6 +34,7 @@ from portolan_cli.extract.wfs.orchestrator import (
 from tests.support.extract import make_wfs_discovery, make_wfs_layer
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from portolan_cli.extract.common.progress import ExtractionProgress
@@ -580,15 +584,48 @@ class TestExtractionProgressError:
         assert failed_events[0].error == error_msg
 
 
+class _VirtualClock:
+    """Stand in for the ``time`` module of ``extract/common/source.py``.
+
+    The clock moves only when a test advances it. A per-layer deadline then
+    depends on the order of events in the run, not on the speed of the runner.
+    """
+
+    def __init__(self) -> None:
+        self._now = 0.0
+        self._lock = threading.Lock()
+
+    def monotonic(self) -> float:
+        with self._lock:
+            return self._now
+
+    def advance(self, seconds: float) -> None:
+        with self._lock:
+            self._now += seconds
+
+
 class TestTimeoutEnforcement:
-    """Tests for per-layer timeout enforcement in a parallel run (Issue #508)."""
+    """Tests for per-layer timeout enforcement in a parallel run (Issue #508).
+
+    The timeout tests use a virtual clock. A wall-clock version failed on
+    loaded Windows runners, where the file I/O of one layer can stall for
+    seconds.
+    """
 
     @staticmethod
-    def _run(tmp_path: Path, names: list[str], fetch: object, timeout: float) -> ExtractionReport:
+    def _run(
+        tmp_path: Path,
+        names: list[str],
+        fetch: Callable[[str, LayerRef, Path], int],
+        timeout: float,
+        clock: _VirtualClock | None = None,
+        on_progress: Callable[[ExtractionProgress], None] | None = None,
+    ) -> ExtractionReport:
         with (
             patch("portolan_cli.extract.wfs.orchestrator.discover_layers") as mock_discover,
             patch("portolan_cli.extract.wfs.orchestrator._negotiate_version", return_value="1.1.0"),
             patch.object(WFSLayerSource, "fetch", side_effect=fetch),
+            patch.object(source_module, "time", clock or time),
         ):
             mock_discover.return_value = make_discovery_result(
                 [make_layer_info(name, i) for i, name in enumerate(names)]
@@ -597,23 +634,39 @@ class TestTimeoutEnforcement:
                 url="https://example.com/wfs",
                 output_dir=tmp_path,
                 options=ExtractionOptions(workers=2, timeout=timeout, retries=1, raw=True),
+                on_progress=on_progress,
             )
 
     def test_slow_layer_times_out(self, tmp_path: Path) -> None:
         """A layer that exceeds the timeout is marked as timed out."""
-        import time
+        clock = _VirtualClock()
+        slow_started = threading.Event()
+        release = threading.Event()
 
         def fetch(source: str, layer: LayerRef, dest: Path) -> int:
             if layer.name == "slow_layer":
-                time.sleep(3)  # Longer than the 1s timeout
+                slow_started.set()
+                release.wait(timeout=30)
             return 1
 
-        report = self._run(tmp_path, ["slow_layer", "fast_layer"], fetch, timeout=1.0)
+        def on_progress(event: ExtractionProgress) -> None:
+            # The fast layer is done, and the slow layer is in its fetch. Move
+            # the clock past the deadline of the slow layer only.
+            if event.layer_name == "fast_layer":
+                assert slow_started.wait(timeout=30)
+                clock.advance(5.0)
 
-        slow = report.layers[0]
-        assert slow.status == "failed"
-        assert "timeout" in (slow.error or "").lower()
-        assert report.layers[1].status == "success"
+        try:
+            report = self._run(
+                tmp_path, ["slow_layer", "fast_layer"], fetch, 1.0, clock, on_progress
+            )
+        finally:
+            release.set()
+
+        slow, fast = report.layers
+        assert (slow.status, slow.error) == ("failed", "Timeout after 1.0s")
+        assert slow.duration_seconds == 5.0
+        assert (fast.status, fast.error) == ("success", None)
 
     def test_fast_layers_complete_normally(self, tmp_path: Path) -> None:
         """Layers that complete within timeout succeed normally."""
@@ -624,22 +677,44 @@ class TestTimeoutEnforcement:
     def test_queued_layers_do_not_time_out(self, tmp_path: Path) -> None:
         """Queued layers must not time out while waiting for a worker (Issue #526).
 
-        With more layers than workers, total wall-clock exceeds the per-layer
-        timeout even though each layer runs well under it. The deadline must be
-        measured from execution start, not submission time.
-        """
-        import time
+        The two workers meet at a barrier once in each fetch, and the clock
+        moves 1s at each meeting. A running layer sees exactly 1s pass, far
+        under the 10s timeout. 48 layers take 24 meetings, and the last layers
+        wait 23s in the queue. A deadline from submission fails them.
 
-        def slow_but_ok(source: str, layer: LayerRef, dest: Path) -> int:
-            # 0.1s is far under the 2.0s timeout. A process-wide pause on a
-            # loaded CI runner stalls both workers at once, and each layer keeps
-            # 1.9s of margin for it. 24 rounds (48 layers / 2 workers) add up
-            # to ~2.4s, so a deadline from submission still fails the test.
-            time.sleep(0.1)
+        A fetch also takes a token, and the main thread gives one back for
+        each layer it reports. The workers then stay at most one round ahead
+        of the main thread. The main thread thus checks the deadlines while
+        layers are still in the queue, and does not find all 48 done at once.
+
+        The waits time out after 15s. One worker can stall for that long
+        before the test fails.
+        """
+        clock = _VirtualClock()
+        rounds = threading.Barrier(2, action=lambda: clock.advance(1.0))
+        tokens = threading.Semaphore(2)
+
+        def fetch(source: str, layer: LayerRef, dest: Path) -> int:
+            if not tokens.acquire(timeout=15):
+                raise TimeoutError("The main thread did not report a layer")
+            rounds.wait(timeout=15)
             return 10
 
-        report = self._run(tmp_path, [f"layer_{i}" for i in range(48)], slow_but_ok, timeout=2.0)
+        try:
+            report = self._run(
+                tmp_path,
+                [f"layer_{i}" for i in range(48)],
+                fetch,
+                10.0,
+                clock,
+                on_progress=lambda _: tokens.release(),
+            )
+        finally:
+            # Free the workers that wait after a failed run.
+            rounds.abort()
+            tokens.release(48)
 
-        assert len(report.layers) == 48
-        assert all(r.status == "success" for r in report.layers)
-        assert all(r.error is None for r in report.layers)
+        assert [(r.status, r.error) for r in report.layers] == [("success", None)] * 48
+        assert [r.duration_seconds for r in report.layers] == [1.0] * 48
+        # The run lasted 24 virtual seconds, more than twice the timeout.
+        assert clock.monotonic() == 24.0
