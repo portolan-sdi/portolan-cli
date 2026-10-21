@@ -42,7 +42,7 @@ services:
   # connection or a wrong key, stops this service, so the REST catalog does not
   # start against a server with no buckets.
   rustfs-init:
-    image: amazon/aws-cli:2.37.10@sha256:3dacc5db57c923c4223e949795f538ecf1f2212b2b7d5a028b47b97f91564c0d
+    image: amazon/aws-cli:2.38.1@sha256:733d5be1015825e4038c6016f3fa9954868ddee1f611b73be795a9cc2e706bfd
     depends_on:
       rustfs:
         condition: service_healthy
