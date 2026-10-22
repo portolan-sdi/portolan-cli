@@ -1,7 +1,8 @@
 # Turn Philadelphia housing data into a shareable catalog
 
 Imagine that you maintain useful city data in ArcGIS.
-People can view each layer, but they still need to find it, understand it, and combine it.
+People can view each layer.
+To use the layers together, they must first find the right ones and learn what each one contains.
 You want to make that work easier without deploying another server or API.
 
 In this tutorial, you follow the same path as a new Portolan publisher:
@@ -69,7 +70,8 @@ uv run ./examples/philadelphia-housing/01-create-catalog.sh
 ```
 
 Portolan searches Philadelphia's ArcGIS services and selects the two named services.
-It downloads every page, retries temporary failures, and converts each layer to GeoParquet.
+It downloads every page of features and retries a request that fails temporarily.
+Then it converts each layer to GeoParquet.
 It also preserves the map style from each source layer.
 
 The `--id` flag names the catalog. Without it, Portolan derives the id from
@@ -118,8 +120,7 @@ Folders below an ArcGIS services root use the same nested structure.
 
 ## 2. Add context and check the catalog
 
-Usable data needs more than a file name.
-A reader needs a clear description, source, publisher, license, preview, and usage notes.
+Beyond a file name, a reader needs a clear description, source, publisher, license, preview, and usage notes.
 
 This tutorial includes prepared metadata for the catalog and two collections.
 The script copies these three files into the catalog.
@@ -192,7 +193,8 @@ Portolan accepts an SPDX identifier, such as `CC-BY-4.0`.
 Use `other` with a `license_url` when the terms have no SPDX identifier.
 This example uses `other` and links to Philadelphia's terms.
 
-The complete second step copies the files, registers the assets, generates docs, and checks the catalog.
+The second step copies the files and registers the assets.
+It then generates docs and checks the catalog.
 
 File: `examples/philadelphia-housing/02-add-context.sh`
 
@@ -256,7 +258,7 @@ This step adds:
 
 Portolan also checks the complete catalog against the Portolan specification.
 The full report can include recommendations, but the command stops if a strict requirement fails.
-The three generated README files document the catalog and its two collections.
+Portolan generates a README file for the catalog and one for each collection.
 
 For your own catalog, edit the generated `.portolan/metadata.yaml` files.
 This example copies prepared files so that everyone gets the same result.
@@ -474,7 +476,7 @@ Your live result can differ from the pinned result above.
 You started with two separate ArcGIS services.
 You finished with one documented catalog that people and agents can find, understand, and use.
 
-Portolan handled four parts of the journey:
+Portolan handled each part of the work:
 
 1. **Convert:** ArcGIS features became cloud-optimized GeoParquet.
 2. **Organize:** The files gained consistent structure, metadata, previews, and documentation.
