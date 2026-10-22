@@ -12,8 +12,10 @@ on:
       - 'examples/**'
   workflow_dispatch:
 
-# Least-privilege default. The registry bot token carries the cross-repo
-# permission, not GITHUB_TOKEN.
+# Least-privilege default. The portolan-ops-sync app token carries the
+# cross-repo permission, not GITHUB_TOKEN. That app is installed on every
+# org repo, and its secrets are org secrets, so this workflow needs no
+# repo-level secret.
 permissions:
   contents: read
 
@@ -22,14 +24,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      # A secret cannot appear in a step `if:`. A fork or a repo without the
-      # bot secrets skips the dispatch and relies on the site's daily run.
-      HAS_BOT: ${{ secrets.REGISTRY_BOT_APP_KEY != '' }}
+      # A secret cannot appear in a step `if:`. A fork has no org secrets,
+      # so it skips the dispatch.
+      HAS_BOT: ${{ secrets.OPS_SYNC_APP_KEY != '' }}
     steps:
       - name: Report a missing bot secret
         if: env.HAS_BOT != 'true'
         run: >-
-          echo "::notice::REGISTRY_BOT_APP_KEY is not set. The site
+          echo "::notice::OPS_SYNC_APP_KEY is not set. The site
           finds this change on its daily sync."
 
       - name: Create site token
@@ -37,8 +39,8 @@ jobs:
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: site-token
         with:
-          client-id: ${{ secrets.REGISTRY_BOT_APP_CLIENT_ID }}
-          private-key: ${{ secrets.REGISTRY_BOT_APP_KEY }}
+          client-id: ${{ secrets.OPS_SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OPS_SYNC_APP_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: portolan-sdi.org
           permission-contents: write
