@@ -43,9 +43,15 @@ dependencies = [
     "stac-geoparquet>=0.6.0", # Generate items.parquet for efficient STAC queries (optional)
     "pyyaml>=6.0", # YAML config file support
     "rasterio>=1.3.0", # Raster I/O (transitive via rio-cogeo, but we import directly)
+    "aiohttp>=3.14.4", # CVE-2026-111063..111066, CVE-2026-111748..111750, GHSA-2g87-pp6c-29x5 fix (transitive via geoparquet-io/s3fs, pinned for security)
+    "certifi>=2026.10.19", # PYSEC-2026-4320 fix (transitive via requests/httpx, pinned for security)
     "cryptography>=46.0.7", # CVE-2026-39892 fix (transitive via httpx/certifi, pinned for security)
     "lxml>=6.1.0", # CVE-2026-41066 fix (transitive via owslib, pinned for security)
-    "pillow>=12.3.0", # PYSEC-2026-2253..2257 fix (transitive via rasterio, pinned for security)
+    # CVE-2026-112390..112406 and CVE-2026-112891..112901 are fixed in pillow
+    # 13.0.0, which requires Python 3.11. No fixed release exists for 3.10, so
+    # 3.10 keeps the older floor (transitive via rasterio, pinned for security)
+    "pillow>=13.0.0; python_version >= '3.11'",
+    "pillow>=12.3.0; python_version < '3.11'", # PYSEC-2026-2253..2257 fix
     "pmtiles>=3.0.0", # PMTiles metadata reading (header, bounds, zoom levels)
     "pluggy>=1.5.0", # Plugin hooks (#947). Pure Python, no dependencies. 1.5 adds warn_on_impl_args for hook deprecation
     "pyogrio>=0.7.0", # FlatGeobuf metadata reading (transitive via geoparquet-io, but we import directly)
@@ -639,14 +645,18 @@ extend_exclude = [
 [tool.deptry.per_rule_ignores]
 # Stability and security constraints for transitive dependencies (not directly
 # imported)
+# - aiohttp: CVE-2026-111063 and others
+# - certifi: PYSEC-2026-4320
 # - cryptography: CVE-2026-39892
 # - duckdb: 1.5.5 segfaults in ST_Read_Meta on malformed input. See
 #   duckdb/duckdb-spatial#860
 # - lxml: CVE-2026-41066
-# - pillow: CVE-2026-40192
+# - pillow: CVE-2026-40192, CVE-2026-112390 and others
 # - pygments: CVE-2026-4539
 # - requests: CVE-2026-25645
 DEP002 = [
+    "aiohttp",
+    "certifi",
     "cryptography",
     "duckdb",
     "lxml",
@@ -661,7 +671,6 @@ DEP002 = [
 
 [dependency-groups]
 dev = [
-    "fastembed>=0.8.0",
     # The conformance gate validates emitted raster items against the vendored
     # raster v2.0.0 schema. jsonschema arrives transitively through rashid, but
     # the gate would break silently if rashid ever dropped it, so declare it.

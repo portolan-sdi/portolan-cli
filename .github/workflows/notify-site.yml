@@ -1,0 +1,57 @@
+name: Notify Site
+
+# portolan-sdi.org mirrors the example READMEs as tutorials. Its Sync CLI
+# Tutorials workflow copies them and opens a pull request there. This dispatch
+# starts that sync as soon as an example changes on main. Without it, the
+# site's daily run finds the change within 24 hours.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'examples/**'
+  workflow_dispatch:
+
+# Least-privilege default. The portolan-ops-sync app token carries the
+# cross-repo permission, not GITHUB_TOKEN. That app is installed on every
+# org repo, and its secrets are org secrets, so this workflow needs no
+# repo-level secret.
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      # A secret cannot appear in a step `if:`. A fork has no org secrets,
+      # so it skips the dispatch.
+      HAS_BOT: ${{ secrets.OPS_SYNC_APP_KEY != '' }}
+    steps:
+      - name: Report a missing bot secret
+        if: env.HAS_BOT != 'true'
+        run: >-
+          echo "::notice::OPS_SYNC_APP_KEY is not set. The site
+          finds this change on its daily sync."
+
+      - name: Create site token
+        if: env.HAS_BOT == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: site-token
+        with:
+          client-id: ${{ secrets.OPS_SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OPS_SYNC_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: portolan-sdi.org
+          permission-contents: write
+
+      - name: Request the tutorial sync
+        if: env.HAS_BOT == 'true'
+        env:
+          GH_TOKEN: ${{ steps.site-token.outputs.token }}
+        run: |
+          gh api \
+            --method POST \
+            repos/portolan-sdi/portolan-sdi.org/dispatches \
+            --field event_type=cli-docs-updated \
+            --field "client_payload[cli_sha]=$GITHUB_SHA"

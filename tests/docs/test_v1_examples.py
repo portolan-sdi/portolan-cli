@@ -301,8 +301,8 @@ def test_example_builds_and_analyzes_a_philadelphia_catalog(tmp_path: Path) -> N
         assert f'"$example_dir/{step.name}"' in wrapper
 
     tutorial = _read_text(EXAMPLE_DIR / "README.md")
-    assert tutorial.index("## 3. Publish the Catalog") < tutorial.index(
-        "## 4. Use the Published Catalog"
+    assert tutorial.index("## 3. Publish the catalog") < tutorial.index(
+        "## 4. Use the published catalog"
     )
     assert "✓ Extracted 2/2 layers" in tutorial
     assert "✓ Added 2 files to 2 collections" in tutorial
