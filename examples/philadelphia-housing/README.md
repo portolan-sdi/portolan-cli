@@ -1,4 +1,4 @@
-# Turn Philadelphia Housing Data Into a Shareable Catalog
+# Turn Philadelphia housing data into a shareable catalog
 
 Imagine that you maintain useful city data in ArcGIS.
 People can view each layer, but they still need to find it, understand it, and combine it.
@@ -17,7 +17,7 @@ The pinned example contains 501 housing projects and all ten districts.
 For a larger example, explore the [published Philadelphia housing catalog](https://source.coop/nlebovits/phl-housing-demo).
 It contains ten collections and about 1.78 million features.
 
-## Before You Begin
+## Before you begin
 
 Clone this repository.
 Then install Portolan and the tutorial dependencies:
@@ -36,7 +36,7 @@ Choose an empty directory for your local catalog:
 export CATALOG_DIR=/tmp/philadelphia-housing
 ```
 
-## 1. Convert the Source Layers
+## 1. Convert the source layers
 
 The tutorial runs this complete script.
 Read the commands before you run them.
@@ -116,7 +116,7 @@ Directory structure can organize a larger catalog.
 Portolan turns intermediate directories into subcatalogs and leaf directories into collections.
 Folders below an ArcGIS services root use the same nested structure.
 
-## 2. Add Context and Check the Catalog
+## 2. Add context and check the catalog
 
 Usable data needs more than a file name.
 A reader needs a clear description, source, publisher, license, preview, and usage notes.
@@ -266,7 +266,7 @@ This example copies prepared files so that everyone gets the same result.
 Both files can exist at the catalog, subcatalog, or collection level.
 Values inherit down the directory tree, and the nearest file overrides its parents.
 
-## 3. Publish the Catalog
+## 3. Publish the catalog
 
 When the local catalog looks right, choose an object-storage destination:
 
@@ -321,7 +321,7 @@ Make the files public according to your storage provider's instructions.
 Your catalog now has one HTTP URL that you can share.
 That public URL can differ from the storage URL in the publish command.
 
-## 4. Use the Published Catalog
+## 4. Use the published catalog
 
 Now ask a practical planning question:
 
@@ -469,7 +469,7 @@ The files remain in storage that you control.
 Philadelphia can update the live ArcGIS layers.
 Your live result can differ from the pinned result above.
 
-## What Portolan Changed
+## What Portolan changed
 
 You started with two separate ArcGIS services.
 You finished with one documented catalog that people and agents can find, understand, and use.
@@ -481,7 +481,7 @@ Portolan handled four parts of the journey:
 3. **Publish:** The catalog moved to object storage without a new serving layer.
 4. **Use:** Standard tools queried the published files directly.
 
-## Use This Pattern With Your Own Data
+## Use this pattern with your own data
 
 The same journey works for your ArcGIS services:
 
@@ -493,7 +493,7 @@ The same journey works for your ArcGIS services:
 You can also start from files or another direct extraction source named above.
 The result has the same basic shape: cloud-native files, clear metadata, and one catalog URL.
 
-## Run the Complete Workflow
+## Run the complete workflow
 
 The numbered steps are the recommended way to follow this tutorial.
 This wrapper contains no hidden work.
@@ -526,7 +526,7 @@ export PORTOLAN_PHL_REMOTE=s3://my-bucket/philadelphia-housing
 uv run ./examples/philadelphia-housing/run.sh
 ```
 
-## How CI Keeps This Tutorial Working
+## How CI keeps this tutorial working
 
 CI runs the same three scripts against a pinned replay of the Philadelphia services.
 It verifies pagination, retry behavior, metadata, previews, documentation, and validation.
