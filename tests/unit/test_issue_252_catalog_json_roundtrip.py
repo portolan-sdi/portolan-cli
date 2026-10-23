@@ -47,6 +47,22 @@ def empty_remote(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(obstore, "head_async", head_async)
     monkeypatch.setattr(obstore, "list", no_pages)
 
+    # The put mocks of these tests return None. obstore returns the ETag of the
+    # write, and push records it for the rollback.
+    from portolan_cli.sync import push
+
+    real_put, real_put_async = push.put_object, push.put_object_async
+    no_etag = {"e_tag": None, "version": None}
+
+    def put(*args: Any, **kwargs: Any) -> Any:
+        return real_put(*args, **kwargs) or no_etag
+
+    async def put_async(*args: Any, **kwargs: Any) -> Any:
+        return await real_put_async(*args, **kwargs) or no_etag
+
+    monkeypatch.setattr(push, "put_object", put)
+    monkeypatch.setattr(push, "put_object_async", put_async)
+
 
 @pytest.fixture
 def full_catalog(tmp_path: Path) -> Path:
