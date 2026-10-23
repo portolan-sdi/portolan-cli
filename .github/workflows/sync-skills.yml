@@ -5,7 +5,9 @@ on:
     - cron: '0 0 * * 0'  # Weekly on Sunday
   workflow_dispatch:  # Manual trigger
 
-# Least-privilege default; the job widens to open its sync PR.
+# The PR comes from the org sync app, not GITHUB_TOKEN. GitHub starts no
+# workflow for a PR that GITHUB_TOKEN opens, so the checks never ran on it.
+# Auto-merge is armed, so the PR lands when the required checks pass.
 permissions:
   contents: read
 
@@ -13,9 +15,6 @@ jobs:
   sync-skills:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: write        # create-pull-request pushes the sync branch
-      pull-requests: write   # ...and opens the PR
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -30,10 +29,21 @@ jobs:
       - name: Sync from upstream
         run: python scripts/sync_skills_readme.py --update
 
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          client-id: ${{ secrets.OPS_SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OPS_SYNC_APP_KEY }}
+          owner: portolan-sdi
+          repositories: portolan-cli
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Create Pull Request
+        id: cpr
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           branch: sync/skills-install
           delete-branch: true
           title: "sync: Update skills install instructions"
@@ -46,3 +56,10 @@ jobs:
           labels: |
             automated
             skills
+
+      - name: Enable auto-merge
+        if: steps.cpr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
+        run: gh pr merge --auto --squash "$PR_NUMBER" --repo "$GITHUB_REPOSITORY"
