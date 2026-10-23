@@ -1,5 +1,5 @@
 {
-  "minTokens": 50,
+  "minTokens": 35,
   "ignore": [
     "**/tests/fixtures/**",
     "**/.venv/**",

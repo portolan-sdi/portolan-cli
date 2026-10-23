@@ -242,6 +242,8 @@ select = [
     "SLOT", # flake8-slots
     "T20", # flake8-print - output goes through output.py, never bare print
     "TC", # flake8-type-checking
+    # Only the banned-api rule of flake8-tidy-imports. See banned-api below.
+    "TID251",
     "YTT", # flake8-2020
 ]
 ignore = [
@@ -280,6 +282,7 @@ ignore = [
     "S310", # a test opens an https URL it writes itself
     "S311", # random builds test data, not a secret
     "S608", # a test builds a DuckDB query from a literal path
+    "TID251", # a test imports portolan_cli.output to test or patch it
 ]
 "scripts/**/*.py" = [
     "T20", # scripts are CLIs of their own and print by design
@@ -288,6 +291,57 @@ ignore = [
     "S607", # the script resolves its tools from PATH
 ]
 "examples/**/*.py" = ["T20"] # an example prints its result for the reader
+# vulture's whitelist format is bare names and `_.attr` expressions. They are
+# never executed, so the undefined `_` and the bare expressions are the format.
+"vulture_whitelist.py" = ["F821", "B018"]
+# TID251, permanent. The CLI layer prints, so it imports portolan_cli.output.
+# It is the layer-cli contract below; tests/docs/test_quality_config.py keeps
+# the two lists equal. api.py re-exports output for plugins. sync/upload.py is
+# the object-store transport and the one module that calls obstore.put.
+"portolan_cli/cli.py" = ["TID251"]
+"portolan_cli/cli_types.py" = ["TID251"]
+"portolan_cli/emit.py" = ["TID251"]
+"portolan_cli/add_progress.py" = ["TID251"]
+"portolan_cli/scan/progress.py" = ["TID251"]
+"portolan_cli/plugins/commands.py" = ["TID251"]
+"portolan_cli/backends/iceberg/cli.py" = ["TID251"]
+"portolan_cli/extract/*/cli.py" = ["TID251"]
+"portolan_cli/extract/common/cli_helpers.py" = ["TID251"]
+"portolan_cli/extract/common/layer_cli.py" = ["TID251"]
+"portolan_cli/api.py" = ["TID251"]
+"portolan_cli/sync/upload.py" = ["TID251"]
+# TID251, ratchet (#1035). Each module still prints through portolan_cli.output
+# or calls obstore.put. The letter names the #1035 agent that owns the module.
+# Delete a line when its module is clean, and delete the same module from
+# RATCHET_TID251 and from the output-is-cli-only ignore_imports. Never add one.
+"portolan_cli/add.py" = ["TID251"] # B
+"portolan_cli/preparation.py" = ["TID251"] # B
+"portolan_cli/convert.py" = ["TID251"] # B
+"portolan_cli/conversion_config.py" = ["TID251"] # A
+"portolan_cli/catalog.py" = ["TID251"] # C
+"portolan_cli/finalization.py" = ["TID251"] # C
+"portolan_cli/stac.py" = ["TID251"] # C
+"portolan_cli/collection_thumbnail.py" = ["TID251"] # D
+"portolan_cli/viz/pmtiles.py" = ["TID251"] # D
+"portolan_cli/viz/style.py" = ["TID251"] # D
+"portolan_cli/sync/core.py" = ["TID251"] # E
+"portolan_cli/sync/download.py" = ["TID251"] # E
+"portolan_cli/sync/pull.py" = ["TID251"] # E
+"portolan_cli/sync/push.py" = ["TID251"] # E, also obstore.put (#807, #908)
+"portolan_cli/extract/arcgis/orchestrator.py" = ["TID251"] # F
+"portolan_cli/extract/arcgis/imageserver/extractor.py" = ["TID251"] # F
+"portolan_cli/extract/arcgis/imageserver/orchestrator.py" = ["TID251"] # F
+"portolan_cli/extract/common/orchestrator_base.py" = ["TID251"] # F
+"portolan_cli/extract/common/source.py" = ["TID251"] # F
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Library output on stdout corrupts the JSON envelope (#1005) and interleaves
+# with progress lines (#1012). A direct obstore.put skips Content-Type (#807)
+# and the multipart part size (#908). Ruff resolves aliases, so
+# `import obstore as obs` then `obs.put(...)` is reported.
+"portolan_cli.output".msg = "Library code logs through logging.getLogger. Only the CLI layer prints. See #1005."
+"obstore.put".msg = "Call the put_object helper in portolan_cli.sync.upload. It sets Content-Type and the part size. See #807 and #908."
+"obstore.put_async".msg = "Call the put_object_async helper in portolan_cli.sync.upload. See #807 and #908."
 
 [tool.ruff.lint.flake8-builtins]
 # STAC names a collection field "license". The ArcGIS REST API and the schema
@@ -339,6 +393,29 @@ mypy_path = "tests/plugins/portolan_example/src"
 # ParquetFile/read_metadata/read_schema call. Scope the suppression to pyarrow
 # instead of relaxing strictness globally.
 untyped_calls_exclude = ["pyarrow"]
+# Reports code that the types say cannot run, such as an isinstance branch the
+# annotation already rules out.
+warn_unreachable = true
+
+# warn_unreachable ratchet (#1035). Each module reports `Statement is
+# unreachable` today. The letter names the #1035 agent that owns the module.
+# Delete a module when it is clean, and delete it from
+# MYPY_UNREACHABLE_RATCHET in tests/docs/test_quality_config.py. Never add one.
+[[tool.mypy.overrides]]
+module = [
+    "portolan_cli.backends.iceberg.backend", # C
+    "portolan_cli.backends.iceberg.hooks", # C
+    "portolan_cli.conversion_config", # A
+    "portolan_cli.metadata.validation", # unassigned in #1035
+    "portolan_cli.models.schema", # unassigned in #1035
+    "portolan_cli.plugins.commands", # unassigned in #1035
+    "portolan_cli.readme", # D
+    "portolan_cli.scan.output", # unassigned in #1035
+    "portolan_cli.stac", # C
+    "portolan_cli.testing", # unassigned in #1035
+    "portolan_cli.viz.thumbnail", # D
+]
+warn_unreachable = false
 
 [[tool.mypy.overrides]]
 module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*", "pyiceberg.*", "shapely.*", "pygeohash.*", "mutmut.*", "geopandas.*", "contextily.*", "jsonschema.*"]
@@ -370,7 +447,9 @@ ignore-words-list = "nd,bu,ue,adresse,projet,environnement,copie,explicite,conne
 # ---------- dead code ----------
 
 [tool.vulture]
-min_confidence = 80
+# 60 reports unused variables, attributes, and functions. 80 reports only
+# unused imports and arguments. vulture_whitelist.py holds today's findings.
+min_confidence = 60
 paths = ["portolan_cli", "tests", "vulture_whitelist.py"]
 exclude = [
     "portolan_cli/backends/protocol.py", # Protocol method params are intentionally unused
@@ -627,6 +706,67 @@ ignore_imports = [
     # The package root names the Click group for type checkers only. It loads
     # the group lazily through __getattr__.
     "portolan_cli -> portolan_cli.cli",
+]
+
+# ---------- output and transport bans (#1035) ----------
+# The second layer under ruff TID251. Ruff sees one file at a time. These
+# contracts see the import graph, and they report an ignore_imports line that
+# matches no import, so a ratchet line cannot outlive its import.
+
+[[tool.importlinter.contracts]]
+id = "output-is-cli-only"
+name = "Only the CLI layer imports portolan_cli.output"
+type = "forbidden"
+source_modules = ["portolan_cli", "portolan_cli.**"]
+forbidden_modules = ["portolan_cli.output"]
+allow_indirect_imports = true
+ignore_imports = [
+    # Permanent. The CLI layer prints. api.py re-exports output for plugins.
+    "portolan_cli.cli -> portolan_cli.output",
+    "portolan_cli.emit -> portolan_cli.output",
+    "portolan_cli.plugins.commands -> portolan_cli.output",
+    "portolan_cli.extract.*.cli -> portolan_cli.output",
+    "portolan_cli.extract.common.cli_helpers -> portolan_cli.output",
+    "portolan_cli.extract.common.layer_cli -> portolan_cli.output",
+    "portolan_cli.api -> portolan_cli.output",
+    # Ratchet. The same modules as the TID251 ratchet in
+    # [tool.ruff.lint.per-file-ignores], plus sync.upload: ruff exempts that
+    # file for obstore.put, so only this contract sees its output import.
+    # The letter names the owning #1035 agent. Delete only.
+    "portolan_cli.add -> portolan_cli.output", # B
+    "portolan_cli.preparation -> portolan_cli.output", # B
+    "portolan_cli.convert -> portolan_cli.output", # B
+    "portolan_cli.conversion_config -> portolan_cli.output", # A
+    "portolan_cli.catalog -> portolan_cli.output", # C
+    "portolan_cli.finalization -> portolan_cli.output", # C
+    "portolan_cli.stac -> portolan_cli.output", # C
+    "portolan_cli.collection_thumbnail -> portolan_cli.output", # D
+    "portolan_cli.viz.pmtiles -> portolan_cli.output", # D
+    "portolan_cli.viz.style -> portolan_cli.output", # D
+    "portolan_cli.sync.core -> portolan_cli.output", # E
+    "portolan_cli.sync.download -> portolan_cli.output", # E
+    "portolan_cli.sync.pull -> portolan_cli.output", # E
+    "portolan_cli.sync.push -> portolan_cli.output", # E
+    "portolan_cli.sync.upload -> portolan_cli.output", # E
+    "portolan_cli.extract.arcgis.orchestrator -> portolan_cli.output", # F
+    "portolan_cli.extract.arcgis.imageserver.extractor -> portolan_cli.output", # F
+    "portolan_cli.extract.arcgis.imageserver.orchestrator -> portolan_cli.output", # F
+    "portolan_cli.extract.common.orchestrator_base -> portolan_cli.output", # F
+    "portolan_cli.extract.common.source -> portolan_cli.output", # F
+]
+
+[[tool.importlinter.contracts]]
+id = "object-store-is-sync-transport-only"
+name = "Only the sync transport modules import obstore"
+type = "forbidden"
+source_modules = ["portolan_cli", "portolan_cli.**"]
+forbidden_modules = ["obstore"]
+allow_indirect_imports = true
+ignore_imports = [
+    "portolan_cli.sync.upload -> obstore",
+    "portolan_cli.sync.download -> obstore",
+    "portolan_cli.sync.push -> obstore",
+    "portolan_cli.sync.pull -> obstore",
 ]
 
 # ---------- dependency checking ----------
