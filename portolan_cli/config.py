@@ -129,6 +129,21 @@ KNOWN_SETTINGS: dict[str, str] = {
     "publish.public_url": "str",
 }
 
+#: The settings that a reader resolves per collection, as key prefixes. Any
+#: other reader reads the catalog level only, so ``set_setting`` rejects a
+#: collection value for its key.
+_COLLECTION_SETTINGS: tuple[str, ...] = (
+    "backend",
+    "parquet.enabled",
+    "partitioning.enabled",
+    "partitioning.strategy",
+    "partitioning.target_rows",
+    "partitioning.threshold_gb",
+    "pmtiles.",
+    "statistics.",
+    "tabular.",
+)
+
 #: How an error message names each type in ``KNOWN_SETTINGS``.
 _TYPE_LABELS: dict[str, str] = {
     "bool": "true or false",
@@ -311,8 +326,10 @@ def _schema_entry(key: str) -> tuple[tuple[str, ...], str] | None:
     Returns:
         The nested path and the type name, or None for an unknown key. Below a
         ``.*`` pattern the rest of the key is one name, so the extension in
-        "conversion.handlers..tif" keeps its dot.
+        "conversion.handlers..tif" keeps its dot. A pattern itself is no key.
     """
+    if key.endswith(".*"):
+        return None
     kind = KNOWN_SETTINGS.get(key)
     if kind is not None:
         return tuple(key.split(".")), kind
@@ -332,7 +349,9 @@ def _matches(kind: str, value: Any) -> bool:
         "number": is_int or isinstance(value, float),
         "int|auto": is_int or value == "auto",
         "str": isinstance(value, str),
-        "list": isinstance(value, list),
+        # A date or a nested value has no reader, and JSON output cannot hold a date.
+        "list": isinstance(value, list)
+        and all(isinstance(item, (str, int, float)) for item in value),
     }
     return checks[kind]
 
@@ -718,6 +737,10 @@ def get_setting(
     # 2. Environment variable (skip empty strings)
     env_value = _env_setting(key)
     if env_value is not None:
+        # The value takes the schema type, as a config set value does.
+        entry = _schema_entry(key)
+        with contextlib.suppress(ConfigError):
+            return _coerce_value(key, entry[1], env_value) if entry else env_value
         return env_value
 
     # If no catalog path, can't check file-based config
@@ -763,7 +786,7 @@ def set_setting(
     key: str,
     value: Any,
     collection: str | None = None,
-) -> None:
+) -> Any:
     """Set a configuration value.
 
     Creates the config file and .portolan directory if they don't exist. A
@@ -777,11 +800,14 @@ def set_setting(
         value: Value to set
         collection: Optional collection name for collection-level config
 
+    Returns:
+        The value as the file stores it, in the type of its setting.
+
     Raises:
         ConfigError: If key is a sensitive setting (remote, profile, region).
             These must be set via environment variables or .env files. Also
-            if key is not in ``KNOWN_SETTINGS``, or if value does not have the
-            type that the key takes.
+            if key is not in ``KNOWN_SETTINGS``, if value does not have the
+            type that the key takes, or if a collection value has no reader.
     """
     if key in SENSITIVE_SETTINGS:
         env_var = _get_env_var_name(key)
@@ -794,12 +820,18 @@ def set_setting(
     if entry is None:
         raise ConfigError(_unknown_setting_message(key))
     path, kind = entry
+    if collection is not None and not key.startswith(_COLLECTION_SETTINGS):
+        raise ConfigError(
+            f"Setting '{key}' applies to the whole catalog. "
+            "Run the command again without --collection."
+        )
     value = _coerce_value(key, kind, value)
 
     config = load_config(catalog_path)
     scope = ("collections", collection) if collection is not None else ()
     _set_path(config, (*scope, *path), value)
     save_config(catalog_path, config)
+    return value
 
 
 def unset_setting(
@@ -996,18 +1028,14 @@ def find_portolan_files(
 
 
 def _load_validated_mapping(file_path: Path) -> dict[str, Any] | None:
-    """Load and validate a YAML file as a mapping.
-
-    Handles YAML parsing errors and validates the document is a dict.
-    Returns None for empty files or non-dict documents (with logging).
+    """Load a YAML file as a mapping.
 
     Args:
         file_path: Path to the YAML file.
 
     Returns:
-        Parsed dict if valid, None otherwise.
-
-    The result is the shared parse from ``_parse_yaml``. Do not mutate it.
+        The shared parse from ``_parse_yaml``. Do not mutate it. None for an
+        empty file, or for a document that is not a mapping.
 
     Raises:
         ConfigInvalidStructureError: If YAML is malformed.
@@ -1016,8 +1044,6 @@ def _load_validated_mapping(file_path: Path) -> dict[str, Any] | None:
         data = _parse_yaml(file_path)
     except yaml.YAMLError as e:
         raise ConfigInvalidStructureError(str(file_path), f"Invalid YAML syntax: {e}") from e
-
-    # Empty or non-mapping YAML (e.g., a list or scalar) counts as no file.
     return data if isinstance(data, dict) else None
 
 
@@ -1109,12 +1135,15 @@ def load_merged_config(
     # below the root override it, and it overrides the root settings.
     root_config = load_catalog_config(catalog_root)
     try:
-        relative = path.resolve().relative_to(catalog_root.resolve())
-        collection_name = relative.parts[0] if relative.parts else None
+        parts = path.resolve().relative_to(catalog_root.resolve()).parts
     except ValueError:
-        collection_name = None
-    legacy = root_config.section("collections").get(collection_name) if collection_name else None
-    if isinstance(legacy, dict):
+        parts = ()
+    # A nested collection id such as "parent/child" is one key. The longest
+    # leading part of the path that names a section wins.
+    sections = root_config.section("collections")
+    names = ("/".join(parts[:end]) for end in range(len(parts), 0, -1))
+    legacy = next((sections[name] for name in names if isinstance(sections.get(name), dict)), None)
+    if legacy is not None:
         root_settings = {k: v for k, v in root_config.data.items() if k != "collections"}
         root_file = get_config_path(catalog_root).resolve()
         merged = _deep_merge(

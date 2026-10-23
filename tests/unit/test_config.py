@@ -1799,3 +1799,76 @@ class TestListNestedSettings:
         assert "backend, check.disabled, check.severity.<name>, conversion.cog.compression" in str(
             excinfo.value
         )
+
+
+class TestCollectionScope:
+    """``set_setting`` writes a collection value only where a reader reads it."""
+
+    @pytest.mark.unit
+    def test_a_catalog_only_setting_rejects_a_collection(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+
+        with pytest.raises(
+            ConfigError,
+            match=r"^\[PRTLN-CFG000\] Setting 'conversion\.vector\.sort' applies to the "
+            r"whole catalog\. Run the command again without --collection\.$",
+        ):
+            set_setting(tmp_path, "conversion.vector.sort", "none", collection="demo")
+        assert not (tmp_path / ".portolan" / "config.yaml").exists()
+
+    @pytest.mark.unit
+    def test_a_nested_collection_reads_its_own_section(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting, set_setting
+
+        set_setting(tmp_path, "pmtiles.enabled", "true", collection="parent/child")
+
+        def read(*parts: str) -> object:
+            return get_setting(
+                "pmtiles.enabled", catalog_path=tmp_path, collection_path=tmp_path.joinpath(*parts)
+            )
+
+        assert read("parent", "child") is True
+        assert read("parent", "child", "item") is True
+        assert read("parent") is False
+
+
+class TestEnvironmentValuesTakeTheSchemaType:
+    """A ``PORTOLAN_<KEY>`` value reads as the type of its setting."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("key", "text", "expected"),
+        [
+            ("statistics.enabled", "false", False),
+            ("push.exclude", "*.md, scratch/", ["*.md", "scratch/"]),
+            ("pmtiles.min_zoom", "3", 3),
+            ("backend", "123", "123"),
+            ("statistics.enabled", "banana", "banana"),
+        ],
+    )
+    def test_env_value(self, tmp_path: Path, key: str, text: str, expected: object) -> None:
+        from portolan_cli.config import _get_env_var_name, get_setting
+
+        with cleared_environ(), mock.patch.dict(os.environ, {_get_env_var_name(key): text}):
+            value = get_setting(key, catalog_path=tmp_path)
+
+        assert (value, type(value)) == (expected, type(expected))
+
+
+class TestSchemaEdges:
+    """``set_setting`` rejects the values that no reader can use."""
+
+    @pytest.mark.unit
+    def test_a_pattern_is_not_a_key(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+
+        with pytest.raises(ConfigError, match=r"Unknown setting 'conversion\.handlers\.\*'"):
+            set_setting(tmp_path, "conversion.handlers.*", "cog")
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("text", ["[2024-01-01]", "[[a]]", "[{a: 1}]"])
+    def test_a_list_holds_only_scalars(self, tmp_path: Path, text: str) -> None:
+        from portolan_cli.config import set_setting
+
+        with pytest.raises(ConfigError, match=r"'push\.exclude' takes a comma-separated list"):
+            set_setting(tmp_path, "push.exclude", text)

@@ -188,9 +188,7 @@ def test_the_default_raster_mode_is_approximate(catalog: Path, run_cli: RunCli) 
 
     _add(run_cli, catalog, scene)
 
-    stats = _band_statistics(catalog / "imagery" / "scene" / "scene.json")
-    assert stats == APPROX_STATISTICS
-    assert stats != EXACT_STATISTICS
+    assert _band_statistics(catalog / "imagery" / "scene" / "scene.json") == APPROX_STATISTICS
 
 
 # ---------------------------------------------------------------------------

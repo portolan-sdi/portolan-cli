@@ -1177,22 +1177,84 @@ class TestReportSkipsAndFindCollections:
     def test_an_ignored_file_before_a_tracked_skip(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """The warning for the ignored file does not stop the walk over the later skips."""
+        """The warning for the ignored file does not stop the walk over the later skips.
+
+        A tracked skip belongs to the nearest collection above it, which can
+        sit below a subcatalog.
+        """
         from portolan_cli.cli import _report_skips_and_find_collections
 
+        for collection in ("roads", "parks", "region/trails"):
+            (tmp_path / collection).mkdir(parents=True)
+            (tmp_path / collection / "collection.json").write_text("{}")
         skips = [
             (tmp_path / "places" / "places.geojson", "it matches ignored_files pattern '*'"),
             (tmp_path / "roads" / "scene" / "roads.tif", "unchanged since the last add"),
             (tmp_path / "parks" / "items.parquet", "it is the STAC-GeoParquet item mirror"),
+            (tmp_path / "region" / "trails" / "trails.parquet", "unchanged since the last add"),
             (tmp_path.parent / "elsewhere.parquet", "unchanged since the last add"),
         ]
 
         affected, versioned = _report_skips_and_find_collections([], skips, tmp_path)
 
-        assert (affected, versioned) == ({"roads", "parks"}, set())
+        assert (affected, versioned) == ({"roads", "parks", "region/trails"}, set())
         assert capsys.readouterr().err == (
             "⚠ Skipping places.geojson: it matches ignored_files pattern '*'\n"
         )
+
+    @pytest.mark.integration
+    def test_a_second_add_restores_the_thumbnail_of_a_nested_collection(
+        self, run_cli: RunCli, conformant_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """An unchanged file keeps its nested collection in the side steps of the add."""
+        root = conformant_catalog
+        collection_dir = root / "region" / "roads"
+        collection_dir.mkdir(parents=True)
+        (collection_dir / "roads.geojson").write_bytes(valid_points_geojson.read_bytes())
+        args = ["add", "--portolan-dir", str(root), str(root)]
+        run_cli(*args)
+        thumbnail = collection_dir / "roads.thumb.jpg"
+        thumbnail.unlink()
+        collection_file = collection_dir / "collection.json"
+        collection = json.loads(collection_file.read_text(encoding="utf-8"))
+        del collection["assets"]["thumbnail"]
+        collection_file.write_text(json.dumps(collection), encoding="utf-8")
+
+        run_cli(*args)
+
+        collection = json.loads(collection_file.read_text(encoding="utf-8"))
+        assert collection["assets"]["thumbnail"]["href"] == "./roads.thumb.jpg"
+        assert thumbnail.is_file()
+
+
+class TestOutputAddUnchanged:
+    """A run that adds nothing calls the files tracked only when all of them are."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("reasons", "summary"),
+        [
+            (
+                ["unchanged since the last add", "it is the STAC-GeoParquet item mirror"],
+                "✓ All 2 files already tracked (unchanged)\n",
+            ),
+            (
+                ["unchanged since the last add", "it matches ignored_files pattern '*'"],
+                "→ Nothing added: 2 files skipped\n",
+            ),
+        ],
+        ids=["tracked", "ignored"],
+    )
+    def test_summary(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], reasons: list[str], summary: str
+    ) -> None:
+        from portolan_cli.cli import _output_add_unchanged
+
+        skips = [(tmp_path / f"{index}.parquet", reason) for index, reason in enumerate(reasons)]
+
+        _output_add_unchanged(skips, verbose=False)
+
+        assert capsys.readouterr().out == summary
 
 
 class TestAddUnknownHandlerPin:

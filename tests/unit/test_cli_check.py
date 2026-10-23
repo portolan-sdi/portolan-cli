@@ -1013,6 +1013,35 @@ class TestExitCodePerMode:
         assert result.exit_code == 1, result.output
         assert json.loads(result.stdout)["data"]["passed"] is False
 
+    @pytest.mark.integration
+    def test_refresh_fails_when_the_catalog_does_not_parse(
+        self, runner: CliRunner, valid_catalog: Path
+    ) -> None:
+        """The refresh cannot read a catalog.json that does not parse, so it refreshed nothing."""
+        root = _mirror_catalog_with_a_lost_child_link(valid_catalog)
+        (root / "catalog.json").write_text("{ not json", encoding="utf-8")
+
+        result = runner.invoke(cli, ["check", str(root), "--json", "--fix", "--metadata"])
+
+        envelope = json.loads(result.stdout)
+        assert result.exit_code == 1, result.output
+        assert envelope["success"] is False
+        assert _errors(envelope) == [("PTL-GEN-000", "instruct")]
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("rule_id", "failed"),
+        [("PTL-GEN-000", True), ("PTL-GEN-001", True), ("PTL-PRO-001", False)],
+    )
+    def test_refresh_fails_on_a_document_it_cannot_read(self, rule_id: str, failed: bool) -> None:
+        """An unreadable document fails the refresh. Other INSTRUCT errors do not."""
+        from portolan_cli.cli import _check_failed
+
+        finding = {"rule_id": rule_id, "severity": "error", "remediation": "instruct"}
+        payload = {"error_count": 1, "findings": [finding]}
+
+        assert _check_failed(payload, strict=False, refresh=True) is failed
+
 
 class TestCheckFailedStrict:
     """Under ``--strict``, each of the three payload keys fails the run on its own."""

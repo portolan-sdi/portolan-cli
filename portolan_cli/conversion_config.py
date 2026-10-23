@@ -25,9 +25,8 @@ See:
 
 from __future__ import annotations
 
-import contextlib
 import logging
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
@@ -714,7 +713,7 @@ def get_vector_settings(catalog_path: Path | None) -> VectorSettings:
     raw_resolution: Any = vector.get("resolution", "auto")
     resolution: int | str = "auto"
     if isinstance(raw_resolution, str):
-        with contextlib.suppress(ValueError):
+        with suppress(ValueError):
             resolution = int(raw_resolution)
     elif isinstance(raw_resolution, int):
         resolution = raw_resolution

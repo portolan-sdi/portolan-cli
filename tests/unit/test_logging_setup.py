@@ -142,6 +142,42 @@ class TestHandlers:
         assert "rel" in records[0] and "ts" in records[0]
 
 
+class TestUserFormat:
+    """At the default level a portolan_cli record reads as an output line."""
+
+    def test_a_warning_reads_as_a_warn_line(self, capsys: pytest.CaptureFixture[str]) -> None:
+        logging_setup.configure_logging(verbosity=0, quiet=False)
+        logging.getLogger("portolan_cli.config").warning("unknown sort '%s'", "bogus")
+        assert capsys.readouterr() == ("", "\u26a0 unknown sort 'bogus'\n")
+
+    def test_an_error_reads_as_an_error_line(self, capsys: pytest.CaptureFixture[str]) -> None:
+        logging_setup.configure_logging(verbosity=0, quiet=True)
+        logging.getLogger("portolan_cli.push").error("upload failed")
+        assert capsys.readouterr() == ("", "\u2717 upload failed\n")
+
+    def test_the_traceback_waits_for_verbose(self, capsys: pytest.CaptureFixture[str]) -> None:
+        logging_setup.configure_logging(verbosity=0, quiet=False)
+        try:
+            raise ValueError("boom")
+        except ValueError:
+            logging.getLogger("portolan_cli.add").warning("kept the file", exc_info=True)
+        assert capsys.readouterr().err == "\u26a0 kept the file\n"
+
+    def test_verbose_keeps_the_record_format(self, capsys: pytest.CaptureFixture[str]) -> None:
+        logging_setup.configure_logging(verbosity=1, quiet=False)
+        logging.getLogger("portolan_cli.config").warning("unknown sort")
+        assert re.fullmatch(
+            r"\+\d+\.\d{3}s WARNING portolan_cli\.config: unknown sort\n", capsys.readouterr().err
+        )
+
+    def test_a_third_party_warning_keeps_the_record_format(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        logging_setup.configure_logging(verbosity=0, quiet=False)
+        logging.getLogger("urllib3").warning("retrying")
+        assert re.fullmatch(r"\+\d+\.\d{3}s WARNING urllib3: retrying\n", capsys.readouterr().err)
+
+
 class TestGdalDebug:
     def test_sets_cpl_debug(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("CPL_DEBUG", raising=False)
