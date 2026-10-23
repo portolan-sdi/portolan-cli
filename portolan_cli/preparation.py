@@ -1446,7 +1446,7 @@ def _rewrite_parquet_in_place(source: Path, settings: VectorSettings) -> None:
     :data:`REWRITE_TEMP_INFIX` in its name. ``add`` collects the source
     directory before it converts anything, and a hard kill skips the cleanup
     below, so a leftover file would otherwise be collected as a source on the
-    next run. :func:`portolan_cli.add.is_rewrite_temp` skips it.
+    next run. :func:`is_rewrite_temp` lets ``add`` skip it.
 
     geoparquet-io writes a fresh ``geo`` key and drops every other schema
     metadata key, so any extra key the source carried is restored afterwards.

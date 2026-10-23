@@ -114,7 +114,6 @@ def assert_one_json_document(stdout: str) -> Any:
     except json.JSONDecodeError as exc:
         pytest.fail(f"stdout does not start with a JSON document ({exc}):\n{stdout}")
     assert end == len(text), f"stdout holds more than one document:\n{stdout}"
-    assert json.loads(stdout) == document
     return document
 
 
