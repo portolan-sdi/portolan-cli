@@ -402,21 +402,33 @@ class TestSameStemGeoParquetAndPMTiles:
 
         assert self._shape(damaged) == self._expected("zone0")
 
+    @staticmethod
+    def _track_under_key(
+        runner: CliRunner, catalog: Path, collection_dir: Path, sample_fgb: Path, key: str
+    ) -> None:
+        """Track ``legacy.fgb`` under ``key``, as a hand edit of collection.json can."""
+        collection_dir.mkdir()
+        shutil.copy(sample_fgb, collection_dir / "legacy.fgb")
+        legacy = str(collection_dir / "legacy.fgb")
+        result = runner.invoke(cli, ["add", "--portolan-dir", str(catalog), legacy])
+        assert result.exit_code == 0, result.output
+        collection_path = collection_dir / "collection.json"
+        data = json.loads(collection_path.read_text())
+        data["assets"][key] = data["assets"].pop("legacy")
+        collection_path.write_text(json.dumps(data))
+
     @pytest.mark.integration
-    def test_add_refuses_a_parquet_that_would_replace_a_flatgeobuf(
+    def test_add_refuses_a_parquet_that_would_replace_another_file(
         self,
         runner: CliRunner,
         initialized_catalog: Path,
         fixtures_dir: Path,
         sample_fgb: Path,
     ) -> None:
-        """A same-stem GeoParquet never silently replaces a tracked FlatGeobuf."""
+        """A GeoParquet never silently replaces the file its key already holds."""
         collection_dir = initialized_catalog / "roads"
-        collection_dir.mkdir()
-        shutil.copy(sample_fgb, collection_dir / "roads.fgb")
+        self._track_under_key(runner, initialized_catalog, collection_dir, sample_fgb, "roads")
         base = ["--portolan-dir", str(initialized_catalog)]
-        result = runner.invoke(cli, ["add", *base, str(collection_dir / "roads.fgb")])
-        assert result.exit_code == 0, result.output
         collection_before = (collection_dir / "collection.json").read_text()
         versions_before = (collection_dir / "versions.json").read_text()
 
@@ -434,3 +446,142 @@ class TestSameStemGeoParquetAndPMTiles:
         assert envelope["errors"][0]["code"] == "PRTLN-COL003"
         assert (collection_dir / "collection.json").read_text() == collection_before
         assert (collection_dir / "versions.json").read_text() == versions_before
+
+    @pytest.mark.integration
+    def test_parquet_added_after_a_same_stem_flatgeobuf_keeps_both(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        fixtures_dir: Path,
+        sample_fgb: Path,
+    ) -> None:
+        """Two adds give the same keys as one add of both files."""
+        collection_dir = initialized_catalog / "roads"
+        collection_dir.mkdir()
+        shutil.copy(sample_fgb, collection_dir / "roads.fgb")
+        base = ["add", "--portolan-dir", str(initialized_catalog)]
+        result = runner.invoke(cli, [*base, str(collection_dir / "roads.fgb")])
+        assert result.exit_code == 0, result.output
+
+        housing = fixtures_dir / "realdata" / "philadelphia-housing"
+        parquet = collection_dir / "roads.parquet"
+        shutil.copy(housing / "council_districts_2024.parquet", parquet)
+        result = runner.invoke(cli, [*base, str(parquet)])
+        assert result.exit_code == 0, result.output
+
+        data = json.loads((collection_dir / "collection.json").read_text())
+        assert data["assets"]["roads"]["href"] == "./roads.parquet"
+        assert data["assets"]["roads.fgb"]["href"] == "./roads.fgb"
+        assert data["assets"]["roads.fgb"]["type"] == "application/vnd.flatgeobuf"
+
+    @pytest.mark.integration
+    def test_add_force_repairs_a_shapefile_under_the_parquet_key(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        """0.8.0 could leave the source or a sidecar under the GeoParquet key."""
+        collection_dir = initialized_catalog / "radios"
+        collection_dir.mkdir()
+        source = fixtures_dir / "scan" / "complete_shapefile_wgs84"
+        for part in source.glob("radios_sample.*"):
+            shutil.copy(part, collection_dir / part.name)
+        args = ["add", "--portolan-dir", str(initialized_catalog), str(collection_dir)]
+        assert runner.invoke(cli, args, catch_exceptions=False).exit_code == 0
+
+        # Write the damage: the .dbf sidecar holds the GeoParquet key.
+        collection_path = collection_dir / "collection.json"
+        data = json.loads(collection_path.read_text())
+        data["assets"]["radios_sample"] = data["assets"].pop("radios_sample.dbf")
+        collection_path.write_text(json.dumps(data))
+
+        result = runner.invoke(cli, [*args, "--force"], catch_exceptions=False)
+        assert result.exit_code == 0, result.output
+
+        assets = json.loads(collection_path.read_text())["assets"]
+        assert assets["radios_sample"]["href"] == "./radios_sample.parquet"
+        assert assets["radios_sample"]["type"] == "application/vnd.apache.parquet"
+        assert assets["radios_sample.dbf"]["href"] == "./radios_sample.dbf"
+
+    @pytest.mark.integration
+    def test_collision_in_one_collection_writes_no_collection(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        fixtures_dir: Path,
+        sample_fgb: Path,
+    ) -> None:
+        """A refused add leaves every collection of the batch unwritten."""
+        base = ["--portolan-dir", str(initialized_catalog)]
+        colliding = initialized_catalog / "zzz"
+        self._track_under_key(runner, initialized_catalog, colliding, sample_fgb, "roads")
+
+        housing = fixtures_dir / "realdata" / "philadelphia-housing"
+        clean = initialized_catalog / "aaa"
+        clean.mkdir()
+        shutil.copy(housing / "council_districts_2024.parquet", clean / "zone.parquet")
+        shutil.copy(housing / "council_districts_2024.parquet", colliding / "roads.parquet")
+
+        result = runner.invoke(
+            cli,
+            ["add", *base, str(clean / "zone.parquet"), str(colliding / "roads.parquet")],
+        )
+
+        assert result.exit_code == 1, result.output
+        assert not (clean / "collection.json").exists()
+        assert not (clean / "versions.json").exists()
+
+    @pytest.mark.integration
+    def test_single_file_add_keys_another_stems_pair_correctly(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        fixtures_dir: Path,
+        sample_pmtiles: Path,
+    ) -> None:
+        """The scan of ``b.parquet`` also sees ``aN.parquet`` and ``aN.pmtiles``.
+
+        Six collections give several ``iterdir`` orders of the pair.
+        """
+        housing = fixtures_dir / "realdata" / "philadelphia-housing"
+        base = ["add", "--portolan-dir", str(initialized_catalog)]
+        for i in range(6):
+            collection_dir = initialized_catalog / f"c{i}"
+            collection_dir.mkdir()
+            shutil.copy(
+                housing / "council_districts_2024.parquet", collection_dir / f"a{i}.parquet"
+            )
+            result = runner.invoke(cli, [*base, str(collection_dir / f"a{i}.parquet")])
+            assert result.exit_code == 0, result.output
+            shutil.copy(sample_pmtiles, collection_dir / f"a{i}.pmtiles")
+            shutil.copy(housing / "council_districts_2024.parquet", collection_dir / "b.parquet")
+
+            result = runner.invoke(cli, [*base, str(collection_dir / "b.parquet")])
+
+            assert result.exit_code == 0, result.output
+            assets = json.loads((collection_dir / "collection.json").read_text())["assets"]
+            assert assets[f"a{i}"]["href"] == f"./a{i}.parquet"
+            assert assets[f"a{i}-tiles"]["href"] == f"./a{i}.pmtiles"
+            assert assets[f"a{i}-tiles"]["roles"] == ["visual"]
+
+    @pytest.mark.integration
+    def test_plain_table_beside_pmtiles_leaves_the_pmtiles_primary(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        fixtures_dir: Path,
+        sample_pmtiles: Path,
+    ) -> None:
+        """A Parquet without GeoParquet metadata is no source of the tiles."""
+        collection_dir = initialized_catalog / "roads"
+        collection_dir.mkdir()
+        shutil.copy(sample_pmtiles, collection_dir / "roads.pmtiles")
+        table = fixtures_dir / "scan" / "geoparquet_with_companions" / "lookup.parquet"
+        shutil.copy(table, collection_dir / "roads.parquet")
+        args = ["add", "--portolan-dir", str(initialized_catalog), str(collection_dir)]
+
+        result = runner.invoke(cli, args)
+
+        assert result.exit_code == 0, result.output
+        assets = json.loads((collection_dir / "collection.json").read_text())["assets"]
+        assert assets["roads"]["href"] == "./roads.pmtiles"
+        assert assets["roads"]["roles"] == ["data"]
+        assert "roads-tiles" not in assets

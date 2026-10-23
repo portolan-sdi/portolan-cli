@@ -147,11 +147,14 @@ class AssetKeyCollisionError(CollectionError):
 
     code = "PRTLN-COL003"
 
-    def __init__(self, asset_key: str, existing_href: str, new_href: str) -> None:
+    def __init__(
+        self, collection_id: str, asset_key: str, existing_href: str, new_href: str
+    ) -> None:
         super().__init__(
-            f"Asset key '{asset_key}' already holds '{existing_href}'. "
-            f"Adding '{new_href}' under the same key would remove that asset. "
-            "Remove one of the two files from the collection, or rename it.",
+            f"Collection '{collection_id}': asset key '{asset_key}' already holds "
+            f"'{existing_href}'. Adding '{new_href}' under the same key would remove "
+            "that asset. Remove one of the two files from the collection, or rename it.",
+            collection_id=collection_id,
             asset_key=asset_key,
             existing_href=existing_href,
             new_href=new_href,

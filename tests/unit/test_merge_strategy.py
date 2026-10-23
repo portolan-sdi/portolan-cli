@@ -230,7 +230,9 @@ class TestAssetKeyCollision:
     @pytest.mark.parametrize("strategy", list(MergeStrategy))
     def test_different_file_and_media_type_raises(self, strategy: MergeStrategy) -> None:
         collection = self._collection(
-            zoning=pystac.Asset(href="./zoning.fgb", media_type="application/vnd.flatgeobuf")
+            zoning=pystac.Asset(
+                href="./legacy.fgb", media_type="application/vnd.flatgeobuf", roles=["data"]
+            )
         )
         incoming = pystac.Asset(href="./zoning.parquet", media_type=_PARQUET, roles=["data"])
 
@@ -239,9 +241,107 @@ class TestAssetKeyCollision:
 
         assert excinfo.value.code == "PRTLN-COL003"
         assert excinfo.value.asset_key == "zoning"
-        assert excinfo.value.existing_href == "./zoning.fgb"
+        assert excinfo.value.existing_href == "./legacy.fgb"
         assert excinfo.value.new_href == "./zoning.parquet"
-        assert collection.assets["zoning"].href == "./zoning.fgb"
+        assert collection.assets["zoning"].href == "./legacy.fgb"
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("href", "media_type"),
+        [
+            ("./roads.shp", "application/x-shapefile"),
+            ("./roads.dbf", "application/x-dbf"),
+            ("./roads.fgb", "application/vnd.flatgeobuf"),
+        ],
+    )
+    def test_parquet_moves_a_displaced_same_stem_file_to_its_filename_key(
+        self, href: str, media_type: str
+    ) -> None:
+        """A source, sidecar, or other same-stem file under the stem key moves aside.
+
+        0.8.0 renamed ``data`` to the stem after the scan keyed a same-stem
+        file by the stem, so any of these files could hold the GeoParquet key.
+        """
+        collection = self._collection(
+            roads=pystac.Asset(href=href, media_type=media_type, roles=["data"])
+        )
+        parquet = pystac.Asset(href="./roads.parquet", media_type=_PARQUET, roles=["data"])
+
+        add_asset_to_collection(collection, "roads", parquet)
+
+        filename = href.removeprefix("./")
+        assert {k: (a.href, a.media_type) for k, a in collection.assets.items()} == {
+            "roads": ("./roads.parquet", _PARQUET),
+            filename: (href, media_type),
+        }
+        assert collection.assets[filename].roles == ["data"]
+
+    @pytest.mark.unit
+    def test_role_keyed_assets_merge_as_before(self) -> None:
+        """A new thumbnail under the ``thumbnail`` key is no data collision."""
+        collection = self._collection(
+            thumbnail=pystac.Asset(
+                href="./roads.thumb.jpg", media_type="image/jpeg", roles=["thumbnail"]
+            )
+        )
+        preview = pystac.Asset(href="./preview.png", media_type="image/png", roles=["thumbnail"])
+
+        add_asset_to_collection(collection, "thumbnail", preview)
+
+        assert {k: a.href for k, a in collection.assets.items()} == {"thumbnail": "./preview.png"}
+
+    @pytest.mark.unit
+    def test_same_file_with_another_href_spelling_is_one_asset(self) -> None:
+        """``roads.parquet`` and ``./roads.parquet`` name one file."""
+        collection = self._collection(
+            roads=pystac.Asset(
+                href="roads.parquet", media_type="application/geo+parquet", roles=["data"]
+            )
+        )
+        parquet = pystac.Asset(href="./roads.parquet", media_type=_PARQUET, roles=["data"])
+
+        add_asset_to_collection(collection, "roads", parquet)
+
+        assert {k: (a.href, a.media_type) for k, a in collection.assets.items()} == {
+            "roads": ("./roads.parquet", _PARQUET)
+        }
+
+    @pytest.mark.unit
+    def test_flatgeobuf_moves_a_same_stem_pmtiles_to_its_filename(self) -> None:
+        """A FlatGeobuf outranks a PMTiles for the stem, as in a fresh add."""
+        collection = self._collection(
+            roads=pystac.Asset(href="./roads.pmtiles", media_type=_PMTILES, roles=["data"])
+        )
+        fgb = pystac.Asset(
+            href="./roads.fgb", media_type="application/vnd.flatgeobuf", roles=["data"]
+        )
+
+        add_asset_to_collection(collection, "roads", fgb)
+
+        assert {k: (a.href, a.roles) for k, a in collection.assets.items()} == {
+            "roads": ("./roads.fgb", ["data"]),
+            "roads.pmtiles": ("./roads.pmtiles", ["data"]),
+        }
+
+    @pytest.mark.unit
+    def test_repair_raises_when_the_target_key_holds_another_file(self) -> None:
+        collection = self._collection(
+            roads=pystac.Asset(
+                href="./roads.fgb", media_type="application/vnd.flatgeobuf", roles=["data"]
+            ),
+            **{
+                "roads.fgb": pystac.Asset(
+                    href="./other.fgb", media_type="application/vnd.flatgeobuf", roles=["data"]
+                )
+            },
+        )
+        parquet = pystac.Asset(href="./roads.parquet", media_type=_PARQUET, roles=["data"])
+
+        with pytest.raises(AssetKeyCollisionError) as excinfo:
+            add_asset_to_collection(collection, "roads", parquet)
+
+        assert excinfo.value.asset_key == "roads.fgb"
+        assert collection.assets["roads"].href == "./roads.fgb"
 
     @pytest.mark.unit
     def test_legacy_parquet_media_type_counts_as_the_same(self) -> None:

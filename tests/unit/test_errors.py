@@ -166,10 +166,12 @@ class TestCollectionErrors:
     @pytest.mark.unit
     def test_asset_key_collision_error(self) -> None:
         """AssetKeyCollisionError names the key and both files."""
-        error = AssetKeyCollisionError("zoning", "./zoning.fgb", "./zoning.parquet")
+        error = AssetKeyCollisionError("land", "zoning", "./zoning.fgb", "./zoning.parquet")
 
         assert error.code == "PRTLN-COL003"
         assert isinstance(error, CollectionError)
+        assert error.collection_id == "land"
+        assert "Collection 'land'" in str(error)
         assert error.asset_key == "zoning"
         assert error.existing_href == "./zoning.fgb"
         assert error.new_href == "./zoning.parquet"
