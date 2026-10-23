@@ -1197,27 +1197,18 @@ class TestOrphanCleanup:
         """_upload_assets_async should return list of uploaded object keys."""
         from portolan_cli.sync.push import _upload_assets_async
 
-        # Create the test file (needed for size calculation)
         test_file = local_catalog / "data.parquet"
         test_file.write_bytes(b"test data")
+        store = MemoryStore()
 
-        with patch("portolan_cli.sync.push.obs.put_async", new_callable=AsyncMock) as mock_put:
-            mock_put.return_value = None
-
-            mock_store = MagicMock()
-            assets = [test_file]
-
-            files_uploaded, errors, uploaded_keys, _metrics = await _upload_assets_async(
-                store=mock_store,
-                catalog_root=local_catalog,
-                prefix="catalog",
-                assets=assets,
-            )
+        files_uploaded, errors, uploaded_keys, _metrics = await _upload_assets_async(
+            store=store, catalog_root=local_catalog, prefix="catalog", assets=[test_file]
+        )
 
         assert files_uploaded == 1
         assert errors == []
-        assert len(uploaded_keys) == 1
-        assert "data.parquet" in uploaded_keys[0]
+        assert uploaded_keys == ["catalog/data.parquet"]
+        assert stored_keys(store) == {"catalog/data.parquet"}
 
     @pytest.mark.unit
     def test_cleanup_deletes_uploaded_assets(self) -> None:
@@ -1270,40 +1261,6 @@ class TestOrphanCleanup:
 
 class TestProgressReporting:
     """Tests for progress reporting during uploads."""
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_upload_assets_shows_progress(self, local_catalog: Path, capsys) -> None:
-        """_upload_assets_async should upload files with progress tracking.
-
-        Note: With json_mode=False, a Rich progress bar handles the display.
-        With suppress_progress=False and json_mode=True, text progress is shown.
-        """
-        from portolan_cli.sync.push import _upload_assets_async
-
-        # Create the test file (needed for size calculation)
-        test_file = local_catalog / "data.parquet"
-        test_file.write_bytes(b"test data")
-
-        with patch("portolan_cli.sync.push.obs.put_async", new_callable=AsyncMock) as mock_put:
-            mock_put.return_value = None
-
-            mock_store = MagicMock()
-            assets = [test_file]
-
-            files_uploaded, errors, uploaded_keys, metrics = await _upload_assets_async(
-                store=mock_store,
-                catalog_root=local_catalog,
-                prefix="catalog",
-                assets=assets,
-                json_mode=True,  # No Rich progress bar
-                suppress_progress=True,  # Suppress for clean test
-            )
-
-        # Verify upload occurred
-        assert files_uploaded == 1
-        assert errors == []
-        assert len(uploaded_keys) == 1
 
     @pytest.mark.unit
     def test_push_dry_run_shows_progress(self, local_catalog: Path, capsys) -> None:
