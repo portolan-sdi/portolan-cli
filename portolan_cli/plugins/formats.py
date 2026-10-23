@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from portolan_cli.errors import AmbiguousFormatError, UnknownFormatHandlerError
+from portolan_cli.format_families import VECTOR_EXTENSIONS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -256,9 +257,11 @@ def select_handler(
 
         pinned = get_handler_pins(catalog_root).get(extension)
         # conversion.extensions.convert sends a cloud-native vector, such as a
-        # FlatGeobuf, to GeoParquet. Its own handler only copies it (#1020).
+        # FlatGeobuf, to GeoParquet. Its own handler only copies it (#1020). A
+        # listed raster keeps the COG handler, which converts it again.
         if (
             pinned is None
+            and extension in VECTOR_EXTENSIONS
             and extension in get_conversion_overrides(catalog_root).extensions_convert
         ):
             pinned = "geoparquet"

@@ -1641,3 +1641,58 @@ class TestSnapshotModel:
             assert latest_assets == all_assets_added, (
                 f"After adding {name}: expected {all_assets_added}, got {latest_assets}"
             )
+
+
+class TestTrackGeneratedAssets:
+    """A generated asset gets one new version, keyed by its path in the collection."""
+
+    @pytest.mark.unit
+    def test_each_default_call_records_a_new_plain_version(self, tmp_path: Path) -> None:
+        """A rebuilt PMTiles keeps its href, so only a new version records the new bytes."""
+        from portolan_cli.versions import track_generated_assets
+
+        tiles = tmp_path / "roads" / "roads.pmtiles"
+        tiles.parent.mkdir()
+        tiles.write_bytes(b"first")
+        track_generated_assets(tiles.parent, [tiles], tmp_path, message="first build")
+        tiles.write_bytes(b"second build")
+
+        track_generated_assets(tiles.parent, [tiles], tmp_path, message="rebuild")
+
+        versions_file = read_versions(tiles.parent / "versions.json")
+        assert versions_file.spec_version == "1.0.0"
+        assert [
+            (v.version, v.breaking, v.message, v.assets["roads.pmtiles"].size_bytes)
+            for v in versions_file.versions
+        ] == [("1.0.0", False, "first build", 5), ("1.0.1", False, "rebuild", 12)]
+
+    @pytest.mark.unit
+    def test_a_missing_file_is_named_in_the_error(self, tmp_path: Path) -> None:
+        from portolan_cli.versions import track_generated_assets
+
+        with pytest.raises(FileNotFoundError, match=r"roads\.pmtiles"):
+            track_generated_assets(tmp_path, [tmp_path / "roads.pmtiles"], tmp_path, message="m")
+
+    @pytest.mark.unit
+    def test_a_resolved_item_file_keeps_its_item_key_under_a_symlinked_root(
+        self, tmp_path: Path
+    ) -> None:
+        """Issue #1053: the collection thumbnail step passes a resolved item path.
+
+        A catalog reached through a symlink gave the bare name as key, the
+        second key at the collection root, and no href at all.
+        """
+        from portolan_cli.versions import track_generated_assets
+
+        thumb = tmp_path / "real" / "imagery" / "scene" / "scene.thumb.jpg"
+        thumb.parent.mkdir(parents=True)
+        thumb.write_bytes(b"jpeg")
+        link = tmp_path / "link"
+        link.symlink_to(tmp_path / "real", target_is_directory=True)
+
+        track_generated_assets(link / "imagery", [thumb.resolve()], link, message="thumbnail")
+
+        assets = read_versions(link / "imagery" / "versions.json").versions[-1].assets
+        assert {key: asset.href for key, asset in assets.items()} == {
+            "scene/scene.thumb.jpg": "imagery/scene/scene.thumb.jpg"
+        }

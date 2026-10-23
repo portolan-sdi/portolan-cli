@@ -19,6 +19,7 @@ from portolan_cli.preparation import (
     _convert_and_extract_metadata,
     _extract_bbox_wgs84,
     _extract_statistics_best_effort,
+    _get_asset_role,
     _scan_item_assets,
     _validate_collection_id,
 )
@@ -292,6 +293,47 @@ class TestStemGroupResolver:
             "a1.PARQUET": ("./a1.PARQUET", ["data"]),
         }
 
+    def test_a_same_rank_tie_without_the_primary_goes_to_the_parquet_name(
+        self, tmp_path: Path
+    ) -> None:
+        """The name order alone would give the stem to ``a1.PARQUET``."""
+        probe = tmp_path / "probe"
+        probe.write_bytes(b"")
+        case_insensitive = (tmp_path / "PROBE").exists()
+        probe.unlink()
+        if case_insensitive:
+            pytest.skip("a case-insensitive filesystem holds one file for both names")
+        _write(tmp_path, "a1.parquet", "a1.PARQUET", "b.parquet")
+
+        assert _scan(tmp_path, "b.parquet") == {
+            "a1": ("./a1.parquet", ["data"]),
+            "a1.PARQUET": ("./a1.PARQUET", ["data"]),
+            "b": ("./b.parquet", ["data"]),
+        }
+
+    def test_a_file_beside_an_owner_that_is_not_cloud_native_keeps_its_role(
+        self, tmp_path: Path
+    ) -> None:
+        """A GeoPackage kept as it is converts nothing, so its CSV is no source."""
+        _write(tmp_path, "roads.gpkg", "roads.csv")
+
+        assert _scan(tmp_path, "roads.gpkg") == {
+            "roads": ("./roads.gpkg", ["data"]),
+            "roads.csv": ("./roads.csv", ["data"]),
+        }
+
+    def test_the_item_primary_keeps_data_over_a_file_whose_stem_is_data(
+        self, tmp_path: Path
+    ) -> None:
+        """The primary group goes first, though ``data`` sorts before ``scene``."""
+        item_dir = tmp_path / "scene"
+        _write(item_dir, "scene.tif", "data.csv")
+
+        assert _scan(item_dir, "scene.tif", collection_level=False) == {
+            "data": ("scene.tif", ["data"]),
+            "data.csv": ("data.csv", ["data"]),
+        }
+
     def test_role_files_never_own_the_stem(self, tmp_path: Path) -> None:
         _write(tmp_path, "roads.pmtiles", "roads.md", "roads.txt")
 
@@ -305,6 +347,28 @@ class TestStemGroupResolver:
         _write(tmp_path, "basemap.pmtiles")
 
         assert _scan(tmp_path, "basemap.pmtiles") == {"basemap": ("./basemap.pmtiles", ["data"])}
+
+    def test_extension_role_of_a_lone_file_is_the_role_the_scan_gives(self, tmp_path: Path) -> None:
+        """``check --fix`` backfills a missing role from the extension alone.
+
+        It must give a lone PMTiles the role a fresh ``add`` gives it, or a
+        repair turns the only data of a collection into a visual.
+        """
+        _write(tmp_path, "basemap.pmtiles")
+
+        _href, roles = _scan(tmp_path, "basemap.pmtiles")["basemap"]
+        assert [_get_asset_role(tmp_path / "basemap.pmtiles")] == roles
+
+    def test_the_item_mirror_is_never_a_scanned_asset(self, tmp_path: Path) -> None:
+        """``items.parquet`` is GeoParquet, so the scan gave the mirror the data role.
+
+        ``register_mirror_asset`` is its one writer, with the role
+        ``collection-mirror``. The PMTiles and thumbnail side-steps read data
+        assets, so a mirror with the data role became a tile source.
+        """
+        _write(tmp_path, "roads.parquet", "items.parquet")
+
+        assert _scan(tmp_path, "roads.parquet") == {"roads": ("./roads.parquet", ["data"])}
 
     def test_a_gdal_statistics_sidecar_is_never_an_asset(self, tmp_path: Path) -> None:
         """GDAL writes ``.aux.xml`` after the first scan, so a rebuild differed."""
