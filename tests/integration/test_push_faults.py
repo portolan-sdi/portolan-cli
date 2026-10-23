@@ -116,10 +116,6 @@ def pushed(
     return fault_catalog
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#965: rollback deletes keys that the remote current version still uses",
-)
 def test_failed_second_push_keeps_first_push_objects(
     pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
@@ -144,10 +140,6 @@ def test_failed_second_push_keeps_first_push_objects(
     assert bucket.keys() == after_first
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#971: the conflict rollback deletes keys that the other writer's manifest uses",
-)
 def test_conflict_deletes_nothing_of_the_other_writer(
     pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
@@ -178,10 +170,6 @@ def test_conflict_deletes_nothing_of_the_other_writer(
     assert sorted(before - bucket.keys()) == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#971: the root versions.json write has no ETag precondition",
-)
 def test_root_versions_json_is_conditional(
     pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
@@ -206,7 +194,6 @@ def test_root_versions_json_is_conditional(
     assert bucket.head(root_key)["ETag"] == other["etag"]
 
 
-@pytest.mark.xfail(strict=True, reason="#807: push sets no Content-Type on any object")
 def test_every_object_has_a_content_type(
     fault_catalog: Path, bucket: Bucket, run_cli: RunCli
 ) -> None:
@@ -221,7 +208,6 @@ def test_every_object_has_a_content_type(
     assert actual == expected
 
 
-@pytest.mark.xfail(strict=True, reason="#1008: the upload thread pool is never shut down")
 def test_thread_pool_is_shut_down(
     fault_catalog: Path,
     bucket: Bucket,
@@ -266,11 +252,6 @@ def test_thread_pool_is_shut_down(
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    strict=True,
-    raises=ImportError,
-    reason="#908: no multipart_chunk_size helper, so parts stay at 5 MiB",
-)
 def test_multipart_chunk_size_keeps_parts_under_10000() -> None:
     """Every size up to 5 TiB fits in 10,000 parts of at least 5 MiB."""
     from portolan_cli.sync.upload import multipart_chunk_size
@@ -283,11 +264,6 @@ def test_multipart_chunk_size_keeps_parts_under_10000() -> None:
     assert multipart_chunk_size(1024) == 5 * 2**20
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ImportError,
-    reason="#908: push passes no chunk_size to the multipart put",
-)
 def test_multipart_put_passes_the_chunk_size(
     fault_catalog: Path,
     bucket: Bucket,
@@ -325,10 +301,6 @@ def test_dry_run_sends_nothing(
     assert "would push up to 1 version(s)" in result.output
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#972: a credential without list permission gets no single clear warning",
-)
 def test_list_permission_denied_warns_once(
     fault_catalog: Path,
     bucket: Bucket,
