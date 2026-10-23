@@ -1383,8 +1383,9 @@ def _output_check_json(payload: dict[str, Any], *, failed: bool) -> None:
     is_flag=True,
     help=(
         "Only check/fix STAC metadata (links, schema, staleness). With --fix this is "
-        "the metadata refresh: it exits 1 only when a fix fails or an auto-fixable "
-        "error remains. --strict restores the exit on every error and warning."
+        "the metadata refresh: it exits 1 only when a fix fails, an auto-fixable "
+        "error remains, or a file does not parse. --strict restores the exit on every "
+        "error and warning."
     ),
 )
 @click.option(
@@ -1878,20 +1879,26 @@ def _check_failed(payload: dict[str, Any], *, strict: bool, refresh: bool = Fals
     conformance defect, so on its own it never flips a default run.
 
     ``refresh`` is ``--fix --metadata`` without ``--strict``: the metadata
-    refresh (#853). It fails only on an AUTO error that is still in the
-    findings, which is a repair the refresh did not make. An INSTRUCT or
-    EXTERNAL error is work for a person or a host, so it stays in the report
-    and leaves the exit code at 0. A fixer that could not write fails the run
-    through ``fix_failed`` in the caller.
+    refresh (#853). It fails on an AUTO error that is still in the findings,
+    which is a repair the refresh did not make. It also fails on a document
+    that does not parse, because the refresh could not read it. Any other
+    INSTRUCT or EXTERNAL error is work for a person or a host, so it stays in
+    the report and leaves the exit code at 0. A fixer that could not write
+    fails the run through ``fix_failed`` in the caller.
     """
     if strict:
         return any(payload.get(key) for key in ("error_count", "warning_count", "workflow"))
     if refresh:
         return any(
-            finding["severity"] == "error" and finding["remediation"] == "auto"
+            finding["severity"] == "error"
+            and (finding["remediation"] == "auto" or finding["rule_id"] in _UNREADABLE_RULES)
             for finding in payload.get("findings", [])
         )
     return bool(payload.get("error_count"))
+
+
+#: rashid rules for a catalog.json or an object file that does not parse.
+_UNREADABLE_RULES = frozenset({"PTL-GEN-000", "PTL-GEN-001"})
 
 
 def _render_check(
