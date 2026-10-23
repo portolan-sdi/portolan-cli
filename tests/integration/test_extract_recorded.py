@@ -278,6 +278,24 @@ def test_wfs_api_key_stays_out_of_the_catalog(tmp_path: Path, run_cli: RunCli) -
     assert leaks == []
 
 
+def test_wfs_layer_that_add_skips_is_named(tmp_path: Path, run_cli: RunCli) -> None:
+    """A layer file that ``ignored_files`` matches is skipped with a warning, not in silence."""
+    from portolan_cli.catalog import init_catalog
+    from portolan_cli.config import set_setting
+
+    init_catalog(tmp_path / "out", catalog_id="recorded", license_id="CC-BY-4.0")
+    set_setting(tmp_path / "out", "ignored_files", ["topp_states*"])
+    result, server, out = _run("workspace_layer-layers", tmp_path, run_cli)
+
+    assert server.unmatched == []
+    assert result.exit_code == 0, result.output
+    assert not (out / "topp_states" / "collection.json").exists()
+    assert (
+        "Skipping topp_states.parquet: it matches ignored_files pattern 'topp_states*'"
+        in result.output
+    )
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda path: f"{path.parent.name}/{path.name}")
 def test_scenario_is_documented_small_and_has_no_stray_file(scenario: Path) -> None:

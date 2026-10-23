@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from portolan_cli.extract.common.report import ExtractionReport, LayerResult
     from portolan_cli.licensing import ResolvedLicense
     from portolan_cli.metadata_extraction import ExtractedMetadata
+    from portolan_cli.query import ItemInfo
     from portolan_cli.viz.style import LegendInfo
 
 logger = logging.getLogger(__name__)
@@ -111,7 +112,6 @@ def init_extracted_catalog(
         version for, or ``None`` when there was nothing to add. The caller
         then stops, because no catalog exists.
     """
-    from portolan_cli.add import add_files
     from portolan_cli.catalog import CatalogState, detect_state, init_catalog
     from portolan_cli.output import warn
 
@@ -155,8 +155,31 @@ def init_extracted_catalog(
     if post_init is not None:
         post_init(output_dir, parquet_files, fresh)
 
-    added, _skipped, _failures = add_files(paths=parquet_files, catalog_root=output_dir)
+    added = add_extracted_files(parquet_files, output_dir)
     return parquet_files, {item.collection_id for item in added}
+
+
+def add_extracted_files(paths: list[Path], catalog_root: Path) -> list[ItemInfo]:
+    """Run ``add_files`` and log each file that it leaves out of the catalog.
+
+    ``add_files`` prints nothing itself. A file that ``ignored_files`` matches,
+    or that has no valid collection id, would otherwise vanish in silence.
+
+    Returns:
+        The items that the add wrote.
+    """
+    from portolan_cli.add import SKIPS_THAT_TRACK, add_files
+
+    reasons: dict[Path, str] = {}
+    added, _skipped, failures = add_files(
+        paths=paths, catalog_root=catalog_root, skip_reasons=reasons
+    )
+    for path, reason in reasons.items():
+        if reason not in SKIPS_THAT_TRACK:
+            logger.warning("Skipping %s: %s", path.name, reason)
+    for failure in failures:
+        logger.warning("Could not add %s: %s", failure.path.name, failure.error)
+    return added
 
 
 def register_collection_styles(

@@ -103,7 +103,7 @@ class TestCollectSuccessfulParquetFiles:
 def _recording_add(events: list[str]) -> Any:
     """An ``add_files`` fake that records the call and adds nothing."""
 
-    def add(*, paths: list[Path], catalog_root: Path) -> tuple[list[Any], ...]:
+    def add(**_: Any) -> tuple[list[Any], ...]:
         events.append("add")
         return [], [], []
 
