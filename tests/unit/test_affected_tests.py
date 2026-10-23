@@ -311,3 +311,48 @@ def test_missing_targets_are_dropped_with_a_note(
     assert capsys.readouterr().err == (
         "Skipped 2 missing target(s): tests/properties tests/unit/test_gone.py\n"
     )
+
+
+def test_a_test_file_deleted_with_its_module_is_not_selected() -> None:
+    """The old importer of a deleted module is gone too, so pytest must not get its path."""
+    selection = _select(
+        [("D", "portolan_cli/legacy.py"), ("D", "tests/unit/test_legacy.py")],
+        deleted_importers={"portolan_cli.add", "tests/unit/test_legacy.py"},
+    )
+
+    assert selection.targets == ["tests/integration/test_cli.py", "tests/unit/test_add.py"]
+
+
+def _main_with(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, targets: list[str], argv: list[str]
+) -> int:
+    monkeypatch.setattr(at, "_git", lambda *args: f"{repo}\n")
+    monkeypatch.setattr(at, "changed_files", lambda repo, base: [])
+    monkeypatch.setattr(
+        at, "select_for_repo", lambda repo, changes, base: at.Selection(targets=targets)
+    )
+    result: int = at.main(argv)
+    return result
+
+
+def test_a_selection_whose_targets_are_all_missing_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An empty run that exits 0 checks nothing, so it must not pass as a green run."""
+    status = _main_with(monkeypatch, tmp_path, ["tests/unit/test_gone.py"], ["--run"])
+
+    assert status == 1
+    assert capsys.readouterr().err == (
+        "Skipped 1 missing target(s): tests/unit/test_gone.py\n"
+        "Every selected target is missing from the tree. Run the full suite.\n"
+    )
+
+
+def test_a_change_that_selects_no_tests_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A docs-only change has no affected tests. That is a valid result, not a failure."""
+    status = _main_with(monkeypatch, tmp_path, [], ["--run"])
+
+    assert status == 0
+    assert capsys.readouterr().err == "No affected tests.\n"

@@ -32,7 +32,9 @@ Selection:
   foundation through a subprocess or ``CliRunner``, so the import graph alone
   does not select them (#1035).
 - A target that does not exist in the tree is dropped with a note on stderr,
-  so ``--run`` does not hand pytest a missing path.
+  so ``--run`` does not hand pytest a missing path. A test file that the
+  change deletes is never a target. When every target is missing, the script
+  exits 1, because an empty pytest run passes and checks nothing.
 """
 
 from __future__ import annotations
@@ -208,8 +210,11 @@ def select(
     targets: set[str] = set()
     directories: set[str] = set()
     modules: set[str] = set()
+    deleted: set[str] = set()
     for status, path in changes:
         pure = PurePosixPath(path)
+        if status == "D":
+            deleted.add(path)
         if path in FULL_SUITE_FILES or path.startswith(FULL_SUITE_PREFIXES):
             return _full(f"{path} changed")
         if pure.name == "conftest.py" and pure.parts[0] == TESTS_DIR:
@@ -240,6 +245,9 @@ def select(
             continue
         targets.update(t for t, text in test_texts.items() if pure.name in text)
     targets |= _tests_importing(modules, test_imports)
+    # A deleted module's old importers can include a test file that the same
+    # change deletes. pytest exits with an error on a missing path.
+    targets -= deleted
     targets = {t for t in targets if not any(t.startswith(f"{d}/") for d in directories)}
     return Selection(targets=sorted(targets | directories))
 
@@ -349,10 +357,16 @@ def main(argv: list[str] | None = None) -> int:
     selection = select_for_repo(repo, changed_files(repo, args.base), args.base)
     if selection.full:
         print(f"Full suite: {selection.reason}.", file=sys.stderr)
-    targets = existing_targets(repo, selection.targets)
-    if not targets:
+    if not selection.targets:
         print("No affected tests.", file=sys.stderr)
         return 0
+    targets = existing_targets(repo, selection.targets)
+    if not targets:
+        # An empty pytest run exits 0 and checks nothing.
+        print(
+            "Every selected target is missing from the tree. Run the full suite.", file=sys.stderr
+        )
+        return 1
     if not args.run:
         print(" ".join(targets))
         return 0
