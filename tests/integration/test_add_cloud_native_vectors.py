@@ -734,7 +734,7 @@ class TestAssetLineage:
         result = runner.invoke(cli, [*args, "--pmtiles", parquet], catch_exceptions=False)
 
         assert result.exit_code == 0, result.output
-        assert "tippecanoe is required" not in result.output
+        assert "tippecanoe" not in result.output
         collection = json.loads((collection_dir / "collection.json").read_text())
         assert collection["assets"]["points-tiles"]["href"] == "./points.pmtiles"
 
