@@ -209,6 +209,19 @@ class TestFindGeoparquetAssets:
 
         assert assets == []
 
+    @pytest.mark.unit
+    def test_ignores_a_partition_glob(self, tmp_path: Path) -> None:
+        """geoparquet-io reads a glob as a dataset, so the footer test alone says True."""
+        from portolan_cli.viz.pmtiles import _find_geoparquet_assets
+
+        partition = tmp_path / "kdtree_cell=000"
+        partition.mkdir()
+        shutil.copy(_GEOPARQUET, partition / "000.parquet")
+        glob = {"href": "./kdtree_cell=*/*.parquet", "roles": ["data"]}
+        (tmp_path / "collection.json").write_text(json.dumps({"assets": {"data": glob}}))
+
+        assert _find_geoparquet_assets(tmp_path) == []
+
 
 class TestShouldGenerate:
     """Tests for _should_generate function."""

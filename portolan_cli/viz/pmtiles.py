@@ -194,7 +194,12 @@ def _find_geoparquet_assets(collection_path: Path) -> list[tuple[str, Path]]:
             continue
         asset_path = collection_path / str(asset.get("href", "")).removeprefix("./")
         # The footer decides, not the suffix: a plain table is no tile source.
-        if asset_path.suffix.lower() == PARQUET_SUFFIX and is_geoparquet(asset_path):
+        # A partition glob such as kdtree_cell=*/*.parquet is no file either.
+        if (
+            asset_path.suffix.lower() == PARQUET_SUFFIX
+            and asset_path.is_file()
+            and is_geoparquet(asset_path)
+        ):
             geoparquet_assets.append((key, asset_path))
 
     return geoparquet_assets
