@@ -9,12 +9,14 @@ own suites; here we verify the shared skeleton in isolation.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from portolan_cli.extract.common.orchestrator_base import (
+    add_extracted_files,
     add_source_links,
     collect_successful_parquet_files,
     init_extracted_catalog,
@@ -120,6 +122,24 @@ def _init_with_recorded_add(
     """Run ``init_extracted_catalog`` with an ``add_files`` that records its call."""
     monkeypatch.setattr("portolan_cli.add.add_files", _recording_add(events))
     return init_extracted_catalog(tmp_path, report, title="t", description="d", post_init=post_init)
+
+
+def test_add_extracted_files_logs_what_stays_out(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A skip that keeps a file out and a failure log a warning. An unchanged file does not."""
+    from portolan_cli.add import SKIP_UNCHANGED, AddFailure
+
+    def add(*, skip_reasons: dict[Path, str], **_: Any) -> tuple[list[Any], ...]:
+        skip_reasons.update({Path("a/a.parquet"): SKIP_UNCHANGED, Path("b/b.parquet"): "no id"})
+        return [], [], [AddFailure(path=Path("c/c.parquet"), error="bad geometry")]
+
+    monkeypatch.setattr("portolan_cli.add.add_files", add)
+    with caplog.at_level(logging.WARNING, logger="portolan_cli.extract.common.orchestrator_base"):
+        added = add_extracted_files([Path("a/a.parquet")], Path("/out"))
+
+    assert added == []
+    assert caplog.messages == ["Skipping b.parquet: no id", "Could not add c.parquet: bad geometry"]
 
 
 class TestInitExtractedCatalog:
