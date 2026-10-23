@@ -80,6 +80,7 @@ SyncError  # unused class (portolan_cli/sync/core.py:38). E deletes it in #1035.
 fig  # unused variable (portolan_cli/viz/thumbnail.py:772, 1 more)
 
 # --- tests ---
+_.exitstatus  # pytest calls it by name (tests/conftest.py:230)
 _mutmut_stats_children  # unused function (tests/conftest.py:263)
 catalog_with_versions_for_dry_run  # unused function (tests/conftest.py:511)
 isolate_aws_config  # unused function (tests/conftest.py:790)
@@ -91,6 +92,7 @@ pytest_collection_modifyitems  # unused function (tests/conftest.py:192)
 pytest_configure  # unused function (tests/conftest.py:160)
 pytest_runtest_call  # unused function (tests/conftest.py:250)
 pytest_runtest_setup  # unused function (tests/conftest.py:245)
+pytest_sessionfinish  # pytest calls it by name (tests/conftest.py:219)
 temp_catalog_dir  # unused function (tests/conftest.py:494)
 
 # --- tests/benchmark ---

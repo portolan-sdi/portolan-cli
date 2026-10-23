@@ -173,10 +173,77 @@ _DUCKDB_EXTENSIONS: tuple[tuple[str, str | None], ...] = (
 )
 
 
+# A test writes only under tmp_path. The session guard below lists the
+# untracked and ignored entries of the repository root before and after the
+# run, and fails the run when a new one appears. These entries are outputs of
+# the tools, not of a test, so the guard ignores them.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_TOOL_OUTPUTS = (
+    ".venv/",
+    "mutants/",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".ruff_cache/",
+    ".hypothesis/",
+    ".benchmarks/",
+    ".coverage",
+    "coverage.xml",
+    "htmlcov/",
+    # tests/docs/test_site_build.py builds the docs site in the repository root.
+    "site/",
+    ".cache/",
+)
+_ROOT_ENTRIES_KEY = pytest.StashKey[frozenset[str]]()
+
+
+def _root_entries() -> frozenset[str] | None:
+    """Return the untracked and ignored entries of the repository, or None without git."""
+    import subprocess
+
+    try:
+        listing = subprocess.run(
+            ["git", "status", "--porcelain", "--ignored"],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    paths = (line[3:] for line in listing.splitlines() if line[:2] in ("??", "!!"))
+    return frozenset(
+        path for path in paths if "__pycache__/" not in path and not path.startswith(_TOOL_OUTPUTS)
+    )
+
+
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    """Fail the run when a test left a new file in the repository.
+
+    A test that runs a command with the repository as its working directory
+    writes there. ``init --backend iceberg`` once left ``.portolan/iceberg.db``
+    in the root that way. pytest_configure takes the first listing.
+    """
+    before = session.config.stash.get(_ROOT_ENTRIES_KEY, None)
+    after = _root_entries() if before is not None else None
+    if before is None or after is None or after <= before:
+        return
+    session.exitstatus = pytest.ExitCode.TESTS_FAILED
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is not None:
+        reporter.write_sep("=", "a test wrote into the repository root", red=True, bold=True)
+        reporter.write_line("Write under tmp_path instead. New entries:", red=True)
+        for path in sorted(after - before):
+            reporter.write_line(f"  {path}", red=True)
+
+
 def pytest_configure(config: pytest.Config) -> None:
-    """Install the DuckDB extensions before the network guard starts."""
+    """List the repository root, and install the DuckDB extensions before the network guard starts."""
     if hasattr(config, "workerinput"):
         return
+    if _MUTMUT_ENV_KEY not in os.environ:
+        entries = _root_entries()
+        if entries is not None:
+            config.stash[_ROOT_ENTRIES_KEY] = entries
     import duckdb
 
     connection = duckdb.connect()
@@ -1087,7 +1154,8 @@ class CliHarness:
     def __init__(self, base: Path) -> None:
         self.base = base
         self.roots: set[Path] = set()
-        self.exempt: set[Path] = set()
+        # Exempt root -> its build_damaged_catalog reason.
+        self.exempt: dict[Path, str] = {}
 
     def __call__(
         self,
@@ -1133,7 +1201,12 @@ class CliHarness:
             yield
 
     def violations(self) -> str:
-        """Return the formatted violations outside the known gaps, or ''."""
+        """Return the violations outside the known gaps, and each stale exemption, or ''.
+
+        An exemption is self-cleaning. A damaged root that breaks no invariant
+        outside the known gaps fails with "exemption no longer needed", so the
+        fix of a bug turns its exemption red.
+        """
         from tests.catalog_invariants import (
             KNOWN_INVARIANT_GAPS,
             check_catalog_invariants,
@@ -1141,13 +1214,16 @@ class CliHarness:
         )
 
         reports: list[str] = []
-        for root in sorted(self.roots - self.exempt):
-            if not root.is_dir():
+        for root in sorted(self.roots | set(self.exempt)):
+            if not (root / "catalog.json").is_file():
                 continue
             found = [
                 v for v in check_catalog_invariants(root) if v.code not in KNOWN_INVARIANT_GAPS
             ]
-            if found:
+            if root in self.exempt:
+                if not found:
+                    reports.append(f"{root}: exemption no longer needed: {self.exempt[root]}")
+            elif found:
                 reports.append(format_violations(root, found))
         return "\n".join(reports)
 
@@ -1198,7 +1274,7 @@ def build_damaged_catalog(run_cli: CliHarness) -> Callable[[Path, str], Path]:
         assert reason in reasons, (
             f"add 'invariant<TAB>{reason}' to tests/guardrail_exemptions.txt to exempt {root}"
         )
-        run_cli.exempt.add(root.resolve())
+        run_cli.exempt[root.resolve()] = reason
         return root
 
     return _register

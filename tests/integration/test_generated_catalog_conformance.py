@@ -419,7 +419,14 @@ def build_extract_carto(root: Path, run: RunCli) -> None:
 
 
 @contextmanager
-def _pushed_catalog(root: Path, run: RunCli) -> Iterator[Any]:
+def _roads_catalog(local: Path, run: RunCli) -> None:
+    roads = _copy(POINTS, local / "roads" / "roads.parquet")
+    _init(local, run)
+    _add(local, run, roads)
+
+
+@contextmanager
+def _pushed(root: Path, run: RunCli, build: Builder = _roads_catalog) -> Iterator[Any]:
     """Build a catalog beside ``root``, push it to moto S3, and yield the S3 client.
 
     The AWS variables point at the moto server for the whole block, so a
@@ -430,9 +437,7 @@ def _pushed_catalog(root: Path, run: RunCli) -> Iterator[Any]:
     from moto.server import ThreadedMotoServer
 
     local = root.parent / "local"
-    roads = _copy(POINTS, local / "roads" / "roads.parquet")
-    _init(local, run)
-    _add(local, run, roads)
+    build(local, run)
 
     server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
     server.start()
@@ -465,7 +470,7 @@ def build_push(root: Path, run: RunCli) -> None:
     rashid checks the downloaded copy, so the gate sees what a reader of the
     bucket sees (#761, #807).
     """
-    with _pushed_catalog(root, run) as client:
+    with _pushed(root, run) as client:
         listing = client.list_objects_v2(Bucket="gate", Prefix="catalog/")
         for entry in listing.get("Contents", []):
             target = root / entry["Key"].removeprefix("catalog/")
@@ -476,7 +481,7 @@ def build_push(root: Path, run: RunCli) -> None:
 
 def build_clone(root: Path, run: RunCli) -> None:
     """Push a catalog to moto S3, then ``clone`` it into ``root``."""
-    with _pushed_catalog(root, run):
+    with _pushed(root, run):
         run("clone", "s3://gate/catalog", str(root))
     assert (root / "catalog.json").is_file()
 
@@ -490,6 +495,9 @@ def build_clone(root: Path, run: RunCli) -> None:
 # them in a `.aux.xml` PAM sidecar. rashid reads with GDAL_PAM_ENABLED=NO, as
 # PORTO-FMT-026..030 require, and sees none.
 COG_STATS = {"PTL-DAT-009": "#748"}
+# A design reason, not an issue: tests/docs/test_guardrail_exemptions.py
+# lists it in DESIGN_REASONS.
+SINGLE_COG_LAYOUT = "single COG layout: spec and CLI disagree (PTL-COL-001), maintainer decision"
 # Items carry file:* and table:* fields without the extension URIs.
 ITEM_FILE_EXT = "#1037"
 # extract writes a placeholder host provider, no producer, and no thumbnail.
@@ -589,18 +597,18 @@ SCENARIOS: dict[str, Scenario] = {
         build_partitioned,
         known_errors={
             # `add` leaves partition:glob for `push` to write (add.py:353,
-            # push.py:296), so the local catalog has none. That is the spec
-            # question behind #761 and #914.
-            "PTL-EXT-001": "#761",
-            "PTL-PRT-001": "#761",
-            "PTL-SCH-001": "#761",
+            # push.py:296), so the local catalog has none. Whether a local
+            # catalog carries the glob at all is the open spec question #914.
+            "PTL-EXT-001": "#914",
+            "PTL-PRT-001": "#914",
+            "PTL-SCH-001": "#914",
             # The partitioned collection gets no thumbnail asset.
             "PTL-VIZ-001": "#1038",
         },
         expected_advisories={
             **ONE_MIRROR,
             # The partition asset names its files with a glob, and a glob has no
-            # single size or checksum. #761 holds the spec question.
+            # single size or checksum. #914 holds the spec question.
             "PTL-AST-003": 2,
             # One per partition item: rashid asks each item for table:columns.
             "PTL-DAT-017": 4,
@@ -654,8 +662,8 @@ SCENARIOS: dict[str, Scenario] = {
             **COG_STATS,
             # `add` refuses a raster outside an item directory, and PTL-COL-001
             # asks a single-file collection to carry its data at collection
-            # level. No layout of one COG passes both.
-            "PTL-COL-001": "#1033",
+            # level. No layout of one COG passes both. The maintainer decides.
+            "PTL-COL-001": SINGLE_COG_LAYOUT,
         },
         expected_advisories={"PTL-DAT-010": 1, "PTL-PRO-002": 1},
         known_invariants=RASTER_INVARIANTS,
@@ -908,6 +916,31 @@ class TestScenarioConformance:
         skipped = sorted(f.rule_id for f in _validate(root).findings if f.rule_id.endswith("-000"))
 
         assert skipped == []
+
+
+@pytest.mark.realdata
+class TestPushedPartitionGlob:
+    """``push`` writes the bulk-access glob of a partitioned collection (#761)."""
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="#761: push builds partition:glob from the prefix without the scheme and bucket",
+    )
+    def test_the_remote_glob_names_the_scheme_and_bucket(
+        self, tmp_path: Path, run_cli: RunCli
+    ) -> None:
+        with _pushed(tmp_path / "remote", run_cli, build_partitioned) as client:
+            body = client.get_object(Bucket="gate", Key="catalog/buildings/collection.json")["Body"]
+            collection = json.loads(body.read())
+
+        # push.py writes the glob onto each asset whose href is a glob.
+        globs = [
+            asset.get("partition:glob")
+            for asset in collection["assets"].values()
+            if "*" in asset["href"]
+        ]
+
+        assert globs == ["s3://gate/catalog/buildings/kdtree_cell=*/*.parquet"]
 
 
 @pytest.mark.realdata

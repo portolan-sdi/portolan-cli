@@ -80,7 +80,12 @@ def runner() -> CliRunner:
 
 
 @pytest.fixture
-def initialized_iceberg_catalog(tmp_path: Path, runner: CliRunner) -> Path:
+def initialized_iceberg_catalog(
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    runner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
     """Create a full portolan catalog initialized with iceberg backend.
 
     Skips on Windows due to PyIceberg SQL catalog path bug.
@@ -90,6 +95,10 @@ def initialized_iceberg_catalog(tmp_path: Path, runner: CliRunner) -> Path:
             "PyIceberg SQL catalog warehouse paths broken on Windows"
             " (https://github.com/apache/iceberg-python/issues/1005)"
         )
+    # init --backend iceberg writes .portolan/iceberg.db into the working
+    # directory (#1056). A separate temporary directory keeps it out of the
+    # repository and out of the catalog.
+    monkeypatch.chdir(tmp_path_factory.mktemp("init-cwd"))
     result = runner.invoke(
         cli,
         ["init", str(tmp_path), "--auto", "--backend", "iceberg", "--license", "CC-BY-4.0"],
