@@ -592,6 +592,31 @@ class TestLinksFixer:
         )
         assert child["title"] == "Hand-written title"
 
+    def test_a_new_item_link_takes_the_item_title(self, tmp_path: Path) -> None:
+        """An item keeps its title under properties, as ``add`` reads it."""
+        collection = _tiny_catalog(tmp_path)
+        _write_json(
+            collection / "a" / "a.json",
+            {
+                "type": "Feature",
+                "stac_version": "1.1.0",
+                "id": "a",
+                "geometry": None,
+                "properties": {"title": "Scene A", "datetime": "2024-01-01T00:00:00Z"},
+                "links": [],
+                "assets": {},
+            },
+        )
+
+        FIXERS["links"](tmp_path, False)
+
+        item = next(
+            link
+            for link in _read_json(collection / "collection.json")["links"]
+            if link["rel"] == "item"
+        )
+        assert item["title"] == "Scene A"
+
     def test_dry_run_writes_nothing_but_reports(self, tmp_path: Path) -> None:
         _tiny_catalog(tmp_path)
         before = _snapshot(tmp_path)
@@ -651,6 +676,22 @@ class TestBboxFixer:
 
         assert _read_json(collection_json)["extent"]["spatial"]["bbox"] == [[0.0, 0.0, 1.0, 1.0]]
         assert [r.action for r in results] == [FixAction.UPDATED]
+
+    def test_an_antimeridian_extent_is_rebuilt_as_add_writes_it(self, tmp_path: Path) -> None:
+        """Issue #852: the envelope, then the two parts, as ``add`` writes them."""
+        collection = self._collection_with_items(tmp_path, [200.0, -95.0, 300.0, 95.0])
+        item = _read_json(collection / "b" / "b.json")
+        item["bbox"] = [177.0, -20.0, -175.0, -15.0]
+        _write_json(collection / "b" / "b.json", item)
+
+        FIXERS["bbox"](tmp_path, False)
+
+        extent = _read_json(collection / "collection.json")["extent"]["spatial"]["bbox"]
+        assert extent == [
+            [-180.0, -20.0, 180.0, 2.0],
+            [-180.0, -20.0, -175.0, -15.0],
+            [0.0, -20.0, 180.0, 2.0],
+        ]
 
     def test_valid_extent_is_left_alone(self, tmp_path: Path) -> None:
         self._collection_with_items(tmp_path, [0.0, -1.0, 3.0, 2.0])

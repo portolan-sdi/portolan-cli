@@ -19,10 +19,6 @@ from typing import Any
 import rasterio
 
 from portolan_cli.formats import RASTER, RASTER_EXTENSIONS
-from portolan_cli.item import (
-    _extract_geometry_from_file,
-    _get_media_type,
-)
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata.cog import extract_cog_metadata
 from portolan_cli.metadata.detection import versions_asset_key, versions_asset_lookup_keys
@@ -78,6 +74,9 @@ def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
     Raises:
         FileNotFoundError: If item_path or file_path doesn't exist.
     """
+    # ``item`` imports the ``metadata`` package, which imports this module.
+    from portolan_cli.item import _extract_geometry_from_file, _get_media_type
+
     # Validate both files exist
     if not file_path.exists():
         raise FileNotFoundError(f"Data file not found: {file_path}")
@@ -331,7 +330,9 @@ def create_missing_item(file_path: Path, collection_path: Path) -> Path:
     """
     from portolan_cli.catalog import find_catalog_root
     from portolan_cli.finalization import record_prepared_items
+    from portolan_cli.hookspecs import EnrichContext
     from portolan_cli.preparation import prepare_item
+    from portolan_cli.stac_enrich import enrich_item_file
 
     if not file_path.exists():
         raise FileNotFoundError(f"Data file not found: {file_path}")
@@ -343,11 +344,12 @@ def create_missing_item(file_path: Path, collection_path: Path) -> Path:
     # A nested collection id holds a slash, which the model rejects, so read the raw id.
     collection_id = json.loads(collection_json_path.read_text(encoding="utf-8"))["id"]
     catalog_root = find_catalog_root(collection_path) or collection_path.parent
+    collection_path_id = collection_path.resolve().relative_to(catalog_root.resolve()).as_posix()
     in_collection_dir = file_path.parent.resolve() == collection_path.resolve()
     prepared = prepare_item(
         path=file_path,
         catalog_root=catalog_root,
-        collection_id=collection_path.resolve().relative_to(catalog_root.resolve()).as_posix(),
+        collection_id=collection_path_id,
         item_id=file_path.stem if in_collection_dir else None,
     )
     item_path = prepared.item_json_path
@@ -358,39 +360,19 @@ def create_missing_item(file_path: Path, collection_path: Path) -> Path:
     item_data = json.loads(item_path.read_text(encoding="utf-8"))
     item_data["collection"] = collection_id
     write_json_atomic(item_path, item_data)
-    _enrich_created_item(item_path, collection_path, prepared.item_id)
-    # The snapshot records every file the item declares, as add does (#1046).
-    record_prepared_items(catalog_root, collection_path, [prepared])
-    return item_path
-
-
-def _enrich_created_item(item_path: Path, collection_path: Path, item_id: str) -> None:
-    """Run the item enrichment hook on a created item (#947).
-
-    The hook context needs the catalog root. An item outside a catalog gets
-    no enrichment.
-
-    Args:
-        item_path: The written item JSON.
-        collection_path: Directory holding collection.json.
-        item_id: Item identifier.
-    """
-    from portolan_cli.catalog import find_catalog_root
-    from portolan_cli.hookspecs import EnrichContext
-    from portolan_cli.stac_enrich import enrich_item_file
-
-    catalog_root = find_catalog_root(collection_path)
-    if catalog_root is None:
-        return
+    # The item enrichment hook runs on the created item, as on an added one (#947).
     enrich_item_file(
         item_path,
         EnrichContext(
             catalog_root=catalog_root,
-            collection_id=collection_path.resolve().relative_to(catalog_root.resolve()).as_posix(),
+            collection_id=collection_path_id,
             document_path=item_path,
-            item_id=item_id,
+            item_id=prepared.item_id,
         ),
     )
+    # The snapshot records every file the item declares, as add does (#1046).
+    record_prepared_items(catalog_root, collection_path, [prepared])
+    return item_path
 
 
 def update_versions_tracking(file_path: Path, versions_path: Path) -> None:

@@ -182,8 +182,8 @@ def test_geohash_is_null_for_a_row_without_geometry():
     result = compute_geohash_column(_table_with_gaps(), precision=4)
 
     geohashes = result.column("geohash_4").to_pylist()
-    assert geohashes[1:] == [None, None]
-    assert geohashes[0] is not None
+    # The point (lon 10, lat 20) is geohash s5x1 at precision 4.
+    assert geohashes == ["s5x1", None, None]
     assert result.num_rows == 3
 
 

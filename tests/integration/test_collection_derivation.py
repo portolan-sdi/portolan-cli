@@ -6,6 +6,7 @@ exact value the issue expected. On origin/main at ff0c61b each one fails.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -106,6 +107,45 @@ class TestExtentFollowsTheMembers:
         _run("rm", "--portolan-dir", str(root), "--force", str(collection_dir / "east.parquet"))
 
         assert _extent(collection_dir) == [[-7.1, 37.9, -6.9, 38.1]]
+        assert sorted(_load(collection_dir / "collection.json")["assets"]) == ["thumbnail", "west"]
+
+    def test_rm_of_an_item_equals_a_fresh_build_of_the_rest(self, tmp_path: Path) -> None:
+        """``rm`` deletes the item directory, so its link, its files and its row go too."""
+        sources = {"a": RAPIDAI4EO, "b": REALDATA.parent / "raster" / "valid" / "rgb.tif"}
+        catalogs = {}
+        for name, items in (("rebuilt", "ab"), ("fresh", "a")):
+            root = _catalog(tmp_path / name)
+            for item in items:
+                (root / "imagery" / item).mkdir(parents=True)
+                shutil.copy(sources[item], root / "imagery" / item / f"{item}.tif")
+            _run("add", "--portolan-dir", str(root), str(root / "imagery"))
+            catalogs[name] = root / "imagery"
+        _run(
+            "rm",
+            "--portolan-dir",
+            str(tmp_path / "rebuilt"),
+            "--force",
+            str(catalogs["rebuilt"] / "b" / "b.tif"),
+        )
+
+        def state(collection_dir: Path) -> dict[str, Any]:
+            data = _load(collection_dir / "collection.json")
+            versions = _load(collection_dir / "versions.json")["versions"][-1]["assets"]
+            return {
+                "links": [link for link in data["links"] if link["rel"] == "item"],
+                "extent": data["extent"],
+                "summaries": data["summaries"],
+                "versions": sorted(versions),
+                "mirror rows": pd.read_parquet(collection_dir / "items.parquet")["id"].tolist(),
+            }
+
+        assert state(catalogs["rebuilt"]) == state(catalogs["fresh"])
+        # The snapshot records the bytes of the rewritten mirror, so push sends them.
+        mirror = catalogs["rebuilt"] / "items.parquet"
+        recorded = _load(catalogs["rebuilt"] / "versions.json")["versions"][-1]["assets"]
+        assert (
+            recorded["items.parquet"]["sha256"] == hashlib.sha256(mirror.read_bytes()).hexdigest()
+        )
 
     def test_each_multi_file_asset_counts_once(self, tmp_path: Path) -> None:
         """The philadelphia-housing pair: the extent is the union of both files.
