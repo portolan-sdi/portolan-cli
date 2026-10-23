@@ -1146,12 +1146,14 @@ def _render_geoparquet(
             )
 
         count("thumbnail.draws")
+        # thumbnails.quality reaches both render paths, as on the PMTiles path.
         plt.savefig(
             output_path,
             bbox_inches="tight",
             pad_inches=0,
             facecolor="white",
             edgecolor="none",
+            pil_kwargs={"quality": config.quality},
         )
         plt.close()
 
