@@ -848,7 +848,8 @@ def _image_size(path: Path) -> tuple[int, int]:
     from PIL import Image
 
     with Image.open(path) as image:
-        return image.size
+        width, height = image.size
+        return int(width), int(height)
 
 
 @_tests("conversion.cog.thumbnail_max_size", "conversion.cog.thumbnail_quality")
@@ -973,7 +974,7 @@ def test_styles_vector_settings_reach_the_default_style(
 ) -> None:
     fixture, paint = VECTOR_STYLES[kind]
     source = _copy(fixture, catalog / "places" / f"places{fixture.suffix}")
-    settings = {"pmtiles.enabled": ("true", True)}
+    settings: dict[str, tuple[str, Any]] = {"pmtiles.enabled": ("true", True)}
     for name, value in paint.items():
         settings[f"styles.vector.{kind}.{name}"] = (str(value), value)
     configure(run_cli, catalog, form, settings)

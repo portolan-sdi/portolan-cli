@@ -1698,7 +1698,9 @@ class TestLoadersReturnDeepCopies:
 
         _write_config(tmp_path, "check:\n  severity:\n    PTL-PRV-001: warning\n")
 
-        get_setting("check", catalog_path=tmp_path)["severity"]["PTL-PRV-001"] = "edited"
+        check = get_setting("check", catalog_path=tmp_path)
+        assert isinstance(check, dict)
+        check["severity"]["PTL-PRV-001"] = "edited"
         load_merged_config(tmp_path, tmp_path)["check"]["severity"]["PTL-PRV-001"] = "edited"
 
         assert get_setting("check", catalog_path=tmp_path) == {
