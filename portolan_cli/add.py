@@ -664,6 +664,40 @@ def _mirror_into_catalog_index(
         )
 
 
+def sync_catalog_index(catalog_root: Path, collection_ids: set[str]) -> None:
+    """Copy the current version of each collection into the catalog-level versions.json.
+
+    ``finalize_items`` writes the index before the side steps of ``add`` run.
+    The item mirror, the PMTiles, and the thumbnails then add assets to the
+    collection's version, so the index lags one run behind without this call.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection_ids: Collections the add touched. One without a
+            versions.json, or with no current version, is left alone. A
+            versions.json that does not parse is logged and left alone, as in
+            :func:`_mirror_into_catalog_index`.
+    """
+    from portolan_cli.versions import read_versions
+
+    for collection_id in sorted(collection_ids):
+        versions_path = catalog_root / Path(*collection_id.split("/")) / "versions.json"
+        if not versions_path.exists():
+            continue
+        try:
+            versions = read_versions(versions_path)
+        except ValueError as err:
+            logger.warning(
+                "Catalog-level versions.json not updated for '%s': %s", collection_id, err
+            )
+            continue
+        current = next(
+            (v for v in versions.versions if v.version == versions.current_version), None
+        )
+        if current is not None:
+            _mirror_into_catalog_index(catalog_root, collection_id, current)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Directory handling
 # ─────────────────────────────────────────────────────────────────────────────
