@@ -13,6 +13,7 @@ issue removes the marker.
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -65,6 +66,39 @@ def _other_writer_manifest(bucket: Bucket, key: str) -> bytes:
     return json.dumps(manifest).encode()
 
 
+def _bytes_that_disagree_with_the_manifest(
+    bucket: Bucket, collection: str, written: set[str]
+) -> dict[str, str]:
+    """Return each written Asset key whose bytes differ from the remote manifest.
+
+    The manifest is the remote ``<collection>/versions.json`` and its current
+    snapshot. The value is the sha256 of the object, or ``<missing>``.
+    """
+    body = bucket.client.get_object(
+        Bucket=bucket.name, Key=bucket.key(f"{collection}/versions.json")
+    )
+    manifest: dict[str, Any] = json.loads(body["Body"].read())
+    versions: list[dict[str, Any]] = manifest["versions"]
+    current = next(
+        (v for v in versions if v.get("version") == manifest.get("current_version")),
+        versions[-1],
+    )
+    expected = {bucket.key(asset["href"]): asset["sha256"] for asset in current["assets"].values()}
+    checked = sorted(written & expected.keys())
+    assert checked != [], (sorted(written), sorted(expected))
+
+    present = bucket.keys()
+    disagree: dict[str, str] = {}
+    for key in checked:
+        actual = "<missing>"
+        if key in present:
+            data = bucket.client.get_object(Bucket=bucket.name, Key=key)["Body"].read()
+            actual = hashlib.sha256(data).hexdigest()
+        if actual != expected[key]:
+            disagree[key] = actual
+    return disagree
+
+
 @pytest.fixture
 def pushed(
     fault_catalog: Path,
@@ -87,9 +121,14 @@ def pushed(
 def test_failed_second_push_keeps_first_push_objects(
     pushed: Path, s3_bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
-    """A dropped connection on the second Asset put leaves push 1 readable."""
+    """A dropped connection on the second Asset put leaves push 1 readable.
+
+    Each key that push 2 wrote holds the bytes that the remote manifest
+    describes. A rollback that keeps the key with the bytes of push 2 fails.
+    """
     after_first = s3_bucket.keys()
     manifest = s3_bucket.head(s3_bucket.key("imagery/versions.json"))
+    calls_before = len(fault_store.calls)
     fault_store.fail_on(2, when=_is_scene)
 
     second = _push(run_cli, pushed, s3_bucket)
@@ -97,6 +136,8 @@ def test_failed_second_push_keeps_first_push_objects(
     assert second.exit_code == 1, second.output
     assert "injected fault" in second.output
     assert s3_bucket.head(s3_bucket.key("imagery/versions.json")) == manifest
+    written = set(fault_store.keys()[calls_before:]) & after_first
+    assert _bytes_that_disagree_with_the_manifest(s3_bucket, "imagery", written) == {}
     assert sorted(after_first - s3_bucket.keys()) == []
     assert s3_bucket.keys() == after_first
 
@@ -108,9 +149,14 @@ def test_failed_second_push_keeps_first_push_objects(
 def test_conflict_deletes_nothing_of_the_other_writer(
     pushed: Path, s3_bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
-    """A push that loses the versions.json race deletes no key."""
+    """A push that loses the versions.json race deletes no key.
+
+    Each key that the losing push overwrote holds the bytes that the other
+    writer's manifest describes (#965).
+    """
     manifest_key = s3_bucket.key("imagery/versions.json")
     before = s3_bucket.keys()
+    calls_before = len(fault_store.calls)
     other: dict[str, str] = {}
 
     def other_push() -> None:
@@ -125,6 +171,8 @@ def test_conflict_deletes_nothing_of_the_other_writer(
     assert second.exit_code == 1, second.output
     assert CONFLICT_MESSAGE in second.output
     assert s3_bucket.head(manifest_key)["ETag"] == other["etag"]
+    written = set(fault_store.keys()[calls_before:]) & before
+    assert _bytes_that_disagree_with_the_manifest(s3_bucket, "imagery", written) == {}
     assert sorted(before - s3_bucket.keys()) == []
 
 
