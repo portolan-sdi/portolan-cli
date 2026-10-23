@@ -23,14 +23,14 @@ if sys.version_info >= (3, 11):
 else:  # pytest itself depends on tomli before 3.11
     import tomli as tomllib
 
-pytestmark = [pytest.mark.unit, pytest.mark.source_scan]
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 PREK = REPO_ROOT / "prek.toml"
 JSCPD_CONFIG = REPO_ROOT / ".jscpd.json"
 JSCPD_BASELINE = REPO_ROOT / ".jscpd-baseline.json"
 VULTURE_WHITELIST = REPO_ROOT / "vulture_whitelist.py"
+
+pytestmark = [pytest.mark.unit, pytest.mark.source_scan]
 
 BANNED_API = {
     "portolan_cli.output": (
