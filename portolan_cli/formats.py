@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli import extension_registry as _reg
 
@@ -145,13 +145,62 @@ def is_valid_parquet(path: Path) -> bool:
         return False
 
 
+def read_kv_metadata(path: Path) -> dict[bytes, bytes]:
+    """Read every key-value pair in a Parquet file's raw footer.
+
+    pyarrow rebuilds the Arrow schema metadata from the ``ARROW:schema`` footer
+    blob and drops every other key. A writer that appends ``geo`` at close, the
+    normal pattern because bbox and geometry_types are known only then, writes
+    a GeoParquet whose ``geo`` key ``schema_arrow.metadata``,
+    ``pq.read_schema()`` and ``to_arrow_schema()`` never show (issue #864).
+    geoparquet-io reads the raw footer, so this and :func:`read_geo_metadata`
+    are the only supported ways to read a footer key in this codebase.
+
+    Args:
+        path: Path to a Parquet file.
+
+    Returns:
+        The footer key-value metadata, ``ARROW:schema`` included when pyarrow
+        wrote the file. Empty for a file that declares none or cannot be read.
+    """
+    from geoparquet_io.core.duckdb_metadata import (  # type: ignore[import-untyped]
+        get_kv_metadata,
+    )
+
+    try:
+        return dict(get_kv_metadata(str(path)) or {})
+    except Exception:  # noqa: BLE001 - an unreadable file carries no metadata
+        logger.debug("Failed to read Parquet footer metadata from %s", path, exc_info=True)
+        return {}
+
+
+def read_geo_metadata(path: Path) -> dict[str, Any] | None:
+    """Read and parse the ``geo`` footer key of a GeoParquet file.
+
+    Args:
+        path: Path to a Parquet file.
+
+    Returns:
+        The parsed GeoParquet metadata object. None for a plain Parquet file,
+        for a ``geo`` value that is not a JSON object, and for an unreadable
+        file.
+    """
+    from geoparquet_io.core.duckdb_metadata import get_geo_metadata
+
+    try:
+        geo = get_geo_metadata(str(path))
+    except Exception:  # noqa: BLE001 - an unreadable file is not a GeoParquet
+        logger.debug("Failed to read GeoParquet metadata from %s", path, exc_info=True)
+        return None
+    return geo if isinstance(geo, dict) else None
+
+
 def is_geoparquet(path: Path) -> bool:
     """Check if a Parquet file has GeoParquet metadata.
 
-    GeoParquet files have a 'geo' key in their footer key-value metadata that
-    contains geospatial column information. The read goes through
-    ``parquet_metadata``, which reads the raw footer. Reading the Arrow schema
-    instead misses a ``geo`` key the writer appended at close (issue #864).
+    The one GeoParquet test. It reads the raw footer through
+    :func:`read_geo_metadata`, so a ``geo`` key that sits after ``ARROW:schema``
+    counts (issue #864).
 
     Args:
         path: Path to the Parquet file.
@@ -161,8 +210,6 @@ def is_geoparquet(path: Path) -> bool:
         Note: Returns False for both non-geo Parquet AND invalid/corrupted files.
         Use is_valid_parquet() first if you need to distinguish these cases.
     """
-    from portolan_cli.parquet_metadata import read_geo_metadata
-
     return read_geo_metadata(path) is not None
 
 

@@ -877,7 +877,7 @@ def _read_geoparquet_bounds(gpq_path: Path) -> tuple[float, float, float, float]
     Returns:
         Tuple of (minx, miny, maxx, maxy) or None if empty/unavailable.
     """
-    from portolan_cli.parquet_metadata import read_geo_metadata
+    from portolan_cli.formats import read_geo_metadata
 
     try:
         # Try to get bbox from GeoParquet metadata (O(1), no geometry parsing).

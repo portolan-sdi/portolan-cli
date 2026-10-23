@@ -14,8 +14,8 @@ import pyarrow.parquet as pq
 from pyproj import CRS
 from pyproj.exceptions import CRSError
 
+from portolan_cli.formats import read_geo_metadata, read_kv_metadata
 from portolan_cli.models.schema import ColumnSchema, SchemaModel
-from portolan_cli.parquet_metadata import read_geo_metadata, read_kv_metadata
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
@@ -178,8 +178,8 @@ def read_spatial_layout(path: Path) -> SpatialLayout:
 
     Reads only the footer, so the cost does not grow with the file. Callers
     that need both answers must use this rather than calling
-    ``formats.is_geoparquet`` and :func:`has_bbox_covering_column` in turn,
-    which would open the file twice.
+    ``formats.is_geoparquet`` and then reading the covering, which would open
+    the file twice.
 
     rashid resolves both PTL-DAT-006 and PTL-DAT-007 through the covering
     column. It reads per-row-group extents from the column's min/max statistics
@@ -224,24 +224,6 @@ def read_spatial_layout(path: Path) -> SpatialLayout:
         isinstance(leaf, list) and leaf and leaf[0] in names for leaf in bbox_paths.values()
     )
     return SpatialLayout(is_geoparquet=True, has_bbox_covering=covers)
-
-
-def has_bbox_covering_column(path: Path) -> bool:
-    """Report whether a GeoParquet file declares a ``bbox`` covering column.
-
-    Thin wrapper over :func:`read_spatial_layout`. Use that function directly
-    when the caller also needs to know whether the file is GeoParquet.
-
-    Args:
-        path: Path to a Parquet file.
-
-    Returns:
-        True when the file's ``geo`` metadata names a ``covering.bbox`` entry
-        for its primary geometry column, and that column exists in the schema.
-        False for a plain Parquet file with no ``geo`` metadata, and False for
-        an unreadable file.
-    """
-    return read_spatial_layout(path).has_bbox_covering
 
 
 class RewriteFidelity(NamedTuple):
