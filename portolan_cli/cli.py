@@ -44,6 +44,7 @@ from portolan_cli.errors import (
     InvalidLiveUrlError,
     MissingLicenseError,
     PortolanError,
+    UnknownFormatHandlerError,
 )
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.licensing import (
@@ -3474,10 +3475,18 @@ def add_cmd(
         # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
         # check reads it, so add refuses the write and names what to supply.
         _fail_on_missing_license("add", err, use_json=use_json)
-    except (ValueError, FileNotFoundError, AssetKeyCollisionError, ConfigError) as err:
+    except (
+        ValueError,
+        FileNotFoundError,
+        AssetKeyCollisionError,
+        ConfigError,
+        UnknownFormatHandlerError,
+    ) as err:
         # Issue #933: AssetKeyCollisionError is add refusing to replace one
         # file's asset with another file. A ConfigError is a config.yaml key
-        # that add reads, such as a malformed ignored_files (#1044).
+        # that add reads, such as a malformed ignored_files (#1044). An
+        # UnknownFormatHandlerError is a conversion.handlers pin to a handler
+        # that no plugin provides. Its message names the known handlers.
         _fail_on_add_error(err, resolved_paths, use_json=use_json)
     trace.current_span().set(elapsed_seconds=progress_reporter.elapsed_seconds)
     # add_files gives every skip a reason. A path without one reads as unchanged.
