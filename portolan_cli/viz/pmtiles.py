@@ -351,10 +351,10 @@ def _write_default_style_for_geoparquet(
 
     try:
         metadata = extract_geoparquet_metadata(parquet_path)
-        geometry_type = metadata.geometry_type
-        if not geometry_type:
+        if not metadata.geometry_type:
             logger.debug("No geometry type found in %s", parquet_path)
             return None
+        geometry_type = _style_geometry_type(metadata.geometry_type)
 
         config = get_vector_style_config(catalog_path) if catalog_path else VectorStyleConfig()
 
@@ -374,6 +374,21 @@ def _write_default_style_for_geoparquet(
     except Exception as e:
         logger.debug("Failed to write default style for %s: %s", parquet_path, e)
         return None
+
+
+def _style_geometry_type(geometry_types: list[str]) -> str:
+    """Pick the one geometry type the default style draws (issue #1010).
+
+    The default style holds one layer, so a layer that declares several types
+    gets the layer of its highest dimension: polygon, then line, then point.
+    A fill or line layer shows where the data lies. A circle layer drawn over
+    polygons shows only their vertices.
+    """
+    for family in ("polygon", "line"):
+        for geometry_type in geometry_types:
+            if family in geometry_type.lower():
+                return geometry_type
+    return geometry_types[0]
 
 
 def _pmtiles_zoom_range(pmtiles_path: Path) -> tuple[int | None, int | None]:

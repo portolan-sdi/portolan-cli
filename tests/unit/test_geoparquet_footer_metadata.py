@@ -10,14 +10,16 @@ key pyarrow hides. Portolan must still classify the file as GeoParquet
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from shapely import to_wkb
 from shapely.geometry import Point
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 
@@ -110,7 +112,7 @@ def test_extract_geoparquet_metadata_reads_the_geo_key(appended_geo_parquet: Pat
 
     metadata = extract_geoparquet_metadata(appended_geo_parquet)
     assert metadata.bbox == (1.0, 2.0, 3.0, 4.0)
-    assert metadata.geometry_type == "Point"
+    assert metadata.geometry_type == ["Point"]
 
 
 def test_spatial_layout_sees_geoparquet(appended_geo_parquet: Path) -> None:

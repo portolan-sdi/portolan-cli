@@ -456,7 +456,7 @@ class TestGeoParquetMetadataEdgeCases:
         pq.write_table(table_with_meta, path)
 
         metadata = extract_geoparquet_metadata(path)
-        assert metadata.geometry_type == "Polygon"
+        assert metadata.geometry_type == ["Polygon"]
 
 
 class TestCoveringColumnDetection:
@@ -649,3 +649,83 @@ class TestReadExtraSchemaMetadata:
         path.write_bytes(b"not a parquet file")
 
         assert read_extra_schema_metadata(path) == {}
+
+
+def _write_declared_types(path: Path, geometry_types: list[str]) -> Path:
+    """Write the mixed Point/LineString table of issue #1010 with ``geometry_types``."""
+    import json
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    import shapely
+
+    geoms = [shapely.Point(0, 0), shapely.LineString([(0, 0), (1, 1)])]
+    table = pa.table({"geometry": [g.wkb for g in geoms]})
+    geo = {
+        "version": "1.1.0",
+        "primary_column": "geometry",
+        "columns": {"geometry": {"encoding": "WKB", "geometry_types": geometry_types}},
+    }
+    pq.write_table(table.replace_schema_metadata({b"geo": json.dumps(geo).encode()}), path)
+    return path
+
+
+class TestGeometryTypes:
+    """Issue #1010: every declared geometry type reaches the metadata."""
+
+    @pytest.mark.unit
+    def test_mixed_types_keep_the_whole_list(self, tmp_path: Path) -> None:
+        path = _write_declared_types(tmp_path / "mixed.parquet", ["Point", "LineString"])
+
+        metadata = extract_geoparquet_metadata(path)
+
+        assert metadata.geometry_type == ["Point", "LineString"]
+        assert metadata.to_stac_properties()["geoparquet:geometry_type"] == [
+            "Point",
+            "LineString",
+        ]
+
+    @pytest.mark.unit
+    def test_duplicates_drop_and_order_stays(self, tmp_path: Path) -> None:
+        path = _write_declared_types(
+            tmp_path / "dup.parquet", ["LineString", "MultiLineString", "LineString"]
+        )
+
+        assert extract_geoparquet_metadata(path).geometry_type == [
+            "LineString",
+            "MultiLineString",
+        ]
+
+    @pytest.mark.unit
+    def test_an_empty_list_is_unknown(self, tmp_path: Path) -> None:
+        """GeoParquet: an empty ``geometry_types`` means the types are unknown."""
+        path = _write_declared_types(tmp_path / "unknown.parquet", [])
+
+        metadata = extract_geoparquet_metadata(path)
+
+        assert metadata.geometry_type is None
+        assert "geoparquet:geometry_type" not in metadata.to_stac_properties()
+
+    @pytest.mark.unit
+    def test_info_json_lists_every_type(self, tmp_path: Path) -> None:
+        from portolan_cli.inspect import inspect_file
+
+        path = _write_declared_types(tmp_path / "mixed.parquet", ["Point", "LineString"])
+
+        assert inspect_file(path).to_dict()["geometry_type"] == ["Point", "LineString"]
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("declared", "drawn"),
+        [
+            (["Point", "MultiPolygon"], "MultiPolygon"),
+            (["Point", "LineString"], "LineString"),
+            (["MultiPoint", "Point"], "MultiPoint"),
+        ],
+    )
+    def test_the_default_style_draws_the_highest_dimension(
+        self, declared: list[str], drawn: str
+    ) -> None:
+        from portolan_cli.viz.pmtiles import _style_geometry_type
+
+        assert _style_geometry_type(declared) == drawn

@@ -1498,10 +1498,15 @@ def _warn_on_mismatches(metadata_list: Sequence[object]) -> None:
             stacklevel=3,
         )
 
-    geometry_types = {getattr(m, "geometry_type", None) for m in metadata_list} - {None}
+    # GeoParquet metadata lists every declared type (#1010). A set needs tuples.
+    geometry_types = {
+        tuple(declared) if isinstance(declared, list) else declared
+        for declared in (getattr(m, "geometry_type", None) for m in metadata_list)
+    } - {None}
     if len(geometry_types) > 1:
+        shown = sorted(list(t) if isinstance(t, tuple) else [t] for t in geometry_types)
         warnings.warn(
-            f"Mixed geometry types detected: {geometry_types}. Using first item's type.",
+            f"Mixed geometry types detected: {shown}. Using first item's type.",
             UserWarning,
             stacklevel=3,
         )

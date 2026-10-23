@@ -33,7 +33,8 @@ class GeoParquetMetadata:
     Attributes:
         bbox: Bounding box as (minx, miny, maxx, maxy) or None.
         crs: CRS as EPSG code, WKT, or PROJJSON dict.
-        geometry_type: Geometry type (Point, Polygon, etc.) or None.
+        geometry_type: Every declared geometry type (Point, Polygon, etc.), in
+            footer order without duplicates, or None when the types are unknown.
         geometry_column: Name of the geometry column.
         feature_count: Number of features (rows).
         schema: Column names and types.
@@ -41,7 +42,7 @@ class GeoParquetMetadata:
 
     bbox: tuple[float, float, float, float] | None
     crs: str | dict[str, Any] | None
-    geometry_type: str | None
+    geometry_type: list[str] | None
     geometry_column: str | None
     feature_count: int
     schema: dict[str, str]
@@ -387,15 +388,23 @@ def _extract_crs(column_meta: dict[str, Any]) -> str | dict[str, Any] | None:
     return str(crs)
 
 
-def _extract_geometry_type(column_meta: dict[str, Any]) -> str | None:
-    """Extract geometry type from column metadata."""
-    geom_types = column_meta.get("geometry_types", [])
-    if geom_types:
-        # Return the first/primary type
-        return geom_types[0] if isinstance(geom_types, list) else str(geom_types)
+def _extract_geometry_type(column_meta: dict[str, Any]) -> list[str] | None:
+    """Every geometry type a column declares, or None when they are unknown.
 
-    # Fallback to geometry_type field
-    return column_meta.get("geometry_type")
+    The list keeps the footer order and drops duplicates. GeoParquet reads an
+    empty ``geometry_types`` as unknown types, so it gives None, not a guess.
+    Keeping only the first type hid the rest from the STAC metadata (#1010).
+    """
+    declared = column_meta.get("geometry_types")
+    if declared is None:
+        # Fallback to a single geometry_type field.
+        declared = column_meta.get("geometry_type")
+    if isinstance(declared, str):
+        declared = [declared]
+    if not isinstance(declared, list):
+        return None
+    types = list(dict.fromkeys(str(value) for value in declared))
+    return types or None
 
 
 # Overloaded signatures for extract_schema_from_geoparquet
@@ -457,7 +466,9 @@ def extract_schema_from_geoparquet(
     for field in pf.schema_arrow:
         # Check if this is a geometry column
         column_meta = geo_columns.get(field.name, {})
-        geometry_type = _extract_geometry_type(column_meta)
+        # The schema model holds one string per column, so it lists every type.
+        declared_types = _extract_geometry_type(column_meta)
+        geometry_type = ", ".join(declared_types) if declared_types else None
         crs_raw = _extract_crs(column_meta)
         # Normalize CRS to string for ColumnSchema
         crs_str: str | None = None

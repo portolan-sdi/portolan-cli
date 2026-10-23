@@ -40,7 +40,7 @@ class FileInfo:
         band_count: Number of bands (raster files only).
         dtype: Data type (raster files only).
         version: Version string from versions.json (if tracked).
-        geometry_type: Geometry type (vector files only).
+        geometry_type: Every declared geometry type (vector files only).
     """
 
     path: Path
@@ -53,7 +53,7 @@ class FileInfo:
     band_count: int | None = None
     dtype: str | None = None
     version: str | None = None
-    geometry_type: str | None = None
+    geometry_type: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dictionary."""
