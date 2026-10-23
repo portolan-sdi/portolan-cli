@@ -391,9 +391,16 @@ def build_report(
     )
     from portolan_cli.extract.common.urls import sanitize_published_string
 
-    # The report keeps a local source path, because push never publishes
-    # .portolan. A credential goes (issue #981).
-    source_url = sanitize_published_string(discovery.source_url) or discovery.source_url
+    def scrub(text: str) -> str:
+        # The report keeps a local path, because push never publishes .portolan.
+        # A credential goes, also from a URL that an error quotes (issue #981).
+        return sanitize_published_string(text) or text
+
+    source_url = scrub(discovery.source_url)
+    results = [
+        replace(r, error=r.error and scrub(r.error), warnings=[scrub(w) for w in r.warnings])
+        for r in results
+    ]
 
     summary = ExtractionSummary(
         total_layers=len(results),
@@ -848,15 +855,10 @@ def _seed_collection(
     from portolan_cli.stac import update_stac_metadata
 
     if meta.record is not None:
-        from portolan_cli.extract.common.urls import sanitize_published_string
-
         logger.info("Using %s for %s", meta.record_label, layer.name)
-        record = meta.record
-        if record.source_url:
-            record = replace(record, source_url=sanitize_published_string(record.source_url))
         # No placeholder: a collection inherits the catalog's license and contact.
         seed_metadata_yaml(
-            record, collection_dir / ".portolan" / "metadata.yaml", placeholders=False
+            meta.record, collection_dir / ".portolan" / "metadata.yaml", placeholders=False
         )
         update_stac_metadata(
             collection_dir / "collection.json", title=meta.title, description=meta.description

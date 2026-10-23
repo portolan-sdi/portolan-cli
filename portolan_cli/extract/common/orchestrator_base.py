@@ -275,17 +275,11 @@ def seed_catalog_metadata(
         license_override: License resolved from the command line, which wins over
             anything harvested (issue #686).
     """
-    from dataclasses import replace
-
-    from portolan_cli.extract.common.urls import sanitize_published_string
     from portolan_cli.metadata_seeding import seed_metadata_yaml
     from portolan_cli.output import info, warn
 
     if extracted is None:
         return
-    # The source URL reaches the published via link (issue #981).
-    if extracted.source_url:
-        extracted = replace(extracted, source_url=sanitize_published_string(extracted.source_url))
 
     metadata_path = output_dir / ".portolan" / "metadata.yaml"
     if seed_metadata_yaml(extracted, metadata_path, license_override=license_override):

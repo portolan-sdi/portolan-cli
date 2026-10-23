@@ -97,12 +97,9 @@ def seed_collection_metadata(
     if title and title != layer_name:
         processing_notes = f"{processing_notes} ({title})"
 
-    from portolan_cli.extract.common.urls import sanitize_published_string
-
     extracted = ExtractedMetadata(
         source_type=source_type,
-        # The source URL reaches the published via link (issue #981).
-        source_url=sanitize_published_string(source_url),
+        source_url=source_url,
         description=best_description,
         keywords=keywords,
         processing_notes=processing_notes,

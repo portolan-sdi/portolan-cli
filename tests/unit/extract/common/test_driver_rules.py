@@ -311,6 +311,25 @@ def test_credentials_never_reach_the_catalog(fixtures_dir: Path, tmp_path: Path)
     assert vias == ["https://h.example/geoserver/wfs?SERVICE=WFS&typename=ws%3Apoints"]
 
 
+def test_a_failed_layer_error_keeps_no_credential_in_the_report(tmp_path: Path) -> None:
+    """#981: an error page that echoes the request URL leaves its API key out of the report."""
+    url = "https://h.example/geoserver/wfs?authkey=SECRET"
+
+    class _BlockedSource(_FakeSource):
+        def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
+            raise RuntimeError(f"Server returned an error page:\n<p>Blocked: {source}&n=1</p>")
+
+    run_layer_extraction(_BlockedSource(_refs(["roads"])), url, tmp_path, _options(retries=1))
+
+    report = json.loads((tmp_path / ".portolan" / "extraction-report.json").read_text())
+    assert [(layer["status"], layer["error"]) for layer in report["layers"]] == [
+        (
+            "failed",
+            "Server returned an error page:\n<p>Blocked: https://h.example/geoserver/wfs?n=1</p>",
+        )
+    ]
+
+
 @pytest.mark.integration
 def test_extracted_catalog_has_a_producer_and_a_thumbnail(
     fixtures_dir: Path, tmp_path: Path
