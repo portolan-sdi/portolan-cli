@@ -59,7 +59,7 @@ from portolan_cli.output import detail, error, set_writer, stdout_to_stderr, suc
 from portolan_cli.output import info as info_output
 from portolan_cli.plugins.commands import ExtractGroup, PluginGroup
 from portolan_cli.plugins.manager import PluginWarning
-from portolan_cli.remove import remove_files
+from portolan_cli.remove import _resolve_collection_dir, remove_files
 from portolan_cli.scan.core import (
     IssueType,
     ScanIssue,
@@ -3036,12 +3036,10 @@ def _report_skips_and_find_collections(
         if reason not in SKIPS_THAT_TRACK:
             warn(f"Skipping {p.name}: {reason}")
             continue
-        try:
-            rel = p.relative_to(catalog_root)
-        except ValueError:
-            continue  # Path not relative to catalog_root
-        if rel.parts:
-            affected.add(rel.parts[0])  # Collection ID is the first path component
+        # A nested collection id spans several path segments.
+        collection_dir = _resolve_collection_dir(p, catalog_root)
+        if collection_dir is not None:
+            affected.add(collection_dir.relative_to(catalog_root.resolve()).as_posix())
     return affected, versioned
 
 
