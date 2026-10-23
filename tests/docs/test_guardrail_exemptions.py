@@ -201,4 +201,4 @@ def test_the_scan_sees_the_markers_it_counts() -> None:
     """Guard the scan: a known strict xfail reason is among the strings it reads."""
     reasons = {text for tree in _sources().values() for text in xfail_reasons(tree)}
 
-    assert "#834: extract arcgis ignores the conversion.vector block" in reasons
+    assert "#801: the extent keeps the rows that the data lost" in reasons

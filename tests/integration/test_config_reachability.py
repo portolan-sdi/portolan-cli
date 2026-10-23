@@ -713,10 +713,11 @@ def test_conversion_handlers_pin_selects_the_handler(
 
 
 @pytest.mark.realdata
+@_forms()
 def test_extract_arcgis_reads_conversion_vector(
-    catalog: Path, run_cli: RunCli, arcgis_url: str
+    form: str, catalog: Path, run_cli: RunCli, arcgis_url: str
 ) -> None:
-    configure(run_cli, catalog, "yaml", {"conversion.vector.add_bbox": ("false", False)})
+    configure(run_cli, catalog, form, {"conversion.vector.add_bbox": ("false", False)})
 
     run_cli("extract", "arcgis", arcgis_url, str(catalog), "--auto", "--license", "CC-BY-4.0")
 
