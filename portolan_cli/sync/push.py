@@ -1472,7 +1472,7 @@ async def _upload_assets_async(
             total_count: int,
         ) -> None:
             """Track results (called from executor)."""
-            rel_path = Path(item).relative_to(catalog_root)
+            rel_path = Path(item).relative_to(catalog_root).as_posix()
             if err:
                 errors_list.append(f"Failed to upload {rel_path}: {err}")
                 error(f"Failed: {rel_path} - {err}")

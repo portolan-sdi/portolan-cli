@@ -2001,6 +2001,55 @@ class TestPushAgainstMoto:
         assert (tmp_path / "cloned" / "roads" / "collection.json").read_bytes() == local_collection
 
     @pytest.mark.integration
+    def test_clone_checks_like_the_catalog_it_copies(
+        self, tmp_path: Path, bucket: tuple[str, Any]
+    ) -> None:
+        """Issue #1042: rashid reports the same findings on the clone as on the source.
+
+        The source catalog comes from the CLI, as in the issue. Its collection
+        has no providers, so both catalogs report PTL-PRV-001. A clone without
+        the remote catalog.json also reports PTL-LNK-002 (no child link).
+        """
+        import pathlib
+        import shutil
+
+        from portolan_cli.cli import cli
+
+        name, client = bucket
+        root, cloned = tmp_path / "R", tmp_path / "cloned"
+
+        def run(*args: str) -> str:
+            result = CliRunner().invoke(cli, list(args), catch_exceptions=False)
+            return result.output
+
+        run(
+            "init",
+            "--auto",
+            "--title",
+            "t",
+            "--description",
+            "d",
+            "--license",
+            "CC-BY-4.0",
+            str(root),
+        )
+        (root / "roads").mkdir()
+        fixture = (
+            pathlib.Path(__file__).parents[1] / "fixtures" / "vector" / "valid" / "points.parquet"
+        )
+        shutil.copy(fixture, root / "roads" / "roads.parquet")
+        run("add", "--portolan-dir", str(root), str(root / "roads" / "roads.parquet"))
+        run("push", f"s3://{name}/cat", "--catalog", str(root))
+        run("clone", f"s3://{name}/cat", str(cloned))
+
+        def findings(catalog: Path) -> list[tuple[str, str]]:
+            data = json.loads(run("check", str(catalog), "--json"))["data"]
+            return sorted((f["rule_id"], f["path"]) for f in data["findings"])
+
+        assert (cloned / "catalog.json").read_bytes() == (root / "catalog.json").read_bytes()
+        assert findings(cloned) == findings(root)
+
+    @pytest.mark.integration
     def test_credential_without_list_warns_once_and_deletes_nothing(
         self,
         tmp_path: Path,
