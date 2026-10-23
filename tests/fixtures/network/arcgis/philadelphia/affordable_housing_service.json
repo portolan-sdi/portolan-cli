@@ -1,0 +1,14 @@
+{
+ "currentVersion": 12,
+ "serviceDescription": "Affordable housing projects funded by Philadelphia's Division of Housing and Community Development.",
+ "description": "Affordable housing projects funded by Philadelphia's Division of Housing and Community Development.",
+ "copyrightText": "City of Philadelphia",
+ "layers": [
+  {
+   "id": 0,
+   "name": "Affordable_Housing",
+   "type": "Feature Layer"
+  }
+ ],
+ "tables": []
+}

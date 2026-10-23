@@ -1,0 +1,81 @@
+{
+ "currentVersion": 12,
+ "id": 0,
+ "name": "Council_Districts_2024",
+ "type": "Feature Layer",
+ "description": "Philadelphia City Council districts redrawn after the 2020 census.",
+ "copyrightText": "City of Philadelphia",
+ "geometryType": "esriGeometryPolygon",
+ "objectIdField": "objectid",
+ "maxRecordCount": 100,
+ "spatialReference": {
+  "wkid": 4326,
+  "latestWkid": 4326
+ },
+ "extent": {
+  "xmin": -75.3,
+  "ymin": 39.8,
+  "xmax": -74.9,
+  "ymax": 40.2,
+  "spatialReference": {
+   "wkid": 4326,
+   "latestWkid": 4326
+  }
+ },
+ "fields": [
+  {
+   "name": "objectid",
+   "type": "esriFieldTypeOID",
+   "alias": "Objectid"
+  },
+  {
+   "name": "district",
+   "type": "esriFieldTypeString",
+   "alias": "District"
+  },
+  {
+   "name": "shape_leng",
+   "type": "esriFieldTypeDouble",
+   "alias": "Shape Leng"
+  },
+  {
+   "name": "district_num",
+   "type": "esriFieldTypeInteger",
+   "alias": "District Num"
+  },
+  {
+   "name": "Shape__Area",
+   "type": "esriFieldTypeDouble",
+   "alias": "Shape  Area"
+  },
+  {
+   "name": "Shape__Length",
+   "type": "esriFieldTypeDouble",
+   "alias": "Shape  Length"
+  }
+ ],
+ "drawingInfo": {
+  "renderer": {
+   "type": "simple",
+   "symbol": {
+    "type": "esriSFS",
+    "style": "esriSFSSolid",
+    "color": [
+     0,
+     122,
+     194,
+     70
+    ],
+    "outline": {
+     "color": [
+      0,
+      71,
+      112,
+      255
+     ],
+     "width": 1
+    }
+   }
+  }
+ }
+}

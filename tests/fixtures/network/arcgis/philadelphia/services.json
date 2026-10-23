@@ -1,0 +1,18 @@
+{
+ "currentVersion": 12,
+ "services": [
+  {
+   "name": "AffordableHousingProduction",
+   "type": "FeatureServer"
+  },
+  {
+   "name": "Council_Districts_2024",
+   "type": "FeatureServer"
+  },
+  {
+   "name": "Unrelated_Parks",
+   "type": "FeatureServer"
+  }
+ ],
+ "folders": []
+}
