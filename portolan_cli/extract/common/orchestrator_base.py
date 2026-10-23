@@ -5,12 +5,13 @@ The ArcGIS, WFS, and Carto orchestrators each run the same lifecycle after their
 
 1. Collect the successfully-extracted assets.
 2. Initialize a Portolan catalog and add those assets.
-3. Give each collection a thumbnail (PTL-VIZ-001).
-4. Register any discovered style/legend sidecars as STAC assets, with
+3. Register any discovered style/legend sidecars as STAC assets, with
    ``file:size`` and ``file:checksum`` (PTL-AST-003).
-5. Add a provenance ``via`` link to each collection.
-6. Seed the catalog-level ``metadata.yaml`` from harvested service metadata.
+4. Add a provenance ``via`` link to each collection.
+5. Seed the catalog-level ``metadata.yaml`` from harvested service metadata.
    The source's attribution names the producer (PTL-PRV-001).
+6. Give each collection a thumbnail (PTL-VIZ-001). ``source.build_catalog``
+   does it last, as ``add`` does.
 
 The output of ``portolan extract`` passes ``portolan check`` when the source
 publishes an attribution.
@@ -76,7 +77,7 @@ def init_extracted_catalog(
     title: str | None,
     description: str | None,
     post_init: Callable[[Path, list[Path], bool], None] | None = None,
-) -> list[Path] | None:
+) -> tuple[list[Path], set[str]] | None:
     """Initialize a catalog and add the extracted assets.
 
     Shared core of ``build_catalog`` and the ImageServer catalog step: collect
@@ -106,12 +107,12 @@ def init_extracted_catalog(
             (issue #832).
 
     Returns:
-        The list of added parquet files, or ``None`` when there was nothing to
-        add (the caller should then stop — no catalog was created).
+        The added parquet files and the collections that this add wrote a
+        version for, or ``None`` when there was nothing to add. The caller
+        then stops, because no catalog exists.
     """
     from portolan_cli.add import add_files
     from portolan_cli.catalog import CatalogState, detect_state, init_catalog
-    from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
     from portolan_cli.output import warn
 
     parquet_files = collect_successful_parquet_files(output_dir, report)
@@ -155,14 +156,7 @@ def init_extracted_catalog(
         post_init(output_dir, parquet_files, fresh)
 
     added, _skipped, _failures = add_files(paths=parquet_files, catalog_root=output_dir)
-    # The add command draws the thumbnails after the add, so extract does too.
-    # A collection this add wrote takes the thumbnail into that version.
-    ensure_collection_thumbnails(
-        output_dir,
-        {path.parent.relative_to(output_dir).as_posix() for path in parquet_files},
-        versioned_collections={item.collection_id for item in added},
-    )
-    return parquet_files
+    return parquet_files, {item.collection_id for item in added}
 
 
 def register_collection_styles(

@@ -928,7 +928,8 @@ def build_catalog(
     """Build or extend the catalog around the layers that succeeded.
 
     Steps: init the catalog and add the files, register styles and legends,
-    add a ``via`` link to each collection, then seed collection metadata.
+    add a ``via`` link to each collection, seed collection metadata, then
+    draw the thumbnails.
 
     Args:
         layer_source: The source the layers come from.
@@ -938,6 +939,7 @@ def build_catalog(
         resolved_license: The license to seed (issue #686).
         catalog_id: Catalog id. None derives it from the directory name.
     """
+    from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
     from portolan_cli.extract.common.orchestrator_base import (
         add_source_links,
         init_extracted_catalog,
@@ -968,6 +970,15 @@ def build_catalog(
         title_builder=lambda result: found.title if (found := link(result)) else result.name,
     )
     seed_collections(layer_source, discovery, output_dir, report)
+    # Thumbnails come last, as in `add`. The renderer's GUI objects then never
+    # meet the metadata thread pool above. A Tk object that a worker thread
+    # frees aborts the process on Windows.
+    files, versioned = added
+    ensure_collection_thumbnails(
+        output_dir,
+        {path.parent.relative_to(output_dir).as_posix() for path in files},
+        versioned_collections=versioned,
+    )
 
 
 def run_layer_extraction(

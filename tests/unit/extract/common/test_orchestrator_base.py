@@ -171,7 +171,7 @@ class TestInitExtractedCatalog:
         monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
         result = _init_with_recorded_add(monkeypatch, tmp_path, report, events, _post_init)
 
-        assert result == [tmp_path / "a/a.parquet"]
+        assert result == ([tmp_path / "a/a.parquet"], set())
         assert events == ["init", "post_init", "add"]
 
     @pytest.mark.usefixtures("stub_add_files")
@@ -182,7 +182,7 @@ class TestInitExtractedCatalog:
         monkeypatch.setattr(catalog_mod, "init_catalog", lambda *a, **k: (Path("catalog.json"), []))
 
         result = init_extracted_catalog(tmp_path, report, title=None, description=None)
-        assert result == [tmp_path / "a/a.parquet"]
+        assert result == ([tmp_path / "a/a.parquet"], set())
 
     @pytest.mark.usefixtures("stub_add_files")
     @pytest.mark.parametrize(
@@ -248,7 +248,7 @@ class TestInitExtractedCatalog:
         monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
         result = _init_with_recorded_add(monkeypatch, tmp_path, report, events, _post_init)
 
-        assert result == [tmp_path / "a/a.parquet"]
+        assert result == ([tmp_path / "a/a.parquet"], set())
         # init_catalog is skipped for an existing catalog; the new collection is
         # added instead of the run aborting.
         assert events == ["post_init", "add"]
