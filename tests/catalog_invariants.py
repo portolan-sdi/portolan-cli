@@ -45,20 +45,13 @@ if TYPE_CHECKING:
 # fixture drops these codes, so a test that builds a catalog through run_cli
 # stays green while the bug is open.
 KNOWN_INVARIANT_GAPS: dict[str, str] = {
-    # Each item that add writes carries file:* fields without the file
-    # extension URI.
-    "S-EXT-DECLARED": "#1037",
     # Collection summaries flatten proj:bbox, proj:shape, and proj:transform.
     "P-SUMMARY-FROM-ITEMS": "#1023",
-    # add keeps the source GeoJSON as a data asset beside its GeoParquet.
-    "P-DATA-ROLE-TYPE": "#960",
     # add --force keeps the old extent after the data shrinks.
     "S-EXTENT-NOT-STALE": "#801",
     # An Iceberg collection publishes the local sqlite path in
     # iceberg:catalog_uri.
     "P-NO-LOCAL-PATH": "#939",
-    # A raster add keys the item thumbnail a second time at the collection root.
-    "P-VERSIONS-KEY": "#1053",
 }
 
 COG_MEDIA_TYPE = "image/tiff; application=geotiff; profile=cloud-optimized"
@@ -311,6 +304,20 @@ def _same(a: Bbox, b: Bbox) -> bool:
     return all(abs(x - y) <= TOLERANCE for x, y in zip(a, b, strict=True))
 
 
+def _is_lon_lat(crs: Any) -> bool:
+    """Whether a GeoParquet ``crs`` value is lon/lat. Absent means OGC:CRS84."""
+    if crs is None:
+        return True
+    from pyproj import CRS
+
+    try:
+        return bool(
+            CRS.from_user_input(json.dumps(crs) if isinstance(crs, dict) else crs).is_geographic
+        )
+    except Exception:  # noqa: BLE001 - an unreadable CRS cannot vouch for its bbox
+        return False
+
+
 def _data_bbox(path: Path) -> Bbox | None:
     """Read the extent of one data file from its bytes, in EPSG:4326."""
     suffix = path.suffix.lower()
@@ -322,6 +329,11 @@ def _data_bbox(path: Path) -> Bbox | None:
             return None
         geo = json.loads(metadata[b"geo"])
         column = geo.get("columns", {}).get(geo.get("primary_column"), {})
+        if not _is_lon_lat(column.get("crs")):
+            # The footer bbox is in the projected CRS. Its reprojected envelope
+            # is wider than the extent add measures from the geometry, so the
+            # two never compare equal (nwi-wetlands, EPSG:5070).
+            return None
         return _as_bbox(column.get("bbox"))
     if suffix in {".tif", ".tiff"}:
         import rasterio

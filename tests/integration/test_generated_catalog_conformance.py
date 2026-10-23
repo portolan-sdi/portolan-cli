@@ -498,20 +498,13 @@ COG_STATS = {"PTL-DAT-009": "#748"}
 # A design reason, not an issue: tests/docs/test_guardrail_exemptions.py
 # lists it in DESIGN_REASONS.
 SINGLE_COG_LAYOUT = "single COG layout: spec and CLI disagree (PTL-COL-001), maintainer decision"
-# Items carry file:* and table:* fields without the extension URIs.
-ITEM_FILE_EXT = "#1037"
 # extract writes a placeholder host provider, no producer, and no thumbnail.
 EXTRACT_PROVIDERS = "#1039"
 
 # Invariants every raster collection breaks today.
 RASTER_INVARIANTS = {
-    # The items list file:size and file:checksum but do not declare the file
-    # extension.
-    "S-EXT-DECLARED": ITEM_FILE_EXT,
     # summaries flatten proj:bbox, proj:shape, and proj:transform.
     "P-SUMMARY-FROM-ITEMS": "#1023",
-    # versions.json keys the scene thumbnail a second time at the collection root.
-    "P-VERSIONS-KEY": "#1053",
 }
 # Every collection is a mirror, because metadata.yaml names a producer
 # distinct from the host. PTL-PRO-002 is an advisory: a rel:'canonical' link is
@@ -561,13 +554,7 @@ SCENARIOS: dict[str, Scenario] = {
         },
         known_invariants={"S-EXTENT-NOT-STALE": "#801"},
     ),
-    "readme": Scenario(
-        build_readme,
-        # The documentation asset keeps the size and checksum of the old README.
-        known_errors={"PTL-DAT-001": "#930", "PTL-DAT-002": "#930"},
-        expected_advisories=ONE_MIRROR,
-        known_invariants={"P-SIZE": "#930", "P-CHECKSUM": "#930", "P-VERSIONS-MATCH": "#930"},
-    ),
+    "readme": Scenario(build_readme, expected_advisories=ONE_MIRROR),
     "item-id": Scenario(
         build_item_id,
         known_errors={
@@ -577,10 +564,11 @@ SCENARIOS: dict[str, Scenario] = {
             "PTL-LNK-001": "#840",
             "PTL-LNK-002": "#840",
         },
-        expected_advisories={"PTL-DAT-010": 1, "PTL-PRO-002": 1},
+        # The custom-scene item lands in two places (#840), and both copies
+        # now resolve their rgb.tif href, so rashid reads the scene twice.
+        expected_advisories={"PTL-DAT-010": 3, "PTL-PRO-002": 1},
         known_invariants={
             **RASTER_INVARIANTS,
-            "S-HREF-RESOLVES": "#840",
             "P-NO-LOCAL-PATH": "#840",
             "P-VERSIONS-MATCH": "#840",
         },
@@ -602,8 +590,6 @@ SCENARIOS: dict[str, Scenario] = {
             "PTL-EXT-001": "#914",
             "PTL-PRT-001": "#914",
             "PTL-SCH-001": "#914",
-            # The partitioned collection gets no thumbnail asset.
-            "PTL-VIZ-001": "#1038",
         },
         expected_advisories={
             **ONE_MIRROR,
@@ -613,19 +599,16 @@ SCENARIOS: dict[str, Scenario] = {
             # One per partition item: rashid asks each item for table:columns.
             "PTL-DAT-017": 4,
         },
-        known_invariants={"S-EXT-DECLARED": ITEM_FILE_EXT, "P-SUMMARY-FROM-ITEMS": "#1023"},
+        known_invariants={"P-SUMMARY-FROM-ITEMS": "#1023"},
         marks=(pytest.mark.realdata,),
     ),
     "antimeridian": Scenario(
         build_antimeridian,
         expected_advisories={"PTL-PRO-002": 2},
-        # The source GeoJSON keeps the data role beside its GeoParquet.
-        known_invariants={"P-DATA-ROLE-TYPE": "#960"},
         marks=(pytest.mark.realdata,),
     ),
     "sibling-pmtiles": Scenario(
         build_sibling_pmtiles,
-        known_errors={"PTL-VIZ-002": "#929", "PTL-VIZ-003": "#929"},
         expected_advisories={
             **ONE_MIRROR,
             # sample.pmtiles holds three points in San Francisco, New York, and
@@ -643,17 +626,7 @@ SCENARIOS: dict[str, Scenario] = {
         known_invariants={"P-NO-LOCAL-PATH": "#939"},
     ),
     "realdata-fieldmaps-boundaries": _realdata_row(REALDATA / "fieldmaps-boundaries.parquet"),
-    "realdata-nwi-wetlands": Scenario(
-        _realdata(REALDATA / "nwi-wetlands.parquet"),
-        expected_advisories=ONE_MIRROR,
-        marks=(
-            pytest.mark.realdata,
-            pytest.mark.xfail(
-                strict=True,
-                reason="#996: nwi-wetlands.parquet declares no CRS, so add refuses it",
-            ),
-        ),
-    ),
+    "realdata-nwi-wetlands": _realdata_row(REALDATA / "nwi-wetlands.parquet"),
     "realdata-open-buildings": _realdata_row(REALDATA / "open-buildings.parquet"),
     "realdata-road-detections": _realdata_row(REALDATA / "road-detections.parquet"),
     "realdata-rapidai4eo-sample": Scenario(

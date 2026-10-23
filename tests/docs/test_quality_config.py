@@ -115,14 +115,12 @@ MYPY_UNREACHABLE_RATCHET = frozenset(
         "portolan_cli.backends.iceberg.backend",
         "portolan_cli.backends.iceberg.hooks",
         "portolan_cli.conversion_config",
-        "portolan_cli.readme",
         "portolan_cli.stac",
-        "portolan_cli.viz.thumbnail",
     }
 )
 
 # Delete only. Lower these numbers when a name or a clone goes away.
-VULTURE_WHITELIST_NAMES = 109
+VULTURE_WHITELIST_NAMES = 108
 JSCPD_BASELINE_FINGERPRINTS = 937
 
 

@@ -127,8 +127,6 @@ def _metadata_override(metadata: dict[str, Any], field: str) -> str | None:
     :func:`portolan_cli.stac.apply_human_titles`). A blank/whitespace value is
     treated as "not provided" so the auto-derived STAC value is used instead.
     """
-    if not isinstance(metadata, dict):
-        return None
     value = metadata.get(field)
     if isinstance(value, str) and value.strip():
         return value.strip()

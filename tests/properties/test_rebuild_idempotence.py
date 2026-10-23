@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from hypothesis import HealthCheck, Phase, given, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 if TYPE_CHECKING:
@@ -206,21 +206,18 @@ def _rebuild_and_fresh(
     return normalize(a), normalize(b)
 
 
-# add --force registers the README.md that the first add wrote as a
-# documentation asset, and a fresh add does not, so every rebuild differs.
-README_ASSET = pytest.mark.xfail(
-    strict=True, reason="#1041: add --force registers the generated README.md as an asset"
-)
-
-
 @pytest.mark.parametrize(
     "mutation",
     [
-        pytest.param("append_rows", marks=README_ASSET),
-        pytest.param("change_timestamp_range", marks=README_ASSET),
-        pytest.param("drop_column", marks=README_ASSET),
-        # The extent also keeps the north-east rows that the data lost (#801).
-        pytest.param("shrink_extent", marks=README_ASSET),
+        pytest.param("append_rows"),
+        pytest.param("change_timestamp_range"),
+        pytest.param("drop_column"),
+        pytest.param(
+            "shrink_extent",
+            marks=pytest.mark.xfail(
+                strict=True, reason="#801: the extent keeps the rows that the data lost"
+            ),
+        ),
     ],
 )
 def test_a_rebuild_equals_a_fresh_build(mutation: str, tmp_path: Path, run_cli: RunCli) -> None:
@@ -229,11 +226,8 @@ def test_a_rebuild_equals_a_fresh_build(mutation: str, tmp_path: Path, run_cli: 
     assert _differences(rebuilt, fresh) == {}
 
 
-@README_ASSET
 @settings(
     max_examples=5,
-    # Every example fails today, so shrinking only repeats the CLI runs.
-    phases=(Phase.explicit, Phase.reuse, Phase.generate),
     deadline=None,
     suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.differing_executors],
 )

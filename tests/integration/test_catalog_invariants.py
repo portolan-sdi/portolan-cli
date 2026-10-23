@@ -414,15 +414,6 @@ class TestKnownGapsStillFire:
     def test_every_known_gap_has_a_test_here(self) -> None:
         assert set(KNOWN_INVARIANT_GAPS) == set(GAP_TESTS)
 
-    def test_s_ext_declared(self, raster_catalog: Path) -> None:
-        """#1037: the scene item lists file:size with no file extension URI."""
-        fired = [v for v in check_catalog_invariants(raster_catalog) if v.code == "S-EXT-DECLARED"]
-
-        assert sorted(v.path for v in fired) == [
-            "imagery/scene-a/scene-a.json",
-            "imagery/scene-b/scene-b.json",
-        ]
-
     def test_p_summary_from_items(self, raster_catalog: Path) -> None:
         """#1023: the summary holds the numbers of proj:transform, not the arrays."""
         item = _parse(raster_catalog / "imagery" / "scene-b" / "scene-b.json")
@@ -436,32 +427,6 @@ class TestKnownGapsStillFire:
 
         assert transform not in summaries["proj:transform"]
         assert f"summaries['proj:transform'] value {transform[0]!r} is on no member item" in fired
-
-    def test_p_versions_key(self, raster_catalog: Path) -> None:
-        """#1053: the scene thumbnail gets a second key at the collection root."""
-        fired = [
-            v.detail for v in check_catalog_invariants(raster_catalog) if v.code == "P-VERSIONS-KEY"
-        ]
-
-        assert sorted(fired) == [
-            "key 'rgb.thumb.jpg' names a file other than imagery/scene-a/rgb.thumb.jpg",
-        ]
-
-    def test_p_data_role_type(self, tmp_path: Path, run_cli: RunCli) -> None:
-        """#960: the converted GeoJSON stays registered as a data asset."""
-        root = tmp_path / "catalog"
-        (root / "places").mkdir(parents=True)
-        shutil.copy(
-            FIXTURES / "vector" / "valid" / "points.geojson", root / "places" / "points.geojson"
-        )
-        run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
-        run_cli("add", "--portolan-dir", str(root), str(root / "places" / "points.geojson"))
-
-        fired = [v for v in check_catalog_invariants(root) if v.code == "P-DATA-ROLE-TYPE"]
-
-        assert [v.detail for v in fired] == [
-            "asset 'points.geojson': role data on './points.geojson' with type 'application/geo+json'"
-        ]
 
     def test_s_extent_not_stale(self, tmp_path: Path, run_cli: RunCli) -> None:
         """#801: after the rows shrink, add --force keeps the old extent."""
@@ -500,10 +465,7 @@ class TestKnownGapsStillFire:
 
 
 GAP_TESTS = {
-    "P-VERSIONS-KEY": TestKnownGapsStillFire.test_p_versions_key,
     "P-NO-LOCAL-PATH": TestKnownGapsStillFire.test_p_no_local_path,
-    "S-EXT-DECLARED": TestKnownGapsStillFire.test_s_ext_declared,
     "P-SUMMARY-FROM-ITEMS": TestKnownGapsStillFire.test_p_summary_from_items,
-    "P-DATA-ROLE-TYPE": TestKnownGapsStillFire.test_p_data_role_type,
     "S-EXTENT-NOT-STALE": TestKnownGapsStillFire.test_s_extent_not_stale,
 }

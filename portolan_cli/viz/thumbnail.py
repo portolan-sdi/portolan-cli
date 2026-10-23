@@ -41,23 +41,20 @@ _ctx_loaded = False
 def _ensure_contextily() -> Any:
     """Lazy-load contextily, returning module or None if unavailable.
 
-    Thread-safe: uses a lock to prevent race conditions on first import.
+    Thread-safe: every call takes the lock, so only one thread runs the import.
+    The lock is cheap next to a thumbnail render.
     """
     global _ctx_module, _ctx_loaded
-    if _ctx_loaded:
-        return _ctx_module
-
     with _ctx_lock:
-        if _ctx_loaded:
-            return _ctx_module
-        try:
-            import contextily as ctx
+        if not _ctx_loaded:
+            try:
+                import contextily as ctx
 
-            _ctx_module = ctx
-        except ImportError:
-            logger.debug("contextily not available, basemaps disabled")
-            _ctx_module = None
-        _ctx_loaded = True
+                _ctx_module = ctx
+            except ImportError:
+                logger.debug("contextily not available, basemaps disabled")
+                _ctx_module = None
+            _ctx_loaded = True
         return _ctx_module
 
 

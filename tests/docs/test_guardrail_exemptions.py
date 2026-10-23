@@ -43,7 +43,7 @@ DESIGN_REASONS = frozenset(
     }
 )
 
-EXPECTED_COUNTS = {"xfail": 37, "invariant": 8, "config-key": 6}
+EXPECTED_COUNTS = {"xfail": 29, "invariant": 8, "config-key": 6}
 
 
 def _sources() -> dict[Path, ast.Module]:
@@ -201,5 +201,4 @@ def test_the_scan_sees_the_markers_it_counts() -> None:
     """Guard the scan: a known strict xfail reason is among the strings it reads."""
     reasons = {text for tree in _sources().values() for text in xfail_reasons(tree)}
 
-    assert "#996: nwi-wetlands.parquet declares no CRS, so add refuses it" in reasons
     assert "#1020: config set stores the list as one string" in reasons
