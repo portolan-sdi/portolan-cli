@@ -14,9 +14,7 @@ from portolan_cli.version_ops import (
     _resolve_backend_name,
     get_current_version,
     list_versions,
-    prune_versions,
     publish_version,
-    rollback_version,
 )
 
 
@@ -116,29 +114,99 @@ class TestPublishVersion:
         )
 
 
-class TestRollbackVersion:
+def _pull_result(
+    *, downloaded: int, version: str, up_to_date: bool = False, success: bool = True
+) -> object:
+    from portolan_cli.sync.pull import PullResult
+
+    return PullResult(
+        success=success,
+        files_downloaded=downloaded,
+        files_skipped=0,
+        local_version=None,
+        remote_version=version,
+        up_to_date=up_to_date,
+    )
+
+
+def _catalog_with_collections(root: Path, *ids: str) -> Path:
+    for collection_id in ids:
+        collection_dir = root / collection_id
+        collection_dir.mkdir(parents=True)
+        (collection_dir / "collection.json").write_text('{"type": "Collection"}')
+    return root
+
+
+class TestTryBackendPull:
+    """Issue #977: pull is a typed protocol method, and a missing collection means all."""
+
     @pytest.mark.unit
-    def test_delegates_to_backend(self) -> None:
-        mock_version = MagicMock()
-        mock_backend = MagicMock()
-        mock_backend.rollback.return_value = mock_version
+    def test_no_collection_pulls_each_collection_of_the_catalog(self, tmp_path: Path) -> None:
+        """On main the backend got collection=None and raised on an empty name."""
+        from portolan_cli.version_ops import try_backend_pull
 
-        with patch("portolan_cli.backends.get_backend", return_value=mock_backend):
-            result = rollback_version("col", "1.0.0", backend_name="iceberg")
+        root = _catalog_with_collections(tmp_path, "boundaries", "roads")
+        backend = MagicMock()
+        backend.pull.side_effect = [
+            _pull_result(downloaded=2, version="1.0.0"),
+            _pull_result(downloaded=3, version="2.0.0"),
+        ]
+        with (
+            patch("portolan_cli.config.get_setting", return_value="iceberg"),
+            patch("portolan_cli.backends.get_backend", return_value=backend),
+        ):
+            result = try_backend_pull(root, "s3://example-bucket/catalog", None, dry_run=False)
 
-        mock_backend.rollback.assert_called_once_with("col", "1.0.0")
-        assert result is mock_version
+        assert [c.args for c in backend.pull.call_args_list] == [
+            ("s3://example-bucket/catalog", root, "boundaries"),
+            ("s3://example-bucket/catalog", root, "roads"),
+        ]
+        assert (result.handled, result.success, result.files_downloaded) == (True, True, 5)
+        assert result.remote_version is None
 
-
-class TestPruneVersions:
     @pytest.mark.unit
-    def test_delegates_to_backend(self) -> None:
-        mock_pruned = [MagicMock()]
-        mock_backend = MagicMock()
-        mock_backend.prune.return_value = mock_pruned
+    def test_an_empty_catalog_is_up_to_date(self, tmp_path: Path) -> None:
+        from portolan_cli.version_ops import try_backend_pull
 
-        with patch("portolan_cli.backends.get_backend", return_value=mock_backend):
-            result = prune_versions("col", keep=5, dry_run=True, backend_name="iceberg")
+        backend = MagicMock()
+        with (
+            patch("portolan_cli.config.get_setting", return_value="iceberg"),
+            patch("portolan_cli.backends.get_backend", return_value=backend),
+        ):
+            result = try_backend_pull(tmp_path, "s3://example-bucket/catalog", None, dry_run=False)
 
-        mock_backend.prune.assert_called_once_with("col", keep=5, dry_run=True)
-        assert result is mock_pruned
+        backend.pull.assert_not_called()
+        assert (result.handled, result.success, result.up_to_date) == (True, True, True)
+
+    @pytest.mark.unit
+    def test_one_failed_collection_fails_the_pull(self, tmp_path: Path) -> None:
+        from portolan_cli.version_ops import try_backend_pull
+
+        root = _catalog_with_collections(tmp_path, "a", "b")
+        backend = MagicMock()
+        backend.pull.side_effect = [
+            _pull_result(downloaded=1, version="1.0.0"),
+            _pull_result(downloaded=0, version="1.0.0", success=False),
+        ]
+        with (
+            patch("portolan_cli.config.get_setting", return_value="iceberg"),
+            patch("portolan_cli.backends.get_backend", return_value=backend),
+        ):
+            result = try_backend_pull(root, "s3://example-bucket/catalog", None, dry_run=False)
+
+        assert (result.handled, result.success) == (True, False)
+
+
+class TestJsonFileBackendHooks:
+    """The file backend implements the four lifecycle hooks with neutral behavior."""
+
+    @pytest.mark.unit
+    def test_defaults(self, tmp_path: Path) -> None:
+        from portolan_cli.backends.json_file import JsonFileBackend
+
+        backend = JsonFileBackend(catalog_root=tmp_path)
+        assert backend.supports_push() is True
+        assert backend.pull("s3://b/c", tmp_path, "roads") is None
+        assert backend.push_blocked_message(None) == (
+            "Push is not supported with the 'file' backend."
+        )

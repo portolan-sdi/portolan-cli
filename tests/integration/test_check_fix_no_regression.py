@@ -38,12 +38,8 @@ pytestmark = [pytest.mark.integration, pytest.mark.realdata]
 
 # `add --item-id` writes asset hrefs relative to a directory that does not
 # exist, so run_cli must not check those catalogs at teardown.
-ITEM_ID_REASON = "item-id: hrefs point at a directory that does not exist (#840)"
 # The test deletes the item JSON and leaves the collection's item link dangling.
 DELETED_ITEM_REASON = "check_fix: the test deletes the item JSON on purpose"
-STALE_MIRROR_REASON = (
-    "check_fix: --fix rewrites items.parquet and leaves versions.json stale (#1046)"
-)
 
 
 def _added_raster_catalog(run_cli: RunCli, root: Path, cog: Path, *, item_id: str = "") -> Path:
@@ -169,7 +165,6 @@ class TestNoFabricatedItem:
         run_cli: RunCli,
         tmp_path: Path,
         valid_rgb_cog: Path,
-        build_damaged_catalog: Callable[[Path, str], Path],
     ) -> None:
         """`add --item-id scene` writes ``scene.json`` in directory ``rapidai4eo``.
 
@@ -178,7 +173,7 @@ class TestNoFabricatedItem:
         """
         root = _added_raster_catalog(
             run_cli,
-            build_damaged_catalog(tmp_path / "cat", ITEM_ID_REASON),
+            tmp_path / "cat",
             valid_rgb_cog,
             item_id="scene",
         )
@@ -194,7 +189,6 @@ class TestNoFabricatedItem:
         run_cli: RunCli,
         tmp_path: Path,
         valid_rgb_cog: Path,
-        build_damaged_catalog: Callable[[Path, str], Path],
     ) -> None:
         """The renamed item covers its directory, so no data file needs one.
 
@@ -205,7 +199,7 @@ class TestNoFabricatedItem:
         """
         root = _added_raster_catalog(
             run_cli,
-            build_damaged_catalog(tmp_path / "cat", ITEM_ID_REASON),
+            tmp_path / "cat",
             valid_rgb_cog,
             item_id="scene",
         )
@@ -263,12 +257,11 @@ class TestNoFabricatedItem:
         run_cli: RunCli,
         tmp_path: Path,
         valid_rgb_cog: Path,
-        build_damaged_catalog: Callable[[Path, str], Path],
     ) -> None:
         """Before the fix the count went from 3 to 10."""
         root = _added_raster_catalog(
             run_cli,
-            build_damaged_catalog(tmp_path / "cat", ITEM_ID_REASON),
+            tmp_path / "cat",
             valid_rgb_cog,
             item_id="scene",
         )
@@ -289,14 +282,13 @@ class TestCreatedItemConforms:
         run_cli: RunCli,
         tmp_path: Path,
         valid_rgb_cog: Path,
-        build_damaged_catalog: Callable[[Path, str], Path],
     ) -> Path:
         """A raster catalog that run_cli does not check at teardown.
 
         ``--fix`` rewrites items.parquet and leaves its versions.json digest
         stale (#1046), and each test below runs ``--fix``.
         """
-        root = build_damaged_catalog(tmp_path / "cat", STALE_MIRROR_REASON)
+        root = tmp_path / "cat"
         return _added_raster_catalog(run_cli, root, valid_rgb_cog)
 
     def test_recreated_item_restores_the_original_error_count(

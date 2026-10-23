@@ -70,9 +70,6 @@ from portolan_cli.finalization import (  # noqa: F401
     _get_or_create_collection as _get_or_create_collection,  # noqa: PLC0414
 )
 from portolan_cli.finalization import (  # noqa: F401
-    _recompute_collection_extent_with_multibbox as _recompute_collection_extent_with_multibbox,  # noqa: PLC0414
-)
-from portolan_cli.finalization import (  # noqa: F401
     _save_collection_with_links as _save_collection_with_links,  # noqa: PLC0414
 )
 from portolan_cli.finalization import (
@@ -80,6 +77,9 @@ from portolan_cli.finalization import (
 )
 from portolan_cli.finalization import (
     apply_human_metadata as apply_human_metadata,  # noqa: PLC0414
+)
+from portolan_cli.finalization import (
+    apply_human_metadata_to_dict,
 )
 from portolan_cli.finalization import (
     finalize_items as finalize_items,  # noqa: PLC0414
@@ -1346,11 +1346,17 @@ def add_files(
             added=added,
             skipped=skipped,
             failures=failures,
+            merge_strategy=merge_strategy,
             touched_items=touched_items,
         )
 
         # Phase 3.5: re-check the file extension on collections with deferred assets (#501).
         _declare_file_extension_for_collections(affected_collections)
+        # A tabular collection takes its providers from metadata.yaml in phase 3
+        # (#813), so it can turn the whole catalog into a mirror after finalize.
+        # The root then needs its sync time (rashid PTL-PRO-003).
+        if affected_collections:
+            update_catalog_provenance(catalog_root)
 
     # Phase 4: run the enrichment hooks on the documents phase 3 changed (#947).
     with span("add.enrich", items=len(touched_items)):
@@ -1433,6 +1439,7 @@ def _process_deferred_non_geo_files(
     added: list[ItemInfo],
     skipped: list[Path],
     failures: list[AddFailure],
+    merge_strategy: MergeStrategy,
     touched_items: list[tuple[str, str]] | None = None,
 ) -> set[Path]:
     """Process deferred non-geospatial files.
@@ -1451,6 +1458,7 @@ def _process_deferred_non_geo_files(
             they attach to an item or collection that is already reported.
         skipped: List to append skipped files to (modified in place).
         failures: List to append failures to (modified in place).
+        merge_strategy: The strategy of the ``add`` run.
         touched_items: List to append each updated item's
             ``(collection_id, item_id)`` to (modified in place).
 
@@ -1509,6 +1517,7 @@ def _process_deferred_non_geo_files(
                 _update_collection_with_asset(
                     collection_dir=resolved_collection_dir,
                     asset_path=file_path,
+                    merge_strategy=merge_strategy,
                 )
 
                 # Update versions.json so is_current() finds the asset
@@ -1605,6 +1614,7 @@ def _process_deferred_non_geo_files(
                     _update_collection_with_asset(
                         collection_dir=collection_dir,
                         asset_path=asset_path,
+                        merge_strategy=merge_strategy,
                     )
 
                     # If converted, also track source file as companion asset
@@ -1614,6 +1624,7 @@ def _process_deferred_non_geo_files(
                         _update_collection_with_asset(
                             collection_dir=collection_dir,
                             asset_path=file_path,
+                            merge_strategy=merge_strategy,
                             role=ROLE_SOURCE,
                         )
 
@@ -1769,6 +1780,7 @@ def _update_collection_with_asset(
     collection_dir: Path,
     asset_path: Path,
     *,
+    merge_strategy: MergeStrategy,
     role: str | None = None,
 ) -> None:
     """Update a collection.json to include a new non-geo asset file (Issue #383).
@@ -1779,6 +1791,7 @@ def _update_collection_with_asset(
     Args:
         collection_dir: Path to the collection directory.
         asset_path: Path to the non-geo asset file.
+        merge_strategy: The strategy of the ``add`` run.
         role: The asset role. None takes the role of the file extension.
     """
     collection_json_path = collection_dir / "collection.json"
@@ -1813,7 +1826,7 @@ def _update_collection_with_asset(
         **file_fields(asset_path),
     }
 
-    _document_tabular_asset(collection_data, asset_key, asset_path)
+    _document_tabular_asset(collection_data, asset_key, asset_path, merge_strategy)
 
     # Write updated collection
     write_json_atomic(collection_json_path, collection_data)
@@ -1823,6 +1836,7 @@ def _document_tabular_asset(
     collection_data: dict[str, Any],
     asset_key: str,
     asset_path: Path,
+    merge_strategy: MergeStrategy,
 ) -> None:
     """Answer the Tabular Data SHOULDs for a plain-Parquet asset (issue #749).
 
@@ -1831,19 +1845,30 @@ def _document_tabular_asset(
     dimension. Both are read from the Parquet footer here, because this function
     is the only writer a collection-level non-geo asset passes through — the
     tabular path never reaches ``finalize_items``, where geo collections get
-    their table metadata.
+    their table metadata and their metadata.yaml.
 
-    Non-Parquet and GeoParquet assets are left alone:
+    metadata.yaml applies here for the same reason, so an ``add --force`` of a
+    tabular collection carries an edited title, license, or providers into
+    STAC as the spatial path does (issue #813).
+
+    Non-Parquet and GeoParquet assets get no table fields:
     :func:`extract_tabular_metadata` returns None for both.
 
     Args:
         collection_data: Parsed ``collection.json``, mutated in place.
         asset_key: Key the asset was just written under.
         asset_path: Path to the asset file on disk.
+        merge_strategy: Decides only the column descriptions (issue #931).
     """
+    from portolan_cli.catalog import find_catalog_root
+
+    collection_dir = asset_path.parent
+    catalog_root = find_catalog_root(collection_dir)
+    if catalog_root is not None:
+        apply_human_metadata_to_dict(collection_data, collection_dir, catalog_root)
     metadata = extract_tabular_metadata(asset_path)
     if metadata is None:
         return
-    document_tabular_table(collection_data, asset_key, metadata)
+    document_tabular_table(collection_data, asset_key, metadata, merge_strategy)
     if metadata.temporal_interval is not None:
         set_temporal_extent(collection_data, metadata.temporal_interval)

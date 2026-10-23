@@ -398,18 +398,6 @@ untyped_calls_exclude = ["pyarrow"]
 # annotation already rules out.
 warn_unreachable = true
 
-# warn_unreachable ratchet (#1035). Each module reports `Statement is
-# unreachable` today. The letter names the #1035 agent that owns the module.
-# Delete a module when it is clean, and delete it from
-# MYPY_UNREACHABLE_RATCHET in tests/docs/test_quality_config.py. Never add one.
-[[tool.mypy.overrides]]
-module = [
-    "portolan_cli.backends.iceberg.backend", # C
-    "portolan_cli.backends.iceberg.hooks", # C
-    "portolan_cli.stac", # C
-]
-warn_unreachable = false
-
 [[tool.mypy.overrides]]
 module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*", "pyiceberg.*", "shapely.*", "pygeohash.*", "mutmut.*", "geopandas.*", "contextily.*", "jsonschema.*"]
 ignore_missing_imports = true
@@ -526,6 +514,7 @@ ignore_imports = [
     # this edge out of add.py into finalization.py); cli reaches it only via the
     # library layer, so the direct cli->backends ban still holds.
     "portolan_cli.finalization -> portolan_cli.backends",
+    "portolan_cli.finalization -> portolan_cli.backends.protocol", # PostAddContext types the on_post_add context (#977)
     "portolan_cli.version_ops -> portolan_cli.backends",
     "portolan_cli.version_ops -> portolan_cli.backends.protocol",
     "portolan_cli.hookspecs -> portolan_cli.backends.protocol", # TYPE_CHECKING only

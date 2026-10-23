@@ -8,21 +8,12 @@
 # #748 has no owner. COG statistics land in a PAM sidecar, and no #1035 agent
 # owns raster statistics.
 xfail	#748	none	tests/integration/test_generated_catalog_conformance.py PTL-DAT-009 rows fresh, re-add, item-id, realdata-rapidai4eo-sample
-xfail	#801	C	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS S-EXTENT-NOT-STALE; tests/integration/test_generated_catalog_conformance.py row force-after-mutation; tests/properties/test_rebuild_idempotence.py
-xfail	#813	C	tests/integration/test_generated_catalog_conformance.py PTL-PRV-001, PTL-SCH-001 row force-after-mutation
-xfail	#840	C	tests/integration/test_generated_catalog_conformance.py row item-id; invariant item-id reason
-xfail	#852	C	tests/integration/test_bbox_validation.py; invariant bbox_validation reason
 xfail	#914	spec	tests/integration/test_generated_catalog_conformance.py PTL-EXT-001, PTL-PRT-001, PTL-SCH-001 row partitioned
 xfail	#932	spec	tests/integration/test_generated_catalog_conformance.py PTL-DAT-005 row multi-file
-xfail	#1023	C	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS P-SUMMARY-FROM-ITEMS; tests/integration/test_generated_catalog_conformance.py raster rows
-xfail	#1046	C	tests/integration/test_check_fix_no_regression.py; invariant check_fix --fix reason
 
 invariant	catalog_invariants: file:size set to 1 for the __main__ test
 invariant	catalog_invariants: a clean root that proves the stale-exemption check
-invariant	bbox_validation: the two-bbox antimeridian extent of #852
-invariant	item-id: hrefs point at a directory that does not exist (#840)
 invariant	check_fix: the test deletes the item JSON on purpose
-invariant	check_fix: --fix rewrites items.parquet and leaves versions.json stale (#1046)
 
 config-key	partitioning.prompt: read only when stderr is a TTY, so CliRunner never reaches it
 config-key	pmtiles.bbox: shows only in decoded tile contents

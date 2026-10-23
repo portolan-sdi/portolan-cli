@@ -66,6 +66,26 @@ class TestAddVectorExtension:
 
         assert sample_item.properties["vector:geometry_types"] == ["Polygon", "MultiPolygon"]
 
+    def test_mixed_types_are_deduplicated_in_order(self, sample_item: pystac.Item) -> None:
+        """Issue #1010: every declared type is kept once, in footer order."""
+
+        class MockMetadata:
+            geometry_type = ["LineString", "MultiLineString", "LineString"]
+
+        add_vector_extension(sample_item, MockMetadata())
+
+        assert sample_item.properties["vector:geometry_types"] == ["LineString", "MultiLineString"]
+
+    def test_empty_list_means_unknown_types(self, sample_item: pystac.Item) -> None:
+        """GeoParquet reads an empty list as unknown, so no field is written."""
+
+        class MockMetadata:
+            geometry_type: list[str] = []
+
+        add_vector_extension(sample_item, MockMetadata())
+
+        assert "vector:geometry_types" not in sample_item.properties
+
     def test_adds_extension_url_to_stac_extensions(self, sample_item: pystac.Item) -> None:
         """Should add Vector extension URL to stac_extensions array."""
 

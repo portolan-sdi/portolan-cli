@@ -67,6 +67,21 @@ class _MemoryBackend:
             "message": "in sync",
         }
 
+    # The four lifecycle hooks are protocol methods since #977.
+    def on_post_add(self, context: Any) -> None:
+        return None
+
+    def pull(
+        self, remote_url: str, local_root: Path, collection: str, *, dry_run: bool = False
+    ) -> None:
+        return None
+
+    def supports_push(self) -> bool:
+        return True
+
+    def push_blocked_message(self, remote: str | None) -> str:
+        return "push is allowed"
+
 
 class _ListReturnsStrings(_MemoryBackend):
     def list_versions(self, collection: str) -> list[Version]:
@@ -139,3 +154,15 @@ def test_nonconforming_handler_lists_each_problem(tmp_path: Path) -> None:
         "asset_level is 'layer', expected collection or item.",
         "extensions does not hold .bad, the sample's.",
     ]
+
+
+class _SixMethodBackend(_MemoryBackend):
+    """A backend written against the protocol before #977."""
+
+    on_post_add = None  # type: ignore[assignment]
+
+
+def test_a_backend_without_the_lifecycle_hooks_does_not_conform(tmp_path: Path) -> None:
+    """#977: the four hooks are protocol members, so check_backend names a gap."""
+    with pytest.raises(ConformanceError, match=r"does not implement VersioningBackend"):
+        check_backend(_SixMethodBackend, tmp_path)

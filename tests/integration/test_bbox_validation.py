@@ -19,13 +19,10 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from tests.catalog_invariants import RunCli
 
 # The #852 extent of two bboxes breaks S-BBOX-COUNT, so run_cli must not
 # check this catalog at teardown while the bug is open.
-ANTIMERIDIAN_REASON = "bbox_validation: the two-bbox antimeridian extent of #852"
 
 
 def _write_point_geoparquet(path: Path, bbox: list[float]) -> None:
@@ -265,22 +262,18 @@ class TestBboxValidationIntegration:
 class TestAntimeridianBboxIntegration:
     """Integration tests for anti-meridian crossing bbox handling."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#852: an antimeridian-crossing extent is written as exactly two bboxes",
-    )
     def test_collection_with_antimeridian_crossing_item(
-        self, tmp_path: Path, run_cli: RunCli, build_damaged_catalog: Callable[[Path, str], Path]
+        self, tmp_path: Path, run_cli: RunCli
     ) -> None:
         """Collection with an anti-meridian crossing item writes a STAC 1.1.0 extent.
 
         STAC 1.1.0 allows one bbox, or an overall bbox followed by two or more
-        sub-bboxes. A list of exactly two is invalid. The one-bbox form keeps
-        the crossing (west > east), and the overall bbox of the longer form
-        does too. Neither may collapse to a whole-world [-180, ..., 180]
-        envelope, which would claim that the data spans the globe.
+        sub-bboxes. A list of exactly two is invalid (#852). The overall bbox is
+        the [-180, ..., 180] envelope, because rashid's PTL-DAT-005 compares
+        bbox[0] with the plain min/max of the data. The two parts that follow
+        it keep the gap over the prime meridian.
         """
-        root = build_damaged_catalog(tmp_path / "catalog", ANTIMERIDIAN_REASON)
+        root = tmp_path / "catalog"
         collection_dir = root / "fiji-data"
         collection_dir.mkdir(parents=True)
         run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
@@ -302,8 +295,14 @@ class TestAntimeridianBboxIntegration:
             assert -90 <= bbox[1] <= 90
             assert -180 <= bbox[2] <= 180
             assert -90 <= bbox[3] <= 90
-        assert len(bboxes) == 1 or len(bboxes) >= 3, f"STAC 1.1.0 forbids {len(bboxes)} bboxes"
-        assert bboxes[0][:4] == [177.0, -20.0, -175.0, -15.0]
+        # STAC 1.1.0 allows one bbox, or three or more with the envelope first,
+        # never two (issue #852). The crossing input is the envelope, then its
+        # western and eastern parts.
+        assert [b[:4] for b in bboxes] == [
+            [-180.0, -20.0, 180.0, -15.0],
+            [-180.0, -20.0, -175.0, -15.0],
+            [177.0, -20.0, 180.0, -15.0],
+        ]
 
         result = run_cli("check", str(root), expect=None)
         assert "invalid bbox" not in result.output.lower()

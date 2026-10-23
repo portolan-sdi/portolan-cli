@@ -113,6 +113,16 @@ class TestLicensePrecedence:
         assert collection.license == "ODbL-1.0"
 
 
+def _providers_over_a_hand_edit(collection_dir: Path, catalog_root: Path) -> list[str]:
+    """Apply metadata.yaml to a collection whose providers a human wrote by hand."""
+    import pystac
+
+    collection = create_collection(collection_id="roads", description="Roads")
+    collection.providers = [pystac.Provider(name="Hand Edited", roles=["producer", "host"])]
+    apply_human_metadata(collection, collection_dir, catalog_root)
+    return [provider.name for provider in collection.providers or []]
+
+
 class TestProvidersPrecedence:
     def test_inherited_providers_fill_missing_providers(self, tmp_path: Path) -> None:
         _write_metadata(
@@ -141,32 +151,24 @@ class TestProvidersPrecedence:
             collection_dir,
             {"contact": {"name": "City GIS", "email": "gis@city.example"}},
         )
-        collection = create_collection(collection_id="roads", description="Roads")
-        import pystac
-
-        collection.providers = [pystac.Provider(name="Hand Edited", roles=["producer", "host"])]
-
-        apply_human_metadata(collection, collection_dir, tmp_path)
-
-        names = [provider.name for provider in collection.providers or []]
+        names = _providers_over_a_hand_edit(collection_dir, tmp_path)
         assert names == ["City GIS"]
 
-    def test_inherited_providers_do_not_overwrite_existing(self, tmp_path: Path) -> None:
-        """A maintainer's hand-edited providers survive a re-add (issue #755)."""
+    def test_inherited_providers_replace_existing(self, tmp_path: Path) -> None:
+        """An explicit providers array in any metadata.yaml is the override (#813)."""
         _write_metadata(
             tmp_path,
             {"providers": [{"name": "Root Org", "roles": ["producer", "host"]}]},
         )
         collection_dir = _collection_dir(tmp_path)
-        collection = create_collection(collection_id="roads", description="Roads")
-        # The collection already carries providers a human wrote by hand.
-        import pystac
+        names = _providers_over_a_hand_edit(collection_dir, tmp_path)
+        assert names == ["Root Org"]
 
-        collection.providers = [pystac.Provider(name="Hand Edited", roles=["producer", "host"])]
-
-        apply_human_metadata(collection, collection_dir, tmp_path)
-
-        names = [provider.name for provider in collection.providers or []]
+    def test_an_inherited_contact_alone_keeps_existing_providers(self, tmp_path: Path) -> None:
+        """Only an explicit array replaces providers. A contact only seeds a host."""
+        _write_metadata(tmp_path, {"contact": {"name": "Root", "email": "root@example.org"}})
+        collection_dir = _collection_dir(tmp_path)
+        names = _providers_over_a_hand_edit(collection_dir, tmp_path)
         assert names == ["Hand Edited"]
 
     def test_own_providers_win_over_existing(self, tmp_path: Path) -> None:

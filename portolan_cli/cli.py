@@ -3304,11 +3304,12 @@ def _generate_add_mirrors(
     type=click.Choice(["smart", "keep", "overwrite"], case_sensitive=False),
     default="smart",
     help=(
-        "How to merge auto-detected metadata with existing values. "
-        "'smart' (default): preserve human-authored fields (title, description), "
-        "update machine-derivable fields (href, type, row_count). "
-        "'keep': preserve all existing fields. "
-        "'overwrite': replace everything with auto-detected values."
+        "How to merge the human-authored fields with the detected values. "
+        "Human fields are the asset title and description, custom asset fields, "
+        "and column descriptions. Fields read from the data always follow the data. "
+        "'smart' (default): keep a human value and fill a missing one from the data. "
+        "'keep': keep a human value and never fill it from the data. "
+        "'overwrite': drop the human values."
     ),
 )
 @click.pass_context

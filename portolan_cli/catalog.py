@@ -500,10 +500,15 @@ def _check_init_preconditions(
         validate_logo_source(logo)
 
     if backend != "file":
+        import tempfile
+
         from portolan_cli.backends import get_backend
 
+        # Build the backend in a scratch directory, so the check writes nothing
+        # in the new catalog or in the current directory (issue #1056).
         try:
-            get_backend(backend)
+            with tempfile.TemporaryDirectory() as probe:
+                get_backend(backend, catalog_root=Path(probe))
         except ValueError as e:
             raise CatalogInitError(str(e)) from e
 

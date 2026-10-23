@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -16,20 +15,10 @@ _skip_windows_sqlite = pytest.mark.skipif(
 
 
 @pytest.mark.unit
-def test_default_properties_returns_sql_type():
+def test_default_properties_returns_sql_type(tmp_path):
     """Default catalog type should be 'sql'."""
-    props = _default_properties()
+    props = _default_properties(tmp_path)
     assert props["type"] == "sql"
-
-
-@pytest.mark.unit
-def test_default_properties_uses_portolan_dir_and_iceberg_db():
-    """Default paths should use .portolan/iceberg.db (not .portolake/catalog.db)."""
-    props = _default_properties()
-    assert props["uri"].startswith("sqlite:///")
-    assert ".portolan/iceberg.db" in props["uri"]
-    assert props["warehouse"].startswith("file:")
-    assert ".portolan/warehouse" in props["warehouse"]
 
 
 @pytest.mark.unit
@@ -43,14 +32,40 @@ def test_default_properties_with_catalog_root(tmp_path):
 
 
 @pytest.mark.unit
-def test_default_properties_without_catalog_root_uses_cwd():
-    """Without catalog_root, defaults should derive from Path.cwd()."""
-    props = _default_properties()
-    cwd = str(Path.cwd())
-    assert cwd in props["uri"]
-    # warehouse uses Path.as_uri() which normalizes separators
-    cwd_uri = Path.cwd().as_uri()
-    assert cwd_uri in props["warehouse"]
+def test_the_sqlite_catalog_needs_a_catalog_root(tmp_path, monkeypatch):
+    """#1056: no catalog root raises, and nothing lands in the current directory."""
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    with pytest.raises(ValueError, match="catalog root"):
+        create_catalog(None)
+    assert list(cwd.iterdir()) == []
+
+
+@_skip_windows_sqlite
+@pytest.mark.integration
+def test_init_writes_nothing_in_the_current_directory(tmp_path, monkeypatch):
+    """#1056: `init <path> --backend iceberg` writes under <path> only.
+
+    On main init checked the backend with no catalog root, so the SQLite
+    catalog appeared at <cwd>/.portolan/iceberg.db.
+    """
+    from click.testing import CliRunner
+
+    from portolan_cli.cli import cli
+
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    target = tmp_path / "catalog"
+    monkeypatch.chdir(cwd)
+
+    result = CliRunner().invoke(
+        cli, ["init", str(target), "--backend", "iceberg", "--license", "CC0-1.0", "--auto"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert list(cwd.iterdir()) == []
+    assert (target / ".portolan" / "config.yaml").is_file()
 
 
 @_skip_windows_sqlite

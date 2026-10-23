@@ -22,6 +22,8 @@ from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.models import (
     FileMetadataState,
@@ -272,7 +274,7 @@ def get_current_metadata(file_path: Path) -> FileMetadataState:
             file_path=file_path,
             current_mtime=current_mtime,
             stored_mtime=None,
-            current_bbox=list(gp_metadata.bbox) if gp_metadata.bbox else None,
+            current_bbox=_comparable_bbox(gp_metadata.bbox, gp_metadata.crs, unset_is_wgs84=True),
             stored_bbox=None,
             current_feature_count=gp_metadata.feature_count,
             stored_feature_count=None,
@@ -292,7 +294,9 @@ def get_current_metadata(file_path: Path) -> FileMetadataState:
             file_path=file_path,
             current_mtime=current_mtime,
             stored_mtime=None,
-            current_bbox=list(cog_metadata.bbox) if cog_metadata.bbox else None,
+            current_bbox=_comparable_bbox(
+                cog_metadata.bbox, cog_metadata.crs, unset_is_wgs84=False
+            ),
             stored_bbox=None,
             current_feature_count=pixel_count,
             stored_feature_count=None,
@@ -304,6 +308,42 @@ def get_current_metadata(file_path: Path) -> FileMetadataState:
         )
 
     raise ValueError(f"Unsupported format: {suffix}")
+
+
+def _comparable_bbox(
+    bbox: Sequence[float] | None,
+    crs: object,
+    *,
+    unset_is_wgs84: bool,
+) -> list[float] | None:
+    """The file's bbox when it is in WGS84, else None.
+
+    The item stores its bbox in WGS84. A file bbox in another CRS, such as the
+    metres of a UTM raster, never equals it, so every touched file read as
+    changed (issue #839). Freshness compares only bboxes in one CRS. For any
+    other file the pixel or feature count and the schema fingerprint carry the
+    signal.
+
+    Args:
+        bbox: The bbox the file declares, in its own CRS.
+        crs: The file's CRS: an EPSG or WKT string, a PROJJSON dict, or None.
+        unset_is_wgs84: Read a missing CRS as WGS84. GeoParquet defines an
+            absent ``crs`` as OGC:CRS84. A GeoTIFF without a CRS has no frame.
+    """
+    if not bbox:
+        return None
+    if crs is None:
+        return list(bbox) if unset_is_wgs84 else None
+    from pyproj import CRS
+    from pyproj.exceptions import CRSError
+
+    from portolan_cli.crs import _is_wgs84
+
+    try:
+        parsed = CRS.from_user_input(crs)
+    except (CRSError, TypeError):
+        return None
+    return list(bbox) if _is_wgs84(parsed) else None
 
 
 def compute_schema_fingerprint(
@@ -405,12 +445,12 @@ def detect_changes(state: FileMetadataState) -> list[str]:
     if state.mtime_changed:
         changes.append("mtime")
 
-    # Check bbox with tolerance-aware comparison
+    # Check bbox with tolerance-aware comparison. A file bbox in another CRS
+    # than the item's WGS84 one is None, and gives no bbox signal (#839).
     from portolan_cli.metadata.models import BBOX_TOLERANCE, _bboxes_equal
 
-    if (
+    if state.current_bbox is not None and (
         state.stored_bbox is None
-        and state.current_bbox is not None
         or not _bboxes_equal(state.stored_bbox, state.current_bbox, BBOX_TOLERANCE)
     ):
         changes.append("bbox")

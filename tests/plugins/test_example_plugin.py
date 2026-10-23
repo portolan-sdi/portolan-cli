@@ -123,6 +123,22 @@ def test_add_runs_every_hook(conformant_catalog: Path, fixtures_dir: Path) -> No
         _cli(), ["example", "versions", "imagery", "--catalog", str(conformant_catalog)]
     )
     assert result.output.startswith("✓ 1.0.0  ")
+    post_add = conformant_catalog / ".portolan" / "example-versions" / "imagery.post-add.json"
+    assert json.loads(post_add.read_text(encoding="utf-8")) == ["scene-a"]
+
+
+def test_backend_allows_push(tmp_path: Path) -> None:
+    """#977: supports_push is a protocol method the example implements."""
+    from portolan_example.backend import ExampleBackend
+
+    from portolan_cli.version_ops import check_backend_supports_push
+
+    backend = ExampleBackend(catalog_root=tmp_path)
+    assert backend.supports_push() is True
+    config = tmp_path / ".portolan" / "config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("backend: example\n", encoding="utf-8")
+    assert check_backend_supports_push(tmp_path) is None
 
 
 _XYZ = "-70.0 -30.0 12.5\n-69.5 -29.8 14.0\n-69.9 -29.9 13.1\n"

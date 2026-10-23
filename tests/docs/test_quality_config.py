@@ -106,17 +106,8 @@ OBJECT_STORE_IMPORTERS = frozenset(
     }
 )
 
-# Delete only. These modules report `Statement is unreachable` today.
-MYPY_UNREACHABLE_RATCHET = frozenset(
-    {
-        "portolan_cli.backends.iceberg.backend",
-        "portolan_cli.backends.iceberg.hooks",
-        "portolan_cli.stac",
-    }
-)
-
 # Delete only. Lower these numbers when a name or a clone goes away.
-VULTURE_WHITELIST_NAMES = 104
+VULTURE_WHITELIST_NAMES = 101
 JSCPD_BASELINE_FINGERPRINTS = 937
 
 
@@ -276,46 +267,6 @@ def test_vulture_whitelist_entries_are_still_unused() -> None:
     assert stale == []
 
 
-def _without_unreachable_override(text: str) -> str:
-    start = text.index("# warn_unreachable ratchet (#1035).")
-    end = text.index("warn_unreachable = false\n", start) + len("warn_unreachable = false\n")
-    return text[:start] + text[end:]
-
-
-def test_mypy_ratchet_modules_still_need_it(tmp_path: Path) -> None:
-    """A ratchet module that mypy no longer reports must leave the override.
-
-    mypy runs on the ratchet modules with a copy of pyproject.toml that drops
-    the override. Each module must still report an unreachable statement.
-    """
-    config = tmp_path / "pyproject.toml"
-    config.write_text(
-        _without_unreachable_override(PYPROJECT.read_text(encoding="utf-8")), encoding="utf-8"
-    )
-    modules = sorted(MYPY_UNREACHABLE_RATCHET)
-    run = subprocess.run(  # noqa: S603 - fixed argument list
-        [
-            sys.executable,
-            "-m",
-            "mypy",
-            "--config-file",
-            str(config),
-            "--no-error-summary",
-            *(arg for module in modules for arg in ("-m", module)),
-        ],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    unreachable = re.findall(
-        r"^(\S+?\.py):\d+: error: .*\[unreachable\]$", run.stdout, re.MULTILINE
-    )
-    # mypy prints native paths, so Windows reports portolan_cli\stac.py.
-    reported = {_path_to_module(path.replace("\\", "/")) for path in unreachable}
-    assert sorted(set(modules) - reported) == [], run.stdout + run.stderr
-
-
 def test_vulture_min_confidence_is_60() -> None:
     vulture = _pyproject()["tool"]["vulture"]
     assert vulture["min_confidence"] == 60
@@ -344,12 +295,8 @@ def test_jscpd_baseline_only_shrinks() -> None:
     assert len(baseline["fingerprints"]) == JSCPD_BASELINE_FINGERPRINTS
 
 
-def test_mypy_unreachable_ratchet_only_shrinks() -> None:
-    """Delete only: drop a module when mypy no longer reports it unreachable."""
+def test_mypy_reports_unreachable_code_everywhere() -> None:
+    """The #1035 ratchet is empty, so no override turns warn_unreachable off."""
     mypy = _pyproject()["tool"]["mypy"]
     assert mypy["warn_unreachable"] is True
-    blocks = [block for block in mypy["overrides"] if "warn_unreachable" in block]
-    assert len(blocks) == 1
-    assert blocks[0]["warn_unreachable"] is False
-    assert set(blocks[0]["module"]) == MYPY_UNREACHABLE_RATCHET
-    assert len(blocks[0]["module"]) == len(MYPY_UNREACHABLE_RATCHET)
+    assert [block for block in mypy["overrides"] if "warn_unreachable" in block] == []

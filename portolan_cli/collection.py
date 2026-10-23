@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from portolan_cli.bbox import to_2d_bbox
+from portolan_cli.bbox import compute_bbox_union, to_2d_bbox
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.models.collection import (
     CollectionModel,
@@ -117,8 +117,10 @@ def _extract_extent_from_file(
     interval_start = (timestamp or datetime.now(timezone.utc)).isoformat()
 
     # Create extent with spatial bbox and open temporal interval
+    # The STAC bbox rule (one bbox, or the envelope and its parts) lives in
+    # compute_bbox_union. A bbox it cannot validate reaches the model as is.
     return ExtentModel(
-        spatial=SpatialExtent(bbox=bbox),
+        spatial=SpatialExtent(bbox=compute_bbox_union(bbox, wgs84_only=False).bboxes or bbox),
         temporal=TemporalExtent(interval=[[interval_start, None]]),
     )
 
@@ -157,27 +159,6 @@ def write_schema_json(schema: SchemaModel, path: Path) -> Path:
     write_json_atomic(output_path, schema.to_dict())
 
     return output_path
-
-
-def read_collection_json(path: Path) -> CollectionModel:
-    """Read collection metadata from JSON file.
-
-    Args:
-        path: Path to collection.json file.
-
-    Returns:
-        CollectionModel loaded from file.
-
-    Raises:
-        FileNotFoundError: If file doesn't exist.
-    """
-    if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
-
-    with Path(path).open(encoding="utf-8") as f:
-        data = json.load(f)
-
-    return CollectionModel.from_dict(data)
 
 
 def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:

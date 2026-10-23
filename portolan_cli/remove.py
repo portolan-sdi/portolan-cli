@@ -186,6 +186,7 @@ def remove_files(
     """
     removed: list[Path] = []
     skipped: list[Path] = []
+    touched: set[Path] = set()
 
     for path in paths:
         for file_path in _gather_removable_files(path):
@@ -193,6 +194,15 @@ def remove_files(
                 file_path, catalog_root=catalog_root, keep=keep, dry_run=dry_run
             )
             (removed if was_removed else skipped).append(file_path)
+            collection_dir = _resolve_collection_dir(file_path, catalog_root)
+            if was_removed and not dry_run and collection_dir is not None:
+                touched.add(collection_dir)
+
+    # The extent and summaries follow the members that remain (issue #801).
+    from portolan_cli.finalization import refresh_collection_fields
+
+    for collection_dir in sorted(touched):
+        refresh_collection_fields(catalog_root, collection_dir)
 
     return removed, skipped
 

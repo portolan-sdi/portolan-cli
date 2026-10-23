@@ -120,25 +120,38 @@ class TestAddAssetToCollectionMerge:
         assert collection.assets["data"].media_type == "application/vnd.apache.parquet"
 
     @pytest.mark.unit
-    def test_keep_strategy_preserves_all_existing(self) -> None:
-        """KEEP strategy preserves all existing fields, only adds missing."""
+    def test_keep_strategy_keeps_human_fields_and_refreshes_machine_fields(self) -> None:
+        """KEEP decides the human fields only. The data decides the rest (#931)."""
         collection = self._create_collection_with_asset()
-        original_href = collection.assets["data"].href
+        collection.assets["data"].extra_fields["file:checksum"] = "1220stale"
 
         new_asset = pystac.Asset(
-            href="different/path.parquet",
+            href="data.parquet",
             media_type="application/vnd.apache.parquet",
             roles=["data", "overview"],
             title="New Title",
             description="New description",
+            extra_fields={"file:checksum": "1220fresh"},
         )
 
         add_asset_to_collection(collection, "data", new_asset, merge_strategy=MergeStrategy.KEEP)
 
         asset = collection.assets["data"]
-        assert asset.href == original_href
+        assert asset.roles == ["data", "overview"]
+        assert asset.extra_fields["file:checksum"] == "1220fresh"
         assert asset.title == "Census Demographics 2020"
-        assert "census data with population" in asset.description
+        assert asset.description == "Detailed census data with population demographics by tract."
+
+    @pytest.mark.unit
+    def test_keep_strategy_does_not_fill_a_missing_human_field(self) -> None:
+        """KEEP never takes a title from the data. SMART fills a missing one."""
+        collection = create_collection(collection_id="keep-fill", description="d")
+        collection.add_asset("data", pystac.Asset(href="data.parquet", roles=["data"]))
+
+        new_asset = pystac.Asset(href="data.parquet", roles=["data"], title="Detected")
+        add_asset_to_collection(collection, "data", new_asset, merge_strategy=MergeStrategy.KEEP)
+
+        assert collection.assets["data"].title is None
 
     @pytest.mark.unit
     def test_overwrite_strategy_replaces_everything(self) -> None:
@@ -307,8 +320,8 @@ class TestAssetKeyCollision:
         }
 
     @pytest.mark.unit
-    def test_flatgeobuf_moves_a_same_stem_pmtiles_to_its_filename(self) -> None:
-        """A FlatGeobuf outranks a PMTiles for the stem, as in a fresh add."""
+    def test_flatgeobuf_moves_a_same_stem_pmtiles_to_its_tiles_key(self) -> None:
+        """A FlatGeobuf outranks a PMTiles for the stem, as the add resolver does."""
         collection = self._collection(
             roads=pystac.Asset(href="./roads.pmtiles", media_type=_PMTILES, roles=["data"])
         )
@@ -320,7 +333,7 @@ class TestAssetKeyCollision:
 
         assert {k: (a.href, a.roles) for k, a in collection.assets.items()} == {
             "roads": ("./roads.fgb", ["data"]),
-            "roads.pmtiles": ("./roads.pmtiles", ["data"]),
+            "roads-tiles": ("./roads.pmtiles", ["visual"]),
         }
 
     @pytest.mark.unit
@@ -603,10 +616,13 @@ class TestAddTableExtensionMerge:
         assert len(columns) == 2
 
     @pytest.mark.unit
-    def test_keep_strategy_preserves_all_columns(self) -> None:
-        """KEEP strategy preserves all existing column metadata."""
+    def test_keep_strategy_keeps_descriptions_and_drops_removed_columns(self) -> None:
+        """Issue #931: KEEP keeps column descriptions, never a removed column.
+
+        On main KEEP returned the stored table fields unchanged, so a column
+        the data no longer had stayed in ``table:columns`` on every rebuild.
+        """
         collection = self._create_collection_with_columns()
-        original_row_count = collection.extra_fields["table:row_count"]
 
         metadata = GeoParquetMetadata(
             bbox=(-180, -90, 180, 90),
@@ -614,18 +630,24 @@ class TestAddTableExtensionMerge:
             geometry_type="Polygon",
             geometry_column="geometry",
             feature_count=9999,
-            schema={"id": "int32", "population": "float64", "geometry": "binary"},
+            schema={"population": "float64", "geometry": "binary"},
         )
 
         add_table_extension(collection, metadata, merge_strategy=MergeStrategy.KEEP)
 
-        # Row count preserved
-        assert collection.extra_fields["table:row_count"] == original_row_count
-
-        # Column types preserved
-        columns = collection.extra_fields["table:columns"]
-        id_col = next(c for c in columns if c["name"] == "id")
-        assert id_col["type"] == "int64"  # Original type, not int32
+        assert collection.extra_fields["table:row_count"] == 9999
+        assert collection.extra_fields["table:columns"] == [
+            {
+                "name": "population",
+                "type": "float64",
+                "description": "Total population count from 2020 census.",
+            },
+            {
+                "name": "geometry",
+                "type": "binary",
+                "description": "Tract boundary polygon in WGS84.",
+            },
+        ]
 
     @pytest.mark.unit
     def test_overwrite_strategy_replaces_all_columns(self) -> None:

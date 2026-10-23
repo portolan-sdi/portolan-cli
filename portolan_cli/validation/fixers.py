@@ -665,10 +665,26 @@ def _has_cog_items(node: Node, graph: CatalogGraph) -> bool:
     return any(has_cog(item) for item in _owned_items(node, graph))
 
 
-def _generate_mirror(node: Node, *, dry_run: bool) -> FixResult:
-    """Write items.parquet for a scene collection and register it."""
-    from portolan_cli.stac_parquet import generate_items_parquet, register_mirror_asset
+def _write_mirror(collection_dir: Path, root: Path) -> None:
+    """Write items.parquet, register it, and record its bytes in versions.json.
 
+    The snapshot records the new bytes through the writer ``add`` uses, so
+    ``push`` sees the change (issue #1046).
+    """
+    from portolan_cli.stac_parquet import (
+        generate_items_parquet,
+        register_mirror_asset,
+        track_parquet_in_versions,
+    )
+
+    generate_items_parquet(collection_dir)
+    register_mirror_asset(collection_dir)
+    if (collection_dir / "versions.json").exists():
+        track_parquet_in_versions(collection_dir, root)
+
+
+def _generate_mirror(node: Node, root: Path, *, dry_run: bool) -> FixResult:
+    """Write items.parquet for a scene collection and register it."""
     collection_dir = node.abs_path.parent
     if dry_run:
         # Same action as the real run: a dry run must predict what will happen,
@@ -680,8 +696,7 @@ def _generate_mirror(node: Node, *, dry_run: bool) -> FixResult:
             "Would generate items.parquet and register the mirror",
         )
     try:
-        generate_items_parquet(collection_dir)
-        register_mirror_asset(collection_dir)
+        _write_mirror(collection_dir, root)
     except (ImportError, ValueError, OSError) as exc:
         return FixResult(
             node.abs_path, FixAction.SKIPPED, True, f"Cannot generate the mirror: {exc}"
@@ -700,7 +715,7 @@ def _fix_item_mirror(root: Path, dry_run: bool) -> list[FixResult]:
                 results.append(_updated(node, "Registered items.parquet as the collection mirror"))
             continue
         if _has_cog_items(node, graph):
-            results.append(_generate_mirror(node, dry_run=dry_run))
+            results.append(_generate_mirror(node, root, dry_run=dry_run))
     return results
 
 
@@ -957,8 +972,6 @@ def _refresh_mirrors(root: Path, changed: Iterable[Path], *, dry_run: bool) -> l
     collections that already publish a mirror are touched, because creating one
     where the operator never asked for it is ``add``'s decision, not a repair.
     """
-    from portolan_cli.stac_parquet import generate_items_parquet, register_mirror_asset
-
     collections = {
         collection
         for path in changed
@@ -974,8 +987,7 @@ def _refresh_mirrors(root: Path, changed: Iterable[Path], *, dry_run: bool) -> l
             )
             continue
         try:
-            generate_items_parquet(collection)
-            register_mirror_asset(collection)
+            _write_mirror(collection, root)
         except (ImportError, ValueError, OSError) as exc:
             results.append(
                 FixResult(target, FixAction.SKIPPED, True, f"Cannot refresh the mirror: {exc}")
@@ -1006,6 +1018,7 @@ def repair_written_items(
         fixer that raises becomes one failed result, so a broken repair cannot
         strand the others.
     """
+    changed = list(changed)
     results: list[FixResult] = []
     for key in POST_ITEM_WRITE_FIXERS:
         try:
@@ -1014,7 +1027,40 @@ def repair_written_items(
             results.append(
                 FixResult(root, FixAction.SKIPPED, False, f"Fixer '{key}' failed: {exc}")
             )
+    results.extend(_refresh_collection_fields(root, changed, dry_run=dry_run))
     results.extend(_refresh_mirrors(root, changed, dry_run=dry_run))
+    return results
+
+
+def _refresh_collection_fields(
+    root: Path, changed: Iterable[Path], *, dry_run: bool
+) -> list[FixResult]:
+    """Derive the extent and summaries again for each collection whose items changed.
+
+    The items the freshness pass rewrote carry new bboxes, so the collection
+    extent follows them, as it does after ``add`` (issue #801).
+    """
+    from portolan_cli.finalization import refresh_collection_fields
+
+    collections = {
+        collection for path in changed if (collection := _collection_dir_of(path, root)) is not None
+    }
+    results: list[FixResult] = []
+    for collection in sorted(collections):
+        target = collection / "collection.json"
+        if dry_run:
+            continue
+        try:
+            changed_file = refresh_collection_fields(root, collection)
+        except (ValueError, OSError) as exc:
+            results.append(
+                FixResult(target, FixAction.SKIPPED, True, f"Cannot derive the extent: {exc}")
+            )
+            continue
+        if changed_file:
+            results.append(
+                FixResult(target, FixAction.UPDATED, True, "Derived the extent from the items")
+            )
     return results
 
 

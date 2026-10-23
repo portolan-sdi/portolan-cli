@@ -504,11 +504,6 @@ SINGLE_COG_LAYOUT = "single COG layout: spec and CLI disagree (PTL-COL-001), mai
 # because the profile schema requires a host provider.
 HOST_UNSET = {"PTL-PRV-002": "host unset by design", "PTL-SCH-001": "host unset by design"}
 
-# Invariants every raster collection breaks today.
-RASTER_INVARIANTS = {
-    # summaries flatten proj:bbox, proj:shape, and proj:transform.
-    "P-SUMMARY-FROM-ITEMS": "#1023",
-}
 # Every collection is a mirror, because metadata.yaml names a producer
 # distinct from the host. PTL-PRO-002 is an advisory: a rel:'canonical' link is
 # only meaningful when the upstream publishes STAC.
@@ -537,44 +532,23 @@ SCENARIOS: dict[str, Scenario] = {
             "PTL-DAT-010": 2,
             "PTL-PRO-002": 4,
         },
-        known_invariants=RASTER_INVARIANTS,
     ),
     "re-add": Scenario(
         build_re_add,
         known_errors=COG_STATS,
         expected_advisories={"PTL-DAT-010": 2, "PTL-PRO-002": 4},
-        known_invariants=RASTER_INVARIANTS,
     ),
     "force-after-mutation": Scenario(
         build_force_after_mutation,
-        known_errors={
-            # The stored extent keeps the north-east rows that the data lost.
-            "PTL-DAT-005": "#801",
-            # Both collections keep the placeholder provider that the first add
-            # wrote, so metadata.yaml never reaches them.
-            "PTL-PRV-001": "#813",
-            "PTL-SCH-001": "#813",
-        },
-        known_invariants={"S-EXTENT-NOT-STALE": "#801"},
+        # metadata.yaml now reaches both collections (#813), and it names a
+        # producer distinct from the host, so both are mirrors.
+        expected_advisories={"PTL-PRO-002": 2},
     ),
     "readme": Scenario(build_readme, expected_advisories=ONE_MIRROR),
     "item-id": Scenario(
         build_item_id,
-        known_errors={
-            **COG_STATS,
-            # The item lands in two places, and the copy in scene-a has only an
-            # absolute self link.
-            "PTL-LNK-001": "#840",
-            "PTL-LNK-002": "#840",
-        },
-        # The custom-scene item lands in two places (#840), and both copies
-        # now resolve their rgb.tif href, so rashid reads the scene twice.
-        expected_advisories={"PTL-DAT-010": 3, "PTL-PRO-002": 1},
-        known_invariants={
-            **RASTER_INVARIANTS,
-            "P-NO-LOCAL-PATH": "#840",
-            "P-VERSIONS-MATCH": "#840",
-        },
+        known_errors=COG_STATS,
+        expected_advisories={"PTL-DAT-010": 2, "PTL-PRO-002": 1},
     ),
     "multi-file": Scenario(
         build_multi_file,
@@ -602,7 +576,6 @@ SCENARIOS: dict[str, Scenario] = {
             # One per partition item: rashid asks each item for table:columns.
             "PTL-DAT-017": 4,
         },
-        known_invariants={"P-SUMMARY-FROM-ITEMS": "#1023"},
         marks=(pytest.mark.realdata,),
     ),
     "antimeridian": Scenario(
@@ -641,7 +614,6 @@ SCENARIOS: dict[str, Scenario] = {
             "PTL-COL-001": SINGLE_COG_LAYOUT,
         },
         expected_advisories={"PTL-DAT-010": 1, "PTL-PRO-002": 1},
-        known_invariants=RASTER_INVARIANTS,
         marks=(pytest.mark.realdata,),
     ),
     "realdata-affordable-housing": _realdata_row(PHILADELPHIA / "affordable_housing.parquet"),

@@ -16,8 +16,7 @@ the pinned count in the same commit. Do not add a name to hide new dead code.
 from __future__ import annotations
 
 # --- portolan_cli ---
-_.blocked  # unused attribute (portolan_cli/version_ops.py:142)
-_now_utc  # unused function (portolan_cli/stac.py:256). C deletes it in #1035.
+_.__class__  # unused attribute (portolan_cli/__init__.py:63). The module swaps its own class.
 add_cmd  # unused function (portolan_cli/cli.py:3140)
 add_external_cmd  # unused function (portolan_cli/cli.py:3486)
 bump  # unused function (portolan_cli/cli.py:6651)
@@ -27,7 +26,6 @@ config_set  # unused function (portolan_cli/cli.py:4868)
 config_unset  # unused function (portolan_cli/cli.py:5077)
 DEFAULT_RESOLUTIONS  # unused variable (portolan_cli/conversion_config.py:578)
 document_path  # unused variable (portolan_cli/hookspecs.py:59)
-get_existing_table_metadata  # unused function (portolan_cli/stac.py:1377). C deletes it in #1035.
 HUMAN_ENRICHABLE_ASSET_FIELDS  # unused variable (portolan_cli/stac.py:77)
 info_cmd  # unused function (portolan_cli/cli.py:1109)
 is_geospatial  # unused variable (portolan_cli/extension_registry.py:65)
@@ -45,7 +43,6 @@ scan_category  # unused variable (portolan_cli/extension_registry.py:58)
 skills_list_cmd  # unused function (portolan_cli/cli.py:7091)
 skills_show_cmd  # unused function (portolan_cli/cli.py:7104)
 status_cmd  # unused function (portolan_cli/cli.py:964)
-update_collection_temporal_extent  # unused function (portolan_cli/stac.py:1043). C deletes it in #1035.
 version_list_cmd  # unused function (portolan_cli/cli.py:6539)
 
 # --- portolan_cli/backends ---

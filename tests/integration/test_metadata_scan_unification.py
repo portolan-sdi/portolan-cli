@@ -1116,7 +1116,8 @@ class TestCheckResolvesCatalogRoot:
         # The catalog is hand-built and does not conform, so the post-fix
         # re-check reports findings and the run exits 1. What this test is
         # about is where the fix landed, which the `fix` section records.
-        payload = json.loads(result.output)
+        # The JSON envelope is on stdout. GDAL logs a thumbnail warning to stderr.
+        payload = json.loads(result.stdout)
         metadata_fix = payload.get("data", {}).get("fix", {}).get("metadata_fix")
         assert metadata_fix is not None and metadata_fix["total_count"] >= 1, (
             f"running --fix from a subdir must reach the catalog root and "

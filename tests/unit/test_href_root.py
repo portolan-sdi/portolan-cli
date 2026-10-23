@@ -95,4 +95,4 @@ class TestEveryCallSiteUsesTheHelper:
             if re.search(r"\.normalize_hrefs\(", line)
         ]
 
-        assert len(call_sites) == 3, f"expected 3 normalize_hrefs call sites, found {call_sites}"
+        assert len(call_sites) == 2, f"expected 2 normalize_hrefs call sites, found {call_sites}"

@@ -29,8 +29,13 @@ def _make_item(
     filename: str = "census.parquet",
     is_collection_level: bool = False,
 ) -> PreparedItem:
-    """Build a minimal PreparedItem suitable for _finalize_with_backend."""
-    item_dir = tmp_path / collection_id / item_id
+    """Build a minimal PreparedItem suitable for _finalize_with_backend.
+
+    A collection-level asset sits in the collection directory itself.
+    """
+    item_dir = tmp_path / collection_id
+    if not is_collection_level:
+        item_dir = item_dir / item_id
     item_dir.mkdir(parents=True, exist_ok=True)
     asset_path = item_dir / filename
     asset_path.write_bytes(b"fake data")
@@ -167,8 +172,8 @@ class TestFinalizeWithBackend:
         assert ctx["remote"] == "gs://bucket/catalog"
 
     @pytest.mark.unit
-    def test_skips_on_post_add_when_absent(self, tmp_path: Path) -> None:
-        """_finalize_with_backend skips on_post_add when method is not on backend."""
+    def test_a_failing_on_post_add_does_not_fail_the_add(self, tmp_path: Path) -> None:
+        """The version is already published, so a hook failure is only logged."""
         item = _make_item(tmp_path)
 
         with (
@@ -176,11 +181,10 @@ class TestFinalizeWithBackend:
             patch("portolan_cli.backends.get_backend") as mock_get_backend,
             patch("portolan_cli.config.get_setting", return_value=None),
         ):
-            # spec=[] means the mock has no attributes → hasattr(backend, 'on_post_add') = False
-            mock_backend = MagicMock(spec=[])
+            mock_backend = MagicMock()
+            mock_backend.on_post_add.side_effect = RuntimeError("upload failed")
             mock_get_backend.return_value = mock_backend
 
-            # Should not raise
             _finalize_with_backend(
                 catalog_root=tmp_path,
                 collection_id="boundaries",
@@ -189,6 +193,40 @@ class TestFinalizeWithBackend:
                 items=[item],
                 active_backend="iceberg",
             )
+
+        mock_backend.on_post_add.assert_called_once()
+
+    @pytest.mark.unit
+    def test_item_id_does_not_rename_the_asset_directory(self, tmp_path: Path) -> None:
+        """Issue #840: --item-id names the item. The key follows the file."""
+        item_dir = tmp_path / "imagery" / "rapidai4eo"
+        item_dir.mkdir(parents=True)
+        tif = item_dir / "rapidai4eo.tif"
+        tif.write_bytes(b"tif")
+        item = PreparedItem(
+            item_id="scene",
+            collection_id="imagery",
+            format_type="raster",
+            bbox=[0, 0, 1, 1],
+            asset_files={"rapidai4eo.tif": (tif, "hash", 3)},
+            item_json_path=item_dir / "scene.json",
+        )
+
+        with (
+            patch("portolan_cli.version_ops.publish_version") as mock_publish,
+            patch("portolan_cli.backends.get_backend"),
+            patch("portolan_cli.config.get_setting", return_value=None),
+        ):
+            _finalize_with_backend(
+                catalog_root=tmp_path,
+                collection_id="imagery",
+                collection_dir=tmp_path / "imagery",
+                collection=MagicMock(),
+                items=[item],
+                active_backend="iceberg",
+            )
+
+        assert mock_publish.call_args.kwargs["assets"] == {"rapidai4eo/rapidai4eo.tif": str(tif)}
 
     @pytest.mark.unit
     def test_on_post_add_receives_all_items(self, tmp_path: Path) -> None:
