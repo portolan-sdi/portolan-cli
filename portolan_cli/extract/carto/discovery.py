@@ -9,8 +9,8 @@ SQL over the Carto SQL API:
   ``type`` is ``"geometry"`` marks the table as spatial.
 
 Terminology is normalized to Portolan's layer-centric model: a Carto *table*
-is exposed as a ``CartoTableInfo`` with ``name``/``id`` (so it flows through
-the shared ``filter_layers``/resume/report machinery unchanged).
+is exposed as a ``CartoTableInfo`` with ``name``/``id``, so it flows through
+the shared filter, resume, and report steps of ``run_layer_extraction``.
 """
 
 from __future__ import annotations
@@ -39,10 +39,6 @@ class CartoTableInfo:
     name: str
     id: int = 0
     has_geometry: bool = True
-
-    def to_filter_dict(self) -> dict[str, int | str]:
-        """Convert to the dict shape expected by ``filter_layers``."""
-        return {"id": self.id, "name": self.name}
 
 
 @dataclass

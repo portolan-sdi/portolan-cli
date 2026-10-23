@@ -182,35 +182,6 @@ class TestDiscoverLayers:
 class TestLayerInfo:
     """Tests for LayerInfo dataclass."""
 
-    def test_layer_info_to_dict(self) -> None:
-        """LayerInfo converts to dict for filtering."""
-        layer = LayerInfo(
-            name="buildings",
-            typename="ns:buildings",
-            title="Building Footprints",
-            abstract="Polygons",
-            bbox=(-122.5, 37.5, -122.0, 38.0),
-        )
-
-        d = layer.to_filter_dict()
-
-        assert d["id"] == 0  # Default ID
-        assert d["name"] == "buildings"
-
-    def test_layer_info_with_id(self) -> None:
-        """LayerInfo can have explicit ID for filtering."""
-        layer = LayerInfo(
-            name="roads",
-            typename="roads",
-            title="Roads",
-            abstract=None,
-            bbox=None,
-            id=5,
-        )
-
-        d = layer.to_filter_dict()
-        assert d["id"] == 5
-
     def test_layer_info_with_keywords(self) -> None:
         """LayerInfo stores layer-specific keywords."""
         layer = LayerInfo(

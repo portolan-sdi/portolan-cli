@@ -210,7 +210,10 @@ def test_arcgis_tables_only_service_fails_and_names_the_tables(
     assert server.unmatched == []
     assert result.exit_code == 1, result.output
     assert "Extracted 0/0 layers" not in result.output
-    assert "table" in result.output.lower()
+    assert (
+        "The service lists 1 table and no layers. Pass --include-tables to extract tables."
+        in result.output
+    )
 
 
 def test_arcgis_token_reaches_layer_discovery(tmp_path: Path, run_cli: RunCli) -> None:
