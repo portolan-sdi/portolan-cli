@@ -4974,10 +4974,10 @@ def config_set(
         raise SystemExit(1)
 
     try:
-        set_setting(catalog_path, key, value, collection=collection)
+        stored = set_setting(catalog_path, key, value, collection=collection)
 
         if use_json:
-            data = {"key": key, "value": value}
+            data = {"key": key, "value": stored}
             if collection:
                 data["collection"] = collection
             envelope = success_envelope("config set", data)
@@ -5023,7 +5023,7 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
         portolan config get remote
         portolan config get aws_profile --collection restricted
     """
-    from portolan_cli.config import get_setting, get_setting_source
+    from portolan_cli.config import _get_env_var_name, get_setting, get_setting_source
 
     use_json = should_output_json(ctx, json_output)
 
@@ -5041,14 +5041,14 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
-    # Load .env for credential precedence
-    load_dotenv_and_warn_sensitive(catalog_path)
-
     try:
+        # Load .env for credential precedence
+        load_dotenv_and_warn_sensitive(catalog_path)
         value = get_setting(key, catalog_path=catalog_path, collection=collection)
         source = get_setting_source(key, catalog_path, collection)
-    except ValueError as e:
-        emit_error("config get", "ConfigError", str(e), use_json=use_json)
+    except (ConfigError, ValueError) as e:
+        error_type = type(e).__name__ if isinstance(e, ConfigError) else "ConfigError"
+        emit_error("config get", error_type, str(e), use_json=use_json)
         raise SystemExit(1) from None
 
     if use_json:
@@ -5068,7 +5068,7 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
         else:
             info_output(f"{key} is not set")
             detail(f"  Set via: portolan config set {key} <value>")
-            detail(f"  Or set:  PORTOLAN_{key.upper()}=<value>")
+            detail(f"  Or set:  {_get_env_var_name(key)}=<value>")
 
 
 @config.command("list")
@@ -5109,10 +5109,13 @@ def config_list(ctx: click.Context, json_output: bool, collection: str | None) -
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
-    # Load .env for credential precedence
-    load_dotenv_and_warn_sensitive(catalog_path)
-
-    settings = list_settings(catalog_path, collection=collection)
+    try:
+        # Load .env for credential precedence
+        load_dotenv_and_warn_sensitive(catalog_path)
+        settings = list_settings(catalog_path, collection=collection)
+    except ConfigError as e:
+        emit_error("config list", type(e).__name__, str(e), use_json=use_json)
+        raise SystemExit(1) from None
 
     if use_json:
         data: dict[str, Any] = {"settings": settings}
@@ -5176,7 +5179,11 @@ def config_unset(ctx: click.Context, json_output: bool, key: str, collection: st
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
-    removed = unset_setting(catalog_path, key, collection=collection)
+    try:
+        removed = unset_setting(catalog_path, key, collection=collection)
+    except ConfigError as e:
+        emit_error("config unset", type(e).__name__, str(e), use_json=use_json)
+        raise SystemExit(1) from None
 
     if use_json:
         data = {"key": key, "removed": removed}

@@ -368,3 +368,35 @@ class TestDottedKeysReachTheReaders:
 
         assert result.exit_code == 0, result.output
         assert "bbox" not in pq.ParquetFile(collection / "points.parquet").schema_arrow.names
+
+    @pytest.mark.integration
+    def test_json_set_reports_the_stored_value(self, catalog: Path) -> None:
+        runner = CliRunner()
+
+        values = [
+            json.loads(runner.invoke(cli, ["--format", "json", "config", "set", key, text]).output)[
+                "data"
+            ]["value"]
+            for key, text in (("statistics.enabled", "false"), ("push.exclude", "*.md, a/"))
+        ]
+
+        assert values == [False, ["*.md", "a/"]]
+
+    @pytest.mark.integration
+    def test_unset_key_hint_names_the_environment_variable(self, catalog: Path) -> None:
+        result = CliRunner().invoke(cli, ["config", "get", "pmtiles.min_zoom"])
+
+        assert result.output.splitlines()[-1] == "    Or set:  PORTOLAN_PMTILES_MIN_ZOOM=<value>"
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("args", [["get", "backend"], ["list"], ["unset", "backend"]])
+    def test_a_broken_config_file_gives_an_error_envelope(
+        self, catalog: Path, args: list[str]
+    ) -> None:
+        (catalog / ".portolan" / "config.yaml").write_text("backend: [file\n", encoding="utf-8")
+
+        result = CliRunner().invoke(cli, ["--format", "json", "config", *args])
+
+        assert result.exit_code == 1
+        errors = json.loads(result.stdout)["errors"]
+        assert [error["type"] for error in errors] == ["ConfigParseError"]
