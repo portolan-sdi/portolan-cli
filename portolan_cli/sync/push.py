@@ -1765,6 +1765,8 @@ async def _upload_metadata_files_async(
     *,
     include_catalog_root: bool = False,
     extra_files: list[Path] | None = None,
+    files: list[Path] | None = None,
+    uploaded_keys: list[str] | None = None,
     concurrency: int = 50,
     verbose: bool = False,
 ) -> tuple[int, list[str]]:
@@ -1784,6 +1786,9 @@ async def _upload_metadata_files_async(
         include_catalog_root: If True, include root-level metadata files.
         extra_files: Files to upload in the same batch, such as the files of
             the intermediate catalogs.
+        files: The files to upload. None discovers them. The upload phase of
+            a push passes the files that its rollback plan already names.
+        uploaded_keys: A list that receives the key of each upload that succeeds.
         concurrency: Maximum concurrent uploads.
         verbose: If True, print per-file upload details.
 
@@ -1791,12 +1796,12 @@ async def _upload_metadata_files_async(
         Tuple of (files_uploaded, errors). Errors are returned, not swallowed,
         so callers can decide how to handle partial failures.
     """
-    metadata_files = _discover_catalog_files(
-        catalog_root,
-        collection,
-        include_catalog_root=include_catalog_root,
-    )
-    metadata_files.extend(extra_files or [])
+    metadata_files = files
+    if metadata_files is None:
+        metadata_files = _discover_catalog_files(
+            catalog_root, collection, include_catalog_root=include_catalog_root
+        )
+        metadata_files.extend(extra_files or [])
 
     if not metadata_files:
         return 0, []
@@ -1810,7 +1815,10 @@ async def _upload_metadata_files_async(
             try:
                 rel_path = file_path.relative_to(catalog_root)
                 content = file_path.read_bytes()
-                await put_object_async(store, _target_key(catalog_root, prefix, file_path), content)
+                key = _target_key(catalog_root, prefix, file_path)
+                await put_object_async(store, key, content)
+                if uploaded_keys is not None:
+                    uploaded_keys.append(key)
                 if verbose:
                     detail(f" Uploaded {rel_path} ({len(content)} bytes)")
                 return True
@@ -1889,11 +1897,16 @@ async def _execute_push_uploads_async(
         error(str(e))
         return PushResult(success=False, files_uploaded=0, versions_pushed=0, errors=[str(e)])
 
-    # The plan names every key before the first write. Rollback deletes only the
-    # keys that were absent (#965).
+    # The plan names every key before the first write. Rollback deletes the keys
+    # that were absent and restores the ones that existed (#965). The metadata
+    # files (styles, thumbnails) upload before versions.json, so they are in it.
     stac_paths = [*stac_files.get("items", []), *stac_files.get("collection", [])]
     stac_paths += stac_files.get("catalog", [])
-    planned = [_target_key(catalog_root, prefix, p) for p in [*assets, *stac_paths]]
+    metadata_files = _discover_catalog_files(
+        catalog_root, collection, include_catalog_root=include_catalog
+    )
+    plan_paths = [*assets, *stac_paths, *metadata_files]
+    planned = [_target_key(catalog_root, prefix, p) for p in plan_paths]
     list_prefix = f"{prefix}/{collection}".lstrip("/")
     created = await _absent_keys(store, planned, list_prefix, concurrency)
     backups = await _back_up(store, [k for k in planned if k not in created], prefix, concurrency)
@@ -1960,7 +1973,8 @@ async def _execute_push_uploads_async(
             catalog_root,
             prefix,
             collection,
-            include_catalog_root=include_catalog,
+            files=metadata_files,
+            uploaded_keys=uploaded_keys,
             concurrency=concurrency,
             verbose=verbose,
         )

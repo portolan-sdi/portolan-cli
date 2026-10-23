@@ -2001,6 +2001,38 @@ class TestPushAgainstMoto:
         assert (tmp_path / "cloned" / "roads" / "collection.json").read_bytes() == local_collection
 
     @pytest.mark.integration
+    def test_pushes_in_a_row_succeed_without_a_notice(
+        self, tmp_path: Path, bucket: tuple[str, Any], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Three push --all runs: first, one overwrite, one with no change.
+
+        Each run reads the root versions.json ETag, writes under it, and prints
+        no rollback line. The overwrite leaves no backup key.
+        """
+        from portolan_cli.sync.push import push_all_collections
+
+        name, client = bucket
+        root = _catalog(tmp_path, {"a": {"a.parquet": b"a1"}, "b": {"b.parquet": b"b1"}})
+        assert push_all_collections(root, f"s3://{name}/cat").success
+        _write_collection(root, "a", "1.0.1", {"a.parquet": b"a2"})
+        capsys.readouterr()
+
+        overwrite = push_all_collections(root, f"s3://{name}/cat")
+        again = push_all_collections(root, f"s3://{name}/cat")
+
+        output = "".join(capsys.readouterr())
+        assert (overwrite.success, again.success) == (True, True)
+        for line in (
+            "Remote changed",
+            "Cannot read which remote keys",
+            "Restoring",
+            "Rolling back",
+        ):
+            assert line not in output
+        assert not any("/.portolan/" in key for key in _keys(client, name))
+        assert client.get_object(Bucket=name, Key="cat/a/a.parquet")["Body"].read() == b"a2"
+
+    @pytest.mark.integration
     def test_clone_checks_like_the_catalog_it_copies(
         self, tmp_path: Path, bucket: tuple[str, Any]
     ) -> None:

@@ -639,7 +639,12 @@ class TestPushToMemoryStore:
 
 
 def _add_version(catalog: Path, data: bytes, new_file: bytes) -> None:
-    """Record version 1.2.0: new bytes for data.parquet and a new extra.parquet."""
+    """Record version 1.2.0: new bytes for data.parquet and a new extra.parquet.
+
+    The edit also changes the style.json metadata file and adds legend.png.
+    """
+    (catalog / "test" / "style.json").write_bytes(b'{"style": 2}')
+    (catalog / "test" / "legend.png").write_bytes(b"new legend")
     item_dir = catalog / "test" / "data"
     (item_dir / "data.parquet").write_bytes(data)
     (item_dir / "extra.parquet").write_bytes(new_file)
@@ -665,8 +670,10 @@ class TestRollbackRestoresOverwrittenKeys:
         """Push once, then record a version that overwrites and adds a key."""
         from portolan_cli.sync.push import push
 
+        (local_catalog / "test" / "style.json").write_bytes(b'{"style": 1}')
         assert push(local_catalog, "test", "s3://mybucket/catalog").success
         before = {key: _stored_bytes(remote, key) for key in stored_keys(remote)}
+        assert before["catalog/test/style.json"] == b'{"style": 1}'
         _add_version(local_catalog, b"bytes of 1.2.0", b"extra of 1.2.0")
         return before
 
@@ -716,6 +723,7 @@ class TestRollbackRestoresOverwrittenKeys:
             **second_push,
             "catalog/test/versions.json": b'{"by": "B"}',
             "catalog/test/data/extra.parquet": b"extra of 1.2.0",
+            "catalog/test/legend.png": b"new legend",
         }
 
     @pytest.mark.unit
@@ -726,8 +734,50 @@ class TestRollbackRestoresOverwrittenKeys:
 
         assert push(local_catalog, "test", "s3://mybucket/catalog").success
 
-        assert stored_keys(remote) == {*second_push, "catalog/test/data/extra.parquet"}
+        assert stored_keys(remote) == {
+            *second_push,
+            "catalog/test/data/extra.parquet",
+            "catalog/test/legend.png",
+        }
         assert _stored_bytes(remote, "catalog/test/data/data.parquet") == b"bytes of 1.2.0"
+        assert _stored_bytes(remote, "catalog/test/style.json") == b'{"style": 2}'
+
+    @pytest.mark.unit
+    async def test_backup_key_sits_under_the_push_prefix(self) -> None:
+        """The backup is <prefix>/.portolan/push-backup/<token>/<key>, with the old bytes."""
+        import re
+
+        from portolan_cli.sync.push import _back_up
+
+        store = MemoryStore()
+        obs.put(store, "catalog/test/a.parquet", b"old")
+
+        backups = await _back_up(store, ["catalog/test/a.parquet"], "catalog", 4)
+
+        backup = backups["catalog/test/a.parquet"]
+        pattern = r"catalog/\.portolan/push-backup/[0-9a-f]{32}/catalog/test/a\.parquet"
+        assert re.fullmatch(pattern, backup), backup
+        assert _stored_bytes(store, backup) == b"old"
+
+    @pytest.mark.unit
+    async def test_failed_copy_warns_and_a_missing_key_does_not(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from obstore.exceptions import PermissionDeniedError
+
+        from portolan_cli.sync.push import _back_up
+
+        store = MemoryStore()
+        assert await _back_up(store, ["catalog/test/gone.parquet"], "catalog", 4) == {}
+        assert capsys.readouterr().err == ""
+
+        async def denied(*_args: Any, **_kwargs: Any) -> None:
+            raise PermissionDeniedError("403 Forbidden")
+
+        monkeypatch.setattr(obs, "copy_async", denied)
+        assert await _back_up(store, ["catalog/test/a.parquet"], "catalog", 4) == {}
+        err = capsys.readouterr().err
+        assert "Cannot back up catalog/test/a.parquet, a failed push leaves its new bytes" in err
 
 
 class TestUploadVersionsJsonAsync:
