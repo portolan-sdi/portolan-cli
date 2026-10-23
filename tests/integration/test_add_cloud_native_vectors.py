@@ -835,3 +835,39 @@ class TestVersionsKeys:
             expected += [f"{scene}/{scene}.thumb.jpg", f"{scene}/{scene}.tif"]
         assert keys == sorted(expected)
         assert all((collection_dir / key).is_file() for key in keys)
+
+
+class TestRasterRebuild:
+    """``add --force`` writes the band statistics the first ``add`` wrote."""
+
+    @pytest.mark.integration
+    def test_force_keeps_the_band_statistics(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        """The first add computes the statistics, and GDAL stores them in .aux.xml.
+
+        GDAL stores 14 significant digits, so a later add read 460.38215 where
+        the first add wrote 460.38215000000383.
+        """
+        item_dir = initialized_catalog / "imagery" / "rapidai4eo"
+        item_dir.mkdir(parents=True)
+        tif = item_dir / "rapidai4eo.tif"
+        shutil.copy(fixtures_dir / "realdata" / "rapidai4eo-sample.tif", tif)
+        args = ["add", "--portolan-dir", str(initialized_catalog), str(tif)]
+
+        def bands() -> list[dict[str, object]]:
+            item = json.loads((item_dir / "rapidai4eo.json").read_text())
+            result: list[dict[str, object]] = item["assets"]["data"]["bands"]
+            return result
+
+        assert runner.invoke(cli, args, catch_exceptions=False).exit_code == 0
+        first = bands()
+        assert runner.invoke(cli, [*args, "--force"], catch_exceptions=False).exit_code == 0
+
+        assert bands() == first
+        assert first[0]["statistics"] == {
+            "minimum": 302.0,
+            "maximum": 1015.0,
+            "mean": 460.38215,
+            "stddev": 51.769646139195,
+        }

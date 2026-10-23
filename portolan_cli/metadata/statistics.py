@@ -157,14 +157,24 @@ def extract_band_statistics(
             stat = computed_stats[band_idx - 1]  # stats() returns 0-indexed list
             results.append(
                 BandStatistics(
-                    minimum=stat.min,
-                    maximum=stat.max,
-                    mean=stat.mean,
-                    stddev=stat.std,
+                    minimum=_as_gdal_stores(stat.min),
+                    maximum=_as_gdal_stores(stat.max),
+                    mean=_as_gdal_stores(stat.mean),
+                    stddev=_as_gdal_stores(stat.std),
                 )
             )
 
         return results
+
+
+def _as_gdal_stores(value: float) -> float:
+    """Round a computed statistic to the 14 significant digits GDAL stores.
+
+    GDAL writes the statistics it computes into the .aux.xml sidecar as
+    ``%.14g`` text, and the next run reads them back from there. Without the
+    rounding, ``add --force`` wrote other values than the first ``add``.
+    """
+    return float(f"{value:.14g}")
 
 
 def _is_stats_compatible_type(field: Any) -> bool:
