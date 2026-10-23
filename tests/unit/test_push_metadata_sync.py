@@ -14,6 +14,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import obstore as obs
 import pytest
 
+from tests.memory_remote import memory_remote, stored_keys
+
 if TYPE_CHECKING:
     from pathlib import Path
     from typing import Any
@@ -445,8 +447,6 @@ class TestPushMetadataSync:
             )
         )
 
-        from tests.memory_remote import stored_keys
-
         uploaded_keys = sorted(stored_keys(store))
         assert count == len(uploaded_keys)
         assert any(k.endswith("style.json") for k in uploaded_keys)
@@ -788,21 +788,12 @@ class TestPushNoVersionChangeMetadataSync:
         # Remote versions.json is identical to local, so the version diff is empty.
         local_versions = json.loads((collection_dir / "versions.json").read_text())
 
-        uploaded_keys: list[str] = []
-
-        async def mock_put_async(
-            store: Any, key: str, content: Any, **kwargs: Any
-        ) -> dict[str, Any]:
-            uploaded_keys.append(key)
-            return {"e_tag": "e1", "version": None}
-
         with (
-            patch("portolan_cli.sync.push.setup_store", return_value=(MagicMock(), "prefix")),
+            memory_remote("prefix") as store,
             patch(
                 "portolan_cli.sync.push._fetch_remote_versions_async",
                 new=AsyncMock(return_value=(local_versions, "etag-1")),
             ),
-            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
         ):
             result = asyncio.run(
                 push_async(
@@ -816,7 +807,7 @@ class TestPushNoVersionChangeMetadataSync:
         assert result.success is True
         assert result.versions_pushed == 0
         # The agent guide reached the bucket even though no version changed.
-        assert "prefix/collection1/AGENTS.md" in uploaded_keys
+        assert "prefix/collection1/AGENTS.md" in stored_keys(store)
         assert result.files_uploaded > 0
 
     @pytest.mark.unit
@@ -856,21 +847,12 @@ class TestPushNoVersionChangeMetadataSync:
         }
         (collection_dir / "versions.json").write_text(json.dumps(versions_data))
 
-        uploaded_keys: list[str] = []
-
-        async def mock_put_async(
-            store: Any, key: str, content: Any, **kwargs: Any
-        ) -> dict[str, Any]:
-            uploaded_keys.append(key)
-            return {"e_tag": "e1", "version": None}
-
         with (
-            patch("portolan_cli.sync.push.setup_store", return_value=(MagicMock(), "prefix")),
+            memory_remote("prefix") as store,
             patch(
                 "portolan_cli.sync.push._fetch_remote_versions_async",
                 new=AsyncMock(return_value=(versions_data, "etag-1")),
             ),
-            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
         ):
             result = asyncio.run(
                 push_async(
@@ -886,7 +868,7 @@ class TestPushNoVersionChangeMetadataSync:
         assert result.success is True
         assert result.versions_pushed == 0
         assert result.files_uploaded == 0
-        assert uploaded_keys == []
+        assert stored_keys(store) == set()
 
     @pytest.mark.unit
     def test_metadata_error_reports_summary_without_version_bump(

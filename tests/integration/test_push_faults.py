@@ -358,7 +358,8 @@ def test_conflict_keeps_the_bytes_that_the_other_writer_wrote_later(
     assert second.exit_code == 1, second.output
     assert CONFLICT_MESSAGE in second.output
     assert _bytes_that_disagree_with_the_manifest(bucket, "imagery", {scene_key}) == {}
-    assert sorted(key for key in bucket.keys() if "/.portolan/" in key) == []
+    present = bucket.keys()
+    assert sorted(key for key in present if "/.portolan/" in key) == []
 
 
 def test_interrupted_push_restores_the_keys_and_drops_the_backups(
