@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import shutil
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pystac
@@ -32,7 +32,7 @@ from portolan_cli.convert import apply_vector_settings, run_with_transient_conve
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
 from portolan_cli.errors import NoGeometryError, RewriteFidelityError
 from portolan_cli.format_families import RASTER, VECTOR
-from portolan_cli.formats import is_cloud_optimized_geotiff
+from portolan_cli.formats import is_cloud_optimized_geotiff, is_geoparquet
 from portolan_cli.metadata import (
     extract_band_statistics,
     extract_parquet_statistics,
@@ -96,7 +96,7 @@ IGNORED_FILES: frozenset[str] = frozenset(
 _MEDIA_TYPE_MAP: dict[str, str] = _reg.field_map("media_type")
 
 
-# Asset keys reserved for well-known roles. _scan_item_assets prefers these
+# Asset keys reserved for well-known roles. _resolve_assets prefers these
 # keys over filename-derived stems so STAC consumers can find assets by role
 # without inspecting file paths. Order matters for collision priority: an
 # asset with role "thumbnail" prefers key "thumbnail"; if it's already taken
@@ -135,8 +135,9 @@ def _get_asset_role(path: Path) -> str:
         path: Path to the file.
 
     Returns:
-        Role string: "data", "thumbnail", "metadata", or "documentation".
-        Defaults to "data" for unknown extensions.
+        Role string: "data", "visual", "thumbnail", "metadata", or
+        "documentation". Defaults to "data" for unknown extensions.
+        :func:`_resolve_assets` then gives each scanned file its final role.
     """
     return _ROLE_MAP.get(path.suffix.lower(), "data")
 
@@ -169,6 +170,17 @@ def _is_never_an_asset(file_path: Path) -> bool:
     return is_rewrite_temp(file_path)
 
 
+@dataclass(frozen=True)
+class _ScannedFile:
+    """One file of an item directory, measured once."""
+
+    path: Path
+    checksum: str
+    size: int
+    media_type: str
+    role: str
+
+
 def _scan_item_assets(
     item_dir: Path,
     item_id: str,
@@ -176,134 +188,214 @@ def _scan_item_assets(
     collection_dir: Path,
     *,
     exclude_names: frozenset[str] = frozenset(),
+    collection_level: bool = False,
 ) -> tuple[dict[str, pystac.Asset], dict[str, tuple[Path, str, int]], list[str]]:
     """Scan an item directory for all trackable assets.
 
-        Per issue #133, ALL files in item directories are tracked as assets.
-        FileGDB directories (.gdb) are treated as single container assets (Issue #174).
-        Skips: non-FileGDB directories, symlinks, hidden files, STAC structural files.
+    Per issue #133, ALL files in item directories are tracked as assets.
+    FileGDB directories (.gdb) are treated as single container assets (Issue #174).
+    Skips: non-FileGDB directories, symlinks, hidden files, STAC structural files.
+    :func:`_resolve_assets` gives each file its key and role.
 
     Args:
-            item_dir: Path to the item directory (where files are).
-            item_id: Item identifier (for skipping item.json).
-            primary_file: Path to the primary data file (gets "data" key).
-            collection_dir: Path to the collection directory.
-            exclude_names: Base filenames of OTHER items being added in the same
-                batch (their sources and converted outputs). For a collection-level
-                asset (``item_dir == collection_dir``) the flat collection directory
-                also holds every sibling asset, so without this the scan re-checksums
-                all siblings on every file — O(n²) (issue #465). Files here that do
-                not share the primary's stem are skipped; each is tracked by its own
-                ``prepare_item``. Loose companions (not in this set) are kept per
-    . Ignored for item-level (subdirectory) scans.
+        item_dir: Path to the item directory (where files are).
+        item_id: Item identifier (for skipping item.json).
+        primary_file: Path to the primary data file.
+        collection_dir: Path to the collection directory.
+        exclude_names: Base filenames of OTHER items being added in the same
+            batch (their sources and converted outputs). For a collection-level
+            asset (``item_dir == collection_dir``) the flat collection directory
+            also holds every sibling asset, so without this the scan re-checksums
+            all siblings on every file, O(n^2) (issue #465). Files here that do
+            not share the primary's stem are skipped. Each is tracked by its own
+            ``prepare_item``. Loose companions (not in this set) are kept.
+            Ignored for item-level (subdirectory) scans.
+        collection_level: The assets go into collection.json. Hrefs are then
+            ``./<name>`` and keys follow the stem groups. For an item, the
+            primary is keyed ``data`` and hrefs are ``<name>``, relative to the
+            item JSON in ``item_dir``.
 
     Returns:
-            Tuple of (stac_assets, asset_files, asset_paths):
-            - stac_assets: Dict mapping asset key to pystac.Asset
-            - asset_files: Dict mapping filename to (path, checksum, size) tuples
-            - asset_paths: List of absolute path strings
+        Tuple of (stac_assets, asset_files, asset_paths):
+        - stac_assets: Dict mapping asset key to pystac.Asset
+        - asset_files: Dict mapping filename to (path, checksum, size) tuples
+        - asset_paths: List of absolute path strings
     """
-    stac_assets: dict[str, pystac.Asset] = {}
-    asset_files: dict[str, tuple[Path, str, int]] = {}
-    asset_paths: list[str] = []
+    # Issue #465: only prune cross-item siblings for collection-level (flat)
+    # scans. Resolve once, not per file: a flat collection holds n files.
+    is_flat = bool(exclude_names) and item_dir.resolve() == collection_dir.resolve()
+    # _create_and_save_item writes the item JSON into item_dir, whatever the
+    # item id, so an item's hrefs are bare names. A "../" prefix assumed a JSON
+    # in {collection_dir}/{item_id}/ and broke --item-id (issue #840).
+    href_prefix = "./" if collection_level else ""
 
-    # Resolve directory paths once, not per file (these are O(n) scans; a
-    # per-file resolve() would be an O(n²) syscall storm for flat collections).
-    item_dir_resolved = item_dir.resolve()
-    # Issue #465: only prune cross-item siblings for collection-level (flat) scans.
-    is_collection_level = bool(exclude_names) and item_dir_resolved == collection_dir.resolve()
-    # Whether assets and the item.json will be co-located (affects href prefix).
-    assets_colocated = item_dir_resolved == (collection_dir / item_id).resolve()
-    primary_stem = primary_file.stem
-
-    for file_path in item_dir.iterdir():
+    scanned: list[_ScannedFile] = []
+    # Sorted, so the keys never depend on the filesystem listing order.
+    for file_path in sorted(item_dir.iterdir()):
         if _is_never_an_asset(file_path):
             continue
-
         # Issue #465: skip siblings that belong to OTHER items in this batch.
         # Keep the primary and its own same-stem source/sidecars; keep loose
         # companions (not in exclude_names) so tracking is preserved.
-        if (
-            is_collection_level
-            and file_path.stem != primary_stem
-            and file_path.name in exclude_names
-        ):
+        if is_flat and file_path.stem != primary_file.stem and file_path.name in exclude_names:
             continue
-        if file_path.name in IGNORED_FILES:
+        if file_path.name in IGNORED_FILES or file_path.name == f"{item_id}.json":
             continue
-        if file_path.name == f"{item_id}.json":
-            continue
+        measured = _measure(file_path)
+        if measured is not None:
+            scanned.append(measured)
 
-        if file_path.is_dir():
-            # FileGDB directories are tracked as single container assets (Issue #174).
-            # Other directories are skipped.
-            if not is_filegdb(file_path):
-                continue
-            file_checksum = compute_dir_checksum(file_path)
-            file_size = compute_dir_size(file_path)
-            # FileGDB is always a geospatial asset
-            file_media_type = "application/x-filegdb"
-            file_role = "data"
-        elif file_path.is_file():
-            file_checksum = compute_checksum(file_path)
-            file_size = file_path.stat().st_size
-            file_media_type = _get_media_type(file_path)
-            file_role = _get_asset_role(file_path)
-        else:
-            # Skip special files (sockets, devices, etc.)
-            continue
-
-        # Primary geo file gets "data" key. Other files prefer the well-known
-        # role-keyed name ("thumbnail", "metadata", "documentation") so STAC
-        # consumers can find them by role; on collision, fall back to stem,
-        # then to filename.
-        if file_path == primary_file:
-            asset_key = "data"
-        else:
-            role_key = _ROLE_KEYS.get(file_role)
-            if role_key and role_key not in stac_assets and role_key != "data":
-                asset_key = role_key
-            else:
-                # Use stem, but disambiguate on collision (e.g. metadata.json vs metadata.xml)
-                asset_key = file_path.stem
-                if asset_key in stac_assets or asset_key == "data":
-                    asset_key = file_path.name
-        # Asset href must be relative to item JSON location.
-        # PySTAC places item JSON at: {collection_dir}/{item_id}/{item_id}.json
-        #
-        # Case 1: Data at {collection_dir}/data.parquet (item_dir == collection_dir)
-        # - Item JSON at {collection_dir}/{item_id}/{item_id}.json (subdirectory)
-        # - Href needs ../{filename} to reach parent (collection) directory
-        #
-        # Case 2: Data at {collection_dir}/{item_id}/data.parquet
-        # - item_dir == {collection_dir}/{item_id}/
-        # - Item JSON at same level: {collection_dir}/{item_id}/{item_id}.json
-        # - Href just needs {filename} (same directory)
-        #
-        # The key: if item_dir IS the collection, PySTAC creates a subdirectory
-        # and we need ../ to reach the files. Otherwise, files are already in
-        # the item subdirectory.
-        #
-        # Assets colocated with the item JSON use a bare name. Otherwise the
-        # item JSON sits one directory down, so the href goes up one level.
-        asset_href = file_path.name if assets_colocated else f"../{file_path.name}"
-
-        stac_assets[asset_key] = pystac.Asset(
-            href=asset_href,
-            media_type=file_media_type,
-            roles=[file_role],
-            # NOTE: Don't set title here - it's a human-enrichable field (Issue #446).
-            # Titles should come from metadata.yaml or be preserved from existing
-            # metadata via merge strategy. Role-based default titles are NOT
-            # auto-detected values, so they shouldn't appear with OVERWRITE.
+    stac_assets: dict[str, pystac.Asset] = {}
+    for key, (scanned_file, role) in _resolve_assets(
+        scanned, primary_file, collection_level=collection_level
+    ).items():
+        stac_assets[key] = pystac.Asset(
+            href=f"{href_prefix}{scanned_file.path.name}",
+            media_type=scanned_file.media_type,
+            roles=[role],
+            # Titles are human-enrichable (Issue #446). They come from
+            # metadata.yaml or survive from existing metadata via the merge.
             # file_fields_from, not file_fields: a FileGDB asset is a directory,
-            # already measured above by compute_dir_checksum/compute_dir_size.
-            extra_fields=file_fields_from(file_checksum, file_size),
+            # already measured by compute_dir_checksum/compute_dir_size.
+            extra_fields=file_fields_from(scanned_file.checksum, scanned_file.size),
         )
-        asset_files[file_path.name] = (file_path, file_checksum, file_size)
-        asset_paths.append(str(file_path))
+    asset_files = {f.path.name: (f.path, f.checksum, f.size) for f in scanned}
+    return stac_assets, asset_files, [str(f.path) for f in scanned]
 
-    return stac_assets, asset_files, asset_paths
+
+def _measure(file_path: Path) -> _ScannedFile | None:
+    """Checksum and type one directory entry, or None when it is no asset."""
+    if file_path.is_dir():
+        # FileGDB directories are single container assets (Issue #174).
+        if not is_filegdb(file_path):
+            return None
+        return _ScannedFile(
+            file_path,
+            compute_dir_checksum(file_path),
+            compute_dir_size(file_path),
+            "application/x-filegdb",
+            "data",
+        )
+    if not file_path.is_file():
+        # Sockets, devices, and the like.
+        return None
+    return _ScannedFile(
+        file_path,
+        compute_checksum(file_path),
+        file_path.stat().st_size,
+        _get_media_type(file_path),
+        _get_asset_role(file_path),
+    )
+
+
+# Rank of a file when same-stem files compete for the stem (Issues #933, #960).
+# The lowest rank owns the stem and gets the data role.
+_STEM_RANK_GEOPARQUET = 0
+_STEM_RANK_CLOUD_NATIVE = 1
+_STEM_RANK_PMTILES = 2
+_STEM_RANK_TABLE = 3
+_STEM_RANK_SOURCE = 4
+
+# Extensions whose files can be the catalog's own cloud-native data. A file of
+# any other extension beside a cloud-native owner is the owner's source.
+_CLOUD_NATIVE_EXTENSIONS: tuple[str, ...] = tuple(
+    spec.ext for spec in _reg.EXTENSION_REGISTRY if spec.cloud_native != "no"
+)
+
+ROLE_SOURCE = "source"
+
+
+def _stem_rank(scanned_file: _ScannedFile, *, read_footer: bool) -> int:
+    """Rank one content file. ``read_footer`` tells GeoParquet from a plain table."""
+    if scanned_file.media_type == PMTILES_MEDIA_TYPE:
+        return _STEM_RANK_PMTILES
+    if scanned_file.media_type == PARQUET_MEDIA_TYPE:
+        if read_footer and not is_geoparquet(scanned_file.path):
+            return _STEM_RANK_TABLE
+        return _STEM_RANK_GEOPARQUET
+    if scanned_file.path.name.lower().endswith(_CLOUD_NATIVE_EXTENSIONS):
+        return _STEM_RANK_CLOUD_NATIVE
+    return _STEM_RANK_SOURCE
+
+
+def _resolve_assets(
+    scanned: list[_ScannedFile], primary_file: Path, *, collection_level: bool
+) -> dict[str, tuple[_ScannedFile, str]]:
+    """Give every scanned file one asset key and one role.
+
+    Content files (every role but thumbnail, metadata and documentation) are
+    grouped by stem. In each group:
+
+    - The file of the lowest rank owns the stem and gets the ``data`` role:
+      GeoParquet, then other cloud-native data (COG, FlatGeobuf), then PMTiles,
+      then Parquet without GeoParquet metadata, then everything else. The
+      primary wins a tie, then ``<stem>.parquet``, then the first name. An item
+      keys its primary ``data`` and always lets it own its group.
+    - A PMTiles that does not own its group is the owner's visualization
+      derivative. It gets the ``visual`` role and the key the PMTiles writer
+      uses (Issue #929).
+    - When the owner is cloud-native, a file that is not is the file the owner
+      was converted from, such as a GeoJSON or a shapefile and its sidecars. It
+      gets the ``source`` role (Issue #960).
+    - Any other file keeps its role and takes its filename as key.
+
+    A file with a well-known role takes the role name as key, then its stem,
+    then its filename. The answer reads the files, never the listing order or,
+    for a collection, the choice of primary, because every item of a flat
+    collection scans the same files (Issue #933).
+
+    Args:
+        scanned: The files of the directory, sorted by name.
+        primary_file: The file this scan registers.
+        collection_level: Key the owner by its stem, not ``data``.
+
+    Returns:
+        ``(file, role)`` by asset key.
+    """
+    groups: dict[str, list[_ScannedFile]] = {}
+    role_files: list[_ScannedFile] = []
+    for scanned_file in scanned:
+        if scanned_file.role in _ROLE_KEYS:
+            role_files.append(scanned_file)
+        else:
+            groups.setdefault(scanned_file.path.stem, []).append(scanned_file)
+
+    resolved: dict[str, tuple[_ScannedFile, str]] = {}
+
+    def claim(key: str, scanned_file: _ScannedFile, role: str) -> None:
+        resolved[key if key not in resolved else scanned_file.path.name] = (scanned_file, role)
+
+    # The primary's group goes first, so an item's primary gets ``data``.
+    for stem in sorted(groups, key=lambda stem: stem != primary_file.stem):
+        members = groups[stem]
+        ranks = {f.path: _stem_rank(f, read_footer=len(members) > 1) for f in members}
+        owner = min(
+            members,
+            key=lambda f: (
+                not collection_level and f.path != primary_file,
+                ranks[f.path],
+                f.path != primary_file,
+                f.path.name != f"{stem}.parquet",
+                f.path.name,
+            ),
+        )
+        converted = ranks[owner.path] < _STEM_RANK_SOURCE
+        for member in members:
+            if member is owner:
+                is_primary = member.path == primary_file
+                claim("data" if is_primary and not collection_level else stem, member, "data")
+            elif member.media_type == PMTILES_MEDIA_TYPE:
+                claim(pmtiles_asset_key(stem), member, ROLE_VISUAL)
+            elif converted and ranks[member.path] == _STEM_RANK_SOURCE:
+                claim(member.path.name, member, ROLE_SOURCE)
+            else:
+                claim(member.path.name, member, member.role)
+
+    for scanned_file in role_files:
+        role_key = _ROLE_KEYS[scanned_file.role]
+        key = role_key if role_key not in resolved else scanned_file.path.stem
+        claim(key, scanned_file, scanned_file.role)
+    return resolved
 
 
 @dataclass
@@ -365,8 +457,6 @@ def _pre_validate_geometry(path: Path) -> None:
 
     # Parquet: check GeoParquet metadata
     if ext == ".parquet":
-        from portolan_cli.formats import is_geoparquet
-
         if not is_geoparquet(path):
             raise NoGeometryError(
                 path=path.stem,
@@ -758,169 +848,6 @@ def _add_statistics_to_properties(
             stac_properties["table:column_statistics"] = col_stats
 
 
-def _fix_collection_level_asset_hrefs(
-    stac_assets: dict[str, pystac.Asset],
-    tabular_names: frozenset[str] = frozenset(),
-) -> dict[str, pystac.Asset]:
-    """Fix asset hrefs and keys for collection-level assets.
-
-    _scan_item_assets() computes hrefs relative to item.json, but for
-    collection-level assets they should be relative to collection.json.
-    Since both collection.json and assets are in the same directory,
-    href should be ./filename (not ../filename).
-
-    Also fixes asset keys. See :func:`_stem_group_keys` for the rule.
-
-    Args:
-        stac_assets: Assets with hrefs relative to item.json location.
-        tabular_names: Names of the scanned Parquet files that carry no
-            GeoParquet metadata.
-
-    Returns:
-        Assets with hrefs relative to collection.json location, with unique keys.
-    """
-    entries: list[tuple[str, str, pystac.Asset]] = []
-    for key, asset in stac_assets.items():
-        href = asset.href
-
-        # Normalize href: strip any ../ or ./ prefix, then add ./
-        if href.startswith("../"):
-            href = href[3:]
-        elif href.startswith("./"):
-            href = href[2:]
-        entries.append((key, href, asset))
-
-    groups: dict[str, list[int]] = {}
-    for index, (_, href, _) in enumerate(entries):
-        groups.setdefault(PurePosixPath(href).stem, []).append(index)
-
-    keys: dict[int, tuple[str, bool]] = {}
-    for stem, indexes in groups.items():
-        keys.update(_stem_group_keys(stem, indexes, entries, tabular_names))
-
-    fixed_assets: dict[str, pystac.Asset] = {}
-    for index, (key, href, asset) in enumerate(entries):
-        fixed_key, is_tiles = keys.get(index, (key, False))
-        fixed_assets[fixed_key] = pystac.Asset(
-            href=f"./{href}",
-            media_type=asset.media_type,
-            roles=[ROLE_VISUAL] if is_tiles else asset.roles,
-            title=asset.title,
-            description=asset.description,
-            extra_fields=asset.extra_fields,
-        )
-    return fixed_assets
-
-
-def _tabular_parquet_names(item_dir: Path, stac_assets: dict[str, pystac.Asset]) -> frozenset[str]:
-    """Names of scanned Parquet files without GeoParquet metadata.
-
-    Only a Parquet file that shares its stem with another scanned file can
-    change a key, so only those footers are read.
-    """
-    from collections import Counter
-
-    from portolan_cli.formats import is_geoparquet
-
-    names = [PurePosixPath(asset.href).name for asset in stac_assets.values()]
-    stem_counts = Counter(PurePosixPath(name).stem for name in names)
-    return frozenset(
-        name
-        for name, asset in zip(names, stac_assets.values(), strict=True)
-        if asset.media_type == PARQUET_MEDIA_TYPE
-        and stem_counts[PurePosixPath(name).stem] > 1
-        and not is_geoparquet(item_dir / name)
-    )
-
-
-# Rank of a file when same-stem files compete for the stem key (Issue #933).
-# The lowest rank owns the stem.
-_STEM_RANK_GEOPARQUET = 0
-_STEM_RANK_DATA = 1
-_STEM_RANK_PMTILES = 2
-_STEM_RANK_TABLE = 3
-_STEM_RANK_NOT_DATA = 4
-
-
-def _stem_rank(name: str, asset: pystac.Asset, tabular_names: frozenset[str]) -> int:
-    if "data" not in (asset.roles or []):
-        return _STEM_RANK_NOT_DATA
-    if asset.media_type == PARQUET_MEDIA_TYPE:
-        return _STEM_RANK_TABLE if name in tabular_names else _STEM_RANK_GEOPARQUET
-    if asset.media_type == PMTILES_MEDIA_TYPE:
-        return _STEM_RANK_PMTILES
-    return _STEM_RANK_DATA
-
-
-def _stem_group_keys(
-    stem: str,
-    indexes: list[int],
-    entries: list[tuple[str, str, pystac.Asset]],
-    tabular_names: frozenset[str],
-) -> dict[int, tuple[str, bool]]:
-    """Pick the collection asset keys of the scanned files of one stem (Issue #933).
-
-    ``_scan_item_assets`` keys the primary ``data`` and other files by stem in
-    ``iterdir`` order, so two files of one stem both want the stem as key. A
-    single-file add also scans the companions of other stems. Every item that
-    scans a file must give it the same key, so the key depends on the files and
-    not on the scan order or on which file is the primary:
-
-    - The file of the lowest rank owns the stem: GeoParquet, then other data
-      files, then PMTiles, then Parquet without GeoParquet metadata, then files
-      without the ``data`` role. The primary wins a tie, then
-      ``<stem>.parquet``, then the first name.
-    - A PMTiles beside a GeoParquet is its tile derivative. It takes the key the
-      PMTiles writer uses and the ``visual`` role.
-    - Any other file that wants the stem takes its filename.
-
-    A file under a role key, such as ``thumbnail``, keeps that key.
-
-    Args:
-        stem: The stem that the files share.
-        indexes: Positions of the files in ``entries``.
-        entries: ``(scan key, href, asset)`` for every scanned file.
-        tabular_names: Names of Parquet files without GeoParquet metadata.
-
-    Returns:
-        ``(key, is_tiles)`` by position, for the files that compete for the stem.
-    """
-    competing = [
-        index
-        for index in indexes
-        if entries[index][0] in ("data", stem, PurePosixPath(entries[index][1]).name)
-    ]
-    if len(competing) < 2 and all(entries[i][0] != "data" for i in competing):
-        return {}
-
-    def rank(index: int) -> tuple[int, bool, bool, str]:
-        key, href, asset = entries[index]
-        name = PurePosixPath(href).name
-        return (
-            _stem_rank(name, asset, tabular_names),
-            key != "data",
-            name != f"{stem}.parquet",
-            name,
-        )
-
-    owner = min(competing, key=rank)
-    has_geoparquet = any(
-        _stem_rank(PurePosixPath(entries[i][1]).name, entries[i][2], tabular_names)
-        == _STEM_RANK_GEOPARQUET
-        for i in competing
-    )
-    keys: dict[int, tuple[str, bool]] = {}
-    for index in competing:
-        asset = entries[index][2]
-        if index == owner:
-            keys[index] = (stem, False)
-        elif has_geoparquet and asset.media_type == PMTILES_MEDIA_TYPE:
-            keys[index] = (pmtiles_asset_key(stem), True)
-        else:
-            keys[index] = (PurePosixPath(entries[index][1]).name, False)
-    return keys
-
-
 def _create_and_save_item(
     *,
     item_id: str,
@@ -1179,12 +1106,14 @@ def prepare_item(
     bbox = _extract_bbox_wgs84(metadata, output_path)
 
     # Step 5: Scan assets and compute statistics
+    collection_level = is_collection_level_asset and handler.asset_level == "collection"
     stac_assets, asset_files, _asset_paths = _scan_item_assets(
         item_dir=item_dir,
         item_id=item_id_resolved,
         primary_file=output_path,
         collection_dir=collection_dir,
         exclude_names=exclude_sibling_names,
+        collection_level=collection_level,
     )
 
     # Step 6: Build STAC properties. The handler adds its format fields when it
@@ -1204,7 +1133,7 @@ def prepare_item(
     # Step 7: Create STAC item or collection-level assets
     # Collection-level vector assets: no item.json, assets go directly in collection.json
     # Item-level assets (rasters, partitioned vectors): create item.json as usual
-    if is_collection_level_asset and handler.asset_level == "collection":
+    if collection_level:
         # Collection-level vector asset: no item.json
         return PreparedItem(
             item_id=item_id_resolved,
@@ -1215,9 +1144,7 @@ def prepare_item(
             item_json_path=None,  # No item.json for collection-level vector
             is_collection_level_asset=True,
             stac_item=None,
-            stac_assets=_fix_collection_level_asset_hrefs(
-                stac_assets, _tabular_parquet_names(item_dir, stac_assets)
-            ),
+            stac_assets=stac_assets,
             metadata=metadata,
             format_name=handler.name,
             created_output=created_output,
