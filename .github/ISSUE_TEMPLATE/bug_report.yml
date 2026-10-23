@@ -35,6 +35,25 @@ body:
     validations:
       required: true
 
+  # issue_governance.py turns the answer into the matching P0 to P3 label,
+  # and writing_check.py requires the section. Keep the label "Priority"
+  # and the P0 to P3 prefixes. norms/repos.md holds the rubric. Change
+  # both in one pull request.
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: >-
+        How soon does this need work? A maintainer can change it at triage.
+        See the [priority rubric](https://github.com/portolan-sdi/portolan-ops/blob/main/norms/repos.md#priority).
+      options:
+        - "P0: Fix now. Data loss, a leaked secret, wrong published data with no warning, or a broken release."
+        - "P1: Fix next. A common workflow fails with no workaround, or a check checks nothing."
+        - "P2: Planned. A workaround exists, the case is rare, or the work improves speed or ease of use."
+        - "P3: Backlog. An idea, an exploration, or work that waits on another project."
+    validations:
+      required: true
+
   - type: textarea
     id: evidence
     attributes:
