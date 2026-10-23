@@ -1841,18 +1841,6 @@ class TestPutObject:
         assert _stored_content_type(store, key) == expected
 
     @pytest.mark.unit
-    def test_explicit_content_type_wins(self) -> None:
-        """A caller can name the type."""
-        from obstore.store import MemoryStore
-
-        from portolan_cli.sync.upload import put_object
-
-        store = MemoryStore()
-        put_object(store, "a.json", b"{}", content_type="application/schema+json")
-
-        assert _stored_content_type(store, "a.json") == "application/schema+json"
-
-    @pytest.mark.unit
     @pytest.mark.parametrize(
         ("size", "expected"),
         [

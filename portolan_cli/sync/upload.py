@@ -962,19 +962,13 @@ def multipart_chunk_size(size: int) -> int:
 
 
 def _put_kwargs(
-    key: str,
-    data: bytes | Path,
-    *,
-    content_type: str | None = None,
-    chunk_size: int | None = None,
-    mode: PutMode | None = None,
-    max_concurrency: int | None = None,
+    key: str, data: bytes | Path, mode: PutMode | None, max_concurrency: int | None
 ) -> dict[str, Any]:
     """Build the obstore put arguments. The parameters are those of ``put_object``."""
     size = data.stat().st_size if isinstance(data, Path) else len(data)
     kwargs: dict[str, Any] = {
-        "attributes": {"Content-Type": content_type or content_type_for(key)},
-        "chunk_size": chunk_size or multipart_chunk_size(size),
+        "attributes": {"Content-Type": content_type_for(key)},
+        "chunk_size": multipart_chunk_size(size),
     }
     if mode is not None:
         kwargs["mode"] = mode
@@ -983,32 +977,46 @@ def _put_kwargs(
     return kwargs
 
 
-def put_object(store: ObjectStore, key: str, data: bytes | Path, **options: Any) -> PutResult:
+def put_object(
+    store: ObjectStore,
+    key: str,
+    data: bytes | Path,
+    *,
+    mode: PutMode | None = None,
+    max_concurrency: int | None = None,
+) -> PutResult:
     """Write one object. Every write in portolan goes through this function.
+
+    The Content-Type comes from the key, and the multipart part size from the
+    size of ``data``.
 
     Args:
         store: Object store instance.
         key: Object key.
         data: The bytes, or a file path that obstore streams.
-        **options: ``content_type`` (None derives it from ``key``), ``chunk_size``
-            (None derives the multipart part size from the size), ``mode`` (the
-            obstore put mode, such as ``"create"`` or ``{"e_tag": ...}``), and
-            ``max_concurrency`` (parts in flight at once).
+        mode: The obstore put mode, such as ``"create"`` or ``{"e_tag": ...}``.
+            None overwrites.
+        max_concurrency: The parts in flight at once. None uses the obstore default.
 
     Returns:
         The obstore put result, which holds the new ETag.
     """
-    return obs.put(store, key, data, **_put_kwargs(key, data, **options))
+    return obs.put(store, key, data, **_put_kwargs(key, data, mode, max_concurrency))
 
 
 async def put_object_async(
-    store: ObjectStore, key: str, data: bytes | Path, **options: Any
+    store: ObjectStore,
+    key: str,
+    data: bytes | Path,
+    *,
+    mode: PutMode | None = None,
+    max_concurrency: int | None = None,
 ) -> PutResult:
     """Write one object without blocking the event loop.
 
-    ``options`` takes the keyword arguments of ``put_object``.
+    The arguments are those of ``put_object``.
     """
-    return await obs.put_async(store, key, data, **_put_kwargs(key, data, **options))
+    return await obs.put_async(store, key, data, **_put_kwargs(key, data, mode, max_concurrency))
 
 
 # =============================================================================
