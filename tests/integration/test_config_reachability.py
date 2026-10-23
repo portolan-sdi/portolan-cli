@@ -134,7 +134,7 @@ def _band_statistics(item: Path) -> list[Any]:
 
 
 @_tests("statistics.enabled")
-@_forms(config_set="#1020: config set stores the string 'false', which is truthy")
+@_forms()
 def test_statistics_enabled_false_writes_no_band_statistics(
     form: str, catalog: Path, run_cli: RunCli
 ) -> None:
@@ -374,7 +374,7 @@ PUSHED = [
 
 
 @_tests("push.exclude")
-@_forms(config_set="#1020: config set stores the list as one string")
+@_forms()
 def test_push_exclude_keeps_matching_files_out_of_the_bucket(
     form: str,
     catalog: Path,
@@ -438,7 +438,7 @@ def test_tabular_data_is_refused_by_default(catalog: Path, run_cli: RunCli) -> N
 
 
 @_tests("tabular.convert")
-@_forms(config_set="#1020: config set stores the string 'false', which is truthy")
+@_forms()
 def test_tabular_convert_false_keeps_the_csv(form: str, catalog: Path, run_cli: RunCli) -> None:
     table = _write_csv(catalog / "census" / "census.csv")
     configure(
@@ -475,7 +475,7 @@ def test_tabular_convert_defaults_to_parquet(catalog: Path, run_cli: RunCli) -> 
 
 
 @_tests("ignored_files")
-@_forms(config_set="#1020: config set stores the list as one string")
+@_forms()
 def test_ignored_files_skips_the_matching_file(form: str, catalog: Path, run_cli: RunCli) -> None:
     _copy(POINTS_PARQUET, catalog / "roads" / "roads.parquet")
     _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
@@ -539,7 +539,7 @@ def _converted_columns(path: Path) -> list[str]:
 
 
 @_tests("conversion.vector.add_bbox")
-@_forms(config_set="#1020: config set writes conversion.vector.add_bbox as one flat key")
+@_forms()
 def test_conversion_vector_add_bbox_false_drops_the_bbox_column(
     form: str, catalog: Path, run_cli: RunCli
 ) -> None:
@@ -557,6 +557,159 @@ def test_add_writes_a_bbox_column_by_default(catalog: Path, run_cli: RunCli) -> 
     _add(run_cli, catalog, source)
 
     assert "bbox" in _converted_columns(catalog / "places" / "places.parquet")
+
+
+@_tests(
+    "conversion.vector.sort",
+    "conversion.vector.spatial_index",
+    "conversion.vector.resolution",
+)
+@_forms()
+def test_conversion_vector_layout_settings_reach_the_writer(
+    form: str, catalog: Path, run_cli: RunCli
+) -> None:
+    source = _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
+    configure(
+        run_cli,
+        catalog,
+        form,
+        {
+            "conversion.vector.sort": ("none", "none"),
+            "conversion.vector.spatial_index": ("h3", "h3"),
+            "conversion.vector.resolution": ("5", 5),
+        },
+    )
+
+    _add(run_cli, catalog, source)
+
+    table = pq.read_table(catalog / "places" / "places.parquet")
+    # sort: none keeps the order of the GeoJSON features.
+    assert table.column("name").to_pylist() == SOURCE_ORDER
+    # The H3 index stores its resolution in bits 52 to 55.
+    cells = table.column("h3_cell").to_pylist()
+    assert {int(cell, 16) >> 52 & 0xF for cell in cells} == {5}
+
+
+SOURCE_ORDER = [
+    "Ferry Building",
+    "Coit Tower",
+    "Golden Gate Park",
+    "Fisherman's Wharf",
+    "Alcatraz View",
+    "Mission District",
+    "Castro",
+    "SOMA",
+    "Financial District",
+    "Embarcadero",
+]
+
+
+def test_the_default_layout_sorts_and_adds_no_index(catalog: Path, run_cli: RunCli) -> None:
+    """Hilbert order differs from the source order, so the test above measures sort."""
+    source = _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
+
+    _add(run_cli, catalog, source)
+
+    table = pq.read_table(catalog / "places" / "places.parquet")
+    assert table.column("name").to_pylist() != SOURCE_ORDER
+    assert "h3_cell" not in table.schema.names
+
+
+@_tests("conversion.vector.partition")
+@_forms()
+def test_conversion_vector_partition_reaches_the_partitioner(
+    form: str, catalog: Path, run_cli: RunCli
+) -> None:
+    """Only check --fix applies this key. geoparquet-io refuses 10 rows a partition."""
+    _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
+    configure(
+        run_cli,
+        catalog,
+        form,
+        {
+            "conversion.vector.partition": ("true", True),
+            "conversion.vector.spatial_index": ("h3", "h3"),
+            "conversion.vector.resolution": ("3", 3),
+        },
+    )
+
+    result = run_cli("check", str(catalog), "--fix", "--geo-assets", expect=1)
+
+    assert "Tiny partitions: Average of 10 rows per partition" in result.output
+    assert not (catalog / "places" / "places.parquet").exists()
+
+
+def test_check_fix_converts_the_geojson_by_default(catalog: Path, run_cli: RunCli) -> None:
+    _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
+
+    run_cli("check", str(catalog), "--fix", "--geo-assets")
+
+    assert (catalog / "places" / "places.parquet").is_file()
+
+
+# ---------------------------------------------------------------------------
+# conversion.extensions.*, conversion.paths.*, conversion.handlers.*
+# ---------------------------------------------------------------------------
+
+# `add` does not read the extension and path overrides. Only check --fix
+# --geo-assets applies them, so these tests observe them through check.
+
+
+@_tests("conversion.extensions.preserve")
+@_forms()
+def test_conversion_extensions_preserve_keeps_the_geojson(
+    form: str, catalog: Path, run_cli: RunCli
+) -> None:
+    _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
+    configure(run_cli, catalog, form, {"conversion.extensions.preserve": ("geojson", ["geojson"])})
+
+    run_cli("check", str(catalog), "--fix", "--geo-assets")
+
+    assert not (catalog / "places" / "places.parquet").exists()
+
+
+@_tests("conversion.paths.preserve")
+@_forms()
+def test_conversion_paths_preserve_keeps_the_matching_file(
+    form: str, catalog: Path, run_cli: RunCli
+) -> None:
+    _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
+    configure(run_cli, catalog, form, {"conversion.paths.preserve": ("places/*", ["places/*"])})
+
+    run_cli("check", str(catalog), "--fix", "--geo-assets")
+
+    assert not (catalog / "places" / "places.parquet").exists()
+
+
+@_tests("conversion.extensions.convert")
+@_forms()
+def test_conversion_extensions_convert_converts_a_flatgeobuf(
+    form: str, catalog: Path, run_cli: RunCli
+) -> None:
+    _copy(FLATGEOBUF, catalog / "places" / "places.fgb")
+    configure(run_cli, catalog, form, {"conversion.extensions.convert": ("fgb", ["fgb"])})
+
+    run_cli("check", str(catalog), "--fix", "--geo-assets")
+
+    assert (catalog / "places" / "places.parquet").is_file()
+
+
+FLATGEOBUF = FIXTURES / "cloud_native" / "sample.fgb"
+
+
+@_tests("conversion.handlers.*")
+@_forms()
+def test_conversion_handlers_pin_selects_the_handler(
+    form: str, catalog: Path, run_cli: RunCli
+) -> None:
+    """A pin of .tif to the PMTiles handler makes add read the GeoTIFF as PMTiles."""
+    scene = _copy(SINGLEBAND_COG, catalog / "imagery" / "scene" / "scene.tif")
+    configure(run_cli, catalog, form, {"conversion.handlers.tif": ("pmtiles", "pmtiles")})
+
+    result = run_cli("add", "--portolan-dir", str(catalog), str(scene), expect=1)
+
+    assert "Invalid PMTiles file" in result.output
+    assert not (catalog / "imagery" / "collection.json").exists()
 
 
 @pytest.mark.realdata
@@ -585,7 +738,7 @@ def _cog_profile(path: Path) -> tuple[str, int, int]:
 
 
 @_tests("conversion.cog.compression", "conversion.cog.tile_size")
-@_forms(config_set="#1020: config set writes conversion.cog.* as flat keys")
+@_forms()
 def test_conversion_cog_settings_reach_the_cog(form: str, catalog: Path, run_cli: RunCli) -> None:
     """#774 is closed. This is its regression check on the yaml form."""
     scene = _copy(NON_COG, catalog / "imagery" / "scene" / "scene.tif")
@@ -612,6 +765,340 @@ def test_the_default_cog_is_deflate_with_512_blocks(catalog: Path, run_cli: RunC
     assert _cog_profile(catalog / "imagery" / "scene" / "scene.tif") == ("deflate", 512, 512)
 
 
+def _structure_tags(path: Path) -> dict[str, str]:
+    import rasterio
+
+    with rasterio.open(path) as source:
+        tags: dict[str, str] = source.tags(ns="IMAGE_STRUCTURE")
+        tags["OVERVIEW_RESAMPLING"] = source.tags().get("OVERVIEW_RESAMPLING", "")
+        return tags
+
+
+@_tests("conversion.cog.predictor", "conversion.cog.resampling")
+@_forms()
+def test_conversion_cog_predictor_and_resampling_reach_the_cog(
+    form: str, catalog: Path, run_cli: RunCli
+) -> None:
+    scene = _copy(NON_COG, catalog / "imagery" / "scene" / "scene.tif")
+    configure(
+        run_cli,
+        catalog,
+        form,
+        {
+            "conversion.cog.predictor": ("1", 1),
+            "conversion.cog.resampling": ("average", "average"),
+        },
+    )
+
+    _add(run_cli, catalog, scene)
+
+    tags = _structure_tags(catalog / "imagery" / "scene" / "scene.tif")
+    assert "PREDICTOR" not in tags
+    assert tags["OVERVIEW_RESAMPLING"] == "AVERAGE"
+
+
+def test_the_default_cog_has_predictor_2_and_nearest_overviews(
+    catalog: Path, run_cli: RunCli
+) -> None:
+    scene = _copy(NON_COG, catalog / "imagery" / "scene" / "scene.tif")
+
+    _add(run_cli, catalog, scene)
+
+    tags = _structure_tags(catalog / "imagery" / "scene" / "scene.tif")
+    assert (tags["PREDICTOR"], tags["OVERVIEW_RESAMPLING"]) == ("2", "NEAREST")
+
+
+@_tests("conversion.cog.quality")
+@_forms()
+def test_conversion_cog_quality_reaches_a_jpeg_cog(
+    form: str, catalog: Path, run_cli: RunCli
+) -> None:
+    scene = _copy(NON_COG, catalog / "imagery" / "scene" / "scene.tif")
+    configure(
+        run_cli,
+        catalog,
+        form,
+        {"conversion.cog.compression": ("JPEG", "JPEG"), "conversion.cog.quality": ("40", 40)},
+    )
+
+    _add(run_cli, catalog, scene)
+
+    assert _structure_tags(catalog / "imagery" / "scene" / "scene.tif")["JPEG_QUALITY"] == "40"
+
+
+def _jpeg_quality(path: Path) -> list[int]:
+    """Return each quality whose standard JPEG tables match the tables in ``path``."""
+    import io
+
+    from PIL import Image
+
+    def tables(quality: int, mode: str) -> dict[int, list[int]]:
+        buffer = io.BytesIO()
+        Image.new(mode, (16, 16)).save(buffer, "JPEG", quality=quality)
+        with Image.open(buffer) as image:
+            return {key: list(table) for key, table in image.quantization.items()}
+
+    with Image.open(path) as image:
+        found = {key: list(table) for key, table in image.quantization.items()}
+        mode = image.mode
+    return [quality for quality in range(1, 101) if tables(quality, mode) == found]
+
+
+def _image_size(path: Path) -> tuple[int, int]:
+    from PIL import Image
+
+    with Image.open(path) as image:
+        return image.size
+
+
+@_tests("conversion.cog.thumbnail_max_size", "conversion.cog.thumbnail_quality")
+@_forms()
+def test_conversion_cog_thumbnail_settings_reach_the_thumbnail(
+    form: str, catalog: Path, run_cli: RunCli
+) -> None:
+    scene = _copy(NON_COG, catalog / "imagery" / "scene" / "scene.tif")
+    configure(
+        run_cli,
+        catalog,
+        form,
+        {
+            "conversion.cog.thumbnail_max_size": ("64", 64),
+            "conversion.cog.thumbnail_quality": ("20", 20),
+        },
+    )
+
+    _add(run_cli, catalog, scene)
+
+    thumbnail = catalog / "imagery" / "scene" / "scene.thumb.jpg"
+    assert _image_size(thumbnail) == (64, 64)
+    assert _jpeg_quality(thumbnail) == [20]
+
+
+def test_the_default_cog_thumbnail_is_512_at_quality_75(catalog: Path, run_cli: RunCli) -> None:
+    scene = _copy(NON_COG, catalog / "imagery" / "scene" / "scene.tif")
+
+    _add(run_cli, catalog, scene)
+
+    thumbnail = catalog / "imagery" / "scene" / "scene.thumb.jpg"
+    assert _image_size(thumbnail) == (512, 512)
+    assert _jpeg_quality(thumbnail) == [75]
+
+
+@_tests("conversion.cog.generate_thumbnail")
+@_forms()
+def test_conversion_cog_generate_thumbnail_false_writes_no_thumbnail(
+    form: str, catalog: Path, run_cli: RunCli
+) -> None:
+    scene = _copy(NON_COG, catalog / "imagery" / "scene" / "scene.tif")
+    configure(run_cli, catalog, form, {"conversion.cog.generate_thumbnail": ("false", False)})
+
+    _add(run_cli, catalog, scene)
+
+    assert not (catalog / "imagery" / "scene" / "scene.thumb.jpg").exists()
+    assert "thumbnail" not in _load(catalog / "imagery" / "scene" / "scene.json")["assets"]
+
+
+# ---------------------------------------------------------------------------
+# styles.*
+# ---------------------------------------------------------------------------
+
+
+def _render_fields(item: Path) -> dict[str, Any]:
+    data = _load(item)["assets"]["data"]
+    return {key: value for key, value in data.items() if key.startswith("render:")}
+
+
+@_tests("styles.raster.colormap", "styles.raster.rescale")
+@_forms()
+def test_styles_raster_settings_reach_the_render_fields(
+    form: str, catalog: Path, run_cli: RunCli
+) -> None:
+    scene = _copy(NON_COG, catalog / "imagery" / "scene" / "scene.tif")
+    configure(
+        run_cli,
+        catalog,
+        form,
+        {
+            "styles.raster.colormap": ("terrain", "terrain"),
+            "styles.raster.rescale": ("[0, 255]", [0, 255]),
+        },
+    )
+
+    _add(run_cli, catalog, scene)
+
+    assert _render_fields(catalog / "imagery" / "scene" / "scene.json") == {
+        "render:colormap_name": "terrain",
+        "render:rescale": [[0.0, 255.0]],
+    }
+
+
+def test_the_default_raster_render_field_is_viridis(catalog: Path, run_cli: RunCli) -> None:
+    scene = _copy(NON_COG, catalog / "imagery" / "scene" / "scene.tif")
+
+    _add(run_cli, catalog, scene)
+
+    assert _render_fields(catalog / "imagery" / "scene" / "scene.json") == {
+        "render:colormap_name": "viridis"
+    }
+
+
+VECTOR_STYLES = {
+    "point": (
+        POINTS_PARQUET,
+        {"circle-color": "#ff0000", "circle-radius": 9, "circle-opacity": 0.5},
+    ),
+    "line": (
+        FIXTURES / "vector" / "valid" / "lines.geojson",
+        {"line-color": "#00ff00", "line-width": 5, "line-opacity": 0.4},
+    ),
+    "polygon": (
+        FIXTURES / "vector" / "valid" / "polygons.geojson",
+        {"fill-color": "#0000ff", "fill-opacity": 0.3, "fill-outline-color": "#111111"},
+    ),
+}
+
+
+@needs_tippecanoe
+@_tests(
+    *(
+        f"styles.vector.{kind}.{name}"
+        for kind, (_, paint) in VECTOR_STYLES.items()
+        for name in paint
+    )
+)
+@_forms()
+@pytest.mark.parametrize("kind", sorted(VECTOR_STYLES))
+def test_styles_vector_settings_reach_the_default_style(
+    kind: str, form: str, catalog: Path, run_cli: RunCli
+) -> None:
+    fixture, paint = VECTOR_STYLES[kind]
+    source = _copy(fixture, catalog / "places" / f"places{fixture.suffix}")
+    settings = {"pmtiles.enabled": ("true", True)}
+    for name, value in paint.items():
+        settings[f"styles.vector.{kind}.{name}"] = (str(value), value)
+    configure(run_cli, catalog, form, settings)
+
+    _add(run_cli, catalog, source)
+
+    style = _load(catalog / "places" / "styles" / "default.json")
+    assert style["layers"][0]["paint"] == paint
+
+
+# ---------------------------------------------------------------------------
+# thumbnails.*
+# ---------------------------------------------------------------------------
+
+
+@_tests("thumbnails.enabled")
+@_forms()
+def test_thumbnails_enabled_false_draws_no_collection_thumbnail(
+    form: str, catalog: Path, run_cli: RunCli
+) -> None:
+    source = _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
+    configure(run_cli, catalog, form, {"thumbnails.enabled": ("false", False)})
+
+    _add(run_cli, catalog, source)
+
+    assert not (catalog / "places" / "places.thumb.jpg").exists()
+
+
+@_tests("thumbnails.max_size")
+@_forms()
+def test_thumbnails_max_size_bounds_the_drawing(form: str, catalog: Path, run_cli: RunCli) -> None:
+    source = _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
+    configure(run_cli, catalog, form, {"thumbnails.max_size": ("128", 128)})
+
+    _add(run_cli, catalog, source)
+
+    # The drawing is cropped to the data, so each side is at most the limit.
+    assert max(_image_size(catalog / "places" / "places.thumb.jpg")) <= 128
+
+
+@_tests("thumbnails.quality")
+@_forms()
+def test_thumbnails_quality_reaches_the_jpeg(form: str, catalog: Path, run_cli: RunCli) -> None:
+    source = _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
+    configure(run_cli, catalog, form, {"thumbnails.quality": ("20", 20)})
+
+    _add(run_cli, catalog, source)
+
+    assert _jpeg_quality(catalog / "places" / "places.thumb.jpg") == [20]
+
+
+def test_the_default_vector_thumbnail_is_over_128_at_quality_75(
+    catalog: Path, run_cli: RunCli
+) -> None:
+    source = _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
+
+    _add(run_cli, catalog, source)
+
+    thumbnail = catalog / "places" / "places.thumb.jpg"
+    assert max(_image_size(thumbnail)) > 128
+    assert _jpeg_quality(thumbnail) == [75]
+
+
+# ---------------------------------------------------------------------------
+# check.*, publish.*
+# ---------------------------------------------------------------------------
+
+
+def _findings(run_cli: RunCli, catalog: Path, expect: int) -> list[tuple[str, str]]:
+    result = run_cli("--format", "json", "check", str(catalog), expect=expect)
+    findings = json.loads(result.output)["data"]["findings"]
+    return [(finding["rule_id"], finding["severity"]) for finding in findings]
+
+
+@_tests("check.disabled", "check.severity.*")
+@_forms()
+def test_check_settings_reach_the_validator(form: str, catalog: Path, run_cli: RunCli) -> None:
+    _add(run_cli, catalog, _copy(POINTS_PARQUET, catalog / "places" / "places.parquet"))
+    configure(
+        run_cli,
+        catalog,
+        form,
+        {
+            "check.disabled": ('["PTL-FIL-005"]', ["PTL-FIL-005"]),
+            "check.severity.PTL-PRV-001": ("warning", "warning"),
+        },
+    )
+
+    assert _findings(run_cli, catalog, expect=0) == [("PTL-PRV-001", "warning")]
+
+
+def test_check_reports_both_findings_by_default(catalog: Path, run_cli: RunCli) -> None:
+    _add(run_cli, catalog, _copy(POINTS_PARQUET, catalog / "places" / "places.parquet"))
+
+    assert _findings(run_cli, catalog, expect=1) == [
+        ("PTL-FIL-005", "warning"),
+        ("PTL-PRV-001", "error"),
+    ]
+
+
+@_tests("publish.public_url")
+@_forms()
+def test_publish_public_url_reaches_the_live_check(
+    form: str, catalog: Path, run_cli: RunCli
+) -> None:
+    """check --live rejects a plain-HTTP base URL and names the setting."""
+    configure(
+        run_cli,
+        catalog,
+        form,
+        {"publish.public_url": ("http://example.com/c", "http://example.com/c")},
+    )
+
+    result = run_cli("check", str(catalog), "--live", expect=2)
+
+    assert "[PRTLN-VAL005]" in result.output
+    assert "publish.public_url" in result.output
+
+
+def test_check_live_needs_no_url_without_the_setting(catalog: Path, run_cli: RunCli) -> None:
+    result = run_cli("check", str(catalog), "--live", expect=None)
+
+    assert "[PRTLN-VAL005]" not in result.output
+
+
 # ---------------------------------------------------------------------------
 # Coverage of KNOWN_SETTINGS
 # ---------------------------------------------------------------------------
@@ -622,19 +1109,5 @@ def test_every_known_setting_is_covered() -> None:
     exempt = {row[0].split(": ", 1)[0] for row in load_exemptions("config-key")}
 
     assert set(TESTED_KEYS) & exempt == set()
-    # No code reads these two keys. A deletes them from KNOWN_SETTINGS with the
-    # typed config (#1020), and this set then becomes empty.
-    assert set(KNOWN_SETTINGS) - (set(TESTED_KEYS) | exempt) == {
-        "partitioning.columns",
-        "partitioning.description",
-    }
-    assert (set(TESTED_KEYS) | exempt) - set(CONVERSION_KEYS) <= set(KNOWN_SETTINGS)
-
-
-# The conversion keys sit outside KNOWN_SETTINGS (#1020). Each one this module
-# measures is listed here, so the coverage test above can drop them.
-CONVERSION_KEYS = (
-    "conversion.vector.add_bbox",
-    "conversion.cog.compression",
-    "conversion.cog.tile_size",
-)
+    assert set(KNOWN_SETTINGS) - (set(TESTED_KEYS) | exempt) == set()
+    assert set(TESTED_KEYS) | exempt <= set(KNOWN_SETTINGS)

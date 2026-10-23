@@ -9,6 +9,7 @@ Tests the configuration system including:
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 from unittest import mock
 
@@ -1507,14 +1508,16 @@ class TestLegacyFlatKeys:
         }
 
 
-@pytest.fixture
-def tracing() -> Iterator[None]:
-    """Turn the trace counters on for one test."""
+@contextmanager
+def _tracing() -> Iterator[None]:
+    """Turn the trace counters on for one block."""
     from portolan_cli import trace
 
     trace.enable()
-    yield
-    trace.reset()
+    try:
+        yield
+    finally:
+        trace.reset()
 
 
 def _parses() -> int:
@@ -1523,7 +1526,6 @@ def _parses() -> int:
     return trace.counters().get("config.yaml_parses", 0)
 
 
-@pytest.mark.usefixtures("tracing")
 class TestOneParsePerFile:
     """Readers share one parse of each YAML file until it changes (issue #1006)."""
 
@@ -1540,18 +1542,18 @@ class TestOneParsePerFile:
         set_setting(tmp_path, "conversion.vector.sort", "none")
         collection = tmp_path / "demo"
         collection.mkdir()
-        before = _parses()
 
-        for _ in range(5):
-            get_setting("statistics.enabled", catalog_path=tmp_path)
-            get_setting("pmtiles.enabled", catalog_path=tmp_path, collection_path=collection)
-            load_merged_config(collection, tmp_path)
-            get_vector_settings(tmp_path)
-            get_cog_settings(tmp_path)
-            get_conversion_overrides(tmp_path)
-            get_handler_pins(tmp_path)
+        with _tracing():
+            for _ in range(5):
+                get_setting("statistics.enabled", catalog_path=tmp_path)
+                get_setting("pmtiles.enabled", catalog_path=tmp_path, collection_path=collection)
+                load_merged_config(collection, tmp_path)
+                get_vector_settings(tmp_path)
+                get_cog_settings(tmp_path)
+                get_conversion_overrides(tmp_path)
+                get_handler_pins(tmp_path)
 
-        assert _parses() - before == 1
+            assert _parses() == 1
 
     @pytest.mark.unit
     def test_changed_file_is_parsed_again(self, tmp_path: Path) -> None:
@@ -1560,14 +1562,14 @@ class TestOneParsePerFile:
         config_file = tmp_path / ".portolan" / "config.yaml"
         config_file.parent.mkdir()
         config_file.write_text("conversion:\n  vector:\n    sort: hilbert\n")
-        before = _parses()
-        assert get_vector_settings(tmp_path).sort == "hilbert"
+        with _tracing():
+            assert get_vector_settings(tmp_path).sort == "hilbert"
 
-        # Same size and the same mtime window: only the content differs.
-        config_file.write_text("conversion:\n  vector:\n    sort: quadkey\n")
+            # Same size and the same mtime window: only the content differs.
+            config_file.write_text("conversion:\n  vector:\n    sort: quadkey\n")
 
-        assert get_vector_settings(tmp_path).sort == "quadkey"
-        assert _parses() - before == 2
+            assert get_vector_settings(tmp_path).sort == "quadkey"
+            assert _parses() == 2
 
     @pytest.mark.unit
     def test_caller_mutation_does_not_reach_the_next_read(self, tmp_path: Path) -> None:
