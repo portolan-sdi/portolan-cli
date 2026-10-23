@@ -1227,6 +1227,36 @@ class TestReportSkipsAndFindCollections:
         assert thumbnail.is_file()
 
 
+class TestOutputAddUnchanged:
+    """A run that adds nothing calls the files tracked only when all of them are."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("reasons", "summary"),
+        [
+            (
+                ["unchanged since the last add", "it is the STAC-GeoParquet item mirror"],
+                "✓ All 2 files already tracked (unchanged)\n",
+            ),
+            (
+                ["unchanged since the last add", "it matches ignored_files pattern '*'"],
+                "→ Nothing added: 2 files skipped\n",
+            ),
+        ],
+        ids=["tracked", "ignored"],
+    )
+    def test_summary(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], reasons: list[str], summary: str
+    ) -> None:
+        from portolan_cli.cli import _output_add_unchanged
+
+        skips = [(tmp_path / f"{index}.parquet", reason) for index, reason in enumerate(reasons)]
+
+        _output_add_unchanged(skips, verbose=False)
+
+        assert capsys.readouterr().out == summary
+
+
 class TestAddUnknownHandlerPin:
     """A ``conversion.handlers`` pin to a missing handler fails add with a typed error."""
 

@@ -2940,7 +2940,7 @@ def _output_add_unchanged(skipped: list[tuple[Path, str]], verbose: bool) -> Non
     """Say that the add changed nothing, and why each file was skipped."""
     skip_count = len(skipped)
     noun = "file" if skip_count == 1 else "files"
-    if all(reason == SKIP_UNCHANGED for _, reason in skipped):
+    if all(reason in SKIPS_THAT_TRACK for _, reason in skipped):
         success(f"All {skip_count} {noun} already tracked (unchanged)")
     else:
         info_output(f"Nothing added: {skip_count} {noun} skipped")
