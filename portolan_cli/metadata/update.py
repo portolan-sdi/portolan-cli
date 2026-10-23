@@ -21,13 +21,14 @@ import rasterio
 from portolan_cli.formats import RASTER, RASTER_EXTENSIONS
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata.cog import extract_cog_metadata
-from portolan_cli.metadata.detection import versions_asset_key, versions_asset_lookup_keys
+from portolan_cli.metadata.detection import versions_asset_lookup_keys
 from portolan_cli.models.item import ItemModel
 from portolan_cli.versions import (
     Asset,
     Version,
     VersionsFile,
     read_versions,
+    versions_asset_key,
     write_versions,
 )
 
