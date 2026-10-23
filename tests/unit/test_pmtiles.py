@@ -18,6 +18,30 @@ import pytest
 _GEOPARQUET = Path(__file__).parents[1] / "fixtures" / "vector" / "valid" / "points.parquet"
 
 
+def _data_collection(tmp_path: Path, name: str = "collection") -> Path:
+    """A collection whose one data asset is the GeoParquet ``data.parquet``."""
+    collection_dir = tmp_path / name
+    collection_dir.mkdir()
+    asset = {"href": "./data.parquet", "type": "application/vnd.apache.parquet", "roles": ["data"]}
+    collection_json = {"type": "Collection", "assets": {"data": asset}}
+    (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+    shutil.copy(_GEOPARQUET, collection_dir / "data.parquet")
+    return collection_dir
+
+
+def _write_empty_versions(collection_dir: Path) -> None:
+    """A versions.json with one version that tracks no asset."""
+    version = {
+        "version": "1.0.0",
+        "created": "2026-01-01T00:00:00Z",
+        "breaking": False,
+        "assets": {},
+        "changes": [],
+    }
+    versions = {"spec_version": "1.0.0", "current_version": "1.0.0", "versions": [version]}
+    (collection_dir / "versions.json").write_text(json.dumps(versions))
+
+
 class TestPMTilesErrors:
     """Tests for PMTiles error classes."""
 
@@ -143,21 +167,7 @@ class TestFindGeoparquetAssets:
         """Finds assets with application/vnd.apache.parquet type."""
         from portolan_cli.viz.pmtiles import _find_geoparquet_assets
 
-        collection_dir = tmp_path / "collection"
-        collection_dir.mkdir()
-
-        collection_json = {
-            "type": "Collection",
-            "assets": {
-                "data": {
-                    "href": "./data.parquet",
-                    "type": "application/vnd.apache.parquet",
-                    "roles": ["data"],
-                }
-            },
-        }
-        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
-        shutil.copy(_GEOPARQUET, collection_dir / "data.parquet")
+        collection_dir = _data_collection(tmp_path)
 
         assets = _find_geoparquet_assets(collection_dir)
 
@@ -816,7 +826,6 @@ class TestGeneratePMTilesForCollection:
         # Mock dependencies as available
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
-            patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"),
         ):
             result = generate_pmtiles_for_collection(collection_dir, tmp_path)
 
@@ -828,44 +837,14 @@ class TestGeneratePMTilesForCollection:
         """All parameters are forwarded to generate_pmtiles."""
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
-        collection_dir = tmp_path / "collection"
-        collection_dir.mkdir()
+        collection_dir = _data_collection(tmp_path)
 
-        # Create collection with parquet asset
-        collection_json = {
-            "type": "Collection",
-            "assets": {
-                "data": {
-                    "href": "./data.parquet",
-                    "type": "application/vnd.apache.parquet",
-                    "roles": ["data"],
-                }
-            },
-        }
-        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
-        shutil.copy(_GEOPARQUET, collection_dir / "data.parquet")
-
-        # Create versions.json
-        versions_json = {
-            "spec_version": "1.0.0",
-            "current_version": "1.0.0",
-            "versions": [
-                {
-                    "version": "1.0.0",
-                    "created": "2026-01-01T00:00:00Z",
-                    "breaking": False,
-                    "assets": {},
-                    "changes": [],
-                }
-            ],
-        }
-        (collection_dir / "versions.json").write_text(json.dumps(versions_json))
+        _write_empty_versions(collection_dir)
 
         mock_generate = MagicMock()
 
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
-            patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"),
             patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate),
         ):
             generate_pmtiles_for_collection(
@@ -908,22 +887,7 @@ class TestGeneratePMTilesForCollection:
             generate_pmtiles_for_collection,
         )
 
-        collection_dir = tmp_path / "collection"
-        collection_dir.mkdir()
-
-        # Create collection with parquet asset
-        collection_json = {
-            "type": "Collection",
-            "assets": {
-                "data": {
-                    "href": "./data.parquet",
-                    "type": "application/vnd.apache.parquet",
-                    "roles": ["data"],
-                }
-            },
-        }
-        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
-        shutil.copy(_GEOPARQUET, collection_dir / "data.parquet")
+        collection_dir = _data_collection(tmp_path)
 
         pmtiles_path = collection_dir / "data.pmtiles"
 
@@ -935,7 +899,6 @@ class TestGeneratePMTilesForCollection:
 
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
-            patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"),
             patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate_raises),
         ):
             result = generate_pmtiles_for_collection(collection_dir, tmp_path)
@@ -955,21 +918,7 @@ class TestGeneratePMTilesForCollection:
         """Partial PMTiles file is deleted on unexpected errors too (Issue #385)."""
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
-        collection_dir = tmp_path / "collection"
-        collection_dir.mkdir()
-
-        collection_json = {
-            "type": "Collection",
-            "assets": {
-                "data": {
-                    "href": "./data.parquet",
-                    "type": "application/vnd.apache.parquet",
-                    "roles": ["data"],
-                }
-            },
-        }
-        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
-        shutil.copy(_GEOPARQUET, collection_dir / "data.parquet")
+        collection_dir = _data_collection(tmp_path)
 
         pmtiles_path = collection_dir / "data.pmtiles"
 
@@ -980,7 +929,6 @@ class TestGeneratePMTilesForCollection:
 
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
-            patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"),
             patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate_unexpected),
         ):
             result = generate_pmtiles_for_collection(collection_dir, tmp_path)
@@ -997,21 +945,7 @@ class TestGeneratePMTilesForCollection:
         """
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
-        collection_dir = tmp_path / "collection"
-        collection_dir.mkdir()
-
-        collection_json = {
-            "type": "Collection",
-            "assets": {
-                "data": {
-                    "href": "./data.parquet",
-                    "type": "application/vnd.apache.parquet",
-                    "roles": ["data"],
-                }
-            },
-        }
-        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
-        shutil.copy(_GEOPARQUET, collection_dir / "data.parquet")
+        collection_dir = _data_collection(tmp_path)
 
         pmtiles_path = collection_dir / "data.pmtiles"
 
@@ -1021,7 +955,6 @@ class TestGeneratePMTilesForCollection:
 
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
-            patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"),
             patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate_interrupted),
             pytest.raises(KeyboardInterrupt),
         ):
@@ -1049,21 +982,7 @@ class TestGeneratePMTilesForCollection:
             generate_pmtiles_for_collection,
         )
 
-        collection_dir = tmp_path / "collection"
-        collection_dir.mkdir()
-
-        collection_json = {
-            "type": "Collection",
-            "assets": {
-                "data": {
-                    "href": "./data.parquet",
-                    "type": "application/vnd.apache.parquet",
-                    "roles": ["data"],
-                }
-            },
-        }
-        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
-        shutil.copy(_GEOPARQUET, collection_dir / "data.parquet")
+        collection_dir = _data_collection(tmp_path)
 
         # A valid tileset already exists. Make it older than the parquet so
         # _should_generate returns True and the collection attempts a rebuild.
@@ -1080,7 +999,6 @@ class TestGeneratePMTilesForCollection:
 
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
-            patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"),
             patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate_refuses),
         ):
             result = generate_pmtiles_for_collection(collection_dir, tmp_path)
@@ -1105,21 +1023,7 @@ class TestGeneratePMTilesForCollection:
             generate_pmtiles_for_collection,
         )
 
-        collection_dir = tmp_path / "collection"
-        collection_dir.mkdir()
-
-        collection_json = {
-            "type": "Collection",
-            "assets": {
-                "data": {
-                    "href": "./data.parquet",
-                    "type": "application/vnd.apache.parquet",
-                    "roles": ["data"],
-                }
-            },
-        }
-        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
-        shutil.copy(_GEOPARQUET, collection_dir / "data.parquet")
+        collection_dir = _data_collection(tmp_path)
 
         pmtiles_path = collection_dir / "data.pmtiles"
         pmtiles_path.write_bytes(b"valid tileset")
@@ -1133,7 +1037,6 @@ class TestGeneratePMTilesForCollection:
 
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
-            patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"),
             patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate_refuses),
             patch("portolan_cli.viz.pmtiles.warn") as mock_warn,
         ):
@@ -1157,36 +1060,9 @@ class TestGeneratePMTilesForCollection:
         from portolan_cli.versions import read_versions
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
-        collection_dir = tmp_path / "demographics"
-        collection_dir.mkdir()
+        collection_dir = _data_collection(tmp_path, "demographics")
 
-        collection_json = {
-            "type": "Collection",
-            "assets": {
-                "data": {
-                    "href": "./data.parquet",
-                    "type": "application/vnd.apache.parquet",
-                    "roles": ["data"],
-                }
-            },
-        }
-        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
-        shutil.copy(_GEOPARQUET, collection_dir / "data.parquet")
-
-        versions_json = {
-            "spec_version": "1.0.0",
-            "current_version": "1.0.0",
-            "versions": [
-                {
-                    "version": "1.0.0",
-                    "created": "2026-01-01T00:00:00Z",
-                    "breaking": False,
-                    "assets": {},
-                    "changes": [],
-                }
-            ],
-        }
-        (collection_dir / "versions.json").write_text(json.dumps(versions_json))
+        _write_empty_versions(collection_dir)
 
         pmtiles_path = collection_dir / "data.pmtiles"
         thumb_path = collection_dir / "data.thumb.png"
@@ -1200,7 +1076,6 @@ class TestGeneratePMTilesForCollection:
 
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
-            patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"),
             patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate),
             patch(
                 "portolan_cli.viz.pmtiles.generate_vector_thumbnail",
@@ -1259,7 +1134,6 @@ class TestGeneratePMTilesForCollection:
 
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
-            patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"),
             patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate),
         ):
             generate_pmtiles_for_collection(collection_dir, tmp_path)
@@ -1314,24 +1188,10 @@ class TestGeneratePMTilesForCollection:
         os.utime(parquet, (old, old))
 
         # versions.json tracks neither the pmtiles nor the thumbnail yet.
-        versions_json = {
-            "spec_version": "1.0.0",
-            "current_version": "1.0.0",
-            "versions": [
-                {
-                    "version": "1.0.0",
-                    "created": "2026-01-01T00:00:00Z",
-                    "breaking": False,
-                    "assets": {},
-                    "changes": [],
-                }
-            ],
-        }
-        (collection_dir / "versions.json").write_text(json.dumps(versions_json))
+        _write_empty_versions(collection_dir)
 
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
-            patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"),
         ):
             result = generate_pmtiles_for_collection(collection_dir, tmp_path)
 
@@ -1361,7 +1221,6 @@ class TestGeneratePMTilesForCollection:
         # Idempotent: a second run with everything tracked creates NO new version.
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
-            patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"),
         ):
             generate_pmtiles_for_collection(collection_dir, tmp_path)
         versions_after = read_versions(collection_dir / "versions.json")
@@ -1424,7 +1283,6 @@ class TestGeneratePMTilesForCollection:
 
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
-            patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"),
             patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate),
             _patch(
                 "portolan_cli.viz.pmtiles.get_thumbnail_config",
@@ -1459,7 +1317,6 @@ class TestGeneratePMTilesForCollection:
 
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
-            patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"),
             patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate),
             patch("portolan_cli.viz.pmtiles.generate_vector_thumbnail", boom),
         ):
