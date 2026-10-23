@@ -2,8 +2,9 @@
 # Edit it there. Local changes are overwritten on the next sync.
 #
 # Puts every issue on the org project board. It removes labels and milestones
-# outside their canonical sets. The sets and rules live in portolan-ops, and
-# norms/repos.md documents both. Nothing here decides priority.
+# outside their canonical sets. It keeps one P0 to P3 priority label and
+# flags a body that skips its issue form. The sets and rules live in
+# portolan-ops, and norms/repos.md documents them.
 name: Issue governance
 
 on:

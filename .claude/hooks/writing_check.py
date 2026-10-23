@@ -22,9 +22,18 @@ model writes by default. A sentence over 20 words fails, which is the STE
 limit. Article dropping and noun clusters need part-of-speech data, so they
 advise or are absent.
 
-The checker denies only when it affirmatively found a blocking hit. Every
-other path exits zero and silent, because a false positive must never stop a
-person from filing an issue.
+An issue body must also carry the headings of the issue form its labels
+select, with every required section filled in. GitHub applies a form only in
+the web UI, so `gh issue create` skips it unless this hook holds the body to
+it. The forms come from the repo's .github/ISSUE_TEMPLATE, or from the org
+.github repo when the repo has none. scripts/issue_governance.py runs the
+same check again after the issue exists.
+
+A `gh issue create` or `gh pr create` whose body the hook cannot read is
+denied, with the fix in the message. So is an issue filed through `gh api`.
+Otherwise the checker denies only when it affirmatively found a blocking
+hit. An internal error exits zero and silent, because a bug here must never
+stop a person from filing an issue. Issue governance still checks the body.
 
 Standard library only: it runs in every repo with no install step.
 """
@@ -806,13 +815,377 @@ def _structure(doc: Doc, kind: str, per_line: dict[int, set[str]]) -> list[Findi
 
 
 # --------------------------------------------------------------------------
+# Issue forms
+# --------------------------------------------------------------------------
+#
+# GitHub applies an issue form only in the web UI. `gh issue create --body`
+# and the REST API skip it, and the body then has whatever headings its
+# author typed. This section reads the forms themselves and holds a body to
+# the headings the web form would write. The hook runs it before filing.
+# scripts/issue_governance.py imports it and runs it again after filing. A
+# form change needs no change here.
+
+PRIORITIES = ("P0", "P1", "P2", "P3")
+PRIORITY_HEADING = "Priority"
+NO_RESPONSE = "_No response_"
+FIELD_TYPES = ("textarea", "input", "dropdown")
+ORG = "portolan-sdi"
+FORMS_DIR = Path(".github") / "ISSUE_TEMPLATE"
+
+
+class FormField:
+    def __init__(
+        self,
+        label: str,
+        required: bool,
+        options: list[str],
+        multiple: bool = False,
+    ) -> None:
+        self.label = label
+        self.required = required
+        self.options = options
+        self.multiple = multiple
+
+
+class IssueForm:
+    def __init__(self, name: str, labels: list[str], fields: list[FormField]) -> None:
+        self.name = name
+        self.labels = labels
+        self.fields = fields
+
+
+_YAML_KEY_RE = re.compile(r"^([A-Za-z0-9_-]+):(?:\s+(.*))?$")
+
+
+def _yaml_scalar(raw: str) -> object:
+    """One scalar or flow sequence, with any trailing comment removed."""
+    raw = raw.strip()
+    if raw.startswith('"'):
+        end = 1
+        while end < len(raw) and raw[end] != '"':
+            end += 2 if raw[end] == "\\" else 1
+        return json.loads(raw[: end + 1])
+    if raw.startswith("'"):
+        m = re.match(r"'((?:[^']|'')*)'", raw)
+        return m.group(1).replace("''", "'") if m else raw
+    raw = re.sub(r"\s+#.*$", "", raw)
+    if raw.startswith("[") and raw.endswith("]"):
+        inner = raw[1:-1].strip()
+        if not inner:
+            return []
+        return [_yaml_scalar(part) for part in inner.split(",")]
+    if raw in ("true", "false"):
+        return raw == "true"
+    return raw
+
+
+def _yaml_load(text: str) -> object:
+    """Load the YAML subset that issue forms use.
+
+    The hook and the governance script run with no install step, so PyYAML
+    is out of reach. The subset covers block mappings, block sequences, flow
+    sequences of scalars, quoted and plain scalars, and folded or literal
+    block scalars. Block scalar whitespace and dates can differ from PyYAML.
+    No check reads them. test_writing_check.py compares the parsed form with
+    the form PyYAML gives, for every form ops ships.
+    """
+    lines = text.replace("\r\n", "\n").split("\n")
+    pos = 0
+
+    def indent(line: str) -> int:
+        return len(line) - len(line.lstrip(" "))
+
+    def significant() -> int | None:
+        """Indent of the next line that holds data, or None at the end."""
+        nonlocal pos
+        while pos < len(lines):
+            stripped = lines[pos].strip()
+            if stripped and not stripped.startswith("#"):
+                return indent(lines[pos])
+            pos += 1
+        return None
+
+    def block_scalar(style: str, parent: int) -> str:
+        nonlocal pos
+        out: list[str] = []
+        while pos < len(lines):
+            line = lines[pos]
+            if line.strip() and indent(line) <= parent:
+                break
+            out.append(line.strip())
+            pos += 1
+        while out and not out[-1]:
+            out.pop()
+        joiner = "\n" if style.startswith("|") else " "
+        return joiner.join(out)
+
+    def value_after_key(rest: str, level: int) -> object:
+        nonlocal pos
+        pos += 1
+        if rest and rest[0] in "|>":
+            return block_scalar(rest, level)
+        if rest:
+            value = _yaml_scalar(rest)
+            if isinstance(value, str) and not rest.startswith(("'", '"')):
+                # A plain scalar may continue on deeper lines.
+                more: list[str] = []
+                while (nxt := significant()) is not None and nxt > level:
+                    more.append(lines[pos].strip())
+                    pos += 1
+                value = " ".join([value, *more])
+            return value
+        nxt = significant()
+        if nxt is None:
+            return None
+        if nxt > level or (nxt == level and lines[pos].lstrip().startswith("- ")):
+            return block(nxt)
+        return None
+
+    def block(level: int) -> object:
+        if lines[pos].lstrip().startswith("-"):
+            return sequence(level)
+        return mapping(level)
+
+    def mapping(level: int) -> dict[str, object]:
+        out: dict[str, object] = {}
+        while (nxt := significant()) is not None and nxt == level:
+            stripped = lines[pos].strip()
+            if stripped.startswith("- "):
+                break
+            m = _YAML_KEY_RE.match(stripped)
+            if not m:
+                raise ValueError(f"line {pos + 1}: not a mapping key")
+            out[m.group(1)] = value_after_key(m.group(2) or "", level)
+        return out
+
+    def sequence(level: int) -> list[object]:
+        nonlocal pos
+        out: list[object] = []
+        while (nxt := significant()) is not None and nxt == level:
+            stripped = lines[pos].strip()
+            if not stripped.startswith("-"):
+                break
+            rest = stripped[1:].strip()
+            if not rest:
+                pos += 1
+                child = significant()
+                out.append(block(child) if child is not None else None)
+            elif _YAML_KEY_RE.match(rest) and not rest.startswith(("'", '"')):
+                # "- key: value" opens a mapping two columns in.
+                lines[pos] = " " * (level + 2) + rest
+                out.append(mapping(level + 2))
+            else:
+                out.append(_yaml_scalar(rest))
+                pos += 1
+        return out
+
+    start = significant()
+    return None if start is None else block(start)
+
+
+def parse_form(text: str, name: str = "") -> IssueForm | None:
+    """The labels and fields of one issue form, or None for another file."""
+    try:
+        data = _yaml_load(text)
+    except (ValueError, json.JSONDecodeError):
+        return None
+    return form_from_data(data, name)
+
+
+def form_from_data(data: object, name: str = "") -> IssueForm | None:
+    """The labels and fields of a loaded issue form."""
+    if not isinstance(data, dict) or not isinstance(data.get("body"), list):
+        return None
+    labels = data.get("labels") or []
+    if isinstance(labels, str):
+        labels = [part.strip() for part in labels.split(",")]
+    fields: list[FormField] = []
+    for item in data["body"]:
+        if not isinstance(item, dict) or item.get("type") not in FIELD_TYPES:
+            continue
+        attrs = item.get("attributes") or {}
+        checks = item.get("validations") or {}
+        if not isinstance(attrs, dict) or not attrs.get("label"):
+            continue
+        options = attrs.get("options") or []
+        fields.append(
+            FormField(
+                str(attrs["label"]),
+                bool(isinstance(checks, dict) and checks.get("required")),
+                [str(o) for o in options] if isinstance(options, list) else [],
+                bool(attrs.get("multiple")),
+            )
+        )
+    return IssueForm(name, [str(x) for x in labels], fields)
+
+
+def _norm_title(title: str) -> str:
+    return title.casefold().rstrip("?:").strip()
+
+
+def _sections(body: str) -> dict[str, str]:
+    """Each heading's text, keyed by normalized title. The first one wins."""
+    doc = Doc(body)
+    lines = doc.text.split("\n")
+    out: dict[str, str] = {}
+    for title, first, last in doc.section_bounds():
+        content = "\n".join(lines[first + 1 : last])
+        content = HTML_COMMENT_RE.sub("", content).strip()
+        out.setdefault(_norm_title(title), "" if content == NO_RESPONSE else content)
+    return out
+
+
+def _option_key(option: str) -> str:
+    """'P1: Fix next. ...' answers to 'P1' as well as to its full text."""
+    return option.split(":", 1)[0].strip()
+
+
+def _answers_option(value: str, field: FormField) -> bool:
+    """Whether the answer picks a listed option.
+
+    An option written as 'P1: Fix next. ...' also accepts any answer that
+    starts with its key, such as 'P1' or 'P1: Fix next.'.
+    """
+    first = value.strip().split("\n", 1)[0].strip()
+    picks = [p.strip() for p in first.split(",")] if field.multiple else [first]
+
+    def known(pick: str) -> bool:
+        for option in field.options:
+            if pick.casefold() == option.casefold():
+                return True
+            key = rf"{re.escape(_option_key(option))}(?![\w-])"
+            if ":" in option and re.match(key, pick, re.IGNORECASE):
+                return True
+        return False
+
+    return all(known(p) for p in picks if p)
+
+
+def _form_gaps(sections: dict[str, str], form: IssueForm) -> list[str]:
+    gaps: list[str] = []
+    for field in form.fields:
+        if not field.required:
+            continue
+        content = sections.get(_norm_title(field.label))
+        if content is None:
+            gaps.append(f'"### {field.label}" is missing')
+        elif not content:
+            gaps.append(f'"### {field.label}" is empty')
+        elif field.options and not _answers_option(content, field):
+            keys = ", ".join(_option_key(o) for o in field.options)
+            gaps.append(f'"### {field.label}" must be one of: {keys}')
+    return gaps
+
+
+def form_problems(body: str, labels: list[str], forms: list[IssueForm]) -> list[str]:
+    """Why the body fails every form its labels select. Empty when it passes.
+
+    A form applies when the issue carries every label the form sets. Two
+    forms can set the same label, as the QGIS plugin form and the bug form
+    both set `bug`, so the body passes when it satisfies any form that
+    applies.
+    """
+    labelled = [f for f in forms if f.labels]
+    candidates = [f for f in labelled if set(f.labels) <= set(labels)]
+    if not candidates:
+        choices = sorted({label for f in labelled for label in f.labels})
+        if not choices:
+            return []
+        listed = ", ".join(choices)
+        return [f"no issue form matches the labels. Add one with --label: {listed}"]
+    sections = _sections(body)
+    best: list[str] | None = None
+    for form in candidates:
+        gaps = _form_gaps(sections, form)
+        if not gaps:
+            return []
+        if best is None or len(gaps) < len(best):
+            best = [f"{form.name or 'the form'}: {gap}" for gap in gaps]
+    return best or []
+
+
+def form_headings(forms: list[IssueForm], labels: list[str]) -> list[str]:
+    """The headings, in order, of the first form the labels select."""
+    for form in forms:
+        if form.labels and set(form.labels) <= set(labels):
+            return [f"### {f.label}" for f in form.fields]
+    return []
+
+
+def priority_from_body(body: str) -> str | None:
+    """The P label the Priority section names, or None."""
+    content = _sections(body).get(_norm_title(PRIORITY_HEADING), "")
+    m = re.match(r"(P[0-3])\b", content)
+    return m.group(1) if m else None
+
+
+def _read_forms(paths: list[tuple[str, str]]) -> list[IssueForm]:
+    forms = []
+    for name, text in paths:
+        form = parse_form(text, name)
+        if form is not None:
+            forms.append(form)
+    return forms
+
+
+def local_forms(start: Path) -> list[IssueForm]:
+    """The forms in the repo that holds `start`, or none."""
+    for folder in (start, *start.parents):
+        forms_dir = folder / FORMS_DIR
+        if forms_dir.is_dir():
+            files = sorted(forms_dir.glob("*.y*ml"))
+            return _read_forms([(p.name, p.read_text("utf-8")) for p in files])
+        if (folder / ".git").exists():
+            return []
+    return []
+
+
+def remote_forms(repo: str) -> list[IssueForm]:
+    """The forms GitHub shows for `repo`: its own, else the org defaults.
+
+    Reads through `gh api`, which the agent filing the issue already uses.
+    """
+    import base64
+    import subprocess
+
+    owner = repo.split("/", 1)[0]
+    for source in (repo, f"{owner}/.github"):
+        base = f"repos/{source}/contents/{FORMS_DIR.as_posix()}"
+        command = ["gh", "api", base]
+        listing = subprocess.run(command, capture_output=True, text=True, check=False)
+        if listing.returncode != 0:
+            continue
+        found = []
+        for entry in json.loads(listing.stdout):
+            name = entry.get("name", "")
+            if not name.endswith((".yml", ".yaml")):
+                continue
+            blob = subprocess.run(
+                ["gh", "api", f"{base}/{name}", "--jq", ".content"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            found.append((name, base64.b64decode(blob.stdout).decode("utf-8")))
+        forms = _read_forms(found)
+        if forms:
+            return forms
+    return []
+
+
+# --------------------------------------------------------------------------
 # Reporting
 # --------------------------------------------------------------------------
 
 MAX_SHOWN = 10
 
 
-def report(findings: list[Finding], labels: list[str], kind: str) -> str:
+def report(
+    findings: list[Finding],
+    labels: list[str],
+    kind: str,
+    hint: str = "",
+) -> str:
     blocking = [f for f in findings if f.blocking]
     advisory = [f for f in findings if not f.blocking]
     noun = "pull request" if kind == "pr" else "issue"
@@ -829,12 +1202,16 @@ def report(findings: list[Finding], labels: list[str], kind: str) -> str:
         lines += ["", f"Advisory, not blocking: {len(advisory)} ({note})."]
     if labels:
         lines += ["", f"Suppressions honored: {', '.join(labels)}."]
+    if hint:
+        lines += ["", hint]
     lines += [
         "",
         "Suppress a false positive with a comment on the line above:",
         "  <!-- ste-ok: RULE_ID why this one is correct -->",
-        "Rules: writing_check.py --print-rules",
     ]
+    if any(f.rule == "FORM" for f in blocking):
+        lines.append("A FORM problem cannot be suppressed. Fill in the section.")
+    lines.append("Rules: writing_check.py --print-rules")
     return "\n".join(lines)
 
 
@@ -843,7 +1220,110 @@ def report(findings: list[Finding], labels: list[str], kind: str) -> str:
 # --------------------------------------------------------------------------
 
 GH_RE = re.compile(r"\bgh\s+(issue|pr)\s+(create|edit)\b")
+GH_CREATE_RE = re.compile(r"\bgh\s+(issue|pr)\s+create\b")
 SHELL_UNSAFE_RE = re.compile(r"<<|\$\(|`")
+# An issue filed through the API skips the form, the labels, and this hook.
+_API_REPO = r"\bgh\s+api\b[^\n|;&]*?\brepos/[^/\s'\"]+/[^/\s'\"]+"
+GH_API_ISSUE_RE = re.compile(_API_REPO + r"/issues/?(?=[\s'\"?]|$)")
+GH_API_WRITE_RE = re.compile(
+    r"(?:^|\s)(?:-f|-F|--field|--raw-field|--input)(?:[\s=]|$)"
+    r"|(?:-X|--method)[\s=]*(?:POST|post)\b"
+)
+GH_API_GET_RE = re.compile(r"(?:-X|--method)[\s=]*(?:GET|get)\b")
+GH_GRAPHQL_ISSUE_RE = re.compile(r"\bgh\s+api\s+graphql\b.*\bcreateIssue\b", re.DOTALL)
+SHELL_OPERATORS = frozenset({"&&", "||", ";", "|"})
+
+
+def api_creates_issue(command: str) -> bool:
+    """Whether the command files an issue through `gh api`."""
+    if GH_GRAPHQL_ISSUE_RE.search(command):
+        return True
+    m = GH_API_ISSUE_RE.search(command)
+    if not m:
+        return False
+    rest = command[m.start() :].split("\n", 1)[0]
+    return bool(GH_API_WRITE_RE.search(rest)) and not GH_API_GET_RE.search(rest)
+
+
+def create_args(command: str) -> tuple[str, list[str]] | None:
+    """The kind and the flags of a `gh issue create` or `gh pr create` call."""
+    if not GH_CREATE_RE.search(command):
+        return None
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return "issue" if "gh issue" in command else "pr", []
+    for i in range(len(argv) - 2):
+        if argv[i] == "gh" and argv[i + 2] == "create":
+            kind = "pr" if argv[i + 1] == "pr" else "issue"
+            flags: list[str] = []
+            for token in argv[i + 3 :]:
+                if token in SHELL_OPERATORS:
+                    break
+                flags.append(token)
+            return kind, flags
+    return None
+
+
+def flag_values(flags: list[str], *names: str) -> list[str]:
+    """Every value given to any of `names`, as `--x v`, `-x v`, or `--x=v`."""
+    out: list[str] = []
+    for i, token in enumerate(flags):
+        if token in names and i + 1 < len(flags):
+            out.append(flags[i + 1])
+        for name in names:
+            if name.startswith("--") and token.startswith(name + "="):
+                out.append(token.split("=", 1)[1])
+    return out
+
+
+def command_labels(flags: list[str]) -> list[str]:
+    raw = flag_values(flags, "--label", "-l")
+    return [part.strip() for value in raw for part in value.split(",") if part.strip()]
+
+
+def forms_for(flags: list[str]) -> list[IssueForm]:
+    """The forms GitHub applies to the repo this command files into."""
+    repos = flag_values(flags, "--repo", "-R")
+    if repos:
+        return remote_forms(repos[-1])
+    return local_forms(Path.cwd()) or remote_forms(f"{ORG}/.github")
+
+
+def deny(reason: str) -> int:
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": reason,
+                }
+            }
+        )
+    )
+    return 0
+
+
+UNREADABLE = (
+    "The writing hook cannot read this {noun} body. It reads only a literal "
+    "--body or a --body-file path that exists when the command starts. Write "
+    "the body to a file in one command. Then run gh {noun_cmd} create with "
+    "--body-file <path> in the next command. A heredoc, $(...), backticks, "
+    "and --body-file - all hide the body."
+)
+
+FORMS_UNREADABLE = (
+    "The writing hook cannot read the issue forms for this repo. It reads "
+    "them from .github/ISSUE_TEMPLATE, or through gh api. Check that gh is "
+    "logged in, then retry."
+)
+
+API_ISSUE = (
+    "Do not file issues through gh api. That path skips the issue form and "
+    "this check. Use gh issue create --body-file <path> with the form's type "
+    "label, for example --label bug."
+)
 
 
 def body_from_command(command: str) -> tuple[str, str] | None:
@@ -876,25 +1356,36 @@ def run_hook() -> int:
     if payload.get("tool_name") != "Bash":
         return 0
     command = payload.get("tool_input", {}).get("command", "")
-    found = body_from_command(command)
+    if api_creates_issue(command):
+        return deny(API_ISSUE)
+    created = create_args(command)
+    if created and ("--web" in created[1] or "-w" in created[1]):
+        return 0  # The browser applies the form itself.
+    try:
+        found = body_from_command(command)
+    except OSError:
+        found = None
     if not found:
+        if created:
+            noun = "pull request" if created[0] == "pr" else "issue"
+            return deny(UNREADABLE.format(noun=noun, noun_cmd=created[0]))
         return 0
     kind, body = found
     findings, labels = review(body, kind)
+    hint = ""
+    if created and created[0] == "issue":
+        flags = created[1]
+        forms = forms_for(flags)
+        if not forms:
+            return deny(FORMS_UNREADABLE)
+        problems = form_problems(body, command_labels(flags), forms)
+        findings.extend(Finding("FORM", 1, 1, p, "") for p in problems)
+        wanted = form_headings(forms, command_labels(flags))
+        if problems and wanted:
+            hint = "The form wants these headings, in order: " + " | ".join(wanted)
     if not any(f.blocking for f in findings):
         return 0
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": report(findings, labels, kind),
-                }
-            }
-        )
-    )
-    return 0
+    return deny(report(findings, labels, kind, hint))
 
 
 def main(argv: list[str] | None = None) -> int:
