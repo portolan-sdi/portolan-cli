@@ -280,6 +280,12 @@ jobs:
             --benchmark-json=benchmark-results.json \
             "${compare[@]}" \
             -v
+          if [ "$RECORD_BASELINE" = "true" ]; then
+            # The compare reads only each benchmark's summary stats. The raw
+            # per-round timings in stats.data are 90% of the file, so a
+            # recorded baseline drops them.
+            uv run python -c "import json, pathlib; p = pathlib.Path('benchmark-results.json'); d = json.loads(p.read_text()); [b['stats'].pop('data', None) for b in d['benchmarks']]; p.write_text(json.dumps(d, indent=4) + '\n')"
+          fi
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -271,15 +271,18 @@ def _requires_catalog_invariants(root: Path) -> str:
 
 
 DUPLICATE_MODULE = "portolan_cli/_dup_selftest.py"
-# About 40 jscpd tokens. G1 lowers minTokens from 50 to 35, so this clone sits
-# between the two thresholds.
+# About 70 jscpd tokens, above the 50-token minTokens in .jscpd.json.
 _DUPLICATE_BODY = """
     total = 0
     for value in values:
         if value > limit:
             total += value * 2
+        elif value < -limit:
+            total -= value * 3
         else:
             total -= value
+    if total > limit * 10:
+        return limit * 10
     return total
 """
 
@@ -292,11 +295,11 @@ def _apply_duplicate_block(root: Path, faulty: bool) -> None:
     (root / DUPLICATE_MODULE).write_text(source, encoding="utf-8")
 
 
-def _requires_jscpd_40(root: Path) -> str:
+def _requires_jscpd_50(root: Path) -> str:
     tokens = json.loads((root / ".jscpd.json").read_text(encoding="utf-8"))["minTokens"]
-    if tokens <= 40:
+    if tokens <= 50:
         return ""
-    return f"needs jscpd minTokens 35, found {tokens} (G1, #1035)"
+    return f"needs jscpd minTokens 50 or lower, found {tokens}"
 
 
 def _apply_ci_success_wiring(root: Path, faulty: bool) -> None:
@@ -384,7 +387,7 @@ FAULTS = (
                 )
             ),
         ),
-        requires=_requires_jscpd_40,
+        requires=_requires_jscpd_50,
     ),
     Fault(
         "ci-success-wiring",

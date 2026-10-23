@@ -227,6 +227,8 @@ def test_benchmark_regressions_fail_the_nightly_run() -> None:
     assert "--benchmark-compare-fail=min:20%" in run
     assert "pytest-benchmark compare" not in run
     assert "cp benchmark-results.json" not in run
+    # A recorded baseline drops the raw per-round timings.
+    assert "b['stats'].pop('data', None)" in run
 
 
 def test_benchmark_baseline_exists_and_parses() -> None:
@@ -236,6 +238,8 @@ def test_benchmark_baseline_exists_and_parses() -> None:
     assert baseline["benchmarks"]
     assert baseline["machine_info"]["machine"] == "x86_64"
     assert baseline["commit_info"]["id"]
+    assert all("min" in bench["stats"] for bench in baseline["benchmarks"])
+    assert not [bench["name"] for bench in baseline["benchmarks"] if "data" in bench["stats"]]
 
 
 # ---------------------------------------------------------------------------
