@@ -32,7 +32,7 @@ from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.config import load_config
+from portolan_cli.config import load_catalog_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -115,12 +115,6 @@ def _normalize_extension(ext: str) -> str:
     return ext
 
 
-def _get_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
-    """Safely get a dict value, returning empty dict if not a dict."""
-    value = data.get(key, {})
-    return value if isinstance(value, dict) else {}
-
-
 def _get_list(data: dict[str, Any], key: str) -> list[Any]:
     """Safely get a list value, returning empty list if not a list."""
     value = data.get(key, [])
@@ -149,14 +143,9 @@ def get_conversion_overrides(catalog_path: Path) -> ConversionOverrides:
     Returns:
         ConversionOverrides instance. Returns empty overrides if no config exists.
     """
-    config = load_config(catalog_path)
-
-    conversion = _get_dict(config, "conversion")
-    if not conversion:
-        return ConversionOverrides()
-
-    extensions = _get_dict(conversion, "extensions")
-    paths = _get_dict(conversion, "paths")
+    config = load_catalog_config(catalog_path)
+    extensions = config.section("conversion", "extensions")
+    paths = config.section("conversion", "paths")
 
     return ConversionOverrides(
         extensions_convert=_parse_extensions(_get_list(extensions, "convert")),
@@ -180,7 +169,7 @@ def get_handler_pins(catalog_path: Path) -> dict[str, str]:
     Returns:
         Lowercase extension with a leading dot, to handler name.
     """
-    handlers = _get_dict(_get_dict(load_config(catalog_path), "conversion"), "handlers")
+    handlers = load_catalog_config(catalog_path).section("conversion", "handlers")
     pins: dict[str, str] = {}
     for extension, name in handlers.items():
         ext = str(extension).strip().lower()
@@ -489,13 +478,7 @@ def get_cog_settings(catalog_path: Path | None) -> CogSettings:
         return override
     if catalog_path is None:
         return CogSettings()
-    config = load_config(catalog_path)
-
-    conversion = _get_dict(config, "conversion")
-    if not conversion:
-        return CogSettings()
-
-    cog = _get_dict(conversion, "cog")
+    cog = load_catalog_config(catalog_path).section("conversion", "cog")
     if not cog:
         return CogSettings()
 
@@ -718,13 +701,7 @@ def get_vector_settings(catalog_path: Path | None) -> VectorSettings:
         return override
     if catalog_path is None:
         return VectorSettings()
-    config = load_config(catalog_path)
-
-    conversion = _get_dict(config, "conversion")
-    if not conversion:
-        return VectorSettings()
-
-    vector = _get_dict(conversion, "vector")
+    vector = load_catalog_config(catalog_path).section("conversion", "vector")
     if not vector:
         return VectorSettings()
 

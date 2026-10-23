@@ -125,11 +125,8 @@ conversion:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
 
-        set_setting(
-            tmp_path,
-            "conversion",
-            {"extensions": {"convert": ["fgb"], "preserve": ["gpkg"]}},
-        )
+        set_setting(tmp_path, "conversion.extensions.convert", ["fgb"])
+        set_setting(tmp_path, "conversion.extensions.preserve", "gpkg")
 
         config = load_config(tmp_path)
         assert config["conversion"]["extensions"]["convert"] == ["fgb"]
