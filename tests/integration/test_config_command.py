@@ -378,7 +378,6 @@ class TestDottedKeysReachTheReaders:
         import threading
 
         import pyarrow.parquet as pq
-
         from tests.docs.philadelphia_arcgis_server import create_server
 
         fixtures = Path(__file__).parent.parent / "fixtures" / "realdata" / "philadelphia-housing"
