@@ -1202,7 +1202,7 @@ class TestOrphanCleanup:
         test_file.write_bytes(b"test data")
 
         with patch("portolan_cli.sync.push.obs.put_async", new_callable=AsyncMock) as mock_put:
-            mock_put.return_value = None
+            mock_put.return_value = {"e_tag": "e1", "version": None}
 
             mock_store = MagicMock()
             assets = [test_file]
@@ -1216,8 +1216,7 @@ class TestOrphanCleanup:
 
         assert files_uploaded == 1
         assert errors == []
-        assert len(uploaded_keys) == 1
-        assert "data.parquet" in uploaded_keys[0]
+        assert uploaded_keys == ["catalog/data.parquet"]
 
     @pytest.mark.unit
     def test_cleanup_deletes_uploaded_assets(self) -> None:
@@ -1286,7 +1285,7 @@ class TestProgressReporting:
         test_file.write_bytes(b"test data")
 
         with patch("portolan_cli.sync.push.obs.put_async", new_callable=AsyncMock) as mock_put:
-            mock_put.return_value = None
+            mock_put.return_value = {"e_tag": "e1", "version": None}
 
             mock_store = MagicMock()
             assets = [test_file]

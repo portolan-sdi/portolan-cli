@@ -656,17 +656,48 @@ async def _back_up(
     return {key: backup for key, backup in zip(keys, copies, strict=True) if backup}
 
 
-async def _drop_backups(store: ObjectStore, backups: dict[str, str], *, restore: bool) -> None:
-    """Delete each backup key. With ``restore``, first copy it back over its key."""
-    if restore and backups:
+async def _drop_backups(
+    store: ObjectStore,
+    backups: dict[str, str],
+    *,
+    restore_over: dict[str, str | None] | None = None,
+) -> None:
+    """Delete each backup key.
+
+    ``restore_over`` maps each key that this push wrote to the ETag of that
+    write. With it, a backup first goes back over its key if the key still
+    holds that ETag. Another key keeps its bytes: this push did not write it,
+    or another writer wrote it after this push (#971).
+    """
+    if restore_over is not None and backups:
         warn(f"Restoring {len(backups)} overwritten key(s) from the backups...")
     for key, backup in backups.items():
         try:
-            if restore:
+            if (
+                restore_over is not None
+                and key in restore_over
+                and await _remote_etag(store, key) == restore_over[key]
+            ):
                 await obs.copy_async(store, backup, key)
             await obs.delete_async(store, backup)
         except Exception as e:
             warn(f"Failed to restore or delete the backup of {key} at {backup}: {e}")
+
+
+async def _remote_names_snapshot(
+    store: ObjectStore, prefix: str, collection: str, local_data: dict[str, Any]
+) -> bool:
+    """Return True if the remote versions.json names the local current snapshot.
+
+    A second run of the same push writes the same bytes to each key. When it
+    wins the race, a restore from the backups breaks its manifest.
+    """
+    try:
+        remote, _ = await _fetch_remote_versions_async(store, prefix, collection)
+    except Exception:
+        return False
+    local = _snapshot_hashes(_current_snapshot(local_data))
+    return _snapshot_hashes(_current_snapshot(remote)) == local
 
 
 def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> None:
@@ -1378,6 +1409,7 @@ async def _upload_assets_async(
     suppress_progress: bool = False,
     verbose: bool = False,
     adaptive: bool = True,
+    written: dict[str, str | None] | None = None,
 ) -> tuple[int, list[str], list[str], UploadMetrics]:
     """Upload asset files to object storage with async concurrent uploads.
 
@@ -1401,11 +1433,13 @@ async def _upload_assets_async(
         verbose: If True, print per-file upload details.
         adaptive: If True, raise concurrency from a slow start while the store
             keeps up (issue #344). False holds ``concurrency`` fixed.
+        written: A dict that receives the ETag of each put, by key.
 
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys, metrics).
     """
     metrics = UploadMetrics()
+    written = {} if written is None else written
 
     if not assets:
         return 0, [], [], metrics
@@ -1426,7 +1460,8 @@ async def _upload_assets_async(
         size_bytes = file_sizes[file_path]
         start = time.perf_counter()
         with span("push.upload_file", key=target_key, bytes=size_bytes, multipart=True):
-            put_object(store, target_key, file_path, max_concurrency=max_conc)
+            put = put_object(store, target_key, file_path, max_concurrency=max_conc)
+        written[target_key] = put.get("e_tag")
         duration = time.perf_counter() - start
         return target_key, size_bytes, duration
 
@@ -1453,7 +1488,8 @@ async def _upload_assets_async(
         # Small file: use put_async (more efficient, no multipart needed)
         start = time.perf_counter()
         with span("push.upload_file", key=target_key, bytes=size_bytes, multipart=False):
-            await put_object_async(store, target_key, asset_path.read_bytes())
+            put = await put_object_async(store, target_key, asset_path.read_bytes())
+        written[target_key] = put.get("e_tag")
         duration = time.perf_counter() - start
         return target_key, size_bytes, duration
 
@@ -1535,6 +1571,7 @@ async def _upload_stac_files_async(
     concurrency: int = 50,
     json_mode: bool = False,
     verbose: bool = False,
+    written: dict[str, str | None] | None = None,
 ) -> tuple[int, list[str], list[str]]:
     """Upload STAC metadata files asynchronously.
 
@@ -1552,10 +1589,12 @@ async def _upload_stac_files_async(
         concurrency: Maximum concurrent uploads.
         json_mode: If True, suppress progress bar.
         verbose: If True, print per-file upload details.
+        written: A dict that receives the ETag of each put, by key.
 
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys).
     """
+    written = {} if written is None else written
     errors: list[str] = []
     uploaded_keys: list[str] = []
 
@@ -1601,7 +1640,8 @@ async def _upload_stac_files_async(
                         content, destination, collection_path
                     )
 
-                await put_object_async(store, target_key, content)
+                put = await put_object_async(store, target_key, content)
+                written[target_key] = put.get("e_tag")
                 return target_key, file_size
             except Exception as e:
                 error_msg = f"Failed to upload {file_path}: {e}"
@@ -1772,7 +1812,7 @@ async def _upload_metadata_files_async(
     include_catalog_root: bool = False,
     extra_files: list[Path] | None = None,
     files: list[Path] | None = None,
-    uploaded_keys: list[str] | None = None,
+    written: dict[str, str | None] | None = None,
     concurrency: int = 50,
     verbose: bool = False,
 ) -> tuple[int, list[str]]:
@@ -1794,7 +1834,7 @@ async def _upload_metadata_files_async(
             the intermediate catalogs.
         files: The files to upload. None discovers them. The upload phase of
             a push passes the files that its rollback plan already names.
-        uploaded_keys: A list that receives the key of each upload that succeeds.
+        written: A dict that receives the ETag of each put, by key.
         concurrency: Maximum concurrent uploads.
         verbose: If True, print per-file upload details.
 
@@ -1812,6 +1852,7 @@ async def _upload_metadata_files_async(
     if not metadata_files:
         return 0, []
 
+    written = {} if written is None else written
     errors: list[str] = []
     semaphore = asyncio.Semaphore(concurrency)
 
@@ -1822,9 +1863,8 @@ async def _upload_metadata_files_async(
                 rel_path = file_path.relative_to(catalog_root)
                 content = file_path.read_bytes()
                 key = _target_key(catalog_root, prefix, file_path)
-                await put_object_async(store, key, content)
-                if uploaded_keys is not None:
-                    uploaded_keys.append(key)
+                put = await put_object_async(store, key, content)
+                written[key] = put.get("e_tag")
                 if verbose:
                     detail(f" Uploaded {rel_path} ({len(content)} bytes)")
                 return True
@@ -1919,11 +1959,12 @@ async def _execute_push_uploads_async(
     list_prefix = f"{prefix}/{collection}".lstrip("/")
     created = await _absent_keys(store, planned, list_prefix, concurrency)
     backups = await _back_up(store, [k for k in planned if k not in created], prefix, concurrency)
-    uploaded_keys: list[str] = []
+    written: dict[str, str | None] = {}
+    files_uploaded, metrics = 0, UploadMetrics()
 
     async def failed(errors: list[str], metadata_errors: list[str] | None = None) -> PushResult:
-        await _drop_backups(store, backups, restore=True)
-        _cleanup_uploaded_assets(store, [k for k in uploaded_keys if k in created])
+        await _drop_backups(store, backups, restore_over=written)
+        _cleanup_uploaded_assets(store, [k for k in written if k in created])
         return PushResult(
             success=False,
             files_uploaded=files_uploaded,
@@ -1933,93 +1974,102 @@ async def _execute_push_uploads_async(
             metrics=metrics,
         )
 
-    with span("push.assets", collection=collection) as stage:
-        # Upload assets first (async, manifest-last pattern)
-        # chunk_concurrency now properly limits per-file multipart parallelism
-        # for files >5MB (Issue #344)
-        files_uploaded, upload_errors, asset_keys, metrics = await _upload_assets_async(
-            store,
-            catalog_root,
-            prefix,
-            assets,
-            concurrency=concurrency,
-            chunk_concurrency=chunk_concurrency,
-            json_mode=json_mode,
-            suppress_progress=suppress_progress,
-            verbose=verbose,
-            adaptive=adaptive,
-        )
-        uploaded_keys.extend(asset_keys)
-        stage.set(**metrics.to_attrs())
-
-    if upload_errors:
-        error("Asset upload failed, aborting push")
-        return await failed(upload_errors)
-
-    # Upload STAC metadata files (async)
-    with span("push.stac_files", collection=collection):
-        stac_uploaded, stac_errors, stac_keys = await _upload_stac_files_async(
-            store,
-            catalog_root,
-            prefix,
-            stac_files,
-            destination=destination,
-            concurrency=concurrency,
-            json_mode=json_mode,
-            verbose=verbose,
-        )
-        uploaded_keys.extend(stac_keys)
-        files_uploaded += stac_uploaded
-
-        if stac_errors:
-            error("STAC metadata upload failed, aborting push")
-            return await failed(stac_errors)
-
-    # Upload metadata files (style.json, thumbnails, etc.) - Issue #426
-    # This happens after STAC files, before versions.json (manifest-last)
-    with span("push.metadata", collection=collection):
-        metadata_uploaded, metadata_errors = await _upload_metadata_files_async(
-            store,
-            catalog_root,
-            prefix,
-            collection,
-            files=metadata_files,
-            uploaded_keys=uploaded_keys,
-            concurrency=concurrency,
-            verbose=verbose,
-        )
-        files_uploaded += metadata_uploaded
-
-    # Metadata errors are warnings, not fatal (push continues)
-    # But we surface them in PushResult so callers can act on partial sync
-    all_metadata_errors: list[str] = list(metadata_errors)
-
-    # Upload versions.json (async, manifest-last)
-    with span("push.versions_json", collection=collection):
-        info("Uploading versions.json...")
-        try:
-            await _upload_versions_json_async(
-                store, prefix, collection, local_data, etag, force=force
+    try:
+        with span("push.assets", collection=collection) as stage:
+            # Upload assets first (async, manifest-last pattern)
+            # chunk_concurrency now properly limits per-file multipart parallelism
+            # for files >5MB (Issue #344)
+            files_uploaded, upload_errors, _, metrics = await _upload_assets_async(
+                store,
+                catalog_root,
+                prefix,
+                assets,
+                concurrency=concurrency,
+                chunk_concurrency=chunk_concurrency,
+                json_mode=json_mode,
+                suppress_progress=suppress_progress,
+                verbose=verbose,
+                adaptive=adaptive,
+                written=written,
             )
-            if diff.local_only:
-                msg = f"Pushed {len(diff.local_only)} version(s): {diff.local_only}"
-            else:
-                # Force re-push with no version delta refreshes metadata only (Issue #496)
-                msg = "Refreshed metadata (no new versions)"
-            if metrics.total_bytes > 0:
-                msg += f" ({format_file_size(metrics.total_bytes)}, {format_speed(metrics.average_speed)})"
-            success(msg)
-        except PushConflictError:
-            # Another writer won the race. Its versions.json still describes the
-            # old bytes of each key that this push overwrote, so the backups go
-            # back. It can own a key that this push created, so rollback deletes
-            # none (#971). Such a key stays as an orphan that no manifest names.
-            await _drop_backups(store, backups, restore=True)
-            raise
-        except Exception as e:
-            error(f"Failed to upload versions.json: {e}")
-            return await failed([f"Failed to upload versions.json: {e}"], all_metadata_errors)
-        await _drop_backups(store, backups, restore=False)
+            stage.set(**metrics.to_attrs())
+
+        if upload_errors:
+            error("Asset upload failed, aborting push")
+            return await failed(upload_errors)
+
+        # Upload STAC metadata files (async)
+        with span("push.stac_files", collection=collection):
+            stac_uploaded, stac_errors, _ = await _upload_stac_files_async(
+                store,
+                catalog_root,
+                prefix,
+                stac_files,
+                destination=destination,
+                concurrency=concurrency,
+                json_mode=json_mode,
+                verbose=verbose,
+                written=written,
+            )
+            files_uploaded += stac_uploaded
+
+            if stac_errors:
+                error("STAC metadata upload failed, aborting push")
+                return await failed(stac_errors)
+
+        # Upload metadata files (style.json, thumbnails, etc.) - Issue #426
+        # This happens after STAC files, before versions.json (manifest-last)
+        with span("push.metadata", collection=collection):
+            metadata_uploaded, metadata_errors = await _upload_metadata_files_async(
+                store,
+                catalog_root,
+                prefix,
+                collection,
+                files=metadata_files,
+                written=written,
+                concurrency=concurrency,
+                verbose=verbose,
+            )
+            files_uploaded += metadata_uploaded
+
+        # Metadata errors are warnings, not fatal (push continues)
+        # But we surface them in PushResult so callers can act on partial sync
+        all_metadata_errors: list[str] = list(metadata_errors)
+
+        # Upload versions.json (async, manifest-last)
+        with span("push.versions_json", collection=collection):
+            info("Uploading versions.json...")
+            try:
+                await _upload_versions_json_async(
+                    store, prefix, collection, local_data, etag, force=force
+                )
+            except PushConflictError:
+                # Another writer won the race. Rollback deletes no key, because
+                # that writer can own a key that this push created (#971). A key
+                # that still holds the bytes of this push gets its backup back,
+                # unless the winning manifest names the local snapshot.
+                same = await _remote_names_snapshot(store, prefix, collection, local_data)
+                await _drop_backups(store, backups, restore_over=None if same else written)
+                raise
+            except Exception as e:
+                error(f"Failed to upload versions.json: {e}")
+                return await failed([f"Failed to upload versions.json: {e}"], all_metadata_errors)
+    except PushConflictError:
+        raise
+    except BaseException:
+        # An interrupt or an unexpected error stops the push before its
+        # versions.json names the new bytes, so the push rolls back.
+        await failed([])
+        raise
+    await _drop_backups(store, backups)
+    if diff.local_only:
+        msg = f"Pushed {len(diff.local_only)} version(s): {diff.local_only}"
+    else:
+        # Force re-push with no version delta refreshes metadata only (Issue #496)
+        msg = "Refreshed metadata (no new versions)"
+    if metrics.total_bytes > 0:
+        msg += f" ({format_file_size(metrics.total_bytes)}, {format_speed(metrics.average_speed)})"
+    success(msg)
 
     # Upload READMEs last (async, parallel)
     with span("push.readmes", collection=collection):

@@ -326,3 +326,89 @@ def test_list_permission_denied_warns_once(
     warnings = [line for line in result.output.splitlines() if "s3:ListBucket" in line]
     assert len(warnings) == 1, result.output
     assert listed != []
+
+
+def test_conflict_keeps_the_bytes_that_the_other_writer_wrote_later(
+    pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
+) -> None:
+    """A push that loses the race restores no key that the other writer wrote after it.
+
+    The other writer writes a scene and its manifest between the uploads of
+    this push and its versions.json write. The scene then holds the bytes
+    that the winning manifest names. A restore from the backup puts the bytes
+    of version 1.0.0 back over them.
+    """
+    manifest_key = bucket.key("imagery/versions.json")
+    scene_key = bucket.key("imagery/scene-a/rgb.tif")
+    winner_bytes = b"bytes of the other writer"
+
+    def other_push() -> None:
+        manifest = json.loads(_other_writer_manifest(bucket, manifest_key))
+        for asset in manifest["versions"][-1]["assets"].values():
+            if bucket.key(asset["href"]) == scene_key:
+                asset["sha256"] = hashlib.sha256(winner_bytes).hexdigest()
+        bucket.second_writer(scene_key, winner_bytes)
+        bucket.second_writer(manifest_key, json.dumps(manifest).encode())
+
+    fault_store.arm(1, when=lambda key: key == manifest_key, action=other_push)
+
+    second = _push(run_cli, pushed, bucket)
+
+    assert second.exit_code == 1, second.output
+    assert CONFLICT_MESSAGE in second.output
+    assert _bytes_that_disagree_with_the_manifest(bucket, "imagery", {scene_key}) == {}
+    assert sorted(key for key in bucket.keys() if "/.portolan/" in key) == []
+
+
+def test_interrupted_push_restores_the_keys_and_drops_the_backups(
+    pushed: Path, bucket: Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A push that stops on an interrupt after its uploads leaves push 1 readable.
+
+    The interrupt comes after the Assets and the STAC files upload, before the
+    versions.json write. The bucket then holds the keys and the bytes of push 1,
+    and no backup key.
+    """
+    import asyncio
+
+    from portolan_cli.sync import push as push_module
+
+    before = bucket.keys()
+
+    async def interrupt(*_args: Any, **_kwargs: Any) -> Any:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(push_module, "_upload_metadata_files_async", interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        asyncio.run(push_module.push_async(pushed, "imagery", bucket.url))
+
+    assert bucket.keys() == before
+    assert _bytes_that_disagree_with_the_manifest(bucket, "imagery", before) == {}
+
+
+def test_conflict_with_a_push_of_the_same_version_restores_nothing(
+    pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
+) -> None:
+    """Two pushes of one local version race. The loser keeps the bytes that both wrote.
+
+    The other writer publishes the local versions.json of this push, as a
+    second run of the same push does. Each written key then already holds
+    the bytes that the winning manifest names.
+    """
+    manifest_key = bucket.key("imagery/versions.json")
+    before = bucket.keys()
+    calls_before = len(fault_store.calls)
+    local_manifest = (pushed / "imagery" / "versions.json").read_bytes()
+
+    def same_push() -> None:
+        bucket.second_writer(manifest_key, local_manifest)
+
+    fault_store.arm(1, when=lambda key: key == manifest_key, action=same_push)
+
+    second = _push(run_cli, pushed, bucket)
+
+    assert second.exit_code == 1, second.output
+    assert CONFLICT_MESSAGE in second.output
+    written = set(fault_store.keys()[calls_before:]) & before
+    assert _bytes_that_disagree_with_the_manifest(bucket, "imagery", written) == {}
