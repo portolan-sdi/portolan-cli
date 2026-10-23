@@ -36,9 +36,14 @@ ISSUE_KEY = re.compile(r"^#(\d+)$")
 OWNERS = frozenset({"A", "B", "C", "D", "E", "F", "G1", "G2", "G3", "G4", "spec", "none"})
 # A scenario pin may name a designed result instead of an issue. Each entry is
 # a result the spec intends, so no fix will remove it.
-DESIGN_REASONS = frozenset({"host unset by design"})
+DESIGN_REASONS = frozenset(
+    {
+        "host unset by design",
+        "single COG layout: spec and CLI disagree (PTL-COL-001), maintainer decision",
+    }
+)
 
-EXPECTED_COUNTS = {"xfail": 39, "invariant": 7, "config-key": 6}
+EXPECTED_COUNTS = {"xfail": 39, "invariant": 8, "config-key": 6}
 
 
 def _sources() -> dict[Path, ast.Module]:

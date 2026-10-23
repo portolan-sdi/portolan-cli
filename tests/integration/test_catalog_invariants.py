@@ -36,6 +36,9 @@ from tests.properties.test_rebuild_idempotence import shrink_geoparquet
 
 if TYPE_CHECKING:
     from tests.catalog_invariants import RunCli
+    from tests.conftest import CliHarness
+
+STALE_REASON = "catalog_invariants: a clean root that proves the stale-exemption check"
 
 pytestmark = pytest.mark.integration
 
@@ -327,6 +330,23 @@ class TestEachCodeFires:
         # The override and the stored bbox agree and still contain the item,
         # but the data reaches [2, 2].
         assert codes(check_catalog_invariants(root)) == {"S-EXTENT-NOT-STALE"}
+
+    def test_a_stale_exemption_fails_the_teardown(
+        self,
+        tmp_path: Path,
+        run_cli: CliHarness,
+        build_damaged_catalog: Callable[[Path, str], Path],
+    ) -> None:
+        """An exempt root that breaks no invariant fails, so a fixed bug drops its exemption."""
+        root = build_damaged_catalog(tmp_path / "catalog", STALE_REASON)
+        run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
+
+        with pytest.raises(pytest.fail.Exception) as raised:
+            run_cli.verify()
+
+        assert str(raised.value) == f"{root.resolve()}: exemption no longer needed: {STALE_REASON}"
+        # The root is clean, so the teardown check passes without the exemption.
+        run_cli.exempt.clear()
 
     def test_the_command_line_entry_point_exits_1_on_a_violation(
         self,

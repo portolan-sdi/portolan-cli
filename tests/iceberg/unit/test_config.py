@@ -70,6 +70,10 @@ def test_create_catalog_returns_catalog_instance(tmp_path, monkeypatch):
     """create_catalog() should return a working Catalog instance."""
     from pyiceberg.catalog import Catalog
 
+    # With no TYPE in the environment, create_catalog keeps the SQLite default
+    # and puts .portolan/iceberg.db in the working directory.
+    monkeypatch.chdir(tmp_path)
+
     monkeypatch.setenv(
         "PYICEBERG_CATALOG__PORTOLAKE__URI",
         f"sqlite:///{tmp_path}/catalog.db",
@@ -86,6 +90,9 @@ def test_create_catalog_returns_catalog_instance(tmp_path, monkeypatch):
 @pytest.mark.integration
 def test_pyiceberg_env_vars_override_defaults(tmp_path, monkeypatch):
     """PyIceberg env vars should override default properties."""
+    # With no TYPE in the environment, create_catalog keeps the SQLite default
+    # and puts .portolan/iceberg.db in the working directory.
+    monkeypatch.chdir(tmp_path)
     custom_uri = f"sqlite:///{tmp_path}/custom.db"
     monkeypatch.setenv("PYICEBERG_CATALOG__PORTOLAKE__URI", custom_uri)
     monkeypatch.setenv(

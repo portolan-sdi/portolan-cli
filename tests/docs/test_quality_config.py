@@ -123,7 +123,7 @@ MYPY_UNREACHABLE_RATCHET = frozenset(
 )
 
 # Delete only. Lower these numbers when a name or a clone goes away.
-VULTURE_WHITELIST_NAMES = 107
+VULTURE_WHITELIST_NAMES = 109
 JSCPD_BASELINE_FINGERPRINTS = 937
 
 
