@@ -562,6 +562,15 @@ class TestSameStemGeoParquetAndPMTiles:
             assert assets[f"a{i}-tiles"]["href"] == f"./a{i}.pmtiles"
             assert assets[f"a{i}-tiles"]["roles"] == ["visual"]
 
+    @staticmethod
+    def _pmtiles_owns_roads(collection_dir: Path) -> dict[str, dict[str, object]]:
+        """Assert that the PMTiles holds ``roads`` as data, and return the assets."""
+        data = json.loads((collection_dir / "collection.json").read_text())
+        assets: dict[str, dict[str, object]] = data["assets"]
+        assert assets["roads"]["href"] == "./roads.pmtiles"
+        assert assets["roads"]["roles"] == ["data"]
+        return assets
+
     @pytest.mark.integration
     def test_plain_table_beside_pmtiles_leaves_the_pmtiles_primary(
         self,
@@ -581,7 +590,33 @@ class TestSameStemGeoParquetAndPMTiles:
         result = runner.invoke(cli, args)
 
         assert result.exit_code == 0, result.output
-        assets = json.loads((collection_dir / "collection.json").read_text())["assets"]
-        assert assets["roads"]["href"] == "./roads.pmtiles"
-        assert assets["roads"]["roles"] == ["data"]
+        assets = self._pmtiles_owns_roads(collection_dir)
         assert "roads-tiles" not in assets
+
+    @pytest.mark.integration
+    def test_pmtiles_added_after_a_same_stem_plain_table_takes_the_stem(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        fixtures_dir: Path,
+        sample_pmtiles: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Two adds give the same keys as one add of a table and its PMTiles."""
+        monkeypatch.chdir(initialized_catalog)
+        result = runner.invoke(cli, ["config", "set", "tabular.enabled", "true"])
+        assert result.exit_code == 0, result.output
+        collection_dir = initialized_catalog / "roads"
+        collection_dir.mkdir()
+        table = fixtures_dir / "scan" / "geoparquet_with_companions" / "lookup.parquet"
+        shutil.copy(table, collection_dir / "roads.parquet")
+        base = ["add", "--portolan-dir", str(initialized_catalog)]
+        result = runner.invoke(cli, [*base, str(collection_dir / "roads.parquet")])
+        assert result.exit_code == 0, result.output
+        shutil.copy(sample_pmtiles, collection_dir / "roads.pmtiles")
+
+        result = runner.invoke(cli, [*base, str(collection_dir / "roads.pmtiles")])
+
+        assert result.exit_code == 0, result.output
+        assets = self._pmtiles_owns_roads(collection_dir)
+        assert assets["roads.parquet"]["href"] == "./roads.parquet"

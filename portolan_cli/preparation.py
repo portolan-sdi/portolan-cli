@@ -839,9 +839,12 @@ _STEM_RANK_GEOPARQUET = 0
 _STEM_RANK_DATA = 1
 _STEM_RANK_PMTILES = 2
 _STEM_RANK_TABLE = 3
+_STEM_RANK_NOT_DATA = 4
 
 
 def _stem_rank(name: str, asset: pystac.Asset, tabular_names: frozenset[str]) -> int:
+    if "data" not in (asset.roles or []):
+        return _STEM_RANK_NOT_DATA
     if asset.media_type == PARQUET_MEDIA_TYPE:
         return _STEM_RANK_TABLE if name in tabular_names else _STEM_RANK_GEOPARQUET
     if asset.media_type == PMTILES_MEDIA_TYPE:
@@ -864,8 +867,9 @@ def _stem_group_keys(
     not on the scan order or on which file is the primary:
 
     - The file of the lowest rank owns the stem: GeoParquet, then other data
-      files, then PMTiles, then Parquet without GeoParquet metadata. The primary
-      wins a tie, then ``<stem>.parquet``, then the first name.
+      files, then PMTiles, then Parquet without GeoParquet metadata, then files
+      without the ``data`` role. The primary wins a tie, then
+      ``<stem>.parquet``, then the first name.
     - A PMTiles beside a GeoParquet is its tile derivative. It takes the key the
       PMTiles writer uses and the ``visual`` role.
     - Any other file that wants the stem takes its filename.

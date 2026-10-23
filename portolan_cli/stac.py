@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from enum import Enum
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 import pystac
@@ -30,7 +30,6 @@ from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
-    from pathlib import Path
 
     from portolan_cli.metadata.tabular import TabularMetadata
 
@@ -455,7 +454,7 @@ def add_asset_to_collection(
         and not _same_href(existing_asset.href, asset.href)
         and _both_data(existing_asset, asset)
     ):
-        if _is_displaced_by(existing_asset, asset):
+        if _is_displaced_by(collection, existing_asset, asset):
             asset = _move_displaced_aside(collection, final_key, existing_asset, asset)
             existing_asset = None
         elif _media_types_differ(existing_asset.media_type, asset.media_type):
@@ -510,21 +509,42 @@ def _media_types_differ(existing: str | None, new: str | None) -> bool:
     return _canonical_media_type(existing) != _canonical_media_type(new)
 
 
-def _stem_rank(media_type: str) -> int:
+def _stem_rank(collection: pystac.Collection, asset: pystac.Asset) -> int:
     """Rank a data file for the stem key, as ``preparation._stem_rank`` does.
 
-    The add path keys a Parquet file without GeoParquet metadata by its
-    filename, so a Parquet asset that reaches the stem key is GeoParquet.
+    A Parquet file without GeoParquet metadata ranks below PMTiles. The tabular
+    add path keys such a table by its stem, so the footer decides. Only a
+    same-stem collision reaches this read.
     """
-    canonical = _canonical_media_type(media_type)
-    if canonical == _PARQUET_MEDIA_TYPE:
-        return 0
+    canonical = _canonical_media_type(asset.media_type or "")
     if canonical == PMTILES_MEDIA_TYPE:
         return 2
-    return 1
+    if canonical != _PARQUET_MEDIA_TYPE:
+        return 1
+    return 3 if _is_plain_table(collection, asset.href) else 0
 
 
-def _is_displaced_by(existing: pystac.Asset, new: pystac.Asset) -> bool:
+def _is_plain_table(collection: pystac.Collection, href: str) -> bool:
+    """Report whether a local Parquet asset has no GeoParquet metadata.
+
+    An asset with no local file, or a collection with no file location, counts
+    as GeoParquet, as its media type says.
+    """
+    self_href = collection.get_self_href()
+    if self_href is None or "://" in self_href:
+        return False
+    path = Path(self_href).parent / href.removeprefix("./")
+    if not path.is_file():
+        return False
+
+    from portolan_cli.formats import is_geoparquet
+
+    return not is_geoparquet(path)
+
+
+def _is_displaced_by(
+    collection: pystac.Collection, existing: pystac.Asset, new: pystac.Asset
+) -> bool:
     """Report whether ``existing`` is a same-stem file that ranks below ``new``.
 
     portolan-cli 0.8.0 renamed the primary ``data`` key to the stem after the
@@ -536,8 +556,8 @@ def _is_displaced_by(existing: pystac.Asset, new: pystac.Asset) -> bool:
     if existing.media_type is None or new.media_type is None:
         return False
     return PurePosixPath(existing.href).stem == PurePosixPath(new.href).stem and _stem_rank(
-        existing.media_type
-    ) > _stem_rank(new.media_type)
+        collection, existing
+    ) > _stem_rank(collection, new)
 
 
 def _move_displaced_aside(
@@ -567,7 +587,7 @@ def _move_displaced_aside(
         AssetKeyCollisionError: The target key holds a different file.
     """
     roles: list[str] | None
-    if displaced.media_type == PMTILES_MEDIA_TYPE and _stem_rank(data.media_type or "") == 0:
+    if displaced.media_type == PMTILES_MEDIA_TYPE and _stem_rank(collection, data) == 0:
         target_key = pmtiles_asset_key(key)
         roles = [ROLE_VISUAL]
     else:

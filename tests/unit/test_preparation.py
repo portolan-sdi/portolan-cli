@@ -313,6 +313,26 @@ class TestSameStemCollectionLevelKeys:
             "roads.pmtiles": ("./roads.pmtiles", ["data"]),
         }
 
+    def test_role_files_never_own_the_stem(self) -> None:
+        """A second documentation file falls back to the stem key in the scan."""
+        fixed = _fix_collection_level_asset_hrefs(
+            {
+                "data": _scanned("../roads.pmtiles", _PMTILES),
+                "documentation": pystac.Asset(
+                    href="../roads.md", media_type="text/markdown", roles=["documentation"]
+                ),
+                "roads": pystac.Asset(
+                    href="../roads.txt", media_type="text/plain", roles=["documentation"]
+                ),
+            }
+        )
+
+        assert {k: a.href for k, a in fixed.items()} == {
+            "roads": "./roads.pmtiles",
+            "documentation": "./roads.md",
+            "roads.txt": "./roads.txt",
+        }
+
     def test_standalone_pmtiles_stays_primary_data(self) -> None:
         """PMTiles without a same-stem GeoParquet is the data, not a derivative."""
         fixed = _fix_collection_level_asset_hrefs(
