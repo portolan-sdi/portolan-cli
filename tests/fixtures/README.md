@@ -162,6 +162,26 @@ Mapbox GL style specs for PMTiles assets.
 
 See `metadata/style/README.md` for style schema details.
 
+## Fixtures and the catalog invariants
+
+The files here are inputs. The `run_cli` fixture in `tests/conftest.py`
+checks only the catalogs that the real CLI writes from them, with the
+invariants in `tests/catalog_invariants.py`. A hand-written STAC file in this
+directory is never checked.
+
+The rashid scenario matrix in
+`tests/integration/test_generated_catalog_conformance.py` adds these files
+through the CLI. Two quirks shape what the matrix sees:
+
+- `add` converts `edge/antimeridian.geojson` to a GeoParquet whose `geo`
+  bbox is `[-180, 50, 180, 60]`, not a crossing bbox. The collection extent
+  is then one whole-width bbox, so the two-bbox extent of #852 shows only
+  with a GeoParquet that declares a crossing bbox
+  (`tests/integration/test_bbox_validation.py`).
+- `cloud_native/sample.pmtiles` holds three points in San Francisco, New
+  York, and Chicago. Beside `vector/valid/points.parquet` its bounds differ
+  from the data, so rashid reports PTL-DAT-005 once.
+
 ## Adding New Fixtures
 
 1. Add generation logic to `generate.py`
