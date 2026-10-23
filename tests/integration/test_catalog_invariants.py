@@ -314,6 +314,26 @@ class TestEachCodeFires:
 
         assert codes(check_catalog_invariants(root)) == codes_fired
 
+    @pytest.mark.realdata
+    def test_a_projected_footer_bounds_the_extent(self, tmp_path: Path, run_cli: RunCli) -> None:
+        """nwi-wetlands declares EPSG:5070. Its reprojected footer box bounds the extent.
+
+        The stored extent passes inside the box and fires once it reaches past it.
+        """
+        root = tmp_path / "catalog"
+        (root / "wetlands").mkdir(parents=True)
+        shutil.copy(FIXTURES / "realdata" / "nwi-wetlands.parquet", root / "wetlands")
+        run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
+        run_cli("add", "--portolan-dir", str(root), str(root / "wetlands"))
+        assert codes(check_catalog_invariants(root)) == set()
+
+        _edit(
+            "wetlands/collection.json",
+            lambda c: c["extent"]["spatial"].update(bbox=[[-78.0, 38.0, -76.0, 40.0]]),
+        )(root)
+
+        assert codes(check_catalog_invariants(root)) == {"S-EXTENT-NOT-STALE"}
+
     def test_a_declared_override_may_widen_the_extent(self, tmp_path: Path) -> None:
         """A human metadata.yaml override is the one way to widen an extent."""
         root = build_clean_catalog(tmp_path / "clean")

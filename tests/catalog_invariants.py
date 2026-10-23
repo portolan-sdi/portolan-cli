@@ -304,22 +304,28 @@ def _same(a: Bbox, b: Bbox) -> bool:
     return all(abs(x - y) <= TOLERANCE for x, y in zip(a, b, strict=True))
 
 
-def _is_lon_lat(crs: Any) -> bool:
-    """Whether a GeoParquet ``crs`` value is lon/lat. Absent means OGC:CRS84."""
+def _footer_envelope(box: Bbox, crs: Any) -> Bbox | None:
+    """Reproject a projected footer bbox to EPSG:4326, or None if not projected.
+
+    None means the footer is lon/lat already. An absent ``crs`` is OGC:CRS84.
+    """
     if crs is None:
-        return True
-    from pyproj import CRS
+        return None
+    from pyproj import CRS, Transformer
 
-    try:
-        return bool(
-            CRS.from_user_input(json.dumps(crs) if isinstance(crs, dict) else crs).is_geographic
-        )
-    except Exception:  # noqa: BLE001 - an unreadable CRS cannot vouch for its bbox
-        return False
+    source = CRS.from_user_input(json.dumps(crs) if isinstance(crs, dict) else crs)
+    if source.is_geographic:
+        return None
+    transformer = Transformer.from_crs(source, "EPSG:4326", always_xy=True)
+    return _as_bbox(list(transformer.transform_bounds(*box)))
 
 
-def _data_bbox(path: Path) -> Bbox | None:
-    """Read the extent of one data file from its bytes, in EPSG:4326."""
+def _data_bbox(path: Path) -> tuple[Bbox, bool] | None:
+    """Read the extent of one data file from its bytes, in EPSG:4326.
+
+    The flag is True for an exact extent. It is False for the reprojected
+    corner box of a projected GeoParquet footer, which only bounds the data.
+    """
     suffix = path.suffix.lower()
     if suffix == ".parquet":
         import pyarrow.parquet as pq
@@ -329,12 +335,11 @@ def _data_bbox(path: Path) -> Bbox | None:
             return None
         geo = json.loads(metadata[b"geo"])
         column = geo.get("columns", {}).get(geo.get("primary_column"), {})
-        if not _is_lon_lat(column.get("crs")):
-            # The footer bbox is in the projected CRS. Its reprojected envelope
-            # is wider than the extent add measures from the geometry, so the
-            # two never compare equal (nwi-wetlands, EPSG:5070).
+        box = _as_bbox(column.get("bbox"))
+        if box is None:
             return None
-        return _as_bbox(column.get("bbox"))
+        envelope = _footer_envelope(box, column.get("crs"))
+        return (box, True) if envelope is None else (envelope, False)
     if suffix in {".tif", ".tiff"}:
         import rasterio
         from rasterio.warp import transform_bounds
@@ -343,7 +348,7 @@ def _data_bbox(path: Path) -> Bbox | None:
             if source.crs is None:
                 return None
             west, south, east, north = transform_bounds(source.crs, "EPSG:4326", *source.bounds)
-        return (west, south, east, north)
+        return (west, south, east, north), True
     return None
 
 
@@ -700,38 +705,44 @@ def _check_extent(cat: _Catalog, collection: _Node) -> list[Violation]:
                 )
             )
 
-    data_boxes: list[Bbox] = []
+    exact: list[Bbox] = []
+    envelopes: list[Bbox] = []
     for node in [collection, *members]:
         for asset in _assets(node).values():
             if "data" not in asset.get("roles", []):
                 continue
             target = _local(node, str(asset.get("href", "")))
             if target is not None and target.is_file():
-                box = _data_bbox(target)
-                if box is not None:
-                    data_boxes.append(box)
-    if not data_boxes:
-        return found
-    data_union = _union(data_boxes)
-    override = _override_bbox(collection.path.parent)
-    if override is None:
-        if not _same(overall, data_union):
-            found.append(
-                Violation(
-                    "S-EXTENT-NOT-STALE",
-                    where,
-                    f"bbox {list(overall)} != data union {list(data_union)}",
-                )
-            )
-    elif not _same(overall, override) or not _contains(override, data_union):
-        found.append(
-            Violation(
-                "S-EXTENT-NOT-STALE",
-                where,
-                f"bbox {list(overall)} vs override {list(override)} and data {list(data_union)}",
-            )
-        )
+                measured = _data_bbox(target)
+                if measured is not None:
+                    (exact if measured[1] else envelopes).append(measured[0])
+    stale = _stale_extent(overall, exact, envelopes, _override_bbox(collection.path.parent))
+    if stale is not None:
+        found.append(Violation("S-EXTENT-NOT-STALE", where, stale))
     return found
+
+
+def _stale_extent(
+    overall: Bbox, exact: list[Bbox], envelopes: list[Bbox], override: Bbox | None
+) -> str | None:
+    """Why the stored extent disagrees with the data, or None when it agrees."""
+    if not exact and not envelopes:
+        return None
+    data_union = _union(exact + envelopes)
+    if override is not None:
+        if not _same(overall, override) or (exact and not _contains(override, _union(exact))):
+            return f"bbox {list(overall)} vs override {list(override)} and data {list(data_union)}"
+        return None
+    if envelopes:
+        # The reprojected corner box of a projected footer over-approximates the
+        # geometry extent, so equality cannot hold. The stored extent must lie
+        # inside it, and it must cover the exact extents beside it.
+        if not _contains(data_union, overall) or (exact and not _contains(overall, _union(exact))):
+            return f"bbox {list(overall)} is not inside data envelope {list(data_union)}"
+        return None
+    if not _same(overall, data_union):
+        return f"bbox {list(overall)} != data union {list(data_union)}"
+    return None
 
 
 def _override_bbox(directory: Path) -> Bbox | None:
