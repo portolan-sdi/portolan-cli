@@ -171,14 +171,14 @@ directory is never checked.
 
 The rashid scenario matrix in
 `tests/integration/test_generated_catalog_conformance.py` adds these files
-through the CLI. Two quirks shape what the matrix sees:
+through the CLI. The rashid results of the matrix depend on these facts:
 
 - `add` converts `edge/antimeridian.geojson` to a GeoParquet whose `geo`
-  bbox is `[-180, 50, 180, 60]`, not a crossing bbox. The collection extent
-  is then one whole-width bbox, so the two-bbox extent of #852 shows only
-  with a GeoParquet that declares a crossing bbox
+  bbox is `[-180, 50, 180, 60]`. That bbox does not cross the antimeridian.
+  The collection extent is then one bbox of full width. Only a GeoParquet
+  that declares a crossing bbox shows the two-bbox extent of #852
   (`tests/integration/test_bbox_validation.py`).
-- `cloud_native/sample.pmtiles` holds three points in San Francisco, New
+- `cloud_native/sample.pmtiles` contains three points in San Francisco, New
   York, and Chicago. Beside `vector/valid/points.parquet` its bounds differ
   from the data, so rashid reports PTL-DAT-005 once.
 
