@@ -383,13 +383,13 @@ def declare_extensions_in_use(document: dict[str, Any]) -> bool:
 
 
 def _is_selected(asset: dict[str, Any], base_dir: Path, only: AbstractSet[Path] | None) -> bool:
-    """Whether ``asset`` points at one of ``only``. Every asset is when it is None."""
+    """Whether ``asset`` points at one of the resolved ``only``. All are when it is None."""
     if only is None:
         return True
     href = asset.get("href")
     if not isinstance(href, str) or not href or is_absolute_href(href):
         return False
-    return resolve_href(base_dir, href).resolve() in {path.resolve() for path in only}
+    return resolve_href(base_dir, href).resolve() in only
 
 
 def restamp_collection_assets(
@@ -416,6 +416,8 @@ def restamp_collection_assets(
     if not collection_json.is_file():
         return False
     documents = [collection_json, *(path for _href, path in owned_item_hrefs(collection_json))]
+    if only is not None:
+        only = {path.resolve() for path in only}
     changed_any = False
     for path in documents:
         try:
