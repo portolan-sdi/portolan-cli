@@ -21,7 +21,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from portolan_cli.catalog import CatalogState, detect_state, init_catalog
+from portolan_cli.catalog import (
+    CatalogState,
+    detect_state,
+    init_catalog,
+    intermediate_catalog_ids,
+)
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import detail, error, info, success, warn
 from portolan_cli.scan.check import CheckReport, check_directory
 from portolan_cli.scan.core import ScanResult, scan_directory
@@ -778,6 +784,31 @@ class CloneError(Exception):
     """Exception raised when clone fails."""
 
 
+def _drop_missing_child_links(local_path: Path, collections: list[str]) -> None:
+    """Drop each child link of a cloned catalog.json that the clone cannot resolve (#1042).
+
+    pull copies the remote root and intermediate catalog.json files, which link
+    to every remote collection. A clone of some collections, or a clone with a
+    failed pull, holds fewer.
+    """
+    ids = {"", *(i for coll in collections for i in intermediate_catalog_ids(coll))}
+    for path in (local_path / catalog_id / "catalog.json" for catalog_id in sorted(ids)):
+        if not path.is_file():
+            continue
+        document = json.loads(path.read_text(encoding="utf-8"))
+        links = document.get("links", [])
+        kept = [
+            link
+            for link in links
+            if link.get("rel") != "child"
+            or "://" in str(link.get("href", ""))
+            or (path.parent / str(link.get("href", ""))).is_file()
+        ]
+        if len(kept) != len(links):
+            document["links"] = kept
+            write_json_atomic(path, document)
+
+
 def clone(
     remote_url: str,
     local_path: Path,
@@ -918,6 +949,8 @@ def clone(
             error(error_msg)
             # Continue with other collections
             continue
+
+    _drop_missing_child_links(local_path, collections_to_clone)
 
     # Determine overall success
     if not collections_cloned:

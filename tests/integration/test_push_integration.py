@@ -2084,6 +2084,47 @@ class TestPushAgainstMoto:
         assert findings(cloned) == findings(root)
 
     @pytest.mark.integration
+    def test_clone_of_one_collection_links_only_to_it(
+        self, tmp_path: Path, bucket: tuple[str, Any], run_cli: Any
+    ) -> None:
+        """Issue #1042: a clone of one collection keeps no child link to another.
+
+        The remote catalog.json links to both collections. The clone holds one,
+        so a kept link to the other does not resolve (PTL-LNK-006). The run_cli
+        teardown checks the invariants of the clone.
+        """
+        import pathlib
+        import shutil
+
+        name, _ = bucket
+        root, cloned = tmp_path / "R", tmp_path / "cloned"
+        fixtures = pathlib.Path(__file__).parents[1] / "fixtures"
+        run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
+        for coll, source in (
+            ("roads", fixtures / "vector" / "valid" / "points.parquet"),
+            ("rivers", fixtures / "realdata" / "open-buildings.parquet"),
+        ):
+            (root / coll).mkdir()
+            shutil.copy(source, root / coll / f"{coll}.parquet")
+            run_cli("add", "--portolan-dir", str(root), str(root / coll / f"{coll}.parquet"))
+        run_cli("push", f"s3://{name}/cat", "--catalog", str(root))
+
+        run_cli("clone", f"s3://{name}/cat", str(cloned), "--collection", "roads")
+
+        links = json.loads((cloned / "catalog.json").read_text())["links"]
+        assert [link["href"] for link in links if link["rel"] == "child"] == [
+            "./roads/collection.json"
+        ]
+
+        def findings(catalog: Path) -> list[tuple[str, str]]:
+            result = run_cli("check", str(catalog), "--json", expect=None)
+            data = json.loads(result.output)["data"]
+            return sorted((f["rule_id"], f["path"]) for f in data["findings"])
+
+        source = [f for f in findings(root) if not f[1].startswith("rivers/")]
+        assert findings(cloned) == source
+
+    @pytest.mark.integration
     def test_credential_without_list_warns_once_and_deletes_nothing(
         self,
         tmp_path: Path,
