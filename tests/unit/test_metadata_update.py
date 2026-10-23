@@ -947,3 +947,21 @@ class TestEdgeCases:
         # Should raise FileNotFoundError
         with pytest.raises(FileNotFoundError):
             create_missing_item(data_file, collection_dir)
+
+
+@pytest.mark.integration
+def test_the_item_module_imports_first() -> None:
+    """``item`` -> ``metadata`` -> ``fix`` -> ``update`` -> ``item`` was a cycle.
+
+    Run alone, this test module stopped at collection with an ImportError.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import portolan_cli.item"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode, result.stderr) == (0, "")
