@@ -1404,3 +1404,32 @@ def test_the_thumbnail_pyplot_draws_on_the_agg_backend() -> None:
         assert mpl.get_backend().lower() == "agg"
     finally:
         mpl.use(previous)
+
+
+@pytest.mark.unit
+def test_thumbnails_quality_reaches_the_geoparquet_render(tmp_path: Path) -> None:
+    """thumbnails.quality set the COG thumbnail only. The GeoParquet one kept 75."""
+    import shutil
+    from pathlib import Path as _Path
+
+    pytest.importorskip("geopandas")
+    from PIL import Image
+
+    from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+    fixture = _Path(__file__).parents[1] / "fixtures" / "realdata" / "open-buildings.parquet"
+    sizes = {}
+    for quality in (5, 95):
+        source = tmp_path / f"q{quality}" / "buildings.parquet"
+        source.parent.mkdir()
+        shutil.copy(fixture, source)
+        config = ThumbnailConfig(quality=quality, basemap_provider="none")
+
+        thumbnail = generate_thumbnail_from_geoparquet(source, config)
+
+        assert thumbnail is not None
+        with Image.open(thumbnail) as image:
+            assert image.format == "JPEG"
+        sizes[quality] = thumbnail.stat().st_size
+
+    assert sizes[5] < sizes[95] / 2
