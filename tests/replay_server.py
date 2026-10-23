@@ -20,6 +20,7 @@ answers a request with the first route that matches it:
   credential, and the second answers a request without it.
 - ``times``: the route answers this many requests and then stops matching. A
   transient error is a route with ``times: 1`` before the good route.
+- A HEAD request gets the status and headers of the GET route, with no body.
 - ``status``, ``content_type``, ``body_file``: the response. The server
   replaces ``{{base_url}}`` in a text body with its own address, so that a
   capabilities document points the client back at the replay.
@@ -169,7 +170,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        self.wfile.write(payload)
+        if method != "HEAD":
+            self.wfile.write(payload)
 
 
 class ReplayServer:
@@ -199,9 +201,13 @@ class ReplayServer:
         self, method: str, path: str, query: dict[str, list[str]]
     ) -> tuple[int, str, bytes]:
         """Return the status, the content type, and the body for one request."""
+        # A HEAD request gets the headers of the GET route, as from a real
+        # server. DuckDB, under geoparquet-io, sends one before each GET. It
+        # does not use up a ``times`` route, so a recorded error hits the GET.
+        lookup = "GET" if method == "HEAD" else method
         with self._lock:
-            route = next((r for r in self.routes if r.matches(method, path, query)), None)
-            if route is not None and route.times is not None:
+            route = next((r for r in self.routes if r.matches(lookup, path, query)), None)
+            if route is not None and route.times is not None and method != "HEAD":
                 route.times -= 1
             status = 404 if route is None else route.status
             request = Request(method=method, path=path, query=query, status=status)
