@@ -114,7 +114,9 @@ class TestTimings:
         assert counters["checksum.files"] > 0
         assert counters["checksum.bytes"] > 0
         assert counters["versions_json.reads"] > 0
-        assert counters["config.yaml_parses"] > 0
+        # One parse per YAML file in the catalog: the root config.yaml and the
+        # root metadata.yaml. Each reader shares that parse (issue #1006).
+        assert counters["config.yaml_parses"] == 2
         assert counters["parquet.opens"] > 0
         assert counters["raster.opens"] > 0
         assert counters["thumbnail.draws"] > 0

@@ -76,7 +76,6 @@ RATCHET_TID251 = frozenset(
     {
         "portolan_cli/catalog.py",
         "portolan_cli/collection_thumbnail.py",
-        "portolan_cli/conversion_config.py",
         "portolan_cli/convert.py",
         "portolan_cli/extract/arcgis/imageserver/extractor.py",
         "portolan_cli/extract/arcgis/imageserver/orchestrator.py",
@@ -112,7 +111,6 @@ MYPY_UNREACHABLE_RATCHET = frozenset(
     {
         "portolan_cli.backends.iceberg.backend",
         "portolan_cli.backends.iceberg.hooks",
-        "portolan_cli.conversion_config",
         "portolan_cli.stac",
     }
 )

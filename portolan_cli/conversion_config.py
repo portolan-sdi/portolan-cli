@@ -25,6 +25,7 @@ See:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -32,7 +33,7 @@ from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.config import load_config
+from portolan_cli.config import load_catalog_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -115,12 +116,6 @@ def _normalize_extension(ext: str) -> str:
     return ext
 
 
-def _get_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
-    """Safely get a dict value, returning empty dict if not a dict."""
-    value = data.get(key, {})
-    return value if isinstance(value, dict) else {}
-
-
 def _get_list(data: dict[str, Any], key: str) -> list[Any]:
     """Safely get a list value, returning empty list if not a list."""
     value = data.get(key, [])
@@ -149,14 +144,9 @@ def get_conversion_overrides(catalog_path: Path) -> ConversionOverrides:
     Returns:
         ConversionOverrides instance. Returns empty overrides if no config exists.
     """
-    config = load_config(catalog_path)
-
-    conversion = _get_dict(config, "conversion")
-    if not conversion:
-        return ConversionOverrides()
-
-    extensions = _get_dict(conversion, "extensions")
-    paths = _get_dict(conversion, "paths")
+    config = load_catalog_config(catalog_path)
+    extensions = config.section("conversion", "extensions")
+    paths = config.section("conversion", "paths")
 
     return ConversionOverrides(
         extensions_convert=_parse_extensions(_get_list(extensions, "convert")),
@@ -180,7 +170,7 @@ def get_handler_pins(catalog_path: Path) -> dict[str, str]:
     Returns:
         Lowercase extension with a leading dot, to handler name.
     """
-    handlers = _get_dict(_get_dict(load_config(catalog_path), "conversion"), "handlers")
+    handlers = load_catalog_config(catalog_path).section("conversion", "handlers")
     pins: dict[str, str] = {}
     for extension, name in handlers.items():
         ext = str(extension).strip().lower()
@@ -489,13 +479,7 @@ def get_cog_settings(catalog_path: Path | None) -> CogSettings:
         return override
     if catalog_path is None:
         return CogSettings()
-    config = load_config(catalog_path)
-
-    conversion = _get_dict(config, "conversion")
-    if not conversion:
-        return CogSettings()
-
-    cog = _get_dict(conversion, "cog")
+    cog = load_catalog_config(catalog_path).section("conversion", "cog")
     if not cog:
         return CogSettings()
 
@@ -684,21 +668,21 @@ def reset_config_warning_cache() -> None:
 
 
 def _warn_once(catalog_path: Path, message: str) -> None:
-    """Log a config problem every time, but print it to the operator once.
+    """Log a config problem as a warning once, and at debug level after that.
+
+    The CLI shows warnings on stderr. Library code does not print (#1035).
 
     Args:
         catalog_path: Catalog the setting came from. Scopes the deduplication,
             so a second catalog in the same process still warns.
         message: The warning text.
     """
-    from portolan_cli.output import warn
-
-    logger.warning(message)
     key = (str(catalog_path), message)
     if key in _CONFIG_WARNINGS_SHOWN:
+        logger.debug(message)
         return
     _CONFIG_WARNINGS_SHOWN.add(key)
-    warn(message)
+    logger.warning(message)
 
 
 def get_vector_settings(catalog_path: Path | None) -> VectorSettings:
@@ -718,13 +702,7 @@ def get_vector_settings(catalog_path: Path | None) -> VectorSettings:
         return override
     if catalog_path is None:
         return VectorSettings()
-    config = load_config(catalog_path)
-
-    conversion = _get_dict(config, "conversion")
-    if not conversion:
-        return VectorSettings()
-
-    vector = _get_dict(conversion, "vector")
+    vector = load_catalog_config(catalog_path).section("conversion", "vector")
     if not vector:
         return VectorSettings()
 
@@ -732,18 +710,14 @@ def get_vector_settings(catalog_path: Path | None) -> VectorSettings:
     spatial_index = vector.get("spatial_index")
     spatial_index = "none" if not isinstance(spatial_index, str) else spatial_index.lower()
 
-    # Parse resolution
-    resolution: int | str = vector.get("resolution", "auto")
-    if isinstance(resolution, str):
-        resolution = resolution.lower()
-        if resolution != "auto":
-            # Try to parse as int
-            try:
-                resolution = int(resolution)
-            except ValueError:
-                resolution = "auto"
-    elif not isinstance(resolution, int):
-        resolution = "auto"
+    # Parse resolution. YAML can hold any type here, such as a float.
+    raw_resolution: Any = vector.get("resolution", "auto")
+    resolution: int | str = "auto"
+    if isinstance(raw_resolution, str):
+        with contextlib.suppress(ValueError):
+            resolution = int(raw_resolution)
+    elif isinstance(raw_resolution, int):
+        resolution = raw_resolution
 
     # Parse sort. A missing or non-string value keeps the default rather than
     # disabling the optimization (issue #805).

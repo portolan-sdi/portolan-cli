@@ -482,8 +482,11 @@ portolan config list [OPTIONS]
 
 Set a configuration value.
 
-KEY is the setting name (e.g., backend, statistics.enabled).
-VALUE is the value to set.
+KEY is the setting name (e.g., backend, statistics.enabled). A dotted KEY
+names a nested value: conversion.vector.sort writes sort under the
+conversion and vector blocks. An unknown KEY fails and lists the known keys.
+VALUE is the value to set. It takes the type of the setting, so "false" is
+stored as a boolean.
 
 Note: Sensitive settings (remote, profile, region) cannot be stored in
 config.yaml. Use environment variables or .env files instead.
@@ -492,6 +495,7 @@ config.yaml. Use environment variables or .env files instead.
 Examples:
     portolan config set backend iceberg
     portolan config set statistics.enabled true
+    portolan config set conversion.vector.sort none
     portolan config set pmtiles.enabled false --collection demographics
 ```
 

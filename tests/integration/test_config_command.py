@@ -5,10 +5,9 @@ Tests cover:
 - File creation and persistence
 - Precedence: env var overrides config file
 - Collection-level config
-- JSON output mode
 
 Note: remote/profile/region are sensitive settings and cannot be set via config.yaml (Issue #356).
-These tests use non-sensitive settings like 'workers' and 'backend' to test config mechanics.
+These tests use non-sensitive settings like 'pmtiles.precision' and 'backend' to test config mechanics.
 Use PORTOLAN_* env vars for sensitive settings.
 """
 
@@ -16,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 from unittest import mock
 
@@ -25,19 +25,20 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 
 
+@pytest.fixture
+def runner() -> CliRunner:
+    """Create a Click test runner."""
+    return CliRunner()
+
+
 class TestConfigWorkflow:
     """Integration tests for complete config workflow."""
-
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
 
     @pytest.mark.integration
     def test_full_config_workflow(self, runner: CliRunner, tmp_path: Path) -> None:
         """Test set -> get -> list -> unset workflow.
 
-        Note: Uses 'workers' instead of 'remote' since remote is a sensitive setting
+        Note: Uses 'pmtiles.min_zoom' instead of 'remote' since remote is a sensitive setting
         that cannot be set via config.yaml (Issue #356).
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
@@ -45,26 +46,26 @@ class TestConfigWorkflow:
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             # 1. Set a value (using non-sensitive setting)
-            result = runner.invoke(cli, ["config", "set", "workers", "4"])
+            result = runner.invoke(cli, ["config", "set", "pmtiles.min_zoom", "4"])
             assert result.exit_code == 0
 
             # 2. Get the value
-            result = runner.invoke(cli, ["config", "get", "workers"])
+            result = runner.invoke(cli, ["config", "get", "pmtiles.min_zoom"])
             assert result.exit_code == 0
             assert "4" in result.output
 
             # 3. List all settings
             result = runner.invoke(cli, ["config", "list"])
             assert result.exit_code == 0
-            assert "workers" in result.output
+            assert "pmtiles.min_zoom" in result.output
             assert "4" in result.output
 
             # 4. Unset the value
-            result = runner.invoke(cli, ["config", "unset", "workers"])
+            result = runner.invoke(cli, ["config", "unset", "pmtiles.min_zoom"])
             assert result.exit_code == 0
 
             # 5. Verify it's gone
-            result = runner.invoke(cli, ["config", "get", "workers"])
+            result = runner.invoke(cli, ["config", "get", "pmtiles.min_zoom"])
             assert result.exit_code == 0
             assert "not set" in result.output.lower()
 
@@ -72,33 +73,33 @@ class TestConfigWorkflow:
     def test_config_persists_to_yaml_file(self, runner: CliRunner, tmp_path: Path) -> None:
         """Config should persist to .portolan/config.yaml.
 
-        Note: Uses 'workers' instead of 'remote' since remote is a sensitive setting (Issue #356).
+        Note: Uses 'pmtiles.precision' instead of 'remote' since remote is a sensitive setting (Issue #356).
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            runner.invoke(cli, ["config", "set", "workers", "8"])
+            runner.invoke(cli, ["config", "set", "pmtiles.precision", "8"])
 
             # Verify file exists and contains our value
             config_file = Path(".portolan/config.yaml")
             assert config_file.exists()
             content = config_file.read_text()
-            assert "workers:" in content
+            assert "precision:" in content
             assert "8" in content
 
     @pytest.mark.integration
     def test_config_survives_restart(self, runner: CliRunner, tmp_path: Path) -> None:
         """Config should survive CLI restart (read from file).
 
-        Note: Uses 'workers' instead of 'remote' since remote is a sensitive setting (Issue #356).
+        Note: Uses 'pmtiles.precision' instead of 'remote' since remote is a sensitive setting (Issue #356).
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             # Set value (using non-sensitive setting)
-            runner.invoke(cli, ["config", "set", "workers", "16"])
+            runner.invoke(cli, ["config", "set", "pmtiles.precision", "16"])
 
             # Simulate restart by creating new runner invocation
-            result = runner.invoke(cli, ["config", "get", "workers"])
+            result = runner.invoke(cli, ["config", "get", "pmtiles.precision"])
             assert result.exit_code == 0
             assert "16" in result.output
 
@@ -111,25 +112,20 @@ class TestConfigPrecedence:
     settings can be set via config file.
     """
 
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
-
     @pytest.mark.integration
     def test_env_var_overrides_config_file(self, runner: CliRunner, tmp_path: Path) -> None:
         """Environment variable should override config file value.
 
-        Uses non-sensitive setting 'workers' for config file, since remote
+        Uses non-sensitive setting 'pmtiles.precision' for config file, since remote
         cannot be set in config.yaml (Issue #356).
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            runner.invoke(cli, ["config", "set", "workers", "4"])
+            runner.invoke(cli, ["config", "set", "pmtiles.precision", "4"])
 
             # Set env var and verify it takes precedence
-            with mock.patch.dict(os.environ, {"PORTOLAN_WORKERS": "8"}):
-                result = runner.invoke(cli, ["config", "get", "workers"])
+            with mock.patch.dict(os.environ, {"PORTOLAN_PMTILES_PRECISION": "8"}):
+                result = runner.invoke(cli, ["config", "get", "pmtiles.precision"])
 
             assert result.exit_code == 0
             assert "8" in result.output
@@ -143,7 +139,7 @@ class TestConfigPrecedence:
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            runner.invoke(cli, ["config", "set", "workers", "4"])
+            runner.invoke(cli, ["config", "set", "pmtiles.precision", "4"])
 
             with mock.patch.dict(os.environ, {"PORTOLAN_AWS_PROFILE": "env-profile"}):
                 result = runner.invoke(cli, ["config", "list"])
@@ -161,29 +157,6 @@ class TestConfigCollection:
     in config.yaml (Issue #356).
     """
 
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
-
-    @pytest.mark.integration
-    def test_set_collection_config(self, runner: CliRunner, tmp_path: Path) -> None:
-        """config set --collection should set collection-level config."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-
-            result = runner.invoke(
-                cli,
-                ["config", "set", "workers", "8", "--collection", "demographics"],
-            )
-
-            assert result.exit_code == 0
-
-            # Verify it's in the file
-            content = Path(".portolan/config.yaml").read_text()
-            assert "collections:" in content
-            assert "demographics:" in content
-
     @pytest.mark.integration
     def test_get_collection_config(self, runner: CliRunner, tmp_path: Path) -> None:
         """config get --collection should retrieve collection-level config."""
@@ -191,15 +164,15 @@ class TestConfigCollection:
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             # Set catalog-level and collection-level (using non-sensitive setting)
-            runner.invoke(cli, ["config", "set", "workers", "4"])
+            runner.invoke(cli, ["config", "set", "pmtiles.precision", "4"])
             runner.invoke(
                 cli,
-                ["config", "set", "workers", "16", "--collection", "demographics"],
+                ["config", "set", "pmtiles.precision", "16", "--collection", "demographics"],
             )
 
             # Get collection config
             result = runner.invoke(
-                cli, ["config", "get", "workers", "--collection", "demographics"]
+                cli, ["config", "get", "pmtiles.precision", "--collection", "demographics"]
             )
             assert result.exit_code == 0
             assert "16" in result.output
@@ -210,93 +183,16 @@ class TestConfigCollection:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
-            # Set only catalog-level workers (using non-sensitive setting)
-            runner.invoke(cli, ["config", "set", "workers", "32"])
+            # Set only catalog-level pmtiles.precision (using non-sensitive setting)
+            runner.invoke(cli, ["config", "set", "pmtiles.precision", "32"])
 
-            # Get workers for a collection that doesn't have it set
+            # Get pmtiles.precision for a collection that doesn't have it set
             result = runner.invoke(
-                cli, ["config", "get", "workers", "--collection", "demographics"]
+                cli, ["config", "get", "pmtiles.precision", "--collection", "demographics"]
             )
 
             assert result.exit_code == 0
             assert "32" in result.output
-
-
-class TestConfigJsonOutput:
-    """Integration tests for JSON output mode.
-
-    Note: Uses non-sensitive settings since remote/profile cannot be set
-    in config.yaml (Issue #356).
-    """
-
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
-
-    @pytest.mark.integration
-    def test_set_json_envelope(self, runner: CliRunner, tmp_path: Path) -> None:
-        """config set should output JSON envelope with --format json."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-
-            result = runner.invoke(cli, ["--format", "json", "config", "set", "workers", "8"])
-
-            assert result.exit_code == 0
-            data = json.loads(result.output)
-            assert data["success"] is True
-            assert data["command"] == "config set"
-            assert data["data"]["key"] == "workers"
-            assert data["data"]["value"] == "8"
-
-    @pytest.mark.integration
-    def test_get_json_envelope(self, runner: CliRunner, tmp_path: Path) -> None:
-        """config get should output JSON envelope with --format json."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            runner.invoke(cli, ["config", "set", "workers", "8"])
-
-            result = runner.invoke(cli, ["--format", "json", "config", "get", "workers"])
-
-            assert result.exit_code == 0
-            data = json.loads(result.output)
-            assert data["success"] is True
-            assert data["command"] == "config get"
-            assert data["data"]["key"] == "workers"
-            assert data["data"]["value"] == "8"
-            assert data["data"]["source"] == "catalog"
-
-    @pytest.mark.integration
-    def test_list_json_envelope(self, runner: CliRunner, tmp_path: Path) -> None:
-        """config list should output JSON envelope with --format json."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            runner.invoke(cli, ["config", "set", "workers", "8"])
-
-            result = runner.invoke(cli, ["--format", "json", "config", "list"])
-
-            assert result.exit_code == 0
-            data = json.loads(result.output)
-            assert data["success"] is True
-            assert data["command"] == "config list"
-            assert "settings" in data["data"]
-            assert "workers" in data["data"]["settings"]
-
-    @pytest.mark.integration
-    def test_unset_json_envelope(self, runner: CliRunner, tmp_path: Path) -> None:
-        """config unset should output JSON envelope with --format json."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            runner.invoke(cli, ["config", "set", "workers", "8"])
-
-            result = runner.invoke(cli, ["--format", "json", "config", "unset", "workers"])
-
-            assert result.exit_code == 0
-            data = json.loads(result.output)
-            assert data["success"] is True
-            assert data["command"] == "config unset"
-            assert data["data"]["key"] == "workers"
-            assert data["data"]["removed"] is True
 
 
 class TestConfigErrors:
@@ -306,18 +202,13 @@ class TestConfigErrors:
     in config.yaml (Issue #356).
     """
 
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
-
     @pytest.mark.integration
     def test_config_fails_outside_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
         """config commands should fail outside a Portolan catalog."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Don't initialize a catalog
 
-            result = runner.invoke(cli, ["config", "set", "workers", "8"])
+            result = runner.invoke(cli, ["config", "set", "pmtiles.precision", "8"])
 
             assert result.exit_code == 1
             output_lower = result.output.lower()
@@ -329,7 +220,9 @@ class TestConfigErrors:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Don't initialize a catalog
 
-            result = runner.invoke(cli, ["--format", "json", "config", "set", "workers", "8"])
+            result = runner.invoke(
+                cli, ["--format", "json", "config", "set", "pmtiles.precision", "8"]
+            )
 
             assert result.exit_code == 1
             data = json.loads(result.output)
@@ -349,9 +242,129 @@ class TestConfigErrors:
             os.chdir(subdir)
 
             # Config should still work (using non-sensitive setting)
-            result = runner.invoke(cli, ["config", "set", "workers", "8"])
+            result = runner.invoke(cli, ["config", "set", "pmtiles.precision", "8"])
             assert result.exit_code == 0
 
-            result = runner.invoke(cli, ["config", "get", "workers"])
+            result = runner.invoke(cli, ["config", "get", "pmtiles.precision"])
             assert result.exit_code == 0
             assert "8" in result.output
+
+
+POINTS_GEOJSON = Path(__file__).parent.parent / "fixtures" / "vector" / "valid" / "points.geojson"
+
+
+class TestDottedKeysReachTheReaders:
+    """`config set` writes what the readers read, and rejects what none reads (#1020)."""
+
+    @pytest.fixture
+    def catalog(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        monkeypatch.chdir(tmp_path)
+        result = CliRunner().invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
+        assert result.exit_code == 0, result.output
+        return tmp_path
+
+    @pytest.mark.integration
+    def test_unknown_key_exits_1_and_names_the_known_keys(self, catalog: Path) -> None:
+        before = (catalog / ".portolan" / "config.yaml").read_text()
+
+        result = CliRunner().invoke(cli, ["config", "set", "conversion.vector.compression", "zstd"])
+
+        assert result.exit_code == 1
+        assert "Unknown setting 'conversion.vector.compression'" in result.output
+        assert "conversion.vector.sort" in result.output
+        assert (catalog / ".portolan" / "config.yaml").read_text() == before
+
+    @pytest.mark.integration
+    def test_unknown_key_error_envelope(self, catalog: Path) -> None:
+        result = CliRunner().invoke(
+            cli, ["--format", "json", "config", "set", "conversion.vector.compression", "zstd"]
+        )
+
+        assert result.exit_code == 1
+        envelope = json.loads(result.output)
+        assert envelope["success"] is False
+        assert envelope["errors"][0]["type"] == "ConfigError"
+        assert envelope["errors"][0]["message"].startswith(
+            "[PRTLN-CFG000] Unknown setting 'conversion.vector.compression'. Known settings: "
+        )
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("key", "text", "stored"),
+        [
+            ("statistics.enabled", "false", False),
+            ("push.exclude", '["*.md"]', ["*.md"]),
+            ("tabular.convert", "false", False),
+        ],
+    )
+    def test_value_is_stored_as_the_type_of_its_setting(
+        self, catalog: Path, key: str, text: str, stored: object
+    ) -> None:
+        from portolan_cli.config import get_setting
+
+        result = CliRunner().invoke(cli, ["config", "set", key, text])
+
+        assert result.exit_code == 0, result.output
+        assert get_setting(key, catalog_path=catalog) == stored
+        assert type(get_setting(key, catalog_path=catalog)) is type(stored)
+
+    @pytest.mark.integration
+    def test_value_that_does_not_parse_exits_1_and_names_the_type(self, catalog: Path) -> None:
+        result = CliRunner().invoke(cli, ["config", "set", "tabular.convert", "maybe"])
+
+        assert result.exit_code == 1
+        assert "Setting 'tabular.convert' takes true or false, got 'maybe'" in result.output
+
+    @pytest.mark.integration
+    def test_set_get_list_round_trip_through_the_vector_reader(self, catalog: Path) -> None:
+        from portolan_cli.conversion_config import get_vector_settings
+
+        runner = CliRunner()
+        assert (
+            runner.invoke(cli, ["config", "set", "conversion.vector.sort", "none"]).exit_code == 0
+        )
+
+        get_result = runner.invoke(cli, ["config", "get", "conversion.vector.sort"])
+        list_result = runner.invoke(cli, ["config", "list"])
+
+        assert get_result.output == "✓ conversion.vector.sort=none (from catalog)\n"
+        assert "conversion.vector.sort=none (from catalog)" in list_result.output
+        assert get_vector_settings(catalog).sort == "none"
+
+    @pytest.mark.integration
+    def test_list_shows_nested_leaves_and_pattern_maps(self, catalog: Path) -> None:
+        runner = CliRunner()
+        for args in (
+            ["pmtiles.min_zoom", "3", "--collection", "demo"],
+            ["pmtiles.max_zoom", "9"],
+            ["conversion.handlers.tif", "cog"],
+        ):
+            assert runner.invoke(cli, ["config", "set", *args]).exit_code == 0
+
+        result = runner.invoke(cli, ["--format", "json", "config", "list", "--collection", "demo"])
+
+        settings = json.loads(result.output)["data"]["settings"]
+        assert settings["pmtiles.min_zoom"] == {"value": 3, "source": "collection"}
+        assert settings["pmtiles.max_zoom"] == {"value": 9, "source": "catalog"}
+        # A map below a .* pattern lists as one value.
+        assert settings["conversion.handlers"] == {"value": {"tif": "cog"}, "source": "catalog"}
+        assert "conversion.handlers.tif" not in settings
+
+    @pytest.mark.integration
+    def test_add_applies_the_vector_settings_that_config_set_wrote(self, catalog: Path) -> None:
+        import pyarrow.parquet as pq
+
+        runner = CliRunner()
+        for key, value in (
+            ("conversion.vector.add_bbox", "false"),
+            ("conversion.vector.sort", "none"),
+        ):
+            assert runner.invoke(cli, ["config", "set", key, value]).exit_code == 0
+        collection = catalog / "points"
+        collection.mkdir()
+        shutil.copy(POINTS_GEOJSON, collection / "points.geojson")
+
+        result = runner.invoke(cli, ["add", "points"])
+
+        assert result.exit_code == 0, result.output
+        assert "bbox" not in pq.ParquetFile(collection / "points.parquet").schema_arrow.names

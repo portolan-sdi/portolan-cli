@@ -8,7 +8,14 @@ This module provides hierarchical configuration with the following precedence
 4. Catalog-level config
 5. Built-in default (None)
 
-Config is stored in `.portolan/config.yaml`.
+Config is stored in `.portolan/config.yaml`. A dotted key such as
+``conversion.vector.sort`` names a nested path in that file, and
+``set_setting`` accepts only the keys in ``KNOWN_SETTINGS`` (issue #1020).
+
+Every reader shares one parse of each YAML file per distinct content
+(``_parse_yaml``, issue #1006). The cache compares the file text, not the
+mtime, because two writes inside one mtime tick are common in ``add`` and in
+tests. A parse costs far more than the read that the comparison needs.
 
 Usage:
     from portolan_cli.config import get_setting, set_setting, load_config
@@ -25,12 +32,15 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
+import copy
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from portolan_cli.errors import ConfigError, ConfigInvalidStructureError, ConfigParseError
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
@@ -50,36 +60,84 @@ SENSITIVE_SETTINGS: frozenset[str] = frozenset(
     }
 )
 
-# Known settings for documentation/validation (but unknown keys are still allowed)
-KNOWN_SETTINGS: frozenset[str] = frozenset(
-    {
-        "ignored_files",
-        "backend",
-        "statistics.enabled",
-        "statistics.raster_mode",
-        "parquet.enabled",  # Generate the items.parquet item mirror (opt-out)
-        "partitioning.enabled",  # Auto-partition large GeoParquet files (Issue #352)
-        "partitioning.prompt",  # Prompt before partitioning in interactive mode (default: true)
-        "partitioning.threshold_gb",  # Size threshold in GB (default: 2.0)
-        "partitioning.strategy",  # Spatial partitioning strategy (default: kdtree)
-        "partitioning.target_rows",  # Target rows per partition (default: 120000)
-        "partitioning.columns",  # Custom partition column names (Issue #443, auto-detect if None)
-        "partitioning.description",  # Free-text description for partition key semantics
-        "pmtiles.enabled",  # Generate PMTiles for GeoParquet collections
-        "pmtiles.min_zoom",  # Minimum zoom level (None = auto-detect)
-        "pmtiles.max_zoom",  # Maximum zoom level (None = auto-detect)
-        "pmtiles.layer",  # Layer name in PMTiles (defaults to filename)
-        "pmtiles.bbox",  # Bounding box filter as "minx,miny,maxx,maxy"
-        "pmtiles.where",  # SQL WHERE clause for filtering features
-        "pmtiles.include_cols",  # Comma-separated columns to include in tiles
-        "pmtiles.precision",  # Coordinate decimal precision (default: 6)
-        "pmtiles.attribution",  # Attribution HTML for tiles
-        "pmtiles.src_crs",  # Override source CRS if metadata is incorrect
-        "push.exclude",  # Glob patterns to exclude from metadata sync (Issue #426)
-        "tabular.enabled",  # Track non-geo tabular data as collection assets (Issue #432)
-        "tabular.convert",  # Convert CSV/TSV/Excel to Parquet (default: true)
-    }
-)
+#: Every setting ``config set`` accepts, with the type it stores. A pattern
+#: that ends in ``.*`` takes any name below its prefix, such as a file
+#: extension or a rule id. A key outside this table is rejected, because no
+#: reader would see it (issue #1020). Reads stay lenient: a plugin can read its
+#: own key from a hand-written config.yaml through ``get_setting``.
+KNOWN_SETTINGS: dict[str, str] = {
+    "backend": "str",
+    "ignored_files": "list",
+    "statistics.enabled": "bool",
+    "statistics.raster_mode": "str",
+    "parquet.enabled": "bool",  # The items.parquet item mirror (opt-out)
+    "partitioning.enabled": "bool",  # Auto-partition large GeoParquet files (#352)
+    "partitioning.prompt": "bool",
+    "partitioning.threshold_gb": "number",
+    "partitioning.strategy": "str",
+    "partitioning.target_rows": "int",
+    "pmtiles.enabled": "bool",
+    "pmtiles.min_zoom": "int",
+    "pmtiles.max_zoom": "int",
+    "pmtiles.layer": "str",
+    "pmtiles.bbox": "str",  # "minx,miny,maxx,maxy"
+    "pmtiles.where": "str",
+    "pmtiles.include_cols": "str",  # Comma-separated column names
+    "pmtiles.precision": "int",
+    "pmtiles.attribution": "str",
+    "pmtiles.src_crs": "str",
+    "push.exclude": "list",  # Metadata sync exclusions (#426)
+    "tabular.enabled": "bool",  # Non-geo tabular assets (#432)
+    "tabular.convert": "bool",
+    "conversion.extensions.convert": "list",
+    "conversion.extensions.preserve": "list",
+    "conversion.paths.preserve": "list",
+    "conversion.handlers.*": "str",  # Format handler pin per extension (#947)
+    "conversion.cog.compression": "str",
+    "conversion.cog.quality": "int",
+    "conversion.cog.tile_size": "int",
+    "conversion.cog.predictor": "int|auto",
+    "conversion.cog.resampling": "str",
+    "conversion.cog.generate_thumbnail": "bool",
+    "conversion.cog.thumbnail_max_size": "int",
+    "conversion.cog.thumbnail_quality": "int",
+    "conversion.vector.spatial_index": "str",
+    "conversion.vector.resolution": "int|auto",
+    "conversion.vector.sort": "str",
+    "conversion.vector.add_bbox": "bool",
+    "conversion.vector.partition": "bool",
+    "styles.vector.point.circle-color": "str",
+    "styles.vector.point.circle-radius": "int",
+    "styles.vector.point.circle-opacity": "number",
+    "styles.vector.line.line-color": "str",
+    "styles.vector.line.line-width": "int",
+    "styles.vector.line.line-opacity": "number",
+    "styles.vector.polygon.fill-color": "str",
+    "styles.vector.polygon.fill-opacity": "number",
+    "styles.vector.polygon.fill-outline-color": "str",
+    "styles.raster.colormap": "str",
+    "styles.raster.rescale": "list",
+    "thumbnails.enabled": "bool",
+    "thumbnails.max_size": "int",
+    "thumbnails.quality": "int",
+    "thumbnails.max_features": "int",
+    "thumbnails.basemap.provider": "str",
+    "thumbnails.basemap.opacity": "number",
+    "thumbnails.basemap.zoom_adjust": "int",
+    "check.disabled": "list",
+    "check.severity.*": "str",
+    "publish.public_url": "str",
+}
+
+#: How an error message names each type in ``KNOWN_SETTINGS``.
+_TYPE_LABELS: dict[str, str] = {
+    "bool": "true or false",
+    "int": "an integer",
+    "number": "a number",
+    "int|auto": "an integer or 'auto'",
+    "str": "a string",
+    "list": "a comma-separated list",
+}
 
 # Setting aliases: maps canonical key -> list of alternative keys to check
 # When looking up aws_profile, also check for "profile" in the config
@@ -99,8 +157,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "partitioning.threshold_gb": 2.0,  # 2GB per OGC best practices
     "partitioning.strategy": "kdtree",  # KD-tree: data-driven, auto-balancing
     "partitioning.target_rows": 120_000,  # geoparquet-io default
-    "partitioning.columns": None,  # Auto-detect from Hive directory structure
-    "partitioning.description": None,  # No semantic description by default
     "pmtiles.enabled": False,  # Disabled by default (requires tippecanoe)
     "pmtiles.min_zoom": None,  # None = tippecanoe auto-detection
     "pmtiles.max_zoom": None,  # None = tippecanoe auto-detection
@@ -211,6 +267,232 @@ def get_config_path(catalog_path: Path) -> Path:
     return catalog_path / ".portolan" / CONFIG_FILENAME
 
 
+#: Parsed YAML per resolved file path, with the text it came from (#1006).
+_PARSED: dict[Path, tuple[str, Any]] = {}
+
+
+def _parse_yaml(file_path: Path) -> Any:
+    """Parse a config.yaml or metadata.yaml file once per distinct content.
+
+    Every caller shares the returned object. Read it, never mutate it. The
+    public loaders hand out deep copies.
+
+    Args:
+        file_path: The YAML file to read.
+
+    Returns:
+        The parsed document, or None for an empty file. A config.yaml mapping
+        comes back with its legacy flat dotted keys folded into nested form.
+
+    Raises:
+        yaml.YAMLError: If the file is not valid YAML.
+    """
+    content = file_path.read_text(encoding="utf-8")
+    key = file_path.resolve()
+    cached = _PARSED.get(key)
+    if cached is not None and cached[0] == content:
+        return cached[1]
+    data: Any = None
+    if content.strip():
+        count("config.yaml_parses")
+        data = yaml.safe_load(content)
+    if isinstance(data, dict) and file_path.name == CONFIG_FILENAME:
+        data = _fold_config(data)
+    _PARSED[key] = (content, data)
+    return data
+
+
+def _schema_entry(key: str) -> tuple[tuple[str, ...], str] | None:
+    """Look a dotted key up in ``KNOWN_SETTINGS``.
+
+    Args:
+        key: Dotted setting key, such as "conversion.vector.sort".
+
+    Returns:
+        The nested path and the type name, or None for an unknown key. Below a
+        ``.*`` pattern the rest of the key is one name, so the extension in
+        "conversion.handlers..tif" keeps its dot.
+    """
+    kind = KNOWN_SETTINGS.get(key)
+    if kind is not None:
+        return tuple(key.split(".")), kind
+    for pattern, pattern_kind in KNOWN_SETTINGS.items():
+        prefix = pattern.removesuffix("*")
+        if prefix != pattern and key.startswith(prefix) and len(key) > len(prefix):
+            return (*prefix[:-1].split("."), key[len(prefix) :]), pattern_kind
+    return None
+
+
+def _matches(kind: str, value: Any) -> bool:
+    """Return True when ``value`` has the type that ``kind`` names."""
+    is_int = isinstance(value, int) and not isinstance(value, bool)
+    checks = {
+        "bool": isinstance(value, bool),
+        "int": is_int,
+        "number": is_int or isinstance(value, float),
+        "int|auto": is_int or value == "auto",
+        "str": isinstance(value, str),
+        "list": isinstance(value, list),
+    }
+    return checks[kind]
+
+
+def _parse_text(kind: str, text: str) -> Any:
+    """Turn the text of a ``config set`` VALUE into the type that ``kind`` names.
+
+    YAML scalar rules apply, so "false" is a bool and "8" is an int. A list
+    takes YAML flow syntax ("[0, 1000]") or comma-separated text ("*.tmp, a/").
+    """
+    if kind == "str":
+        return text
+    if kind == "list" and not text.lstrip().startswith("["):
+        return [item.strip() for item in text.split(",") if item.strip()]
+    try:
+        return yaml.safe_load(text)
+    except yaml.YAMLError:
+        return text
+
+
+def _coerce_value(key: str, kind: str, value: Any) -> Any:
+    """Give a setting value the type that ``KNOWN_SETTINGS`` names for it.
+
+    Raises:
+        ConfigError: If the value does not have that type.
+    """
+    parsed = _parse_text(kind, value) if isinstance(value, str) else value
+    if not _matches(kind, parsed):
+        raise ConfigError(f"Setting '{key}' takes {_TYPE_LABELS[kind]}, got {value!r}")
+    return parsed
+
+
+def _set_path(target: dict[str, Any], path: tuple[str, ...], value: Any) -> None:
+    """Write ``value`` at a nested path. A missing or non-mapping level becomes a mapping."""
+    node = target
+    for part in path[:-1]:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            node[part] = child
+        node = child
+    node[path[-1]] = value
+
+
+def _pop_path(target: dict[str, Any], path: tuple[str, ...]) -> bool:
+    """Remove the value at a nested path and every mapping that it leaves empty.
+
+    Returns:
+        True when a value was removed.
+    """
+    parents: list[tuple[dict[str, Any], str]] = []
+    node = target
+    for part in path[:-1]:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            return False
+        parents.append((node, part))
+        node = child
+    if path[-1] not in node:
+        return False
+    del node[path[-1]]
+    for parent, part in reversed(parents):
+        if parent[part]:
+            break
+        del parent[part]
+    return True
+
+
+def _fold_dotted_keys(mapping: dict[str, Any]) -> dict[str, Any]:
+    """Move the flat dotted keys that ``config set`` wrote before #1020 into nested form.
+
+    Such a key wins over the nested value, as it did when ``get_setting`` read
+    the flat key first. Its value gets the schema type when it can, so the
+    string 'false' that the old command wrote reads as False. The next
+    ``set_setting`` saves the folded form.
+    """
+    flat = {
+        key: entry
+        for key in mapping
+        if isinstance(key, str) and "." in key and (entry := _schema_entry(key)) is not None
+    }
+    if not flat:
+        return mapping
+    folded = {key: value for key, value in mapping.items() if key not in flat}
+    for key, (path, kind) in flat.items():
+        value = mapping[key]
+        # A bad value stays as it is. The reader warns, as for a nested value.
+        with contextlib.suppress(ConfigError):
+            value = _coerce_value(key, kind, value)
+        _set_path(folded, path, value)
+    return folded
+
+
+def _fold_config(data: dict[str, Any]) -> dict[str, Any]:
+    """Fold legacy dotted keys at the catalog level and in each ``collections`` entry."""
+    data = _fold_dotted_keys(data)
+    collections = data.get("collections")
+    if isinstance(collections, dict):
+        data["collections"] = {
+            name: _fold_dotted_keys(entry) if isinstance(entry, dict) else entry
+            for name, entry in collections.items()
+        }
+    return data
+
+
+@dataclass(frozen=True)
+class CatalogConfig:
+    """The ``.portolan/config.yaml`` of one catalog, parsed once per content.
+
+    ``data`` is the parse that every reader in the process shares. Read it,
+    never mutate it. ``load_config`` returns a copy for a caller that edits.
+    """
+
+    data: dict[str, Any]
+
+    def section(self, *path: str) -> dict[str, Any]:
+        """Return the mapping at a nested path, or an empty dict.
+
+        Args:
+            *path: Keys from the top level down, such as ("conversion", "vector").
+
+        Returns:
+            The mapping at that path. Any missing or non-mapping level gives {}.
+        """
+        node: Any = self.data
+        for part in path:
+            node = node.get(part) if isinstance(node, dict) else None
+        return node if isinstance(node, dict) else {}
+
+
+def load_catalog_config(catalog_path: Path) -> CatalogConfig:
+    """Load the catalog-level config that every reader in one run shares.
+
+    Args:
+        catalog_path: Root path of the catalog.
+
+    Returns:
+        The parsed config. Empty when the file is absent or empty.
+
+    Raises:
+        ConfigParseError: If the file is not valid YAML.
+        ConfigInvalidStructureError: If the file is not a mapping, or if its
+            ``collections`` section is not a mapping.
+    """
+    config_file = get_config_path(catalog_path)
+    if not config_file.is_file():
+        return CatalogConfig({})
+    try:
+        data = _parse_yaml(config_file)
+    except yaml.YAMLError as e:
+        raise ConfigParseError(str(config_file), str(e)) from e
+    if data is None:
+        return CatalogConfig({})
+    if not isinstance(data, dict):
+        raise ConfigInvalidStructureError(str(config_file), "Config must be a YAML mapping")
+    if "collections" in data and not isinstance(data["collections"], dict):
+        raise ConfigInvalidStructureError(str(config_file), "'collections' must be a mapping")
+    return CatalogConfig(data)
+
+
 def load_config(catalog_path: Path) -> dict[str, Any]:
     """Load configuration from .portolan/config.yaml.
 
@@ -218,40 +500,10 @@ def load_config(catalog_path: Path) -> dict[str, Any]:
         catalog_path: Root path of the catalog.
 
     Returns:
-        Config dictionary. Returns empty dict if file doesn't exist.
+        A copy of the config that the caller may edit. Empty if the file does
+        not exist.
     """
-    config_file = get_config_path(catalog_path)
-
-    if not config_file.exists():
-        return {}
-
-    content = config_file.read_text(encoding="utf-8")
-    if not content.strip():
-        return {}
-
-    count("config.yaml_parses")
-    try:
-        data = yaml.safe_load(content)
-    except yaml.YAMLError as e:
-        from portolan_cli.errors import ConfigParseError
-
-        raise ConfigParseError(str(config_file), str(e)) from e
-
-    if data is None:
-        return {}
-
-    if not isinstance(data, dict):
-        from portolan_cli.errors import ConfigInvalidStructureError
-
-        raise ConfigInvalidStructureError(str(config_file), "Config must be a YAML mapping")
-
-    # Validate collections section if present
-    if "collections" in data and not isinstance(data["collections"], dict):
-        from portolan_cli.errors import ConfigInvalidStructureError
-
-        raise ConfigInvalidStructureError(str(config_file), "'collections' must be a mapping")
-
-    return data
+    return copy.deepcopy(load_catalog_config(catalog_path).data)
 
 
 def get_ignored_files(catalog_path: Path | None) -> list[str]:
@@ -266,11 +518,7 @@ def get_ignored_files(catalog_path: Path | None) -> list[str]:
     ``ignored_files``, they take full control over the list. This matches how
     ``.gitignore`` works: a file at a given scope replaces inherited patterns.
 
-    .. warning::
-       Nothing on the asset-write path calls this function, so setting
-       ``ignored_files`` in ``.portolan/config.yaml`` currently has no effect.
-       Only the unit tests exercise it. Wire it into asset preparation before
-       documenting the key as user-facing.
+    ``add`` and ``list`` both apply these patterns.
 
     Args:
         catalog_path: Root path of the catalog, or None to get defaults.
@@ -285,7 +533,7 @@ def get_ignored_files(catalog_path: Path | None) -> list[str]:
     if catalog_path is None:
         return list(DEFAULT_IGNORED_FILES)
 
-    config = load_config(catalog_path)
+    config = load_catalog_config(catalog_path).data
 
     if "ignored_files" not in config:
         return list(DEFAULT_IGNORED_FILES)
@@ -293,8 +541,6 @@ def get_ignored_files(catalog_path: Path | None) -> list[str]:
     raw = config["ignored_files"]
 
     if not isinstance(raw, list):
-        from portolan_cli.errors import ConfigInvalidStructureError
-
         raise ConfigInvalidStructureError(
             str(get_config_path(catalog_path)),
             "'ignored_files' must be a list of glob patterns (strings)",
@@ -302,8 +548,6 @@ def get_ignored_files(catalog_path: Path | None) -> list[str]:
 
     for item in raw:
         if not isinstance(item, str):
-            from portolan_cli.errors import ConfigInvalidStructureError
-
             raise ConfigInvalidStructureError(
                 str(get_config_path(catalog_path)),
                 f"'ignored_files' must be a list of strings; got item {item!r}",
@@ -373,6 +617,12 @@ def _env_setting(key: str) -> str | None:
     return None
 
 
+def _key_path(key: str) -> tuple[str, ...]:
+    """Split a dotted key into its nested path, as ``KNOWN_SETTINGS`` defines it."""
+    entry = _schema_entry(key)
+    return entry[0] if entry is not None else tuple(key.split("."))
+
+
 def _get_nested(cfg: dict[str, Any], key: str) -> Any | None:
     """Walk a nested config dict for a dotted key such as "pmtiles.src_crs".
 
@@ -384,7 +634,7 @@ def _get_nested(cfg: dict[str, Any], key: str) -> Any | None:
         The value at that path, or None when any part is missing.
     """
     current: Any = cfg
-    for part in key.split("."):
+    for part in _key_path(key):
         if not isinstance(current, dict) or part not in current:
             return None
         current = current[part]
@@ -458,7 +708,8 @@ def get_setting(
         collection_path: Optional path to collection directory for hierarchical lookup
 
     Returns:
-        Resolved value, or None if not found at any level.
+        Resolved value, or None if not found at any level. A list or mapping
+        is a copy, so the caller may edit it.
     """
     # 1. CLI argument takes highest precedence
     if cli_value is not None:
@@ -480,30 +731,31 @@ def get_setting(
         value = _get_with_aliases(merged_config, key)
         if value is not None:
             return value
-        # Fall through to built-in defaults
 
     else:
-        # Legacy behavior: use collections: section in root config
-        # Load config from file
-        config = load_config(catalog_path)
+        config = load_catalog_config(catalog_path)
 
         # 4. Legacy collection-level config (if collection specified)
         if collection is not None:
-            collections = config.get("collections", {})
-            collection_config = collections.get(collection, {})
+            collection_config = config.section("collections", collection)
             _check_sensitive_in_config(collection_config, key)
             value = _get_with_aliases(collection_config, key)
             if value is not None:
-                return value
+                return copy.deepcopy(value)
 
         # 5. Catalog-level config
-        _check_sensitive_in_config(config, key)
-        value = _get_with_aliases(config, key)
+        _check_sensitive_in_config(config.data, key)
+        value = _get_with_aliases(config.data, key)
         if value is not None:
-            return value
+            return copy.deepcopy(value)
 
     # 6. Built-in default from DEFAULT_SETTINGS
-    return DEFAULT_SETTINGS.get(key)
+    return copy.deepcopy(DEFAULT_SETTINGS.get(key))
+
+
+def _unknown_setting_message(key: str) -> str:
+    names = ", ".join(sorted(name.replace("*", "<name>") for name in KNOWN_SETTINGS))
+    return f"Unknown setting '{key}'. Known settings: {names}"
 
 
 def set_setting(
@@ -514,7 +766,10 @@ def set_setting(
 ) -> None:
     """Set a configuration value.
 
-    Creates the config file and .portolan directory if they don't exist.
+    Creates the config file and .portolan directory if they don't exist. A
+    dotted key writes a nested path: "conversion.vector.sort" lands under
+    ``conversion: vector: sort:``. A string value takes the type that
+    ``KNOWN_SETTINGS`` names, so "false" is stored as a bool.
 
     Args:
         catalog_path: Root path of the catalog.
@@ -523,29 +778,27 @@ def set_setting(
         collection: Optional collection name for collection-level config
 
     Raises:
-        ValueError: If key is a sensitive setting (remote, profile, region).
-            These must be set via environment variables or .env files.
+        ConfigError: If key is a sensitive setting (remote, profile, region).
+            These must be set via environment variables or .env files. Also
+            if key is not in ``KNOWN_SETTINGS``, or if value does not have the
+            type that the key takes.
     """
     if key in SENSITIVE_SETTINGS:
         env_var = _get_env_var_name(key)
-        raise ValueError(
+        raise ConfigError(
             f"'{key}' cannot be stored in config.yaml (would be pushed to remote). "
             f"Use environment variable {env_var} or add to .env file in catalog root."
         )
 
+    entry = _schema_entry(key)
+    if entry is None:
+        raise ConfigError(_unknown_setting_message(key))
+    path, kind = entry
+    value = _coerce_value(key, kind, value)
+
     config = load_config(catalog_path)
-
-    if collection is not None:
-        # Set collection-level config
-        if "collections" not in config:
-            config["collections"] = {}
-        if collection not in config["collections"]:
-            config["collections"][collection] = {}
-        config["collections"][collection][key] = value
-    else:
-        # Set catalog-level config
-        config[key] = value
-
+    scope = ("collections", collection) if collection is not None else ()
+    _set_path(config, (*scope, *path), value)
     save_config(catalog_path, config)
 
 
@@ -556,6 +809,9 @@ def unset_setting(
 ) -> bool:
     """Remove a configuration value.
 
+    A dotted key removes its nested path, and every level that it leaves
+    empty. A literal key that holds a dot, as a hand edit can write, goes too.
+
     Args:
         catalog_path: Root path of the catalog.
         key: Setting key to remove
@@ -565,22 +821,27 @@ def unset_setting(
         True if the key existed and was removed, False if key didn't exist.
     """
     config = load_config(catalog_path)
-
-    if collection is not None:
-        # Remove from collection-level config
-        collections = config.get("collections", {})
-        collection_config = collections.get(collection, {})
-        if key not in collection_config:
-            return False
-        del collection_config[key]
-    else:
-        # Remove from catalog-level config
-        if key not in config:
-            return False
-        del config[key]
-
+    scope = ("collections", collection) if collection is not None else ()
+    if not (_pop_path(config, (*scope, key)) or _pop_path(config, (*scope, *_key_path(key)))):
+        return False
     save_config(catalog_path, config)
     return True
+
+
+def _leaf_keys(mapping: dict[str, Any], prefix: str = "") -> list[str]:
+    """List the dotted keys of the values in a nested config mapping.
+
+    A mapping that ``KNOWN_SETTINGS`` names with a ``.*`` pattern, such as
+    ``conversion.handlers``, counts as one value.
+    """
+    keys: list[str] = []
+    for name, value in mapping.items():
+        dotted = f"{prefix}{name}"
+        if isinstance(value, dict) and value and f"{dotted}.*" not in KNOWN_SETTINGS:
+            keys.extend(_leaf_keys(value, f"{dotted}."))
+        else:
+            keys.append(dotted)
+    return keys
 
 
 def list_settings(
@@ -601,23 +862,19 @@ def list_settings(
     """
     result: dict[str, dict[str, Any]] = {}
 
-    # Load file-based config
-    config = load_config(catalog_path) if catalog_path else {}
+    config = load_catalog_config(catalog_path) if catalog_path else CatalogConfig({})
+    file_config = {key: value for key, value in config.data.items() if key != "collections"}
+    all_keys = set(_leaf_keys(file_config))
 
-    # Get all keys from config file
-    all_keys = set(config.keys()) - {"collections"}
+    collection_config = config.section("collections", collection) if collection else {}
+    all_keys.update(_leaf_keys(collection_config))
 
-    # Add collection keys if specified
-    if collection and "collections" in config:
-        collection_config = config.get("collections", {}).get(collection, {})
-        all_keys.update(collection_config.keys())
-
-    # Add known settings
+    # Add known settings. A ``.*`` pattern resolves to nothing and drops out.
     all_keys.update(KNOWN_SETTINGS)
 
     # Check environment variables for all known + sensitive settings
     # Sensitive settings can still be read from env vars, just not saved to config
-    for key in KNOWN_SETTINGS | SENSITIVE_SETTINGS:
+    for key in KNOWN_SETTINGS.keys() | SENSITIVE_SETTINGS:
         env_var = _get_env_var_name(key)
         if env_var in os.environ:
             all_keys.add(key)
@@ -627,14 +884,11 @@ def list_settings(
         try:
             value = get_setting(key, catalog_path=catalog_path, collection=collection)
             source = get_setting_source(key, catalog_path, collection)
-            if value is not None or source != "default":
+            if value is not None:
                 result[key] = {"value": value, "source": source}
         except ValueError:
             # Sensitive key in config without env var - show with warning source
-            # Get the value directly from config for display purposes
-            cfg = load_config(catalog_path) if catalog_path else {}
-            if collection:
-                cfg = cfg.get("collections", {}).get(collection, cfg)
+            cfg = collection_config or config.data
             if key in cfg:
                 result[key] = {"value": cfg[key], "source": "config (INSECURE)"}
 
@@ -656,31 +910,23 @@ def get_setting_source(
     Returns:
         Source string: "env", "collection", "catalog", or "default"
     """
-    # Check environment variable (skip empty strings)
-    env_var = _get_env_var_name(key)
-    env_value = os.environ.get(env_var)
-    if env_value:  # Non-empty string
+    if _env_setting(key) is not None:
         return "env"
-
-    # Check alias env vars (e.g., aws_profile aliases to profile, so check PORTOLAN_PROFILE)
-    for alias in SETTING_ALIASES.get(key, []):
-        alias_env_var = _get_env_var_name(alias)
-        if os.environ.get(alias_env_var):
-            return "env"
 
     if catalog_path is None:
         return "default"
 
-    config = load_config(catalog_path)
+    config = load_catalog_config(catalog_path)
 
     # Check collection config
-    if collection is not None:
-        collection_config = config.get("collections", {}).get(collection, {})
-        if key in collection_config:
-            return "collection"
+    if (
+        collection is not None
+        and _get_with_aliases(config.section("collections", collection), key) is not None
+    ):
+        return "collection"
 
     # Check catalog config
-    if key in config:
+    if _get_with_aliases(config.data, key) is not None:
         return "catalog"
 
     return "default"
@@ -761,26 +1007,34 @@ def _load_validated_mapping(file_path: Path) -> dict[str, Any] | None:
     Returns:
         Parsed dict if valid, None otherwise.
 
+    The result is the shared parse from ``_parse_yaml``. Do not mutate it.
+
     Raises:
         ConfigInvalidStructureError: If YAML is malformed.
     """
-    from portolan_cli.errors import ConfigInvalidStructureError
-
-    content = file_path.read_text(encoding="utf-8")
-    if not content.strip():
-        return None
-
-    count("config.yaml_parses")
     try:
-        data = yaml.safe_load(content)
+        data = _parse_yaml(file_path)
     except yaml.YAMLError as e:
         raise ConfigInvalidStructureError(str(file_path), f"Invalid YAML syntax: {e}") from e
 
-    if not isinstance(data, dict):
-        # Non-mapping YAML (e.g., a list or scalar) - skip with warning
-        return None
+    # Empty or non-mapping YAML (e.g., a list or scalar) counts as no file.
+    return data if isinstance(data, dict) else None
 
-    return data
+
+def _merge_files(files: list[Path], skip: Path | None = None) -> dict[str, Any]:
+    """Deep-merge the mappings in ``files``, later files over earlier ones.
+
+    The result shares nested values with the parse cache. Copy it before it
+    leaves this module.
+    """
+    result: dict[str, Any] = {}
+    for file_path in files:
+        if file_path == skip:
+            continue
+        data = _load_validated_mapping(file_path)
+        if data is not None:
+            result = _deep_merge(result, data)
+    return result
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -826,18 +1080,7 @@ def load_merged_yaml(
         Merged dictionary from all YAML files in hierarchy.
         Empty dict if no files exist.
     """
-    files = find_portolan_files(start_path, filename, catalog_root)
-
-    if not files:
-        return {}
-
-    result: dict[str, Any] = {}
-    for file_path in files:
-        data = _load_validated_mapping(file_path)
-        if data is not None:
-            result = _deep_merge(result, data)
-
-    return result
+    return copy.deepcopy(_merge_files(find_portolan_files(start_path, filename, catalog_root)))
 
 
 def load_merged_config(
@@ -859,45 +1102,26 @@ def load_merged_config(
     Returns:
         Merged configuration dictionary.
     """
-    # Get the merged config from hierarchy
-    merged = load_merged_yaml(path, CONFIG_FILENAME, catalog_root)
+    files = find_portolan_files(path, CONFIG_FILENAME, catalog_root)
+    merged = _merge_files(files)
 
-    # Check for legacy collections: section in root config
-    root_config_path = catalog_root / ".portolan" / CONFIG_FILENAME
-    if root_config_path.is_file():
-        root_config = _load_validated_mapping(root_config_path)
-        if root_config is not None:
-            collections = root_config.get("collections", {})
-            if isinstance(collections, dict):
-                # Determine collection name from path
-                try:
-                    relative = path.resolve().relative_to(catalog_root.resolve())
-                    collection_name = relative.parts[0] if relative.parts else None
-                except ValueError:
-                    collection_name = None
+    # Legacy collections: section in the root config. The hierarchy files
+    # below the root override it, and it overrides the root settings.
+    root_config = load_catalog_config(catalog_root)
+    try:
+        relative = path.resolve().relative_to(catalog_root.resolve())
+        collection_name = relative.parts[0] if relative.parts else None
+    except ValueError:
+        collection_name = None
+    legacy = root_config.section("collections").get(collection_name) if collection_name else None
+    if isinstance(legacy, dict):
+        root_settings = {k: v for k, v in root_config.data.items() if k != "collections"}
+        root_file = get_config_path(catalog_root).resolve()
+        merged = _deep_merge(
+            _deep_merge(root_settings, legacy), _merge_files(files, skip=root_file)
+        )
 
-                if collection_name and collection_name in collections:
-                    legacy_config = collections[collection_name]
-                    if isinstance(legacy_config, dict):
-                        # Merge: hierarchy config overrides legacy
-                        # First apply legacy, then hierarchy on top
-                        # Start with root-level settings (excluding collections:)
-                        result: dict[str, Any] = {
-                            key: value for key, value in root_config.items() if key != "collections"
-                        }
-                        # Apply legacy collection config
-                        result = _deep_merge(result, legacy_config)
-                        # Apply hierarchical folder configs (takes precedence)
-                        # But we need to exclude the root config since we processed it
-                        files = find_portolan_files(path, CONFIG_FILENAME, catalog_root)
-                        for file_path in files:
-                            if file_path != root_config_path:
-                                data = _load_validated_mapping(file_path)
-                                if data is not None:
-                                    result = _deep_merge(result, data)
-                        return result
-
-    return merged
+    return copy.deepcopy(merged)
 
 
 #: metadata.yaml keys that name one object and therefore never inherit (#815).
@@ -955,7 +1179,7 @@ def load_own_metadata(path: Path) -> dict[str, Any]:
     file_path = path / ".portolan" / "metadata.yaml"
     if not file_path.is_file():
         return {}
-    return _load_validated_mapping(file_path) or {}
+    return copy.deepcopy(_load_validated_mapping(file_path) or {})
 
 
 # =============================================================================

@@ -43,7 +43,7 @@ DESIGN_REASONS = frozenset(
     }
 )
 
-EXPECTED_COUNTS = {"xfail": 10, "invariant": 6, "config-key": 6}
+EXPECTED_COUNTS = {"xfail": 9, "invariant": 6, "config-key": 10}
 
 
 def _sources() -> dict[Path, ast.Module]:
@@ -201,4 +201,4 @@ def test_the_scan_sees_the_markers_it_counts() -> None:
     """Guard the scan: a known strict xfail reason is among the strings it reads."""
     reasons = {text for tree in _sources().values() for text in xfail_reasons(tree)}
 
-    assert "#1020: config set stores the list as one string" in reasons
+    assert "#801: the extent keeps the rows that the data lost" in reasons

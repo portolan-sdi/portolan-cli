@@ -14,7 +14,6 @@ xfail	#840	C	tests/integration/test_generated_catalog_conformance.py row item-id
 xfail	#852	C	tests/integration/test_bbox_validation.py; invariant bbox_validation reason
 xfail	#914	spec	tests/integration/test_generated_catalog_conformance.py PTL-EXT-001, PTL-PRT-001, PTL-SCH-001 row partitioned
 xfail	#932	spec	tests/integration/test_generated_catalog_conformance.py PTL-DAT-005 row multi-file
-xfail	#1020	A	tests/integration/test_config_reachability.py
 xfail	#1023	C	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS P-SUMMARY-FROM-ITEMS; tests/integration/test_generated_catalog_conformance.py raster rows
 xfail	#1046	C	tests/integration/test_check_fix_no_regression.py; invariant check_fix --fix reason
 
@@ -31,3 +30,7 @@ config-key	pmtiles.where: shows only in decoded tile contents
 config-key	pmtiles.include_cols: shows only in decoded tile contents
 config-key	pmtiles.precision: shows only in decoded tile coordinates
 config-key	pmtiles.src_crs: shows only when the file CRS metadata is wrong
+config-key	thumbnails.max_features: changes only which features the drawing samples
+config-key	thumbnails.basemap.provider: draws only with basemap tiles from the network, which tests block
+config-key	thumbnails.basemap.opacity: draws only with basemap tiles from the network, which tests block
+config-key	thumbnails.basemap.zoom_adjust: draws only with basemap tiles from the network, which tests block
