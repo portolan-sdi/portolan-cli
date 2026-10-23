@@ -24,13 +24,14 @@ import pystac
 from portolan_cli.bbox import compute_bbox_union, to_2d_bbox
 from portolan_cli.constants import PARTITION_EXTENSION_URI, PORTOLAN_SCHEMA_URI, ROLE_VISUAL
 from portolan_cli.errors import AssetKeyCollisionError, InvalidBboxError
+from portolan_cli.extension_registry import EXTENSION_REGISTRY
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.providers import derive_provenance, resolve_providers
 from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from portolan_cli.metadata.tabular import TabularMetadata
 
@@ -431,12 +432,41 @@ _LEGACY_MEDIA_TYPES: dict[str, str] = {
     "application/x-geoparquet": _PARQUET_MEDIA_TYPE,
 }
 
-# Stem ranks of the cloud-native media types other than Parquet.
-_CLOUD_NATIVE_RANK: dict[str, int] = {
-    "image/tiff; application=geotiff; profile=cloud-optimized": 1,
-    "application/vnd.flatgeobuf": 1,
-    PMTILES_MEDIA_TYPE: 2,
-}
+# Rank of a file when same-stem files compete for the stem key (Issues #933,
+# #960). The lowest rank owns the stem. ``preparation`` ranks the scanned files
+# and ``add_asset_to_collection`` the stored assets, both with :func:`stem_rank`.
+STEM_RANK_GEOPARQUET = 0
+STEM_RANK_CLOUD_NATIVE = 1
+STEM_RANK_PMTILES = 2
+STEM_RANK_TABLE = 3
+STEM_RANK_SOURCE = 4
+
+# Extensions whose files can be the catalog's own cloud-native data.
+_CLOUD_NATIVE_EXTENSIONS: tuple[str, ...] = tuple(
+    spec.ext for spec in EXTENSION_REGISTRY if spec.cloud_native != "no"
+)
+
+
+def stem_rank(media_type: str | None, name: str, is_plain_table: Callable[[], bool]) -> int:
+    """Rank one data file for the stem key.
+
+    GeoParquet, then COG, FlatGeobuf and other cloud-native data, then PMTiles,
+    then a Parquet table without GeoParquet metadata, then any other file, such
+    as a CSV or GeoJSON source.
+
+    Args:
+        media_type: The media type of the file. A legacy Parquet type counts.
+        name: The file name or href.
+        is_plain_table: Reads the Parquet footer. Called for Parquet only.
+    """
+    canonical = _canonical_media_type(media_type or "")
+    if canonical == PMTILES_MEDIA_TYPE:
+        return STEM_RANK_PMTILES
+    if canonical == _PARQUET_MEDIA_TYPE:
+        return STEM_RANK_TABLE if is_plain_table() else STEM_RANK_GEOPARQUET
+    if name.lower().endswith(_CLOUD_NATIVE_EXTENSIONS):
+        return STEM_RANK_CLOUD_NATIVE
+    return STEM_RANK_SOURCE
 
 
 def _canonical_media_type(media_type: str) -> str:
@@ -470,19 +500,12 @@ def _media_types_differ(existing: str | None, new: str | None) -> bool:
 
 
 def _stem_rank(collection: pystac.Collection, asset: pystac.Asset) -> int:
-    """Rank a data file for the stem key, as the ``preparation`` resolver does.
+    """Rank a stored asset with :func:`stem_rank`.
 
-    GeoParquet 0, COG or FlatGeobuf 1, PMTiles 2, a Parquet table without
-    GeoParquet metadata 3, and any other file 4, such as a CSV or GeoJSON
-    source. The tabular add path keys a plain table by its stem, so the footer
-    decides. Only a same-stem collision reaches this read.
+    The tabular add path keys a plain table by its stem, so the footer decides.
+    Only a same-stem collision reaches this read.
     """
-    canonical = _canonical_media_type(asset.media_type or "")
-    if canonical == _PARQUET_MEDIA_TYPE:
-        return 3 if _is_plain_table(collection, asset.href) else 0
-    if canonical in _CLOUD_NATIVE_RANK:
-        return _CLOUD_NATIVE_RANK[canonical]
-    return 4
+    return stem_rank(asset.media_type, asset.href, lambda: _is_plain_table(collection, asset.href))
 
 
 def _is_plain_table(collection: pystac.Collection, href: str) -> bool:

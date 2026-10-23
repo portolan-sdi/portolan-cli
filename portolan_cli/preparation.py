@@ -54,14 +54,15 @@ from portolan_cli.plugins.formats import FormatContext, extension_of, handler_fo
 from portolan_cli.readme import README_FILENAME
 from portolan_cli.scan.detect import is_filegdb
 from portolan_cli.stac import (
+    STEM_RANK_SOURCE,
     add_projection_extension,
     add_raster_extension,
     add_vector_extension,
     create_item,
+    stem_rank,
 )
 from portolan_cli.stac_parquet import (
     PARQUET_FILENAME,
-    PARQUET_MEDIA_TYPE,
     declare_extensions_in_use,
 )
 from portolan_cli.sync.checksums import (
@@ -311,34 +312,16 @@ def _measure(file_path: Path) -> _ScannedFile | None:
     )
 
 
-# Rank of a file when same-stem files compete for the stem (Issues #933, #960).
-# The lowest rank owns the stem and gets the data role.
-_STEM_RANK_GEOPARQUET = 0
-_STEM_RANK_CLOUD_NATIVE = 1
-_STEM_RANK_PMTILES = 2
-_STEM_RANK_TABLE = 3
-_STEM_RANK_SOURCE = 4
-
-# Extensions whose files can be the catalog's own cloud-native data. A file of
-# any other extension beside a cloud-native owner is the owner's source.
-_CLOUD_NATIVE_EXTENSIONS: tuple[str, ...] = tuple(
-    spec.ext for spec in _reg.EXTENSION_REGISTRY if spec.cloud_native != "no"
-)
-
 ROLE_SOURCE = "source"
 
 
 def _stem_rank(scanned_file: _ScannedFile, *, read_footer: bool) -> int:
     """Rank one content file. ``read_footer`` tells GeoParquet from a plain table."""
-    if scanned_file.media_type == PMTILES_MEDIA_TYPE:
-        return _STEM_RANK_PMTILES
-    if scanned_file.media_type == PARQUET_MEDIA_TYPE:
-        if read_footer and not is_geoparquet(scanned_file.path):
-            return _STEM_RANK_TABLE
-        return _STEM_RANK_GEOPARQUET
-    if scanned_file.path.name.lower().endswith(_CLOUD_NATIVE_EXTENSIONS):
-        return _STEM_RANK_CLOUD_NATIVE
-    return _STEM_RANK_SOURCE
+    return stem_rank(
+        scanned_file.media_type,
+        scanned_file.path.name,
+        lambda: read_footer and not is_geoparquet(scanned_file.path),
+    )
 
 
 def _resolve_assets(
@@ -402,14 +385,14 @@ def _resolve_assets(
                 f.path.name,
             ),
         )
-        converted = ranks[owner.path] < _STEM_RANK_SOURCE
+        converted = ranks[owner.path] < STEM_RANK_SOURCE
         for member in members:
             if member is owner:
                 is_primary = member.path == primary_file
                 claim("data" if is_primary and not collection_level else stem, member, "data")
             elif member.media_type == PMTILES_MEDIA_TYPE:
                 claim(pmtiles_asset_key(stem), member, ROLE_VISUAL)
-            elif converted and ranks[member.path] == _STEM_RANK_SOURCE:
+            elif converted and ranks[member.path] == STEM_RANK_SOURCE:
                 claim(member.path.name, member, ROLE_SOURCE)
             else:
                 claim(member.path.name, member, member.role)

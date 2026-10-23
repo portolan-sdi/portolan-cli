@@ -402,6 +402,23 @@ class TestAssetKeyCollision:
         assert tiles.extra_fields == {"file:size": 10}
 
     @pytest.mark.unit
+    def test_a_zarr_store_ranks_as_the_add_resolver_ranks_it(self) -> None:
+        """``preparation`` ranks a Zarr store as cloud-native data, above PMTiles."""
+        collection = self._collection(
+            scene=pystac.Asset(href="./scene.pmtiles", media_type=_PMTILES, roles=["data"])
+        )
+        incoming = pystac.Asset(
+            href="./scene.zarr", media_type="application/vnd+zarr", roles=["data"]
+        )
+
+        add_asset_to_collection(collection, "scene", incoming)
+
+        assert {key: asset.href for key, asset in collection.assets.items()} == {
+            "scene": "./scene.zarr",
+            "scene-tiles": "./scene.pmtiles",
+        }
+
+    @pytest.mark.unit
     def test_repair_converges_when_the_tiles_item_lands_first(self) -> None:
         collection = self._collection(
             zoning=pystac.Asset(href="./zoning.pmtiles", media_type=_PMTILES, roles=["data"])
