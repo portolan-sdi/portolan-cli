@@ -16,6 +16,7 @@ mutmut sandbox does not copy (#997).
 
 from __future__ import annotations
 
+import datetime
 import importlib.util
 import json
 import re
@@ -268,3 +269,14 @@ def test_the_gate_catches_its_fault(name: str, tmp_path: Path) -> None:
         assert result.detail
     else:
         assert (result.status, result.detail) == ("CAUGHT", "")
+
+
+def test_a_pending_row_fails_the_run_after_the_deadline() -> None:
+    deadline = selftest.PENDING_DEADLINE
+    pending = selftest.Result("x", "PENDING", "needs a config")
+
+    assert selftest.failed(pending, deadline) is False
+    assert selftest.failed(pending, deadline + datetime.timedelta(days=1)) is True
+    assert selftest.failed(selftest.Result("x", "CAUGHT", ""), deadline) is False
+    for status in ("MISSED", "BROKEN", "ERROR"):
+        assert selftest.failed(selftest.Result("x", status, "why"), deadline) is True
