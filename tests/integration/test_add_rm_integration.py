@@ -35,6 +35,16 @@ def initialized_catalog(tmp_path: Path) -> Path:
     return tmp_path
 
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from tests.catalog_invariants import RunCli
+
+# `add --item-id` writes asset hrefs relative to a directory that does not
+# exist, so run_cli must not check those catalogs at teardown.
+ITEM_ID_REASON = "item-id: hrefs point at a directory that does not exist (#840)"
+
+
 @pytest.fixture
 def catalog_with_vectors(initialized_catalog: Path, valid_points_geojson: Path) -> Path:
     """Create catalog with a vector collection."""
@@ -304,7 +314,11 @@ class TestAddItemIdOverrideIntegration:
 
     @pytest.mark.integration
     def test_add_with_item_id_creates_item_with_custom_id(
-        self, runner: CliRunner, initialized_catalog: Path, valid_singleband_cog: Path
+        self,
+        run_cli: RunCli,
+        initialized_catalog: Path,
+        valid_singleband_cog: Path,
+        build_damaged_catalog: Callable[[Path, str], Path],
     ) -> None:
         """add --item-id creates STAC item with the custom ID.
 
@@ -324,21 +338,17 @@ class TestAddItemIdOverrideIntegration:
         shutil.copy(valid_singleband_cog, test_file)
 
         # Act: add with --item-id override
-        result = runner.invoke(
-            cli,
-            [
-                "add",
-                "--portolan-dir",
-                str(initialized_catalog),
-                "--item-id",
-                "custom-scene-2024",
-                str(test_file),
-            ],
-            catch_exceptions=False,
+        build_damaged_catalog(initialized_catalog, ITEM_ID_REASON)
+        run_cli(
+            "add",
+            "--portolan-dir",
+            str(initialized_catalog),
+            "--item-id",
+            "custom-scene-2024",
+            str(test_file),
         )
 
         # Assert
-        assert result.exit_code == 0, f"Add failed: {result.output}"
 
         # Versions.json is at the collection level (imagery/)
         versions_path = collection_dir / "versions.json"
@@ -360,7 +370,11 @@ class TestAddItemIdOverrideIntegration:
 
     @pytest.mark.integration
     def test_add_with_item_id_stac_item_uses_custom_id(
-        self, runner: CliRunner, initialized_catalog: Path, valid_singleband_cog: Path
+        self,
+        run_cli: RunCli,
+        initialized_catalog: Path,
+        valid_singleband_cog: Path,
+        build_damaged_catalog: Callable[[Path, str], Path],
     ) -> None:
         """add --item-id results in STAC item.json with custom ID field.
 
@@ -376,20 +390,15 @@ class TestAddItemIdOverrideIntegration:
         shutil.copy(valid_singleband_cog, test_file)
 
         # Act
-        result = runner.invoke(
-            cli,
-            [
-                "add",
-                "--portolan-dir",
-                str(initialized_catalog),
-                "--item-id",
-                "my-custom-item",
-                str(test_file),
-            ],
-            catch_exceptions=False,
+        build_damaged_catalog(initialized_catalog, ITEM_ID_REASON)
+        run_cli(
+            "add",
+            "--portolan-dir",
+            str(initialized_catalog),
+            "--item-id",
+            "my-custom-item",
+            str(test_file),
         )
-
-        assert result.exit_code == 0, f"Add failed: {result.output}"
 
         # Raster item JSON at item_dir/{item_id}.json (flat structure)
         item_json_path = item_dir / "my-custom-item.json"
@@ -446,7 +455,7 @@ class TestAddItemIdOverrideIntegration:
 
     @pytest.mark.integration
     def test_add_item_id_with_invalid_characters_fails(
-        self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
+        self, run_cli: RunCli, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
         """add --item-id with path separators fails with clear error."""
         # Set up
@@ -457,25 +466,22 @@ class TestAddItemIdOverrideIntegration:
         shutil.copy(valid_points_geojson, test_file)
 
         # Act: try to use invalid item_id with path separator
-        result = runner.invoke(
-            cli,
-            [
-                "add",
-                "--portolan-dir",
-                str(initialized_catalog),
-                "--item-id",
-                "invalid/item-id",
-                str(test_file),
-            ],
+        result = run_cli(
+            "add",
+            "--portolan-dir",
+            str(initialized_catalog),
+            "--item-id",
+            "invalid/item-id",
+            str(test_file),
+            expect=1,
         )
 
         # Should fail
-        assert result.exit_code != 0, "Should fail for item_id with '/'"
-        assert "single path segment" in result.output.lower() or "invalid" in result.output.lower()
+        assert "Invalid item_id 'invalid/item-id': must be a single path segment" in result.output
 
     @pytest.mark.integration
     def test_add_item_id_with_directory_rejects(
-        self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
+        self, run_cli: RunCli, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
         """add --item-id with a directory path fails (ambiguous for multiple files)."""
         # Set up: directory with a geo file
@@ -486,21 +492,18 @@ class TestAddItemIdOverrideIntegration:
         shutil.copy(valid_points_geojson, test_file)
 
         # Act: use --item-id with a directory path
-        result = runner.invoke(
-            cli,
-            [
-                "add",
-                "--portolan-dir",
-                str(initialized_catalog),
-                "--item-id",
-                "my-custom-id",
-                str(collection_dir),
-            ],
+        result = run_cli(
+            "add",
+            "--portolan-dir",
+            str(initialized_catalog),
+            "--item-id",
+            "my-custom-id",
+            str(collection_dir),
+            expect=1,
         )
 
         # Should fail because --item-id is ambiguous with directories
-        assert result.exit_code != 0, "Should fail for --item-id with directory"
-        assert "single file" in result.output.lower() or "directory" in result.output.lower()
+        assert "--item-id can only be used with a single file, not a directory" in result.output
 
 
 class TestRmIntegration:

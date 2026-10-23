@@ -345,50 +345,8 @@ class TestCliOutputWithFailures:
                 assert "invalid geometry type" in result.output
                 assert result.exit_code == 1
 
-    @pytest.mark.unit
-    def test_cli_json_output_includes_failures(self, runner: CliRunner) -> None:
-        """JSON output should include failures array."""
-        with runner.isolated_filesystem() as temp_dir:
-            temp_path = Path(temp_dir)
-            setup_catalog(temp_path)
-
-            collection_dir = temp_path / "collection"
-            collection_dir.mkdir()
-            test_file = collection_dir / "test.geojson"
-            test_file.write_text("{}")
-
-            with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = (
-                    [
-                        ItemInfo(
-                            item_id="good",
-                            collection_id="collection",
-                            format_type="vector",
-                            bbox=[0, 0, 1, 1],
-                            asset_paths=["good.parquet"],
-                        )
-                    ],
-                    [],
-                    [
-                        AddFailure(
-                            path=Path("bad.parquet"),
-                            error="missing geometry",
-                        )
-                    ],
-                )
-
-                result = runner.invoke(
-                    cli,
-                    ["--format", "json", "add", str(collection_dir)],
-                )
-
-                envelope = json.loads(result.output)
-                # With failures, success should be False
-                assert envelope["success"] is False
-                assert "failures" in envelope["data"]
-                assert len(envelope["data"]["failures"]) == 1
-                assert envelope["data"]["failures"][0]["error"] == "missing geometry"
-                assert result.exit_code == 1
+    # The JSON envelope with failures runs the real add_files in
+    # tests/integration/test_stdout_purity.py::TestAddEnvelope.
 
     @pytest.mark.unit
     def test_cli_success_when_no_failures(self, runner: CliRunner) -> None:
@@ -557,52 +515,4 @@ class TestOutputEdgeCases:
                 assert f"{err_path}: Permission denied" in result.output
                 # Verify no double-path pattern
                 assert "Failed to add" not in result.output
-                assert result.exit_code == 1
-
-    @pytest.mark.unit
-    def test_json_output_only_failures_no_successes(self, runner: CliRunner) -> None:
-        """JSON output with zero successes and only failures.
-
-        When all files fail, the envelope should have success=False,
-        an errors array at the top level, and data.added should be empty.
-        """
-        with runner.isolated_filesystem() as temp_dir:
-            temp_path = Path(temp_dir)
-            setup_catalog(temp_path)
-
-            collection_dir = temp_path / "collection"
-            collection_dir.mkdir()
-            test_file = collection_dir / "test.geojson"
-            test_file.write_text("{}")
-
-            with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = (
-                    [],  # no successes
-                    [],  # no skipped
-                    [
-                        AddFailure(
-                            path=Path("file1.geojson"),
-                            error="missing bounding box",
-                        ),
-                        AddFailure(
-                            path=Path("file2.geojson"),
-                            error="invalid geometry type",
-                        ),
-                    ],
-                )
-
-                result = runner.invoke(
-                    cli,
-                    ["--format", "json", "add", str(collection_dir)],
-                )
-
-                envelope = json.loads(result.output)
-                assert envelope["success"] is False
-                assert envelope["data"]["added"] == []
-                assert len(envelope["data"]["failures"]) == 2
-                assert envelope["data"]["failures"][0]["error"] == "missing bounding box"
-                assert envelope["data"]["failures"][1]["error"] == "invalid geometry type"
-                # Top-level errors array should exist
-                assert "errors" in envelope
-                assert len(envelope["errors"]) == 2
                 assert result.exit_code == 1
