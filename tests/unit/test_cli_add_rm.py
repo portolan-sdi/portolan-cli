@@ -1268,16 +1268,21 @@ class TestCatalogIndexAfterAdd:
         valid_rgb_cog: Path,
         valid_points_parquet: Path,
     ) -> None:
-        """The item mirror and the thumbnails are in both files, not only the collection's."""
+        """The item mirror and the thumbnails are in both files, and a no-op re-add writes neither."""
         root = conformant_catalog
         (root / "imagery" / "scene").mkdir(parents=True)
         (root / "imagery" / "scene" / "scene.tif").write_bytes(valid_rgb_cog.read_bytes())
         (root / "roads").mkdir()
         (root / "roads" / "roads.parquet").write_bytes(valid_points_parquet.read_bytes())
 
-        run_cli("add", "--portolan-dir", str(root), str(root))
+        args = ["add", "--portolan-dir", str(root), str(root)]
+        run_cli(*args)
+        after_first = (root / "versions.json").read_bytes()
+        run_cli(*args)
 
-        index = json.loads((root / "versions.json").read_text(encoding="utf-8"))["collections"]
+        # A second add changes nothing, so it leaves the index bytes alone.
+        assert (root / "versions.json").read_bytes() == after_first
+        index = json.loads(after_first)["collections"]
         for collection_id in ("imagery", "roads"):
             versions = json.loads(
                 (root / collection_id / "versions.json").read_text(encoding="utf-8")
