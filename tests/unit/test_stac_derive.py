@@ -218,9 +218,7 @@ class TestSummaries:
                 "proj:transform": [364800.0, 3.0, 0.0, 4824000.0, -3.0],
                 "proj:shape": [200],
             },
-            "stac_extensions": [
-                "https://stac-extensions.github.io/projection/v2.0.0/schema.json"
-            ],
+            "stac_extensions": ["https://stac-extensions.github.io/projection/v2.0.0/schema.json"],
         }
         fields = derive_collection_fields(
             [CollectionMember(properties={"proj:transform": VALENCIA_TRANSFORM})], {}
