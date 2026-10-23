@@ -57,6 +57,8 @@ KNOWN_INVARIANT_GAPS: dict[str, str] = {
     # An Iceberg collection publishes the local sqlite path in
     # iceberg:catalog_uri.
     "P-NO-LOCAL-PATH": "#939",
+    # A raster add keys the item thumbnail a second time at the collection root.
+    "P-VERSIONS-KEY": "#1053",
 }
 
 COG_MEDIA_TYPE = "image/tiff; application=geotiff; profile=cloud-optimized"
@@ -471,10 +473,15 @@ def _check_strings(cat: _Catalog, node: _Node) -> list[Violation]:
 
 
 def _check_versions(cat: _Catalog, stac_targets: set[Path]) -> list[Violation]:
-    """P-VERSIONS-MATCH (#929, #960): the current snapshot in versions.json matches the files.
+    """P-VERSIONS-MATCH (#929, #960) and P-VERSIONS-KEY (#1053) on versions.json.
 
-    Each asset of the current version carries the sha256 and the size of its
-    file, and a STAC asset in the catalog has an href that resolves to it.
+    P-VERSIONS-MATCH: each asset of the current snapshot carries the sha256
+    and the size of its file, and a STAC asset in the catalog has an href that
+    resolves to it.
+
+    P-VERSIONS-KEY: the key of each asset is the path of its file relative to
+    the collection directory, as ``add`` writes it. A second key for one file
+    fails.
     """
     found: list[Violation] = []
     for node in cat.versions:
@@ -490,6 +497,14 @@ def _check_versions(cat: _Catalog, stac_targets: set[Path]) -> list[Violation]:
         for name, entry in (snapshot.get("assets") or {}).items():
             href = str(entry.get("href", name))
             target = (cat.root / href).resolve()
+            # P-VERSIONS-KEY (#1053): the key names the file relative to the
+            # collection directory, so one file has one key.
+            if (node.path.parent / name).resolve() != target:
+                found.append(
+                    Violation(
+                        "P-VERSIONS-KEY", where, f"key {name!r} names a file other than {href}"
+                    )
+                )
             if not target.is_file():
                 found.append(Violation("P-VERSIONS-MATCH", where, f"{name!r}: {href} is missing"))
                 continue

@@ -487,6 +487,8 @@ RASTER_INVARIANTS = {
     "S-EXT-DECLARED": ITEM_FILE_EXT,
     # summaries flatten proj:bbox, proj:shape, and proj:transform.
     "P-SUMMARY-FROM-ITEMS": "#1023",
+    # versions.json keys the scene thumbnail a second time at the collection root.
+    "P-VERSIONS-KEY": "#1053",
 }
 # Every collection is a mirror, because metadata.yaml names a producer
 # distinct from the host. PTL-PRO-002 is an advisory: a rel:'canonical' link is

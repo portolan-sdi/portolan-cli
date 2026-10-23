@@ -29,6 +29,7 @@ xfail	#1041	D	tests/properties/test_rebuild_idempotence.py
 xfail	#1042	E	tests/integration/test_generated_catalog_conformance.py row clone; invariant stdout_purity reason
 xfail	#1044	B	tests/integration/test_config_reachability.py
 xfail	#1046	C	tests/integration/test_check_fix_no_regression.py; invariant check_fix --fix reason
+xfail	#1053	D	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS P-VERSIONS-KEY; tests/integration/test_generated_catalog_conformance.py raster rows
 
 invariant	catalog_invariants: file:size set to 1 for the __main__ test
 invariant	stdout_purity: clone writes no collection.json (#1042)

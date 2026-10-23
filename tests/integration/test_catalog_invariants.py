@@ -225,6 +225,12 @@ def _versions_size(data: dict[str, Any]) -> None:
     data["versions"][0]["assets"]["roads.parquet"]["size_bytes"] += 1
 
 
+def _versions_second_key(data: dict[str, Any]) -> None:
+    """Key the one data file a second time, as the #1053 thumbnail is."""
+    assets = data["versions"][0]["assets"]
+    assets["other.parquet"] = dict(assets["roads.parquet"])
+
+
 TAMPERS: dict[str, Tamper] = {
     "P-SIZE": _edit(COLLECTION, lambda c: _roads(c).update({"file:size": 1})),
     "P-CHECKSUM": lambda root: _edit(
@@ -248,6 +254,7 @@ TAMPERS: dict[str, Tamper] = {
         ),
     ),
     "P-VERSIONS-MATCH": _edit("roads/versions.json", _versions_size),
+    "P-VERSIONS-KEY": _edit("roads/versions.json", _versions_second_key),
     "P-DATA-ROLE-TYPE": _source_asset,
     "P-SUMMARY-FROM-ITEMS": _edit(
         COLLECTION, lambda c: c.update(summaries={"proj:code": ["EPSG:3857"]})
@@ -410,6 +417,16 @@ class TestKnownGapsStillFire:
         assert transform not in summaries["proj:transform"]
         assert f"summaries['proj:transform'] value {transform[0]!r} is on no member item" in fired
 
+    def test_p_versions_key(self, raster_catalog: Path) -> None:
+        """#1053: the scene thumbnail gets a second key at the collection root."""
+        fired = [
+            v.detail for v in check_catalog_invariants(raster_catalog) if v.code == "P-VERSIONS-KEY"
+        ]
+
+        assert sorted(fired) == [
+            "key 'rgb.thumb.jpg' names a file other than imagery/scene-a/rgb.thumb.jpg",
+        ]
+
     def test_p_data_role_type(self, tmp_path: Path, run_cli: RunCli) -> None:
         """#960: the converted GeoJSON stays registered as a data asset."""
         root = tmp_path / "catalog"
@@ -461,6 +478,7 @@ class TestKnownGapsStillFire:
 
 
 GAP_TESTS = {
+    "P-VERSIONS-KEY": TestKnownGapsStillFire.test_p_versions_key,
     "P-NO-LOCAL-PATH": TestKnownGapsStillFire.test_p_no_local_path,
     "S-EXT-DECLARED": TestKnownGapsStillFire.test_s_ext_declared,
     "P-SUMMARY-FROM-ITEMS": TestKnownGapsStillFire.test_p_summary_from_items,
