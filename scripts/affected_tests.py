@@ -27,6 +27,12 @@ Selection:
   import legacy``, or ``from .legacy import Item``.
 - Any other changed file selects the test files whose source names it, such as
   a test that reads ``AGENTS.md``.
+- A change to a file in ``FOUNDATION_FILES`` also selects ``FOUNDATION_TESTS``.
+  Those tests run the real CLI on a generated catalog. They reach the
+  foundation through a subprocess or ``CliRunner``, so the import graph alone
+  does not select them (#1035).
+- A target that does not exist in the tree is dropped with a note on stderr,
+  so ``--run`` does not hand pytest a missing path.
 """
 
 from __future__ import annotations
@@ -47,6 +53,24 @@ PACKAGE = "portolan_cli"
 TESTS_DIR = "tests"
 FULL_SUITE_FILES = frozenset({"pyproject.toml", "uv.lock", "tests/conftest.py"})
 FULL_SUITE_PREFIXES = ("tests/fixtures/",)
+# The modules that write or read derived catalog state on every command. A bug
+# in one shows up as a catalog that breaks an invariant, not as a failed import.
+FOUNDATION_FILES = frozenset(
+    {
+        "portolan_cli/config.py",
+        "portolan_cli/output.py",
+        "portolan_cli/stac.py",
+        "portolan_cli/finalization.py",
+        "portolan_cli/preparation.py",
+        "portolan_cli/sync/push.py",
+        "portolan_cli/extract/common/source.py",
+    }
+)
+FOUNDATION_TESTS = (
+    "tests/integration/test_generated_catalog_conformance.py",
+    "tests/integration/test_catalog_invariants.py",
+    "tests/properties",
+)
 
 
 @dataclass
@@ -199,6 +223,8 @@ def select(
                 stem = ".".join(pure.with_suffix("").parts)
                 targets.update(t for t, text in test_texts.items() if stem in text)
             continue
+        if path in FOUNDATION_FILES:
+            targets.update(FOUNDATION_TESTS)
         name = module_name(path)
         if name is not None:
             if status == "D":
@@ -304,6 +330,14 @@ def select_for_repo(
     )
 
 
+def existing_targets(repo: Path, targets: list[str]) -> list[str]:
+    """Return the targets that exist under ``repo``, and note the rest on stderr."""
+    missing = [target for target in targets if not (repo / target).exists()]
+    if missing:
+        print(f"Skipped {len(missing)} missing target(s): {' '.join(missing)}", file=sys.stderr)
+    return [target for target in targets if target not in missing]
+
+
 def main(argv: list[str] | None = None) -> int:
     """Print or run the affected tests."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -315,14 +349,15 @@ def main(argv: list[str] | None = None) -> int:
     selection = select_for_repo(repo, changed_files(repo, args.base), args.base)
     if selection.full:
         print(f"Full suite: {selection.reason}.", file=sys.stderr)
-    if not selection.targets:
+    targets = existing_targets(repo, selection.targets)
+    if not targets:
         print("No affected tests.", file=sys.stderr)
         return 0
     if not args.run:
-        print(" ".join(selection.targets))
+        print(" ".join(targets))
         return 0
     return subprocess.run(
-        [sys.executable, "-m", "pytest", *pytest_args, *selection.targets], cwd=repo, check=False
+        [sys.executable, "-m", "pytest", *pytest_args, *targets], cwd=repo, check=False
     ).returncode
 
 

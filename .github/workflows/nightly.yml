@@ -7,6 +7,15 @@ on:
   schedule:
     - cron: '0 4 * * *'  # 4 AM UTC daily
   workflow_dispatch:  # Allow manual triggering
+    inputs:
+      record-baseline:
+        # Run the benchmarks without the regression check and upload the
+        # results. A maintainer commits the artifact as
+        # .benchmarks/baseline.json, so the baseline comes from this runner
+        # type and never from a dev machine.
+        description: Record a benchmark baseline instead of comparing with one
+        type: boolean
+        default: false
 
 # Nightly jobs only read the repo. A job needing more (e.g. network-live opening
 # a tracking issue) widens its own permissions block.
@@ -233,7 +242,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0  # Full history to compare with previous runs
 
       - name: Install uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -249,28 +257,29 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Run benchmarks
+      - name: Run benchmarks against the committed baseline
+        env:
+          RECORD_BASELINE: ${{ inputs.record-baseline }}
         run: |
-          # Run benchmarks and save results
+          # The old step passed --fail-on=20 to the compare subcommand. That
+          # command has no --fail-on flag, and git never held the baseline,
+          # so the step copied each run over a missing file and passed.
+          # --benchmark-compare reads the committed baseline by path. A
+          # benchmark whose minimum time grows by more than 20% fails the run.
+          # A missing baseline fails it too: --benchmark-compare-fail needs a
+          # file to compare with.
+          compare=(
+            --benchmark-compare=.benchmarks/baseline.json
+            --benchmark-compare-fail=min:20%
+          )
+          if [ "$RECORD_BASELINE" = "true" ]; then
+            compare=()
+          fi
           uv run pytest tests/ \
             -m benchmark \
             --benchmark-json=benchmark-results.json \
-            --benchmark-autosave \
+            "${compare[@]}" \
             -v
-
-      - name: Check for performance regression
-        run: |
-          # If baseline exists, compare and fail on >20% regression
-          if [ -f .benchmarks/baseline.json ]; then
-            uv run pytest-benchmark compare \
-              benchmark-results.json \
-              .benchmarks/baseline.json \
-              --fail-on=20
-          else
-            echo "No baseline found. This run will establish the baseline."
-            mkdir -p .benchmarks
-            cp benchmark-results.json .benchmarks/baseline.json
-          fi
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -287,6 +296,9 @@ jobs:
     # Non-blocking: live third-party servers (ArcGIS, WFS, ...) being flaky is not
     # something a contributor can fix, so a failure does NOT fail the workflow —
     # it opens/updates a single tracking issue instead (mirrors security-audit.yml).
+    # A baseline-recording dispatch skips the job, so it cannot touch the
+    # tracking issue.
+    if: ${{ !inputs.record-baseline }}
     permissions:
       contents: read
       issues: write
@@ -316,8 +328,10 @@ jobs:
         run: |
           # -rfE prints a short "FAILED/ERROR" summary at the tail; tee keeps a
           # copy so the run-summary + tracking-issue steps below can name the
-          # tests that failed. Default bash pipefail preserves pytest's exit
-          # code through the pipe, so the step outcome is unchanged.
+          # tests that failed. A step with no `shell:` runs `bash -e`, without
+          # pipefail, so the pipe returned tee's status and the step outcome
+          # was always success. pipefail keeps pytest's exit code.
+          set -o pipefail
           uv run pytest tests/ \
             -m network \
             --timeout=120 \
@@ -461,12 +475,17 @@ jobs:
             --durations=15 \
             -v
 
-  dependency-check:
-    name: Dependency Audit
+  property-tests:
+    name: Property Tests (unseeded)
+    # CI runs each @given test with HYPOTHESIS_PROFILE=ci: 25 examples and a
+    # fixed seed. This job runs the same tests with the nightly profile from
+    # tests/conftest.py: 500 examples and a random seed, so each night
+    # explores new inputs. A failure prints its reproduce_failure blob, and
+    # the step copies it into the run summary.
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # Note: Job-level continue-on-error removed. Only audit steps soft-fail.
-    # Setup steps (checkout, uv, python) fail fast on errors.
+    timeout-minutes: 45
+    env:
+      HYPOTHESIS_PROFILE: nightly
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -486,23 +505,51 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Full security audit
-        # Soft-fail: security-audit.yml creates issues, this is informational.
-        # Ignores come from the single-source .pip-audit-ignores file (expiry +
-        # reason per entry). Same file feeds ci.yml and security-audit.yml.
-        continue-on-error: true
+      - name: Run every property test with random examples
         run: |
-          echo "=== Dependency security audit ==="
-          # shellcheck disable=SC2046  # intentional word-splitting of the flag list
-          uv run pip-audit --strict \
-            $(uv run python scripts/pip_audit_ignores.py)
+          set -o pipefail
+          mapfile -t FILES < <(grep -rl "@given" tests --include="test_*.py" | sort)
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "::error::No @given test files found; the property run tests nothing."
+            exit 1
+          fi
+          status=0
+          uv run pytest "${FILES[@]}" \
+            -m "not network and not slow and not benchmark and not e2e and not e2e_slow" \
+            -n logical --hypothesis-show-statistics -rfE \
+            2>&1 | tee prop.log || status=$?
+          grep -B2 -A6 "reproduce_failure" prop.log >> "$GITHUB_STEP_SUMMARY" || true
+          exit "$status"
 
-      - name: Check for outdated dependencies
-        # Informational only, soft-fail
-        continue-on-error: true
+  gate-selftest:
+    name: Gate Self-Test
+    # Injects one known fault per quality gate into a copy of the tree and
+    # fails when a gate stays green. See scripts/gate_selftest.py.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Set up Python
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Prove each gate catches its fault
         run: |
-          echo "=== Outdated dependencies ==="
-          uv pip list --outdated
+          set -o pipefail
+          uv run python scripts/gate_selftest.py | tee -a "$GITHUB_STEP_SUMMARY"
 
   iceberg-e2e-full:
     name: Iceberg E2E Tests (Full Suite)

@@ -244,3 +244,70 @@ def test_deleted_importers_find_every_import_form(tmp_path: Path) -> None:
         "portolan_cli.relative",
         "tests/unit/test_legacy.py",
     }
+
+
+FOUNDATION_TESTS = {
+    "tests/integration/test_generated_catalog_conformance.py",
+    "tests/integration/test_catalog_invariants.py",
+    "tests/properties",
+}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "portolan_cli/config.py",
+        "portolan_cli/output.py",
+        "portolan_cli/stac.py",
+        "portolan_cli/finalization.py",
+        "portolan_cli/preparation.py",
+        "portolan_cli/sync/push.py",
+        "portolan_cli/extract/common/source.py",
+    ],
+)
+def test_a_foundation_file_also_selects_the_catalog_conformance_tests(path: str) -> None:
+    """A foundation change reaches the conformance tests through the CLI, not an import."""
+    selection = _select([("M", path)])
+
+    assert selection.full is False
+    assert set(selection.targets) == FOUNDATION_TESTS
+
+
+def test_a_foundation_file_keeps_its_import_graph_selection() -> None:
+    """The path rule adds targets. The import graph still selects the importers."""
+    importers = {"portolan_cli.output": {"portolan_cli.cli"}}
+
+    selection = at.select(
+        [("M", "portolan_cli/output.py")],
+        importers=lambda module: importers.get(module, set()),
+        test_imports={**TESTS, "tests/unit/test_output.py": {"portolan_cli.output"}},
+        test_texts={**TEXTS, "tests/unit/test_output.py": ""},
+        deleted_importers=lambda module: set(),
+    )
+
+    assert selection.targets == sorted(
+        FOUNDATION_TESTS | {"tests/integration/test_cli.py", "tests/unit/test_output.py"}
+    )
+
+
+def test_a_module_outside_the_foundation_does_not_select_the_conformance_tests() -> None:
+    selection = _select([("M", "portolan_cli/bbox.py")])
+
+    assert not set(selection.targets) & FOUNDATION_TESTS
+
+
+def test_missing_targets_are_dropped_with_a_note(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A target that is not in the tree yet must not make pytest exit with an error."""
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / "tests" / "unit" / "test_here.py").write_text("", encoding="utf-8")
+
+    kept = at.existing_targets(
+        tmp_path, ["tests/properties", "tests/unit/test_here.py", "tests/unit/test_gone.py"]
+    )
+
+    assert kept == ["tests/unit/test_here.py"]
+    assert capsys.readouterr().err == (
+        "Skipped 2 missing target(s): tests/properties tests/unit/test_gone.py\n"
+    )

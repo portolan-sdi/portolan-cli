@@ -245,6 +245,17 @@ jobs:
           slug: portolan-sdi/portolan-cli
           flags: main
 
+      # The diff-cover job reads this report. A missing report fails the
+      # upload, so a coverage cell that stops writing it cannot pass quietly.
+      - name: Upload coverage XML
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-main
+          path: coverage.xml
+          if-no-files-found: error
+          retention-days: 7
+
   plugin-test:
     # The example plugin uses the public plugin API alone (#947). A change to
     # portolan_cli.api or portolan_cli.hookspecs that breaks a plugin fails here.
@@ -297,7 +308,10 @@ jobs:
   iceberg-test:
     name: Iceberg Unit & Integration Tests (Python ${{ matrix.python-version }} / ${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.iceberg == 'true' || github.event_name == 'push'
+    # Core Python changes run these tests too. #977 merged because a change to
+    # the core backend calls skipped them. The Docker e2e job below keeps the
+    # narrow filter, and nightly runs the full e2e suite.
+    if: needs.changes.outputs.iceberg == 'true' || needs.changes.outputs.python == 'true' || github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -343,6 +357,80 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: portolan-sdi/portolan-cli
           flags: iceberg
+
+      # The Iceberg cell skips on a change that touches neither filter, so the
+      # diff-cover job accepts a missing report.
+      - name: Upload coverage XML
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-iceberg
+          path: coverage.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+  diff-cover:
+    # The coverage gate on the lines a pull request changes. Codecov reports
+    # but never blocks (codecov.yml), so this job is the gate.
+    #
+    # Two cells write coverage: the ubuntu 3.11 test cell (portolan_cli
+    # without the Iceberg backend) and the ubuntu 3.11 Iceberg cell
+    # (portolan_cli/backends/iceberg). The other cells run without coverage
+    # to save wall time, so diff-cover reads these two reports and not a
+    # merged report of the whole matrix. A line that only Windows or macOS
+    # runs counts as uncovered.
+    #
+    # FLOOR comes from five merged pull requests (#868, #985, #1004, #1011,
+    # #1031), measured on the marker set of the coverage cell. The pull
+    # request that added this job records the numbers. The floor is
+    # min(90, median rounded down to a multiple of 5).
+    name: Diff Coverage
+    needs: [test, iceberg-test]
+    if: always() && github.event_name == 'pull_request' && needs.test.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # renovate: datasource=pypi depName=diff-cover
+      DIFF_COVER_VERSION: "10.6.0"
+      FLOOR: "80"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.6.14"
+
+      - name: Download main coverage
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-main
+          path: coverage-main
+
+      - name: Download Iceberg coverage
+        if: needs.iceberg-test.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-iceberg
+          path: coverage-iceberg
+
+      - name: Check coverage of the changed lines
+        run: |
+          git fetch --no-tags origin main
+          reports=(coverage-main/coverage.xml)
+          if [ -f coverage-iceberg/coverage.xml ]; then
+            reports+=(coverage-iceberg/coverage.xml)
+          fi
+          status=0
+          uvx "diff-cover==${DIFF_COVER_VERSION}" "${reports[@]}" \
+            --compare-branch=origin/main \
+            --fail-under="$FLOOR" \
+            --format "markdown:diff-cover.md" || status=$?
+          cat diff-cover.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
   iceberg-e2e:
     name: Iceberg E2E Tests (Python ${{ matrix.python-version }})
@@ -512,9 +600,10 @@ jobs:
     # context (see scripts/apply_branch_protection.sh) instead of every matrix
     # cell means adding a Python version or OS never silently drops a required
     # check, and the conditionally-skipped iceberg jobs don't block PRs that
-    # don't touch iceberg.
+    # don't touch iceberg. needs lists every job but `changes`, and
+    # tests/docs/test_ci_wiring.py fails when one is missing.
     if: always()
-    needs: [quality, security, test, iceberg-test, iceberg-e2e, docs, site-links, build]
+    needs: [quality, security, test, plugin-test, iceberg-test, iceberg-e2e, diff-cover, docs, site-links, build]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
