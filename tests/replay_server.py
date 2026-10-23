@@ -42,8 +42,11 @@ from fnmatch import fnmatchcase
 from functools import cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 _TEXT_TYPES = ("json", "xml", "text", "html")
@@ -138,13 +141,18 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - BaseHTTPRequestHandler API
         """Keep stderr quiet. ``ReplayServer.requests`` is the log."""
 
-    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-        """Answer a GET request."""
-        self._answer("GET")
+    def __getattr__(self, name: str) -> Callable[[], None]:
+        """Answer every HTTP method through ``_answer``.
 
-    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-        """Answer a POST request. A form body counts as query parameters."""
-        self._answer("POST")
+        BaseHTTPRequestHandler looks up ``do_<METHOD>``. This lookup serves
+        GET, POST, and every other method. So a request with a method that no
+        route expects gets a 404 and lands in ``unmatched``, not a bare 501.
+        A POST form body counts as query parameters.
+        """
+        if name.startswith("do_"):
+            method = name.removeprefix("do_")
+            return lambda: self._answer(method)
+        raise AttributeError(name)
 
     def _answer(self, method: str) -> None:
         parsed = urlparse(self.path)

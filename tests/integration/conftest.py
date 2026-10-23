@@ -12,8 +12,9 @@ put whose key matches a predicate. The action raises ``ConnectionError`` to
 simulate a dropped connection, or calls ``second_writer`` to simulate a
 concurrent push.
 
-``moto_server``, ``s3_bucket``, and ``run_cli`` are private copies of the
-shared fixtures that G2 adds to ``tests/conftest.py`` for #1035.
+``bucket`` wraps the shared ``s3_bucket`` and ``_aws_env`` fixtures of
+``tests/conftest.py``. Every CLI call goes through the shared ``run_cli``
+harness, so the catalog invariants check each catalog that a test writes.
 """
 
 from __future__ import annotations
@@ -21,16 +22,17 @@ from __future__ import annotations
 import logging
 import shutil
 import threading
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from click.testing import CliRunner, Result
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
+
+    from tests.catalog_invariants import RunCli
+    from tests.conftest import CliHarness
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 BUILDINGS = FIXTURES / "realdata" / "open-buildings.parquet"
@@ -162,80 +164,32 @@ def fault_store(monkeypatch: pytest.MonkeyPatch) -> PutFaults:
     return faults
 
 
-@pytest.fixture(scope="session")
-def moto_server() -> Iterator[str]:
-    """Start one moto S3 server on the loopback interface for the session."""
-    pytest.importorskip("moto")
-    from moto.server import ThreadedMotoServer
-
-    # werkzeug logs each request at INFO. A failed test then prints hundreds
-    # of request lines above its assertion.
-    logging.getLogger("werkzeug").setLevel(logging.WARNING)
-
-    server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
-    server.start()
-    host, port = server.get_host_and_port()
-    yield f"http://{host}:{port}"
-    server.stop()
-
-
 @pytest.fixture
-def s3_bucket(moto_server: str, monkeypatch: pytest.MonkeyPatch) -> Bucket:
-    """Create an empty bucket and point the obstore S3 client at moto."""
+def bucket(s3_bucket: tuple[str, str], _aws_env: None) -> Bucket:
+    """Wrap the shared moto bucket, with obstore pointed at it, in a ``Bucket``."""
     boto3 = pytest.importorskip("boto3")
 
-    # The VM exports a real profile and region. They would win over the
-    # moto credentials below.
-    monkeypatch.delenv("AWS_PROFILE", raising=False)
-    monkeypatch.delenv("AWS_REGION", raising=False)
-    for name, value in {
-        "AWS_ENDPOINT_URL": moto_server,
-        "AWS_ACCESS_KEY_ID": "testing",
-        "AWS_SECRET_ACCESS_KEY": "testing",
-        "AWS_DEFAULT_REGION": "us-east-1",
-        "AWS_ALLOW_HTTP": "true",
-    }.items():
-        monkeypatch.setenv(name, value)
-
+    # werkzeug logs each moto request at INFO. A failed test then prints
+    # hundreds of request lines above its assertion.
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
+    name, endpoint = s3_bucket
     client = boto3.client(
         "s3",
-        endpoint_url=moto_server,
+        endpoint_url=endpoint,
         aws_access_key_id="testing",
         aws_secret_access_key="testing",
         region_name="us-east-1",
     )
-    name = f"push-faults-{uuid.uuid4().hex[:8]}"
-    client.create_bucket(Bucket=name)
-    return Bucket(name=name, endpoint=moto_server, client=client)
+    return Bucket(name=name, endpoint=endpoint, client=client)
 
 
-@pytest.fixture
-def run_cli() -> Callable[..., Result]:
-    """Run the real CLI in process and fail on an exception that escapes it.
-
-    A test that expects exit code 1 must see the CLI report the failure. A
-    traceback also gives exit code 1, so it must not pass that test.
-    """
-    from portolan_cli.cli import cli
-
-    runner = CliRunner()
-
-    def run(*args: str) -> Result:
-        result = runner.invoke(cli, list(args))
-        if result.exception is not None and not isinstance(result.exception, SystemExit):
-            raise result.exception
-        return result
-
-    return run
-
-
-def _build_catalog(root: Path, run: Callable[..., Result]) -> None:
+def _build_catalog(root: Path, run: RunCli) -> None:
     (root / "buildings").mkdir(parents=True)
     shutil.copy(BUILDINGS, root / "buildings" / "open-buildings.parquet")
     for scene, source in (("scene-a", SCENE_A), ("scene-b", SCENE_B)):
         (root / "imagery" / scene).mkdir(parents=True)
         shutil.copy(source, root / "imagery" / scene / source.name)
-    result = run(
+    run(
         "init",
         str(root),
         "--auto",
@@ -246,7 +200,6 @@ def _build_catalog(root: Path, run: Callable[..., Result]) -> None:
         "--license",
         "CC-BY-4.0",
     )
-    assert result.exit_code == 0, result.output
     result = run(
         "add",
         "--portolan-dir",
@@ -255,22 +208,18 @@ def _build_catalog(root: Path, run: Callable[..., Result]) -> None:
         str(root / "imagery" / "scene-a" / SCENE_A.name),
         str(root / "imagery" / "scene-b" / SCENE_B.name),
     )
-    assert result.exit_code == 0, result.output
     assert (root / "imagery" / "collection.json").is_file(), result.output
 
 
 @pytest.fixture(scope="session")
-def _catalog_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    from portolan_cli.cli import cli
-
-    runner = CliRunner()
-
-    def run(*args: str) -> Result:
-        return runner.invoke(cli, list(args), catch_exceptions=False)
-
-    root = tmp_path_factory.mktemp("fault-template") / "catalog"
-    _build_catalog(root, run)
-    return root
+def _catalog_template(
+    tmp_path_factory: pytest.TempPathFactory, cli_harness: type[CliHarness]
+) -> Path:
+    base = tmp_path_factory.mktemp("fault-template")
+    harness = cli_harness(base)
+    _build_catalog(base / "catalog", harness)
+    harness.verify()
+    return base / "catalog"
 
 
 @pytest.fixture
@@ -287,19 +236,18 @@ def fault_catalog(tmp_path: Path, _catalog_template: Path) -> Path:
 
 
 @pytest.fixture
-def change_scenes(run_cli: Callable[..., Result]) -> Callable[[Path], None]:
+def change_scenes(run_cli: RunCli) -> Callable[[Path], None]:
     """Return a function that gives both COG scenes new bytes and a new version."""
 
     def change(root: Path) -> None:
         shutil.copy(SCENE_A_V2, root / "imagery" / "scene-a" / SCENE_A.name)
         shutil.copy(SCENE_B_V2, root / "imagery" / "scene-b" / SCENE_B.name)
-        result = run_cli(
+        run_cli(
             "add",
             "--portolan-dir",
             str(root),
             str(root / "imagery" / "scene-a" / SCENE_A.name),
             str(root / "imagery" / "scene-b" / SCENE_B.name),
         )
-        assert result.exit_code == 0, result.output
 
     return change

@@ -90,3 +90,19 @@ def test_wfs_capabilities_keep_the_recorded_type_names(scenario: str) -> None:
     assert recorded != set()
     live = _get(WFS_ORIGINS[scenario] + capabilities.path, capabilities.query_subset).text
     assert sorted(recorded - set(_TYPE_NAME.findall(live))) == []
+
+
+def test_carto_table_keeps_the_recorded_columns() -> None:
+    """The recorded Carto table keeps each recorded column, and the account refuses a listing."""
+    scenario = NETWORK / "carto" / "phl_zoning"
+    columns = json.loads((scenario / "columns.json").read_text())
+    query = 'SELECT * FROM "zoning_basedistricts" LIMIT 0'
+    live = _get("https://phl.carto.com/api/v2/sql", {"q": query}).json()
+    assert sorted(set(columns["fields"]) - set(live["fields"])) == []
+
+    tables = httpx.get(
+        "https://phl.carto.com/api/v2/sql",
+        params={"q": "SELECT cdb_usertables AS table_name FROM CDB_UserTables() ORDER BY 1"},
+        timeout=60,
+    )
+    assert tables.status_code == 403

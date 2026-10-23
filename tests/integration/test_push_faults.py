@@ -15,19 +15,21 @@ from __future__ import annotations
 import concurrent.futures
 import hashlib
 import json
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from click.testing import Result
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from click.testing import Result
+
+    from tests.catalog_invariants import RunCli
     from tests.integration.conftest import Bucket, PutFaults
 
 pytestmark = [pytest.mark.integration]
 
-RunCli = Callable[..., Result]
 
 CONFLICT_MESSAGE = "Remote changed during push"
 
@@ -51,7 +53,7 @@ def _is_scene(key: str) -> bool:
 
 
 def _push(run_cli: RunCli, root: Path, bucket: Bucket, *extra: str) -> Result:
-    return run_cli("push", bucket.url, "--catalog", str(root), *extra)
+    return run_cli("push", bucket.url, "--catalog", str(root), *extra, expect=None)
 
 
 def _other_writer_manifest(bucket: Bucket, key: str) -> bytes:
@@ -102,13 +104,13 @@ def _bytes_that_disagree_with_the_manifest(
 @pytest.fixture
 def pushed(
     fault_catalog: Path,
-    s3_bucket: Bucket,
+    bucket: Bucket,
     run_cli: RunCli,
     fault_store: PutFaults,
     change_scenes: Callable[[Path], None],
 ) -> Path:
     """Push the catalog once, then record a new imagery version locally."""
-    first = _push(run_cli, fault_catalog, s3_bucket)
+    first = _push(run_cli, fault_catalog, bucket)
     assert first.exit_code == 0, first.output
     change_scenes(fault_catalog)
     return fault_catalog
@@ -119,27 +121,27 @@ def pushed(
     reason="#965: rollback deletes keys that the remote current version still uses",
 )
 def test_failed_second_push_keeps_first_push_objects(
-    pushed: Path, s3_bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
+    pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
     """A dropped connection on the second Asset put leaves push 1 readable.
 
     Each key that push 2 wrote holds the bytes that the remote manifest
     describes. A rollback that keeps the key with the bytes of push 2 fails.
     """
-    after_first = s3_bucket.keys()
-    manifest = s3_bucket.head(s3_bucket.key("imagery/versions.json"))
+    after_first = bucket.keys()
+    manifest = bucket.head(bucket.key("imagery/versions.json"))
     calls_before = len(fault_store.calls)
     fault_store.fail_on(2, when=_is_scene)
 
-    second = _push(run_cli, pushed, s3_bucket)
+    second = _push(run_cli, pushed, bucket)
 
     assert second.exit_code == 1, second.output
     assert "injected fault" in second.output
-    assert s3_bucket.head(s3_bucket.key("imagery/versions.json")) == manifest
+    assert bucket.head(bucket.key("imagery/versions.json")) == manifest
     written = set(fault_store.keys()[calls_before:]) & after_first
-    assert _bytes_that_disagree_with_the_manifest(s3_bucket, "imagery", written) == {}
-    assert sorted(after_first - s3_bucket.keys()) == []
-    assert s3_bucket.keys() == after_first
+    assert _bytes_that_disagree_with_the_manifest(bucket, "imagery", written) == {}
+    assert sorted(after_first - bucket.keys()) == []
+    assert bucket.keys() == after_first
 
 
 @pytest.mark.xfail(
@@ -147,33 +149,33 @@ def test_failed_second_push_keeps_first_push_objects(
     reason="#971: the conflict rollback deletes keys that the other writer's manifest uses",
 )
 def test_conflict_deletes_nothing_of_the_other_writer(
-    pushed: Path, s3_bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
+    pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
     """A push that loses the versions.json race deletes no key.
 
     Each key that the losing push overwrote holds the bytes that the other
     writer's manifest describes (#965).
     """
-    manifest_key = s3_bucket.key("imagery/versions.json")
-    before = s3_bucket.keys()
+    manifest_key = bucket.key("imagery/versions.json")
+    before = bucket.keys()
     calls_before = len(fault_store.calls)
     other: dict[str, str] = {}
 
     def other_push() -> None:
-        other["etag"] = s3_bucket.second_writer(
-            manifest_key, _other_writer_manifest(s3_bucket, manifest_key)
+        other["etag"] = bucket.second_writer(
+            manifest_key, _other_writer_manifest(bucket, manifest_key)
         )
 
     fault_store.arm(1, when=_is_scene, action=other_push)
 
-    second = _push(run_cli, pushed, s3_bucket)
+    second = _push(run_cli, pushed, bucket)
 
     assert second.exit_code == 1, second.output
     assert CONFLICT_MESSAGE in second.output
-    assert s3_bucket.head(manifest_key)["ETag"] == other["etag"]
+    assert bucket.head(manifest_key)["ETag"] == other["etag"]
     written = set(fault_store.keys()[calls_before:]) & before
-    assert _bytes_that_disagree_with_the_manifest(s3_bucket, "imagery", written) == {}
-    assert sorted(before - s3_bucket.keys()) == []
+    assert _bytes_that_disagree_with_the_manifest(bucket, "imagery", written) == {}
+    assert sorted(before - bucket.keys()) == []
 
 
 @pytest.mark.xfail(
@@ -181,7 +183,7 @@ def test_conflict_deletes_nothing_of_the_other_writer(
     reason="#971: the root versions.json write has no ETag precondition",
 )
 def test_root_versions_json_is_conditional(
-    pushed: Path, s3_bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
+    pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
     """Another writer's root versions.json survives a concurrent push.
 
@@ -189,32 +191,32 @@ def test_root_versions_json_is_conditional(
     does not, so the push overwrites the other writer without a conflict. The
     push must read the root ETag before its first upload.
     """
-    root_key = s3_bucket.key("versions.json")
+    root_key = bucket.key("versions.json")
     other: dict[str, str] = {}
 
     def other_push() -> None:
-        other["etag"] = s3_bucket.second_writer(root_key, b'{"other_writer": true}')
+        other["etag"] = bucket.second_writer(root_key, b'{"other_writer": true}')
 
     fault_store.arm(1, when=_is_scene, action=other_push)
 
-    second = _push(run_cli, pushed, s3_bucket)
+    second = _push(run_cli, pushed, bucket)
 
     assert second.exit_code == 1, second.output
     assert CONFLICT_MESSAGE in second.output
-    assert s3_bucket.head(root_key)["ETag"] == other["etag"]
+    assert bucket.head(root_key)["ETag"] == other["etag"]
 
 
 @pytest.mark.xfail(strict=True, reason="#807: push sets no Content-Type on any object")
 def test_every_object_has_a_content_type(
-    fault_catalog: Path, s3_bucket: Bucket, run_cli: RunCli
+    fault_catalog: Path, bucket: Bucket, run_cli: RunCli
 ) -> None:
     """Every pushed object carries the media type of its suffix."""
-    result = _push(run_cli, fault_catalog, s3_bucket)
+    result = _push(run_cli, fault_catalog, bucket)
     assert result.exit_code == 0, result.output
 
-    keys = s3_bucket.keys()
+    keys = bucket.keys()
     assert {Path(key).suffix for key in keys} >= {".parquet", ".json", ".tif", ".md"}
-    actual = {key: s3_bucket.head(key)["ContentType"] for key in keys}
+    actual = {key: bucket.head(key)["ContentType"] for key in keys}
     expected = {key: CONTENT_TYPES.get(Path(key).suffix, "<no rule>") for key in keys}
     assert actual == expected
 
@@ -222,7 +224,7 @@ def test_every_object_has_a_content_type(
 @pytest.mark.xfail(strict=True, reason="#1008: the upload thread pool is never shut down")
 def test_thread_pool_is_shut_down(
     fault_catalog: Path,
-    s3_bucket: Bucket,
+    bucket: Bucket,
     run_cli: RunCli,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -256,7 +258,7 @@ def test_thread_pool_is_shut_down(
 
     monkeypatch.setattr(push_module, "_upload_assets_async", upload_assets)
 
-    result = _push(run_cli, fault_catalog, s3_bucket, "--collection", "imagery")
+    result = _push(run_cli, fault_catalog, bucket, "--collection", "imagery")
 
     assert result.exit_code == 0, result.output
     assert len(pools) == 1
@@ -288,7 +290,7 @@ def test_multipart_chunk_size_keeps_parts_under_10000() -> None:
 )
 def test_multipart_put_passes_the_chunk_size(
     fault_catalog: Path,
-    s3_bucket: Bucket,
+    bucket: Bucket,
     run_cli: RunCli,
     fault_store: PutFaults,
     monkeypatch: pytest.MonkeyPatch,
@@ -301,25 +303,25 @@ def test_multipart_put_passes_the_chunk_size(
     # 5 MiB fixture.
     monkeypatch.setattr(push_module, "MULTIPART_THRESHOLD", 1)
 
-    result = _push(run_cli, fault_catalog, s3_bucket, "--collection", "imagery")
+    result = _push(run_cli, fault_catalog, bucket, "--collection", "imagery")
     assert result.exit_code == 0, result.output
 
     scene_puts = [call for call in fault_store.calls if _is_scene(call.key)]
     assert len(scene_puts) == 2
     for call in scene_puts:
-        local = fault_catalog / s3_bucket.relative(call.key)
+        local = fault_catalog / bucket.relative(call.key)
         assert call.kwargs.get("chunk_size") == multipart_chunk_size(local.stat().st_size)
 
 
 def test_dry_run_sends_nothing(
-    fault_catalog: Path, s3_bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
+    fault_catalog: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
     """``push --dry-run`` writes no object."""
-    result = _push(run_cli, fault_catalog, s3_bucket, "--dry-run")
+    result = _push(run_cli, fault_catalog, bucket, "--dry-run")
 
     assert result.exit_code == 0, result.output
     assert fault_store.keys() == []
-    assert s3_bucket.keys() == set()
+    assert bucket.keys() == set()
     assert "would push up to 1 version(s)" in result.output
 
 
@@ -329,7 +331,7 @@ def test_dry_run_sends_nothing(
 )
 def test_list_permission_denied_warns_once(
     fault_catalog: Path,
-    s3_bucket: Bucket,
+    bucket: Bucket,
     run_cli: RunCli,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -346,7 +348,7 @@ def test_list_permission_denied_warns_once(
     for name in ("list", "list_with_delimiter", "list_with_delimiter_async"):
         monkeypatch.setattr(obstore, name, deny)
 
-    result = _push(run_cli, fault_catalog, s3_bucket)
+    result = _push(run_cli, fault_catalog, bucket)
 
     assert result.exit_code == 0, result.output
     warnings = [line for line in result.output.splitlines() if "s3:ListBucket" in line]

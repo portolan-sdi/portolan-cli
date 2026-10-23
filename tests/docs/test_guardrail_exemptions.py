@@ -38,7 +38,7 @@ OWNERS = frozenset({"A", "B", "C", "D", "E", "F", "G1", "G2", "G3", "G4", "spec"
 # a result the spec intends, so no fix will remove it.
 DESIGN_REASONS = frozenset({"host unset by design"})
 
-EXPECTED_COUNTS = {"xfail": 25, "invariant": 6, "config-key": 6}
+EXPECTED_COUNTS = {"xfail": 39, "invariant": 7, "config-key": 6}
 
 
 def _sources() -> dict[Path, ast.Module]:

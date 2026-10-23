@@ -6,6 +6,12 @@
   },
   {
     "method": "GET",
+    "path": "/ArcGIS/rest/services/Unrelated_Parks/FeatureServer",
+    "status": 404,
+    "body_file": "not_found.json"
+  },
+  {
+    "method": "GET",
     "path": "/ArcGIS/rest/services/AffordableHousingProduction/FeatureServer",
     "body_file": "affordable_housing_service.json"
   },

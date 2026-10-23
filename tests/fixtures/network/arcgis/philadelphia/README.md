@@ -13,8 +13,10 @@ contains two feature services and a services root.
   README in that directory gives the query for each Asset.
 - The service and layer documents are hand-written. They contain the fields
   that `portolan extract arcgis` reads.
-- `Unrelated_Parks` in `services.json` has no routes. The test asserts that
-  `--services` does not request it.
+- `Unrelated_Parks` in `services.json` gets HTTP 404, as the old replay
+  server sent. The tutorial test asserts that `--services` does not request
+  it. The rashid row `extract-arcgis` extracts every service, so it requests
+  it.
 - The first request for `resultOffset=200` of the housing layer gets a 503.
   The test asserts that the extractor requests the page again.
 - The files contain no credential.
