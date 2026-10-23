@@ -59,7 +59,7 @@ from portolan_cli.output import detail, error, set_writer, stdout_to_stderr, suc
 from portolan_cli.output import info as info_output
 from portolan_cli.plugins.commands import ExtractGroup, PluginGroup
 from portolan_cli.plugins.manager import PluginWarning
-from portolan_cli.remove import remove_files
+from portolan_cli.remove import _resolve_collection_dir, remove_files
 from portolan_cli.scan.core import (
     IssueType,
     ScanIssue,
@@ -1383,8 +1383,9 @@ def _output_check_json(payload: dict[str, Any], *, failed: bool) -> None:
     is_flag=True,
     help=(
         "Only check/fix STAC metadata (links, schema, staleness). With --fix this is "
-        "the metadata refresh: it exits 1 only when a fix fails or an auto-fixable "
-        "error remains. --strict restores the exit on every error and warning."
+        "the metadata refresh: it exits 1 only when a fix fails, an auto-fixable "
+        "error remains, or a file does not parse. --strict restores the exit on every "
+        "error and warning."
     ),
 )
 @click.option(
@@ -1878,20 +1879,26 @@ def _check_failed(payload: dict[str, Any], *, strict: bool, refresh: bool = Fals
     conformance defect, so on its own it never flips a default run.
 
     ``refresh`` is ``--fix --metadata`` without ``--strict``: the metadata
-    refresh (#853). It fails only on an AUTO error that is still in the
-    findings, which is a repair the refresh did not make. An INSTRUCT or
-    EXTERNAL error is work for a person or a host, so it stays in the report
-    and leaves the exit code at 0. A fixer that could not write fails the run
-    through ``fix_failed`` in the caller.
+    refresh (#853). It fails on an AUTO error that is still in the findings,
+    which is a repair the refresh did not make. It also fails on a document
+    that does not parse, because the refresh could not read it. Any other
+    INSTRUCT or EXTERNAL error is work for a person or a host, so it stays in
+    the report and leaves the exit code at 0. A fixer that could not write
+    fails the run through ``fix_failed`` in the caller.
     """
     if strict:
         return any(payload.get(key) for key in ("error_count", "warning_count", "workflow"))
     if refresh:
         return any(
-            finding["severity"] == "error" and finding["remediation"] == "auto"
+            finding["severity"] == "error"
+            and (finding["remediation"] == "auto" or finding["rule_id"] in _UNREADABLE_RULES)
             for finding in payload.get("findings", [])
         )
     return bool(payload.get("error_count"))
+
+
+#: rashid rules for a catalog.json or an object file that does not parse.
+_UNREADABLE_RULES = frozenset({"PTL-GEN-000", "PTL-GEN-001"})
 
 
 def _render_check(
@@ -2933,7 +2940,7 @@ def _output_add_unchanged(skipped: list[tuple[Path, str]], verbose: bool) -> Non
     """Say that the add changed nothing, and why each file was skipped."""
     skip_count = len(skipped)
     noun = "file" if skip_count == 1 else "files"
-    if all(reason == SKIP_UNCHANGED for _, reason in skipped):
+    if all(reason in SKIPS_THAT_TRACK for _, reason in skipped):
         success(f"All {skip_count} {noun} already tracked (unchanged)")
     else:
         info_output(f"Nothing added: {skip_count} {noun} skipped")
@@ -3029,12 +3036,10 @@ def _report_skips_and_find_collections(
         if reason not in SKIPS_THAT_TRACK:
             warn(f"Skipping {p.name}: {reason}")
             continue
-        try:
-            rel = p.relative_to(catalog_root)
-        except ValueError:
-            continue  # Path not relative to catalog_root
-        if rel.parts:
-            affected.add(rel.parts[0])  # Collection ID is the first path component
+        # A nested collection id spans several path segments.
+        collection_dir = _resolve_collection_dir(p, catalog_root)
+        if collection_dir is not None:
+            affected.add(collection_dir.relative_to(catalog_root.resolve()).as_posix())
     return affected, versioned
 
 

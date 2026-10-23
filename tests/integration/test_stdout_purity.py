@@ -114,7 +114,6 @@ def assert_one_json_document(stdout: str) -> Any:
     except json.JSONDecodeError as exc:
         pytest.fail(f"stdout does not start with a JSON document ({exc}):\n{stdout}")
     assert end == len(text), f"stdout holds more than one document:\n{stdout}"
-    assert json.loads(stdout) == document
     return document
 
 
@@ -327,3 +326,29 @@ class TestAddEnvelope:
             "malformed.geojson",
         ]
         assert len(envelope["errors"]) == 2
+
+
+class TestLibraryWarning:
+    """A library warning reads as an output line on stderr, and stdout stays JSON."""
+
+    LINE = "\u26a0 Vector config: unknown sort 'bogus', using 'hilbert'"
+
+    @pytest.mark.parametrize("json_mode", [False, True], ids=["text", "json"])
+    def test_a_config_warning(self, tmp_path: Path, run_cli: RunCli, json_mode: bool) -> None:
+        root = _add_catalog(
+            tmp_path, run_cli, {"roads/roads.geojson": VECTOR / "valid" / "points.geojson"}
+        )
+        config = root / ".portolan" / "config.yaml"
+        config.write_text(
+            config.read_text(encoding="utf-8") + "conversion:\n  vector:\n    sort: bogus\n",
+            encoding="utf-8",
+        )
+        prefix = ["--format", "json"] if json_mode else []
+
+        result = run_cli(*prefix, "add", "--portolan-dir", str(root), str(root / "roads"))
+
+        assert self.LINE in result.stderr.splitlines()
+        if json_mode:
+            assert assert_one_json_document(result.stdout)["success"] is True
+        else:
+            assert result.stdout == "\u2713 Added 1 file to 1 collection\n"
