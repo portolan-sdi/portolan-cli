@@ -35,6 +35,7 @@ from portolan_cli.extract.arcgis.imageserver.tilecache import (
     select_probe_lod,
 )
 from portolan_cli.extract.arcgis.imageserver.tiling import TileSpec
+from tests.unit.extract.arcgis.imageserver import requires_lerc
 
 pytestmark = pytest.mark.unit
 
@@ -417,6 +418,7 @@ class TestCacheTileRefs:
 class TestDecodeTileBytes:
     """LERC decoding, which GDAL cannot do for LERC2 version 6."""
 
+    @requires_lerc
     def test_decodes_a_lerc2d_tile(self) -> None:
         data, mask = decode_tile_bytes(LERC_TILE.read_bytes(), "LERC2D")
         assert data.shape == (1, 256, 256)
@@ -425,6 +427,7 @@ class TestDecodeTileBytes:
         assert int(mask.sum()) == 2851
         assert sorted(np.unique(data[0][mask]).tolist()) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
+    @requires_lerc
     def test_reports_an_empty_tile_as_fully_masked(self) -> None:
         _, mask = decode_tile_bytes(LERC_EMPTY.read_bytes(), "LERC2D")
         assert not mask.any()
@@ -497,6 +500,7 @@ class TestFetchCacheTile:
             height_px=512,
         )
 
+    @requires_lerc
     @pytest.mark.asyncio
     async def test_writes_a_georeferenced_mosaic(
         self,
@@ -528,6 +532,7 @@ class TestFetchCacheTile:
             # Each of the four cache tiles carries 2851 valid pixels.
             assert int((src.dataset_mask() > 0).sum()) == 2851 * 4
 
+    @requires_lerc
     @pytest.mark.asyncio
     async def test_requests_the_cache_endpoint(
         self,
@@ -568,6 +573,7 @@ class TestFetchCacheTile:
         out = tmp_path / "tile.tif"
         await _assert_empty_tile(handler, spec, cache, lod_native, out)
 
+    @requires_lerc
     @pytest.mark.asyncio
     async def test_reports_empty_when_every_pixel_is_masked(
         self,
@@ -582,6 +588,7 @@ class TestFetchCacheTile:
         out = tmp_path / "tile.tif"
         await _assert_empty_tile(handler, spec, cache, lod_native, out)
 
+    @requires_lerc
     @pytest.mark.asyncio
     async def test_writes_the_tile_when_only_one_cache_tile_is_present(
         self,
@@ -704,6 +711,7 @@ class TestProbeBlockEmpty:
             height_px=4096,
         )
 
+    @requires_lerc
     @pytest.mark.asyncio
     async def test_reports_empty_when_the_coarse_tile_has_no_valid_pixel(
         self, block: TileSpec, cache: TileCacheInfo
@@ -829,6 +837,7 @@ class TestEnsureCacheReadable:
     def test_accepts_an_image_format(self) -> None:
         ensure_cache_readable(self._cache("JPEGPLUS"))
 
+    @requires_lerc
     def test_accepts_a_lerc_format(self) -> None:
         ensure_cache_readable(self._cache("LERC2D"))
 
@@ -938,6 +947,7 @@ class TestFloatMosaicNodata:
         ],
         ids=["float32", "uint8"],
     )
+    @requires_lerc
     async def test_the_mosaic_states_its_masked_pixels(
         self,
         cache: TileCacheInfo,

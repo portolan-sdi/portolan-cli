@@ -20,17 +20,16 @@ Usage:
     style_info = extract_wms_style(wms_url, layer_name, collection_path)
     legend_info = extract_wms_legend(wms_url, layer_name, collection_path)
 
-    # During ArcGIS extraction
-    style_info = extract_esri_style(layer_url, collection_path)
+    # During ArcGIS extraction, with the layer JSON from the ArcGIS client
+    style_info = extract_esri_style(layer_json, collection_path)
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlparse, urlunparse
 
 import httpx
 
@@ -38,6 +37,11 @@ from portolan_cli.extract.common.converters.esri import convert_esri_renderer
 from portolan_cli.extract.common.converters.sld import (
     SLDConverterError,
     convert_sld,
+)
+from portolan_cli.extract.common.urls import (
+    CREDENTIAL_QUERY_PARAMS,
+    WFS_REQUEST_PARAMS,
+    merge_query,
 )
 from portolan_cli.json_io import write_json_atomic
 
@@ -134,26 +138,6 @@ def _redact_url_for_logging(url: str) -> str:
     return urlunparse(parsed._replace(netloc=netloc, query=""))
 
 
-# Query parameter names (case-insensitive) that commonly carry a credential.
-# A plain-HTTP request exposes any of these to a network observer, since the
-# request has no TLS confidentiality (RFC 9110 section 4.2.2).
-_CREDENTIAL_QUERY_PARAM_NAMES = frozenset(
-    {
-        "apikey",
-        "api_key",
-        "api-key",
-        "access_token",
-        "token",
-        "auth",
-        "authorization",
-        "key",
-        "secret",
-        "client_secret",
-        "password",
-    }
-)
-
-
 def _reject_credential_bearing_http_url(url: str) -> None:
     """Refuse to fetch a non-HTTPS URL that carries a credential.
 
@@ -169,7 +153,7 @@ def _reject_credential_bearing_http_url(url: str) -> None:
         return
 
     query_param_names = {name.lower() for name, _ in parse_qsl(parsed.query)}
-    leaked = query_param_names & _CREDENTIAL_QUERY_PARAM_NAMES
+    leaked = query_param_names & CREDENTIAL_QUERY_PARAMS
     if leaked:
         raise StyleExtractionError(
             f"Refusing to send credential-bearing query parameter(s) "
@@ -218,26 +202,6 @@ def _guarded_get(url: str, timeout: float) -> httpx.Response:
         return response
 
 
-def _merge_query_params(query: str, overrides: dict[str, str]) -> str:
-    """Merge override params into a query string, matching names case-insensitively.
-
-    An existing parameter whose name matches an override, ignoring case (e.g.
-    ``SERVICE`` vs. ``service``), is replaced rather than duplicated.
-    Unrelated parameters are preserved as-is.
-
-    Args:
-        query: Original query string (without leading "?").
-        overrides: New parameter values keyed by (lowercase) parameter name.
-
-    Returns:
-        URL-encoded query string with overrides applied.
-    """
-    override_names = {name.lower() for name in overrides}
-    kept = [(name, value) for name, value in parse_qsl(query) if name.lower() not in override_names]
-    kept.extend(overrides.items())
-    return urlencode(kept)
-
-
 def _build_wms_getstyles_url(wfs_url: str, layer_name: str) -> str:
     """Build WMS GetStyles URL from WFS endpoint.
 
@@ -262,11 +226,8 @@ def _build_wms_getstyles_url(wfs_url: str, layer_name: str) -> str:
         "layers": layer_name,
     }
 
-    # Merge with the original query string so non-WMS parameters (e.g. an
-    # API key) survive; the new WMS parameters override same-named ones,
-    # regardless of the original parameter's letter case.
-    new_parsed = parsed._replace(path=path, query=_merge_query_params(parsed.query, params))
-    return urlunparse(new_parsed)
+    # An API key survives. WFS request parameters go (issue #981).
+    return merge_query(urlunparse(parsed._replace(path=path)), params, drop=WFS_REQUEST_PARAMS)
 
 
 def _build_wms_getlegendgraphic_url(wfs_url: str, layer_name: str) -> str:
@@ -294,11 +255,8 @@ def _build_wms_getlegendgraphic_url(wfs_url: str, layer_name: str) -> str:
         "format": "image/png",
     }
 
-    # Merge with the original query string so non-WMS parameters (e.g. an
-    # API key) survive; the new WMS parameters override same-named ones,
-    # regardless of the original parameter's letter case.
-    new_parsed = parsed._replace(path=path, query=_merge_query_params(parsed.query, params))
-    return urlunparse(new_parsed)
+    # An API key survives. WFS request parameters go (issue #981).
+    return merge_query(urlunparse(parsed._replace(path=path)), params, drop=WFS_REQUEST_PARAMS)
 
 
 def _fetch_wms_style(url: str, timeout: float = 30.0) -> str:
@@ -337,43 +295,6 @@ def _fetch_wms_style(url: str, timeout: float = 30.0) -> str:
         ) from e
     except httpx.RequestError as e:
         raise StyleExtractionError(f"WMS GetStyles request failed: {e}") from e
-
-
-def _fetch_esri_layer_json(layer_url: str, timeout: float = 30.0) -> dict[str, Any]:
-    """Fetch layer JSON from ESRI REST endpoint.
-
-    Args:
-        layer_url: ESRI layer URL (e.g., .../FeatureServer/0).
-        timeout: Request timeout in seconds.
-
-    Returns:
-        Layer JSON dict.
-
-    Raises:
-        StyleExtractionError: On HTTP or response errors.
-    """
-    # Ensure f=json parameter
-    parsed = urlparse(layer_url)
-    params = parse_qs(parsed.query)
-    params["f"] = ["json"]
-    new_parsed = parsed._replace(query=urlencode(params, doseq=True))
-    url = urlunparse(new_parsed)
-
-    try:
-        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            response = client.get(url)
-            response.raise_for_status()
-            result: dict[str, Any] = response.json()
-            return result
-
-    except httpx.HTTPStatusError as e:
-        raise StyleExtractionError(
-            f"ESRI layer request failed: HTTP {e.response.status_code}"
-        ) from e
-    except httpx.RequestError as e:
-        raise StyleExtractionError(f"ESRI layer request failed: {e}") from e
-    except json.JSONDecodeError as e:
-        raise StyleExtractionError(f"Invalid JSON from ESRI endpoint: {e}") from e
 
 
 def _write_style_file(
@@ -463,34 +384,26 @@ def extract_wms_style(
 
 
 def extract_esri_style(
-    layer_url: str,
+    layer_json: dict[str, Any],
     collection_path: Path,
     *,
     source_layer: str | None = None,
     style_name: str = "default",
-    timeout: float = 30.0,
 ) -> ExtractedStyle | None:
-    """Extract style from ESRI REST layer and write as Mapbox GL JSON.
+    """Convert the ESRI renderer of a layer to a Mapbox GL JSON style file.
 
-    Fetches drawingInfo.renderer from layer JSON and converts to
-    Mapbox GL format. Returns None if style cannot be extracted.
+    The caller fetches the layer JSON with the ArcGIS client, which sends
+    the token (issue #855).
 
     Args:
-        layer_url: ESRI layer URL (e.g., .../FeatureServer/0).
+        layer_json: The layer's REST JSON, with ``drawingInfo.renderer``.
         collection_path: Path to collection directory.
         source_layer: Source layer name for Mapbox GL (defaults to layer name).
         style_name: Output filename (default "default").
-        timeout: Request timeout in seconds.
 
     Returns:
         ExtractedStyle if successful, None if style unavailable.
     """
-    try:
-        layer_json = _fetch_esri_layer_json(layer_url, timeout=timeout)
-    except StyleExtractionError as e:
-        logger.warning("Could not fetch ESRI layer JSON: %s", e)
-        return None
-
     # Extract renderer from drawingInfo
     drawing_info = layer_json.get("drawingInfo", {})
     renderer = drawing_info.get("renderer")

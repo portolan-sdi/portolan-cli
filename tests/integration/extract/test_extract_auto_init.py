@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from portolan_cli.extract.arcgis.orchestrator import ExtractionOptions
-from portolan_cli.extract.arcgis.report import (
+from portolan_cli.extract.common.report import (
     ExtractionReport,
     LayerResult,
     MetadataExtracted,

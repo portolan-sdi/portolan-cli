@@ -95,6 +95,7 @@ def retry_with_backoff(
     config: RetryConfig,
     *args: Any,
     retry_on: tuple[type[Exception], ...] | None = None,
+    give_up_on: tuple[type[Exception], ...] = (),
     on_retry: Callable[[int, Exception], None] | None = None,
     **kwargs: Any,
 ) -> RetryResult[T]:
@@ -105,6 +106,8 @@ def retry_with_backoff(
         config: Retry configuration
         *args: Positional arguments to pass to operation
         retry_on: Exception types to retry on (default: all exceptions)
+        give_up_on: Exception types that end the retries at once. The
+            result then fails with that error, as a retry cannot change it.
         on_retry: Callback called before each retry with (attempt, error)
         **kwargs: Keyword arguments to pass to operation
 
@@ -125,6 +128,8 @@ def retry_with_backoff(
                 attempts=attempt,
                 error=None,
             )
+        except give_up_on as e:
+            return RetryResult(success=False, value=None, attempts=attempt, error=e)
         except retry_on as e:
             last_error = e
 

@@ -14,7 +14,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from portolan_cli.conversion_config import VectorSettings
 from portolan_cli.extract.arcgis.discovery import (
+    ArcGISClient,
     FolderTraversal,
     LayerInfo,
     ServiceDiscoveryResult,
@@ -25,7 +27,6 @@ from portolan_cli.extract.arcgis.orchestrator import (
     ArcGISLayerSource,
     ExtractionOptions,
     ServicesRootDiscoveryResult,
-    _collect_layers_from_services,
     _discover_and_filter_services,
     _ensure_geoparquet_crs,
     _is_wgs84_crs,
@@ -34,7 +35,14 @@ from portolan_cli.extract.arcgis.orchestrator import (
     list_services,
 )
 from portolan_cli.extract.common.progress import ExtractionProgress
-from portolan_cli.extract.common.source import Discovery, LayerRef, seed_collections, slugify
+from portolan_cli.extract.common.source import (
+    Discovery,
+    LayerRef,
+    LayerSourceOptions,
+    NoLayersSelectedError,
+    seed_collections,
+    slugify,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -421,8 +429,7 @@ class TestExtractionOptions:
         assert options.timeout == 60.0
         assert options.resume is False
         assert options.dry_run is False
-        assert options.sort_hilbert is True
-        assert options.add_bbox is True
+        assert options.vector == VectorSettings()
 
     def test_custom_values(self) -> None:
         """Should accept custom values."""
@@ -432,8 +439,7 @@ class TestExtractionOptions:
             timeout=120.0,
             resume=True,
             dry_run=True,
-            sort_hilbert=False,
-            add_bbox=False,
+            vector=VectorSettings(sort="none", add_bbox=False),
         )
 
         assert options.workers == 5
@@ -441,8 +447,7 @@ class TestExtractionOptions:
         assert options.timeout == 120.0
         assert options.resume is True
         assert options.dry_run is True
-        assert options.sort_hilbert is False
-        assert options.add_bbox is False
+        assert options.vector == VectorSettings(sort="none", add_bbox=False)
 
 
 class TestExtractionProgress:
@@ -1222,12 +1227,11 @@ def test_list_services_recurses_and_reports_coverage(monkeypatch: pytest.MonkeyP
     def fake_recursive(
         url: str,
         *,
+        client: ArcGISClient | None = None,
         service_types: list[str] | None = None,
-        token: str | None = None,
-        timeout: float = 60.0,
         max_depth: int = 2,
     ) -> tuple[list[ServiceInfo], FolderTraversal]:
-        captured["token"] = token
+        captured["token"] = client.token if client else None
         services = [
             ServiceInfo("Top", "MapServer"),
             ServiceInfo("NationalDatasets/Property", "MapServer"),
@@ -1262,8 +1266,7 @@ def test_list_services_no_recurse_skips_coverage(monkeypatch: pytest.MonkeyPatch
         *,
         service_types: list[str] | None = None,
         return_folders: bool = False,
-        timeout: float = 60.0,
-        token: str | None = None,
+        client: ArcGISClient | None = None,
     ) -> tuple[list[ServiceInfo], list[str]]:
         assert return_folders is True
         return [ServiceInfo("Top", "MapServer")], ["SomeFolder"]
@@ -1299,14 +1302,7 @@ def test_service_output_dir_nests_folders(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 def test_discover_and_filter_scopes_to_folder(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_recursive(
-        url: str,
-        *,
-        service_types: list[str] | None = None,
-        token: str | None = None,
-        timeout: float = 60.0,
-        max_depth: int = 2,
-    ) -> tuple[list[ServiceInfo], FolderTraversal]:
+    def fake_recursive(url: str, **_: object) -> tuple[list[ServiceInfo], FolderTraversal]:
         services = [
             ServiceInfo("ecml/active_faults", "MapServer"),
             ServiceInfo("water/rivers", "MapServer"),
@@ -1317,7 +1313,7 @@ def test_discover_and_filter_scopes_to_folder(monkeypatch: pytest.MonkeyPatch) -
         "portolan_cli.extract.arcgis.orchestrator.discover_services_recursive", fake_recursive
     )
     services, coverage = _discover_and_filter_services(
-        "https://x/rest/services", None, None, 60.0, token=None, folder="ecml"
+        "https://x/rest/services", None, None, client=ArcGISClient(), folder="ecml"
     )
     assert [s.name for s in services] == ["ecml/active_faults"]
     assert coverage is not None
@@ -1327,14 +1323,7 @@ def test_discover_and_filter_scopes_to_folder(monkeypatch: pytest.MonkeyPatch) -
 def test_extract_routes_folder_url_and_attaches_coverage(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    def fake_recursive(
-        url: str,
-        *,
-        service_types: list[str] | None = None,
-        token: str | None = None,
-        timeout: float = 60.0,
-        max_depth: int = 2,
-    ) -> tuple[list[ServiceInfo], FolderTraversal]:
+    def fake_recursive(url: str, **_: object) -> tuple[list[ServiceInfo], FolderTraversal]:
         return (
             [ServiceInfo("ecml/active_faults", "MapServer")],
             FolderTraversal(visited=["ecml"], skipped=[], service_count=1),
@@ -1344,8 +1333,10 @@ def test_extract_routes_folder_url_and_attaches_coverage(
         "portolan_cli.extract.arcgis.orchestrator.discover_services_recursive", fake_recursive
     )
     monkeypatch.setattr(
-        "portolan_cli.extract.arcgis.orchestrator._collect_layers_from_services",
-        lambda services, base_url, timeout, skipped_out=None: ([], {}, {}, []),
+        "portolan_cli.extract.arcgis.orchestrator.discover_layers",
+        lambda url, client=None: ServiceDiscoveryResult(
+            layers=[LayerInfo(id=0, name="faults", layer_type="Feature Layer")]
+        ),
     )
     report = extract_arcgis_catalog(
         url="https://x/server/rest/services/ecml",
@@ -1365,18 +1356,17 @@ def test_discover_and_filter_no_recurse_uses_flat_discovery(
     def fake_flat(
         url: str,
         *,
+        client: ArcGISClient | None = None,
         service_types: list[str] | None = None,
         return_folders: bool = False,
-        timeout: float = 60.0,
-        token: str | None = None,
     ) -> tuple[list[ServiceInfo], list[str]]:
         assert return_folders is True
-        captured["token"] = token
+        captured["token"] = client.token if client else None
         return [ServiceInfo("Top", "MapServer")], ["SomeFolder"]
 
     monkeypatch.setattr("portolan_cli.extract.arcgis.orchestrator.discover_services", fake_flat)
     services, coverage = _discover_and_filter_services(
-        "https://x/rest/services", None, None, 60.0, token="TKN", recurse=False
+        "https://x/rest/services", None, None, client=ArcGISClient(token="TKN"), recurse=False
     )
     assert [s.name for s in services] == ["Top"]
     assert coverage is None
@@ -1408,7 +1398,9 @@ def test_fetch_passes_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
 
     _install_gpio(monkeypatch, fake_extract_arcgis)
 
-    _fetch_test_layer(tmp_path / "out.parquet", ExtractionOptions(token="TKN", sort_hilbert=False))
+    _fetch_test_layer(
+        tmp_path / "out.parquet", ExtractionOptions(token="TKN", vector=VectorSettings(sort="none"))
+    )
     assert captured["token"] == "TKN"
     assert captured["max_workers"] == 3  # ExtractionOptions.workers, gpio's page concurrency
     assert captured["bbox"] is True
@@ -1433,7 +1425,7 @@ class _StubTable:
 
 
 # A source that needs longer than gpio's 60s default, as in issue #898.
-_SLOW_LAYER_OPTIONS = ExtractionOptions(timeout=180.0, sort_hilbert=False)
+_SLOW_LAYER_OPTIONS = ExtractionOptions(timeout=180.0, vector=VectorSettings(sort="none"))
 
 
 def _extract_through_fake_gpio(
@@ -1523,7 +1515,9 @@ def test_fetch_forwards_native_output_crs(monkeypatch: pytest.MonkeyPatch, tmp_p
     captured: dict[str, object] = {}
     _install_gpio(monkeypatch, _capturing_extract(captured))
 
-    _fetch_test_layer(tmp_path / "out.parquet", ExtractionOptions(sort_hilbert=False))
+    _fetch_test_layer(
+        tmp_path / "out.parquet", ExtractionOptions(vector=VectorSettings(sort="none"))
+    )
     assert captured["output_crs"] == "native"
 
 
@@ -1535,7 +1529,8 @@ def test_fetch_forwards_explicit_output_crs(
     _install_gpio(monkeypatch, _capturing_extract(captured))
 
     _fetch_test_layer(
-        tmp_path / "out.parquet", ExtractionOptions(output_crs="EPSG:28992", sort_hilbert=False)
+        tmp_path / "out.parquet",
+        ExtractionOptions(output_crs="EPSG:28992", vector=VectorSettings(sort="none")),
     )
     assert captured["output_crs"] == "EPSG:28992"
 
@@ -1550,7 +1545,9 @@ def test_fetch_warns_when_gpio_lacks_output_crs(
 
     _install_gpio(monkeypatch, fake_extract_arcgis)
 
-    _fetch_test_layer(tmp_path / "out.parquet", ExtractionOptions(sort_hilbert=False))
+    _fetch_test_layer(
+        tmp_path / "out.parquet", ExtractionOptions(vector=VectorSettings(sort="none"))
+    )
     assert "WGS84" in capsys.readouterr().err
 
 
@@ -1572,7 +1569,7 @@ def test_fetch_restamps_projected_source_crs(
     _install_gpio(monkeypatch, fake_extract_arcgis)
 
     out = tmp_path / "out.parquet"
-    _fetch_test_layer(out, ExtractionOptions(sort_hilbert=False))
+    _fetch_test_layer(out, ExtractionOptions(vector=VectorSettings(sort="none")))
 
     stamped = _read_crs(out)
     assert isinstance(stamped, dict)
@@ -1592,7 +1589,7 @@ def test_fetch_ignores_string_source_crs(monkeypatch: pytest.MonkeyPatch, tmp_pa
     _install_gpio(monkeypatch, fake_extract_arcgis)
 
     out = tmp_path / "out.parquet"
-    _fetch_test_layer(out, ExtractionOptions(sort_hilbert=False))
+    _fetch_test_layer(out, ExtractionOptions(vector=VectorSettings(sort="none")))
 
     assert _read_crs(out) is None
 
@@ -1746,7 +1743,9 @@ def test_fetch_honours_add_bbox_false(monkeypatch: pytest.MonkeyPatch, tmp_path:
     calls: list[str] = []
     _install_gpio(monkeypatch, _recording_ops_extract(calls))
 
-    _fetch_test_layer(tmp_path / "out.parquet", ExtractionOptions(add_bbox=False))
+    _fetch_test_layer(
+        tmp_path / "out.parquet", ExtractionOptions(vector=VectorSettings(add_bbox=False))
+    )
 
     assert calls == ["sort_hilbert"]
 
@@ -1834,21 +1833,23 @@ def test_single_service_reports_no_query_layers_as_skipped(tmp_path: Path) -> No
 
 
 def test_single_service_skipped_layers_respect_layer_filter(tmp_path: Path) -> None:
-    with patch(
-        "portolan_cli.extract.arcgis.orchestrator.discover_layers",
-        return_value=_tiles_only_discovery(),
+    with (
+        patch(
+            "portolan_cli.extract.arcgis.orchestrator.discover_layers",
+            return_value=_tiles_only_discovery(),
+        ),
+        pytest.raises(NoLayersSelectedError, match="matches the layer filters"),
     ):
-        report = extract_arcgis_catalog(
+        extract_arcgis_catalog(
             url=TEST_FEATURE_SERVER_URL,
             output_dir=tmp_path,
             layer_exclude=["punten"],
             options=ExtractionOptions(raw=True),
         )
 
-    assert report.layers == []
 
-
-def test_collect_layers_gathers_skipped_layers_from_no_query_services() -> None:
+def test_services_root_keeps_the_service_order_with_skipped_layers(tmp_path: Path) -> None:
+    """#1012: a tiles-only service keeps its place, so the [i/N] index follows the services."""
     results = {
         "https://x/rest/services/Tiles/MapServer": _tiles_only_discovery(),
         "https://x/rest/services/Good/FeatureServer": ServiceDiscoveryResult(
@@ -1856,36 +1857,23 @@ def test_collect_layers_gathers_skipped_layers_from_no_query_services() -> None:
         ),
     }
     services = [ServiceInfo("Tiles", "MapServer"), ServiceInfo("Good", "FeatureServer")]
-    skipped: list[tuple[ServiceInfo, LayerInfo, str]] = []
 
-    with patch(
-        "portolan_cli.extract.arcgis.orchestrator.discover_layers",
-        side_effect=lambda url, timeout: results[url],
+    with (
+        patch(
+            "portolan_cli.extract.arcgis.orchestrator.discover_services_recursive",
+            return_value=(services, FolderTraversal(visited=[], skipped=[], service_count=2)),
+        ),
+        patch(
+            "portolan_cli.extract.arcgis.orchestrator.discover_layers",
+            side_effect=lambda url, client=None: results[url],
+        ),
     ):
-        layers, service_for_layer, counts, errors = _collect_layers_from_services(
-            services, "https://x/rest/services", 60.0, skipped_out=skipped
-        )
+        found = ArcGISLayerSource().discover("https://x/rest/services", LayerSourceOptions())
 
-    assert [layer.name for layer in layers] == ["roads"]
-    assert service_for_layer[0].name == "Good"
-    assert counts["Tiles"] == 0
-    assert errors == []
-    assert [(service.name, layer.name, reason) for service, layer, reason in skipped] == [
-        ("Tiles", "punten", NO_QUERY_REASON)
+    assert [(ref.name, ref.path, ref.skip_reason) for ref in found.layers] == [
+        ("punten", "tiles/punten", f"Tiles: {NO_QUERY_REASON}"),
+        ("roads", "good", None),
     ]
-
-
-def test_collect_layers_ignores_skipped_layers_without_skipped_out() -> None:
-    with patch(
-        "portolan_cli.extract.arcgis.orchestrator.discover_layers",
-        return_value=_tiles_only_discovery(),
-    ):
-        layers, _, _, errors = _collect_layers_from_services(
-            [ServiceInfo("Tiles", "MapServer")], "https://x/rest/services", 60.0
-        )
-
-    assert layers == []
-    assert errors == []
 
 
 def test_services_root_reports_no_query_layers_as_skipped_not_failed(tmp_path: Path) -> None:
@@ -1921,7 +1909,7 @@ def test_services_root_filters_skipped_layers_and_keeps_each_reason(tmp_path: Pa
         f"{root}/B/MapServer": ("B", "lijnen"),
     }
 
-    def fake_discover(url: str, timeout: float) -> ServiceDiscoveryResult:
+    def fake_discover(url: str, client: ArcGISClient | None = None) -> ServiceDiscoveryResult:
         return ServiceDiscoveryResult(
             layers=[],
             skipped_layers=[LayerInfo(id=0, name=tiles[url][1], layer_type="Feature Layer")],
@@ -1948,3 +1936,141 @@ def test_services_root_filters_skipped_layers_and_keeps_each_reason(tmp_path: Pa
         )
 
     assert [(r.name, r.error) for r in report.layers] == [("lijnen", f"B: {NO_QUERY_REASON}")]
+
+
+# =============================================================================
+# Layer URLs (#652), tables (#812), and the layer identity in errors (#866)
+# =============================================================================
+
+_PARKS_AND_ROADS = ServiceDiscoveryResult(
+    layers=[
+        LayerInfo(id=0, name="Parks", layer_type="Feature Layer"),
+        LayerInfo(id=1, name="Roads", layer_type="Feature Layer"),
+    ],
+    tables=[LayerInfo(id=2, name="zoning_descriptions", layer_type="Table")],
+)
+
+
+def _discover(source: str, found: ServiceDiscoveryResult, **options: Any) -> Discovery:
+    with patch(
+        "portolan_cli.extract.arcgis.orchestrator.discover_layers", return_value=found
+    ) as mock:
+        discovery = ArcGISLayerSource(ExtractionOptions(**options)).discover(
+            source, LayerSourceOptions()
+        )
+    assert mock.call_args.args[0] == TEST_FEATURE_SERVER_URL
+    return discovery
+
+
+@pytest.mark.unit
+def test_layer_url_discovers_that_one_layer_as_named() -> None:
+    """#652: .../FeatureServer/1 extracts layer 1, which the user named."""
+    discovery = _discover(f"{TEST_FEATURE_SERVER_URL}/1", _PARKS_AND_ROADS)
+
+    assert [(ref.id, ref.name, ref.explicit) for ref in discovery.layers] == [(1, "Roads", True)]
+    assert discovery.source_url == TEST_FEATURE_SERVER_URL
+
+
+@pytest.mark.unit
+def test_layer_url_can_name_a_table() -> None:
+    discovery = _discover(f"{TEST_FEATURE_SERVER_URL}/2", _PARKS_AND_ROADS)
+
+    assert [(ref.name, ref.kind, ref.explicit) for ref in discovery.layers] == [
+        ("zoning_descriptions", "table", True)
+    ]
+
+
+@pytest.mark.unit
+def test_layer_url_for_a_missing_layer_fails() -> None:
+    from portolan_cli.extract.arcgis.discovery import ArcGISDiscoveryError
+
+    with pytest.raises(ArcGISDiscoveryError) as caught:
+        _discover(f"{TEST_FEATURE_SERVER_URL}/7", _PARKS_AND_ROADS)
+
+    assert str(caught.value) == (
+        f"The service {TEST_FEATURE_SERVER_URL} has no layer 7. "
+        "Its layers and tables: 0 (Parks), 1 (Roads), 2 (zoning_descriptions)"
+    )
+
+
+@pytest.mark.unit
+def test_tables_join_the_layers_only_with_include_tables() -> None:
+    """#812: --include-tables reaches discovery, and a table is kind 'table'."""
+    without = _discover(TEST_FEATURE_SERVER_URL, _PARKS_AND_ROADS)
+    with_tables = _discover(TEST_FEATURE_SERVER_URL, _PARKS_AND_ROADS, include_tables=True)
+
+    assert [ref.name for ref in without.layers] == ["Parks", "Roads"]
+    assert [(ref.name, ref.kind) for ref in with_tables.layers] == [
+        ("Parks", "layer"),
+        ("Roads", "layer"),
+        ("zoning_descriptions", "table"),
+    ]
+
+
+@pytest.mark.unit
+def test_tables_only_service_fails_and_names_the_flag(tmp_path: Path) -> None:
+    """#812: a FeatureServer with only tables no longer reports 'Extracted 0/0 layers'."""
+    tables_only = ServiceDiscoveryResult(
+        layers=[], tables=[LayerInfo(id=0, name="zoning_descriptions", layer_type="Table")]
+    )
+
+    with (
+        patch("portolan_cli.extract.arcgis.orchestrator.discover_layers", return_value=tables_only),
+        pytest.raises(NoLayersSelectedError) as caught,
+    ):
+        extract_arcgis_catalog(
+            url=TEST_FEATURE_SERVER_URL, output_dir=tmp_path, options=ExtractionOptions(raw=True)
+        )
+
+    assert caught.value.message == (
+        f"No layers to extract from {TEST_FEATURE_SERVER_URL}. The service lists 1 table and "
+        "no layers. Pass --include-tables to extract tables."
+    )
+
+
+@pytest.mark.unit
+def test_include_tables_flag_reaches_the_extraction(tmp_path: Path) -> None:
+    from click.testing import CliRunner
+
+    from portolan_cli.cli import cli
+
+    with patch(
+        "portolan_cli.extract.arcgis.orchestrator.discover_layers", return_value=_PARKS_AND_ROADS
+    ):
+        result = CliRunner().invoke(
+            cli,
+            [
+                "extract",
+                "arcgis",
+                TEST_FEATURE_SERVER_URL,
+                str(tmp_path / "o"),
+                "--dry-run",
+                "--include-tables",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "zoning_descriptions (ID: 2)" in result.output
+
+
+@pytest.mark.unit
+def test_fetch_error_keeps_the_layer_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#866: the DuckDB error names a temp file. The message names the layer too."""
+    from portolan_cli.extract.arcgis.orchestrator import ArcGISLayerError
+
+    def failing_gpio(url: str, **_: object) -> object:
+        raise OSError("IO Error: Failed to read GeoJSON data")
+
+    _install_gpio(monkeypatch, failing_gpio)
+
+    with pytest.raises(ArcGISLayerError) as caught:
+        _fetch_test_layer(
+            tmp_path / "out.parquet", ExtractionOptions(vector=VectorSettings(sort="none"))
+        )
+
+    assert str(caught.value) == (
+        "Layer L (id 0) at https://x/rest/services/F/FeatureServer/0: "
+        "OSError: IO Error: Failed to read GeoJSON data"
+    )

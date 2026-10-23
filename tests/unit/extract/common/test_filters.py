@@ -9,11 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from portolan_cli.extract.common.filters import (
-    apply_unified_filter,
-    filter_layers,
-    filter_services,
-)
+from portolan_cli.extract.common.filters import filter_services, is_glob, layer_matches
 
 pytestmark = pytest.mark.unit
 
@@ -118,114 +114,37 @@ class TestFilterServicesCaseSensitivity:
 
 
 # =============================================================================
-# Layer Filtering Tests
+# Layer Matching Tests
 # =============================================================================
 
 
-class TestFilterLayersBasic:
-    """Tests for basic layer filtering."""
+class TestLayerMatches:
+    """``layer_matches`` decides one pattern against one layer."""
 
-    @pytest.fixture
-    def sample_layers(self) -> list[dict[str, int | str]]:
-        """Sample layer list for testing."""
-        return [
-            {"id": 0, "name": "Census_Block_Groups"},
-            {"id": 1, "name": "Census_Tracts"},
-            {"id": 2, "name": "Transportation"},
-            {"id": 3, "name": "Boundaries"},
-        ]
+    @pytest.mark.parametrize(
+        ("pattern", "expected"),
+        [("sdn_*", True), ("SDN_ADMIN*", True), ("ukr_*", False), ("*health*", False)],
+    )
+    def test_glob_matches_the_name_without_case(self, pattern: str, expected: bool) -> None:
+        assert layer_matches(0, "sdn_admin_boundaries", pattern) is expected
 
-    def test_no_filters_returns_all_layers(self, sample_layers: list[dict[str, int | str]]) -> None:
-        """When no include/exclude specified, return all layers."""
-        result = filter_layers(sample_layers, include=None, exclude=None)
+    def test_numeric_pattern_matches_the_id_only(self) -> None:
+        assert layer_matches(5, "Layer_C", "5") is True
+        assert layer_matches(2, "5", "5") is False
 
-        assert result == sample_layers
+    def test_plain_pattern_matches_the_leaf(self) -> None:
+        """#768: a WFS name is workspace:layer, and the leaf alone matches."""
+        assert layer_matches(0, "cadastru_data:terenuri", "terenuri") is True
+        assert layer_matches(0, "cadastru_data:terenuri", "cadastru_data:terenuri") is True
+        assert layer_matches(0, "cadastru_data:terenuri", "cadastru") is False
 
+    def test_whitespace_around_a_pattern_is_ignored(self) -> None:
+        assert layer_matches(1, "roads", " roads ") is True
 
-class TestFilterLayersByGlobPattern:
-    """Tests for glob pattern matching on layer names."""
-
-    @pytest.fixture
-    def country_layers(self) -> list[dict[str, int | str]]:
-        """Layers with country code prefixes."""
-        return [
-            {"id": 0, "name": "sdn_admin_boundaries"},
-            {"id": 1, "name": "sdn_health_facilities"},
-            {"id": 2, "name": "ukr_admin_boundaries"},
-        ]
-
-    def test_glob_country_prefix(self, country_layers: list[dict[str, int | str]]) -> None:
-        """Filter by country code prefix glob pattern."""
-        result = filter_layers(country_layers, include=["sdn_*"], exclude=None)
-
-        assert len(result) == 2
-        assert all("sdn_" in str(layer["name"]) for layer in result)
-
-    def test_glob_combined_with_exclude(self, country_layers: list[dict[str, int | str]]) -> None:
-        """Glob include with glob exclude."""
-        result = filter_layers(country_layers, include=["sdn_*"], exclude=["*health*"])
-
-        assert len(result) == 1
-        assert result[0]["name"] == "sdn_admin_boundaries"
-
-
-class TestFilterLayersById:
-    """Tests for filtering layers by numeric ID."""
-
-    @pytest.fixture
-    def sample_layers(self) -> list[dict[str, int | str]]:
-        return [
-            {"id": 0, "name": "Layer_A"},
-            {"id": 1, "name": "Layer_B"},
-            {"id": 2, "name": "Layer_C"},
-        ]
-
-    def test_include_by_id_string(self, sample_layers: list[dict[str, int | str]]) -> None:
-        """Include filter matches layer IDs passed as strings."""
-        result = filter_layers(sample_layers, include=["0", "1"], exclude=None)
-
-        assert len(result) == 2
-        assert result[0]["id"] == 0
-        assert result[1]["id"] == 1
-
-
-# =============================================================================
-# Unified Filter Tests
-# =============================================================================
-
-
-class TestApplyUnifiedFilter:
-    """Tests for apply_unified_filter function."""
-
-    def test_applies_to_both_services_and_layers(self) -> None:
-        """Unified filter applies same pattern to both."""
-        services = ["sdn_census", "ukr_census", "eth_census"]
-        layers = [
-            {"id": 0, "name": "sdn_boundaries"},
-            {"id": 1, "name": "ukr_boundaries"},
-        ]
-
-        filtered_services, filtered_layers = apply_unified_filter(
-            services, layers, filter_pattern=["sdn_*"], exclude_pattern=None
-        )
-
-        assert filtered_services == ["sdn_census"]
-        assert len(filtered_layers) == 1
-        assert filtered_layers[0]["name"] == "sdn_boundaries"
-
-    def test_none_services_handled(self) -> None:
-        """When services is None, only layers are filtered."""
-        layers = [
-            {"id": 0, "name": "sdn_boundaries"},
-            {"id": 1, "name": "ukr_boundaries"},
-        ]
-
-        filtered_services, filtered_layers = apply_unified_filter(
-            None, layers, filter_pattern=["sdn_*"], exclude_pattern=None
-        )
-
-        assert filtered_services is None
-        assert len(filtered_layers) == 1
+    @pytest.mark.parametrize(("pattern", "expected"), [("a*", True), ("a?", True), ("[ab]", True)])
+    def test_is_glob(self, pattern: str, expected: bool) -> None:
+        assert is_glob(pattern) is expected
+        assert is_glob("roads") is False
 
 
 # =============================================================================

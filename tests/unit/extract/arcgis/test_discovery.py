@@ -14,16 +14,16 @@ import httpx
 import pytest
 
 from portolan_cli.extract.arcgis.discovery import (
+    ArcGISClient,
     ArcGISDiscoveryError,
     FolderTraversal,
     LayerInfo,
     ServiceDiscoveryResult,
     ServiceInfo,
-    _ensure_json_format,
-    _fetch_json,
     discover_layers,
     discover_services,
     discover_services_recursive,
+    ensure_json_format,
 )
 
 pytestmark = pytest.mark.unit
@@ -80,24 +80,24 @@ def _mock_httpx_response(data: dict[str, Any]) -> MagicMock:
 
 
 # =============================================================================
-# _ensure_json_format tests
+# ensure_json_format tests
 # =============================================================================
 
 
 class TestEnsureJsonFormat:
-    """Tests for _ensure_json_format helper."""
+    """Tests for ensure_json_format helper."""
 
     def test_adds_f_json_to_url_without_params(self) -> None:
         """Should add f=json to URL without query params."""
         url = "https://services.arcgis.com/test/FeatureServer"
-        result = _ensure_json_format(url)
+        result = ensure_json_format(url)
 
         assert "f=json" in result
 
     def test_preserves_existing_f_param(self) -> None:
         """Should not duplicate f param if already present."""
         url = "https://services.arcgis.com/test/FeatureServer?f=json"
-        result = _ensure_json_format(url)
+        result = ensure_json_format(url)
 
         # Should not have f=json twice
         assert result.count("f=json") == 1
@@ -105,7 +105,7 @@ class TestEnsureJsonFormat:
     def test_preserves_other_params(self) -> None:
         """Should preserve existing query parameters."""
         url = "https://services.arcgis.com/test/FeatureServer?token=abc123"
-        result = _ensure_json_format(url)
+        result = ensure_json_format(url)
 
         assert "token=abc123" in result
         assert "f=json" in result
@@ -136,20 +136,23 @@ class TestDiscoverLayers:
             assert result.layers[1].id == 1
             assert result.layers[1].name == "Census_Tracts"
 
-    def test_includes_tables_when_requested(self, feature_server_response: dict[str, Any]) -> None:
-        """Should include tables when include_tables=True."""
+    def test_returns_tables_apart_from_layers(
+        self, feature_server_response: dict[str, Any]
+    ) -> None:
+        """#812: discovery reports the tables; the caller decides to extract them."""
         with patch("portolan_cli.extract.arcgis.discovery.httpx.Client") as mock_client:
             mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
                 feature_server_response
             )
 
-            result = discover_layers(
-                "https://services.arcgis.com/test/FeatureServer",
-                include_tables=True,
-            )
+            result = discover_layers("https://services.arcgis.com/test/FeatureServer")
 
-            assert len(result.layers) == 4  # 3 layers + 1 table
-            assert any(layer.name == "Metadata_Table" for layer in result.layers)
+            assert [layer.name for layer in result.layers] == [
+                "Census_Block_Groups",
+                "Census_Tracts",
+                "Boundaries",
+            ]
+            assert result.tables == [LayerInfo(id=3, name="Metadata_Table", layer_type="Table")]
 
     def test_extracts_service_metadata(self, feature_server_response: dict[str, Any]) -> None:
         """Should extract service-level metadata."""
@@ -339,12 +342,12 @@ class TestServiceDiscoveryResult:
 
 
 # =============================================================================
-# _fetch_json token and embedded-error tests
+# ArcGISClient token, retry, and embedded-error tests
 # =============================================================================
 
 
 @pytest.mark.unit
-def test_fetch_json_raises_on_embedded_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_json_raises_on_embedded_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """Should raise ArcGISDiscoveryError when ArcGIS returns an embedded error body."""
 
     def fake_get(self: object, url: str) -> httpx.Response:
@@ -352,11 +355,11 @@ def test_fetch_json_raises_on_embedded_error(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(httpx.Client, "get", fake_get)
     with pytest.raises(ArcGISDiscoveryError, match="499"):
-        _fetch_json("https://x/rest/services/Secret")
+        ArcGISClient().get_json("https://x/rest/services/Secret")
 
 
 @pytest.mark.unit
-def test_fetch_json_appends_token(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_json_appends_token(monkeypatch: pytest.MonkeyPatch) -> None:
     """Should append token=<token> to the request URL when token is provided."""
     seen: dict[str, str] = {}
 
@@ -365,12 +368,12 @@ def test_fetch_json_appends_token(monkeypatch: pytest.MonkeyPatch) -> None:
         return httpx.Response(200, json={"services": [], "folders": []})
 
     monkeypatch.setattr(httpx.Client, "get", fake_get)
-    _fetch_json("https://x/rest/services", token="ABC123")
+    ArcGISClient(token="ABC123").get_json("https://x/rest/services")
     assert "token=ABC123" in seen["url"]
 
 
 @pytest.mark.unit
-def test_fetch_json_raises_on_http_error_status(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_json_raises_on_http_error_status(monkeypatch: pytest.MonkeyPatch) -> None:
     """Should raise ArcGISDiscoveryError when the server returns a 4xx/5xx status."""
 
     def fake_get(self: object, url: str) -> httpx.Response:
@@ -378,11 +381,11 @@ def test_fetch_json_raises_on_http_error_status(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(httpx.Client, "get", fake_get)
     with pytest.raises(ArcGISDiscoveryError, match="HTTP 404"):
-        _fetch_json("https://x/rest/services/Missing")
+        ArcGISClient().get_json("https://x/rest/services/Missing")
 
 
 @pytest.mark.unit
-def test_fetch_json_raises_on_non_object_json(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_json_raises_on_non_object_json(monkeypatch: pytest.MonkeyPatch) -> None:
     """Non-object JSON must raise ArcGISDiscoveryError, not AttributeError on .get()."""
 
     def fake_get(self: object, url: str) -> httpx.Response:
@@ -390,7 +393,7 @@ def test_fetch_json_raises_on_non_object_json(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(httpx.Client, "get", fake_get)
     with pytest.raises(ArcGISDiscoveryError, match="Expected JSON object"):
-        _fetch_json("https://x/rest/services")
+        ArcGISClient().get_json("https://x/rest/services")
 
 
 @pytest.mark.unit
@@ -403,7 +406,7 @@ def test_discover_services_forwards_token(monkeypatch: pytest.MonkeyPatch) -> No
         return httpx.Response(200, json={"services": [], "folders": []})
 
     monkeypatch.setattr(httpx.Client, "get", fake_get)
-    discover_services("https://x/rest/services", token="TKN789")
+    discover_services("https://x/rest/services", client=ArcGISClient(token="TKN789"))
     assert "token=TKN789" in seen["url"]
 
 
@@ -415,13 +418,13 @@ def test_discover_services_forwards_token(monkeypatch: pytest.MonkeyPatch) -> No
 def _mock_endpoints(monkeypatch: pytest.MonkeyPatch, responses: dict[str, dict]) -> None:  # type: ignore[type-arg]
     """Map base URL (without query) -> JSON body."""
 
-    def fake_fetch(url: str, timeout: float = 60.0, token: str | None = None) -> dict[str, Any]:
+    def fake_fetch(self: ArcGISClient, url: str) -> dict[str, Any]:
         base = url.split("?")[0]
         if base not in responses:
             raise ArcGISDiscoveryError(f"ArcGIS error from {url}: 499 Token Required")
         return responses[base]
 
-    monkeypatch.setattr("portolan_cli.extract.arcgis.discovery._fetch_json", fake_fetch)
+    monkeypatch.setattr(ArcGISClient, "get_json", fake_fetch)
 
 
 @pytest.mark.unit
@@ -543,9 +546,7 @@ def test_recursive_builds_full_path_for_nested_folders(monkeypatch: pytest.Monke
 
 
 def _discover_with(monkeypatch: pytest.MonkeyPatch, body: dict[str, Any]) -> ServiceDiscoveryResult:
-    monkeypatch.setattr(
-        "portolan_cli.extract.arcgis.discovery._fetch_json", lambda url, timeout=60.0: body
-    )
+    monkeypatch.setattr(ArcGISClient, "get_json", lambda self, url: body)
     return discover_layers("https://x/rest/services/S/MapServer")
 
 
@@ -575,3 +576,79 @@ def test_discover_layers_keeps_layers_when_query_or_unknown(
     assert [layer.name for layer in result.layers] == ["roads"]
     assert result.skipped_layers == []
     assert result.skip_reason is None
+
+
+# =============================================================================
+# One client for every discovery request: token (#855) and retry (#811)
+# =============================================================================
+
+
+def _transport(answers: list[httpx.Response], seen: list[str]) -> httpx.MockTransport:
+    """Answer each request with the next response, and record each URL."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return answers.pop(0)
+
+    return httpx.MockTransport(handler)
+
+
+_SERVICE = {"layers": [{"id": 0, "name": "Parcels", "type": "Feature Layer"}]}
+
+
+@pytest.mark.unit
+def test_discover_layers_sends_the_token() -> None:
+    """#855: a token-gated server needs the token on the layer-list request."""
+    seen: list[str] = []
+    client = ArcGISClient(
+        token="TKN", transport=_transport([httpx.Response(200, json=_SERVICE)], seen)
+    )
+
+    found = discover_layers("https://x/rest/services/S/FeatureServer", client)
+
+    assert [layer.name for layer in found.layers] == ["Parcels"]
+    assert seen == ["https://x/rest/services/S/FeatureServer?f=json&token=TKN"]
+
+
+@pytest.mark.unit
+def test_transient_failure_is_retried_once_and_discovery_completes() -> None:
+    """#811: one HTTP 503 during discovery does not end the harvest."""
+    seen: list[str] = []
+    answers = [httpx.Response(503, json={}), httpx.Response(200, json=_SERVICE)]
+    client = ArcGISClient(retries=3, retry_delay=0.0, transport=_transport(answers, seen))
+
+    found = discover_layers("https://x/rest/services/S/FeatureServer", client)
+
+    assert [layer.name for layer in found.layers] == ["Parcels"]
+    assert len(seen) == 2
+
+
+@pytest.mark.unit
+def test_embedded_server_error_is_retried() -> None:
+    seen: list[str] = []
+    answers = [
+        httpx.Response(200, json={"error": {"code": 500, "message": "Server busy"}}),
+        httpx.Response(200, json=_SERVICE),
+    ]
+    client = ArcGISClient(retry_delay=0.0, transport=_transport(answers, seen))
+
+    assert discover_layers("https://x/S/FeatureServer", client).layers[0].name == "Parcels"
+    assert len(seen) == 2
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx.Response(404, json={}),
+        httpx.Response(200, json={"error": {"code": 499, "message": "Token Required"}}),
+    ],
+)
+def test_permanent_failure_is_not_retried(answer: httpx.Response) -> None:
+    """#811: a bad URL or a missing token fails at once, with no repeat request."""
+    seen: list[str] = []
+    client = ArcGISClient(retries=3, retry_delay=0.0, transport=_transport([answer], seen))
+
+    with pytest.raises(ArcGISDiscoveryError):
+        discover_layers("https://x/S/FeatureServer", client)
+    assert len(seen) == 1

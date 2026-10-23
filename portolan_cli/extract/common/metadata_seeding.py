@@ -97,9 +97,12 @@ def seed_collection_metadata(
     if title and title != layer_name:
         processing_notes = f"{processing_notes} ({title})"
 
+    from portolan_cli.extract.common.urls import sanitize_published_string
+
     extracted = ExtractedMetadata(
         source_type=source_type,
-        source_url=source_url,
+        # The source URL reaches the published via link (issue #981).
+        source_url=sanitize_published_string(source_url),
         description=best_description,
         keywords=keywords,
         processing_notes=processing_notes,
@@ -107,8 +110,8 @@ def seed_collection_metadata(
 
     metadata_path = collection_dir / ".portolan" / "metadata.yaml"
     # No placeholder: this is a child file and the merge lets the child win, so a
-    # TODO here would override the catalog's real license (issue #686).
-    seeded = seed_metadata_yaml(extracted, metadata_path, license_placeholder=False)
+    # TODO here would override the catalog's real license and contact (#686, #1039).
+    seeded = seed_metadata_yaml(extracted, metadata_path, placeholders=False)
 
     # Per Issue #369: Also update collection.json with title/description
     # This ensures STAC has meaningful metadata, not generic placeholders

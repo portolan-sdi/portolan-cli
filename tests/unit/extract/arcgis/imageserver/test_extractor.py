@@ -22,6 +22,7 @@ from portolan_cli.extract.arcgis.imageserver.extractor import (
     extract_imageserver,
 )
 from portolan_cli.extract.arcgis.imageserver.tiling import TileSpec
+from tests.unit.extract.arcgis.imageserver import requires_lerc
 
 # =============================================================================
 # Fixtures
@@ -1163,6 +1164,7 @@ class TestTilePlanning:
         assert plan.lod is None
         assert len(plan.tiles) == 16
 
+    @requires_lerc
     def test_tiles_only_service_uses_the_cache_grid(
         self, tiles_only_metadata: ImageServerMetadata
     ) -> None:
@@ -1180,6 +1182,7 @@ class TestTilePlanning:
         assert len(plan.tiles) == 1
         assert (plan.tiles[0].width_px, plan.tiles[0].height_px) == (512, 512)
 
+    @requires_lerc
     def test_cache_grid_ignores_the_export_image_size_limit(
         self, tiles_only_metadata: ImageServerMetadata
     ) -> None:
@@ -1207,6 +1210,7 @@ class TestTilePlanning:
         with pytest.raises(ImageServerExtractionError, match="TilesOnly"):
             _plan_tiles(no_cache, no_cache.full_extent, ExtractionConfig())
 
+    @requires_lerc
     def test_cache_grid_reprojects_a_service_extent_in_another_crs(
         self, tiles_only_metadata: ImageServerMetadata
     ) -> None:
@@ -1248,6 +1252,7 @@ class TestTilePlanning:
         for got, want in zip(plan.tiles, expected.tiles, strict=True):
             assert got.bbox == pytest.approx(want.bbox, abs=1e-3)
 
+    @requires_lerc
     def test_cache_grid_fails_when_the_extent_cannot_be_reprojected(
         self, tiles_only_metadata: ImageServerMetadata
     ) -> None:
@@ -1322,6 +1327,7 @@ class TestTilesOnlyExtraction:
                 config=config,
             )
 
+    @requires_lerc
     @pytest.mark.asyncio
     async def test_writes_a_cog_from_the_tile_cache(
         self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
@@ -1344,6 +1350,7 @@ class TestTilesOnlyExtraction:
             assert src.crs.to_string() == "EPSG:3857"
             assert int((src.dataset_mask() > 0).sum()) == 2851 * 4
 
+    @requires_lerc
     @pytest.mark.asyncio
     async def test_a_float32_cache_keeps_its_mask_in_the_cog(
         self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
@@ -1381,6 +1388,7 @@ class TestTilesOnlyExtraction:
             raw = src.read(1)
             assert np.isnan(raw[src.dataset_mask() == 0]).all()
 
+    @requires_lerc
     @pytest.mark.asyncio
     async def test_empty_tiles_write_no_file_and_do_not_fail(
         self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
@@ -1399,6 +1407,7 @@ class TestTilesOnlyExtraction:
         assert result.report is not None
         assert [t.status for t in result.report.tiles] == ["empty"]
 
+    @requires_lerc
     @pytest.mark.asyncio
     async def test_a_cache_error_fails_the_tile_with_the_reason(
         self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
@@ -1533,6 +1542,7 @@ class TestCoarseScan:
         ],
         ids=["scan-on", "scan-off"],
     )
+    @requires_lerc
     async def test_the_scan_decides_how_many_cache_tiles_the_reader_asks_for(
         self,
         tmp_path: Path,
@@ -1551,6 +1561,7 @@ class TestCoarseScan:
         assert len(seen) == requests
         assert all(level in path for path in seen)
 
+    @requires_lerc
     @pytest.mark.asyncio
     async def test_reads_a_block_whose_coarse_tile_holds_data(
         self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
@@ -1572,6 +1583,7 @@ class TestCoarseScan:
         assert (tmp_path / "tiles" / "tile_0_0" / "tile_0_0.tif").exists()
         assert not (tmp_path / "tiles" / "tile_1_0" / "tile_1_0.tif").exists()
 
+    @requires_lerc
     @pytest.mark.asyncio
     async def test_a_failed_probe_reads_the_block_in_full(
         self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
@@ -1595,6 +1607,7 @@ class TestCoarseScan:
 class TestCoarseScanResume:
     """A coarse verdict must not become a completed tile (PR #871 review)."""
 
+    @requires_lerc
     @pytest.mark.asyncio
     async def test_a_coarse_empty_block_stays_out_of_the_succeeded_tiles(
         self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
@@ -1621,6 +1634,7 @@ class TestCoarseScanResume:
             ],
         }
 
+    @requires_lerc
     @pytest.mark.asyncio
     async def test_no_coarse_scan_reads_a_block_the_scan_dropped(
         self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
@@ -1654,6 +1668,7 @@ class TestCoarseScanResume:
         assert second.tiles_downloaded == 2
         assert second.tiles_skipped == 0
 
+    @requires_lerc
     @pytest.mark.asyncio
     async def test_resume_with_the_scan_on_keeps_skipping_those_blocks(
         self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
@@ -1830,6 +1845,7 @@ class TestCachePreflight:
 class TestCacheRateLimit:
     """HTTP 429 from the cache must back off, not fail the tile."""
 
+    @requires_lerc
     @pytest.mark.asyncio
     async def test_a_429_becomes_a_rate_limit_error(
         self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata

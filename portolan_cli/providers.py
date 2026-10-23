@@ -48,6 +48,18 @@ def _text(value: object) -> str | None:
     return None
 
 
+def _contact_text(value: object) -> str | None:
+    """Return a contact value, or None for a seeded ``TODO`` placeholder (issue #1039).
+
+    ``metadata_seeding`` writes the placeholder to ask the human for a value.
+    The placeholder is not a maintainer, so it never becomes a published host.
+    """
+    text = _text(value)
+    if text is None or text.upper().startswith("TODO"):
+        return None
+    return text
+
+
 def _roles_of(provider: Mapping[str, Any]) -> list[str]:
     raw = provider.get("roles")
     if not isinstance(raw, list):
@@ -110,15 +122,15 @@ def _host_from_contact_text(text: str) -> dict[str, Any]:
 
 
 def _host_from_contact_mapping(contact: Mapping[str, Any]) -> dict[str, Any] | None:
-    email = _text(contact.get("email"))
-    name = _text(contact.get("name"))
+    email = _contact_text(contact.get("email"))
+    name = _contact_text(contact.get("name"))
     if name is None and email is None:
         return None
 
     host: dict[str, Any] = {"name": name or email, "roles": [HOST_ROLE]}
     if email is not None:
         host["email"] = email
-    url = _text(contact.get("url"))
+    url = _contact_text(contact.get("url"))
     if url is not None:
         host["url"] = url
     return host
@@ -132,7 +144,7 @@ def _host_from_contact(contact: object) -> dict[str, Any] | None:
     maintainer, so it is the same fact in two shapes.
     """
     if isinstance(contact, str):
-        text = _text(contact)
+        text = _contact_text(contact)
         return _host_from_contact_text(text) if text is not None else None
     if isinstance(contact, Mapping):
         return _host_from_contact_mapping(contact)

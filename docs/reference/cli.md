@@ -650,8 +650,8 @@ portolan extract arcgis [OPTIONS] URL [OUTPUT_DIR]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--layers` | text | Include layers matching glob patterns (comma-separated). Example: 'Census*,Transport*' | None |
-| `--exclude-layers` | text | Exclude layers matching glob patterns (comma-separated). Example: 'Legacy*,Test*' | None |
+| `--layers` | text | Include layers by layer id or name glob (comma-separated). Example: 'Census*,3' | None |
+| `--exclude-layers` | text | Exclude layers by layer id or name glob (comma-separated). Example: 'Legacy*,7' | None |
 | `--filter` | text | Apply glob filter to both services and layers. Example: 'sdn_*', '*_2024*' | None |
 | `--services` | text | Include services matching glob patterns (comma-separated). For services root URLs only. | None |
 | `--exclude-services` | text | Exclude services matching glob patterns (comma-separated). For services root URLs only. | None |
@@ -660,9 +660,10 @@ portolan extract arcgis [OPTIONS] URL [OUTPUT_DIR]
 | `--username` | text | ArcGIS username (mints a token via generateToken). | None |
 | `--password` | text | ArcGIS password (used with --username, or set ARCGIS_PASSWORD). Prompted interactively when omitted. | None |
 | `--no-recurse` | boolean | Do not traverse folders for services-root URLs (default: recurse). | `False` |
+| `--include-tables` | boolean | Also extract the tables of a service, as Parquet with no geometry. | `False` |
 | `--output-crs` | text | CRS for extracted GeoParquet. 'native' keeps the service's source CRS (default). Pass an EPSG code (e.g. EPSG:4326) to reproject. | `native` |
 | `--workers` | integer range (`1` and above) | Parallel page requests per layer (default: 3). | `3` |
-| `--retries` | integer range (`1` and above) | Retry attempts per failed layer or tile (default: 3). | `3` |
+| `--retries` | integer range (`1` and above) | Attempts per layer, tile, or discovery request that fails (default: 3). | `3` |
 | `--timeout` | float range (`0.0` and above) | Per-request timeout in seconds for discovery, feature, and tile requests (default: 60). | `60.0` |
 | `--resume` | boolean | Resume from existing extraction-report.json (skip succeeded layers). | `False` |
 | `--dry-run` | boolean | List layers without extracting. | `False` |
@@ -809,8 +810,8 @@ portolan extract wfs [OPTIONS] URL [OUTPUT_DIR]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--layers` | text | Include layers matching glob patterns (comma-separated). Example: 'buildings*,roads*' | None |
-| `--exclude-layers` | text | Exclude layers matching glob patterns (comma-separated). Example: 'test_*' | None |
+| `--layers` | text | Include layers by name or glob (comma-separated). A pattern matches the full workspace:layer name or the part after the ':'. Example: 'roads,ws:build*' | None |
+| `--exclude-layers` | text | Exclude layers by name or glob (comma-separated), matched as for --layers. Example: 'test_*' | None |
 | `--wfs-version` | choice (`1.0.0` &#x7C; `1.1.0` &#x7C; `2.0.0` &#x7C; `auto`) | WFS version (default: auto-detect). | `auto` |
 | `--output-crs` | text | Target CRS for output (e.g., 'EPSG:4326'). Default keeps source CRS. | None |
 | `--bbox` | text | Bounding box filter: minx,miny,maxx,maxy in output CRS. | None |

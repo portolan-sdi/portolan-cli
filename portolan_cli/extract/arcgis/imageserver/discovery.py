@@ -19,10 +19,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from typing import Any, cast
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
 
+from portolan_cli.extract.arcgis.discovery import ensure_json_format
 from portolan_cli.extract.arcgis.imageserver.tilecache import (
     TileCacheInfo,
     export_image_supported,
@@ -177,29 +177,6 @@ class ImageServerMetadata:
             raise ValueError(f"full_extent values must be numeric. Got: {self.full_extent}") from e
 
 
-def _ensure_json_format(url: str) -> str:
-    """Ensure URL has f=json parameter for ArcGIS REST API.
-
-    Args:
-        url: Original URL
-
-    Returns:
-        URL with f=json parameter added if not present
-    """
-    parsed = urlparse(url)
-    query_params = parse_qs(parsed.query)
-
-    # Check if f parameter already exists
-    if "f" not in query_params:
-        query_params["f"] = ["json"]
-
-    # Rebuild query string
-    new_query = urlencode(query_params, doseq=True)
-    new_parsed = parsed._replace(query=new_query)
-
-    return urlunparse(new_parsed)
-
-
 def _parse_capabilities(capabilities_value: str | list[str] | None) -> list[str]:
     """Parse capabilities from various formats.
 
@@ -235,7 +212,7 @@ async def _fetch_json(url: str, timeout: float) -> dict[str, Any]:
     Raises:
         ImageServerDiscoveryError: On HTTP or parsing errors
     """
-    request_url = _ensure_json_format(url)
+    request_url = ensure_json_format(url)
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:

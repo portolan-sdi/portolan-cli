@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.extract.arcgis.report import (
+from portolan_cli.extract.common.report import (
     ExtractionReport,
     ExtractionSummary,
     LayerResult,

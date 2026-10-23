@@ -39,13 +39,13 @@ def build_command(layer_source: LayerSource) -> click.Command:
         "--layers",
         type=str,
         default=None,
-        help="Include layers matching glob patterns (comma-separated).",
+        help="Include layers by id, name, or glob (comma-separated).",
     )
     @click.option(
         "--exclude-layers",
         type=str,
         default=None,
-        help="Exclude layers matching glob patterns (comma-separated).",
+        help="Exclude layers by id, name, or glob (comma-separated).",
     )
     @click.option(
         "--retries",
