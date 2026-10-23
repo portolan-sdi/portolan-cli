@@ -25,6 +25,7 @@ See:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -667,21 +668,21 @@ def reset_config_warning_cache() -> None:
 
 
 def _warn_once(catalog_path: Path, message: str) -> None:
-    """Log a config problem every time, but print it to the operator once.
+    """Log a config problem as a warning once, and at debug level after that.
+
+    The CLI shows warnings on stderr. Library code does not print (#1035).
 
     Args:
         catalog_path: Catalog the setting came from. Scopes the deduplication,
             so a second catalog in the same process still warns.
         message: The warning text.
     """
-    from portolan_cli.output import warn
-
-    logger.warning(message)
     key = (str(catalog_path), message)
     if key in _CONFIG_WARNINGS_SHOWN:
+        logger.debug(message)
         return
     _CONFIG_WARNINGS_SHOWN.add(key)
-    warn(message)
+    logger.warning(message)
 
 
 def get_vector_settings(catalog_path: Path | None) -> VectorSettings:
@@ -709,18 +710,14 @@ def get_vector_settings(catalog_path: Path | None) -> VectorSettings:
     spatial_index = vector.get("spatial_index")
     spatial_index = "none" if not isinstance(spatial_index, str) else spatial_index.lower()
 
-    # Parse resolution
-    resolution: int | str = vector.get("resolution", "auto")
-    if isinstance(resolution, str):
-        resolution = resolution.lower()
-        if resolution != "auto":
-            # Try to parse as int
-            try:
-                resolution = int(resolution)
-            except ValueError:
-                resolution = "auto"
-    elif not isinstance(resolution, int):
-        resolution = "auto"
+    # Parse resolution. YAML can hold any type here, such as a float.
+    raw_resolution: Any = vector.get("resolution", "auto")
+    resolution: int | str = "auto"
+    if isinstance(raw_resolution, str):
+        with contextlib.suppress(ValueError):
+            resolution = int(raw_resolution)
+    elif isinstance(raw_resolution, int):
+        resolution = raw_resolution
 
     # Parse sort. A missing or non-string value keeps the default rather than
     # disabling the optimization (issue #805).

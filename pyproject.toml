@@ -321,7 +321,6 @@ ignore = [
 # RATCHET_TID251 and from the output-is-cli-only ignore_imports. Never add one.
 "portolan_cli/preparation.py" = ["TID251"] # B
 "portolan_cli/convert.py" = ["TID251"] # B
-"portolan_cli/conversion_config.py" = ["TID251"] # A
 "portolan_cli/catalog.py" = ["TID251"] # C
 "portolan_cli/finalization.py" = ["TID251"] # C
 "portolan_cli/stac.py" = ["TID251"] # C
@@ -407,7 +406,6 @@ warn_unreachable = true
 module = [
     "portolan_cli.backends.iceberg.backend", # C
     "portolan_cli.backends.iceberg.hooks", # C
-    "portolan_cli.conversion_config", # A
     "portolan_cli.stac", # C
 ]
 warn_unreachable = false
@@ -730,7 +728,6 @@ ignore_imports = [
     # The letter names the owning #1035 agent. Delete only.
     "portolan_cli.preparation -> portolan_cli.output", # B
     "portolan_cli.convert -> portolan_cli.output", # B
-    "portolan_cli.conversion_config -> portolan_cli.output", # A
     "portolan_cli.catalog -> portolan_cli.output", # C
     "portolan_cli.finalization -> portolan_cli.output", # C
     "portolan_cli.stac -> portolan_cli.output", # C
