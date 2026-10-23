@@ -1641,3 +1641,31 @@ class TestSnapshotModel:
             assert latest_assets == all_assets_added, (
                 f"After adding {name}: expected {all_assets_added}, got {latest_assets}"
             )
+
+
+class TestTrackGeneratedAssetsKey:
+    """The key and href of a generated asset do not depend on path spelling."""
+
+    @pytest.mark.unit
+    def test_a_resolved_item_file_keeps_its_item_key_under_a_symlinked_root(
+        self, tmp_path: Path
+    ) -> None:
+        """Issue #1053: the collection thumbnail step passes a resolved item path.
+
+        A catalog reached through a symlink gave the bare name as key, the
+        second key at the collection root, and no href at all.
+        """
+        from portolan_cli.versions import track_generated_assets
+
+        thumb = tmp_path / "real" / "imagery" / "scene" / "scene.thumb.jpg"
+        thumb.parent.mkdir(parents=True)
+        thumb.write_bytes(b"jpeg")
+        link = tmp_path / "link"
+        link.symlink_to(tmp_path / "real", target_is_directory=True)
+
+        track_generated_assets(link / "imagery", [thumb.resolve()], link, message="thumbnail")
+
+        assets = read_versions(link / "imagery" / "versions.json").versions[-1].assets
+        assert {key: asset.href for key, asset in assets.items()} == {
+            "scene/scene.thumb.jpg": "imagery/scene/scene.thumb.jpg"
+        }
