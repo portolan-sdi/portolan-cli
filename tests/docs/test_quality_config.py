@@ -12,11 +12,16 @@ from __future__ import annotations
 
 import ast
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
-import tomllib
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pytest itself depends on tomli before 3.11
+    import tomli as tomllib
 
 pytestmark = [pytest.mark.unit, pytest.mark.source_scan]
 
