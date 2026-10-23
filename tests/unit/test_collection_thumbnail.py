@@ -385,7 +385,10 @@ class TestVectorRendering:
         assert _thumbnail_assets(collection_dir) == {}
 
     @pytest.mark.unit
-    def test_render_returning_none_registers_nothing(self, tmp_path: Path) -> None:
+    def test_render_returning_none_registers_nothing_and_warns(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Issue #1038: the failure went to a debug log only."""
         collection_dir = _vector_collection(tmp_path)
 
         with patch(
@@ -394,6 +397,7 @@ class TestVectorRendering:
             ensure_collection_thumbnails(tmp_path, {"roads"})
 
         assert _thumbnail_assets(collection_dir) == {}
+        assert "No thumbnail for roads:" in capsys.readouterr().err
 
 
 class TestNonGeospatialCollections:

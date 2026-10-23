@@ -351,6 +351,9 @@ def _resolve_for_collection(
         style_path=_discover_style_for_thumbnail(collection_path),
     )
     if rendered is None:
+        # A silent failure left partitioned collections without a thumbnail
+        # and gave no hint why (issue #1038).
+        warn(f"No thumbnail for {collection_path.name}: {path.name} did not render")
         return None
     return rendered, True
 

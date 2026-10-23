@@ -135,13 +135,44 @@ def stored_baseline_mtime(entry: dict[str, Any]) -> float | None:
     return baseline if isinstance(baseline, (int, float)) else None
 
 
+def _item_registering(file_path: Path) -> dict[str, Any] | None:
+    """The STAC item beside ``file_path`` that registers it, or None.
+
+    ``add`` names the item ``<stem>.json``, but ``add --item-id`` names it
+    after the id. Then the item is the one whose asset href resolves to the
+    file. Asking only for ``<stem>.json`` reported such a file as MISSING, and
+    ``check --fix`` wrote a second item for it (issue #840).
+    """
+    named = file_path.parent / f"{file_path.stem}.json"
+    candidates = [named] if named.exists() else sorted(file_path.parent.glob("*.json"))
+    target = file_path.resolve()
+    for path in candidates:
+        try:
+            item = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            continue
+        if not isinstance(item, dict) or item.get("type") != "Feature":
+            continue
+        if path == named:
+            return item
+        assets = item.get("assets")
+        hrefs = (
+            [a.get("href") for a in assets.values() if isinstance(a, dict)]
+            if isinstance(assets, dict)
+            else []
+        )
+        if any(isinstance(h, str) and (path.parent / h).resolve() == target for h in hrefs):
+            return item
+    return None
+
+
 def get_stored_metadata(
     file_path: Path,
     collection_dir: Path,
 ) -> StoredMetadata | None:
     """Read existing STAC item and versions.json metadata.
 
-    Looks for a STAC item JSON file matching the asset filename,
+    Looks for the STAC item beside the asset that registers it,
     and extracts tracking data from versions.json if present.
 
     Args:
@@ -157,19 +188,8 @@ def get_stored_metadata(
     # legacy flat sibling-JSON layout is intentionally not supported here
     # — the scanner reports such files as ORPHANED and directs the user
     # to migrate via `portolan add`.
-    item_name = file_path.stem + ".json"
-    item_path = file_path.parent / item_name
-    if not item_path.exists():
-        return None
-
-    try:
-        with Path(item_path).open(encoding="utf-8") as f:
-            item_data = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return None
-
-    # Validate it's a STAC item
-    if item_data.get("type") != "Feature":
+    item_data = _item_registering(file_path)
+    if item_data is None:
         return None
 
     # Extract bbox from item (None if not explicitly provided)

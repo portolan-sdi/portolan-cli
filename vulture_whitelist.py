@@ -20,7 +20,6 @@ _.blocked  # unused attribute (portolan_cli/version_ops.py:142)
 _now_utc  # unused function (portolan_cli/stac.py:256). C deletes it in #1035.
 add_cmd  # unused function (portolan_cli/cli.py:3140)
 add_external_cmd  # unused function (portolan_cli/cli.py:3486)
-all_known_sidecar_extensions  # unused function (portolan_cli/extension_registry.py:412). D deletes it in #1035.
 bump  # unused function (portolan_cli/cli.py:6651)
 config_get  # unused function (portolan_cli/cli.py:4942)
 config_list  # unused function (portolan_cli/cli.py:5013)

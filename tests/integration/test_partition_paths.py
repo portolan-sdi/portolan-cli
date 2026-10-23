@@ -242,3 +242,16 @@ def test_push_dryrun_shows_correct_glob_url(
             break
     else:
         pytest.fail("No glob asset found in transformed collection")
+
+
+def test_partitioned_collection_gets_a_thumbnail(
+    partitioned_catalog: tuple[Path, Path],
+) -> None:
+    """Issue #1038: the render read a partition as a hive dataset and failed."""
+    _catalog_root, collection_dir = partitioned_catalog
+
+    assets = json.loads((collection_dir / "collection.json").read_text())["assets"]
+
+    thumbnails = [a["href"] for a in assets.values() if "thumbnail" in a.get("roles", [])]
+    assert len(thumbnails) == 1
+    assert (collection_dir / thumbnails[0]).is_file()

@@ -6042,7 +6042,9 @@ def _process_readme_entry(
         is_fresh = readme_path.exists() and readme_path.read_text(encoding="utf-8") == content
         (generated if is_fresh else stale).append(rel_path)
     else:
-        readme_path.write_text(content, encoding="utf-8")
+        from portolan_cli.readme import write_readme
+
+        write_readme(readme_path, content)
         generated.append(rel_path)
 
 
@@ -6258,8 +6260,10 @@ def readme(
         # Print to stdout
         click.echo(readme_content)
     else:
-        # Write to file
-        readme_path.write_text(readme_content, encoding="utf-8")
+        # Write to file, and re-stamp an asset that points at it (issue #930)
+        from portolan_cli.readme import write_readme
+
+        write_readme(readme_path, readme_content)
         if not emit_success(
             "readme",
             {"path": str(readme_path.relative_to(catalog_path)), "generated": True},

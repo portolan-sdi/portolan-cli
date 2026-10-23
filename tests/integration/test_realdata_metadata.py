@@ -75,6 +75,41 @@ class TestSmokeTests:
         assert metadata.bbox is not None
 
     @pytest.mark.integration
+    @pytest.mark.realdata
+    def test_nwi_wetlands_adds_with_its_albers_crs(
+        self, nwi_wetlands_path: Path, tmp_path: Path
+    ) -> None:
+        """Issue #996-B: the fixture declared no CRS, so add read Albers as lon/lat.
+
+        The upstream DC_Wetlands.parquet declares EPSG:5070. The DuckDB copy
+        that made the fixture dropped it.
+        """
+        import json
+        import shutil
+
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+
+        runner = CliRunner()
+        assert (
+            runner.invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC0-1.0"]).exit_code
+            == 0
+        )
+        collection_dir = tmp_path / "wetlands"
+        collection_dir.mkdir()
+        shutil.copy(nwi_wetlands_path, collection_dir)
+
+        result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(tmp_path), "--no-thumbnails", str(collection_dir)],
+        )
+
+        assert result.exit_code == 0, result.output
+        assets = json.loads((collection_dir / "collection.json").read_text())["assets"]
+        assert assets["nwi-wetlands"]["proj:code"] == "EPSG:5070"
+
+    @pytest.mark.integration
     def test_smoke_open_buildings(self, open_buildings_path: Path) -> None:
         """Smoke test: Open Buildings (1000 simple polygons)."""
         metadata = extract_geoparquet_metadata(open_buildings_path)

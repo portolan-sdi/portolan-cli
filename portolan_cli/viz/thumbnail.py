@@ -41,23 +41,20 @@ _ctx_loaded = False
 def _ensure_contextily() -> Any:
     """Lazy-load contextily, returning module or None if unavailable.
 
-    Thread-safe: uses a lock to prevent race conditions on first import.
+    Thread-safe: every call takes the lock, so only one thread runs the import.
+    The lock is cheap next to a thumbnail render.
     """
     global _ctx_module, _ctx_loaded
-    if _ctx_loaded:
-        return _ctx_module
-
     with _ctx_lock:
-        if _ctx_loaded:
-            return _ctx_module
-        try:
-            import contextily as ctx
+        if not _ctx_loaded:
+            try:
+                import contextily as ctx
 
-            _ctx_module = ctx
-        except ImportError:
-            logger.debug("contextily not available, basemaps disabled")
-            _ctx_module = None
-        _ctx_loaded = True
+                _ctx_module = ctx
+            except ImportError:
+                logger.debug("contextily not available, basemaps disabled")
+                _ctx_module = None
+            _ctx_loaded = True
         return _ctx_module
 
 
@@ -748,7 +745,7 @@ def _render_geometries(
         True if successful, False otherwise.
     """
     try:
-        import matplotlib.pyplot as plt
+        plt = _pyplot()
         from matplotlib.collections import PatchCollection
         from matplotlib.patches import Polygon as MplPolygon
     except ImportError:
@@ -877,19 +874,13 @@ def _read_geoparquet_bounds(gpq_path: Path) -> tuple[float, float, float, float]
     Returns:
         Tuple of (minx, miny, maxx, maxy) or None if empty/unavailable.
     """
-    try:
-        import pyarrow.parquet as pq
-    except ImportError:
-        logger.debug("pyarrow not available")
-        return None
+    from portolan_cli.formats import read_geo_metadata
 
     try:
-        pq_file = pq.ParquetFile(gpq_path)
-
-        # Try to get bbox from GeoParquet metadata (O(1), no geometry parsing)
-        schema_meta = pq_file.schema_arrow.metadata or {}
-        geo_meta_bytes = schema_meta.get(b"geo", b"{}")
-        geo_meta = json.loads(geo_meta_bytes.decode("utf-8"))
+        # Try to get bbox from GeoParquet metadata (O(1), no geometry parsing).
+        # The read goes through the raw footer: the Arrow schema hides a ``geo``
+        # key the writer appended at close (issue #864).
+        geo_meta = read_geo_metadata(gpq_path) or {}
 
         # GeoParquet spec: columns.<geom_col>.bbox is [minx, miny, maxx, maxy] in 2D and
         # [minx, miny, minz, maxx, maxy, maxz] in 3D, so to_2d_bbox does the reduction.
@@ -1040,7 +1031,9 @@ def _read_geoparquet_for_thumbnail(
                 # Sampling is an optimization; a full read is always correct.
                 logger.debug("Falling back to a full read of %s: %s", gpq_path, exc)
         if gdf is None:
-            gdf = gpd.read_parquet(gpq_path)
+            # One file, not a dataset: a hive directory name such as
+            # kdtree_cell=000 would add a clashing partition column (#1038).
+            gdf = gpd.read_parquet(gpq_path, partitioning=None)
         if gdf.empty:
             return None, None, None
 
@@ -1062,7 +1055,7 @@ def _read_geoparquet_for_thumbnail(
         return gdf, full_bbox, source_crs
 
     except Exception as e:
-        logger.debug("Failed to read GeoParquet for thumbnail: %s", e)
+        logger.warning("Could not read %s for its thumbnail: %s", gpq_path.name, e)
         return None, None, None
 
 
@@ -1088,7 +1081,7 @@ def _render_geoparquet(
         True if successful, False otherwise.
     """
     try:
-        import matplotlib.pyplot as plt
+        plt = _pyplot()
     except ImportError:
         logger.debug("matplotlib not available")
         return False
@@ -1171,6 +1164,20 @@ def _render_geoparquet(
 # =============================================================================
 # Public API
 # =============================================================================
+
+
+def _pyplot() -> Any:
+    """Import pyplot on the Agg backend, which draws to a file and needs no GUI.
+
+    The default backend is TkAgg on Windows. A thread that frees a TkAgg figure
+    there can abort the process.
+    """
+    import matplotlib as mpl
+
+    mpl.use("Agg")
+    import matplotlib.pyplot as plt
+
+    return plt
 
 
 def add_basemap(

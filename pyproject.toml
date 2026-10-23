@@ -410,9 +410,7 @@ module = [
     "portolan_cli.backends.iceberg.backend", # C
     "portolan_cli.backends.iceberg.hooks", # C
     "portolan_cli.conversion_config", # A
-    "portolan_cli.readme", # D
     "portolan_cli.stac", # C
-    "portolan_cli.viz.thumbnail", # D
 ]
 warn_unreachable = false
 

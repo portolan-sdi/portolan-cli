@@ -12,10 +12,12 @@ Additionally, it provides cloud-native status classification (see issue #10):
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli import extension_registry as _reg
 
@@ -43,7 +45,7 @@ from portolan_cli.format_families import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    import pyarrow.parquet as pq
 
     from portolan_cli.conversion_config import ConversionOverrides
     from portolan_cli.plugins.formats import FormatHandler
@@ -145,11 +147,67 @@ def is_valid_parquet(path: Path) -> bool:
         return False
 
 
+def read_kv_metadata(path: Path) -> dict[bytes, bytes]:
+    """Read every key-value pair in a Parquet file's raw footer.
+
+    pyarrow rebuilds the Arrow schema metadata from the ``ARROW:schema`` footer
+    blob and drops every other key. A writer that appends ``geo`` at close, the
+    normal pattern because bbox and geometry_types are known only then, writes
+    a GeoParquet whose ``geo`` key ``schema_arrow.metadata``,
+    ``pq.read_schema()`` and ``to_arrow_schema()`` never show (issue #864).
+    geoparquet-io reads the raw footer, so this and :func:`read_geo_metadata`
+    are the only supported ways to read a footer key in this codebase.
+
+    Args:
+        path: Path to a Parquet file.
+
+    Returns:
+        The footer key-value metadata, ``ARROW:schema`` included when pyarrow
+        wrote the file. Empty for a file that declares none or cannot be read.
+    """
+    from geoparquet_io.core.duckdb_metadata import (  # type: ignore[import-untyped]
+        get_kv_metadata,
+    )
+
+    try:
+        return dict(get_kv_metadata(str(path)) or {})
+    except Exception:  # noqa: BLE001 - an unreadable file carries no metadata
+        logger.debug("Failed to read Parquet footer metadata from %s", path, exc_info=True)
+        return {}
+
+
+def read_geo_metadata(source: Path | pq.ParquetFile) -> dict[str, Any] | None:
+    """Read and parse the ``geo`` footer key of a GeoParquet file.
+
+    Args:
+        source: Path to a Parquet file, or a file the caller already opened.
+            An open file gives its raw footer (``metadata.metadata``), so the
+            caller pays for one footer read, not two.
+
+    Returns:
+        The parsed GeoParquet metadata object. None for a plain Parquet file,
+        for a ``geo`` value that is not a JSON object, and for an unreadable
+        file.
+    """
+    from geoparquet_io.core.duckdb_metadata import get_geo_metadata
+
+    try:
+        if isinstance(source, Path):
+            geo = get_geo_metadata(str(source))
+        else:
+            geo = json.loads((source.metadata.metadata or {}).get(b"geo", b"null"))
+    except Exception:  # noqa: BLE001 - an unreadable file is not a GeoParquet
+        logger.debug("Failed to read GeoParquet metadata from %s", source, exc_info=True)
+        return None
+    return geo if isinstance(geo, dict) else None
+
+
 def is_geoparquet(path: Path) -> bool:
     """Check if a Parquet file has GeoParquet metadata.
 
-    GeoParquet files have a 'geo' key in their schema metadata that contains
-    geospatial column information.
+    The one GeoParquet test. It reads the raw footer through
+    :func:`read_geo_metadata`, so a ``geo`` key that sits after ``ARROW:schema``
+    counts (issue #864).
 
     Args:
         path: Path to the Parquet file.
@@ -159,23 +217,7 @@ def is_geoparquet(path: Path) -> bool:
         Note: Returns False for both non-geo Parquet AND invalid/corrupted files.
         Use is_valid_parquet() first if you need to distinguish these cases.
     """
-    try:
-        import pyarrow.parquet as pq
-    except ImportError:
-        logger.warning(
-            "pyarrow not installed; cannot detect GeoParquet metadata. "
-            "Install with: pip install pyarrow"
-        )
-        return False
-
-    try:
-        metadata = pq.read_metadata(str(path))
-        schema_metadata = metadata.schema.to_arrow_schema().metadata or {}
-        # GeoParquet files have 'geo' key in schema metadata
-        return b"geo" in schema_metadata
-    except Exception:
-        logger.exception("Failed to read Parquet metadata from %s", path)
-        return False
+    return read_geo_metadata(path) is not None
 
 
 def is_cloud_optimized_geotiff(path: Path, *, quiet: bool = True) -> bool:
@@ -355,6 +397,18 @@ def get_cloud_native_status(path: Path, catalog_root: Path | None = None) -> For
     Raises:
         FileNotFoundError: If the file does not exist.
     """
+    info = _default_status(path, catalog_root)
+    if catalog_root is None:
+        return info
+    # The catalog's conversion.extensions and conversion.paths lists win over
+    # the default status, so convert and check agree on a file (#1020).
+    from portolan_cli.conversion_config import get_conversion_overrides
+
+    return _apply_overrides(path, info, get_conversion_overrides(catalog_root), catalog_root)
+
+
+def _default_status(path: Path, catalog_root: Path | None) -> FormatInfo:
+    """The status of a file by format alone. See ``get_cloud_native_status``."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
@@ -502,13 +556,16 @@ def get_effective_status(
         >>> result = get_effective_status(Path("data.fgb"), overrides=overrides)
         >>> result.status  # CONVERTIBLE instead of CLOUD_NATIVE
     """
-    # Get original status
-    info = get_cloud_native_status(path, root)
-
-    # No overrides? Return original
+    info = _default_status(path, root)
     if overrides is None:
         return info
+    return _apply_overrides(path, info, overrides, root)
 
+
+def _apply_overrides(
+    path: Path, info: FormatInfo, overrides: ConversionOverrides, root: Path | None
+) -> FormatInfo:
+    """Apply the preserve and force-convert lists to a default status."""
     # UNSUPPORTED formats cannot be overridden - they're genuinely unsupported
     if info.status == CloudNativeStatus.UNSUPPORTED:
         return info

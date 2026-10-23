@@ -8,6 +8,8 @@ Uses vectorized shapely 2.0+ operations for performance on large data.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pyarrow as pa
 import pygeohash as pgh
 import shapely
@@ -50,13 +52,13 @@ def compute_geohash_column(table: pa.Table, precision: int = 4) -> pa.Table:
     if col_name is None:
         return table
 
-    wkb_list = table.column(col_name).to_pylist()
-    geoms = shapely.from_wkb(wkb_list)
-    centroids = shapely.centroid(geoms)
-    coords = shapely.get_coordinates(centroids)
-
+    geoms, present = _geometries(table, col_name)
+    # get_coordinates skips missing and empty geometries, so encode only the
+    # rows that have one and write null for the rest (issue #961).
+    coords = shapely.get_coordinates(shapely.centroid(geoms[present]))
     # pygeohash.encode is per-element (C extension, still fast)
-    geohashes = [pgh.encode(y, x, precision=precision) for x, y in coords]
+    encoded = iter([pgh.encode(y, x, precision=precision) for x, y in coords])
+    geohashes = [next(encoded) if has_geometry else None for has_geometry in present]
 
     geohash_col_name = f"geohash_{precision}"
     return table.append_column(geohash_col_name, pa.array(geohashes, type=pa.string()))
@@ -71,14 +73,21 @@ def compute_bbox_columns(table: pa.Table) -> pa.Table:
     if col_name is None:
         return table
 
-    wkb_list = table.column(col_name).to_pylist()
-    geoms = shapely.from_wkb(wkb_list)
+    geoms, present = _geometries(table, col_name)
     bounds = shapely.bounds(geoms)  # (N, 4) array: xmin, ymin, xmax, ymax
+    # A row without geometry has NaN bounds. Write null, which a spatial
+    # filter on the table skips (issue #961).
+    for index, name in enumerate(("bbox_xmin", "bbox_ymin", "bbox_xmax", "bbox_ymax")):
+        column = pa.array(bounds[:, index], type=pa.float64(), mask=~present)
+        table = table.append_column(name, column)
+    return table
 
-    table = table.append_column("bbox_xmin", pa.array(bounds[:, 0], type=pa.float64()))
-    table = table.append_column("bbox_ymin", pa.array(bounds[:, 1], type=pa.float64()))
-    table = table.append_column("bbox_xmax", pa.array(bounds[:, 2], type=pa.float64()))
-    return table.append_column("bbox_ymax", pa.array(bounds[:, 3], type=pa.float64()))
+
+def _geometries(table: pa.Table, col_name: str) -> tuple[Any, Any]:
+    """The parsed geometries and a mask of the rows that hold a non-empty one."""
+    geoms = shapely.from_wkb(table.column(col_name).to_pylist())
+    present = ~(shapely.is_missing(geoms) | shapely.is_empty(geoms))
+    return geoms, present
 
 
 def add_spatial_columns(table: pa.Table, precision: int | None = None) -> pa.Table:

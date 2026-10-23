@@ -244,3 +244,52 @@ class TestGetEffectiveStatusWithRealFixtures:
 
         assert result.status == CloudNativeStatus.CLOUD_NATIVE
         assert result.display_name == "GeoParquet"
+
+
+def _catalog_converting_fgb(root: Path) -> Path:
+    """A catalog whose config lists .fgb under conversion.extensions.convert."""
+    from click.testing import CliRunner
+
+    from portolan_cli.cli import cli
+
+    assert (
+        CliRunner().invoke(cli, ["init", str(root), "--auto", "--license", "CC0-1.0"]).exit_code
+        == 0
+    )
+    config = root / ".portolan" / "config.yaml"
+    config.write_text(
+        config.read_text() + "conversion:\n  extensions:\n    convert: [fgb]\n", encoding="utf-8"
+    )
+    source = Path(__file__).parents[1] / "fixtures" / "cloud_native" / "sample.fgb"
+    target = root / "roads" / "roads.fgb"
+    target.parent.mkdir()
+    target.write_bytes(source.read_bytes())
+    return target
+
+
+class TestTheCatalogConvertListWins:
+    """Issue #1020: conversion.extensions.convert never reached the converter."""
+
+    @pytest.mark.unit
+    def test_the_status_reads_the_catalog_list(self, tmp_path: Path) -> None:
+        from portolan_cli.formats import get_cloud_native_status
+
+        fgb = _catalog_converting_fgb(tmp_path)
+
+        assert get_cloud_native_status(fgb).status == CloudNativeStatus.CLOUD_NATIVE
+        assert get_cloud_native_status(fgb, tmp_path).status == CloudNativeStatus.CONVERTIBLE
+
+    @pytest.mark.integration
+    def test_check_fix_converts_a_listed_flatgeobuf(self, tmp_path: Path) -> None:
+        """check --fix --geo-assets skipped the file as already cloud-native."""
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+
+        fgb = _catalog_converting_fgb(tmp_path)
+
+        result = CliRunner().invoke(cli, ["check", str(tmp_path), "--fix", "--geo-assets"])
+
+        assert result.exit_code == 0, result.output
+        assert "roads.fgb -> roads.parquet" in result.output
+        assert fgb.with_suffix(".parquet").is_file()

@@ -112,6 +112,10 @@ from portolan_cli.preparation import (  # noqa: F401
     IGNORED_FILES as IGNORED_FILES,  # noqa: PLC0414
 )
 from portolan_cli.preparation import (
+    ROLE_SOURCE,
+    is_rewrite_temp,
+)
+from portolan_cli.preparation import (
     PreparedItem as PreparedItem,  # noqa: PLC0414
 )
 from portolan_cli.preparation import (
@@ -146,9 +150,6 @@ from portolan_cli.preparation import (
 )
 from portolan_cli.preparation import (
     convert_vector as convert_vector,  # noqa: PLC0414
-)
-from portolan_cli.preparation import (
-    is_rewrite_temp,
 )
 from portolan_cli.preparation import (
     prepare_item as prepare_item,  # noqa: PLC0414
@@ -1609,9 +1610,11 @@ def _process_deferred_non_geo_files(
                     # If converted, also track source file as companion asset
                     # (consistent with vector conversion behavior)
                     if source_tracked:
+                        # The CSV is the source of the Parquet (#960).
                         _update_collection_with_asset(
                             collection_dir=collection_dir,
                             asset_path=file_path,
+                            role=ROLE_SOURCE,
                         )
 
                     # Update versions.json so is_current() finds the asset(s)
@@ -1765,6 +1768,8 @@ def _update_item_with_asset(
 def _update_collection_with_asset(
     collection_dir: Path,
     asset_path: Path,
+    *,
+    role: str | None = None,
 ) -> None:
     """Update a collection.json to include a new non-geo asset file (Issue #383).
 
@@ -1774,6 +1779,7 @@ def _update_collection_with_asset(
     Args:
         collection_dir: Path to the collection directory.
         asset_path: Path to the non-geo asset file.
+        role: The asset role. None takes the role of the file extension.
     """
     collection_json_path = collection_dir / "collection.json"
 
@@ -1788,7 +1794,7 @@ def _update_collection_with_asset(
     # Add asset to collection
     assets = collection_data.setdefault("assets", {})
     media_type = _get_media_type(asset_path)
-    role = _get_asset_role(asset_path)
+    role = role or _get_asset_role(asset_path)
 
     # Use stem as key, but fall back to full filename on collision
     # (consistent with _scan_item_assets behavior for vectors)

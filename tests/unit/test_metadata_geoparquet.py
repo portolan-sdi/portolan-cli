@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from portolan_cli.formats import is_geoparquet
 from portolan_cli.metadata.geoparquet import (
     GeoParquetMetadata,
     extract_geoparquet_metadata,
-    has_bbox_covering_column,
-    is_geoparquet,
+    read_spatial_layout,
 )
 
 
@@ -456,11 +456,11 @@ class TestGeoParquetMetadataEdgeCases:
         pq.write_table(table_with_meta, path)
 
         metadata = extract_geoparquet_metadata(path)
-        assert metadata.geometry_type == "Polygon"
+        assert metadata.geometry_type == ["Polygon"]
 
 
 class TestCoveringColumnDetection:
-    """Tests for has_bbox_covering_column() and is_geoparquet() (issue #805).
+    """Tests for the covering column and is_geoparquet() (issue #805).
 
     rashid resolves PTL-DAT-006 and PTL-DAT-007 through the covering column, so
     ``add`` reads these two answers to decide whether to rewrite a file.
@@ -470,7 +470,7 @@ class TestCoveringColumnDetection:
     def test_fixture_without_covering_column(self, valid_points_parquet: Path) -> None:
         """The committed fixture predates #805 and carries no covering column."""
         assert is_geoparquet(valid_points_parquet) is True
-        assert has_bbox_covering_column(valid_points_parquet) is False
+        assert read_spatial_layout(valid_points_parquet).has_bbox_covering is False
 
     @pytest.mark.unit
     def test_rewritten_file_carries_the_column(self, tmp_path: Path) -> None:
@@ -481,7 +481,7 @@ class TestCoveringColumnDetection:
         output = tmp_path / "out.parquet"
         gpio.convert(str(source / "points.parquet")).add_bbox().write(str(output))
 
-        assert has_bbox_covering_column(output) is True
+        assert read_spatial_layout(output).has_bbox_covering is True
 
     @pytest.mark.unit
     def test_tabular_parquet_is_not_geoparquet(self, tmp_path: Path) -> None:
@@ -493,7 +493,7 @@ class TestCoveringColumnDetection:
         pq.write_table(pa.table({"tract": ["001"], "population": [5000]}), path)
 
         assert is_geoparquet(path) is False
-        assert has_bbox_covering_column(path) is False
+        assert read_spatial_layout(path).has_bbox_covering is False
 
     @pytest.mark.unit
     def test_unreadable_file_is_not_conformant(self, tmp_path: Path) -> None:
@@ -502,7 +502,7 @@ class TestCoveringColumnDetection:
         path.write_bytes(b"not a parquet file")
 
         assert is_geoparquet(path) is False
-        assert has_bbox_covering_column(path) is False
+        assert read_spatial_layout(path).has_bbox_covering is False
 
     @pytest.mark.unit
     def test_covering_naming_a_column_that_is_gone(self, tmp_path: Path) -> None:
@@ -527,7 +527,7 @@ class TestCoveringColumnDetection:
         metadata[b"geo"] = json.dumps(geo).encode("utf-8")
         pq.write_table(table.replace_schema_metadata(metadata), path)
 
-        assert has_bbox_covering_column(path) is False
+        assert read_spatial_layout(path).has_bbox_covering is False
 
 
 class TestReadSpatialLayout:
@@ -594,20 +594,14 @@ class TestReadSpatialLayout:
         assert layout.has_bbox_covering is False
 
     @pytest.mark.unit
-    def test_the_wrappers_agree_with_it(self, tmp_path: Path) -> None:
-        """`is_geoparquet` and `has_bbox_covering_column` read the same source."""
-        from portolan_cli.metadata import (
-            has_bbox_covering_column,
-            is_geoparquet,
-            read_spatial_layout,
-        )
+    def test_is_geoparquet_agrees_with_it(self, tmp_path: Path) -> None:
+        """`is_geoparquet` and the layout read the same footer."""
+        from portolan_cli.metadata import read_spatial_layout
 
         source = Path(__file__).resolve().parents[1] / "fixtures" / "vector" / "valid"
         path = source / "points.parquet"
-        layout = read_spatial_layout(path)
 
-        assert is_geoparquet(path) is layout.is_geoparquet
-        assert has_bbox_covering_column(path) is layout.has_bbox_covering
+        assert is_geoparquet(path) is read_spatial_layout(path).is_geoparquet
 
 
 class TestReadExtraSchemaMetadata:
@@ -649,3 +643,83 @@ class TestReadExtraSchemaMetadata:
         path.write_bytes(b"not a parquet file")
 
         assert read_extra_schema_metadata(path) == {}
+
+
+def _write_declared_types(path: Path, geometry_types: list[str]) -> Path:
+    """Write the mixed Point/LineString table of issue #1010 with ``geometry_types``."""
+    import json
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    import shapely
+
+    geoms = [shapely.Point(0, 0), shapely.LineString([(0, 0), (1, 1)])]
+    table = pa.table({"geometry": [g.wkb for g in geoms]})
+    geo = {
+        "version": "1.1.0",
+        "primary_column": "geometry",
+        "columns": {"geometry": {"encoding": "WKB", "geometry_types": geometry_types}},
+    }
+    pq.write_table(table.replace_schema_metadata({b"geo": json.dumps(geo).encode()}), path)
+    return path
+
+
+class TestGeometryTypes:
+    """Issue #1010: every declared geometry type reaches the metadata."""
+
+    @pytest.mark.unit
+    def test_mixed_types_keep_the_whole_list(self, tmp_path: Path) -> None:
+        path = _write_declared_types(tmp_path / "mixed.parquet", ["Point", "LineString"])
+
+        metadata = extract_geoparquet_metadata(path)
+
+        assert metadata.geometry_type == ["Point", "LineString"]
+        assert metadata.to_stac_properties()["geoparquet:geometry_type"] == [
+            "Point",
+            "LineString",
+        ]
+
+    @pytest.mark.unit
+    def test_duplicates_drop_and_order_stays(self, tmp_path: Path) -> None:
+        path = _write_declared_types(
+            tmp_path / "dup.parquet", ["LineString", "MultiLineString", "LineString"]
+        )
+
+        assert extract_geoparquet_metadata(path).geometry_type == [
+            "LineString",
+            "MultiLineString",
+        ]
+
+    @pytest.mark.unit
+    def test_an_empty_list_is_unknown(self, tmp_path: Path) -> None:
+        """GeoParquet: an empty ``geometry_types`` means the types are unknown."""
+        path = _write_declared_types(tmp_path / "unknown.parquet", [])
+
+        metadata = extract_geoparquet_metadata(path)
+
+        assert metadata.geometry_type is None
+        assert "geoparquet:geometry_type" not in metadata.to_stac_properties()
+
+    @pytest.mark.unit
+    def test_info_json_lists_every_type(self, tmp_path: Path) -> None:
+        from portolan_cli.inspect import inspect_file
+
+        path = _write_declared_types(tmp_path / "mixed.parquet", ["Point", "LineString"])
+
+        assert inspect_file(path).to_dict()["geometry_type"] == ["Point", "LineString"]
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("declared", "drawn"),
+        [
+            (["Point", "MultiPolygon"], "MultiPolygon"),
+            (["Point", "LineString"], "LineString"),
+            (["MultiPoint", "Point"], "MultiPoint"),
+        ],
+    )
+    def test_the_default_style_draws_the_highest_dimension(
+        self, declared: list[str], drawn: str
+    ) -> None:
+        from portolan_cli.viz.pmtiles import _style_geometry_type
+
+        assert _style_geometry_type(declared) == drawn

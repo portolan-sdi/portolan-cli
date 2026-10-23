@@ -27,7 +27,7 @@ be a valid COG), so those extensions are deliberately excluded from the static
 
 ConvertTarget = Literal["GeoParquet", "COG"]
 Routes = Literal["vector", "raster"]
-Role = Literal["data", "thumbnail", "metadata", "documentation"]
+Role = Literal["data", "visual", "thumbnail", "metadata", "documentation"]
 
 
 @dataclass(frozen=True)
@@ -166,7 +166,9 @@ EXTENSION_REGISTRY: tuple[ExtensionSpec, ...] = (
         ".pmtiles",
         display_name="PMTiles",
         media_type="application/vnd.pmtiles",
-        role="data",
+        # The visualization derivative of the data. A PMTiles that a user adds
+        # on its own owns its stem and is data (preparation._resolve_assets).
+        role="visual",
         cloud_native="yes",
         routes_as="vector",
         scan_category="geo_asset",
@@ -407,13 +409,3 @@ def unsupported_extensions() -> frozenset[str]:
     return frozenset(
         spec.ext for spec in EXTENSION_REGISTRY if spec.unsupported_message is not None
     )
-
-
-def all_known_sidecar_extensions() -> frozenset[str]:
-    """Return every sidecar suffix the system knows.
-
-    The set holds the flat scanner suffixes plus every per-primary pattern in
-    :data:`SIDECAR_OF`.
-    """
-    from_patterns = {ext for patterns in SIDECAR_OF.values() for ext in patterns}
-    return extensions_where(scan_category="known_sidecar") | frozenset(from_patterns)

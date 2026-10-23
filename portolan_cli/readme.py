@@ -127,8 +127,6 @@ def _metadata_override(metadata: dict[str, Any], field: str) -> str | None:
     :func:`portolan_cli.stac.apply_human_titles`). A blank/whitespace value is
     treated as "not provided" so the auto-derived STAC value is used instead.
     """
-    if not isinstance(metadata, dict):
-        return None
     value = metadata.get(field)
     if isinstance(value, str) and value.strip():
         return value.strip()
@@ -1213,6 +1211,25 @@ def readme_link_gap(stac_path: Path, data: dict[str, Any]) -> bool:
     return markdown_link_gap(stac_path, data, rel=README_LINK_REL, target=README_FILENAME)
 
 
+def write_readme(readme_path: Path, content: str) -> None:
+    """Write a README and re-stamp the collection that holds it.
+
+    The README is a ``rel="describedby"`` link, not an asset. A catalog that
+    an older ``add --force`` built can still register it as a ``documentation``
+    asset (issue #1041). That asset's ``file:size`` and ``file:checksum`` must
+    follow the new bytes, or ``check`` reports PTL-DAT-001 and PTL-DAT-002 on
+    every collection (issue #930).
+
+    Args:
+        readme_path: Path of the README.md to write.
+        content: The README text.
+    """
+    from portolan_cli.stac_parquet import restamp_collection_assets
+
+    readme_path.write_text(content, encoding="utf-8")
+    restamp_collection_assets(readme_path.parent, only={readme_path})
+
+
 def ensure_readmes(catalog_root: Path) -> bool:
     """Scaffold README.md and its ``describedby`` link across a catalog tree.
 
@@ -1249,6 +1266,7 @@ def ensure_readmes(catalog_root: Path) -> bool:
                 if stac_file.name == "collection.json"
                 else generate_catalog_readme(directory)
             )
+            # A README that did not exist backs no asset, so nothing to re-stamp.
             readme_path.write_text(content, encoding="utf-8")
             changed_any = True
 

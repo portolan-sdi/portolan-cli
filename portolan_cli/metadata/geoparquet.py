@@ -14,11 +14,16 @@ import pyarrow.parquet as pq
 from pyproj import CRS
 from pyproj.exceptions import CRSError
 
+from portolan_cli.formats import read_geo_metadata, read_kv_metadata
 from portolan_cli.models.schema import ColumnSchema, SchemaModel
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+# Footer keys a rewrite must never carry over. geoparquet-io writes a fresh
+# ``geo``, and ``ARROW:schema`` describes the source columns.
+_WRITER_OWNED_KEYS: frozenset[bytes] = frozenset({b"geo", b"ARROW:schema"})
 
 
 @dataclass
@@ -28,7 +33,8 @@ class GeoParquetMetadata:
     Attributes:
         bbox: Bounding box as (minx, miny, maxx, maxy) or None.
         crs: CRS as EPSG code, WKT, or PROJJSON dict.
-        geometry_type: Geometry type (Point, Polygon, etc.) or None.
+        geometry_type: Every declared geometry type (Point, Polygon, etc.), in
+            footer order without duplicates, or None when the types are unknown.
         geometry_column: Name of the geometry column.
         feature_count: Number of features (rows).
         schema: Column names and types.
@@ -36,7 +42,7 @@ class GeoParquetMetadata:
 
     bbox: tuple[float, float, float, float] | None
     crs: str | dict[str, Any] | None
-    geometry_type: str | None
+    geometry_type: list[str] | None
     geometry_column: str | None
     feature_count: int
     schema: dict[str, str]
@@ -121,10 +127,9 @@ def extract_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
     # Open parquet file (metadata only)
     count("parquet.opens")
     pf = pq.ParquetFile(path)
-    metadata = pf.schema_arrow.metadata or {}
 
     # Parse GeoParquet geo metadata
-    geo_metadata = _parse_geo_metadata(metadata)
+    geo_metadata = read_geo_metadata(pf) or {}
 
     # Extract schema
     schema = {field.name: str(field.type) for field in pf.schema_arrow}
@@ -173,8 +178,8 @@ def read_spatial_layout(path: Path) -> SpatialLayout:
 
     Reads only the footer, so the cost does not grow with the file. Callers
     that need both answers must use this rather than calling
-    :func:`is_geoparquet` and :func:`has_bbox_covering_column` in turn, which
-    would open the file twice.
+    ``formats.is_geoparquet`` and then reading the covering, which would open
+    the file twice.
 
     rashid resolves both PTL-DAT-006 and PTL-DAT-007 through the covering
     column. It reads per-row-group extents from the column's min/max statistics
@@ -200,7 +205,7 @@ def read_spatial_layout(path: Path) -> SpatialLayout:
     except Exception:  # noqa: BLE001 - an unreadable file is not a conformant one
         return SpatialLayout(is_geoparquet=False, has_bbox_covering=False)
 
-    geo = _parse_geo_metadata(parquet.schema_arrow.metadata or {})
+    geo = read_geo_metadata(parquet) or {}
     if not geo:
         return SpatialLayout(is_geoparquet=False, has_bbox_covering=False)
 
@@ -219,39 +224,6 @@ def read_spatial_layout(path: Path) -> SpatialLayout:
         isinstance(leaf, list) and leaf and leaf[0] in names for leaf in bbox_paths.values()
     )
     return SpatialLayout(is_geoparquet=True, has_bbox_covering=covers)
-
-
-def has_bbox_covering_column(path: Path) -> bool:
-    """Report whether a GeoParquet file declares a ``bbox`` covering column.
-
-    Thin wrapper over :func:`read_spatial_layout`. Use that function directly
-    when the caller also needs :func:`is_geoparquet`.
-
-    Args:
-        path: Path to a Parquet file.
-
-    Returns:
-        True when the file's ``geo`` metadata names a ``covering.bbox`` entry
-        for its primary geometry column, and that column exists in the schema.
-        False for a plain Parquet file with no ``geo`` metadata, and False for
-        an unreadable file.
-    """
-    return read_spatial_layout(path).has_bbox_covering
-
-
-def is_geoparquet(path: Path) -> bool:
-    """Report whether a Parquet file carries GeoParquet ``geo`` metadata.
-
-    A Parquet file without the key is tabular data, not a spatial table, so the
-    spatial optimizations do not apply to it.
-
-    Args:
-        path: Path to a Parquet file.
-
-    Returns:
-        True when the file declares GeoParquet metadata.
-    """
-    return read_spatial_layout(path).is_geoparquet
 
 
 class RewriteFidelity(NamedTuple):
@@ -288,7 +260,7 @@ def read_rewrite_fidelity(path: Path) -> RewriteFidelity | None:
     except Exception:  # noqa: BLE001 - an unreadable file cannot be compared
         return None
 
-    geo = _parse_geo_metadata(parquet.schema_arrow.metadata or {})
+    geo = read_geo_metadata(parquet) or {}
     primary = geo.get("primary_column", "geometry")
     columns = geo.get("columns")
     column_meta = columns.get(primary, {}) if isinstance(columns, dict) else {}
@@ -309,36 +281,20 @@ def read_extra_schema_metadata(path: Path) -> dict[bytes, bytes]:
     reads the footer so a rewrite can restore them (issue #805).
 
     ``geo`` is excluded because the writer owns it. Restoring the old value
-    would contradict the columns the rewrite added.
+    would contradict the columns the rewrite added. ``ARROW:schema`` is excluded
+    for the same reason: the blob describes the source columns, and pyarrow
+    rebuilds the schema from it, so restoring it would hide the rewritten
+    schema (issue #864).
 
     Args:
         path: Path to a Parquet file.
 
     Returns:
-        Every schema metadata key except ``geo``. Empty for a file with no
-        extra keys, and empty for an unreadable file.
+        Every footer key except ``geo`` and ``ARROW:schema``. Empty for a file
+        with no extra keys, and empty for an unreadable file.
     """
-    try:
-        count("parquet.opens")
-        parquet = pq.ParquetFile(path)
-    except Exception:  # noqa: BLE001 - an unreadable file has nothing to preserve
-        return {}
-    metadata = parquet.schema_arrow.metadata or {}
-    return {key: value for key, value in metadata.items() if key != b"geo"}
-
-
-def _parse_geo_metadata(metadata: dict[bytes, bytes]) -> dict[str, Any]:
-    """Parse GeoParquet geo metadata from Arrow schema metadata."""
-    geo_key = b"geo"
-    if geo_key not in metadata:
-        # Not a GeoParquet file, return empty
-        return {}
-
-    try:
-        result = json.loads(metadata[geo_key].decode("utf-8"))
-        return dict(result) if isinstance(result, dict) else {}
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {}
+    metadata = read_kv_metadata(path)
+    return {key: value for key, value in metadata.items() if key not in _WRITER_OWNED_KEYS}
 
 
 def _extract_bbox(column_meta: dict[str, Any]) -> tuple[float, float, float, float] | None:
@@ -385,15 +341,23 @@ def _extract_crs(column_meta: dict[str, Any]) -> str | dict[str, Any] | None:
     return str(crs)
 
 
-def _extract_geometry_type(column_meta: dict[str, Any]) -> str | None:
-    """Extract geometry type from column metadata."""
-    geom_types = column_meta.get("geometry_types", [])
-    if geom_types:
-        # Return the first/primary type
-        return geom_types[0] if isinstance(geom_types, list) else str(geom_types)
+def _extract_geometry_type(column_meta: dict[str, Any]) -> list[str] | None:
+    """Every geometry type a column declares, or None when they are unknown.
 
-    # Fallback to geometry_type field
-    return column_meta.get("geometry_type")
+    The list keeps the footer order and drops duplicates. GeoParquet reads an
+    empty ``geometry_types`` as unknown types, so it gives None, not a guess.
+    Keeping only the first type hid the rest from the STAC metadata (#1010).
+    """
+    declared = column_meta.get("geometry_types")
+    if declared is None:
+        # Fallback to a single geometry_type field.
+        declared = column_meta.get("geometry_type")
+    if isinstance(declared, str):
+        declared = [declared]
+    if not isinstance(declared, list):
+        return None
+    types = list(dict.fromkeys(str(value) for value in declared))
+    return types or None
 
 
 # Overloaded signatures for extract_schema_from_geoparquet
@@ -442,10 +406,9 @@ def extract_schema_from_geoparquet(
     # Open parquet file (metadata only)
     count("parquet.opens")
     pf = pq.ParquetFile(path)
-    metadata = pf.schema_arrow.metadata or {}
 
     # Parse GeoParquet geo metadata
-    geo_metadata = _parse_geo_metadata(metadata)
+    geo_metadata = read_geo_metadata(pf) or {}
 
     # Get geometry column name
     geometry_column = geo_metadata.get("primary_column", "geometry")
@@ -456,7 +419,9 @@ def extract_schema_from_geoparquet(
     for field in pf.schema_arrow:
         # Check if this is a geometry column
         column_meta = geo_columns.get(field.name, {})
-        geometry_type = _extract_geometry_type(column_meta)
+        # The schema model holds one string per column, so it lists every type.
+        declared_types = _extract_geometry_type(column_meta)
+        geometry_type = ", ".join(declared_types) if declared_types else None
         crs_raw = _extract_crs(column_meta)
         # Normalize CRS to string for ColumnSchema
         crs_str: str | None = None

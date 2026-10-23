@@ -24,6 +24,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from portolan_cli import extension_registry as _reg
+from portolan_cli.formats import is_geoparquet
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -34,7 +35,8 @@ if TYPE_CHECKING:
 # =============================================================================
 
 # Primary geospatial formats (GEO_ASSET). .parquet is NOT here — it needs a
-# metadata peek to tell GeoParquet from plain Parquet (see is_geoparquet()).
+# metadata peek to tell GeoParquet from plain Parquet. The scanner and the
+# format detector share formats.is_geoparquet, so they cannot disagree (#864).
 GEO_ASSET_EXTENSIONS: frozenset[str] = _reg.extensions_where(scan_category="geo_asset")
 
 # Shapefile / raster sidecars (KNOWN_SIDECAR). Compound forms like .aux.xml are
@@ -69,42 +71,6 @@ STYLE_FILENAMES: frozenset[str] = _reg.STYLE_FILENAMES
 
 # Max size for thumbnail classification (1MB).
 THUMBNAIL_MAX_SIZE: int = _reg.THUMBNAIL_MAX_SIZE
-
-
-def is_geoparquet(path: Path) -> bool:
-    """Check if a Parquet file is GeoParquet by peeking at metadata.
-
-    This is a fast check that only reads the Parquet footer (O(1) metadata read),
-    not the actual data. It looks for the 'geo' key in the schema metadata which
-    is required by the GeoParquet specification.
-
-    Args:
-        path: Path to the Parquet file.
-
-    Returns:
-        True if the file has GeoParquet metadata, False otherwise.
-        Returns False on any read errors (file not found, invalid format, etc.).
-    """
-    try:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-
-        # Only read schema metadata, not data — this is fast (reads footer only)
-        schema = pq.read_schema(path)
-
-        # GeoParquet requires a 'geo' key in schema metadata
-        if schema.metadata is None:
-            return False
-
-        return b"geo" in schema.metadata
-
-    except (OSError, ValueError, pa.lib.ArrowInvalid):
-        # File not found, not valid parquet, corrupted, etc. means not GeoParquet
-        return False
-    except Exception:
-        # Catch-all for unexpected pyarrow errors, but re-raise system-exiting
-        # exceptions (KeyboardInterrupt, SystemExit are BaseException, not Exception)
-        return False
 
 
 class FileCategory(Enum):

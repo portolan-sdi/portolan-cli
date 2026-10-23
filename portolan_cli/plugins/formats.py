@@ -252,9 +252,16 @@ def select_handler(
     handlers = format_handlers()
 
     if catalog_root is not None:
-        from portolan_cli.conversion_config import get_handler_pins
+        from portolan_cli.conversion_config import get_conversion_overrides, get_handler_pins
 
         pinned = get_handler_pins(catalog_root).get(extension)
+        # conversion.extensions.convert sends a cloud-native vector, such as a
+        # FlatGeobuf, to GeoParquet. Its own handler only copies it (#1020).
+        if (
+            pinned is None
+            and extension in get_conversion_overrides(catalog_root).extensions_convert
+        ):
+            pinned = "geoparquet"
         if pinned is not None:
             for plugin_name, handler in handlers:
                 if handler.name == pinned:

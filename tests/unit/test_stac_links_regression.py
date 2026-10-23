@@ -74,48 +74,30 @@ class TestAssetPathResolution:
     """Bug #1: Asset hrefs must be relative to item JSON location."""
 
     @pytest.mark.unit
-    def test_scan_item_assets_returns_parent_relative_hrefs(
-        self, tmp_path: Path, valid_parquet: Path
+    @pytest.mark.parametrize("item_id", ["data", "scene"])
+    def test_item_hrefs_are_relative_to_the_item_json_in_the_file_directory(
+        self, tmp_path: Path, valid_parquet: Path, item_id: str
     ) -> None:
-        """Asset hrefs should reference parent directory (../) when item JSON
-        will be placed in a subdirectory.
+        """Issue #840: the item JSON sits in the directory of its files.
 
-        Structure:
-            collection/
-                data.parquet       <- Asset file
-                item_id/
-                    item_id.json   <- Item JSON goes here
-
-        The item JSON is one level deeper than assets, so href should be "../data.parquet"
+        ``_create_and_save_item`` writes ``<item_dir>/<item_id>.json``. With
+        ``--item-id scene`` the scan wrote ``../data.parquet``, which resolves
+        to a file one directory up that does not exist.
         """
-        # Arrange: create item directory with a parquet file
-        item_dir = tmp_path / "collection"
-        item_dir.mkdir()
+        collection_dir = tmp_path / "collection"
+        item_dir = collection_dir / "data"
+        item_dir.mkdir(parents=True)
         data_file = item_dir / "data.parquet"
         shutil.copy(valid_parquet, data_file)
 
-        item_id = "test-item"
-
-        # Act: scan for assets
-        # item_dir IS the collection directory in this test scenario
         stac_assets, _, _ = _scan_item_assets(
             item_dir=item_dir,
             item_id=item_id,
             primary_file=data_file,
-            collection_dir=item_dir,  # Files are at collection level
+            collection_dir=collection_dir,
         )
 
-        # Assert: href should be relative to item subdirectory (../)
-        assert "data" in stac_assets, "Primary file should have 'data' key"
-        data_asset = stac_assets["data"]
-
-        # The item JSON will be at collection/test-item/test-item.json
-        # The data file is at collection/data.parquet
-        # So the relative path from item JSON to data file is ../data.parquet
-        assert data_asset.href == "../data.parquet", (
-            f"Asset href should be '../data.parquet' to reach parent directory, "
-            f"but got '{data_asset.href}'"
-        )
+        assert stac_assets["data"].href == "data.parquet"
 
     @pytest.mark.unit
     def test_add_creates_valid_asset_paths(

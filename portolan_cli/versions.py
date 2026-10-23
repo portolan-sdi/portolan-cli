@@ -544,6 +544,19 @@ def _asset_href(asset_path: Path, catalog_root: Path, collection_path: Path) -> 
     return rel_path.as_posix()
 
 
+def _asset_key(asset_path: Path, collection_path: Path) -> str:
+    """The versions.json key of a file: its POSIX path below the collection.
+
+    ``add`` keys an item file ``<item dir>/<name>``. A key of the bare name
+    gave an adopted item thumbnail a second key at the collection root, where
+    no file is (issue #1053).
+    """
+    try:
+        return asset_path.relative_to(collection_path).as_posix()
+    except ValueError:
+        return asset_path.name
+
+
 def _is_tracked(
     asset_path: Path,
     tracked: dict[str, Asset],
@@ -556,7 +569,7 @@ def _is_tracked(
     ``data.thumb.jpg``, and a basename match would treat the second as already
     tracked and drop it from the snapshot.
     """
-    existing = tracked.get(asset_path.name)
+    existing = tracked.get(_asset_key(asset_path, collection_path))
     if existing is None:
         return False
     return existing.href == _asset_href(asset_path, catalog_root, collection_path)
@@ -639,7 +652,7 @@ def track_generated_assets(
     assets: dict[str, Asset] = {}
     for asset_path in paths_to_track:
         stat = asset_path.stat()
-        assets[asset_path.name] = Asset(
+        assets[_asset_key(asset_path, collection_path)] = Asset(
             sha256=_compute_sha256(asset_path),
             size_bytes=stat.st_size,
             href=_asset_href(asset_path, catalog_root, collection_path),
