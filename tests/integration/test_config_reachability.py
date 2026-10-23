@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -505,10 +506,13 @@ def test_without_ignored_files_the_geojson_is_added(catalog: Path, run_cli: RunC
 
 @_tests("backend")
 @_forms()
-@pytest.mark.usefixtures("pyiceberg_home")
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="PyIceberg SQL catalog warehouse paths break on Windows"
+)
 def test_backend_iceberg_writes_the_iceberg_fields(
     form: str, catalog: Path, run_cli: RunCli
 ) -> None:
+    pytest.importorskip("pyiceberg")
     source = _copy(POINTS_PARQUET, catalog / "roads" / "roads.parquet")
     configure(run_cli, catalog, form, {"backend": ("iceberg", "iceberg")})
 

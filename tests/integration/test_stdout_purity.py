@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import json
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -246,6 +247,7 @@ def iceberg_catalog(tmp_path: Path, run_cli: RunCli) -> Path:
     Its iceberg:catalog_uri holds a local path. The run_cli teardown drops
     that code as the known gap #939.
     """
+    pytest.importorskip("pyiceberg")
     root = tmp_path / "lake"
     (root / "roads").mkdir(parents=True)
     shutil.copy(POINTS, root / "roads" / "roads.parquet")
@@ -262,7 +264,9 @@ def iceberg_catalog(tmp_path: Path, run_cli: RunCli) -> Path:
         pytest.param(("version", "prune", "roads", "--dry-run", "--json"), 0, id="prune"),
     ],
 )
-@pytest.mark.usefixtures("pyiceberg_home")
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="PyIceberg SQL catalog warehouse paths break on Windows"
+)
 def test_iceberg_commands_write_one_document(
     args: tuple[str, ...], expect: int, iceberg_catalog: Path, run_cli: RunCli
 ) -> None:

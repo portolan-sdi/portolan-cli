@@ -357,15 +357,10 @@ def build_iceberg(root: Path, run: RunCli) -> None:
     if sys.platform == "win32":
         pytest.skip("PyIceberg SQL catalog warehouse paths break on Windows")
     roads = _copy(POINTS, root / "roads" / "roads.parquet")
-    # Hide a developer's ~/.pyiceberg.yaml, as tests/iceberg/conftest.py does.
-    home = root.parent / "pyiceberg-home"
-    home.mkdir()
-    (home / ".pyiceberg.yaml").write_text("portolan-test-isolation: true\n", encoding="utf-8")
-    with pytest.MonkeyPatch.context() as env:
-        env.setenv("PYICEBERG_HOME", str(home))
-        _init(root, run)
-        run("config", "set", "backend", "iceberg", cwd=root)
-        _add(root, run, roads)
+    # The run_cli harness hides a developer's PyIceberg config.
+    _init(root, run)
+    run("config", "set", "backend", "iceberg", cwd=root)
+    _add(root, run, roads)
 
 
 def _realdata(source: Path, *, expect: int = 0) -> Builder:
