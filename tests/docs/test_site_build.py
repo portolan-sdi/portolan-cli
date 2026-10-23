@@ -14,9 +14,13 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 import yaml
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 pytestmark = pytest.mark.integration
 
@@ -38,26 +42,45 @@ LITERAL_COLOR = re.compile(r"#[0-9a-fA-F]{3,8}\b|rgba?\(")
 
 
 @pytest.fixture(scope="session")
-def built_site() -> Path:
-    """Build the site once and return the output directory.
+def built_site(worker_id: str) -> Iterator[Path]:
+    """Build the site once per xdist worker and return the output directory.
+
+    Each worker builds into its own directory. Under `-n 3` the workers
+    shared `site/`, and one worker deleted it while another read it.
+    zensical has no output flag, and it refuses a `site_dir` outside the
+    project root. So a per-worker config in the project root inherits
+    mkdocs.yml and sets only `site_dir`. The `site/` that the docs job
+    uploads stays as the build step wrote it.
 
     Remove the output directory first. `zensical build --clean` clears
     the cache and keeps the output. A page whose source is gone stays
     on disk, and a test that reads it passes against stale HTML.
     """
-    site = PROJECT_ROOT / "site"
+    name = f".pytest-site-{worker_id}"
+    site = PROJECT_ROOT / name
+    config = PROJECT_ROOT / f"{name}.yml"
     shutil.rmtree(site, ignore_errors=True)
+    config.write_text(f"INHERIT: mkdocs.yml\nsite_dir: {name}\n", encoding="utf-8")
+    try:
+        result = subprocess.run(
+            ["uv", "run", "zensical", "build", "--strict", "--clean", "-f", str(config)],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, f"Build failed:\n{result.stdout}\n{result.stderr}"
+        assert site.is_dir(), f"Build reported success but {site} does not exist."
+        yield site
+    finally:
+        config.unlink(missing_ok=True)
+        shutil.rmtree(site, ignore_errors=True)
 
-    result = subprocess.run(
-        ["uv", "run", "zensical", "build", "--strict", "--clean"],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, f"Build failed:\n{result.stdout}\n{result.stderr}"
-    assert site.is_dir(), f"Build reported success but {site} does not exist."
-    return site
+
+def test_each_xdist_worker_builds_its_own_site(built_site: Path, worker_id: str) -> None:
+    """Workers that share one output directory delete each other's pages."""
+    assert built_site == PROJECT_ROOT / f".pytest-site-{worker_id}"
+    assert (built_site / "index.html").is_file()
 
 
 def _page(site: Path, relative: str) -> str:

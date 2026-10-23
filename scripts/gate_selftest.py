@@ -22,24 +22,17 @@ from installing the copy into it, and ``PYTHONPATH`` puts the copy ahead of
 the editable install. A symlinked ``.venv`` would work on Linux, but Windows
 needs extra privileges to create one, and the tools would walk into it.
 
-A fault whose gate configuration is not in the tree yet prints PENDING with
-the reason. Agents G1 and G2 of #1035 add those configurations. A PENDING row
-passes until ``PENDING_DEADLINE`` and fails the run after it, so a missing
-prerequisite cannot keep a row green.
-
 Usage::
 
     uv run python scripts/gate_selftest.py                 # every fault
     uv run python scripts/gate_selftest.py --fault mutant  # one fault
 
-The exit status is 1 when a row is MISSED, BROKEN, or ERROR, or PENDING past
-the deadline.
+The exit status is 1 when a row is MISSED, BROKEN, or ERROR.
 """
 
 from __future__ import annotations
 
 import argparse
-import datetime
 import io
 import json
 import os
@@ -51,18 +44,10 @@ import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pytest itself depends on tomli before 3.11
-    import tomli as tomllib
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
-
-# A PENDING row passes until this date and fails the run after it.
-PENDING_DEADLINE = datetime.date(2026, 11, 13)
 
 GATE_TIMEOUT_S = 1200
 _STRIPPED_ENV_PREFIXES = ("COV_CORE_", "PYTEST_", "MUTANT_UNDER_TEST")
@@ -81,22 +66,19 @@ class Fault:
     """A known defect and the gates that must catch it.
 
     ``apply(root, faulty)`` writes the fault into the copy at ``root`` when
-    ``faulty`` is true, and the clean variant otherwise. ``requires(root)``
-    returns an empty string when the gate configuration is in the tree, and
-    the missing prerequisite otherwise. ``control`` is false when a clean run
-    of the gate has no meaning.
+    ``faulty`` is true, and the clean variant otherwise. ``control`` is false
+    when a clean run of the gate has no meaning.
     """
 
     name: str
     apply: Callable[[Path, bool], None]
     gates: tuple[Gate, ...]
-    requires: Callable[[Path], str] = lambda _root: ""
     control: bool = True
 
 
 @dataclass(frozen=True)
 class Result:
-    """The outcome of one fault: CAUGHT, MISSED, BROKEN, PENDING, or ERROR."""
+    """The outcome of one fault: CAUGHT, MISSED, BROKEN, or ERROR."""
 
     fault: str
     status: str
@@ -162,10 +144,6 @@ def _append(path: Path, text: str) -> None:
         handle.write(text)
 
 
-def _pyproject(root: Path) -> dict[str, Any]:
-    return tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-
-
 def copy_head(repo: Path, dest: Path) -> Path:
     """Extract ``HEAD`` of ``repo`` into ``dest`` and return ``dest``."""
     archive = subprocess.run(
@@ -218,24 +196,9 @@ def _apply_library_output_import(root: Path, faulty: bool) -> None:
         _append(root / BBOX, "\nfrom portolan_cli.output import info\n")
 
 
-def _requires_output_ban(root: Path) -> str:
-    tool = _pyproject(root)["tool"]
-    banned = tool["ruff"]["lint"].get("flake8-tidy-imports", {}).get("banned-api", {})
-    if "portolan_cli.output" in banned:
-        return ""
-    return "needs the portolan_cli.output TID251 ban and import contract (G1, #1035)"
-
-
 def _apply_dead_function(root: Path, faulty: bool) -> None:
     if faulty:
         _append(root / BBOX, "\n\ndef _gate_selftest_dead() -> int:\n    return 1\n")
-
-
-def _requires_vulture_60(root: Path) -> str:
-    confidence = _pyproject(root)["tool"]["vulture"]["min_confidence"]
-    if confidence <= 60:
-        return ""
-    return f"needs vulture min_confidence 60, found {confidence} (G1, #1035)"
 
 
 CATALOG = "_selftest_catalog"
@@ -264,12 +227,6 @@ def _apply_stale_file_size(root: Path, faulty: bool) -> None:
     raise FaultError("no asset in the catalog carries file:size")
 
 
-def _requires_catalog_invariants(root: Path) -> str:
-    if (root / "tests" / "catalog_invariants.py").is_file():
-        return ""
-    return "needs tests/catalog_invariants.py (G2, #1035)"
-
-
 DUPLICATE_MODULE = "portolan_cli/_dup_selftest.py"
 # About 70 jscpd tokens, above the 50-token minTokens in .jscpd.json.
 _DUPLICATE_BODY = """
@@ -293,13 +250,6 @@ def _apply_duplicate_block(root: Path, faulty: bool) -> None:
     for name in names:
         source += f"\n\ndef {name}(values: list[int], limit: int) -> int:{_DUPLICATE_BODY}"
     (root / DUPLICATE_MODULE).write_text(source, encoding="utf-8")
-
-
-def _requires_jscpd_50(root: Path) -> str:
-    tokens = json.loads((root / ".jscpd.json").read_text(encoding="utf-8"))["minTokens"]
-    if tokens <= 50:
-        return ""
-    return f"needs jscpd minTokens 50 or lower, found {tokens}"
 
 
 def _apply_ci_success_wiring(root: Path, faulty: bool) -> None:
@@ -356,19 +306,16 @@ FAULTS = (
             Gate(("uv", "run", "ruff", "check", "--select", "TID251", BBOX)),
             Gate(("uv", "run", "lint-imports")),
         ),
-        requires=_requires_output_ban,
     ),
     Fault(
         "dead-function",
         _apply_dead_function,
         (Gate(("uv", "run", "vulture")),),
-        _requires_vulture_60,
     ),
     Fault(
         "stale-file-size",
         _apply_stale_file_size,
         (Gate(("uv", "run", "python", "-m", "tests.catalog_invariants", CATALOG)),),
-        requires=_requires_catalog_invariants,
     ),
     Fault(
         "duplicate-block",
@@ -387,7 +334,6 @@ FAULTS = (
                 )
             ),
         ),
-        requires=_requires_jscpd_50,
     ),
     Fault(
         "ci-success-wiring",
@@ -428,14 +374,8 @@ FAULTS_BY_NAME = {fault.name: fault for fault in FAULTS}
 def run_fault(fault: Fault, repo: Path, workdir: Path) -> Result:
     """Test one fault against copies of ``repo`` under ``workdir``."""
     try:
-        # Apply the fault before the PENDING check, so a fault whose setup
-        # breaks (a CLI change that stops the catalog build) is an ERROR now
-        # and not a surprise on the day its gate lands.
         faulty_root = copy_head(repo, workdir / f"{fault.name}-faulty")
         fault.apply(faulty_root, True)
-        reason = fault.requires(faulty_root)
-        if reason:
-            return Result(fault.name, "PENDING", reason)
         if fault.control:
             clean_root = copy_head(repo, workdir / f"{fault.name}-clean")
             fault.apply(clean_root, False)
@@ -458,13 +398,6 @@ def run_fault(fault: Fault, repo: Path, workdir: Path) -> Result:
     return Result(fault.name, "CAUGHT", "")
 
 
-def failed(result: Result, today: datetime.date) -> bool:
-    """Return whether ``result`` fails the run on ``today``."""
-    if result.status == "PENDING":
-        return today > PENDING_DEADLINE
-    return result.status != "CAUGHT"
-
-
 def main(argv: list[str] | None = None) -> int:
     """Run the faults and print one Markdown table row per fault."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -479,7 +412,6 @@ def main(argv: list[str] | None = None) -> int:
         ).stdout.strip()
     )
     faults = [FAULTS_BY_NAME[name] for name in args.fault] if args.fault else list(FAULTS)
-    today = datetime.datetime.now(datetime.timezone.utc).date()
 
     print("| Fault | Gates | Result | Detail |")
     print("|---|---|---|---|")
@@ -490,9 +422,9 @@ def main(argv: list[str] | None = None) -> int:
             gates = "<br>".join(f"`{' '.join(gate.command)}`" for gate in fault.gates)
             detail = result.detail.replace("|", "\\|")
             print(f"| {fault.name} | {gates} | {result.status} | {detail} |", flush=True)
-            any_failed |= failed(result, today)
+            any_failed |= result.status != "CAUGHT"
     if any_failed:
-        print(f"\nA gate did not catch its fault (PENDING fails after {PENDING_DEADLINE}).")
+        print("\nA gate did not catch its fault.")
     return 1 if any_failed else 0
 
 
