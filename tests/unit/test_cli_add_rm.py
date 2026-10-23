@@ -24,14 +24,11 @@ from portolan_cli.add import ItemInfo
 from portolan_cli.cli import cli
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from tests.catalog_invariants import RunCli
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 # `add --item-id` writes asset hrefs relative to a directory that does not
 # exist, so run_cli must not check those catalogs at teardown.
-ITEM_ID_REASON = "item-id: hrefs point at a directory that does not exist (#840)"
 
 
 @pytest.fixture
@@ -268,10 +265,9 @@ class TestAdd:
         self,
         tmp_path: Path,
         run_cli: RunCli,
-        build_damaged_catalog: Callable[[Path, str], Path],
     ) -> None:
         """add --item-id overrides automatic item ID derivation."""
-        root = build_damaged_catalog(tmp_path / "catalog", ITEM_ID_REASON)
+        root = tmp_path / "catalog"
         collection_dir = root / "demographics"
         collection_dir.mkdir(parents=True)
         test_file = collection_dir / "census.geojson"
@@ -294,10 +290,9 @@ class TestAdd:
         self,
         tmp_path: Path,
         run_cli: RunCli,
-        build_damaged_catalog: Callable[[Path, str], Path],
     ) -> None:
         """--item-id reaches add_files: the raster item takes the given id."""
-        root = build_damaged_catalog(tmp_path / "catalog", ITEM_ID_REASON)
+        root = tmp_path / "catalog"
         item_dir = root / "imagery" / "scene"
         item_dir.mkdir(parents=True)
         test_file = item_dir / "satellite.tif"

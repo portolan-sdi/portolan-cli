@@ -32,7 +32,6 @@ from tests.catalog_invariants import (
     check_catalog_invariants,
     codes,
 )
-from tests.properties.test_rebuild_idempotence import shrink_geoparquet
 
 if TYPE_CHECKING:
     from tests.catalog_invariants import RunCli
@@ -334,6 +333,10 @@ class TestEachCodeFires:
 
         assert codes(check_catalog_invariants(root)) == {"S-EXTENT-NOT-STALE"}
 
+        # add --force derives the extent from the data again (#801).
+        run_cli("add", "--force", "--portolan-dir", str(root), str(root / "wetlands"))
+        assert codes(check_catalog_invariants(root)) == set()
+
     def test_a_declared_override_may_widen_the_extent(self, tmp_path: Path) -> None:
         """A human metadata.yaml override is the one way to widen an extent."""
         root = build_clean_catalog(tmp_path / "clean")
@@ -420,53 +423,8 @@ class TestKnownGapsStillFire:
     keep the list honest. A fix deletes the entry and its test together.
     """
 
-    @pytest.fixture
-    def raster_catalog(self, tmp_path: Path, run_cli: RunCli) -> Path:
-        """``add`` two raster scenes, the shape where both open gaps show."""
-        root = tmp_path / "catalog"
-        for scene, source in (("scene-a", RGB_COG), ("scene-b", SINGLEBAND_COG)):
-            (root / "imagery" / scene).mkdir(parents=True)
-            shutil.copy(source, root / "imagery" / scene / source.name)
-        run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
-        run_cli("add", "--portolan-dir", str(root), str(root / "imagery"))
-        return root
-
     def test_every_known_gap_has_a_test_here(self) -> None:
         assert set(KNOWN_INVARIANT_GAPS) == set(GAP_TESTS)
 
-    def test_p_summary_from_items(self, raster_catalog: Path) -> None:
-        """#1023: the summary holds the numbers of proj:transform, not the arrays."""
-        item = _parse(raster_catalog / "imagery" / "scene-b" / "scene-b.json")
-        transform = item["properties"]["proj:transform"]
-        summaries = _parse(raster_catalog / "imagery" / "collection.json")["summaries"]
-        fired = {
-            v.detail
-            for v in check_catalog_invariants(raster_catalog)
-            if v.code == "P-SUMMARY-FROM-ITEMS"
-        }
 
-        assert transform not in summaries["proj:transform"]
-        assert f"summaries['proj:transform'] value {transform[0]!r} is on no member item" in fired
-
-    def test_s_extent_not_stale(self, tmp_path: Path, run_cli: RunCli) -> None:
-        """#801: after the rows shrink, add --force keeps the old extent."""
-        root = tmp_path / "catalog"
-        data = root / "roads" / "roads.parquet"
-        data.parent.mkdir(parents=True)
-        shutil.copy(POINTS, data)
-        run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
-        run_cli("add", "--portolan-dir", str(root), str(data))
-        shrink_geoparquet(data)
-        run_cli("add", "--force", "--portolan-dir", str(root), str(data))
-
-        fired = [v for v in check_catalog_invariants(root) if v.code == "S-EXTENT-NOT-STALE"]
-
-        assert [v.detail for v in fired] == [
-            "bbox [-122.5, 37.7, -122.35, 37.85] != data union [-122.5, 37.7, -122.425, 37.7]"
-        ]
-
-
-GAP_TESTS = {
-    "P-SUMMARY-FROM-ITEMS": TestKnownGapsStillFire.test_p_summary_from_items,
-    "S-EXTENT-NOT-STALE": TestKnownGapsStillFire.test_s_extent_not_stale,
-}
+GAP_TESTS: dict[str, object] = {}

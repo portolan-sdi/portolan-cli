@@ -156,7 +156,7 @@ portolan add [OPTIONS] PATHS...
 | `--force-thumbnails` | boolean | Redraw the thumbnail even if one is registered. Use after a collection grows, since the extent it draws is otherwise fixed at first render. A thumbnail.png or preview.png you supplied still wins. | `False` |
 | `--force` | boolean | Re-process all files, ignoring change detection. | `False` |
 | `--reconvert` | boolean | Re-convert from source files (requires --force). | `False` |
-| `--merge-strategy` | choice (`smart` &#x7C; `keep` &#x7C; `overwrite`) | How to merge auto-detected metadata with existing values. 'smart' (default): preserve human-authored fields (title, description), update machine-derivable fields (href, type, row_count). 'keep': preserve all existing fields. 'overwrite': replace everything with auto-detected values. | `smart` |
+| `--merge-strategy` | choice (`smart` &#x7C; `keep` &#x7C; `overwrite`) | How to merge the human-authored fields with the detected values. Human fields are the asset title and description, custom asset fields, and column descriptions. Fields read from the data always follow the data. 'smart' (default): keep a human value and fill a missing one from the data. 'keep': keep a human value and never fill it from the data. 'overwrite': drop the human values. | `smart` |
 | `--json` | boolean | Output as JSON. | `False` |
 | `--help` | boolean | Show this message and exit. | `False` |
 

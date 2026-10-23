@@ -97,6 +97,7 @@ def _check_describe(
     import pystac
 
     from portolan_cli.plugins.formats import FormatContext
+    from portolan_cli.stac import build_spatial_extent
 
     context = FormatContext(catalog_root=output_dir, collection_dir=output_dir, source=sample)
     problems: list[str] = []
@@ -116,7 +117,7 @@ def _check_describe(
         id="conformance",
         description="Conformance check",
         extent=pystac.Extent(
-            pystac.SpatialExtent([bbox]),
+            build_spatial_extent([bbox], wgs84_only=False),
             pystac.TemporalExtent([[datetime.now(timezone.utc), None]]),
         ),
     )

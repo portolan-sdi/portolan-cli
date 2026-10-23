@@ -18,13 +18,12 @@ from pyiceberg.catalog import Catalog, load_catalog
 CATALOG_NAME = "portolake"
 
 
-def _default_properties(catalog_root: Path | None = None) -> dict[str, str]:
+def _default_properties(catalog_root: Path) -> dict[str, str]:
     """Build default catalog properties (SQL/SQLite, local warehouse)."""
-    root = catalog_root or Path.cwd()
     return {
         "type": "sql",
-        "uri": f"sqlite:///{root}/.portolan/iceberg.db",
-        "warehouse": (root / ".portolan" / "warehouse").as_uri(),
+        "uri": f"sqlite:///{catalog_root}/.portolan/iceberg.db",
+        "warehouse": (catalog_root / ".portolan" / "warehouse").as_uri(),
     }
 
 
@@ -55,7 +54,14 @@ def create_catalog(catalog_root: Path | None = None) -> Catalog:
         # summaries, not just the current ref.
         return load_catalog(CATALOG_NAME, **{"snapshot-loading-mode": "all"})
 
-    # SQLite or no external config — use local defaults
+    # SQLite or no external config: the catalog lives under the catalog root.
+    # The current directory is never a fallback, because a SQLite catalog there
+    # lands in whatever directory the caller runs from (issue #1056).
+    if catalog_root is None:
+        if external and "uri" in external:
+            # The PyIceberg configuration names the SQLite catalog itself.
+            return load_catalog(CATALOG_NAME, **{"type": "sql", **external})
+        raise ValueError("The local Iceberg catalog needs the catalog root; none was given.")
     defaults = _default_properties(catalog_root)
     uri = defaults["uri"]
     if uri.startswith("sqlite:///"):

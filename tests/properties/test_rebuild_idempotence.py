@@ -212,12 +212,7 @@ def _rebuild_and_fresh(
         pytest.param("append_rows"),
         pytest.param("change_timestamp_range"),
         pytest.param("drop_column"),
-        pytest.param(
-            "shrink_extent",
-            marks=pytest.mark.xfail(
-                strict=True, reason="#801: the extent keeps the rows that the data lost"
-            ),
-        ),
+        pytest.param("shrink_extent"),
     ],
 )
 def test_a_rebuild_equals_a_fresh_build(mutation: str, tmp_path: Path, run_cli: RunCli) -> None:

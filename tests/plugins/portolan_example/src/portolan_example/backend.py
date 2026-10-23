@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from portolan_cli.api import DriftReport, SchemaFingerprint, Version
+from portolan_cli.api import DriftReport, PostAddContext, PullResult, SchemaFingerprint, Version
 
 
 class ExampleBackend:
@@ -104,3 +104,30 @@ class ExampleBackend:
             remote_version=current,
             message="The example backend keeps no remote copy.",
         )
+
+    # The four lifecycle hooks of the protocol (#977).
+    def on_post_add(self, context: PostAddContext) -> None:
+        """Record which items the last add of a collection wrote."""
+        record = self._path(context["collection_id"]).with_suffix(".post-add.json")
+        record.parent.mkdir(parents=True, exist_ok=True)
+        items = [item["item_id"] for item in context["items"]]
+        record.write_text(json.dumps(items), encoding="utf-8")
+
+    def pull(
+        self,
+        remote_url: str,
+        local_root: Path,
+        collection: str,
+        *,
+        dry_run: bool = False,
+    ) -> PullResult | None:
+        """The example backend has no remote, so the file-based pull runs."""
+        return None
+
+    def supports_push(self) -> bool:
+        """The catalog is plain files, so ``push`` uploads it."""
+        return True
+
+    def push_blocked_message(self, remote: str | None) -> str:
+        """Never shown, because push is allowed."""
+        return "The example backend allows push."

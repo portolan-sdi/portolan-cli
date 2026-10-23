@@ -23,7 +23,6 @@ Validation functions:
 Update functions:
 - update_item_metadata(): Re-extract and update existing STAC item
 - create_missing_item(): Create new STAC item for file without metadata
-- update_collection_extent(): Recalculate extent from child items
 - update_versions_tracking(): Update source_mtime in versions.json
 
 Fix functions:
@@ -95,7 +94,6 @@ from portolan_cli.metadata.tabular import (
 )
 from portolan_cli.metadata.update import (
     create_missing_item,
-    update_collection_extent,
     update_item_metadata,
     update_versions_tracking,
 )
@@ -150,7 +148,6 @@ __all__ = [
     "validate_collection_extent",
     # Update functions
     "create_missing_item",
-    "update_collection_extent",
     "update_item_metadata",
     "update_versions_tracking",
     # Check models

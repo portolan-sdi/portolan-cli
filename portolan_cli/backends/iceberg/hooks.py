@@ -15,6 +15,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+# A name, not a literal, so mypy does not decide the check for the Python it
+# targets and report the rest of the function as unreachable (warn_unreachable).
+_MINIMUM_PYTHON = (3, 11)
+
 
 def iceberg_backend(catalog_root: Path | None = None) -> Any:
     """Create an ``IcebergBackend``.
@@ -28,7 +32,7 @@ def iceberg_backend(catalog_root: Path | None = None) -> Any:
     Raises:
         ValueError: On Python before 3.11, or without the iceberg extra.
     """
-    if sys.version_info[:2] < (3, 11):
+    if sys.version_info[:2] < _MINIMUM_PYTHON:
         raise ValueError(
             "The Iceberg backend requires Python 3.11+. "
             f"You are running Python {sys.version_info[0]}.{sys.version_info[1]}."

@@ -595,13 +595,19 @@ class TestExtentUpdate:
         assert bbox_after_b[1] <= bbox_after_b[3], "min_y should be <= max_y"
 
     @pytest.mark.integration
-    def test_extent_keep_strategy_preserves_manual_extent(
+    @pytest.mark.parametrize("declared_in_metadata_yaml", [False, True])
+    def test_extent_comes_from_the_data_under_keep(
         self,
         runner: CliRunner,
         initialized_catalog: Path,
         valid_points_parquet: Path,
+        declared_in_metadata_yaml: bool,
     ) -> None:
-        """With --merge-strategy=keep, manually set extent should be preserved."""
+        """The extent is derived under every strategy (#801).
+
+        A bbox written into collection.json is replaced by the data. A bbox in
+        the collection's own metadata.yaml is the one override, and it widens.
+        """
         collection_dir = initialized_catalog / "testcol"
         collection_dir.mkdir()
 
@@ -624,6 +630,14 @@ class TestExtentUpdate:
 
         data_file = collection_dir / "data.parquet"
         shutil.copy(valid_points_parquet, data_file)
+        if declared_in_metadata_yaml:
+            (collection_dir / ".portolan").mkdir()
+            (collection_dir / ".portolan" / "metadata.yaml").write_text(
+                f"extent:\n  bbox: {manual_bbox}\n", encoding="utf-8"
+            )
+        from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+
+        data_bbox = list(extract_geoparquet_metadata(data_file).bbox or ())
 
         result = runner.invoke(
             cli,
@@ -640,9 +654,15 @@ class TestExtentUpdate:
         assert result.exit_code == 0
 
         collection_json = json.loads((collection_dir / "collection.json").read_text())
-        bbox = collection_json["extent"]["spatial"]["bbox"][0]
+        bboxes = collection_json["extent"]["spatial"]["bbox"]
 
-        # With KEEP strategy, manual extent should be preserved
-        assert bbox == manual_bbox, (
-            f"KEEP strategy should preserve manual extent. Expected {manual_bbox}, got {bbox}"
-        )
+        if declared_in_metadata_yaml:
+            expected = [
+                min(manual_bbox[0], data_bbox[0]),
+                min(manual_bbox[1], data_bbox[1]),
+                max(manual_bbox[2], data_bbox[2]),
+                max(manual_bbox[3], data_bbox[3]),
+            ]
+        else:
+            expected = data_bbox
+        assert bboxes == [expected]

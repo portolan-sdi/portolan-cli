@@ -829,16 +829,14 @@ class TestCheckBackendPushSupport:
         )
 
     @pytest.mark.unit
-    def test_backend_without_push_blocked_message_attribute(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
-        """push is blocked with generic message when backend lacks push_blocked_message."""
+    def test_push_prints_the_backend_message(self, runner: CliRunner, tmp_path: Path) -> None:
+        """push is blocked with the message the backend gives (#977)."""
         catalog_root = _make_file_catalog(tmp_path)
         (catalog_root / ".portolan" / "config.yaml").write_text("backend: custom\n")
 
-        mock_backend = MagicMock(spec=["supports_push"])
+        mock_backend = MagicMock(spec=["supports_push", "push_blocked_message"])
         mock_backend.supports_push.return_value = False
-        # No push_blocked_message attribute (spec excludes it)
+        mock_backend.push_blocked_message.return_value = "Push is not supported with custom."
 
         with (
             patch("portolan_cli.config.get_setting", return_value="custom"),
@@ -856,7 +854,7 @@ class TestCheckBackendPushSupport:
             )
 
         assert result.exit_code == 1
-        assert "custom" in result.output
+        assert "Push is not supported with custom." in result.output
 
     @pytest.mark.unit
     def test_backend_supports_push_allows_through(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -923,15 +921,15 @@ class TestTryBackendPull:
         assert pull_fn.call_args.kwargs["remote_url"] == "gs://some-bucket/catalog"
 
     @pytest.mark.unit
-    def test_backend_without_pull_method_falls_through(
+    def test_backend_pull_returning_none_falls_through(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """pull uses file-based pull when active backend has no pull() method."""
+        """pull uses file-based pull when the backend's pull() returns None."""
         catalog_root = _make_file_catalog(tmp_path)
         (catalog_root / ".portolan" / "config.yaml").write_text("backend: custom\n")
 
-        # Backend without pull() method (spec excludes it)
-        mock_backend = MagicMock(spec=["publish", "get_current_version"])
+        mock_backend = MagicMock(spec=["pull"])
+        mock_backend.pull.return_value = None
 
         with (
             patch("portolan_cli.config.get_setting", return_value="custom"),

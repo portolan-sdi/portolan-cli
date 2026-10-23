@@ -3,7 +3,6 @@
 This module provides functions to update existing metadata when files change:
 - update_item_metadata(): Re-extract metadata and update existing STAC item
 - create_missing_item(): Create new STAC item for file without metadata
-- update_collection_extent(): Recalculate extent from child items
 - update_versions_tracking(): Update source_mtime in versions.json
 
 Part of Phase 2c: Update Functions (check-metadata-handling feature).
@@ -14,31 +13,19 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timezone
 from pathlib import Path, PurePath
 from typing import Any
 
 import rasterio
 
-from portolan_cli.collection import (
-    read_collection_json,
-    write_collection_json,
-)
 from portolan_cli.formats import RASTER, RASTER_EXTENSIONS
 from portolan_cli.item import (
     _extract_geometry_from_file,
     _get_media_type,
-    create_item,
-    write_item_json,
 )
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata.cog import extract_cog_metadata
 from portolan_cli.metadata.detection import versions_asset_key, versions_asset_lookup_keys
-from portolan_cli.models.collection import (
-    CollectionModel,
-    ExtentModel,
-    SpatialExtent,
-)
 from portolan_cli.models.item import ItemModel
 from portolan_cli.versions import (
     Asset,
@@ -326,9 +313,11 @@ def _find_data_asset_key(assets: dict[str, Any]) -> str:
 def create_missing_item(file_path: Path, collection_path: Path) -> Path:
     """Create new STAC item for a file without metadata.
 
-    Writes item.json into the data file's parent directory at
-    `{item_dir}/{item_id}.json`, matching the hierarchical convention
-    that `add` produces ( and add.py:_create_and_save_item).
+    The item comes from ``preparation.prepare_item``, the code ``add`` uses, so
+    a recreated item equals the one ``add`` wrote: the same id, assets, bands,
+    ``proj:*`` and ``raster:*`` fields, and datetime (issue #1046). A file
+    directly in the collection directory keeps its stem as the item id, so
+    ``check --fix`` still writes ``{item_dir}/{stem}.json`` for it.
 
     Args:
         file_path: Path to the data file (GeoParquet or COG).
@@ -340,6 +329,10 @@ def create_missing_item(file_path: Path, collection_path: Path) -> Path:
     Raises:
         FileNotFoundError: If file_path doesn't exist or collection.json not found.
     """
+    from portolan_cli.catalog import find_catalog_root
+    from portolan_cli.finalization import record_prepared_items
+    from portolan_cli.preparation import prepare_item
+
     if not file_path.exists():
         raise FileNotFoundError(f"Data file not found: {file_path}")
 
@@ -347,18 +340,27 @@ def create_missing_item(file_path: Path, collection_path: Path) -> Path:
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found: {collection_json_path}")
 
-    collection = read_collection_json(collection_json_path)
-    item_id = file_path.stem
-    item_dir = file_path.parent
-
-    item = create_item(
-        item_id=item_id,
-        data_path=file_path,
-        collection_id=collection.id,
+    # A nested collection id holds a slash, which the model rejects, so read the raw id.
+    collection_id = json.loads(collection_json_path.read_text(encoding="utf-8"))["id"]
+    catalog_root = find_catalog_root(collection_path) or collection_path.parent
+    in_collection_dir = file_path.parent.resolve() == collection_path.resolve()
+    prepared = prepare_item(
+        path=file_path,
+        catalog_root=catalog_root,
+        collection_id=collection_path.resolve().relative_to(catalog_root.resolve()).as_posix(),
+        item_id=file_path.stem if in_collection_dir else None,
     )
+    item_path = prepared.item_json_path
+    if item_path is None:
+        raise FileNotFoundError(f"add writes no item for {file_path}; run portolan add")
 
-    item_path = write_item_json(item, item_dir)
-    _enrich_created_item(item_path, collection_path, item_id)
+    # finalize_items sets the collection field when it saves the collection.
+    item_data = json.loads(item_path.read_text(encoding="utf-8"))
+    item_data["collection"] = collection_id
+    write_json_atomic(item_path, item_data)
+    _enrich_created_item(item_path, collection_path, prepared.item_id)
+    # The snapshot records every file the item declares, as add does (#1046).
+    record_prepared_items(catalog_root, collection_path, [prepared])
     return item_path
 
 
@@ -389,111 +391,6 @@ def _enrich_created_item(item_path: Path, collection_path: Path, item_id: str) -
             item_id=item_id,
         ),
     )
-
-
-def update_collection_extent(collection_path: Path) -> CollectionModel:
-    """Recalculate collection extent from child items.
-
-    Reads all items in the collection directory, computes the union
-    bounding box, updates the collection extent, and writes the
-    updated collection.json.
-
-    Args:
-        collection_path: Path to the collection directory.
-
-    Returns:
-        Updated CollectionModel.
-
-    Raises:
-        FileNotFoundError: If collection_path doesn't exist or has no collection.json.
-    """
-    # Validate collection.json exists
-    collection_json_path = collection_path / "collection.json"
-    if not collection_json_path.exists():
-        raise FileNotFoundError(f"collection.json not found: {collection_json_path}")
-
-    # Read existing collection
-    collection = read_collection_json(collection_json_path)
-
-    # Find all item JSON files in collection directory
-    item_files = list(collection_path.glob("*.json"))
-    item_files = [f for f in item_files if f.name not in ("collection.json", "schema.json")]
-
-    # Collect bboxes from all items
-    bboxes: list[list[float]] = []
-    for item_file in item_files:
-        try:
-            with Path(item_file).open(encoding="utf-8") as f:
-                data = json.load(f)
-            # Check if this is a valid STAC item (has bbox)
-            if "bbox" in data and data.get("type") == "Feature":
-                bboxes.append(data["bbox"])
-        except (json.JSONDecodeError, KeyError):
-            # Skip invalid JSON files
-            continue
-
-    # If no items found, return collection unchanged
-    if not bboxes:
-        return collection
-
-    # Compute union bbox
-    union_bbox = _compute_union_bbox(bboxes)
-    if union_bbox is None:
-        # No valid child bboxes; keep the existing extent rather than persisting
-        # a synthetic global [-180, -90, 180, 90] that would mask the failure.
-        logger.warning(
-            "Collection '%s': all item bboxes invalid; keeping existing extent",
-            collection.id,
-        )
-        return collection
-
-    # Update collection extent
-    updated_extent = ExtentModel(
-        spatial=SpatialExtent(bbox=[union_bbox]),
-        temporal=collection.extent.temporal,  # Keep temporal extent
-    )
-
-    # Create updated collection
-    updated_collection = CollectionModel(
-        id=collection.id,
-        description=collection.description,
-        extent=updated_extent,
-        license=collection.license,
-        title=collection.title,
-        summaries=collection.summaries,
-        providers=collection.providers,
-        keywords=collection.keywords,
-        created=collection.created,
-        updated=datetime.now(timezone.utc),
-        links=collection.links,
-    )
-
-    # Write updated collection
-    write_collection_json(updated_collection, collection_path)
-
-    return updated_collection
-
-
-def _compute_union_bbox(bboxes: list[list[float]]) -> list[float] | None:
-    """Compute the union bounding box from multiple bboxes.
-
-    Filters out invalid bboxes (inf/nan/out-of-range) with warnings (issue #516).
-
-    Args:
-        bboxes: List of bounding boxes, each as [west, south, east, north].
-
-    Returns:
-        Union bounding box [west, south, east, north], or None when there are no
-        valid bboxes. Callers must not substitute a synthetic global extent, as
-        that would mask the failure (issue #516).
-    """
-    from portolan_cli.bbox import compute_bbox_union
-
-    if not bboxes:
-        return None
-
-    result = compute_bbox_union(bboxes)
-    return result.bbox  # None when all bboxes are invalid
 
 
 def update_versions_tracking(file_path: Path, versions_path: Path) -> None:

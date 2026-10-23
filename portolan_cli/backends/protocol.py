@@ -80,18 +80,10 @@ class PostAddItemContext(TypedDict):
 
 
 class PostAddContext(TypedDict):
-    """Context passed to a backend's optional on_post_add() hook.
+    """Context passed to :meth:`VersioningBackend.on_post_add`.
 
-    After add() completes local processing, portolan-cli checks
-    ``hasattr(backend, "on_post_add")`` and, if present, calls it with this
-    context. Backends that do not implement on_post_add() are silently
-    skipped.
-
-    Optional backend methods (checked via hasattr, NOT part of VersioningBackend):
-        on_post_add(context: PostAddContext) -> None
-        pull(remote_url: str, local_root: Path, collection: str, *, dry_run: bool) -> PullResult
-        supports_push() -> bool
-        push_blocked_message(remote: str | None) -> str
+    After add() completes local processing, portolan-cli calls the active
+    backend's ``on_post_add`` with this context.
 
     Note:
         The ``collection`` field is typed as Any to avoid a hard dependency on pystac.
@@ -107,6 +99,21 @@ class PostAddContext(TypedDict):
     asset_files: dict[str, tuple[Path, str, int]]
     remote: str | None
     items: list[PostAddItemContext]
+
+
+class PullOutcome(Protocol):
+    """What a backend pull reports. ``portolan_cli.api.PullResult`` has this shape.
+
+    The protocol names the fields, not the class, so this module imports
+    nothing from the sync layer.
+    """
+
+    success: bool
+    files_downloaded: int
+    files_skipped: int
+    local_version: str | None
+    remote_version: str | None
+    up_to_date: bool
 
 
 @runtime_checkable
@@ -125,6 +132,12 @@ class VersioningBackend(Protocol):
         to be thread-safe. Use drift checking to detect concurrent modifications.
         For true concurrent access, use a backend with distributed locking (e.g.,
         IcebergBackend via portolake).
+
+    Lifecycle hooks:
+        ``on_post_add``, ``pull``, ``supports_push`` and ``push_blocked_message``
+        are protocol methods, so mypy checks every call against them (#977).
+        ``JsonFileBackend`` shows the neutral behavior: no post-add work, no
+        backend pull, and push allowed.
     """
 
     def get_current_version(self, collection: str) -> Version:
@@ -221,5 +234,52 @@ class VersioningBackend(Protocol):
 
         Returns:
             DriftReport with drift status and details.
+        """
+        ...
+
+    def on_post_add(self, context: PostAddContext) -> None:
+        """Run backend work after ``add`` published a version of a collection.
+
+        A failure is logged and does not fail the add, because the version is
+        already published.
+
+        Args:
+            context: The collection and the items the add wrote.
+        """
+        ...
+
+    def pull(
+        self,
+        remote_url: str,
+        local_root: Path,
+        collection: str,
+        *,
+        dry_run: bool = False,
+    ) -> PullOutcome | None:
+        """Pull one collection through the backend.
+
+        ``portolan pull`` without ``--collection`` calls this once per
+        collection of the catalog.
+
+        Args:
+            remote_url: The remote catalog URL.
+            local_root: The local catalog root.
+            collection: Collection identifier/path.
+            dry_run: Report what would be pulled, and download nothing.
+
+        Returns:
+            The pull result, or None when the file-based pull must run instead.
+        """
+        ...
+
+    def supports_push(self) -> bool:
+        """Whether ``portolan push`` may upload a catalog on this backend."""
+        ...
+
+    def push_blocked_message(self, remote: str | None) -> str:
+        """The message ``push`` prints when :meth:`supports_push` is False.
+
+        Args:
+            remote: The configured remote, or None.
         """
         ...

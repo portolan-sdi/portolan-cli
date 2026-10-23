@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -97,13 +97,15 @@ class BboxUnionResult:
     """Result of computing a bbox union."""
 
     bbox: list[float] | None
-    """Single union bbox, or None if no valid inputs. For multi-bbox, this is the overall envelope."""
+    """The overall envelope, or None if no input is valid."""
 
     bboxes: list[list[float]] | None = None
-    """Multi-bbox list for STAC output when antimeridian crossing is involved."""
+    """The STAC 1.1.0 ``extent.spatial.bbox`` list, or None if no input is valid.
 
-    is_multi_bbox: bool = False
-    """True if the union requires multi-bbox representation."""
+    STAC allows one bbox, or three or more with the overall envelope first. A
+    union that crosses the antimeridian is the envelope, then its western and
+    eastern parts. Two entries are never written (issue #852).
+    """
 
     skipped: list[tuple[list[float], str]] = field(default_factory=list)
     """Bboxes that were skipped due to validation failures."""
@@ -400,10 +402,10 @@ def compute_bbox_union(
 
     # If no crossing bboxes, simple union
     if not crossing:
+        envelope = _compute_simple_union(normal)
         return BboxUnionResult(
-            bbox=_compute_simple_union(normal),
-            bboxes=None,
-            is_multi_bbox=False,
+            bbox=envelope,
+            bboxes=None if envelope is None else [envelope],
             skipped=validation.invalid,
         )
 
@@ -447,21 +449,16 @@ def _compute_antimeridian_union(
         western.extend(spanning)
         eastern.extend(spanning)
 
-    # Build result bboxes from hemisphere unions
+    # Build result bboxes from hemisphere unions. Each crossing bbox puts one
+    # part in each hemisphere, so neither list is empty.
     result_bboxes = _build_hemisphere_unions(western, eastern)
-
-    # Fallback if no results
-    if not result_bboxes:
-        result_bboxes = all_parts
-
-    envelope = _compute_simple_union(all_parts) if all_parts else None
-
-    return BboxUnionResult(
-        bbox=envelope,
-        bboxes=result_bboxes if len(result_bboxes) > 1 else None,
-        is_multi_bbox=len(result_bboxes) > 1,
-        skipped=skipped,
-    )
+    envelope = cast("list[float]", _compute_simple_union(all_parts))
+    # STAC 1.1.0: one bbox, or the envelope first and then the parts (#852).
+    # The envelope spans every longitude. A crossing bbox (west > east) would be
+    # tighter, but rashid's PTL-DAT-005 compares bbox[0] with the plain min/max
+    # of the data and warns on it.
+    parts = result_bboxes if len(result_bboxes) > 1 else []
+    return BboxUnionResult(bbox=envelope, bboxes=[envelope, *parts], skipped=skipped)
 
 
 def _build_hemisphere_unions(

@@ -35,26 +35,31 @@ from portolan_cli.hookspecs import EnrichContext
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata import extract_geoparquet_metadata
+from portolan_cli.metadata.detection import versions_asset_key
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
 from portolan_cli.query import ItemInfo
 from portolan_cli.stac import (
     DEFAULT_LICENSE,
+    PROVISIONAL_END_DATETIME,
+    PROVISIONAL_START_DATETIME,
+    CollectionMember,
     MergeStrategy,
     add_asset_to_collection,
-    add_collection_extensions_from_summaries,
     add_collection_properties_from_metadata,
     add_item_to_collection,
     add_partition_metadata_to_collection,
     add_table_extension,
     aggregate_table_metadata,
+    apply_collection_fields,
+    apply_collection_fields_to_dict,
     apply_human_license,
     apply_human_providers,
     apply_human_titles,
     apply_provenance,
     create_collection,
     declare_file_extension,
+    derive_collection_fields,
     update_catalog_provenance,
-    update_collection_summaries,
 )
 from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
 from portolan_cli.stac_links import iter_links
@@ -288,89 +293,191 @@ def _save_collection_with_links(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Spatial extent recomputation
+# Collection members: the input of derive_collection_fields
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Roles of collection-level assets that describe the collection itself, not data.
+_NON_MEMBER_ROLES = frozenset({"collection-mirror", "stac-items", "source"})
 
-def _gather_collection_bboxes(collection: pystac.Collection) -> list[list[float]]:
-    """Collect all candidate bboxes for a collection's spatial extent (issue #516).
 
-    Gathers bboxes from linked items, collection-level assets (``proj:bbox``),
-    and the existing collection extent (as a fallback), de-duplicating the
-    existing-extent entries against what the items/assets already contributed.
+def _item_member(item: pystac.Item) -> CollectionMember:
+    """The bbox, times, and properties of one item."""
+    props = item.properties
+    provisional = (
+        props.get("start_datetime") == PROVISIONAL_START_DATETIME
+        and props.get("end_datetime") == PROVISIONAL_END_DATETIME
+    )
+    start = end = item.datetime
+    if start is None and not provisional:
+        start = item.common_metadata.start_datetime
+        end = item.common_metadata.end_datetime
+    return CollectionMember(
+        bbox=list(item.bbox) if item.bbox is not None else None,
+        start=start,
+        end=end,
+        properties=props,
+    )
+
+
+def _asset_member_path(collection_dir: Path, asset: pystac.Asset) -> Path | None:
+    """The local file a collection-level data asset names, or None."""
+    roles = set(asset.roles or [])
+    if "data" not in roles or roles & _NON_MEMBER_ROLES:
+        return None
+    href = asset.get_absolute_href() or asset.href
+    if "://" in href or "*" in href:
+        return None
+    path = Path(href)
+    return path if path.is_absolute() else collection_dir / href.removeprefix("./")
+
+
+def _read_wgs84_bbox(path: Path, catalog_root: Path | None) -> list[float] | None:
+    """The WGS84 footprint of a data file, measured the way ``add`` measures it.
+
+    None when no handler reads the file, so a table or a remote asset adds no
+    footprint, and the extent is never invented.
+    """
+    from portolan_cli.plugins.formats import handler_for
+    from portolan_cli.preparation import _extract_bbox_wgs84
+
+    try:
+        handler = handler_for(path, catalog_root)
+        if handler is None:
+            return None
+        metadata = handler.read_metadata(path)
+        if not getattr(metadata, "bbox", None):
+            return None
+        return _extract_bbox_wgs84(metadata, path)  # type: ignore[arg-type]
+    except Exception:  # noqa: BLE001 - an unreadable file contributes no footprint
+        logger.debug("Cannot read the footprint of %s", path, exc_info=True)
+        return None
+
+
+def _linked_items(collection: pystac.Collection) -> list[pystac.Item]:
+    """Every item the collection links, skipping a link whose file is gone.
+
+    ``rm`` deletes an item directory but leaves its link, so one dead link must
+    not stop the derivation of the rest.
+    """
+    try:
+        return list(collection.get_items(recursive=True))
+    except Exception:  # noqa: BLE001 - fall back to resolving each link alone
+        logger.debug("Collection '%s' links an unreadable item", collection.id, exc_info=True)
+    items: list[pystac.Item] = []
+    for link in collection.get_links(pystac.RelType.ITEM):
+        try:
+            target = link.resolve_stac_object(root=collection.get_root()).target
+        except Exception:  # noqa: BLE001 - a dead link contributes no member
+            logger.debug("Skipping the dead item link %s", link.href)
+            continue
+        if isinstance(target, pystac.Item):
+            items.append(target)
+    return items
+
+
+def collection_members(
+    collection: pystac.Collection,
+    collection_dir: Path,
+    *,
+    catalog_root: Path | None = None,
+    known_bboxes: dict[str, list[float]] | None = None,
+) -> list[CollectionMember]:
+    """Every item and collection-level data asset of a collection, from disk.
+
+    An item contributes its bbox, times, and properties. A collection-level
+    data asset contributes its footprint: the bbox ``add`` measured in this
+    run when ``known_bboxes`` has it, else the bbox read from the file again.
+    The stored extent is never an input (issue #801).
 
     Args:
-        collection: The pystac Collection to read bboxes from.
+        collection: The collection, with its items linked.
+        collection_dir: Directory holding collection.json.
+        catalog_root: Catalog root, for the format handler pins.
+        known_bboxes: WGS84 bbox per resolved asset path, measured in this run.
 
     Returns:
-        List of bboxes (each a ``[minx, miny, maxx, maxy]`` list).
+        One member per item and per collection-level data asset.
     """
-    all_bboxes: list[list[float]] = []
-
-    # Get bboxes from linked items
-    for link in collection.links:
-        if link.rel == "item" and hasattr(link, "target") and link.target is not None:
-            item = link.target
-            if hasattr(item, "bbox") and item.bbox is not None:
-                all_bboxes.append(list(item.bbox))
-
-    # Get bboxes from collection-level assets (if they have proj:bbox)
-    if collection.assets:
-        for asset in collection.assets.values():
-            if hasattr(asset, "extra_fields") and asset.extra_fields:
-                proj_bbox = asset.extra_fields.get("proj:bbox")
-                if proj_bbox:
-                    all_bboxes.append(list(proj_bbox))
-
-    # Also use the existing collection extent as a fallback
-    if collection.extent and collection.extent.spatial:
-        for bbox in collection.extent.spatial.bboxes:
-            if bbox not in all_bboxes:
-                all_bboxes.append(list(bbox))
-
-    return all_bboxes
+    known = known_bboxes or {}
+    members = [_item_member(item) for item in _linked_items(collection)]
+    for asset in collection.assets.values():
+        path = _asset_member_path(collection_dir, asset)
+        if path is None:
+            continue
+        bbox = known.get(str(path.resolve()))
+        if bbox is None:
+            bbox = _read_wgs84_bbox(path, catalog_root)
+        members.append(CollectionMember(bbox=bbox))
+    return members
 
 
-def _recompute_collection_extent_with_multibbox(collection: pystac.Collection) -> None:
-    """Recompute collection spatial extent with anti-meridian handling (issue #516).
+def derive_and_apply_fields(
+    collection: pystac.Collection,
+    collection_dir: Path,
+    *,
+    catalog_root: Path | None = None,
+    known_bboxes: dict[str, list[float]] | None = None,
+) -> None:
+    """Replace the derived fields of an in-memory collection from its members."""
+    members = collection_members(
+        collection, collection_dir, catalog_root=catalog_root, known_bboxes=known_bboxes
+    )
+    apply_collection_fields(
+        collection, derive_collection_fields(members, load_own_metadata(collection_dir))
+    )
 
-    Collects all item and asset bboxes from the collection and recomputes the
-    spatial extent using proper multi-bbox support for anti-meridian crossing.
 
-    If anti-meridian crossing is detected, the extent will use multiple bboxes
-    per the STAC spec (one for the western portion, one for the eastern portion).
+def refresh_collection_fields(catalog_root: Path, collection_dir: Path) -> bool:
+    """Derive the fields of a saved collection again, after its members changed.
+
+    ``rm`` and ``check --fix --metadata`` change the members without passing
+    through ``finalize_items``. They call this, so the extent and summaries
+    follow the members that remain. The file is edited as JSON, so fields an
+    enrichment hook wrote survive.
 
     Args:
-        collection: The pystac Collection to update.
+        catalog_root: Root directory of the catalog.
+        collection_dir: Directory holding collection.json.
+
+    Returns:
+        True when collection.json changed.
     """
-    from portolan_cli.bbox import compute_bbox_union
+    path = collection_dir / "collection.json"
+    if not path.is_file():
+        return False
+    try:
+        collection = pystac.Collection.from_file(str(path))
+    except (pystac.STACError, pystac.STACTypeError, ValueError, OSError):
+        # Not a collection pystac can read: nothing to derive, and check
+        # reports the file itself.
+        logger.warning("Cannot read %s; its extent is not derived", path)
+        return False
+    members = collection_members(collection, collection_dir, catalog_root=catalog_root)
+    fields = derive_collection_fields(members, load_own_metadata(collection_dir))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    before = json.dumps(data, sort_keys=True)
+    apply_collection_fields_to_dict(data, fields)
+    if json.dumps(data, sort_keys=True) == before:
+        return False
+    write_json_atomic(path, data)
+    return True
 
-    all_bboxes = _gather_collection_bboxes(collection)
-    if not all_bboxes:
-        return  # No bboxes to process
 
-    # Compute union with anti-meridian handling
-    result = compute_bbox_union(all_bboxes)
+def _batch_bboxes(items: list[PreparedItem]) -> dict[str, list[float]]:
+    """The bbox ``add`` measured for each collection-level data file of the batch.
 
-    if result.bbox is None:
-        logger.warning(
-            "Collection '%s': all bboxes are invalid, keeping existing extent",
-            collection.id,
-        )
-        return
-
-    # Update collection extent
-    if result.is_multi_bbox and result.bboxes:
-        # Use multi-bbox for anti-meridian crossing
-        collection.extent.spatial = pystac.SpatialExtent(bboxes=result.bboxes)
-        logger.info(
-            "Collection '%s': using multi-bbox extent for anti-meridian crossing (%d bboxes)",
-            collection.id,
-            len(result.bboxes),
-        )
-    else:
-        # Single bbox
-        collection.extent.spatial = pystac.SpatialExtent(bboxes=[result.bbox])
+    The scan of a flat collection also lists the other files beside the one
+    added, so only the files of the item's own stem take its bbox. Any other
+    file is read from disk.
+    """
+    known: dict[str, list[float]] = {}
+    for p in items:
+        if not p.is_collection_level_asset:
+            continue
+        for file_path, _checksum, _size in p.asset_files.values():
+            if file_path.stem == p.item_id:
+                known[str(file_path.resolve())] = list(p.bbox)
+    return known
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -420,14 +527,15 @@ def apply_human_metadata(
 
     A metadata.yaml the collection owns is authoritative. Portolan re-applies its
     title, description, license, and providers on every add. A metadata.yaml an
-    ancestor owns only fills a field the collection still lacks. So a re-add never
-    replaces a title, a license, or providers a maintainer set on this collection,
-    and a catalog title never becomes a collection title (issue #755).
+    ancestor owns only fills a title or a license the collection still lacks. So a
+    re-add never replaces a title or a license a maintainer set on this
+    collection, and a catalog title never becomes a collection title (issue #755).
 
-    An own ``contact`` counts as an own providers declaration. It seeds the host
-    provider, so it regenerates the providers array even over one a maintainer
-    hand-edited into collection.json. Do not set both a hand-edited array and an
-    own ``contact`` unless you want the contact to win.
+    Providers differ. A ``providers`` array in any metadata.yaml, own or
+    inherited, rebuilds the array on every add, because the human file is the
+    override (issue #813). An own ``contact`` counts as an own providers
+    declaration too: it seeds the host provider. Either one replaces a providers
+    array a maintainer hand-edited into collection.json.
 
     Args:
         collection: The collection to update in place.
@@ -450,15 +558,44 @@ def apply_human_metadata(
         # still resolve its link.
         apply_human_license(collection, own)
 
-    # Providers: an own providers array or an own contact rebuilds the array,
-    # because both are own declarations (an own contact seeds the host). An
-    # inherited array fills only a collection that declares none yet.
-    if "providers" in own or "contact" in own or not collection.providers:
+    # Providers: a providers array in any metadata.yaml, own or inherited, or an
+    # own contact rebuilds the array, because the human file is the override
+    # (issue #813). An inherited contact alone only seeds a collection that
+    # declares no providers yet.
+    if "providers" in merged or "contact" in own or not collection.providers:
         apply_human_providers(collection, merged)
 
     # Provenance derives from the providers now on the collection and the source
     # link the merged metadata declares.
     apply_provenance(collection, merged)
+
+
+# The collection.json keys apply_human_metadata writes.
+_HUMAN_METADATA_KEYS = ("title", "description", "license", "providers", "links", "updated")
+
+
+def apply_human_metadata_to_dict(
+    data: dict[str, Any], collection_dir: Path, catalog_root: Path
+) -> None:
+    """Apply :func:`apply_human_metadata` to a parsed ``collection.json`` in place.
+
+    The tabular writer keeps collection.json as JSON. It calls this so an
+    ``add --force`` applies metadata.yaml to a tabular collection the way it
+    does to a spatial one (issue #813).
+
+    Args:
+        data: Parsed ``collection.json``, mutated in place.
+        collection_dir: The collection's directory under the catalog root.
+        catalog_root: Root directory of the catalog.
+    """
+    collection = pystac.Collection.from_dict(data, migrate=False)
+    apply_human_metadata(collection, collection_dir, catalog_root)
+    applied = collection.to_dict(include_self_link=False, transform_hrefs=False)
+    for key in _HUMAN_METADATA_KEYS:
+        if key in applied:
+            data[key] = applied[key]
+        else:
+            data.pop(key, None)
 
 
 def _preflight_asset_keys(
@@ -508,13 +645,7 @@ def _add_prepared_items_to_collection(
         if p.is_collection_level_asset and p.stac_assets is not None:
             # Collection-level asset: add directly to collection.assets
             for asset_key, asset in p.stac_assets.items():
-                add_asset_to_collection(
-                    collection,
-                    asset_key,
-                    asset,
-                    update_extent_from_bbox=p.bbox,
-                    merge_strategy=merge_strategy,
-                )
+                add_asset_to_collection(collection, asset_key, asset, merge_strategy=merge_strategy)
             # Add format-specific properties (proj:code, pmtiles:*, flatgeobuf:*)
             if p.metadata is not None:
                 add_collection_properties_from_metadata(
@@ -522,9 +653,7 @@ def _add_prepared_items_to_collection(
                 )
         elif p.stac_item is not None:
             # Item-level: add item link to collection
-            add_item_to_collection(
-                collection, p.stac_item, update_extent=True, merge_strategy=merge_strategy
-            )
+            add_item_to_collection(collection, p.stac_item)
 
 
 def _collect_parquet_metadata_from_disk(
@@ -808,15 +937,12 @@ def _batch_update_versions(
     # Build assets dict from ALL items (batch)
     all_assets: dict[str, Asset] = {}
     for p in items:
-        for filename, (file_path, file_checksum, file_size) in p.asset_files.items():
-            # For collection-level assets, omit item_id from path
-            # asset_key is collection-relative; href is catalog-relative
-            if p.is_collection_level_asset:
-                href = f"{collection_id}/{filename}"
-                asset_key = filename  # Issue #354: collection-relative, not doubled
-            else:
-                href = f"{collection_id}/{p.item_id}/{filename}"
-                asset_key = f"{p.item_id}/{filename}"
+        for file_path, file_checksum, file_size in p.asset_files.values():
+            # The key is the path of the file under the collection, and the href
+            # adds the collection id. Both follow where the file is, never the
+            # item id: --item-id names the item, not a directory (issue #840).
+            asset_key = versions_asset_key(file_path, collection_dir)
+            href = f"{collection_id}/{asset_key}"
 
             stat = file_path.stat()
             # Collection-level assets have no companion item.json, so
@@ -850,14 +976,11 @@ def _batch_update_versions(
     # Single write for all items
     write_versions(versions_path, updated)
 
-    # Return info for catalog-level versioning
-    # Get latest version's asset info
-    latest = updated.versions[-1] if updated.versions else None
-    if latest:
-        asset_count = len(latest.assets)
-        total_size = sum(a.size_bytes for a in latest.assets.values())
-        return (updated.current_version or new_version, asset_count, total_size)
-    return (new_version, 0, 0)
+    # Return info for catalog-level versioning. add_version always leaves at
+    # least one version, so the latest one exists.
+    latest = updated.versions[-1]
+    total_size = sum(a.size_bytes for a in latest.assets.values())
+    return (updated.current_version or new_version, len(latest.assets), total_size)
 
 
 def _finalize_with_backend(
@@ -877,46 +1000,44 @@ def _finalize_with_backend(
     branch.
     """
     from portolan_cli.backends import get_backend
+    from portolan_cli.backends.protocol import PostAddContext, PostAddItemContext
     from portolan_cli.config import get_setting
     from portolan_cli.version_ops import publish_version
 
     # Publish version snapshot via the plugin backend
-    assets: dict[str, str] = {}
-    for p in items:
-        for filename, (file_path, _checksum, _size) in p.asset_files.items():
-            asset_key = filename if p.is_collection_level_asset else f"{p.item_id}/{filename}"
-            assets[asset_key] = str(file_path)
+    assets = {
+        versions_asset_key(file_path, collection_dir): str(file_path)
+        for p in items
+        for file_path, _checksum, _size in p.asset_files.values()
+    }
     publish_version(collection_id, assets=assets, catalog_root=catalog_root)
 
     # NOTE: Plugin backends (e.g. Iceberg) may override table:* STAC extension
     # fields in collection.json via on_post_add, since the backend's table state
     # (actual row counts, schema excluding derived columns) is authoritative.
     backend = get_backend(active_backend, catalog_root=catalog_root)
-    if not hasattr(backend, "on_post_add"):
-        return
-
     remote = get_setting("remote", catalog_path=catalog_root, collection=collection_id)
     first = items[0]
     # For collection-level assets, item_json_path is None; use collection_dir
     first_item_dir = first.item_json_path.parent if first.item_json_path else collection_dir
-    context = {
-        "catalog_root": catalog_root,
-        "collection_id": collection_id,
-        "collection_dir": collection_dir,
-        "collection": collection,
-        "item_id": first.item_id,
-        "item_dir": first_item_dir,
-        "asset_files": first.asset_files,
-        "items": [
-            {
-                "item_id": p.item_id,
-                "item_dir": (p.item_json_path.parent if p.item_json_path else collection_dir),
-                "asset_files": p.asset_files,
-            }
+    context = PostAddContext(
+        catalog_root=catalog_root,
+        collection_id=collection_id,
+        collection_dir=collection_dir,
+        collection=collection,
+        item_id=first.item_id,
+        item_dir=first_item_dir,
+        asset_files=first.asset_files,
+        items=[
+            PostAddItemContext(
+                item_id=p.item_id,
+                item_dir=p.item_json_path.parent if p.item_json_path else collection_dir,
+                asset_files=p.asset_files,
+            )
             for p in items
         ],
-        "remote": remote,
-    }
+        remote=remote,
+    )
     try:
         backend.on_post_add(context)
     except Exception:
@@ -1008,6 +1129,25 @@ def _publish_collection_version(
             collection_dir=collection_dir,
             items=items,
         )
+
+
+def record_prepared_items(
+    catalog_root: Path, collection_dir: Path, items: list[PreparedItem]
+) -> None:
+    """Record the asset files of prepared items in a new version, as ``add`` does.
+
+    ``check --fix`` recreates an item outside ``finalize_items``. It calls this,
+    so the version snapshot holds every file the recreated item declares
+    (issue #1046).
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection_dir: Directory holding collection.json.
+        items: The prepared items whose asset files the snapshot records.
+    """
+    collection_id = collection_dir.resolve().relative_to(catalog_root.resolve()).as_posix()
+    collection = pystac.Collection.from_file(str(collection_dir / "collection.json"))
+    _publish_collection_version(catalog_root, collection_id, collection_dir, collection, items)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1198,21 +1338,17 @@ def _finalize_collection(
     # Add partition extension if any items have partition metadata (Issue #232/#443)
     _emit_partition_warnings(collection, collection_dir, items)
 
-    # Compute collection summaries from items
-    # Moved here from push.py for separation of concerns - summaries are now
-    # available immediately after add, not just after push.
-    update_collection_summaries(collection)
-
     # Declare the file extension the assets use (Issue #501, narrowed by #654)
     declare_file_extension(collection)
 
-    # Add extension declarations based on summaries (Issue #336)
-    # Collections should declare extensions used by their items
-    if collection.summaries is not None:
-        add_collection_extensions_from_summaries(collection, collection.summaries.to_dict())
-
-    # Issue #516: Recompute spatial extent with anti-meridian handling
-    _recompute_collection_extent_with_multibbox(collection)
+    # Extent, summaries, and the extensions the summaries use come from the
+    # members, never from the stored values (issues #801, #852, #1023).
+    derive_and_apply_fields(
+        collection,
+        collection_dir,
+        catalog_root=catalog_root,
+        known_bboxes=_batch_bboxes(items),
+    )
 
     # Save collection.json ONCE for all items in this collection
     _save_collection_with_links(collection, collection_dir, catalog_root, collection_id)

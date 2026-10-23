@@ -36,13 +36,10 @@ def initialized_catalog(tmp_path: Path) -> Path:
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from tests.catalog_invariants import RunCli
 
 # `add --item-id` writes asset hrefs relative to a directory that does not
 # exist, so run_cli must not check those catalogs at teardown.
-ITEM_ID_REASON = "item-id: hrefs point at a directory that does not exist (#840)"
 
 
 @pytest.fixture
@@ -318,7 +315,6 @@ class TestAddItemIdOverrideIntegration:
         run_cli: RunCli,
         initialized_catalog: Path,
         valid_singleband_cog: Path,
-        build_damaged_catalog: Callable[[Path, str], Path],
     ) -> None:
         """add --item-id creates STAC item with the custom ID.
 
@@ -338,7 +334,6 @@ class TestAddItemIdOverrideIntegration:
         shutil.copy(valid_singleband_cog, test_file)
 
         # Act: add with --item-id override
-        build_damaged_catalog(initialized_catalog, ITEM_ID_REASON)
         run_cli(
             "add",
             "--portolan-dir",
@@ -374,7 +369,6 @@ class TestAddItemIdOverrideIntegration:
         run_cli: RunCli,
         initialized_catalog: Path,
         valid_singleband_cog: Path,
-        build_damaged_catalog: Callable[[Path, str], Path],
     ) -> None:
         """add --item-id results in STAC item.json with custom ID field.
 
@@ -390,7 +384,6 @@ class TestAddItemIdOverrideIntegration:
         shutil.copy(valid_singleband_cog, test_file)
 
         # Act
-        build_damaged_catalog(initialized_catalog, ITEM_ID_REASON)
         run_cli(
             "add",
             "--portolan-dir",

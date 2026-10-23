@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from portolan_cli.bbox import (
     BboxValidationResult,
     compute_bbox_union,
@@ -11,6 +13,8 @@ from portolan_cli.bbox import (
     normalize_antimeridian_bbox,
     to_2d_bbox,
 )
+
+pytestmark = pytest.mark.unit
 
 
 class TestTo2dBbox:
@@ -261,7 +265,7 @@ class TestComputeBboxUnion:
         """Single bbox should return itself."""
         result = compute_bbox_union([[-74.0, 40.0, -73.0, 41.0]])
         assert result.bbox == [-74.0, 40.0, -73.0, 41.0]
-        assert result.is_multi_bbox is False
+        assert result.bboxes == [[-74.0, 40.0, -73.0, 41.0]]
 
     def test_two_bboxes_union(self) -> None:
         """Two non-overlapping bboxes should union correctly."""
@@ -313,38 +317,120 @@ class TestComputeBboxUnion:
         result = compute_bbox_union(bboxes)
         assert result.bbox == [-122.5, 37.5, -73.0, 41.0]
 
-    def test_antimeridian_crossing_produces_multi_bbox(self) -> None:
-        """Union with antimeridian-crossing bbox should produce multi-bbox."""
-        bboxes = [
-            [-74.0, 40.0, -73.0, 41.0],  # NYC
-            [177.0, -20.0, -175.0, -15.0],  # Fiji (crossing)
-        ]
-        result = compute_bbox_union(bboxes)
-        assert result.is_multi_bbox is True
-        assert result.bboxes is not None
-        assert len(result.bboxes) >= 2
+    @pytest.mark.parametrize(
+        ("bboxes", "expected"),
+        [
+            # NYC and a Fiji box that crosses 180.
+            (
+                [[-74.0, 40.0, -73.0, 41.0], [177.0, -20.0, -175.0, -15.0]],
+                [
+                    [-180.0, -20.0, 180.0, 41.0],
+                    [-180.0, -20.0, -73.0, 41.0],
+                    [177.0, -20.0, 180.0, -15.0],
+                ],
+            ),
+            # Two crossing boxes: Fiji and the Russian far east.
+            (
+                [[177.0, -20.0, -175.0, -15.0], [160.0, 50.0, -170.0, 70.0]],
+                [
+                    [-180.0, -20.0, 180.0, 70.0],
+                    [-180.0, -20.0, -170.0, 70.0],
+                    [160.0, -20.0, 180.0, 70.0],
+                ],
+            ),
+            # A normal box joins the hemisphere it lies in.
+            (
+                [
+                    [-74.0, 40.0, -73.0, 41.0],
+                    [150.0, 30.0, 160.0, 40.0],
+                    [177.0, -20.0, -175.0, -15.0],
+                ],
+                [
+                    [-180.0, -20.0, 180.0, 41.0],
+                    [-180.0, -20.0, -73.0, 41.0],
+                    [150.0, -20.0, 180.0, 40.0],
+                ],
+            ),
+        ],
+    )
+    def test_a_crossing_union_is_the_envelope_then_the_parts(
+        self, bboxes: list[list[float]], expected: list[list[float]]
+    ) -> None:
+        assert compute_bbox_union(bboxes).bboxes == expected
 
-    def test_multiple_crossing_bboxes(self) -> None:
-        """Multiple crossing bboxes should all be represented."""
-        bboxes = [
-            [177.0, -20.0, -175.0, -15.0],  # Fiji
-            [160.0, 50.0, -170.0, 70.0],  # Russia far east
-        ]
-        result = compute_bbox_union(bboxes)
-        assert result.is_multi_bbox is True
+    def test_us_counties_extent_is_never_two_bboxes(self) -> None:
+        """Issue #852: STAC 1.1.0 allows one bbox or three or more, never two.
 
-    def test_union_with_mixed_normal_and_crossing(self) -> None:
-        """Mix of normal and crossing bboxes should handle correctly."""
-        bboxes = [
-            [-74.0, 40.0, -73.0, 41.0],  # NYC (normal)
-            [150.0, 30.0, 160.0, 40.0],  # Japan area (normal)
-            [177.0, -20.0, -175.0, -15.0],  # Fiji (crossing)
+        The input is the measured extent of us-counties from the issue. On main
+        the union wrote the two hemisphere parts alone, and dropped the
+        overall extent that STAC requires as the first entry.
+        """
+        crossing = [172.4616709015344, 17.884812999999998, -65.22111000000001, 71.3525606439998]
+        result = compute_bbox_union([crossing])
+        assert result.bboxes == [
+            [-180.0, 17.884812999999998, 180.0, 71.3525606439998],
+            [-180.0, 17.884812999999998, -65.22111000000001, 71.3525606439998],
+            [172.4616709015344, 17.884812999999998, 180.0, 71.3525606439998],
         ]
-        result = compute_bbox_union(bboxes)
-        # Should produce multi-bbox representation
-        assert result.is_multi_bbox is True
-        # The crossing bbox should be split
-        assert result.bboxes is not None
+        assert result.bbox == [-180.0, 17.884812999999998, 180.0, 71.3525606439998]
+
+    @pytest.mark.parametrize(
+        ("part", "western", "eastern"),
+        [
+            # Spans 0, so it joins both hemispheres.
+            ([-10.0, 0.0, 10.0, 5.0], [-180.0, 0.0, 10.0, 5.0], [-10.0, 0.0, 180.0, 5.0]),
+            # Starts on 0: eastern only.
+            ([0.0, 0.0, 10.0, 5.0], [-180.0, 0.0, -170.0, 5.0], [0.0, 0.0, 180.0, 5.0]),
+            # Ends on 0: western only.
+            ([-10.0, 0.0, 0.0, 5.0], [-180.0, 0.0, 0.0, 5.0], [170.0, 0.0, 180.0, 5.0]),
+            # East of 0 and narrower than one degree: eastern only.
+            ([0.2, 0.0, 0.8, 5.0], [-180.0, 0.0, -170.0, 5.0], [0.2, 0.0, 180.0, 5.0]),
+            ([0.5, 0.0, 2.0, 5.0], [-180.0, 0.0, -170.0, 5.0], [0.5, 0.0, 180.0, 5.0]),
+        ],
+    )
+    def test_a_part_near_the_prime_meridian_joins_the_right_hemisphere(
+        self, part: list[float], western: list[float], eastern: list[float]
+    ) -> None:
+        result = compute_bbox_union([[170.0, 0.0, -170.0, 5.0], part])
+        assert result.bboxes == [[-180.0, 0.0, 180.0, 5.0], western, eastern]
+
+    def test_hemispheres_that_meet_give_one_bbox(self) -> None:
+        """Equal hemisphere unions collapse, and STAC never gets two bboxes."""
+        result = compute_bbox_union([[170.0, 0.0, -170.0, 5.0], [-180.0, 0.0, 180.0, 5.0]])
+        assert result.bboxes == [[-180.0, 0.0, 180.0, 5.0]]
+
+    def test_a_crossing_union_reports_the_skipped_bbox(self) -> None:
+        result = compute_bbox_union([[170.0, 0.0, -170.0, 5.0], [float("nan"), 0.0, 1.0, 1.0]])
+        assert [reason for _, reason in result.skipped] == ["west is NaN"]
+
+    def test_no_valid_bbox_has_no_extent(self) -> None:
+        """No valid input gives no extent, never a whole-world default."""
+        result = compute_bbox_union([[float("nan"), 0.0, 1.0, 1.0]])
+        assert result.bboxes is None
+
+
+class TestIsValidBboxBounds:
+    """Each WGS84 bound is inclusive, and each check stands on its own."""
+
+    UTM = [500000.0, 4000000.0, 600000.0, 4100000.0]
+
+    def test_wgs84_ranges_apply_by_default(self) -> None:
+        assert is_valid_bbox(self.UTM) is False
+
+    def test_projected_bbox_is_valid_without_the_wgs84_ranges(self) -> None:
+        assert is_valid_bbox(self.UTM, wgs84_only=False) is True
+
+    @pytest.mark.parametrize(
+        "bbox",
+        [
+            [180.0, 0.0, 180.0, 1.0],  # west on the eastern bound
+            [-180.0, 0.0, -180.0, 1.0],  # east on the western bound
+            [0.0, 90.0, 1.0, 90.0],  # south on the northern bound, south == north
+            [0.0, -90.0, 1.0, -90.0],  # north on the southern bound
+        ],
+    )
+    def test_a_coordinate_on_a_bound_is_valid(self, bbox: list[float]) -> None:
+        assert is_valid_bbox(bbox) is True
 
 
 class TestBboxValidationResult:

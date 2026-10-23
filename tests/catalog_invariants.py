@@ -44,12 +44,7 @@ if TYPE_CHECKING:
 # Codes that fire on main, each keyed to the open issue that tracks it. The
 # fixture drops these codes, so a test that builds a catalog through run_cli
 # stays green while the bug is open.
-KNOWN_INVARIANT_GAPS: dict[str, str] = {
-    # Collection summaries flatten proj:bbox, proj:shape, and proj:transform.
-    "P-SUMMARY-FROM-ITEMS": "#1023",
-    # add --force keeps the old extent after the data shrinks.
-    "S-EXTENT-NOT-STALE": "#801",
-}
+KNOWN_INVARIANT_GAPS: dict[str, str] = {}
 
 COG_MEDIA_TYPE = "image/tiff; application=geotiff; profile=cloud-optimized"
 PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
@@ -567,9 +562,15 @@ def _check_summaries(cat: _Catalog, collection: _Node) -> list[Violation]:
         held: list[Any] = []
         for item in members:
             properties = item.data.get("properties", {})
-            if field in properties:
-                held.append(properties[field])
-            held.extend(asset[field] for asset in _assets(item).values() if field in asset)
+            sources = [properties] if field in properties else []
+            sources.extend(asset for asset in _assets(item).values() if field in asset)
+            for source in sources:
+                value = source[field]
+                held.append(value)
+                # A list of strings, such as vector:geometry_types, is a set of
+                # values, so STAC summarizes it by its elements.
+                if isinstance(value, list) and all(isinstance(v, str) for v in value):
+                    held.extend(value)
         found.extend(
             Violation(
                 "P-SUMMARY-FROM-ITEMS",
@@ -737,9 +738,20 @@ def _stale_extent(
         if not _contains(data_union, overall) or (exact and not _contains(overall, _union(exact))):
             return f"bbox {list(overall)} is not inside data envelope {list(data_union)}"
         return None
-    if not _same(overall, data_union):
+    if not _same(overall, data_union) and not _same(overall, _crossing_envelope(data_union)):
         return f"bbox {list(overall)} != data union {list(data_union)}"
     return None
+
+
+def _crossing_envelope(box: Bbox) -> Bbox:
+    """The plain min/max envelope of a union that crosses the antimeridian.
+
+    The CLI writes it as bbox[0], followed by the two parts, because rashid's
+    PTL-DAT-005 compares bbox[0] with the plain min/max extent of the data (#852).
+    """
+    if box[0] <= box[2]:
+        return box
+    return (-180.0, box[1], 180.0, box[3])
 
 
 def _override_bbox(directory: Path) -> Bbox | None:
