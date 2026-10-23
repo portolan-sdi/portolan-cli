@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from portolan_cli.parquet_metadata import read_geo_metadata
+from portolan_cli.formats import is_geoparquet
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
@@ -62,7 +62,7 @@ def extract_tabular_metadata(path: Path) -> TabularMetadata | None:
         parquet = pq.ParquetFile(path)
     except Exception:  # noqa: BLE001 - unreadable Parquet: the format checks own it
         return None
-    if read_geo_metadata(path) is not None:
+    if is_geoparquet(path):
         return None
 
     return TabularMetadata(

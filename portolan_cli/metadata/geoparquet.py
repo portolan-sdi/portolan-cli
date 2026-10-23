@@ -15,7 +15,7 @@ from pyproj import CRS
 from pyproj.exceptions import CRSError
 
 from portolan_cli.models.schema import ColumnSchema, SchemaModel
-from portolan_cli.parquet_metadata import read_kv_metadata
+from portolan_cli.parquet_metadata import read_geo_metadata, read_kv_metadata
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
@@ -129,7 +129,7 @@ def extract_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
     pf = pq.ParquetFile(path)
 
     # Parse GeoParquet geo metadata
-    geo_metadata = _parse_geo_metadata(read_kv_metadata(path))
+    geo_metadata = read_geo_metadata(path) or {}
 
     # Extract schema
     schema = {field.name: str(field.type) for field in pf.schema_arrow}
@@ -178,8 +178,8 @@ def read_spatial_layout(path: Path) -> SpatialLayout:
 
     Reads only the footer, so the cost does not grow with the file. Callers
     that need both answers must use this rather than calling
-    :func:`is_geoparquet` and :func:`has_bbox_covering_column` in turn, which
-    would open the file twice.
+    ``formats.is_geoparquet`` and :func:`has_bbox_covering_column` in turn,
+    which would open the file twice.
 
     rashid resolves both PTL-DAT-006 and PTL-DAT-007 through the covering
     column. It reads per-row-group extents from the column's min/max statistics
@@ -205,7 +205,7 @@ def read_spatial_layout(path: Path) -> SpatialLayout:
     except Exception:  # noqa: BLE001 - an unreadable file is not a conformant one
         return SpatialLayout(is_geoparquet=False, has_bbox_covering=False)
 
-    geo = _parse_geo_metadata(read_kv_metadata(path))
+    geo = read_geo_metadata(path) or {}
     if not geo:
         return SpatialLayout(is_geoparquet=False, has_bbox_covering=False)
 
@@ -230,7 +230,7 @@ def has_bbox_covering_column(path: Path) -> bool:
     """Report whether a GeoParquet file declares a ``bbox`` covering column.
 
     Thin wrapper over :func:`read_spatial_layout`. Use that function directly
-    when the caller also needs :func:`is_geoparquet`.
+    when the caller also needs to know whether the file is GeoParquet.
 
     Args:
         path: Path to a Parquet file.
@@ -242,21 +242,6 @@ def has_bbox_covering_column(path: Path) -> bool:
         an unreadable file.
     """
     return read_spatial_layout(path).has_bbox_covering
-
-
-def is_geoparquet(path: Path) -> bool:
-    """Report whether a Parquet file carries GeoParquet ``geo`` metadata.
-
-    A Parquet file without the key is tabular data, not a spatial table, so the
-    spatial optimizations do not apply to it.
-
-    Args:
-        path: Path to a Parquet file.
-
-    Returns:
-        True when the file declares GeoParquet metadata.
-    """
-    return read_spatial_layout(path).is_geoparquet
 
 
 class RewriteFidelity(NamedTuple):
@@ -293,7 +278,7 @@ def read_rewrite_fidelity(path: Path) -> RewriteFidelity | None:
     except Exception:  # noqa: BLE001 - an unreadable file cannot be compared
         return None
 
-    geo = _parse_geo_metadata(read_kv_metadata(path))
+    geo = read_geo_metadata(path) or {}
     primary = geo.get("primary_column", "geometry")
     columns = geo.get("columns")
     column_meta = columns.get(primary, {}) if isinstance(columns, dict) else {}
@@ -328,20 +313,6 @@ def read_extra_schema_metadata(path: Path) -> dict[bytes, bytes]:
     """
     metadata = read_kv_metadata(path)
     return {key: value for key, value in metadata.items() if key not in _WRITER_OWNED_KEYS}
-
-
-def _parse_geo_metadata(metadata: dict[bytes, bytes]) -> dict[str, Any]:
-    """Parse GeoParquet geo metadata from Arrow schema metadata."""
-    geo_key = b"geo"
-    if geo_key not in metadata:
-        # Not a GeoParquet file, return empty
-        return {}
-
-    try:
-        result = json.loads(metadata[geo_key].decode("utf-8"))
-        return dict(result) if isinstance(result, dict) else {}
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {}
 
 
 def _extract_bbox(column_meta: dict[str, Any]) -> tuple[float, float, float, float] | None:
@@ -455,7 +426,7 @@ def extract_schema_from_geoparquet(
     pf = pq.ParquetFile(path)
 
     # Parse GeoParquet geo metadata
-    geo_metadata = _parse_geo_metadata(read_kv_metadata(path))
+    geo_metadata = read_geo_metadata(path) or {}
 
     # Get geometry column name
     geometry_column = geo_metadata.get("primary_column", "geometry")

@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from portolan_cli.formats import is_geoparquet
 from portolan_cli.metadata.geoparquet import (
     GeoParquetMetadata,
     extract_geoparquet_metadata,
     has_bbox_covering_column,
-    is_geoparquet,
 )
 
 
@@ -598,7 +598,6 @@ class TestReadSpatialLayout:
         """`is_geoparquet` and `has_bbox_covering_column` read the same source."""
         from portolan_cli.metadata import (
             has_bbox_covering_column,
-            is_geoparquet,
             read_spatial_layout,
         )
 

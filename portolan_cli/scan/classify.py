@@ -24,6 +24,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from portolan_cli import extension_registry as _reg
+from portolan_cli.formats import is_geoparquet
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -34,7 +35,8 @@ if TYPE_CHECKING:
 # =============================================================================
 
 # Primary geospatial formats (GEO_ASSET). .parquet is NOT here — it needs a
-# metadata peek to tell GeoParquet from plain Parquet (see is_geoparquet()).
+# metadata peek to tell GeoParquet from plain Parquet. The scanner and the
+# format detector share formats.is_geoparquet, so they cannot disagree (#864).
 GEO_ASSET_EXTENSIONS: frozenset[str] = _reg.extensions_where(scan_category="geo_asset")
 
 # Shapefile / raster sidecars (KNOWN_SIDECAR). Compound forms like .aux.xml are
@@ -69,26 +71,6 @@ STYLE_FILENAMES: frozenset[str] = _reg.STYLE_FILENAMES
 
 # Max size for thumbnail classification (1MB).
 THUMBNAIL_MAX_SIZE: int = _reg.THUMBNAIL_MAX_SIZE
-
-
-def is_geoparquet(path: Path) -> bool:
-    """Check if a Parquet file is GeoParquet by peeking at metadata.
-
-    This re-exports ``formats.is_geoparquet`` so the scanner and the format
-    detector cannot disagree about the same file. The scanner kept its own copy
-    until issue #864, and the copy read the Arrow schema, which hides a ``geo``
-    key the writer appended at close.
-
-    Args:
-        path: Path to the Parquet file.
-
-    Returns:
-        True if the file has GeoParquet metadata, False otherwise.
-        Returns False on any read errors (file not found, invalid format, etc.).
-    """
-    from portolan_cli.formats import is_geoparquet as _is_geoparquet
-
-    return _is_geoparquet(path)
 
 
 class FileCategory(Enum):

@@ -194,3 +194,27 @@ def test_thumbnail_sample_reads_the_crs(appended_geo_parquet: Path) -> None:
     frame = _sample_geoparquet(appended_geo_parquet, max_features=2)
     assert frame is not None
     assert len(frame) == 2
+
+
+@pytest.mark.integration
+def test_add_accepts_the_file(tmp_path: Path) -> None:
+    """``add`` registers the file as data. It refused it as tabular before the fix."""
+    from click.testing import CliRunner
+
+    from portolan_cli.cli import cli
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC0-1.0"])
+    assert result.exit_code == 0, result.output
+    parts = tmp_path / "parts"
+    parts.mkdir()
+    _write_appended_geo_parquet(parts / "part-0.parquet")
+
+    result = runner.invoke(
+        cli, ["add", "--portolan-dir", str(tmp_path), str(parts / "part-0.parquet")]
+    )
+
+    assert result.exit_code == 0, result.output
+    assets = json.loads((parts / "collection.json").read_text())["assets"]
+    assert assets["part-0"]["href"] == "./part-0.parquet"
+    assert assets["part-0"]["roles"] == ["data"]
