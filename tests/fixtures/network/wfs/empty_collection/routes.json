@@ -1,0 +1,94 @@
+[
+  {
+    "method": "GET",
+    "path": "/n2000/wfs",
+    "query_subset": {
+      "service": "WFS",
+      "request": "GetCapabilities",
+      "version": "2.0.0"
+    },
+    "content_type": "text/xml; charset=UTF-8",
+    "body_file": "GetCapabilities.xml"
+  },
+  {
+    "method": "GET",
+    "path": "/n2000/wfs",
+    "query_subset": {
+      "service": "WFS",
+      "request": "DescribeFeatureType",
+      "version": "2.0.0",
+      "typeNames": "N2000_WFS:N2000",
+      "typeName": "N2000_WFS:N2000"
+    },
+    "content_type": "text/xml; charset=UTF-8",
+    "body_file": "DescribeFeatureType_N2000_WFS_N2000.xml"
+  },
+  {
+    "method": "GET",
+    "path": "/n2000/wfs",
+    "query_subset": {
+      "service": "WFS",
+      "version": "2.0.0",
+      "request": "GetFeature",
+      "typeNames": "N2000_WFS:N2000",
+      "resultType": "hits"
+    },
+    "content_type": "application/xml; charset=UTF-8",
+    "body_file": "GetFeature_hits_N2000_WFS_N2000.xml"
+  },
+  {
+    "method": "GET",
+    "path": "/n2000/wfs",
+    "query_subset": {
+      "service": "WFS",
+      "version": "2.0.0",
+      "request": "GetFeature",
+      "typeNames": "N2000_WFS:N2000",
+      "outputFormat": "GEOJSON",
+      "count": "1",
+      "startIndex": "50001",
+      "srsName": "urn:ogc:def:crs:EPSG::3006"
+    },
+    "content_type": "application/json; charset=UTF-8",
+    "body_file": "GetFeature_start50001_N2000_WFS_N2000.json"
+  },
+  {
+    "method": "GET",
+    "path": "/n2000/wfs",
+    "query_subset": {
+      "service": "WFS",
+      "version": "2.0.0",
+      "request": "GetFeature",
+      "typeNames": "N2000_WFS:N2000",
+      "outputFormat": "GEOJSON",
+      "srsName": "urn:ogc:def:crs:EPSG::3006"
+    },
+    "content_type": "application/json; charset=UTF-8",
+    "body_file": "GetFeature_N2000_WFS_N2000.json"
+  },
+  {
+    "method": "GET",
+    "path": "/n2000/wms",
+    "query_subset": {
+      "service": "WMS",
+      "version": "1.1.1",
+      "request": "GetStyles",
+      "layers": "N2000_WFS:N2000"
+    },
+    "content_type": "application/vnd.ogc.se_xml",
+    "body_file": "GetStyles_N2000_WFS_N2000.xml"
+  },
+  {
+    "method": "GET",
+    "path": "/n2000/wms",
+    "query_subset": {
+      "service": "WMS",
+      "version": "1.1.1",
+      "request": "GetLegendGraphic",
+      "layer": "N2000_WFS:N2000",
+      "format": "image/png"
+    },
+    "content_type": "application/vnd.ogc.se_xml",
+    "body_file": "GetLegendGraphic_N2000_WFS_N2000.xml"
+  }
+]

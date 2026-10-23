@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?><!DOCTYPE ServiceExceptionReport SYSTEM "{{base_url}}/geoserver/schemas/wms/1.1.1/WMS_exception_1_1_1.dtd"> <ServiceExceptionReport version="1.1.1" >   <ServiceException>
+      java.lang.NullPointerException: Cannot invoke &quot;org.geoserver.catalog.StyleInfo.getStyle()&quot; because the return value of &quot;org.geoserver.catalog.LayerInfo.getDefaultStyle()&quot; is null
+Cannot invoke &quot;org.geoserver.catalog.StyleInfo.getStyle()&quot; because the return value of &quot;org.geoserver.catalog.LayerInfo.getDefaultStyle()&quot; is null
+</ServiceException></ServiceExceptionReport>

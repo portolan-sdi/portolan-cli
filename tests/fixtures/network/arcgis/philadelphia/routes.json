@@ -1,0 +1,69 @@
+[
+  {
+    "method": "GET",
+    "path": "/ArcGIS/rest/services",
+    "body_file": "services.json"
+  },
+  {
+    "method": "GET",
+    "path": "/ArcGIS/rest/services/Unrelated_Parks/FeatureServer",
+    "status": 404,
+    "body_file": "not_found.json"
+  },
+  {
+    "method": "GET",
+    "path": "/ArcGIS/rest/services/AffordableHousingProduction/FeatureServer",
+    "body_file": "affordable_housing_service.json"
+  },
+  {
+    "method": "GET",
+    "path": "/ArcGIS/rest/services/AffordableHousingProduction/FeatureServer/0",
+    "body_file": "affordable_housing_layer.json"
+  },
+  {
+    "method": "GET",
+    "path": "/ArcGIS/rest/services/AffordableHousingProduction/FeatureServer/0/query",
+    "query_subset": {
+      "returnCountOnly": "true"
+    },
+    "body_file": "affordable_housing_count.json"
+  },
+  {
+    "method": "GET",
+    "path": "/ArcGIS/rest/services/AffordableHousingProduction/FeatureServer/0/query",
+    "query_subset": {
+      "resultOffset": "200"
+    },
+    "times": 1,
+    "status": 503,
+    "body_file": "error_503.json"
+  },
+  {
+    "method": "GET",
+    "path": "/ArcGIS/rest/services/AffordableHousingProduction/FeatureServer/0/query",
+    "pages_from": "realdata/philadelphia-housing/affordable_housing.parquet"
+  },
+  {
+    "method": "GET",
+    "path": "/ArcGIS/rest/services/Council_Districts_2024/FeatureServer",
+    "body_file": "council_districts_2024_service.json"
+  },
+  {
+    "method": "GET",
+    "path": "/ArcGIS/rest/services/Council_Districts_2024/FeatureServer/0",
+    "body_file": "council_districts_2024_layer.json"
+  },
+  {
+    "method": "GET",
+    "path": "/ArcGIS/rest/services/Council_Districts_2024/FeatureServer/0/query",
+    "query_subset": {
+      "returnCountOnly": "true"
+    },
+    "body_file": "council_districts_2024_count.json"
+  },
+  {
+    "method": "GET",
+    "path": "/ArcGIS/rest/services/Council_Districts_2024/FeatureServer/0/query",
+    "pages_from": "realdata/philadelphia-housing/council_districts_2024.parquet"
+  }
+]

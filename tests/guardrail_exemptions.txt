@@ -5,20 +5,34 @@
 #   invariant<TAB>a build_damaged_catalog reason, verbatim
 #   config-key<TAB>key: why the reachability test cannot observe it
 
+xfail	#652	F	tests/integration/test_extract_recorded.py test_arcgis_layer_url_extracts_that_layer
 xfail	#748	none	tests/integration/test_generated_catalog_conformance.py PTL-DAT-009 rows fresh, re-add, item-id, realdata-rapidai4eo-sample
 xfail	#761	spec	tests/integration/test_generated_catalog_conformance.py PTL-EXT-001, PTL-PRT-001, PTL-SCH-001 row partitioned
+xfail	#768	F	tests/integration/test_extract_recorded.py test_wfs_exclude_layers_matches_the_leaf_name
 xfail	#801	C	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS S-EXTENT-NOT-STALE; tests/integration/test_generated_catalog_conformance.py row force-after-mutation; tests/properties/test_rebuild_idempotence.py
+xfail	#807	E	tests/integration/test_push_faults.py test_every_object_has_a_content_type
+xfail	#811	F	tests/integration/test_extract_recorded.py test_arcgis_discovery_retries_a_transient_error
+xfail	#812	F	tests/integration/test_extract_recorded.py test_arcgis_tables_only_service_fails_and_names_the_tables
 xfail	#813	C	tests/integration/test_generated_catalog_conformance.py PTL-PRV-001, PTL-SCH-001 row force-after-mutation
 xfail	#834	A	tests/integration/test_config_reachability.py
 xfail	#840	C	tests/integration/test_generated_catalog_conformance.py row item-id; invariant item-id reason
 xfail	#852	C	tests/integration/test_bbox_validation.py; invariant bbox_validation reason
+xfail	#855	F	tests/integration/test_extract_recorded.py test_arcgis_token_reaches_layer_discovery
+xfail	#908	E	tests/integration/test_push_faults.py test_multipart_chunk_size_keeps_parts_under_10000, test_multipart_put_passes_the_chunk_size
 xfail	#929	D	tests/integration/test_generated_catalog_conformance.py PTL-VIZ-002, PTL-VIZ-003 row sibling-pmtiles
 xfail	#930	D	tests/integration/test_generated_catalog_conformance.py row readme
 xfail	#932	spec	tests/integration/test_generated_catalog_conformance.py PTL-DAT-005 row multi-file
 xfail	#939	F	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS P-NO-LOCAL-PATH; tests/integration/test_generated_catalog_conformance.py row iceberg
 xfail	#960	D	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS P-DATA-ROLE-TYPE; tests/integration/test_generated_catalog_conformance.py row antimeridian
+xfail	#963	F	tests/integration/test_extract_recorded.py test_wfs_named_layer_with_no_features_fails
+xfail	#965	E	tests/integration/test_push_faults.py test_failed_second_push_keeps_first_push_objects
+xfail	#971	E	tests/integration/test_push_faults.py test_conflict_deletes_nothing_of_the_other_writer, test_root_versions_json_is_conditional
+xfail	#972	E	tests/integration/test_push_faults.py test_list_permission_denied_warns_once
+xfail	#981	F	tests/integration/test_extract_recorded.py test_wfs_api_key_stays_out_of_the_catalog
 xfail	#996	D	tests/integration/test_generated_catalog_conformance.py row realdata-nwi-wetlands
+xfail	#1003	F	tests/integration/test_extract_recorded.py test_arcgis_layers_matches_sparse_layer_ids, test_arcgis_exclude_layers_matches_sparse_layer_ids
 xfail	#1005	B	tests/integration/test_stdout_purity.py; tests/unit/test_cli_add_rm.py
+xfail	#1008	E	tests/integration/test_push_faults.py test_thread_pool_is_shut_down
 xfail	#1020	A	tests/integration/test_config_reachability.py
 xfail	#1023	C	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS P-SUMMARY-FROM-ITEMS; tests/integration/test_generated_catalog_conformance.py raster rows
 xfail	#1033	spec	tests/integration/test_generated_catalog_conformance.py PTL-COL-001 row realdata-rapidai4eo-sample
@@ -37,6 +51,7 @@ invariant	bbox_validation: the two-bbox antimeridian extent of #852
 invariant	item-id: hrefs point at a directory that does not exist (#840)
 invariant	check_fix: the test deletes the item JSON on purpose
 invariant	check_fix: --fix rewrites items.parquet and leaves versions.json stale (#1046)
+invariant	extract_recorded: extract wfs writes the api_key into the catalog (#981)
 
 config-key	partitioning.prompt: read only when stderr is a TTY, so CliRunner never reaches it
 config-key	pmtiles.bbox: shows only in decoded tile contents

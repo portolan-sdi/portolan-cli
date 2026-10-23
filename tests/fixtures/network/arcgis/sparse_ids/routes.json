@@ -1,0 +1,82 @@
+[
+  {
+    "method": "GET",
+    "path": "/arcgis/rest/services/MapServiceForOpenGov/MapServer",
+    "query_subset": {
+      "f": "json"
+    },
+    "body_file": "MapServiceForOpenGov_MapServer.json"
+  },
+  {
+    "method": "GET",
+    "path": "/arcgis/rest/services/MapServiceForOpenGov/MapServer/2",
+    "query_subset": {
+      "f": "json"
+    },
+    "body_file": "MapServiceForOpenGov_MapServer_2.json"
+  },
+  {
+    "method": "GET",
+    "path": "/arcgis/rest/services/MapServiceForOpenGov/MapServer/2/query",
+    "query_subset": {
+      "returnCountOnly": "true"
+    },
+    "body_file": "MapServiceForOpenGov_MapServer_2_count.json"
+  },
+  {
+    "method": "GET",
+    "path": "/arcgis/rest/services/MapServiceForOpenGov/MapServer/2/query",
+    "query_subset": {
+      "resultOffset": "0"
+    },
+    "body_file": "MapServiceForOpenGov_MapServer_2_page0.json"
+  },
+  {
+    "method": "GET",
+    "path": "/arcgis/rest/services/MapServiceForOpenGov/MapServer/9",
+    "query_subset": {
+      "f": "json"
+    },
+    "body_file": "MapServiceForOpenGov_MapServer_9.json"
+  },
+  {
+    "method": "GET",
+    "path": "/arcgis/rest/services/MapServiceForOpenGov/MapServer/9/query",
+    "query_subset": {
+      "returnCountOnly": "true"
+    },
+    "body_file": "MapServiceForOpenGov_MapServer_9_count.json"
+  },
+  {
+    "method": "GET",
+    "path": "/arcgis/rest/services/MapServiceForOpenGov/MapServer/9/query",
+    "query_subset": {
+      "resultOffset": "0"
+    },
+    "body_file": "MapServiceForOpenGov_MapServer_9_page0.json"
+  },
+  {
+    "method": "GET",
+    "path": "/arcgis/rest/services/MapServiceForOpenGov/MapServer/10",
+    "query_subset": {
+      "f": "json"
+    },
+    "body_file": "MapServiceForOpenGov_MapServer_10.json"
+  },
+  {
+    "method": "GET",
+    "path": "/arcgis/rest/services/MapServiceForOpenGov/MapServer/10/query",
+    "query_subset": {
+      "returnCountOnly": "true"
+    },
+    "body_file": "MapServiceForOpenGov_MapServer_10_count.json"
+  },
+  {
+    "method": "GET",
+    "path": "/arcgis/rest/services/MapServiceForOpenGov/MapServer/10/query",
+    "query_subset": {
+      "resultOffset": "0"
+    },
+    "body_file": "MapServiceForOpenGov_MapServer_10_page0.json"
+  }
+]

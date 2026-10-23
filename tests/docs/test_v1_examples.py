@@ -6,7 +6,6 @@ import json
 import os
 import subprocess
 import sys
-import threading
 from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
@@ -15,10 +14,10 @@ from typing import TYPE_CHECKING, Any, cast
 import pyarrow.parquet as pq
 import pytest
 
-from .philadelphia_arcgis_server import create_server
+from tests.replay_server import ReplayServer
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Iterator
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 README = PROJECT_ROOT / "README.md"
@@ -31,6 +30,7 @@ JOURNEY_STEPS = (
 )
 QUERY = EXAMPLE_DIR / "query.py"
 FIXTURE_DIR = PROJECT_ROOT / "tests" / "fixtures" / "realdata" / "philadelphia-housing"
+REPLAY_DIR = PROJECT_ROOT / "tests" / "fixtures" / "network" / "arcgis" / "philadelphia"
 CI_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
 
 EXPECTED_QUERY_OUTPUT = """\
@@ -59,33 +59,15 @@ def _read_text(path: Path) -> str:
 
 
 @contextmanager
-def _arcgis_server(tmp_path: Path) -> Iterator[tuple[str, Path, Callable[[], None]]]:
-    """Run the deterministic ArcGIS replay inside the current test worker."""
+def _arcgis_server() -> Iterator[tuple[str, ReplayServer]]:
+    """Replay the two Philadelphia services inside the current test worker."""
     assert (FIXTURE_DIR / "affordable_housing.parquet").is_file()
     assert (FIXTURE_DIR / "council_districts_2024.parquet").is_file()
 
-    request_log = tmp_path / "arcgis-requests.jsonl"
-    server = create_server(FIXTURE_DIR, request_log)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    stopped = False
-
-    def stop_server() -> None:
-        nonlocal stopped
-        if stopped:
-            return
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-        if thread.is_alive():
-            raise RuntimeError("ArcGIS fixture server did not stop")
-        stopped = True
-
-    port = int(server.server_address[1])
-    try:
-        yield f"http://127.0.0.1:{port}/ArcGIS/rest/services", request_log, stop_server
-    finally:
-        stop_server()
+    server = ReplayServer(REPLAY_DIR)
+    with server as base_url:
+        yield f"{base_url}/ArcGIS/rest/services", server
+    assert server.unmatched == []
 
 
 def _example_environment(
@@ -141,13 +123,6 @@ def _collection(catalog_dir: Path, collection_id: str) -> dict[str, Any]:
     """Read one generated STAC Collection."""
     value = json.loads(_read_text(catalog_dir / collection_id / "collection.json"))
     return cast("dict[str, Any]", value)
-
-
-def _requests(request_log: Path) -> list[dict[str, Any]]:
-    """Read the ArcGIS fixture server request log."""
-    return [
-        cast("dict[str, Any]", json.loads(line)) for line in _read_text(request_log).splitlines()
-    ]
 
 
 @pytest.mark.unit
@@ -226,7 +201,7 @@ def test_docs_ci_uses_anonymous_http_rustfs() -> None:
 
 @pytest.mark.unit
 def test_arcgis_fixture_starts_without_a_child_python_process(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The fixture does not repeat heavy imports in a resource-constrained child."""
 
@@ -235,10 +210,9 @@ def test_arcgis_fixture_starts_without_a_child_python_process(
 
     monkeypatch.setattr(subprocess, "Popen", reject_child_process)
 
-    with _arcgis_server(tmp_path) as (arcgis_url, request_log, stop_server):
+    with _arcgis_server() as (arcgis_url, server):
         assert arcgis_url.startswith("http://127.0.0.1:")
-        assert request_log == tmp_path / "arcgis-requests.jsonl"
-        assert callable(stop_server)
+        assert server.requests == []
 
 
 @pytest.mark.unit
@@ -308,7 +282,7 @@ def test_example_builds_and_analyzes_a_philadelphia_catalog(tmp_path: Path) -> N
     assert "✓ Added 2 files to 2 collections" in tutorial
     assert "✓ Pushed 2 collection(s), 4 version(s), 18 file(s)" in tutorial
 
-    with _arcgis_server(tmp_path) as (arcgis_url, request_log, _process):
+    with _arcgis_server() as (arcgis_url, server):
         result = _run_example(catalog_dir, arcgis_url)
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -370,21 +344,19 @@ def test_example_builds_and_analyzes_a_philadelphia_catalog(tmp_path: Path) -> N
             for index in bbox_columns
         )
 
-    requests = _requests(request_log)
     query_requests = [
         request
-        for request in requests
-        if str(request["path"]).endswith("/query")
-        and request["query"].get("returnCountOnly") != ["true"]
+        for request in server.requests
+        if request.path.endswith("/query") and request.query.get("returnCountOnly") != ["true"]
     ]
     affordable_offsets = [
-        int(request["query"]["resultOffset"][0])
+        int(request.query["resultOffset"][0])
         for request in query_requests
-        if "AffordableHousingProduction" in str(request["path"])
+        if "AffordableHousingProduction" in request.path
     ]
     assert sorted(set(affordable_offsets)) == [0, 100, 200, 300, 400, 500]
     assert Counter(affordable_offsets)[200] == 2
-    assert not any("Unrelated_Parks" in str(request["path"]) for request in requests)
+    assert not any("Unrelated_Parks" in request.path for request in server.requests)
 
     query = _run_query(str(catalog_dir))
     assert query.returncode == 0, query.stdout + query.stderr
@@ -405,10 +377,10 @@ def test_example_publishes_assets_that_remain_queryable_without_arcgis(
     catalog_dir = tmp_path / "philadelphia-housing"
     remote = "s3://portolan-docs/philadelphia-housing"
 
-    with _arcgis_server(tmp_path) as (arcgis_url, _request_log, stop_arcgis):
+    with _arcgis_server() as (arcgis_url, server):
         result = _run_example(catalog_dir, arcgis_url, remote)
         assert result.returncode == 0, result.stdout + result.stderr
-        stop_arcgis()
+        server.stop()
 
     query = _run_query("http://localhost:9000/portolan-docs/philadelphia-housing")
     assert query.returncode == 0, query.stdout + query.stderr

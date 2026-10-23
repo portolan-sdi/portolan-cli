@@ -1,0 +1,36 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/v2/sql",
+    "query_subset": {
+      "q": "SELECT cdb_usertables AS table_name FROM CDB_UserTables() ORDER BY 1"
+    },
+    "status": 403,
+    "body_file": "user_tables_forbidden.json"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/sql",
+    "query_subset": {
+      "q": "SELECT * FROM \"zoning_basedistricts\" LIMIT 0"
+    },
+    "body_file": "columns.json"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/sql",
+    "query_subset": {
+      "q": "SELECT COUNT(*) as count FROM \"zoning_basedistricts\""
+    },
+    "body_file": "count.json"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/sql",
+    "query_subset": {
+      "q": "SELECT * FROM \"zoning_basedistricts\" LIMIT 3",
+      "format": "GeoJSON"
+    },
+    "body_file": "features.json"
+  }
+]

@@ -26,7 +26,6 @@ from __future__ import annotations
 import json
 import shutil
 import sys
-import threading
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -382,20 +381,41 @@ def _realdata(source: Path, *, expect: int = 0) -> Builder:
     return build
 
 
+def _extract_recorded(
+    root: Path, run: RunCli, scenario: str, kind: str, path: str, *args: str
+) -> None:
+    """Run ``extract`` against a recorded scenario of ``tests/replay_server.py``."""
+    from tests.replay_server import ReplayServer
+
+    server = ReplayServer(FIXTURES / "network" / scenario)
+    with server as base_url:
+        run("extract", kind, base_url + path, str(root), "--auto", "--license", "CC-BY-4.0", *args)
+    assert server.unmatched == []
+
+
 def build_extract_arcgis(root: Path, run: RunCli) -> None:
     """Extract both services of the recorded Philadelphia ArcGIS server."""
-    from tests.docs.philadelphia_arcgis_server import create_server
+    _extract_recorded(root, run, "arcgis/philadelphia", "arcgis", "/ArcGIS/rest/services")
 
-    server = create_server(PHILADELPHIA, root.parent / "arcgis-requests.jsonl")
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        url = f"http://127.0.0.1:{server.server_address[1]}/ArcGIS/rest/services"
-        run("extract", "arcgis", url, str(root), "--auto", "--license", "CC-BY-4.0")
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+
+def build_extract_wfs(root: Path, run: RunCli) -> None:
+    """Extract the two prefixed layers of the recorded GeoServer WFS."""
+    _extract_recorded(root, run, "wfs/workspace_layer", "wfs", "/geoserver/wfs")
+
+
+def build_extract_carto(root: Path, run: RunCli) -> None:
+    """Extract three rows of the recorded Philadelphia CARTO table."""
+    _extract_recorded(
+        root,
+        run,
+        "carto/phl_zoning",
+        "carto",
+        "/api/v2/sql",
+        "--tables",
+        "zoning_basedistricts",
+        "--limit",
+        "3",
+    )
 
 
 @contextmanager
@@ -657,6 +677,25 @@ SCENARIOS: dict[str, Scenario] = {
             "PTL-VIZ-001": EXTRACT_PROVIDERS,
         },
         marks=(pytest.mark.realdata,),
+    ),
+    "extract-wfs": Scenario(
+        build_extract_wfs,
+        known_errors={
+            "PTL-PRV-001": EXTRACT_PROVIDERS,
+            "PTL-SCH-001": EXTRACT_PROVIDERS,
+            "PTL-VIZ-001": EXTRACT_PROVIDERS,
+        },
+        # register_legend_assets in viz/style.py writes the legends/source
+        # asset of topp_states with no file:size and no file:checksum.
+        expected_advisories={"PTL-AST-003": 2},
+    ),
+    "extract-carto": Scenario(
+        build_extract_carto,
+        known_errors={
+            "PTL-PRV-001": EXTRACT_PROVIDERS,
+            "PTL-SCH-001": EXTRACT_PROVIDERS,
+            "PTL-VIZ-001": EXTRACT_PROVIDERS,
+        },
     ),
     "push": Scenario(build_push, expected_advisories=ONE_MIRROR),
     "clone": Scenario(

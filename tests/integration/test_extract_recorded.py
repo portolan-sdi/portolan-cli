@@ -1,0 +1,304 @@
+"""Run the real ``extract`` command against recorded service responses.
+
+Each scenario under ``tests/fixtures/network/`` holds the response shape that
+broke a production extraction: sparse ArcGIS layer IDs, a layer URL, a
+FeatureServer with only tables, a token gate, a transient 503, prefixed WFS
+names, an empty FeatureCollection, and an API key in the WFS URL. Its README
+names the issue and the source of the recording.
+
+``tests/replay_server.py`` serves the scenario on the loopback interface, so
+the requests of ``httpx``, ``requests``, and geoparquet-io all reach it. Each
+test asserts ``server.unmatched == []`` first. That proves the recording
+covers every request that the extraction made. The test then asserts the
+exact layer set in the extraction report and the exit code.
+
+A test that fails on ``origin/main`` carries a strict xfail with its issue
+number. The fix for that issue removes the marker.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import pytest
+
+from tests.replay_server import ReplayServer
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from click.testing import Result
+
+    from tests.catalog_invariants import RunCli
+
+pytestmark = [pytest.mark.integration]
+
+NETWORK = Path(__file__).resolve().parents[1] / "fixtures" / "network"
+EAST_HAMPTON = "/arcgis/rest/services/MapServiceForOpenGov/MapServer"
+BOSTON = "/arcgis/rest/services/BaseServices/Open_Space_Public/MapServer"
+
+LayerRow = tuple[Any, str, str, int]
+SCENARIOS = sorted(path.parent for path in NETWORK.glob("*/*/routes.json"))
+
+
+@dataclass(frozen=True)
+class Extraction:
+    """One ``extract`` run against one scenario."""
+
+    scenario: str
+    kind: str
+    path: str
+    args: tuple[str, ...] = ()
+
+
+EXTRACTIONS = {
+    "sparse_ids-layers": Extraction("arcgis/sparse_ids", "arcgis", EAST_HAMPTON, ("--layers", "2")),
+    "sparse_ids-exclude": Extraction(
+        "arcgis/sparse_ids", "arcgis", EAST_HAMPTON, ("--exclude-layers", "2")
+    ),
+    "layer_url": Extraction("arcgis/layer_url", "arcgis", f"{BOSTON}/0"),
+    "tables_only": Extraction(
+        "arcgis/tables_only", "arcgis", "/arcgis/rest/services/zoning_descriptions/FeatureServer"
+    ),
+    "token_gated": Extraction(
+        "arcgis/token_gated",
+        "arcgis",
+        "/arcgis/rest/services/Secured/Open_Space_Public/MapServer",
+        ("--token", "REPLAY-TOKEN"),
+    ),
+    "transient_error": Extraction("arcgis/transient_error", "arcgis", BOSTON, ("--retries", "2")),
+    "workspace_layer-exclude": Extraction(
+        "wfs/workspace_layer", "wfs", "/geoserver/wfs", ("--exclude-layers", "states")
+    ),
+    "workspace_layer-layers": Extraction(
+        "wfs/workspace_layer", "wfs", "/geoserver/wfs", ("--layers", "topp:states")
+    ),
+    "empty_collection": Extraction(
+        "wfs/empty_collection",
+        "wfs",
+        "/n2000/wfs",
+        ("--layers", "N2000_WFS:N2000", "--wfs-version", "2.0.0"),
+    ),
+    "geodata_gov_md": Extraction("wfs/geodata_gov_md", "wfs", "/geoserver/wfs?api_key=SECRET"),
+    "phl_zoning": Extraction(
+        "carto/phl_zoning",
+        "carto",
+        "/api/v2/sql",
+        ("--tables", "zoning_basedistricts", "--limit", "3"),
+    ),
+}
+# tests/docs/test_v1_examples.py replays arcgis/philadelphia. It asserts
+# server.unmatched == [] with no xfail marker.
+CHECKED_ELSEWHERE = {"arcgis/philadelphia"}
+
+
+def _run(case: str, tmp_path: Path, run_cli: RunCli) -> tuple[Result, ReplayServer, Path]:
+    """Run one extraction against its scenario and return the result, server, and output."""
+    extraction = EXTRACTIONS[case]
+    out = tmp_path / "out"
+    server = ReplayServer(NETWORK / extraction.scenario)
+    with server as base_url:
+        result = run_cli(
+            "extract",
+            extraction.kind,
+            base_url + extraction.path,
+            str(out),
+            "--auto",
+            "--license",
+            "CC-BY-4.0",
+            "--retries",
+            "1",
+            *extraction.args,
+            expect=None,
+        )
+    return result, server, out
+
+
+def _report(out: Path) -> list[dict[str, Any]]:
+    report = json.loads((out / ".portolan" / "extraction-report.json").read_text())
+    layers: list[dict[str, Any]] = report["layers"]
+    return layers
+
+
+def _layers(out: Path) -> list[LayerRow]:
+    """Return (id, name, status, features) for each layer in the extraction report."""
+    return [
+        (layer["id"], layer["name"], layer["status"], layer.get("features") or 0)
+        for layer in _report(out)
+    ]
+
+
+def _wfs_layers(out: Path) -> list[tuple[str, str, int]]:
+    """Return (name, status, features) for each layer. A WFS ID is a list position."""
+    return sorted(
+        (layer["name"], layer["status"], layer.get("features") or 0) for layer in _report(out)
+    )
+
+
+# A case whose output breaks a catalog invariant because of an open bug. The
+# reason is an ``invariant`` line in tests/guardrail_exemptions.txt.
+DAMAGED = {
+    "geodata_gov_md": "extract_recorded: extract wfs writes the api_key into the catalog (#981)"
+}
+
+
+@pytest.mark.parametrize("case", sorted(EXTRACTIONS))
+def test_recording_answers_every_request(
+    case: str,
+    tmp_path: Path,
+    run_cli: RunCli,
+    build_damaged_catalog: Callable[[Path, str], Path],
+) -> None:
+    """The scenario answers each request of the extraction.
+
+    This test has no xfail marker. A strict xfail on a behavior test also
+    swallows a lost route, so this test keeps the recording gate visible.
+    """
+    if case in DAMAGED:
+        build_damaged_catalog(tmp_path / "out", DAMAGED[case])
+    _result, server, _out = _run(case, tmp_path, run_cli)
+
+    assert server.unmatched == []
+
+
+@pytest.mark.unit
+def test_every_scenario_has_a_recording_gate() -> None:
+    """Each scenario directory has an extraction in ``EXTRACTIONS`` or a gate elsewhere."""
+    covered = {extraction.scenario for extraction in EXTRACTIONS.values()} | CHECKED_ELSEWHERE
+    on_disk = {f"{path.parent.name}/{path.name}" for path in SCENARIOS}
+    assert sorted(covered) == sorted(on_disk)
+
+
+@pytest.mark.xfail(strict=True, reason="#1003: --layers matches the list position, not the ID")
+def test_arcgis_layers_matches_sparse_layer_ids(tmp_path: Path, run_cli: RunCli) -> None:
+    """``--layers 2`` extracts layer ID 2 of a service whose IDs are 2, 9, 10."""
+    result, server, out = _run("sparse_ids-layers", tmp_path, run_cli)
+
+    assert server.unmatched == []
+    assert result.exit_code == 0, result.output
+    assert _layers(out) == [(2, "Municipal Boundary Lines", "success", 2)]
+
+
+@pytest.mark.xfail(
+    strict=True, reason="#1003: --exclude-layers matches the list position, not the ID"
+)
+def test_arcgis_exclude_layers_matches_sparse_layer_ids(tmp_path: Path, run_cli: RunCli) -> None:
+    """``--exclude-layers 2`` keeps layer IDs 9 and 10."""
+    result, server, out = _run("sparse_ids-exclude", tmp_path, run_cli)
+
+    assert server.unmatched == []
+    assert result.exit_code == 0, result.output
+    assert sorted(_layers(out)) == [
+        (9, "EH Fire Districts", "success", 2),
+        (10, "EH School Districts", "success", 2),
+    ]
+
+
+@pytest.mark.xfail(strict=True, reason="#652: a layer URL extracts 0 layers and exits 0")
+def test_arcgis_layer_url_extracts_that_layer(tmp_path: Path, run_cli: RunCli) -> None:
+    """A URL that ends in ``/MapServer/0`` extracts layer 0."""
+    result, server, out = _run("layer_url", tmp_path, run_cli)
+
+    assert server.unmatched == []
+    assert result.exit_code == 0, result.output
+    assert _layers(out) == [(0, "PRK.open_space", "success", 2)]
+
+
+@pytest.mark.xfail(strict=True, reason="#812: a tables-only FeatureServer reports 0/0 and exits 0")
+def test_arcgis_tables_only_service_fails_and_names_the_tables(
+    tmp_path: Path, run_cli: RunCli
+) -> None:
+    """A service that holds one table and no layer exits 1 and says why (#1034)."""
+    result, server, _out = _run("tables_only", tmp_path, run_cli)
+
+    assert server.unmatched == []
+    assert result.exit_code == 1, result.output
+    assert "Extracted 0/0 layers" not in result.output
+    assert "table" in result.output.lower()
+
+
+@pytest.mark.xfail(strict=True, reason="#855: layer discovery sends no token")
+def test_arcgis_token_reaches_layer_discovery(tmp_path: Path, run_cli: RunCli) -> None:
+    """``--token`` reaches every request of a token-gated server."""
+    result, server, out = _run("token_gated", tmp_path, run_cli)
+
+    assert server.unmatched == []
+    assert [r.path for r in server.requests if "token" not in r.query] == []
+    assert result.exit_code == 0, result.output
+    assert _layers(out) == [(0, "PRK.open_space", "success", 2)]
+
+
+@pytest.mark.xfail(strict=True, reason="#811: one transient discovery error ends the harvest")
+def test_arcgis_discovery_retries_a_transient_error(tmp_path: Path, run_cli: RunCli) -> None:
+    """A 503 on the first service request is retried, and the layer extracts."""
+    result, server, out = _run("transient_error", tmp_path, run_cli)
+
+    assert server.unmatched == []
+    assert [r.status for r in server.requests if r.path == BOSTON] == [503, 200]
+    assert result.exit_code == 0, result.output
+    assert _layers(out) == [(0, "PRK.open_space", "success", 2)]
+
+
+@pytest.mark.xfail(
+    strict=True, reason="#768: --exclude-layers compares the leaf with workspace:layer"
+)
+def test_wfs_exclude_layers_matches_the_leaf_name(tmp_path: Path, run_cli: RunCli) -> None:
+    """``--exclude-layers states`` excludes ``topp:states``."""
+    result, server, out = _run("workspace_layer-exclude", tmp_path, run_cli)
+
+    assert server.unmatched == []
+    assert result.exit_code == 0, result.output
+    assert _wfs_layers(out) == [("topp:tasmania_roads", "success", 2)]
+
+
+def test_wfs_layers_matches_the_qualified_name(tmp_path: Path, run_cli: RunCli) -> None:
+    """``--layers topp:states`` extracts that layer only. This is the control for #768."""
+    result, server, out = _run("workspace_layer-layers", tmp_path, run_cli)
+
+    assert server.unmatched == []
+    assert result.exit_code == 0, result.output
+    assert _wfs_layers(out) == [("topp:states", "success", 2)]
+
+
+@pytest.mark.xfail(strict=True, reason="#963: a named layer with 0 features exits 0")
+def test_wfs_named_layer_with_no_features_fails(tmp_path: Path, run_cli: RunCli) -> None:
+    """A layer named with ``--layers`` that returns 0 features fails the run (#1034)."""
+    result, server, out = _run("empty_collection", tmp_path, run_cli)
+
+    assert server.unmatched == []
+    assert result.exit_code == 1, result.output
+    assert _wfs_layers(out) == [("N2000_WFS:N2000", "failed", 0)]
+
+
+@pytest.mark.xfail(strict=True, reason="#981: the WFS api_key reaches the published catalog")
+def test_wfs_api_key_stays_out_of_the_catalog(tmp_path: Path, run_cli: RunCli) -> None:
+    """No file under the output root holds the API key of the service URL."""
+    result, server, out = _run("geodata_gov_md", tmp_path, run_cli)
+
+    assert server.unmatched == []
+    assert result.exit_code == 0, result.output
+    assert _wfs_layers(out) == [("topp:tasmania_roads", "success", 2)]
+    leaks = sorted(
+        str(path.relative_to(out))
+        for path in out.rglob("*")
+        if path.is_file() and b"SECRET" in path.read_bytes()
+    )
+    assert leaks == []
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda path: f"{path.parent.name}/{path.name}")
+def test_scenario_is_documented_small_and_has_no_stray_file(scenario: Path) -> None:
+    """Each scenario names its issue or test, stays under 100 KB, and serves every file."""
+    readme = (scenario / "README.md").read_text(encoding="utf-8")
+    assert re.search(r"#\d+|`tests/[\w/]+\.py`", readme), scenario
+    assert "\n## Source\n" in readme, scenario
+    assert sum(path.stat().st_size for path in scenario.iterdir()) < 100_000
+
+    bodies = {route.body_file for route in ReplayServer(scenario).routes}
+    stray = {path.name for path in scenario.iterdir()} - bodies - {"README.md", "routes.json"}
+    assert sorted(stray) == []

@@ -97,10 +97,9 @@ temp_catalog_dir  # unused function (tests/conftest.py:494)
 pytestmark  # unused variable (tests/benchmark/test_entry_points_scan.py:25, 141 more)
 
 # --- tests/docs ---
-_.do_GET  # unused method (tests/docs/philadelphia_arcgis_server.py:195)
-_.log_message  # unused method (tests/docs/philadelphia_arcgis_server.py:184)
+_.log_message  # unused method (tests/replay_server.py:141)
 catalog_with_geojson  # unused function (tests/docs/conftest.py:77)
-daemon_threads  # unused variable (tests/docs/philadelphia_arcgis_server.py:145)
+daemon_threads  # unused variable (tests/replay_server.py:131)
 
 # --- tests/fixtures ---
 convert_to_geoparquet  # unused function (tests/fixtures/generate.py:444)

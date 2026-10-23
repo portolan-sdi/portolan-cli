@@ -1,0 +1,44 @@
+[
+ {
+  "method": "GET",
+  "path": "/arcgis/rest/services/BaseServices/Open_Space_Public/MapServer",
+  "query_subset": {
+   "f": "json"
+  },
+  "body_file": "unavailable.json",
+  "status": 503,
+  "times": 1
+ },
+ {
+  "method": "GET",
+  "path": "/arcgis/rest/services/BaseServices/Open_Space_Public/MapServer",
+  "query_subset": {
+   "f": "json"
+  },
+  "body_file": "BaseServices_Open_Space_Public_MapServer.json"
+ },
+ {
+  "method": "GET",
+  "path": "/arcgis/rest/services/BaseServices/Open_Space_Public/MapServer/0",
+  "query_subset": {
+   "f": "json"
+  },
+  "body_file": "BaseServices_Open_Space_Public_MapServer_0.json"
+ },
+ {
+  "method": "GET",
+  "path": "/arcgis/rest/services/BaseServices/Open_Space_Public/MapServer/0/query",
+  "query_subset": {
+   "returnCountOnly": "true"
+  },
+  "body_file": "BaseServices_Open_Space_Public_MapServer_0_count.json"
+ },
+ {
+  "method": "GET",
+  "path": "/arcgis/rest/services/BaseServices/Open_Space_Public/MapServer/0/query",
+  "query_subset": {
+   "resultOffset": "0"
+  },
+  "body_file": "BaseServices_Open_Space_Public_MapServer_0_page0.json"
+ }
+]

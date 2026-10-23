@@ -1045,23 +1045,19 @@ def _aws_env(s3_bucket: tuple[str, str], monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 @pytest.fixture
-def arcgis_url(tmp_path: Path, fixtures_dir: Path) -> Iterator[str]:
+def arcgis_url(fixtures_dir: Path) -> Iterator[str]:
     """Serve the recorded Philadelphia ArcGIS services on the loopback interface.
 
-    Yields the services root URL for ``extract arcgis``.
+    Yields the services root URL for ``extract arcgis``. The scenario is
+    ``tests/fixtures/network/arcgis/philadelphia``. At teardown the fixture
+    asserts that the scenario answered every request.
     """
-    import threading
+    from tests.replay_server import ReplayServer
 
-    from tests.docs.philadelphia_arcgis_server import create_server
-
-    layers = fixtures_dir / "realdata" / "philadelphia-housing"
-    server = create_server(layers, tmp_path / "arcgis-requests.jsonl")
-    worker = threading.Thread(target=server.serve_forever, daemon=True)
-    worker.start()
-    yield f"http://127.0.0.1:{server.server_address[1]}/ArcGIS/rest/services"
-    server.shutdown()
-    server.server_close()
-    worker.join(timeout=5)
+    server = ReplayServer(fixtures_dir / "network" / "arcgis" / "philadelphia")
+    with server as base_url:
+        yield f"{base_url}/ArcGIS/rest/services"
+    assert server.unmatched == []
 
 
 # =============================================================================
