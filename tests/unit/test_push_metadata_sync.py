@@ -790,8 +790,11 @@ class TestPushNoVersionChangeMetadataSync:
 
         uploaded_keys: list[str] = []
 
-        async def mock_put_async(store: Any, key: str, content: Any, **kwargs: Any) -> None:
+        async def mock_put_async(
+            store: Any, key: str, content: Any, **kwargs: Any
+        ) -> dict[str, Any]:
             uploaded_keys.append(key)
+            return {"e_tag": "e1", "version": None}
 
         with (
             patch("portolan_cli.sync.push.setup_store", return_value=(MagicMock(), "prefix")),
@@ -855,8 +858,11 @@ class TestPushNoVersionChangeMetadataSync:
 
         uploaded_keys: list[str] = []
 
-        async def mock_put_async(store: Any, key: str, content: Any, **kwargs: Any) -> None:
+        async def mock_put_async(
+            store: Any, key: str, content: Any, **kwargs: Any
+        ) -> dict[str, Any]:
             uploaded_keys.append(key)
+            return {"e_tag": "e1", "version": None}
 
         with (
             patch("portolan_cli.sync.push.setup_store", return_value=(MagicMock(), "prefix")),

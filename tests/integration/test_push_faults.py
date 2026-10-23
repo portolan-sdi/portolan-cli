@@ -260,7 +260,8 @@ def test_multipart_chunk_size_keeps_parts_under_10000() -> None:
         chunk = multipart_chunk_size(size)
         assert chunk >= 5 * 2**20, size
         assert chunk * 10_000 >= size, size
-    assert multipart_chunk_size(6 * 2**30) * 10_000 >= 6 * 2**30
+    # One byte over 9000 parts of 5 MiB grows the part size by one byte.
+    assert multipart_chunk_size(9000 * 5 * 2**20 + 1) == 5 * 2**20 + 1
     assert multipart_chunk_size(1024) == 5 * 2**20
 
 
