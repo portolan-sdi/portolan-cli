@@ -42,11 +42,8 @@ from fnmatch import fnmatchcase
 from functools import cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import parse_qs, urlparse
-
-if TYPE_CHECKING:
-    from types import TracebackType
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 _TEXT_TYPES = ("json", "xml", "text", "html")
@@ -225,12 +222,7 @@ class ReplayServer:
         self._thread.start()
         return self.url
 
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
+    def __exit__(self, *_exc_info: object) -> None:
         """Stop the server and wait for its thread."""
         self.stop()
 
