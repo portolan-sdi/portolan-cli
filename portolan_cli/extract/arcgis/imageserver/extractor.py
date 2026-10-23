@@ -1254,8 +1254,8 @@ def _auto_init_catalog(
     Returns:
         True if catalog was initialized, False if no files to add.
     """
-    from portolan_cli.add import add_files
     from portolan_cli.catalog import CatalogState, detect_state, init_catalog
+    from portolan_cli.extract.common.orchestrator_base import add_extracted_files
 
     # Get list of extracted COG files (nested in item directories)
     collection_dir = output_dir / collection_name
@@ -1289,10 +1289,7 @@ def _auto_init_catalog(
         )
 
     # Add all COG files - this creates items per raster
-    add_files(
-        paths=cog_files,
-        catalog_root=output_dir,
-    )
+    add_extracted_files(cog_files, output_dir)
 
     return True
 

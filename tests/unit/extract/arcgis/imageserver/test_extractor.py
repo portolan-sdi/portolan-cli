@@ -605,7 +605,7 @@ class TestAutoInitCatalogExistingCatalog:
             return output_dir / "catalog.json", []
 
         monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
-        monkeypatch.setattr(add_mod, "add_files", lambda **k: events.append("add"))
+        monkeypatch.setattr(add_mod, "add_files", lambda **k: events.append("add") or ([], [], []))
 
         result = _auto_init_catalog(tmp_path, service_name="svc")
 
@@ -638,7 +638,7 @@ class TestAutoInitCatalogExistingCatalog:
         monkeypatch.setattr(
             catalog_mod, "init_catalog", lambda *a, **k: (tmp_path / "catalog.json", [])
         )
-        monkeypatch.setattr(add_mod, "add_files", lambda **k: events.append("add"))
+        monkeypatch.setattr(add_mod, "add_files", lambda **k: events.append("add") or ([], [], []))
 
         result = _auto_init_catalog(tmp_path, service_name="svc", collection_name="naip-2024")
 
@@ -661,7 +661,7 @@ class TestAutoInitCatalogExistingCatalog:
             return output_dir / "catalog.json", ["Derived catalog id 'publish'"]
 
         monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
-        monkeypatch.setattr(add_mod, "add_files", lambda **k: None)
+        monkeypatch.setattr(add_mod, "add_files", lambda **k: ([], [], []))
 
         _auto_init_catalog(tmp_path, service_name="svc")
 
@@ -679,7 +679,7 @@ class TestAutoInitCatalogExistingCatalog:
 
         import portolan_cli.add as add_mod
 
-        monkeypatch.setattr(add_mod, "add_files", lambda **k: None)
+        monkeypatch.setattr(add_mod, "add_files", lambda **k: ([], [], []))
 
         _auto_init_catalog(tmp_path, service_name="svc", catalog_id="phl-housing")
 

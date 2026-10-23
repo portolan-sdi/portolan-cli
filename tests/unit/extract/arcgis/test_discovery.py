@@ -565,6 +565,26 @@ def test_discover_layers_skips_tiles_only_service(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.unit
+def test_discover_layers_reads_every_field(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A layer or table without a type gets the default type. The license fields are kept."""
+    result = _discover_with(
+        monkeypatch,
+        {
+            "layers": [{"id": 4, "name": "roads"}, {"id": 5, "name": "rail", "type": "Raster"}],
+            "tables": [{"id": 6, "name": "codes"}],
+            "licenseInfo": "CC-BY 4.0",
+            "accessInformation": "City GIS",
+        },
+    )
+
+    assert (result.layers, result.tables) == (
+        [LayerInfo(4, "roads", "Feature Layer"), LayerInfo(5, "rail", "Raster")],
+        [LayerInfo(6, "codes", "Table")],
+    )
+    assert (result.license_info, result.access_information) == ("CC-BY 4.0", "City GIS")
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("capabilities", ["Map,Query,Data", "Query", " map , QUERY ", None, "", 5])
 def test_discover_layers_keeps_layers_when_query_or_unknown(
     monkeypatch: pytest.MonkeyPatch, capabilities: Any

@@ -2007,6 +2007,25 @@ def test_layer_url_discovers_that_one_layer_as_named() -> None:
 
 
 @pytest.mark.unit
+def test_service_url_with_a_query_builds_layer_urls_without_it() -> None:
+    """A pasted ``?f=json&token=T`` URL gives ``.../FeatureServer/0``, and T works as --token."""
+    layer_source = ArcGISLayerSource(ExtractionOptions())
+    with patch(
+        "portolan_cli.extract.arcgis.orchestrator.discover_layers", return_value=_PARKS_AND_ROADS
+    ) as mock:
+        discovery = layer_source.discover(
+            f"{TEST_FEATURE_SERVER_URL}?f=json&token=T", LayerSourceOptions()
+        )
+
+    assert [ref.data.url for ref in discovery.layers] == [
+        f"{TEST_FEATURE_SERVER_URL}/0",
+        f"{TEST_FEATURE_SERVER_URL}/1",
+    ]
+    assert (mock.call_args.args[0], mock.call_args.args[1].token) == (TEST_FEATURE_SERVER_URL, "T")
+    assert layer_source.options.token == "T"
+
+
+@pytest.mark.unit
 def test_layer_url_can_name_a_table() -> None:
     discovery = _discover(f"{TEST_FEATURE_SERVER_URL}/2", _PARKS_AND_ROADS)
 

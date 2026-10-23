@@ -39,7 +39,19 @@ class TestMergeQuery:
 
 class TestSanitizePublishedString:
     @pytest.mark.parametrize(
-        "name", ["token", "api_key", "apikey", "KEY", "access_token", "signature", "sig"]
+        "name",
+        [
+            "token",
+            "api_key",
+            "apikey",
+            "KEY",
+            "access_token",
+            "signature",
+            "sig",
+            "authkey",
+            "X-Goog-Signature",
+            "subscription-key",
+        ],
     )
     def test_credential_parameter_is_removed(self, name: str) -> None:
         url = f"https://h.example/wfs?service=WFS&{name}=SECRET&typename=a"
@@ -73,3 +85,16 @@ class TestSanitizePublishedString:
 
     def test_plain_text_is_unchanged(self) -> None:
         assert sanitize_published_string("City of Philadelphia") == "City of Philadelphia"
+
+    def test_url_inside_text_loses_its_credential(self) -> None:
+        """#981: an error message that quotes a request URL drops the credential of the URL."""
+        text = "Error page from https://u:pw@h.example/wfs?authkey=SECRET&n=1: blocked. See /tmp/x"
+
+        assert sanitize_published_string(text) == (
+            "Error page from https://h.example/wfs?n=1: blocked. See /tmp/x"
+        )
+
+    def test_url_inside_text_without_credential_is_unchanged(self) -> None:
+        text = "Layer roads at https://h.example/MapServer/0?f=json&a=b%2Fc: HTTP 500"
+
+        assert sanitize_published_string(text) == text

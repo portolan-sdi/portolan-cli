@@ -29,6 +29,7 @@ CREDENTIAL_QUERY_PARAMS = frozenset(
         "api_key",
         "apikey",
         "auth",
+        "authkey",
         "authorization",
         "client_secret",
         "key",
@@ -36,10 +37,12 @@ CREDENTIAL_QUERY_PARAMS = frozenset(
         "secret",
         "sig",
         "signature",
+        "subscription-key",
         "token",
         "x-amz-credential",
         "x-amz-security-token",
         "x-amz-signature",
+        "x-goog-signature",
     }
 )
 
@@ -63,6 +66,8 @@ WFS_REQUEST_PARAMS = frozenset(
 # A local path: POSIX absolute, Windows drive, or UNC share.
 _LOCAL_PATH = re.compile(r"^(/|[A-Za-z]:[\\/]|\\\\)")
 _LOCAL_SCHEMES = ("file:", "sqlite:")
+# A URL inside a text, such as an error message that quotes a request.
+_URL_IN_TEXT = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s<>\"'`]+")
 
 
 def merge_query(
@@ -89,7 +94,8 @@ def merge_query(
 def sanitize_published_string(value: str) -> str | None:
     """Return ``value`` safe to publish, or None when no safe form exists.
 
-    A URL loses its userinfo and every credential query parameter. A local
+    Each URL in ``value`` loses its userinfo and every credential query
+    parameter. This covers a URL that an error message quotes. A local
     location (``file:``, ``sqlite:``, or an absolute path) has no safe form,
     because it names the layout of the machine that ran the command. Other
     text is returned unchanged.
@@ -102,13 +108,24 @@ def sanitize_published_string(value: str) -> str | None:
     """
     if value.lower().startswith(_LOCAL_SCHEMES) or _LOCAL_PATH.match(value):
         return None
-    parsed = urlparse(value)
-    if not parsed.scheme or not parsed.netloc:
-        return value
-    if parsed.username is not None or parsed.password is not None:
+    return _URL_IN_TEXT.sub(lambda match: _sanitize_url(match.group()), value)
+
+
+def _sanitize_url(text: str) -> str:
+    """Return the URL in ``text`` with no userinfo and no credential parameter.
+
+    Punctuation at the end of ``text`` ends the sentence, not the URL.
+    """
+    url = text.rstrip(".,:;!?)")
+    parsed = urlparse(url)
+    if not parsed.netloc:
+        return text
+    changed = parsed.username is not None or parsed.password is not None
+    if changed:
         parsed = parsed._replace(netloc=parsed.netloc.rsplit("@", 1)[1])
     pairs = parse_qsl(parsed.query, keep_blank_values=True)
     kept = [(name, item) for name, item in pairs if name.lower() not in CREDENTIAL_QUERY_PARAMS]
     if len(kept) != len(pairs):
         parsed = parsed._replace(query=urlencode(kept))
-    return urlunparse(parsed)
+        changed = True
+    return urlunparse(parsed) + text[len(url) :] if changed else text

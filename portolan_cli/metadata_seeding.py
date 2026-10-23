@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from portolan_cli.constants import TODO_MARKER
+from portolan_cli.extract.common.urls import sanitize_published_string
 from portolan_cli.licensing import OTHER_LICENSE, ResolvedLicense
 
 if TYPE_CHECKING:
@@ -169,9 +170,11 @@ def _build_metadata_dict(
     elif placeholders:
         metadata["license"] = TODO_MARKER
 
-    # Optional fields - only include if we have data
-    if extracted.source_url:
-        metadata["source_url"] = extracted.source_url
+    # Optional fields - only include if we have data. The source URL is
+    # published, so it carries no credential and no local path (issue #981).
+    source_url = extracted.source_url and sanitize_published_string(extracted.source_url)
+    if source_url:
+        metadata["source_url"] = source_url
 
     if extracted.description:
         metadata["description"] = extracted.description

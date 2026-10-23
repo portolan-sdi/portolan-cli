@@ -49,14 +49,6 @@ class LayerInfo:
     bbox: tuple[float, float, float, float] | None = None
     id: int = 0
 
-    def to_filter_dict(self) -> dict[str, int | str]:
-        """Convert to dict format expected by filter_layers.
-
-        Returns:
-            Dict with 'id' and 'name' keys for glob filtering.
-        """
-        return {"id": self.id, "name": self.name}
-
 
 @dataclass
 class WFSDiscoveryResult:

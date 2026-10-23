@@ -210,6 +210,20 @@ class TestSeedMetadataYaml:
         content = yaml.safe_load(metadata_path.read_text())
         assert content["source_url"] == "https://services.arcgis.com/test/ImageServer"
 
+    def test_seed_drops_a_token_from_the_source_url(self, tmp_path: Path) -> None:
+        """#981: an ImageServer URL with a token seeds the URL without the token."""
+        from portolan_cli.metadata_seeding import seed_metadata_yaml
+
+        metadata = make_imageserver_metadata_extracted(
+            source_url="https://services.arcgis.com/test/ImageServer?token=SECRET&f=json"
+        )
+        metadata_path = tmp_path / ".portolan" / "metadata.yaml"
+
+        seed_metadata_yaml(metadata.to_extracted(), metadata_path)
+
+        content = yaml.safe_load(metadata_path.read_text())
+        assert content["source_url"] == "https://services.arcgis.com/test/ImageServer?f=json"
+
     def test_seed_includes_processing_notes(self, tmp_path: Path) -> None:
         """Seeded metadata.yaml contains processing_notes with technical specs."""
         from portolan_cli.metadata_seeding import seed_metadata_yaml

@@ -119,6 +119,24 @@ class TestFilterRefs:
             "cadastru_data:terenuri, cadastru_data:UAT1, cadastru_data:cladiri"
         ]
 
+    def test_id_pattern_that_matches_an_id_does_not_warn(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="portolan_cli.extract.common.source"):
+            kept = filter_refs(_refs(["a", "b"], ids=[3, 7]), ["7"], None)
+
+        assert ([ref.name for ref in kept], caplog.records) == (["b"], [])
+
+    def test_a_source_with_no_layers_warns_with_none(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="portolan_cli.extract.common.source"):
+            filter_refs([], ["roads"], None)
+
+        assert [record.getMessage() for record in caplog.records] == [
+            "Layer pattern 'roads' matches no layer. Layers at the source include: none"
+        ]
+
     def test_named_layer_is_explicit_and_glob_match_is_not(self) -> None:
         kept = filter_refs(_refs(_WFS_NAMES), ["UAT1", "*:clad*"], None)
 
@@ -197,6 +215,61 @@ class TestZeroLayers:
             )
 
 
+class TestFetchRetry:
+    def test_a_fetch_that_writes_zero_rows_is_empty(self, tmp_path: Path) -> None:
+        class _ZeroRows(_FakeSource):
+            def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
+                self.fetched.append(layer.name)
+                pq.write_table(pa.table({"value": pa.array([], pa.int64())}), dest)
+                return 0
+
+        source = _ZeroRows(_refs(["a"]))
+
+        report = run_layer_extraction(source, "https://h.example", tmp_path, _options(retries=3))
+
+        assert (source.fetched, report.layers[0].status) == (["a"], "empty")
+
+    def test_a_failure_is_retried_and_the_report_counts_the_attempts(self, tmp_path: Path) -> None:
+        class _Flaky(_FakeSource):
+            def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
+                if layer.name == "down" or layer.name not in self.fetched:
+                    self.fetched.append(layer.name)
+                    raise OSError(f"{layer.name} is down")
+                return super().fetch(source, layer, dest)
+
+        source = _Flaky(_refs(["flaky", "down"]))
+
+        report = run_layer_extraction(source, "https://h.example", tmp_path, _options(retries=2))
+
+        assert source.fetched == ["flaky", "flaky", "down", "down"]
+        assert [(r.name, r.status, r.attempts, r.error) for r in report.layers] == [
+            ("flaky", "success", 2, None),
+            ("down", "failed", 2, "down is down"),
+        ]
+
+    def test_zero_retries_still_fetches_once(self, tmp_path: Path) -> None:
+        class _Down(_FakeSource):
+            def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
+                self.fetched.append(layer.name)
+                raise OSError("down")
+
+        source = _Down(_refs(["a"]))
+
+        run_layer_extraction(source, "https://h.example", tmp_path, _options(retries=0))
+
+        assert source.fetched == ["a"]
+
+    def test_styles_move_into_the_collection(self, tmp_path: Path) -> None:
+        class _Styled(_FakeSource):
+            def styles(self, source: str, layer: LayerRef, collection_dir: Path) -> None:
+                (collection_dir / "styles").mkdir()
+                (collection_dir / "styles" / "default.json").write_text("{}")
+
+        run_layer_extraction(_Styled(_refs(["a"])), "https://h.example", tmp_path, _options())
+
+        assert (tmp_path / "a" / "styles" / "default.json").read_text() == "{}"
+
+
 class TestBulkDiscovery:
     def test_unnamed_empty_layer_stays_empty_with_a_warning(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -208,6 +281,7 @@ class TestBulkDiscovery:
             report = run_layer_extraction(source, "https://h.example", tmp_path, _options())
 
         assert [(r.name, r.status) for r in report.layers] == [("a", "success"), ("b", "empty")]
+        assert report.layers[1].warnings == ["Layer has no features"]
         assert "Layer b is empty (0 features), skipping" in caplog.messages
 
 
@@ -243,6 +317,47 @@ class TestProgressOrder:
             ("fetch2", "starting"),
             ("fetch2", "success"),
         ]
+
+
+class TestRunState:
+    def test_parallel_run_reports_and_keeps_the_skipped_layer(self, tmp_path: Path) -> None:
+        """With workers, a skipped layer reports first at its own index and stays in the report."""
+        layers = [
+            LayerRef(id=0, name="tiles", skip_reason="skipped: tiles-only"),
+            LayerRef(id=1, name="a"),
+            LayerRef(id=2, name="b"),
+        ]
+        events: list[ExtractionProgress] = []
+
+        report = run_layer_extraction(
+            _FakeSource(layers),
+            "https://h.example",
+            tmp_path,
+            _options(workers=2),
+            on_progress=events.append,
+        )
+
+        assert [(e.layer_index, e.total_layers, e.layer_name, e.status) for e in events[:2]] == [
+            (0, 3, "tiles", "starting"),
+            (0, 3, "tiles", "skipped"),
+        ]
+        assert {e.total_layers for e in events} == {3}
+        assert [(r.name, r.status) for r in report.layers] == [
+            ("tiles", "skipped"),
+            ("a", "success"),
+            ("b", "success"),
+        ]
+
+    def test_a_run_without_resume_fetches_again_and_leaves_no_staging(self, tmp_path: Path) -> None:
+        run_layer_extraction(_FakeSource(_refs(["a"])), "https://h.example", tmp_path, _options())
+        again = _FakeSource(_refs(["a"]))
+
+        report = run_layer_extraction(again, "https://h.example", tmp_path, _options())
+
+        assert again.fetched == ["a"]
+        assert not (tmp_path / ".portolan" / "staging").exists()
+        assert report.summary.wall_duration_seconds is not None
+        assert 0 <= report.summary.wall_duration_seconds < 60
 
 
 class TestExitCode:
@@ -311,6 +426,25 @@ def test_credentials_never_reach_the_catalog(fixtures_dir: Path, tmp_path: Path)
     assert vias == ["https://h.example/geoserver/wfs?SERVICE=WFS&typename=ws%3Apoints"]
 
 
+def test_a_failed_layer_error_keeps_no_credential_in_the_report(tmp_path: Path) -> None:
+    """#981: an error page that echoes the request URL leaves its API key out of the report."""
+    url = "https://h.example/geoserver/wfs?authkey=SECRET"
+
+    class _BlockedSource(_FakeSource):
+        def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
+            raise RuntimeError(f"Server returned an error page:\n<p>Blocked: {source}&n=1</p>")
+
+    run_layer_extraction(_BlockedSource(_refs(["roads"])), url, tmp_path, _options(retries=1))
+
+    report = json.loads((tmp_path / ".portolan" / "extraction-report.json").read_text())
+    assert [(layer["status"], layer["error"]) for layer in report["layers"]] == [
+        (
+            "failed",
+            "Server returned an error page:\n<p>Blocked: https://h.example/geoserver/wfs?n=1</p>",
+        )
+    ]
+
+
 @pytest.mark.integration
 def test_extracted_catalog_has_a_producer_and_a_thumbnail(
     fixtures_dir: Path, tmp_path: Path
@@ -339,9 +473,10 @@ def test_extracted_catalog_has_a_producer_and_a_thumbnail(
         _AttributedSource(_refs(["points"])),
         "https://h.example/FeatureServer",
         out,
-        _options(raw=False, license="CC0-1.0"),
+        _options(raw=False, license="CC0-1.0", catalog_id="phl-points"),
     )
 
+    assert json.loads((out / "catalog.json").read_text(encoding="utf-8"))["id"] == "phl-points"
     collection = json.loads((out / "points" / "collection.json").read_text(encoding="utf-8"))
     assert collection["providers"] == [{"name": "City of Philadelphia", "roles": ["producer"]}]
     thumbnails = [key for key, a in collection["assets"].items() if "thumbnail" in a["roles"]]

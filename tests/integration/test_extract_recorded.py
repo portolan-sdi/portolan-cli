@@ -210,7 +210,10 @@ def test_arcgis_tables_only_service_fails_and_names_the_tables(
     assert server.unmatched == []
     assert result.exit_code == 1, result.output
     assert "Extracted 0/0 layers" not in result.output
-    assert "table" in result.output.lower()
+    assert (
+        "The service lists 1 table and no layers. Pass --include-tables to extract tables."
+        in result.output
+    )
 
 
 def test_arcgis_token_reaches_layer_discovery(tmp_path: Path, run_cli: RunCli) -> None:
@@ -273,6 +276,24 @@ def test_wfs_api_key_stays_out_of_the_catalog(tmp_path: Path, run_cli: RunCli) -
         if path.is_file() and b"SECRET" in path.read_bytes()
     )
     assert leaks == []
+
+
+def test_wfs_layer_that_add_skips_is_named(tmp_path: Path, run_cli: RunCli) -> None:
+    """A layer file that ``ignored_files`` matches is skipped with a warning, not in silence."""
+    from portolan_cli.catalog import init_catalog
+    from portolan_cli.config import set_setting
+
+    init_catalog(tmp_path / "out", catalog_id="recorded", license_id="CC-BY-4.0")
+    set_setting(tmp_path / "out", "ignored_files", ["topp_states*"])
+    result, server, out = _run("workspace_layer-layers", tmp_path, run_cli)
+
+    assert server.unmatched == []
+    assert result.exit_code == 0, result.output
+    assert not (out / "topp_states" / "collection.json").exists()
+    assert (
+        "Skipping topp_states.parquet: it matches ignored_files pattern 'topp_states*'"
+        in result.output
+    )
 
 
 @pytest.mark.unit
