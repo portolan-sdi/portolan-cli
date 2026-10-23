@@ -12,7 +12,9 @@ Git-style implicit tracking
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -20,6 +22,16 @@ from click.testing import CliRunner
 
 from portolan_cli.add import ItemInfo
 from portolan_cli.cli import cli
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from tests.catalog_invariants import RunCli
+
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+# `add --item-id` writes asset hrefs relative to a directory that does not
+# exist, so run_cli must not check those catalogs at teardown.
+ITEM_ID_REASON = "item-id: hrefs point at a directory that does not exist (#840)"
 
 
 @pytest.fixture
@@ -251,68 +263,52 @@ class TestAdd:
                 or "item-level" in result.output
             ), f"warning should explain the raster item-subdir rule; got:\n{result.output}"
 
-    @pytest.mark.unit
-    def test_add_with_item_id_override(self, runner: CliRunner) -> None:
+    @pytest.mark.integration
+    def test_add_with_item_id_override(
+        self,
+        tmp_path: Path,
+        run_cli: RunCli,
+        build_damaged_catalog: Callable[[Path, str], Path],
+    ) -> None:
         """add --item-id overrides automatic item ID derivation."""
-        with runner.isolated_filesystem() as temp_dir:
-            temp_path = Path(temp_dir)
-            setup_catalog(temp_path)
+        root = build_damaged_catalog(tmp_path / "catalog", ITEM_ID_REASON)
+        collection_dir = root / "demographics"
+        collection_dir.mkdir(parents=True)
+        test_file = collection_dir / "census.geojson"
+        shutil.copy(FIXTURES / "vector" / "valid" / "points.geojson", test_file)
+        run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
 
-            collection_dir = temp_path / "demographics"
-            collection_dir.mkdir()
-            test_file = collection_dir / "census.geojson"
-            test_file.write_text('{"type": "FeatureCollection", "features": []}')
+        result = run_cli(
+            "--format", "json", "add", "--item-id", "custom-item-id", str(test_file), cwd=root
+        )
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = (
-                    [
-                        ItemInfo(
-                            item_id="custom-item-id",
-                            collection_id="demographics",
-                            format_type="vector",
-                            bbox=[-122.5, 37.5, -122.0, 38.0],
-                            asset_paths=["census.parquet"],
-                        )
-                    ],
-                    [],  # skipped
-                    [],  # failures
-                )
+        added = json.loads(result.stdout)["data"]["added"]
+        assert [(a["item_id"], a["collection_id"]) for a in added] == [
+            ("custom-item-id", "demographics")
+        ]
+        item = json.loads((collection_dir / "custom-item-id.json").read_text(encoding="utf-8"))
+        assert item["id"] == "custom-item-id"
 
-                result = runner.invoke(
-                    cli,
-                    ["add", "--item-id", "custom-item-id", str(test_file)],
-                    catch_exceptions=False,
-                )
+    @pytest.mark.integration
+    def test_add_item_id_passed_to_add_files(
+        self,
+        tmp_path: Path,
+        run_cli: RunCli,
+        build_damaged_catalog: Callable[[Path, str], Path],
+    ) -> None:
+        """--item-id reaches add_files: the raster item takes the given id."""
+        root = build_damaged_catalog(tmp_path / "catalog", ITEM_ID_REASON)
+        item_dir = root / "imagery" / "scene"
+        item_dir.mkdir(parents=True)
+        test_file = item_dir / "satellite.tif"
+        shutil.copy(FIXTURES / "raster" / "valid" / "singleband.tif", test_file)
+        run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
 
-                assert result.exit_code == 0
-                mock_add.assert_called_once()
-                call_kwargs = mock_add.call_args.kwargs
-                assert call_kwargs.get("item_id") == "custom-item-id"
+        run_cli("add", "--item-id", "my-custom-id", str(test_file), cwd=root)
 
-    @pytest.mark.unit
-    def test_add_item_id_passed_to_add_files(self, runner: CliRunner) -> None:
-        """--item-id parameter is correctly passed through to add_files."""
-        with runner.isolated_filesystem() as temp_dir:
-            temp_path = Path(temp_dir)
-            setup_catalog(temp_path)
-
-            collection_dir = temp_path / "imagery"
-            collection_dir.mkdir()
-            test_file = collection_dir / "satellite.tif"
-            test_file.write_bytes(b"GeoTIFF content")
-
-            with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [], [])
-
-                runner.invoke(
-                    cli,
-                    ["add", "--item-id", "my-custom-id", str(test_file)],
-                    catch_exceptions=False,
-                )
-
-                call_args = mock_add.call_args
-                assert call_args is not None
-                assert call_args.kwargs.get("item_id") == "my-custom-id"
+        item = json.loads((item_dir / "my-custom-id.json").read_text(encoding="utf-8"))
+        assert item["id"] == "my-custom-id"
+        assert not (item_dir / "scene.json").exists()
 
     @pytest.mark.unit
     def test_add_without_item_id_passes_none(self, runner: CliRunner) -> None:
@@ -340,22 +336,15 @@ class TestAdd:
                 assert call_args.kwargs.get("item_id") is None
 
     @pytest.mark.unit
-    def test_add_item_id_with_directory_fails(self, runner: CliRunner) -> None:
+    def test_add_item_id_with_directory_fails(self, tmp_path: Path, run_cli: RunCli) -> None:
         """--item-id with a directory path should fail (ambiguous for multiple files)."""
-        with runner.isolated_filesystem() as temp_dir:
-            temp_path = Path(temp_dir)
-            setup_catalog(temp_path)
+        setup_catalog(tmp_path)
+        collection_dir = tmp_path / "demographics"
+        collection_dir.mkdir()
 
-            collection_dir = temp_path / "demographics"
-            collection_dir.mkdir()
+        result = run_cli("add", "--item-id", "my-id", str(collection_dir), expect=1)
 
-            result = runner.invoke(
-                cli,
-                ["add", "--item-id", "my-id", str(collection_dir)],
-            )
-
-            assert result.exit_code != 0
-            assert "single file" in result.output.lower() or "directory" in result.output.lower()
+        assert "--item-id can only be used with a single file, not a directory" in result.output
 
     @pytest.mark.unit
     def test_add_multiple_paths(self, runner: CliRunner) -> None:
@@ -607,27 +596,20 @@ class TestAdd:
             assert "missing argument" in result.output.lower() or "paths" in result.output.lower()
 
     @pytest.mark.unit
-    def test_add_item_id_with_multiple_paths_fails(self, runner: CliRunner) -> None:
+    def test_add_item_id_with_multiple_paths_fails(self, tmp_path: Path, run_cli: RunCli) -> None:
         """--item-id with multiple paths fails (ambiguous)."""
-        with runner.isolated_filesystem() as temp_dir:
-            temp_path = Path(temp_dir)
-            setup_catalog(temp_path)
+        setup_catalog(tmp_path)
+        coll = tmp_path / "data"
+        coll.mkdir()
+        file1 = coll / "data1.geojson"
+        file1.write_text("{}")
+        file2 = coll / "data2.geojson"
+        file2.write_text("{}")
 
-            coll = temp_path / "data"
-            coll.mkdir()
-            file1 = coll / "data1.geojson"
-            file1.write_text("{}")
-            file2 = coll / "data2.geojson"
-            file2.write_text("{}")
+        result = run_cli("add", "--item-id", "my-id", str(file1), str(file2), expect=1)
 
-            result = runner.invoke(
-                cli,
-                ["add", "--item-id", "my-id", str(file1), str(file2)],
-            )
-
-            assert result.exit_code != 0
-            # Should reject using --item-id with multiple paths
-            assert "single" in result.output.lower() or "multiple" in result.output.lower()
+        # Should reject using --item-id with multiple paths
+        assert "--item-id can only be used with a single file, not multiple paths" in result.output
 
 
 class TestRm:
@@ -956,45 +938,31 @@ class TestPathToCollectionResolution:
 
 
 class TestAddJsonOutput:
-    """Tests for add command JSON output mode."""
+    """``add --format json`` through the real ``add_files``, with no mock (#1005)."""
 
-    @pytest.mark.unit
-    def test_add_json_output(self, runner: CliRunner) -> None:
-        """add --format json outputs valid JSON envelope."""
-        with runner.isolated_filesystem() as temp_dir:
-            temp_path = Path(temp_dir)
-            setup_catalog(temp_path)
+    @pytest.mark.integration
+    @pytest.mark.xfail(
+        strict=True,
+        reason="#1005: add prints the GeoParquet rewrite notice on stdout before the envelope",
+    )
+    def test_add_json_output(self, tmp_path: Path, run_cli: RunCli) -> None:
+        """add --format json writes one JSON envelope to stdout and nothing else.
 
-            collection_dir = temp_path / "data"
-            collection_dir.mkdir()
-            test_file = collection_dir / "test.geojson"
-            test_file.write_text("{}")
+        points.parquet has no bbox covering column, so add rewrites it and
+        announces the rewrite.
+        """
+        root = tmp_path / "catalog"
+        source = root / "data" / "points.parquet"
+        source.parent.mkdir(parents=True)
+        shutil.copy(FIXTURES / "vector" / "valid" / "points.parquet", source)
+        run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = (
-                    [
-                        ItemInfo(
-                            item_id="test",
-                            collection_id="data",
-                            format_type="vector",
-                            bbox=[0, 0, 1, 1],
-                            asset_paths=["test.parquet"],
-                        )
-                    ],
-                    [],  # skipped
-                    [],  # failures
-                )
+        result = run_cli("--format", "json", "add", str(source), cwd=root)
 
-                result = runner.invoke(
-                    cli,
-                    ["--format", "json", "add", str(test_file)],
-                    catch_exceptions=False,
-                )
-
-                assert result.exit_code == 0
-                envelope = json.loads(result.output)
-                assert envelope["success"] is True
-                assert envelope["command"] == "add"
+        envelope = json.loads(result.stdout)
+        assert envelope["success"] is True
+        assert envelope["command"] == "add"
+        assert [item["collection_id"] for item in envelope["data"]["added"]] == ["data"]
 
 
 class TestRmJsonOutput:

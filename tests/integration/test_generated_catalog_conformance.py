@@ -1,43 +1,52 @@
-"""The conformance gate: a freshly generated catalog passes rashid (issues #654, #746).
+"""The conformance gate: every catalog the CLI writes passes rashid (#654, #746, #1033).
 
-Builds a catalog the way a user does — ``portolan init`` then ``portolan add``,
-with the metadata.yaml enrichment expects — and runs every offline pass rashid
-has over the result. Any generation change that breaks spec conformance fails
-here, so the gate is the executable form of "Portolan emits conformant catalogs".
+Each row of ``SCENARIOS`` builds a catalog the way a user does, through the
+real CLI, and runs every offline pass rashid has over the result. The rows
+cover the operations that cause drift: a fresh ``add``, the same ``add`` again,
+``add --force`` after the data changes, ``readme``, ``--item-id``, a
+multi-file collection, partitioning, the antimeridian, a sibling PMTiles, the
+Iceberg backend, each realdata fixture, ``extract arcgis``, and ``push``.
 
-Two things widened it after #654 (issue #746).
+A row pins every rashid result it produces. ``known_errors`` maps each rule
+that fires because of an open bug to its issue, and
+``test_known_gaps_are_still_real`` fails when one stops firing, so a fix
+cannot land without deleting its entry. ``expected_advisories`` pins the
+warnings and infos by exact count. Any other result fails the gate.
 
-The catalog was vector-only. Raster items, the item mirror, style assets,
-PMTiles, and the catalog logo never reached rashid, so the drift #654 fixed —
-raster declared at v1.1.0, a ``rel:"items"`` link the spec does not ask for,
-seven undefined ``portolan:`` fields — could not have been caught here. The
-catalog now carries all of them.
+Every build runs through the ``run_cli`` harness, so the catalog invariants
+in ``tests/catalog_invariants.py`` check each catalog too.
 
-The gate also read only errors. rashid does own an extension-version rule,
-PTL-CNF-004, and it fires on exactly the stale raster URI #654 removed, but it
-reports a WARNING and the assertion threw warnings away. Severity is a judgment
-about how bad a finding is, not about whether generated output changed, so the
-gate now pins warnings and infos too. Every finding a generated catalog produces
-is enumerated below; anything else fails.
+The gate pins warnings and infos as well as errors (#746). rashid reports a
+stale extension version (PTL-CNF-004) as a WARNING, so a gate that read only
+errors watched the raster extension sit at v1.1.0 and stayed green.
 """
 
 from __future__ import annotations
 
 import json
 import shutil
+import sys
+import threading
 from collections import Counter
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 import yaml
-from click.testing import CliRunner
 from rashid import RulesConfig, Severity, validate
 from rashid.data.reader import LocalOnlyReader
 
-from portolan_cli.cli import cli
+from tests.catalog_invariants import check_catalog_invariants
+from tests.properties.test_rebuild_idempotence import shrink_geoparquet
+
+if TYPE_CHECKING:
+    from tests.catalog_invariants import RunCli
+    from tests.conftest import CliHarness
 
 pytestmark = pytest.mark.integration
 
@@ -48,10 +57,12 @@ SINGLEBAND_COG = FIXTURES / "raster" / "valid" / "singleband.tif"
 # Ten points in CRS84, GeoParquet 1.1. An earlier draft fed the GeoJSON these
 # were converted from and let `add` convert it, which tiled on Linux and
 # silently produced nothing on macOS. Handing the converted file over directly
-# drops that hop and the platform split with it. The older realdata Parquet
-# fixtures cannot stand in: they declare GeoParquet 1.0.0, which PTL-DAT-012
-# rejects outright.
+# drops that hop and the platform split with it.
 POINTS = FIXTURES / "vector" / "valid" / "points.parquet"
+ANTIMERIDIAN_GEOJSON = FIXTURES / "edge" / "antimeridian.geojson"
+SAMPLE_PMTILES = FIXTURES / "cloud_native" / "sample.pmtiles"
+REALDATA = FIXTURES / "realdata"
+PHILADELPHIA = REALDATA / "philadelphia-housing"
 RASTER_SCHEMA = FIXTURES / "schemas" / "raster-v2.0.0.schema.json"
 
 # A real 1x1 transparent PNG. rashid reads logo bytes, so magic bytes alone
@@ -62,33 +73,28 @@ LOGO_PNG = bytes.fromhex(
     "0d0a2db40000000049454e44ae426082"
 )
 
-# Rules a generated catalog cannot yet satisfy without machinery that does not
-# exist in the CLI. Each is a named gap with a diagnosed cause, not an accepted
-# violation: ``test_known_gaps_are_still_real`` fails the moment one stops firing,
-# so a fix cannot land without deleting its entry here.
-KNOWN_GAPS = frozenset(
-    {
-        # PTL-DAT-009 (issue #748): COGs ship without embedded band statistics.
-        # Portolan does compute them and does write them into the item, but GDAL
-        # puts them in a `.aux.xml` PAM sidecar. rashid reads with
-        # GDAL_PAM_ENABLED=NO, as PORTO-FMT-026..030 require, and sees none.
-        # Found by adding raster to this gate.
-        "PTL-DAT-009",
-    }
-)
+Builder = Callable[[Path, "RunCli"], None]
+Builds = Callable[[str], tuple[Path, list[Path]]]
 
-# Findings a conformant generated catalog produces on purpose. Pinned by exact
-# count, so a second collection growing the same warning is a change the gate
-# reports rather than absorbs.
-EXPECTED_ADVISORIES: dict[str, int] = {
-    # PTL-DAT-010, twice, one per raster item: the valid-percent half of the
-    # PTL-DAT-009 sidecar problem above. Same root cause, same issue #748.
-    "PTL-DAT-010": 2,
-    # PTL-PRO-002, once per collection: every collection is a mirror, because
-    # metadata.yaml names a producer distinct from the host. Advisory — a
-    # rel:'canonical' link is only meaningful when the upstream publishes STAC.
-    "PTL-PRO-002": 4,
-}
+
+@dataclass(frozen=True)
+class Scenario:
+    """One row of the gate: how to build a catalog and what rashid reports on it."""
+
+    build: Builder
+    # Rules that fire because of an open bug, each mapped to its issue.
+    known_errors: Mapping[str, str] = field(default_factory=dict)
+    # Warnings and infos the catalog produces on purpose, by exact count.
+    expected_advisories: Mapping[str, int] = field(default_factory=dict)
+    # Catalog invariant codes that fire because of an open bug, each mapped to
+    # its issue (tests/catalog_invariants.py).
+    known_invariants: Mapping[str, str] = field(default_factory=dict)
+    marks: tuple[pytest.MarkDecorator, ...] = ()
+
+
+# ---------------------------------------------------------------------------
+# Builders
+# ---------------------------------------------------------------------------
 
 
 def _write_metadata(root: Path) -> Path:
@@ -126,27 +132,42 @@ def _write_metadata(root: Path) -> Path:
     return portolan_dir
 
 
-def _build_catalog(root: Path) -> None:
-    """Run init + add over a geo and a tabular collection, with metadata.yaml enrichment."""
-    collection_dir = root / "roads"
-    collection_dir.mkdir(parents=True)
-    shutil.copy(FIXTURE, collection_dir / "roads.parquet")
+def _init(root: Path, run: RunCli, *extra: str) -> None:
+    """Write metadata.yaml, then run ``init --auto`` into ``root``."""
+    _write_metadata(root)
+    run(
+        "init",
+        str(root),
+        "--auto",
+        "--title",
+        "Demo Catalog",
+        "--description",
+        "A catalog published for the conformance gate.",
+        # init keeps the metadata.yaml written above, so this only satisfies the
+        # flag's requirement; the license the catalog uses is the one in that file.
+        "--license",
+        "CC-BY-4.0",
+        *extra,
+    )
 
-    # A three-level id, so generation has to write two intermediate catalogs and
-    # the deeper one's parent differs from its root. Flat ids alone let #711
-    # ship: root and parent coincide at the top level and the conflation between
-    # them stays invisible.
-    nested_dir = root / "env" / "air" / "quality"
-    nested_dir.mkdir(parents=True)
-    shutil.copy(FIXTURE, nested_dir / "quality.parquet")
 
-    # A geometry-less Parquet exercises the tabular path, which writes its
-    # collection.json outside finalize_items. The timestamp column is load-bearing
-    # (issue #749): PTL-DAT-015 asks a tabular collection for `table:columns` and,
-    # only when the data has a time dimension, for `extent.temporal`. Without a
-    # temporal column the gate would cover half the rule and call it done.
-    tabular_dir = root / "demographics"
-    tabular_dir.mkdir(parents=True)
+def _add(root: Path, run: RunCli, *paths: Path | str, expect: int | None = 0) -> None:
+    run("add", "--portolan-dir", str(root), *(str(p) for p in paths), expect=expect)
+
+
+def _enable_tabular(root: Path) -> None:
+    config = root / ".portolan" / "config.yaml"
+    config.write_text(config.read_text() + "tabular:\n  enabled: true\n", encoding="utf-8")
+
+
+def _write_census(path: Path) -> Path:
+    """Write a geometry-less Parquet with a timestamp column.
+
+    The timestamp column is load-bearing (issue #749): PTL-DAT-015 asks a
+    tabular collection for `table:columns` and, only when the data has a time
+    dimension, for `extent.temporal`.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(
         pa.table(
             {
@@ -157,162 +178,541 @@ def _build_catalog(root: Path) -> None:
                 ),
             }
         ),
-        tabular_dir / "census.parquet",
+        path,
     )
+    return path
 
-    # Two raster scenes, because raster is the path #654's drift rode in on and
-    # the gate never built it. Two rather than one for a reason: a lone scene
-    # trips PTL-COL-001, which asks a single-file collection to carry its data at
-    # collection level instead of wrapping it in an item. Scenes also give the
-    # collection items, and items are what the mirror needs — every other
-    # collection here is a single collection-level asset with no items at all,
-    # which is why items.parquet was never generated under the old gate.
-    # The collection/item/file layout is mandatory: `add` skips a raster placed
-    # one level shallower, and still exits 0 while doing it.
-    scene_a = root / "imagery" / "scene-a"
-    scene_b = root / "imagery" / "scene-b"
-    scene_a.mkdir(parents=True)
-    scene_b.mkdir(parents=True)
-    shutil.copy(RGB_COG, scene_a / "rgb.tif")
-    shutil.copy(SINGLEBAND_COG, scene_b / "singleband.tif")
 
-    portolan_dir = _write_metadata(root)
+def _copy(source: Path, target: Path) -> Path:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(source, target)
+    return target
+
+
+def build_fresh(root: Path, run: RunCli) -> None:
+    """Run init + add over a geo, a nested, a tabular, and a raster collection."""
+    roads = _copy(FIXTURE, root / "roads" / "roads.parquet")
+    # A three-level id, so generation has to write two intermediate catalogs and
+    # the deeper one's parent differs from its root. Flat ids alone let #711
+    # ship: root and parent coincide at the top level and the conflation between
+    # them stays invisible.
+    quality = _copy(FIXTURE, root / "env" / "air" / "quality" / "quality.parquet")
+    # A geometry-less Parquet exercises the tabular path, which writes its
+    # collection.json outside finalize_items.
+    census = _write_census(root / "demographics" / "census.parquet")
+    # Two raster scenes, because raster is the path #654's drift rode in on.
+    # Two rather than one for a reason: a lone scene trips PTL-COL-001, which
+    # asks a single-file collection to carry its data at collection level
+    # instead of wrapping it in an item (see the realdata-rapidai4eo row).
+    # Scenes also give the collection items, and items are what the mirror
+    # needs. The collection/item/file layout is mandatory: `add` skips a raster
+    # placed one level shallower, and still exits 0 while doing it.
+    scene_a = _copy(RGB_COG, root / "imagery" / "scene-a" / "rgb.tif")
+    scene_b = _copy(SINGLEBAND_COG, root / "imagery" / "scene-b" / "singleband.tif")
+
     logo_source = root.parent / "brand.png"
     logo_source.write_bytes(LOGO_PNG)
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        [
-            "init",
-            str(root),
-            "--auto",
-            "--title",
-            "Demo Catalog",
-            "--description",
-            "Roads published for the conformance gate.",
-            # init keeps the metadata.yaml written above, so this only satisfies the
-            # flag's requirement; the license the catalog uses is the one in that file.
-            "--license",
-            "CC-BY-4.0",
-            # PORTO-CORE-074..077. A MAY, so plain init writes no icon link —
-            # which is why the gate has to ask for one to cover it.
-            "--logo",
-            str(logo_source),
-            "--logo-title",
-            "Example Municipal Open Data",
-        ],
-        catch_exceptions=False,
+    # PORTO-CORE-074..077. A MAY, so plain init writes no icon link, which is
+    # why the gate has to ask for one to cover it.
+    _init(
+        root,
+        run,
+        "--logo",
+        str(logo_source),
+        "--logo-title",
+        "Example Municipal Open Data",
     )
-    assert result.exit_code == 0, result.output
-
-    config = portolan_dir / "config.yaml"
-    config.write_text(config.read_text() + "tabular:\n  enabled: true\n", encoding="utf-8")
-
-    result = runner.invoke(
-        cli,
-        [
-            "add",
-            "--portolan-dir",
-            str(root),
-            str(collection_dir / "roads.parquet"),
-            str(nested_dir / "quality.parquet"),
-            str(tabular_dir / "census.parquet"),
-            str(scene_a / "rgb.tif"),
-            str(scene_b / "singleband.tif"),
-        ],
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0, result.output
+    _enable_tabular(root)
+    _add(root, run, roads, quality, census, scene_a, scene_b)
     # `add` reports a skipped raster on stdout and still exits 0, so the exit
     # code alone would not prove the scenes landed.
-    assert (root / "imagery" / "collection.json").exists(), result.output
+    assert (root / "imagery" / "collection.json").exists()
 
 
-def _build_visual_catalog(root: Path) -> None:
-    """Build a collection carrying three styles and PMTiles.
+def _versions_bytes(root: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("versions.json"))
+    }
 
-    Separate from the main catalog because PMTiles needs tippecanoe, which CI
-    installs on Linux and macOS but not Windows. Keeping it apart lets the core
-    gate run everywhere.
 
-    `add` never registers style assets on its own — `register_style_assets` has
-    exactly two callers, the end of PMTiles generation and the extract
-    orchestrator — so `--pmtiles` is the only offline route to a styled
-    collection. Two hand-written styles plus the generated `styles/default`
-    make three, and three is the point: PTL-VIZ-006 short-circuits below two
-    styles, so a smaller collection would never test the default-role MUST.
+def build_re_add(root: Path, run: RunCli) -> None:
+    """Run the same ``add`` twice. The second run changes no version state."""
+    build_fresh(root, run)
+    before = _versions_bytes(root)
+    _add(
+        root,
+        run,
+        root / "roads" / "roads.parquet",
+        root / "env" / "air" / "quality" / "quality.parquet",
+        root / "demographics" / "census.parquet",
+        root / "imagery" / "scene-a" / "rgb.tif",
+        root / "imagery" / "scene-b" / "singleband.tif",
+    )
+    assert _versions_bytes(root) == before
+
+
+def build_force_after_mutation(root: Path, run: RunCli) -> None:
+    """``add``, then change the data and metadata.yaml, then ``add --force``.
+
+    The geo file loses its first column and its north-east rows, so the
+    extent must shrink (#801) and ``table:columns`` must lose the column
+    (#931). The first ``add`` runs before metadata.yaml names any provider,
+    so both collections get the placeholder provider. The providers arrive
+    before ``add --force``, which must apply them to the tabular collection
+    too (#813).
     """
-    collection_dir = root / "places"
-    (collection_dir / "styles").mkdir(parents=True)
-    # Not simple.parquet: tippecanoe needs two distinct feature locations to
-    # guess a maxzoom, and simple.parquet holds one point. Not the UTM buildings
-    # fixture either, because the thumbnail renderer returns None on a projected
-    # CRS and the collection would then fail PTL-VIZ-001.
-    shutil.copy(POINTS, collection_dir / "places.parquet")
-    for name, title in (("aqua", "Aqua"), ("zebra", "Zebra")):
-        (collection_dir / "styles" / f"{name}.json").write_text(
-            json.dumps({"version": 8, "name": title, "sources": {}, "layers": []}),
-            encoding="utf-8",
+    roads = _copy(POINTS, root / "roads" / "roads.parquet")
+    census = _write_census(root / "demographics" / "census.parquet")
+    _init(root, run)
+    _enable_tabular(root)
+    metadata = root / ".portolan" / "metadata.yaml"
+    full = metadata.read_text(encoding="utf-8")
+    without_providers = yaml.safe_load(full)
+    del without_providers["providers"]
+    metadata.write_text(yaml.dump(without_providers), encoding="utf-8")
+    _add(root, run, roads, census)
+    metadata.write_text(full, encoding="utf-8")
+    shrink_geoparquet(roads, drop="id")
+    pq.write_table(pq.read_table(census).drop_columns(["tract_id"]), census)
+    run("add", "--force", "--portolan-dir", str(root), str(roads), str(census))
+
+
+def build_readme(root: Path, run: RunCli) -> None:
+    """Register the README as an asset, change metadata.yaml, then ``readme`` (#930).
+
+    The first ``add`` writes ``roads/README.md``. ``add --force`` then finds
+    it in the collection directory and registers it as the ``documentation``
+    asset with its ``file:size`` and ``file:checksum``. ``readme`` rewrites
+    the file after a description change.
+    """
+    roads = _copy(POINTS, root / "roads" / "roads.parquet")
+    _init(root, run)
+    _add(root, run, roads)
+    run("add", "--force", "--portolan-dir", str(root), str(roads))
+    metadata = root / ".portolan" / "metadata.yaml"
+    loaded = yaml.safe_load(metadata.read_text(encoding="utf-8"))
+    loaded["description"] = "Roads, described again after the first add."
+    metadata.write_text(yaml.dump(loaded), encoding="utf-8")
+    run("readme", cwd=root)
+
+
+def build_item_id(root: Path, run: RunCli) -> None:
+    """Add one raster scene under an item id that differs from its directory (#840)."""
+    scene_a = _copy(RGB_COG, root / "imagery" / "scene-a" / "rgb.tif")
+    scene_b = _copy(SINGLEBAND_COG, root / "imagery" / "scene-b" / "singleband.tif")
+    _init(root, run)
+    _add(root, run, scene_b)
+    run("add", "--portolan-dir", str(root), "--item-id", "custom-scene", str(scene_a))
+
+
+def build_multi_file(root: Path, run: RunCli) -> None:
+    """Put both Philadelphia GeoParquet files in one collection (#932)."""
+    housing = _copy(
+        PHILADELPHIA / "affordable_housing.parquet", root / "housing" / "affordable_housing.parquet"
+    )
+    districts = _copy(
+        PHILADELPHIA / "council_districts_2024.parquet",
+        root / "housing" / "council_districts_2024.parquet",
+    )
+    _init(root, run)
+    _add(root, run, housing, districts)
+
+
+def build_partitioned(root: Path, run: RunCli) -> None:
+    """Partition ``open-buildings.parquet`` with a threshold it exceeds."""
+    buildings = _copy(REALDATA / "open-buildings.parquet", root / "buildings" / "buildings.parquet")
+    _init(root, run)
+    for key, value in (
+        ("partitioning.enabled", "true"),
+        ("partitioning.prompt", "false"),
+        ("partitioning.threshold_gb", "0.0001"),
+        ("partitioning.target_rows", "200"),
+    ):
+        run("config", "set", key, value, cwd=root)
+    _add(root, run, buildings)
+
+
+def build_antimeridian(root: Path, run: RunCli) -> None:
+    """Add two collections whose data crosses the antimeridian (#852)."""
+    edge = _copy(ANTIMERIDIAN_GEOJSON, root / "edge" / "antimeridian.geojson")
+    fieldmaps = _copy(
+        REALDATA / "fieldmaps-boundaries.parquet", root / "boundaries" / "boundaries.parquet"
+    )
+    _init(root, run)
+    _add(root, run, edge, fieldmaps)
+
+
+def build_sibling_pmtiles(root: Path, run: RunCli) -> None:
+    """Add a GeoParquet that has a PMTiles file with the same stem beside it (#929)."""
+    points = _copy(POINTS, root / "points" / "points.parquet")
+    _copy(SAMPLE_PMTILES, root / "points" / "points.pmtiles")
+    _init(root, run)
+    _add(root, run, points)
+
+
+def build_iceberg(root: Path, run: RunCli) -> None:
+    """Add a GeoParquet on the Iceberg backend, with the default SQLite catalog (#939)."""
+    pytest.importorskip("pyiceberg")
+    if sys.platform == "win32":
+        pytest.skip("PyIceberg SQL catalog warehouse paths break on Windows")
+    roads = _copy(POINTS, root / "roads" / "roads.parquet")
+    # Hide a developer's ~/.pyiceberg.yaml, as tests/iceberg/conftest.py does.
+    home = root.parent / "pyiceberg-home"
+    home.mkdir()
+    (home / ".pyiceberg.yaml").write_text("portolan-test-isolation: true\n", encoding="utf-8")
+    with pytest.MonkeyPatch.context() as env:
+        env.setenv("PYICEBERG_HOME", str(home))
+        _init(root, run)
+        run("config", "set", "backend", "iceberg", cwd=root)
+        _add(root, run, roads)
+
+
+def _realdata(source: Path, *, expect: int = 0) -> Builder:
+    """Return a builder that adds one realdata file as it ships."""
+
+    def build(root: Path, run: RunCli) -> None:
+        if source.suffix == ".tif":
+            # A raster needs the collection/item/file layout.
+            target = root / "imagery" / "scene" / source.name
+        else:
+            target = root / source.stem / source.name
+        if source.is_dir():
+            shutil.copytree(source, target)
+        else:
+            _copy(source, target)
+        _init(root, run)
+        _add(root, run, target, expect=expect)
+
+    return build
+
+
+def build_extract_arcgis(root: Path, run: RunCli) -> None:
+    """Extract both services of the recorded Philadelphia ArcGIS server."""
+    from tests.docs.philadelphia_arcgis_server import create_server
+
+    server = create_server(PHILADELPHIA, root.parent / "arcgis-requests.jsonl")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/ArcGIS/rest/services"
+        run("extract", "arcgis", url, str(root), "--auto", "--license", "CC-BY-4.0")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@contextmanager
+def _pushed_catalog(root: Path, run: RunCli) -> Iterator[Any]:
+    """Build a catalog beside ``root``, push it to moto S3, and yield the S3 client.
+
+    The AWS variables point at the moto server for the whole block, so a
+    ``clone`` inside it reads the same bucket.
+    """
+    boto3 = pytest.importorskip("boto3")
+    pytest.importorskip("moto")
+    from moto.server import ThreadedMotoServer
+
+    local = root.parent / "local"
+    roads = _copy(POINTS, local / "roads" / "roads.parquet")
+    _init(local, run)
+    _add(local, run, roads)
+
+    server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
+    server.start()
+    try:
+        host, port = server.get_host_and_port()
+        endpoint = f"http://{host}:{port}"
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",
+            region_name="us-east-1",
         )
+        client.create_bucket(Bucket="gate")
+        with pytest.MonkeyPatch.context() as env:
+            env.setenv("AWS_ENDPOINT_URL", endpoint)
+            env.setenv("AWS_ACCESS_KEY_ID", "testing")
+            env.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+            env.setenv("AWS_DEFAULT_REGION", "us-east-1")
+            env.setenv("AWS_ALLOW_HTTP", "true")
+            run("push", "s3://gate/catalog", "--catalog", str(local))
+            yield client
+    finally:
+        server.stop()
 
-    _write_metadata(root)
 
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        [
-            "init",
-            str(root),
-            "--auto",
-            "--title",
-            "Visual Catalog",
-            "--description",
-            "Styled points published for the conformance gate.",
-            "--license",
-            "CC-BY-4.0",
-        ],
-        catch_exceptions=False,
+def build_push(root: Path, run: RunCli) -> None:
+    """Push a catalog to moto S3, then download every object into ``root``.
+
+    rashid checks the downloaded copy, so the gate sees what a reader of the
+    bucket sees (#761, #807).
+    """
+    with _pushed_catalog(root, run) as client:
+        listing = client.list_objects_v2(Bucket="gate", Prefix="catalog/")
+        for entry in listing.get("Contents", []):
+            target = root / entry["Key"].removeprefix("catalog/")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            client.download_file("gate", entry["Key"], str(target))
+    assert (root / "catalog.json").is_file()
+
+
+def build_clone(root: Path, run: RunCli) -> None:
+    """Push a catalog to moto S3, then ``clone`` it into ``root``."""
+    with _pushed_catalog(root, run):
+        run("clone", "s3://gate/catalog", str(root))
+    assert (root / "catalog.json").is_file()
+
+
+# ---------------------------------------------------------------------------
+# The scenario table
+# ---------------------------------------------------------------------------
+
+# PTL-DAT-009 (issue #748): COGs ship without embedded band statistics.
+# Portolan does compute them and does write them into the item, but GDAL puts
+# them in a `.aux.xml` PAM sidecar. rashid reads with GDAL_PAM_ENABLED=NO, as
+# PORTO-FMT-026..030 require, and sees none.
+COG_STATS = {"PTL-DAT-009": "#748"}
+# Items carry file:* and table:* fields without the extension URIs.
+ITEM_FILE_EXT = "#1037"
+# extract writes a placeholder host provider, no producer, and no thumbnail.
+EXTRACT_PROVIDERS = "#1039"
+
+# Invariants every raster collection breaks today.
+RASTER_INVARIANTS = {
+    # The items list file:size and file:checksum but do not declare the file
+    # extension.
+    "S-EXT-DECLARED": ITEM_FILE_EXT,
+    # summaries flatten proj:bbox, proj:shape, and proj:transform.
+    "P-SUMMARY-FROM-ITEMS": "#1023",
+    # versions.json keys the scene thumbnail a second time at the collection root.
+    "P-VERSIONS-KEY": "#1053",
+}
+# Every collection is a mirror, because metadata.yaml names a producer
+# distinct from the host. PTL-PRO-002 is an advisory: a rel:'canonical' link is
+# only meaningful when the upstream publishes STAC.
+ONE_MIRROR = {"PTL-PRO-002": 1}
+
+
+def _realdata_row(source: Path) -> Scenario:
+    """A realdata file that ``add`` takes as it ships.
+
+    The four older Parquet files declare GeoParquet 1.0.0, which PTL-DAT-012
+    rejects. ``add`` rewrites each to GeoParquet 1.1 with a bbox covering
+    column, so the published file passes (TestRealdataGeoParquetIsRewritten).
+    """
+    return Scenario(
+        _realdata(source), expected_advisories=ONE_MIRROR, marks=(pytest.mark.realdata,)
     )
-    assert result.exit_code == 0, result.output
 
-    result = runner.invoke(
-        cli,
-        [
-            "add",
-            "--portolan-dir",
-            str(root),
-            "--pmtiles",
-            str(collection_dir / "places.parquet"),
-        ],
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0, result.output
 
-    # Fail here, loudly, rather than three assertion errors down the file.
-    # `register_style_assets` runs at the end of PMTiles generation, outside the
-    # per-asset try block, so a collection can come back with its hand-written
-    # styles registered and no tiles at all. That shape reads as "the default
-    # style is missing" and "there is no tiles asset" instead of "tiling did not
-    # run", which is what actually happened.
-    assert (collection_dir / "places.pmtiles").is_file(), (
-        f"tippecanoe produced no tiles, so the styles and PMTiles assertions "
-        f"below would report the wrong defect. add output:\n{result.output}"
-    )
+SCENARIOS: dict[str, Scenario] = {
+    "fresh": Scenario(
+        build_fresh,
+        known_errors=COG_STATS,
+        expected_advisories={
+            # One per raster item: the valid-percent half of the PTL-DAT-009
+            # sidecar problem above. Same root cause, same issue #748.
+            "PTL-DAT-010": 2,
+            "PTL-PRO-002": 4,
+        },
+        known_invariants=RASTER_INVARIANTS,
+    ),
+    "re-add": Scenario(
+        build_re_add,
+        known_errors=COG_STATS,
+        expected_advisories={"PTL-DAT-010": 2, "PTL-PRO-002": 4},
+        known_invariants=RASTER_INVARIANTS,
+    ),
+    "force-after-mutation": Scenario(
+        build_force_after_mutation,
+        known_errors={
+            # The stored extent keeps the north-east rows that the data lost.
+            "PTL-DAT-005": "#801",
+            # Both collections keep the placeholder provider that the first add
+            # wrote, so metadata.yaml never reaches them.
+            "PTL-PRV-001": "#813",
+            "PTL-SCH-001": "#813",
+        },
+        known_invariants={"S-EXTENT-NOT-STALE": "#801"},
+    ),
+    "readme": Scenario(
+        build_readme,
+        # The documentation asset keeps the size and checksum of the old README.
+        known_errors={"PTL-DAT-001": "#930", "PTL-DAT-002": "#930"},
+        expected_advisories=ONE_MIRROR,
+        known_invariants={"P-SIZE": "#930", "P-CHECKSUM": "#930", "P-VERSIONS-MATCH": "#930"},
+    ),
+    "item-id": Scenario(
+        build_item_id,
+        known_errors={
+            **COG_STATS,
+            # The item lands in two places, and the copy in scene-a has only an
+            # absolute self link.
+            "PTL-LNK-001": "#840",
+            "PTL-LNK-002": "#840",
+        },
+        expected_advisories={"PTL-DAT-010": 1, "PTL-PRO-002": 1},
+        known_invariants={
+            **RASTER_INVARIANTS,
+            "S-HREF-RESOLVES": "#840",
+            "P-NO-LOCAL-PATH": "#840",
+            "P-VERSIONS-MATCH": "#840",
+        },
+    ),
+    "multi-file": Scenario(
+        build_multi_file,
+        # rashid compares each collection-level asset with extent.spatial.bbox[0]
+        # and never reads an asset-level bbox, so no CLI change clears this.
+        known_errors={"PTL-DAT-005": "#932"},
+        expected_advisories=ONE_MIRROR,
+        marks=(pytest.mark.realdata,),
+    ),
+    "partitioned": Scenario(
+        build_partitioned,
+        known_errors={
+            # `add` leaves partition:glob for `push` to write (add.py:353,
+            # push.py:296), so the local catalog has none. That is the spec
+            # question behind #761 and #914.
+            "PTL-EXT-001": "#761",
+            "PTL-PRT-001": "#761",
+            "PTL-SCH-001": "#761",
+            # The partitioned collection gets no thumbnail asset.
+            "PTL-VIZ-001": "#1038",
+        },
+        expected_advisories={
+            **ONE_MIRROR,
+            # The partition asset names its files with a glob, and a glob has no
+            # single size or checksum. #761 holds the spec question.
+            "PTL-AST-003": 2,
+            # One per partition item: rashid asks each item for table:columns.
+            "PTL-DAT-017": 4,
+        },
+        known_invariants={"S-EXT-DECLARED": ITEM_FILE_EXT, "P-SUMMARY-FROM-ITEMS": "#1023"},
+        marks=(pytest.mark.realdata,),
+    ),
+    "antimeridian": Scenario(
+        build_antimeridian,
+        expected_advisories={"PTL-PRO-002": 2},
+        # The source GeoJSON keeps the data role beside its GeoParquet.
+        known_invariants={"P-DATA-ROLE-TYPE": "#960"},
+        marks=(pytest.mark.realdata,),
+    ),
+    "sibling-pmtiles": Scenario(
+        build_sibling_pmtiles,
+        known_errors={"PTL-VIZ-002": "#929", "PTL-VIZ-003": "#929"},
+        expected_advisories={
+            **ONE_MIRROR,
+            # sample.pmtiles holds three points in San Francisco, New York, and
+            # Chicago, so its bounds differ from points.parquet on purpose.
+            "PTL-DAT-005": 1,
+        },
+    ),
+    "iceberg": Scenario(
+        build_iceberg,
+        expected_advisories={
+            **ONE_MIRROR,
+            # The incubating Iceberg extension is not in rashid's registry.
+            "PTL-EXT-002": 1,
+        },
+        known_invariants={"P-NO-LOCAL-PATH": "#939"},
+    ),
+    "realdata-fieldmaps-boundaries": _realdata_row(REALDATA / "fieldmaps-boundaries.parquet"),
+    "realdata-nwi-wetlands": Scenario(
+        _realdata(REALDATA / "nwi-wetlands.parquet"),
+        expected_advisories=ONE_MIRROR,
+        marks=(
+            pytest.mark.realdata,
+            pytest.mark.xfail(
+                strict=True,
+                reason="#996: nwi-wetlands.parquet declares no CRS, so add refuses it",
+            ),
+        ),
+    ),
+    "realdata-open-buildings": _realdata_row(REALDATA / "open-buildings.parquet"),
+    "realdata-road-detections": _realdata_row(REALDATA / "road-detections.parquet"),
+    "realdata-rapidai4eo-sample": Scenario(
+        _realdata(REALDATA / "rapidai4eo-sample.tif"),
+        known_errors={
+            **COG_STATS,
+            # `add` refuses a raster outside an item directory, and PTL-COL-001
+            # asks a single-file collection to carry its data at collection
+            # level. No layout of one COG passes both.
+            "PTL-COL-001": "#1033",
+        },
+        expected_advisories={"PTL-DAT-010": 1, "PTL-PRO-002": 1},
+        known_invariants=RASTER_INVARIANTS,
+        marks=(pytest.mark.realdata,),
+    ),
+    "realdata-affordable-housing": _realdata_row(PHILADELPHIA / "affordable_housing.parquet"),
+    "realdata-council-districts": _realdata_row(PHILADELPHIA / "council_districts_2024.parquet"),
+    # The GDAL autotest file declares no CRS on its one spatial layer, so `add`
+    # refuses it. That refusal is correct, and the catalog stays empty.
+    "realdata-field-alias-gdb": Scenario(
+        _realdata(REALDATA / "filegdb" / "field_alias.gdb", expect=1),
+        marks=(pytest.mark.realdata,),
+    ),
+    "extract-arcgis": Scenario(
+        build_extract_arcgis,
+        known_errors={
+            "PTL-PRV-001": EXTRACT_PROVIDERS,
+            "PTL-SCH-001": EXTRACT_PROVIDERS,
+            "PTL-VIZ-001": EXTRACT_PROVIDERS,
+        },
+        marks=(pytest.mark.realdata,),
+    ),
+    "push": Scenario(build_push, expected_advisories=ONE_MIRROR),
+    "clone": Scenario(
+        build_clone,
+        # The clone holds no roads/collection.json.
+        known_errors={},
+        known_invariants={"P-VERSIONS-MATCH": "#1042"},
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Harness
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
-def generated_catalog(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    root = tmp_path_factory.mktemp("conformance") / "demo-catalog"
-    _build_catalog(root)
-    return root
+def build_scenario(
+    tmp_path_factory: pytest.TempPathFactory, cli_harness: type[CliHarness]
+) -> Builds:
+    """Build each scenario once per module, in the test that first asks for it.
+
+    The build runs in the test body, not in fixture setup, so a strict xfail
+    on a row sees a failed build as the expected failure. A failed build is
+    cached and raised again for the next test of the row. The result is the
+    root that rashid reads and every catalog root that the build wrote.
+    """
+    built: dict[str, tuple[Path, list[Path]] | BaseException] = {}
+
+    def _build(name: str) -> tuple[Path, list[Path]]:
+        if name not in built:
+            base = tmp_path_factory.mktemp(f"conformance-{name}")
+            harness = cli_harness(base)
+            root = base / "catalog"
+            try:
+                SCENARIOS[name].build(root, harness)
+                built[name] = (root, sorted(harness.roots | {root.resolve()}))
+            except BaseException as exc:  # noqa: BLE001 - cached and raised again
+                built[name] = exc
+        result = built[name]
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    return _build
 
 
 @pytest.fixture(scope="module")
-def visual_catalog(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    root = tmp_path_factory.mktemp("conformance-visual") / "visual-catalog"
-    _build_visual_catalog(root)
-    return root
+def generated_catalog(build_scenario: Builds) -> Path:
+    """The ``fresh`` scenario, which the shape tests below read."""
+    return build_scenario("fresh")[0]
 
 
 def _validate(root: Path, **kwargs: Any) -> Any:
@@ -341,15 +741,21 @@ def _validate(root: Path, **kwargs: Any) -> Any:
     )
 
 
-def _rule_counts(root: Path, severity: Severity) -> Counter[str]:
-    """Count findings by rule id at one severity, with the known gaps disabled."""
-    report = _validate(root, config=RulesConfig(disabled=KNOWN_GAPS))
-    return Counter(f.rule_id for f in report.findings if f.severity is severity)
+def _findings(root: Path, known: Mapping[str, str] = COG_STATS) -> list[Any]:
+    """Return rashid findings with the known rules disabled."""
+    report = _validate(root, config=RulesConfig(disabled=frozenset(known)))
+    return list(report.findings)
 
 
-def _findings(root: Path, severity: Severity) -> list[dict[str, Any]]:
-    report = _validate(root, config=RulesConfig(disabled=KNOWN_GAPS))
-    return [f.to_dict() for f in report.findings if f.severity is severity]
+def _rule_counts(
+    root: Path, severity: Severity, known: Mapping[str, str] = COG_STATS
+) -> Counter[str]:
+    """Count findings by rule id at one severity, with the known rules disabled."""
+    return Counter(f.rule_id for f in _findings(root, known) if f.severity is severity)
+
+
+def _errors(root: Path, known: Mapping[str, str] = COG_STATS) -> list[dict[str, Any]]:
+    return [f.to_dict() for f in _findings(root, known) if f.severity is Severity.ERROR]
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -357,43 +763,152 @@ def _load(path: Path) -> dict[str, Any]:
     return loaded
 
 
-class TestGeneratedCatalogConformance:
-    def test_no_errors(self, generated_catalog: Path) -> None:
-        """rashid reports zero errors on a generated catalog."""
-        assert _findings(generated_catalog, Severity.ERROR) == []
+def _scenario_params() -> list[Any]:
+    return [pytest.param(name, marks=row.marks, id=name) for name, row in SCENARIOS.items()]
 
-    def test_known_gaps_are_still_real(self, generated_catalog: Path) -> None:
-        """The disabled rules still fire, so the gap list cannot rot silently."""
-        report = _validate(generated_catalog)
-        fired = {f.rule_id for f in report.findings if f.severity is Severity.ERROR}
 
-        assert fired == KNOWN_GAPS
+def _build_visual_catalog(root: Path, run: RunCli) -> None:
+    """Build a collection carrying three styles and PMTiles.
 
-    def test_no_unexpected_advisories(self, generated_catalog: Path) -> None:
+    Separate from the main catalog because PMTiles needs tippecanoe, which CI
+    installs on Linux and macOS but not Windows. Keeping it apart lets the core
+    gate run everywhere.
+
+    `add` never registers style assets on its own. `register_style_assets` has
+    exactly two callers, the end of PMTiles generation and the extract
+    orchestrator, so `--pmtiles` is the only offline route to a styled
+    collection. Two hand-written styles plus the generated `styles/default`
+    make three, and three is the point: PTL-VIZ-006 short-circuits below two
+    styles, so a smaller collection would never test the default-role MUST.
+    """
+    collection_dir = root / "places"
+    (collection_dir / "styles").mkdir(parents=True)
+    # Not simple.parquet: tippecanoe needs two distinct feature locations to
+    # guess a maxzoom, and simple.parquet holds one point. Not the UTM buildings
+    # fixture either, because the thumbnail renderer returns None on a projected
+    # CRS and the collection would then fail PTL-VIZ-001.
+    shutil.copy(POINTS, collection_dir / "places.parquet")
+    for name, title in (("aqua", "Aqua"), ("zebra", "Zebra")):
+        (collection_dir / "styles" / f"{name}.json").write_text(
+            json.dumps({"version": 8, "name": title, "sources": {}, "layers": []}),
+            encoding="utf-8",
+        )
+    _init(root, run)
+    result = run(
+        "add", "--portolan-dir", str(root), "--pmtiles", str(collection_dir / "places.parquet")
+    )
+
+    # Fail here, loudly, rather than three assertion errors down the file.
+    # `register_style_assets` runs at the end of PMTiles generation, outside the
+    # per-asset try block, so a collection can come back with its hand-written
+    # styles registered and no tiles at all. That shape reads as "the default
+    # style is missing" and "there is no tiles asset" instead of "tiling did not
+    # run", which is what actually happened.
+    assert (collection_dir / "places.pmtiles").is_file(), (
+        f"tippecanoe produced no tiles, so the styles and PMTiles assertions "
+        f"below would report the wrong defect. add output:\n{result.output}"
+    )
+
+
+@pytest.fixture(scope="module")
+def visual_catalog(tmp_path_factory: pytest.TempPathFactory, cli_harness: type[CliHarness]) -> Path:
+    base = tmp_path_factory.mktemp("conformance-visual")
+    harness = cli_harness(base)
+    root = base / "visual-catalog"
+    _build_visual_catalog(root, harness)
+    harness.verify()
+    return root
+
+
+@pytest.mark.parametrize("name", _scenario_params())
+class TestScenarioConformance:
+    """Each scenario passes rashid except for the rules its open bugs explain."""
+
+    def test_no_errors(self, name: str, build_scenario: Builds) -> None:
+        """rashid reports no error outside the scenario's known errors."""
+        root, _ = build_scenario(name)
+
+        assert _errors(root, SCENARIOS[name].known_errors) == []
+
+    def test_known_gaps_are_still_real(self, name: str, build_scenario: Builds) -> None:
+        """Each known error still fires, so the list cannot rot silently."""
+        root, _ = build_scenario(name)
+        known = SCENARIOS[name].known_errors
+        fired = {f.rule_id for f in _validate(root).findings}
+
+        assert fired & set(known) == set(known)
+
+    def test_no_unexpected_advisories(self, name: str, build_scenario: Builds) -> None:
         """Warnings and infos are pinned by exact count, not discarded.
 
-        This is the assertion #654 needed and did not have. rashid's PTL-CNF-004
-        reports a stale extension version as a WARNING, so an error-only gate
-        watched raster sit at v1.1.0 and stayed green. Pinning counts means a new
-        advisory fails here, and a fixed one fails too until its entry goes.
+        A new advisory fails here, and a fixed one fails too until its entry goes.
         """
-        observed = _rule_counts(generated_catalog, Severity.WARNING) + _rule_counts(
-            generated_catalog, Severity.INFO
+        root, _ = build_scenario(name)
+        row = SCENARIOS[name]
+        observed = _rule_counts(root, Severity.WARNING, row.known_errors) + _rule_counts(
+            root, Severity.INFO, row.known_errors
         )
 
-        assert dict(observed) == EXPECTED_ADVISORIES
+        assert dict(observed) == dict(row.expected_advisories)
 
-    def test_every_pass_actually_ran(self, generated_catalog: Path) -> None:
+    def test_catalog_invariants_hold(self, name: str, build_scenario: Builds) -> None:
+        """The invariants that fire are exactly the row's known ones.
+
+        The row pins the codes itself instead of the global
+        ``KNOWN_INVARIANT_GAPS``, so a gap in one row cannot hide the same code
+        in another.
+        """
+        _, roots = build_scenario(name)
+        fired = {v.code for root in roots for v in check_catalog_invariants(root)}
+
+        assert fired == set(SCENARIOS[name].known_invariants)
+
+    def test_every_pass_actually_ran(self, name: str, build_scenario: Builds) -> None:
         """No pass silently skipped itself.
 
         rashid degrades a pass it cannot run to a single ``-000`` warning rather
         than failing the run. A gate that counts only rule findings cannot tell a
         clean data pass from an absent one, so assert the absence directly.
         """
-        report = _validate(generated_catalog)
-        skipped = sorted(f.rule_id for f in report.findings if f.rule_id.endswith("-000"))
+        root, _ = build_scenario(name)
+        skipped = sorted(f.rule_id for f in _validate(root).findings if f.rule_id.endswith("-000"))
 
         assert skipped == []
+
+
+@pytest.mark.realdata
+class TestRealdataGeoParquetIsRewritten:
+    """What ``add`` does with a realdata file that declares GeoParquet 1.0.0 (#1033).
+
+    PTL-DAT-012 rejects 1.0.0. The gate does not skip these files: it pins
+    that ``add`` publishes them as GeoParquet 1.1 with a bbox covering column.
+    """
+
+    @pytest.mark.parametrize(
+        ("name", "stem"),
+        [
+            ("realdata-fieldmaps-boundaries", "fieldmaps-boundaries"),
+            ("realdata-open-buildings", "open-buildings"),
+            ("realdata-road-detections", "road-detections"),
+        ],
+    )
+    def test_the_published_file_is_geoparquet_1_1(
+        self, name: str, stem: str, build_scenario: Builds
+    ) -> None:
+        source = json.loads(pq.read_schema(REALDATA / f"{stem}.parquet").metadata[b"geo"])
+        root, _ = build_scenario(name)
+        published = pq.read_schema(root / stem / f"{stem}.parquet")
+        geo = json.loads(published.metadata[b"geo"])
+
+        assert source["version"] == "1.0.0"
+        assert geo["version"] == "1.1.0"
+        assert geo["columns"]["geometry"]["covering"]["bbox"]["xmin"] == ["bbox", "xmin"]
+
+    def test_add_refuses_the_gdb_with_no_crs(self, build_scenario: Builds) -> None:
+        """The refusal leaves the catalog without a collection."""
+        root, _ = build_scenario("realdata-field-alias-gdb")
+
+        assert list(root.rglob("collection.json")) == []
 
 
 class TestUnlicensedCatalogIsRefused:
@@ -424,17 +939,16 @@ class TestUnlicensedCatalogIsRefused:
         )
         return collection_dir / "roads.parquet"
 
-    def test_add_refuses_and_writes_no_collection(self, tmp_path: Path) -> None:
+    def test_add_refuses_and_writes_no_collection(self, tmp_path: Path, run_cli: RunCli) -> None:
         root = tmp_path / "unlicensed"
         source = self._catalog_without_a_license(root)
 
-        result = CliRunner().invoke(cli, ["add", "--portolan-dir", str(root), str(source)])
+        result = run_cli("add", "--portolan-dir", str(root), str(source), expect=1)
 
-        assert result.exit_code == 1, result.output
         assert "PRTLN-VAL004" in result.output
         assert list(root.rglob("collection.json")) == []
 
-    def test_the_violation_it_prevents_is_real(self, tmp_path: Path) -> None:
+    def test_the_violation_it_prevents_is_real(self, tmp_path: Path, run_cli: RunCli) -> None:
         """Prove PTL-LIC-002 is what the gate averts, not a rule we assume exists.
 
         Takes a conformant generated catalog and puts back exactly what the old
@@ -442,8 +956,10 @@ class TestUnlicensedCatalogIsRefused:
         this, the test above would keep passing even if the rule it protects
         against were renamed or dropped upstream.
         """
+        # The license is outside the catalog invariants, so run_cli checks
+        # this catalog at teardown and finds nothing.
         root = tmp_path / "damaged-catalog"
-        _build_catalog(root)
+        build_fresh(root, run_cli)
         collection_path = root / "roads" / "collection.json"
 
         collection = json.loads(collection_path.read_text(encoding="utf-8"))
@@ -451,11 +967,7 @@ class TestUnlicensedCatalogIsRefused:
         collection["links"] = [link for link in collection["links"] if link.get("rel") != "license"]
         collection_path.write_text(json.dumps(collection, indent=2), encoding="utf-8")
 
-        fired = {
-            f.rule_id
-            for f in _validate(root, config=RulesConfig(disabled=KNOWN_GAPS)).findings
-            if f.severity is Severity.ERROR
-        }
+        fired = {f.rule_id for f in _findings(root) if f.severity is Severity.ERROR}
 
         assert fired == {"PTL-LIC-002"}
 
@@ -469,7 +981,9 @@ class TestAnIdentifierOutsideThePopularShortlistSurvivesGeneration:
     this runs the identifier through generation and validates the output.
     """
 
-    def test_eupl_reaches_the_collection_and_conforms(self, tmp_path: Path) -> None:
+    def test_eupl_reaches_the_collection_and_conforms(
+        self, tmp_path: Path, run_cli: RunCli
+    ) -> None:
         root = tmp_path / "eupl-catalog"
         collection_dir = root / "roads"
         collection_dir.mkdir(parents=True)
@@ -487,19 +1001,12 @@ class TestAnIdentifierOutsideThePopularShortlistSurvivesGeneration:
             encoding="utf-8",
         )
 
-        result = CliRunner().invoke(
-            cli, ["add", "--portolan-dir", str(root), str(collection_dir / "roads.parquet")]
-        )
+        run_cli("add", "--portolan-dir", str(root), str(collection_dir / "roads.parquet"))
 
-        assert result.exit_code == 0, result.output
         collection = json.loads((collection_dir / "collection.json").read_text(encoding="utf-8"))
         assert collection["license"] == "EUPL-1.2"
 
-        license_findings = [
-            f.rule_id
-            for f in _validate(root, config=RulesConfig(disabled=KNOWN_GAPS)).findings
-            if f.rule_id.startswith("PTL-LIC")
-        ]
+        license_findings = [f.rule_id for f in _findings(root) if f.rule_id.startswith("PTL-LIC")]
         assert license_findings == []
 
 
@@ -810,7 +1317,7 @@ class TestStylesAndPMTilesConform:
     """
 
     def test_the_catalog_has_no_errors(self, visual_catalog: Path) -> None:
-        assert _findings(visual_catalog, Severity.ERROR) == []
+        assert _errors(visual_catalog) == []
 
     def test_exactly_one_style_is_the_default(self, visual_catalog: Path) -> None:
         """PORTO-CORE-070, a MUST once a collection registers more than one style.
@@ -875,6 +1382,7 @@ class TestTheGateCatchesTheDriftItWasBuiltFor:
 
     @pytest.fixture
     def damaged(self, generated_catalog: Path, tmp_path: Path) -> Path:
+        # A copy, not a CLI build, so the run_cli check never sees it.
         root = tmp_path / "damaged-catalog"
         shutil.copytree(generated_catalog, root)
         return root
@@ -912,7 +1420,7 @@ class TestTheGateCatchesTheDriftItWasBuiltFor:
 
         assert advisories["PTL-CNF-004"] == 1
         assert advisories["PTL-EXT-000"] == 1
-        assert dict(advisories) != EXPECTED_ADVISORIES
+        assert dict(advisories) != dict(SCENARIOS["fresh"].expected_advisories)
 
     def test_a_stale_extension_version_also_fails_the_schema(self, damaged: Path) -> None:
         """And the schema assertion catches it a second way.
@@ -961,6 +1469,6 @@ class TestTheGateCatchesTheDriftItWasBuiltFor:
         links = [link for link in _load(collection_path)["links"] if link.get("rel") == "items"]
 
         assert links != []
-        assert _findings(damaged, Severity.ERROR) == [], (
+        assert _errors(damaged) == [], (
             "rashid tolerates the legacy link, which is why the gate asserts on it directly"
         )

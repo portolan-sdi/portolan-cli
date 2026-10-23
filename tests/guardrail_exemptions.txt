@@ -1,0 +1,46 @@
+# Guardrail exemptions for #1035. tests/docs/test_guardrail_exemptions.py pins
+# the count of each kind and checks the xfail set against the test markers.
+# Tab-separated. One record per line.
+#   xfail<TAB>#N<TAB>owner agent<TAB>where the strict xfail lives
+#   invariant<TAB>a build_damaged_catalog reason, verbatim
+#   config-key<TAB>key: why the reachability test cannot observe it
+
+xfail	#748	none	tests/integration/test_generated_catalog_conformance.py PTL-DAT-009 rows fresh, re-add, item-id, realdata-rapidai4eo-sample
+xfail	#761	spec	tests/integration/test_generated_catalog_conformance.py PTL-EXT-001, PTL-PRT-001, PTL-SCH-001 row partitioned
+xfail	#801	C	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS S-EXTENT-NOT-STALE; tests/integration/test_generated_catalog_conformance.py row force-after-mutation; tests/properties/test_rebuild_idempotence.py
+xfail	#813	C	tests/integration/test_generated_catalog_conformance.py PTL-PRV-001, PTL-SCH-001 row force-after-mutation
+xfail	#834	A	tests/integration/test_config_reachability.py
+xfail	#840	C	tests/integration/test_generated_catalog_conformance.py row item-id; invariant item-id reason
+xfail	#852	C	tests/integration/test_bbox_validation.py; invariant bbox_validation reason
+xfail	#929	D	tests/integration/test_generated_catalog_conformance.py PTL-VIZ-002, PTL-VIZ-003 row sibling-pmtiles
+xfail	#930	D	tests/integration/test_generated_catalog_conformance.py row readme
+xfail	#932	spec	tests/integration/test_generated_catalog_conformance.py PTL-DAT-005 row multi-file
+xfail	#939	F	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS P-NO-LOCAL-PATH; tests/integration/test_generated_catalog_conformance.py row iceberg
+xfail	#960	D	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS P-DATA-ROLE-TYPE; tests/integration/test_generated_catalog_conformance.py row antimeridian
+xfail	#996	D	tests/integration/test_generated_catalog_conformance.py row realdata-nwi-wetlands
+xfail	#1005	B	tests/integration/test_stdout_purity.py; tests/unit/test_cli_add_rm.py
+xfail	#1020	A	tests/integration/test_config_reachability.py
+xfail	#1023	C	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS P-SUMMARY-FROM-ITEMS; tests/integration/test_generated_catalog_conformance.py raster rows
+xfail	#1033	spec	tests/integration/test_generated_catalog_conformance.py PTL-COL-001 row realdata-rapidai4eo-sample
+xfail	#1037	D	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS S-EXT-DECLARED; tests/integration/test_generated_catalog_conformance.py raster and partitioned rows
+xfail	#1038	D	tests/integration/test_generated_catalog_conformance.py PTL-VIZ-001 row partitioned
+xfail	#1039	F	tests/integration/test_generated_catalog_conformance.py row extract-arcgis
+xfail	#1041	D	tests/properties/test_rebuild_idempotence.py
+xfail	#1042	E	tests/integration/test_generated_catalog_conformance.py row clone; invariant stdout_purity reason
+xfail	#1044	B	tests/integration/test_config_reachability.py
+xfail	#1046	C	tests/integration/test_check_fix_no_regression.py; invariant check_fix --fix reason
+xfail	#1053	D	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS P-VERSIONS-KEY; tests/integration/test_generated_catalog_conformance.py raster rows
+
+invariant	catalog_invariants: file:size set to 1 for the __main__ test
+invariant	stdout_purity: clone writes no collection.json (#1042)
+invariant	bbox_validation: the two-bbox antimeridian extent of #852
+invariant	item-id: hrefs point at a directory that does not exist (#840)
+invariant	check_fix: the test deletes the item JSON on purpose
+invariant	check_fix: --fix rewrites items.parquet and leaves versions.json stale (#1046)
+
+config-key	partitioning.prompt: read only when stderr is a TTY, so CliRunner never reaches it
+config-key	pmtiles.bbox: shows only in decoded tile contents
+config-key	pmtiles.where: shows only in decoded tile contents
+config-key	pmtiles.include_cols: shows only in decoded tile contents
+config-key	pmtiles.precision: shows only in decoded tile coordinates
+config-key	pmtiles.src_crs: shows only when the file CRS metadata is wrong

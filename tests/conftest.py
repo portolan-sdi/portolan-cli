@@ -32,6 +32,8 @@ from tests.network_guard import NO_PROXY_KEYS, PROXY_KEYS, NetworkGuard, Sentine
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
 
+    from click.testing import Result
+
 
 # =============================================================================
 # Environment Isolation
@@ -55,6 +57,10 @@ _AWS_ISOLATION_KEYS = (
     "AWS_SHARED_CREDENTIALS_FILE",
     "AWS_EC2_METADATA_DISABLED",
 )
+
+# The shell exports these on a developer machine. isolate_aws_config removes
+# them for every test.
+_AWS_SHELL_KEYS = ("AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION")
 
 # mutmut also re-invokes Hypothesis tests through its own runner, once per
 # mutant in the same process, so class-based property tests see more than one
@@ -104,6 +110,16 @@ if _MUTMUT_ENV_KEY not in os.environ and os.environ.get("HYPOTHESIS_PROFILE") ==
         print_blob=True,
     )
     _ci_hypothesis_settings.load_profile("ci")
+
+# The nightly property-tests job sets HYPOTHESIS_PROFILE=nightly: 500 random
+# examples with no deadline, and the failing blob printed for a replay.
+if _MUTMUT_ENV_KEY not in os.environ and os.environ.get("HYPOTHESIS_PROFILE") == "nightly":
+    from hypothesis import settings as _nightly_hypothesis_settings
+
+    _nightly_hypothesis_settings.register_profile(
+        "nightly", max_examples=500, derandomize=False, print_blob=True, deadline=None
+    )
+    _nightly_hypothesis_settings.load_profile("nightly")
 
 
 @contextmanager
@@ -814,6 +830,11 @@ def isolate_aws_config(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Non
             "AWS_EC2_METADATA_DISABLED": "true",
         },
     ):
+        # A profile or region from the shell picks the developer's account and
+        # changes the region a store resolves, so a test sees neither. The
+        # patch restores them on exit.
+        for name in _AWS_SHELL_KEYS:
+            os.environ.pop(name, None)
         yield
 
 
@@ -964,3 +985,227 @@ def register_plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., N
 
     yield _register
     manager.reset_plugin_manager()
+
+
+# =============================================================================
+# Moto S3 server
+# =============================================================================
+
+
+@pytest.fixture(scope="session")
+def moto_server() -> Iterator[str]:
+    """Start one moto server for the session and yield its endpoint URL.
+
+    obstore is a Rust client that makes its own HTTP calls, so boto3's
+    in-process patching cannot reach it. moto's server mode gives it a real
+    endpoint on the loopback interface, which the network guard allows.
+    """
+    pytest.importorskip("moto")
+    from moto.server import ThreadedMotoServer
+
+    # 127.0.0.1, not 0.0.0.0: Windows cannot bind to 0.0.0.0.
+    server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
+    server.start()
+    host, port = server.get_host_and_port()
+    yield f"http://{host}:{port}"
+    server.stop()
+
+
+@pytest.fixture
+def s3_bucket(moto_server: str) -> tuple[str, str]:
+    """Create a bucket with a unique name on the moto server.
+
+    Returns ``(bucket_name, endpoint_url)``.
+    """
+    import uuid
+
+    boto3 = pytest.importorskip("boto3")
+    bucket_name = f"test-bucket-{uuid.uuid4().hex[:8]}"
+    client = boto3.client(
+        "s3",
+        endpoint_url=moto_server,
+        aws_access_key_id="testing",
+        aws_secret_access_key="testing",
+        region_name="us-east-1",
+    )
+    client.create_bucket(Bucket=bucket_name)
+    return bucket_name, moto_server
+
+
+@pytest.fixture
+def pyiceberg_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip without the iceberg extra, and hide the developer's PyIceberg config.
+
+    PyIceberg reads the first ``.pyiceberg.yaml`` it finds, so a developer's
+    own file would replace the local SQLite catalog that the backend defaults
+    to. ``tests/iceberg/conftest.py`` gives the full reason. The stub file
+    holds one key that PyIceberg does not read.
+    """
+    pytest.importorskip("pyiceberg")
+    if sys.platform == "win32":
+        pytest.skip("PyIceberg SQL catalog warehouse paths break on Windows")
+    stub = tmp_path / "pyiceberg-home" / ".pyiceberg.yaml"
+    stub.parent.mkdir(parents=True, exist_ok=True)
+    stub.write_text("portolan-test-isolation: true\n", encoding="utf-8")
+    monkeypatch.setenv("PYICEBERG_HOME", str(stub.parent))
+    for name in os.environ.copy():
+        if name.startswith("PYICEBERG_CATALOG__"):
+            monkeypatch.delenv(name)
+
+
+@pytest.fixture
+def _aws_env(s3_bucket: tuple[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point obstore and boto3 at the moto server of ``s3_bucket``."""
+    _, endpoint_url = s3_bucket
+    monkeypatch.setenv("AWS_ENDPOINT_URL", endpoint_url)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    # obstore refuses an http:// endpoint without this.
+    monkeypatch.setenv("AWS_ALLOW_HTTP", "true")
+
+
+@pytest.fixture
+def arcgis_url(tmp_path: Path, fixtures_dir: Path) -> Iterator[str]:
+    """Serve the recorded Philadelphia ArcGIS services on the loopback interface.
+
+    Yields the services root URL for ``extract arcgis``.
+    """
+    import threading
+
+    from tests.docs.philadelphia_arcgis_server import create_server
+
+    layers = fixtures_dir / "realdata" / "philadelphia-housing"
+    server = create_server(layers, tmp_path / "arcgis-requests.jsonl")
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/ArcGIS/rest/services"
+    server.shutdown()
+    server.server_close()
+    worker.join(timeout=5)
+
+
+# =============================================================================
+# The real CLI, with catalog invariants at teardown
+# =============================================================================
+
+
+@contextmanager
+def _working_directory(path: Path) -> Iterator[None]:
+    previous = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
+class CliHarness:
+    """Invoke the real CLI and check every catalog it writes under ``base``.
+
+    ``tests/catalog_invariants.py`` gives the reason for the checks. The
+    harness records a directory as a catalog root when it holds both
+    ``catalog.json`` and ``.portolan/``. It checks only the roots that the
+    CLI wrote, so a hand-written fixture is never checked.
+    """
+
+    def __init__(self, base: Path) -> None:
+        self.base = base
+        self.roots: set[Path] = set()
+        self.exempt: set[Path] = set()
+
+    def __call__(
+        self,
+        *args: str,
+        cwd: Path | None = None,
+        expect: int | None = 0,
+        input: str | None = None,  # noqa: A002 - mirrors CliRunner.invoke
+    ) -> Result:
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+
+        with _working_directory(cwd or self.base):
+            result = CliRunner().invoke(cli, list(args), input=input, catch_exceptions=False)
+        self.roots.update(
+            path.parent.resolve()
+            for path in self.base.rglob("catalog.json")
+            if (path.parent / ".portolan").is_dir()
+        )
+        if expect is not None:
+            assert result.exit_code == expect, (
+                f"portolan {' '.join(args)} exited {result.exit_code}, expected {expect}\n"
+                f"{result.output}"
+            )
+        return result
+
+    def violations(self) -> str:
+        """Return the formatted violations outside the known gaps, or ''."""
+        from tests.catalog_invariants import (
+            KNOWN_INVARIANT_GAPS,
+            check_catalog_invariants,
+            format_violations,
+        )
+
+        reports: list[str] = []
+        for root in sorted(self.roots - self.exempt):
+            if not root.is_dir():
+                continue
+            found = [
+                v for v in check_catalog_invariants(root) if v.code not in KNOWN_INVARIANT_GAPS
+            ]
+            if found:
+                reports.append(format_violations(root, found))
+        return "\n".join(reports)
+
+    def verify(self) -> None:
+        """Fail the current test when a tracked catalog breaks an invariant."""
+        report = self.violations()
+        if report:
+            pytest.fail(report, pytrace=False)
+
+
+@pytest.fixture
+def run_cli(tmp_path: Path) -> Iterator[CliHarness]:
+    """Invoke ``portolan`` in process and check each catalog it writes at teardown.
+
+    ``run_cli("add", "--portolan-dir", str(root), str(file))`` runs the real
+    command with ``catch_exceptions=False`` in ``cwd`` (default ``tmp_path``).
+    It asserts that the exit code equals ``expect`` (0 by default, None skips
+    the check). A test that damages a catalog on purpose registers the root
+    with ``build_damaged_catalog``.
+    """
+    harness = CliHarness(tmp_path)
+    yield harness
+    harness.verify()
+
+
+@pytest.fixture(scope="session")
+def cli_harness() -> type[CliHarness]:
+    """The ``run_cli`` class, for a module-scoped fixture that builds a catalog once.
+
+    The caller calls ``verify()`` after the build, because no teardown runs
+    the check for it.
+    """
+    return CliHarness
+
+
+@pytest.fixture
+def build_damaged_catalog(run_cli: CliHarness) -> Callable[[Path, str], Path]:
+    """Exempt one catalog root from the ``run_cli`` teardown check.
+
+    The reason must appear verbatim as an ``invariant`` line in
+    ``tests/guardrail_exemptions.txt``, so each exemption is counted.
+    """
+    from tests.catalog_invariants import load_exemptions
+
+    reasons = {row[0] for row in load_exemptions("invariant")}
+
+    def _register(root: Path, reason: str) -> Path:
+        assert reason in reasons, (
+            f"add 'invariant<TAB>{reason}' to tests/guardrail_exemptions.txt to exempt {root}"
+        )
+        run_cli.exempt.add(root.resolve())
+        return root
+
+    return _register

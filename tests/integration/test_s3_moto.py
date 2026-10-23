@@ -12,70 +12,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import uuid
 from typing import TYPE_CHECKING
 
 import pytest
 
-# Skip the whole module when moto or boto3 is absent. The import of
-# ThreadedMotoServer must follow the skip, because it fails without moto.
-moto = pytest.importorskip("moto")
+# The moto_server, s3_bucket, and _aws_env fixtures live in tests/conftest.py.
 boto3 = pytest.importorskip("boto3")
 
-from moto.server import ThreadedMotoServer  # noqa: E402
-
 if TYPE_CHECKING:
-    from collections.abc import Generator
     from pathlib import Path
 
 # =============================================================================
 # Fixtures
 # =============================================================================
-
-
-@pytest.fixture(scope="module")
-def moto_server() -> Generator[str, None, None]:
-    """Start a moto server that provides a real HTTP endpoint.
-
-    This is necessary because obstore (Rust-based S3 client) makes direct
-    HTTP calls and doesn't integrate with boto3's patching mechanism.
-    """
-    # Start moto server on a random available port
-    # Use 127.0.0.1 explicitly - Windows can't bind to 0.0.0.0
-    server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
-    server.start()
-
-    # Get the actual port
-    host, port = server.get_host_and_port()
-    endpoint_url = f"http://{host}:{port}"
-
-    yield endpoint_url
-
-    server.stop()
-
-
-@pytest.fixture
-def s3_bucket(moto_server: str) -> Generator[tuple[str, str], None, None]:
-    """Create a mock S3 bucket using the moto server.
-
-    Uses a unique bucket name per test to ensure isolation.
-    Returns (bucket_name, endpoint_url) tuple.
-    """
-    # Unique bucket name per test for isolation
-    bucket_name = f"test-bucket-{uuid.uuid4().hex[:8]}"
-
-    # Create bucket using boto3 pointed at moto server
-    client = boto3.client(
-        "s3",
-        endpoint_url=moto_server,
-        aws_access_key_id="testing",
-        aws_secret_access_key="testing",
-        region_name="us-east-1",
-    )
-    client.create_bucket(Bucket=bucket_name)
-
-    yield bucket_name, moto_server
 
 
 @pytest.fixture
@@ -236,38 +185,6 @@ def nested_catalog_with_data(tmp_path: Path, s3_bucket: tuple[str, str]) -> Path
         )
 
     return catalog_dir
-
-
-@pytest.fixture
-def _aws_env(s3_bucket: tuple[str, str]) -> Generator[None, None, None]:
-    """Set up AWS environment variables for obstore to use moto server.
-
-    Note: Named with underscore prefix to indicate it's used for side effects only.
-    """
-    bucket_name, endpoint_url = s3_bucket
-
-    old_env = {
-        "AWS_ENDPOINT_URL": os.environ.get("AWS_ENDPOINT_URL"),
-        "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID"),
-        "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY"),
-        "AWS_DEFAULT_REGION": os.environ.get("AWS_DEFAULT_REGION"),
-        "AWS_ALLOW_HTTP": os.environ.get("AWS_ALLOW_HTTP"),
-    }
-
-    os.environ["AWS_ENDPOINT_URL"] = endpoint_url
-    os.environ["AWS_ACCESS_KEY_ID"] = "testing"
-    os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
-    os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
-    os.environ["AWS_ALLOW_HTTP"] = "true"  # Required for http:// endpoints
-
-    yield
-
-    # Restore original env
-    for key, value in old_env.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
 
 
 # =============================================================================
