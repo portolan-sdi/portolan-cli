@@ -676,10 +676,17 @@ def sync_catalog_index(catalog_root: Path, collection_ids: set[str]) -> None:
         collection_ids: Collections the add touched. One without a
             versions.json, or with no current version, is left alone. A
             versions.json that does not parse is logged and left alone, as in
-            :func:`_mirror_into_catalog_index`.
+            :func:`_mirror_into_catalog_index`. A collection whose index entry
+            already matches is not written, so a no-op re-add leaves the
+            index bytes and its ``updated`` time alone.
     """
     from portolan_cli.versions import read_versions
 
+    index_path = catalog_root / "versions.json"
+    try:
+        indexed = json.loads(index_path.read_text(encoding="utf-8")).get("collections") or {}
+    except (OSError, ValueError, AttributeError):
+        indexed = {}
     for collection_id in sorted(collection_ids):
         versions_path = catalog_root / Path(*collection_id.split("/")) / "versions.json"
         if not versions_path.exists():
@@ -694,8 +701,21 @@ def sync_catalog_index(catalog_root: Path, collection_ids: set[str]) -> None:
         current = next(
             (v for v in versions.versions if v.version == versions.current_version), None
         )
-        if current is not None:
-            _mirror_into_catalog_index(catalog_root, collection_id, current)
+        if current is None:
+            continue
+        entry = indexed.get(collection_id) if isinstance(indexed, dict) else None
+        summary = (
+            current.version,
+            len(current.assets),
+            sum(a.size_bytes for a in current.assets.values()),
+        )
+        if isinstance(entry, dict) and summary == (
+            entry.get("current_version"),
+            entry.get("asset_count"),
+            entry.get("total_size_bytes"),
+        ):
+            continue
+        _mirror_into_catalog_index(catalog_root, collection_id, current)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
