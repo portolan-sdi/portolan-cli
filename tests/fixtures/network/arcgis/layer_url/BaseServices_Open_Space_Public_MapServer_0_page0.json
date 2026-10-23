@@ -1,0 +1,469 @@
+{
+ "displayFieldName": "SITE_NAME",
+ "fieldAliases": {
+  "OBJECTID": "OBJECTID",
+  "SITE_NAME": "SITE_NAME",
+  "OWNERSHIP": "OWNERSHIP",
+  "PROTECTION": "PROTECTION",
+  "TYPECODE": "TYPECODE",
+  "DISTRICT": "DISTRICT",
+  "ACRES": "ACRES",
+  "ADDRESS": "ADDRESS",
+  "ZonAgg": "ZonAgg",
+  "TypeLong": "TypeLong",
+  "OS_Own_Jur": "OS_Own_Jur",
+  "OS_Mngmnt": "OS_Mngmnt",
+  "POS": "POS",
+  "PA": "PA",
+  "ALT_NAME": "ALT_NAME",
+  "AgncyJuris": "AgncyJuris",
+  "PARK_ID": "PARK_ID",
+  "REGION": "REGION",
+  "OS_ID": "OS_ID",
+  "F_100ftRule": "F_100ftRule",
+  "ZipCode": "ZipCode",
+  "ParcelNumber": "ParcelNumber",
+  "YearAcquired": "YearAcquired",
+  "Shape.STArea()": "Shape.STArea()",
+  "Shape.STLength()": "Shape.STLength()"
+ },
+ "geometryType": "esriGeometryPolygon",
+ "spatialReference": {
+  "wkid": 102686,
+  "latestWkid": 2249
+ },
+ "fields": [
+  {
+   "name": "OBJECTID",
+   "type": "esriFieldTypeOID",
+   "alias": "OBJECTID"
+  },
+  {
+   "name": "SITE_NAME",
+   "type": "esriFieldTypeString",
+   "alias": "SITE_NAME",
+   "length": 254
+  },
+  {
+   "name": "OWNERSHIP",
+   "type": "esriFieldTypeString",
+   "alias": "OWNERSHIP",
+   "length": 85
+  },
+  {
+   "name": "PROTECTION",
+   "type": "esriFieldTypeString",
+   "alias": "PROTECTION",
+   "length": 254
+  },
+  {
+   "name": "TYPECODE",
+   "type": "esriFieldTypeInteger",
+   "alias": "TYPECODE"
+  },
+  {
+   "name": "DISTRICT",
+   "type": "esriFieldTypeString",
+   "alias": "DISTRICT",
+   "length": 20
+  },
+  {
+   "name": "ACRES",
+   "type": "esriFieldTypeDouble",
+   "alias": "ACRES"
+  },
+  {
+   "name": "ADDRESS",
+   "type": "esriFieldTypeString",
+   "alias": "ADDRESS",
+   "length": 254
+  },
+  {
+   "name": "ZonAgg",
+   "type": "esriFieldTypeString",
+   "alias": "ZonAgg",
+   "length": 50
+  },
+  {
+   "name": "TypeLong",
+   "type": "esriFieldTypeString",
+   "alias": "TypeLong",
+   "length": 75
+  },
+  {
+   "name": "OS_Own_Jur",
+   "type": "esriFieldTypeString",
+   "alias": "OS_Own_Jur",
+   "length": 50
+  },
+  {
+   "name": "OS_Mngmnt",
+   "type": "esriFieldTypeString",
+   "alias": "OS_Mngmnt",
+   "length": 50
+  },
+  {
+   "name": "POS",
+   "type": "esriFieldTypeString",
+   "alias": "POS",
+   "length": 1
+  },
+  {
+   "name": "PA",
+   "type": "esriFieldTypeString",
+   "alias": "PA",
+   "length": 1
+  },
+  {
+   "name": "ALT_NAME",
+   "type": "esriFieldTypeString",
+   "alias": "ALT_NAME",
+   "length": 1000
+  },
+  {
+   "name": "AgncyJuris",
+   "type": "esriFieldTypeString",
+   "alias": "AgncyJuris",
+   "length": 50
+  },
+  {
+   "name": "PARK_ID",
+   "type": "esriFieldTypeString",
+   "alias": "PARK_ID",
+   "length": 4
+  },
+  {
+   "name": "REGION",
+   "type": "esriFieldTypeString",
+   "alias": "REGION",
+   "length": 100
+  },
+  {
+   "name": "OS_ID",
+   "type": "esriFieldTypeString",
+   "alias": "OS_ID",
+   "length": 6
+  },
+  {
+   "name": "F_100ftRule",
+   "type": "esriFieldTypeString",
+   "alias": "F_100ftRule",
+   "length": 254
+  },
+  {
+   "name": "ZipCode",
+   "type": "esriFieldTypeString",
+   "alias": "ZipCode",
+   "length": 50
+  },
+  {
+   "name": "ParcelNumber",
+   "type": "esriFieldTypeString",
+   "alias": "ParcelNumber",
+   "length": 1000
+  },
+  {
+   "name": "YearAcquired",
+   "type": "esriFieldTypeSmallInteger",
+   "alias": "YearAcquired"
+  },
+  {
+   "name": "Shape.STArea()",
+   "type": "esriFieldTypeDouble",
+   "alias": "Shape.STArea()"
+  },
+  {
+   "name": "Shape.STLength()",
+   "type": "esriFieldTypeDouble",
+   "alias": "Shape.STLength()"
+  }
+ ],
+ "features": [
+  {
+   "attributes": {
+    "OBJECTID": 10,
+    "SITE_NAME": "Reilly Playground",
+    "OWNERSHIP": "Commonwealth of Massachusetts",
+    "PROTECTION": "A97",
+    "TYPECODE": 3,
+    "DISTRICT": "Allston-Brighton",
+    "ACRES": 6.93091232,
+    "ADDRESS": "355 Chestnut Hill Avenue",
+    "ZonAgg": "Open Space District",
+    "TypeLong": "Parks, Playgrounds & Athletic Fields",
+    "OS_Own_Jur": "DCR",
+    "OS_Mngmnt": "NULL",
+    "POS": "X",
+    "PA": "X",
+    "ALT_NAME": "Reilly Memorial Recreation Center",
+    "AgncyJuris": null,
+    "PARK_ID": null,
+    "REGION": "INFO_Reallocation From Dept",
+    "OS_ID": "3000",
+    "F_100ftRule": "YES",
+    "ZipCode": "02135",
+    "ParcelNumber": "2102473000",
+    "YearAcquired": 0,
+    "Shape.STArea()": 301910.54058086034,
+    "Shape.STLength()": 2540.0637751123227
+   },
+   "geometry": {
+    "rings": [
+     [
+      [
+       750005.2299060524,
+       2947658.6318430603
+      ],
+      [
+       749677.5947345495,
+       2947997.910692066
+      ],
+      [
+       749741.4843705595,
+       2948357.8725705594
+      ],
+      [
+       749824.9599253833,
+       2948339.0566633046
+      ],
+      [
+       749856.8824337274,
+       2948336.2374432236
+      ],
+      [
+       749864.426381886,
+       2948335.6777330637
+      ],
+      [
+       749871.9647526443,
+       2948335.2190725654
+      ],
+      [
+       749881.4552192241,
+       2948334.7843621373
+      ],
+      [
+       749889.0575662255,
+       2948334.2108724713
+      ],
+      [
+       749898.4581379741,
+       2948331.8841054738
+      ],
+      [
+       749907.9692738056,
+       2948328.41856122
+      ],
+      [
+       749918.2540301383,
+       2948323.245343223
+      ],
+      [
+       750456.3362873048,
+       2947719.484083563
+      ],
+      [
+       750457.815615058,
+       2947717.070046395
+      ],
+      [
+       750458.9566888809,
+       2947714.4765476435
+      ],
+      [
+       750459.744416967,
+       2947711.759033397
+      ],
+      [
+       750460.1640355587,
+       2947708.9585140646
+      ],
+      [
+       750460.2030774653,
+       2947706.126498729
+      ],
+      [
+       750459.8700728863,
+       2947703.3138403147
+      ],
+      [
+       750459.1587882191,
+       2947700.5700793862
+      ],
+      [
+       750458.0915331393,
+       2947697.946068898
+      ],
+      [
+       750456.686680302,
+       2947695.4880685657
+      ],
+      [
+       750454.9632585496,
+       2947693.2413538992
+      ],
+      [
+       750452.959325552,
+       2947691.2436544746
+      ],
+      [
+       750450.7060492188,
+       2947689.5317156464
+      ],
+      [
+       750448.2431276441,
+       2947688.138673812
+      ],
+      [
+       750445.6168205589,
+       2947687.083885893
+      ],
+      [
+       750442.8760123849,
+       2947686.3893334717
+      ],
+      [
+       750440.0636820495,
+       2947686.070108399
+      ],
+      [
+       750406.2875028849,
+       2947684.577985391
+      ],
+      [
+       750356.0828788877,
+       2947681.6498416364
+      ],
+      [
+       750005.2299060524,
+       2947658.6318430603
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "attributes": {
+    "OBJECTID": 21,
+    "SITE_NAME": "Savin Hill Beach",
+    "OWNERSHIP": "Commonwealth of Massachusetts",
+    "PROTECTION": "A97",
+    "TYPECODE": 2,
+    "DISTRICT": "Dorchester",
+    "ACRES": 3.42923687,
+    "ADDRESS": "68 Denny Street",
+    "ZonAgg": "Open Space District",
+    "TypeLong": "Parkways, Reservations & Beaches",
+    "OS_Own_Jur": "DCR",
+    "OS_Mngmnt": "DCR",
+    "POS": "X",
+    "PA": "X",
+    "ALT_NAME": " ",
+    "AgncyJuris": null,
+    "PARK_ID": null,
+    "REGION": "INFO_Reallocation From Dept",
+    "OS_ID": "3002",
+    "F_100ftRule": "YES",
+    "ZipCode": "02125",
+    "ParcelNumber": "1302238001",
+    "YearAcquired": 0,
+    "Shape.STArea()": 149377.55817044753,
+    "Shape.STLength()": 3619.01900503478
+   },
+   "geometry": {
+    "rings": [
+     [
+      [
+       777127.9732326418,
+       2936989.00784114
+      ],
+      [
+       776956.5168826431,
+       2937005.576049477
+      ],
+      [
+       776914.9487242997,
+       2937226.671407804
+      ],
+      [
+       776909.4369243085,
+       2937479.951741144
+      ],
+      [
+       777086.4001530558,
+       2937573.6415143907
+      ],
+      [
+       777102.2226279676,
+       2937580.484020397
+      ],
+      [
+       777114.9063296318,
+       2937587.505659893
+      ],
+      [
+       777133.7058327198,
+       2937596.3389755636
+      ],
+      [
+       777143.510275051,
+       2937600.440673396
+      ],
+      [
+       777163.5056418926,
+       2937607.96756123
+      ],
+      [
+       777183.8366379738,
+       2937614.321551144
+      ],
+      [
+       777204.5655991435,
+       2937619.2434573174
+      ],
+      [
+       777225.5855702162,
+       2937622.7076892257
+      ],
+      [
+       777246.7964858115,
+       2937624.696530387
+      ],
+      [
+       777268.0956557989,
+       2937625.201778725
+      ],
+      [
+       777294.9604314715,
+       2937623.6660206467
+      ],
+      [
+       778064.6199813932,
+       2937529.6681771427
+      ],
+      [
+       777498.4449326396,
+       2937529.623557806
+      ],
+      [
+       777244.2131576389,
+       2937532.5434994698
+      ],
+      [
+       776989.6204909682,
+       2937369.223616138
+      ],
+      [
+       777133.485032633,
+       2937034.4473828077
+      ],
+      [
+       777127.9732326418,
+       2936989.00784114
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}
