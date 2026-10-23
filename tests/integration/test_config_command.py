@@ -283,9 +283,9 @@ class TestDottedKeysReachTheReaders:
         assert result.exit_code == 1
         envelope = json.loads(result.output)
         assert envelope["success"] is False
-        assert envelope["errors"][0]["type"] == "ValueError"
+        assert envelope["errors"][0]["type"] == "ConfigError"
         assert envelope["errors"][0]["message"].startswith(
-            "Unknown setting 'conversion.vector.compression'. Known settings: "
+            "[PRTLN-CFG000] Unknown setting 'conversion.vector.compression'. Known settings: "
         )
 
     @pytest.mark.integration

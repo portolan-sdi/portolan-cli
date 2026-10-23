@@ -274,8 +274,9 @@ class TestPartitionConfigSupport:
     ) -> None:
         """No code reads these keys from the config, so `config set` rejects them (#1020)."""
         from portolan_cli.config import set_setting
+        from portolan_cli.errors import ConfigError
 
-        with pytest.raises(ValueError, match=f"Unknown setting '{key}'"):
+        with pytest.raises(ConfigError, match=f"Unknown setting '{key}'"):
             set_setting(tmp_path, key, "kdtree_cell")
 
     @pytest.mark.unit

@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from portolan_cli.errors import ConfigInvalidStructureError, ConfigParseError
+from portolan_cli.errors import ConfigError, ConfigInvalidStructureError, ConfigParseError
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
@@ -357,11 +357,11 @@ def _coerce_value(key: str, kind: str, value: Any) -> Any:
     """Give a setting value the type that ``KNOWN_SETTINGS`` names for it.
 
     Raises:
-        ValueError: If the value does not have that type.
+        ConfigError: If the value does not have that type.
     """
     parsed = _parse_text(kind, value) if isinstance(value, str) else value
     if not _matches(kind, parsed):
-        raise ValueError(f"Setting '{key}' takes {_TYPE_LABELS[kind]}, got {value!r}")
+        raise ConfigError(f"Setting '{key}' takes {_TYPE_LABELS[kind]}, got {value!r}")
     return parsed
 
 
@@ -420,7 +420,7 @@ def _fold_dotted_keys(mapping: dict[str, Any]) -> dict[str, Any]:
     for key, (path, kind) in flat.items():
         value = mapping[key]
         # A bad value stays as it is. The reader warns, as for a nested value.
-        with contextlib.suppress(ValueError):
+        with contextlib.suppress(ConfigError):
             value = _coerce_value(key, kind, value)
         _set_path(folded, path, value)
     return folded
@@ -782,21 +782,21 @@ def set_setting(
         collection: Optional collection name for collection-level config
 
     Raises:
-        ValueError: If key is a sensitive setting (remote, profile, region).
+        ConfigError: If key is a sensitive setting (remote, profile, region).
             These must be set via environment variables or .env files. Also
             if key is not in ``KNOWN_SETTINGS``, or if value does not have the
             type that the key takes.
     """
     if key in SENSITIVE_SETTINGS:
         env_var = _get_env_var_name(key)
-        raise ValueError(
+        raise ConfigError(
             f"'{key}' cannot be stored in config.yaml (would be pushed to remote). "
             f"Use environment variable {env_var} or add to .env file in catalog root."
         )
 
     entry = _schema_entry(key)
     if entry is None:
-        raise ValueError(_unknown_setting_message(key))
+        raise ConfigError(_unknown_setting_message(key))
     path, kind = entry
     value = _coerce_value(key, kind, value)
 

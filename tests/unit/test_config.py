@@ -14,6 +14,7 @@ from unittest import mock
 
 import pytest
 
+from portolan_cli.errors import ConfigError
 from tests.conftest import cleared_environ
 
 if TYPE_CHECKING:
@@ -834,7 +835,7 @@ class TestSensitiveSettings:
 
         (tmp_path / ".portolan").mkdir()
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ConfigError) as exc_info:
             set_setting(tmp_path, "remote", "s3://bucket/")
 
         assert "remote" in str(exc_info.value)
@@ -848,7 +849,7 @@ class TestSensitiveSettings:
 
         (tmp_path / ".portolan").mkdir()
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ConfigError) as exc_info:
             set_setting(tmp_path, "profile", "myprofile")
 
         assert "profile" in str(exc_info.value)
@@ -861,7 +862,7 @@ class TestSensitiveSettings:
 
         (tmp_path / ".portolan").mkdir()
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ConfigError) as exc_info:
             set_setting(tmp_path, "aws_profile", "myprofile")
 
         assert "aws_profile" in str(exc_info.value)
@@ -873,7 +874,7 @@ class TestSensitiveSettings:
 
         (tmp_path / ".portolan").mkdir()
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ConfigError) as exc_info:
             set_setting(tmp_path, "region", "us-west-2")
 
         assert "region" in str(exc_info.value)
@@ -1399,10 +1400,10 @@ class TestUnknownKeysRejected:
     def test_unknown_key_raises_with_the_known_keys(self, tmp_path: Path) -> None:
         from portolan_cli.config import set_setting
 
-        with pytest.raises(ValueError, match=r"Unknown setting 'conversion\.vector\.compression'"):
+        with pytest.raises(ConfigError, match=r"Unknown setting 'conversion\.vector\.compression'"):
             set_setting(tmp_path, "conversion.vector.compression", "zstd")
 
-        with pytest.raises(ValueError) as excinfo:
+        with pytest.raises(ConfigError) as excinfo:
             set_setting(tmp_path, "workers", "8")
         message = str(excinfo.value)
         assert "conversion.vector.sort" in message
@@ -1413,9 +1414,11 @@ class TestUnknownKeysRejected:
     def test_value_of_the_wrong_type_raises(self, tmp_path: Path) -> None:
         from portolan_cli.config import set_setting
 
-        with pytest.raises(ValueError, match=r"'conversion\.vector\.add_bbox' takes true or false"):
+        with pytest.raises(
+            ConfigError, match=r"'conversion\.vector\.add_bbox' takes true or false"
+        ):
             set_setting(tmp_path, "conversion.vector.add_bbox", "maybe")
-        with pytest.raises(ValueError, match=r"'pmtiles\.min_zoom' takes an integer"):
+        with pytest.raises(ConfigError, match=r"'pmtiles\.min_zoom' takes an integer"):
             set_setting(tmp_path, "pmtiles.min_zoom", "low")
 
     @pytest.mark.unit
