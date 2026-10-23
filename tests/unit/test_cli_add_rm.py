@@ -1257,6 +1257,42 @@ class TestOutputAddUnchanged:
         assert capsys.readouterr().out == summary
 
 
+class TestCatalogIndexAfterAdd:
+    """The catalog-level versions.json matches each collection after one add."""
+
+    @pytest.mark.integration
+    def test_the_index_counts_the_side_step_assets(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_rgb_cog: Path,
+        valid_points_parquet: Path,
+    ) -> None:
+        """The item mirror and the thumbnails are in both files, not only the collection's."""
+        root = conformant_catalog
+        (root / "imagery" / "scene").mkdir(parents=True)
+        (root / "imagery" / "scene" / "scene.tif").write_bytes(valid_rgb_cog.read_bytes())
+        (root / "roads").mkdir()
+        (root / "roads" / "roads.parquet").write_bytes(valid_points_parquet.read_bytes())
+
+        run_cli("add", "--portolan-dir", str(root), str(root))
+
+        index = json.loads((root / "versions.json").read_text(encoding="utf-8"))["collections"]
+        for collection_id in ("imagery", "roads"):
+            versions = json.loads(
+                (root / collection_id / "versions.json").read_text(encoding="utf-8")
+            )
+            current = next(
+                v for v in versions["versions"] if v["version"] == versions["current_version"]
+            )
+            entry = index[collection_id]
+            assert (entry["current_version"], entry["asset_count"], entry["total_size_bytes"]) == (
+                versions["current_version"],
+                len(current["assets"]),
+                sum(asset["size_bytes"] for asset in current["assets"].values()),
+            ), collection_id
+
+
 class TestAddUnknownHandlerPin:
     """A ``conversion.handlers`` pin to a missing handler fails add with a typed error."""
 

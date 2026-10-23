@@ -25,7 +25,13 @@ import click
 from rashid.model import Severity as RashidSeverity
 
 from portolan_cli import trace
-from portolan_cli.add import SKIP_UNCHANGED, SKIPS_THAT_TRACK, AddFailure, add_files
+from portolan_cli.add import (
+    SKIP_UNCHANGED,
+    SKIPS_THAT_TRACK,
+    AddFailure,
+    add_files,
+    sync_catalog_index,
+)
 from portolan_cli.add_progress import AddProgressReporter, count_files
 from portolan_cli.catalog import find_catalog_root
 from portolan_cli.catalog_list import (
@@ -3536,6 +3542,7 @@ def add_cmd(
         versioned_collections=versioned,
         verbose=verbose,
     )
+    sync_catalog_index(catalog_root, affected)
 
     # Output combined results (after all processing complete)
     _output_add_results(all_added, skips, all_failures, verbose, use_json)
