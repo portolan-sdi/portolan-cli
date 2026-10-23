@@ -279,6 +279,12 @@ class TestStemGroupResolver:
         self, tmp_path: Path
     ) -> None:
         """An uppercase ``.PARQUET`` source converts to a same-stem output."""
+        probe = tmp_path / "probe"
+        probe.write_bytes(b"")
+        case_insensitive = (tmp_path / "PROBE").exists()
+        probe.unlink()
+        if case_insensitive:
+            pytest.skip("a case-insensitive filesystem holds one file for both names")
         _write(tmp_path, "a1.parquet", "a1.PARQUET")
 
         assert _scan(tmp_path, "a1.parquet") == {
