@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 from typing_extensions import Self
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Coroutine
+    from collections.abc import Awaitable, Callable
     from types import TracebackType
 
     from rich.progress import Progress, TaskID
@@ -618,23 +618,3 @@ class AsyncProgressReporter:
         if self.elapsed_seconds == 0:
             return 0.0
         return self.bytes_completed / self.elapsed_seconds
-
-
-# =============================================================================
-# Utility Functions
-# =============================================================================
-
-
-def run_async(coro: Coroutine[None, None, T]) -> T:
-    """Run an async coroutine from sync code.
-
-    Handles the common case of calling async code from a sync CLI entry point.
-    Creates a new event loop.
-
-    Args:
-        coro: The coroutine to run.
-
-    Returns:
-        The coroutine's result.
-    """
-    return asyncio.run(coro)

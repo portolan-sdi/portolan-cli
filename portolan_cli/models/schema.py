@@ -155,11 +155,8 @@ class SchemaModel:
         for col in self.columns:
             if isinstance(col, (ColumnSchema, BandSchema)):
                 columns_data.append(col.to_dict())
-            elif isinstance(col, dict):
-                columns_data.append(col)
             else:
-                # Handle other types with to_dict method
-                columns_data.append(col.to_dict() if hasattr(col, "to_dict") else col)
+                columns_data.append(col)
 
         result: dict[str, Any] = {
             "schema_version": self.schema_version,

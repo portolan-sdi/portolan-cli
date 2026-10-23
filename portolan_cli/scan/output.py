@@ -878,25 +878,15 @@ def _get_collection_id(file: ScannedFile) -> str | None:
 
 
 def _get_format_status(file: ScannedFile) -> str:
-    """Extract format_status from ScannedFile.
-
-    Reads from the top-level field first (set by scan.py),
-    falls back to metadata, then extension.
+    """Return the format status of a ScannedFile as a string.
 
     Args:
         file: The scanned file.
 
     Returns:
-        Format status string, or extension as fallback.
+        The value of ``file.format_status``. The field is a required enum.
     """
-    # Primary: top-level field (CloudNativeStatus enum)
-    if file.format_status:
-        return file.format_status.value
-    # Fallback: metadata dict
-    status = file.metadata.get("format_status")
-    if isinstance(status, str):
-        return status
-    return file.extension.lstrip(".")
+    return file.format_status.value
 
 
 def _get_format_display_name(file: ScannedFile) -> str:

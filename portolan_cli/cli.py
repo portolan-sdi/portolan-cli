@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, TextIO
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from datetime import datetime
 
     from portolan_cli.convert import ConversionResult
@@ -370,32 +369,6 @@ def resolve_aws_profile(
     )
 
 
-def resolve_aws_region(
-    region: str | None,
-    catalog_path: Path | None,
-    collection: str | None = None,
-) -> str | None:
-    """Resolve AWS region with precedence: CLI > env var > config.
-
-    Args:
-        region: CLI-provided region value (None if not specified).
-        catalog_path: Path to catalog root for config lookup.
-        collection: Optional collection name for collection-level config.
-
-    Returns:
-        Resolved region name or None if not configured.
-    """
-    from portolan_cli.config import get_setting
-
-    return get_setting(
-        "region",
-        cli_value=region,
-        catalog_path=catalog_path,
-        collection=collection,
-        collection_path=_collection_path(catalog_path, collection),
-    )
-
-
 @click.group(cls=PluginGroup)
 @click.version_option()
 @click.option(
@@ -737,55 +710,6 @@ def _get_format_display_name(format_type: str | None) -> str:
     if format_type == RASTER:
         return "COG"
     return format_type or "Unknown"
-
-
-def _get_asset_format_display_name(asset_href: str) -> str:
-    """Get human-readable format name for an individual asset based on extension.
-
-    Uses FORMAT_DISPLAY_NAMES from formats.py for known geospatial extensions,
-    falls back to the uppercase extension for unknown types.
-
-    Args:
-        asset_href: Asset href (e.g., "./data.parquet", "./thumb.png").
-
-    Returns:
-        Human-readable format name (e.g., "GeoParquet", "PMTiles", "PNG").
-    """
-    from portolan_cli.formats import FORMAT_DISPLAY_NAMES
-
-    ext = Path(asset_href).suffix.lower()
-    if ext in FORMAT_DISPLAY_NAMES:
-        return FORMAT_DISPLAY_NAMES[ext]
-    if ext:
-        return ext.upper().lstrip(".")
-    return "Unknown"
-
-
-def _get_asset_file_size(
-    catalog_path: Path, collection_id: str, item_id: str, asset_href: str
-) -> int | None:
-    """Get the file size for an asset.
-
-    Args:
-        catalog_path: Path to catalog root.
-        collection_id: Collection ID.
-        item_id: Item ID (subdirectory under collection).
-        asset_href: Asset href (relative to item directory).
-
-    Returns:
-        File size in bytes, or None if file not found.
-    """
-    # Asset hrefs are relative to the item directory: collection/item/
-    # The href looks like "./data.parquet" or just "data.parquet"
-    clean_href = asset_href.removeprefix("./")
-
-    # Full path: catalog_root / collection / item / asset
-    asset_path = catalog_path / collection_id / item_id / clean_href
-
-    if asset_path.exists():
-        return asset_path.stat().st_size
-
-    return None
 
 
 def _apply_list_status_filter(
@@ -2649,99 +2573,8 @@ def _print_format_breakdown(result: ScanResult) -> None:
         detail(f"  {count} {ext} file{'s' if count != 1 else ''}")
 
 
-# Default maximum issues to show per severity before truncation
-DEFAULT_ISSUE_LIMIT = 10
-
 # Maximum example paths to show per batched issue group
 BATCH_EXAMPLES_LIMIT = 3
-
-
-def _print_issue_group(
-    issues: list[ScanIssue],
-    severity: ScanSeverity,
-    header_fn: Callable[[str], None],
-    count: int,
-    label: str,
-    *,
-    show_all: bool = False,
-    limit: int = DEFAULT_ISSUE_LIMIT,
-) -> None:
-    """Print a group of issues with the same severity.
-
-    Args:
-        issues: List of all issues.
-        severity: Severity level to filter for.
-        header_fn: Function to print header (error/warn/info).
-        count: Total count of issues with this severity.
-        label: Label for the issue type (e.g., "error", "warning").
-        show_all: If True, show all issues without truncation.
-        limit: Maximum issues to show per severity (default: 10).
-    """
-    if count == 0:
-        return
-    header_fn(f"{count} {label}{'s' if count != 1 else ''}")
-
-    # Filter issues by severity
-    severity_issues = [i for i in issues if i.severity == severity]
-
-    # Apply truncation if needed
-    displayed = severity_issues if show_all else severity_issues[:limit]
-    truncated_count = len(severity_issues) - len(displayed)
-
-    for issue in displayed:
-        header_fn(f"  {issue.relative_path}: {issue.message}")
-        if issue.suggestion is not None:
-            detail(f"    Hint: {issue.suggestion}")
-
-    # Show truncation message if issues were hidden
-    if truncated_count > 0:
-        detail(f"  ... and {truncated_count} more (use --all to see all)")
-
-
-def _print_issues_by_severity(result: ScanResult, *, show_all: bool = False) -> None:
-    """Print issues grouped by severity.
-
-    Args:
-        result: The scan result containing issues.
-        show_all: If True, show all issues without truncation.
-    """
-    if not result.issues:
-        return
-
-    _print_issue_group(
-        result.issues, ScanSeverity.ERROR, error, result.error_count, "error", show_all=show_all
-    )
-    _print_issue_group(
-        result.issues,
-        ScanSeverity.WARNING,
-        warn,
-        result.warning_count,
-        "warning",
-        show_all=show_all,
-    )
-    _print_issue_group(
-        result.issues,
-        ScanSeverity.INFO,
-        info_output,
-        result.info_count,
-        "info message",
-        show_all=show_all,
-    )
-
-
-def _print_scan_summary(result: ScanResult, *, show_all: bool = False) -> None:
-    """Print human-readable scan summary (legacy).
-
-    Args:
-        result: The scan result to print.
-        show_all: If True, show all issues without truncation.
-    """
-    _print_scan_header(result)
-    _print_format_breakdown(result)
-    _print_issues_by_severity(result, show_all=show_all)
-
-    if result.skipped:
-        detail(f"{len(result.skipped)} files skipped (unrecognized format)")
 
 
 def _print_scan_summary_enhanced(
