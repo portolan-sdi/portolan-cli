@@ -25,7 +25,7 @@ import click
 from rashid.model import Severity as RashidSeverity
 
 from portolan_cli import trace
-from portolan_cli.add import AddFailure, add_files
+from portolan_cli.add import SKIP_UNCHANGED, SKIPS_THAT_TRACK, AddFailure, add_files
 from portolan_cli.add_progress import AddProgressReporter, count_files
 from portolan_cli.catalog import find_catalog_root
 from portolan_cli.catalog_list import (
@@ -40,6 +40,7 @@ from portolan_cli.discovery import get_sidecars
 from portolan_cli.emit import emit_error, emit_success
 from portolan_cli.errors import (
     AssetKeyCollisionError,
+    ConfigError,
     InvalidLiveUrlError,
     MissingLicenseError,
     PortolanError,
@@ -53,7 +54,7 @@ from portolan_cli.licensing import (
 )
 from portolan_cli.logging_setup import configure_logging
 from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
-from portolan_cli.output import detail, error, set_writer, success, warn
+from portolan_cli.output import detail, error, set_writer, stdout_to_stderr, success, warn
 from portolan_cli.output import info as info_output
 from portolan_cli.plugins.commands import ExtractGroup, PluginGroup
 from portolan_cli.plugins.manager import PluginWarning
@@ -144,11 +145,16 @@ warnings.showwarning = show_warning
 
 
 def should_output_json(ctx: click.Context, json_flag: bool = False) -> bool:
-    """Determine if JSON output should be used.
+    """Determine if JSON output should be used, and keep stdout for the envelope.
 
     Checks both the global --format option and per-command --json flags.
     Global --format=json takes precedence, but per-command flags also work
     for backward compatibility.
+
+    In JSON mode this also routes the stdout-bound ``output`` messages to
+    stderr until the root context closes, so the library messages of the
+    run cannot break the JSON document on stdout (#1005). A second call in
+    the same run changes nothing.
 
     Args:
         ctx: Click context containing the format preference.
@@ -157,12 +163,16 @@ def should_output_json(ctx: click.Context, json_flag: bool = False) -> bool:
     Returns:
         True if JSON output should be used, False for text output.
     """
-    # Get format from context (set by global --format option)
-    obj = ctx.find_root().obj or {}
-    global_format = obj.get("format", "text")
+    root = ctx.find_root()
+    obj = root.obj or {}
+    use_json = obj.get("format", "text") == "json" or json_flag
+    if use_json and not root.meta.get(_STDOUT_ROUTED):
+        root.meta[_STDOUT_ROUTED] = True
+        root.with_resource(stdout_to_stderr())
+    return use_json
 
-    # Global format takes precedence, but per-command --json also works
-    return global_format == "json" or json_flag
+
+_STDOUT_ROUTED = "portolan.stdout_to_stderr"
 
 
 def _fail_on_add_error(
@@ -411,6 +421,8 @@ def cli(ctx: click.Context, output_format: str, verbosity: int, quiet: bool, tim
     # Store format in context for subcommands
     ctx.ensure_object(dict)
     ctx.obj["format"] = output_format
+    # A command that never asks should_output_json still gets a clean stdout.
+    should_output_json(ctx)
 
     configure_logging(verbosity=verbosity, quiet=quiet)
     # Tracing state is process-wide. A second run in the same process (a
@@ -1368,7 +1380,11 @@ def _output_check_json(payload: dict[str, Any], *, failed: bool) -> None:
 @click.option(
     "--metadata",
     is_flag=True,
-    help="Only check/fix STAC metadata (links, schema, staleness)",
+    help=(
+        "Only check/fix STAC metadata (links, schema, staleness). With --fix this is "
+        "the metadata refresh: it exits 1 only when a fix fails or an auto-fixable "
+        "error remains. --strict restores the exit on every error and warning."
+    ),
 )
 @click.option(
     "--geo-assets",
@@ -1753,7 +1769,7 @@ def _execute_check_workflow(
                 else [],
             )
         payload["fix"] = fix_data
-    failed = fix_failed or _check_failed(payload, strict=strict)
+    failed = fix_failed or _check_failed(payload, strict=strict, refresh=fix and mode == "metadata")
 
     if use_json:
         _output_check_json(payload, failed=failed)
@@ -1852,19 +1868,29 @@ def _should_validate(path: Path, *, run_metadata: bool, fix: bool) -> bool:
     return resolve_catalog_root_for_check(path) is not None
 
 
-def _check_failed(payload: dict[str, Any], *, strict: bool) -> bool:
-    """Decide the exit code: errors always fail, warnings only under --strict.
+def _check_failed(payload: dict[str, Any], *, strict: bool, refresh: bool = False) -> bool:
+    """Decide the exit code from the findings the mode owns.
 
-    The workflow notice (unregistered or vanished data files) is not a
-    conformance defect, so on its own it never flips a default run. Under
-    ``--strict``, where a catalog is asserted to be publishable, an unaccounted
-    file is a failure.
+    A default run fails on any error. Under ``--strict``, where a catalog is
+    asserted to be publishable, it also fails on a warning or on the workflow
+    notice (unregistered or vanished data files). The notice is not a
+    conformance defect, so on its own it never flips a default run.
+
+    ``refresh`` is ``--fix --metadata`` without ``--strict``: the metadata
+    refresh (#853). It fails only on an AUTO error that is still in the
+    findings, which is a repair the refresh did not make. An INSTRUCT or
+    EXTERNAL error is work for a person or a host, so it stays in the report
+    and leaves the exit code at 0. A fixer that could not write fails the run
+    through ``fix_failed`` in the caller.
     """
-    if payload.get("error_count"):
-        return True
-    if not strict:
-        return False
-    return bool(payload.get("warning_count")) or bool(payload.get("workflow"))
+    if strict:
+        return any(payload.get(key) for key in ("error_count", "warning_count", "workflow"))
+    if refresh:
+        return any(
+            finding["severity"] == "error" and finding["remediation"] == "auto"
+            for finding in payload.get("findings", [])
+        )
+    return bool(payload.get("error_count"))
 
 
 def _render_check(
@@ -2792,7 +2818,7 @@ def _print_next_steps(result: ScanResult) -> None:
 
 def _output_add_json(
     added: list[ItemInfo],
-    skipped: list[Path],
+    skipped: list[tuple[Path, str]],
     failures: list[AddFailure],
 ) -> None:
     """Output add command results as JSON."""
@@ -2806,7 +2832,7 @@ def _output_add_json(
             }
             for ds in added
         ],
-        "skipped": [str(p) for p in skipped],
+        "skipped": [{"path": str(p), "reason": reason} for p, reason in skipped],
         "failures": [{"path": str(f.path), "error": f.error} for f in failures],
     }
     if failures:
@@ -2902,13 +2928,17 @@ def _print_add_failures_batched(failures: list[AddFailure]) -> None:
                 detail(f"    Examples: {paths}")
 
 
-def _output_add_unchanged(skipped: list[Path], verbose: bool) -> None:
-    """Output message when all files are already tracked (unchanged)."""
+def _output_add_unchanged(skipped: list[tuple[Path, str]], verbose: bool) -> None:
+    """Say that the add changed nothing, and why each file was skipped."""
     skip_count = len(skipped)
-    success(f"All {skip_count} file{'s' if skip_count != 1 else ''} already tracked (unchanged)")
+    noun = "file" if skip_count == 1 else "files"
+    if all(reason == SKIP_UNCHANGED for _, reason in skipped):
+        success(f"All {skip_count} {noun} already tracked (unchanged)")
+    else:
+        info_output(f"Nothing added: {skip_count} {noun} skipped")
     if verbose:
-        for p in skipped:
-            detail(f"  {p.name}")
+        for p, reason in skipped:
+            detail(f"  {p.name}: {reason}")
 
 
 def _output_add_summary(added: list[ItemInfo]) -> None:
@@ -2936,7 +2966,7 @@ def _output_add_summary(added: list[ItemInfo]) -> None:
 
 def _output_add_human(
     added: list[ItemInfo],
-    skipped: list[Path],
+    skipped: list[tuple[Path, str]],
     failures: list[AddFailure],
     verbose: bool,
 ) -> None:
@@ -2959,8 +2989,8 @@ def _output_add_human(
 
     # Show skipped files in verbose mode
     if verbose and skipped:
-        for p in skipped:
-            detail(f"Skipping {p.name} (unchanged)")
+        for p, reason in skipped:
+            detail(f"Skipping {p.name} ({reason})")
 
     # Final success summary (always show if we added something, even with failures)
     # Summary is always shown, failures are shown separately
@@ -2972,9 +3002,44 @@ def _output_add_human(
         _print_add_failures_batched(failures)
 
 
+def _report_skips_and_find_collections(
+    added: list[ItemInfo], skips: list[tuple[Path, str]], catalog_root: Path
+) -> tuple[set[str], set[str]]:
+    """Warn about each file that stayed out of the catalog, and find the collections to refresh.
+
+    The warning goes to stderr in both modes. The affected set holds the
+    collections of the added files and of the skips still in the catalog, so
+    --pmtiles works on already-tracked files. An ignored file has no
+    collection to refresh.
+
+    The versioned set holds the collections this run wrote a version for. A
+    side-step's derived asset folds into that snapshot instead of bumping a
+    second version, so one `add` stays one version. A skipped collection is
+    absent, so its backfill gets a version of its own rather than editing a
+    published snapshot.
+    """
+    affected: set[str] = set()
+    versioned: set[str] = set()
+    for a in added:
+        if a.collection_id:
+            affected.add(a.collection_id)
+            versioned.add(a.collection_id)
+    for p, reason in skips:
+        if reason not in SKIPS_THAT_TRACK:
+            warn(f"Skipping {p.name}: {reason}")
+            continue
+        try:
+            rel = p.relative_to(catalog_root)
+        except ValueError:
+            continue  # Path not relative to catalog_root
+        if rel.parts:
+            affected.add(rel.parts[0])  # Collection ID is the first path component
+    return affected, versioned
+
+
 def _output_add_results(
     added: list[ItemInfo],
-    skipped: list[Path],
+    skipped: list[tuple[Path, str]],
     failures: list[AddFailure],
     verbose: bool,
     use_json: bool,
@@ -3388,6 +3453,7 @@ def add_cmd(
     )
 
     # item_datetime is parsed by Click via FLEXIBLE_DATETIME type
+    skip_reasons: dict[Path, str] = {}
     try:
         with progress_reporter:
             all_added, all_skipped, all_failures = add_files(
@@ -3398,44 +3464,25 @@ def add_cmd(
                 item_datetime=item_datetime,
                 on_progress=on_file_progress,
                 workers=workers,
-                json_mode=use_json,
                 force=force,
                 reconvert=reconvert,
                 skip_partitioning=skip_partitioning,
                 merge_strategy=MergeStrategy(merge_strategy),
+                skip_reasons=skip_reasons,
             )
     except MissingLicenseError as err:
         # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
         # check reads it, so add refuses the write and names what to supply.
         _fail_on_missing_license("add", err, use_json=use_json)
-    except (ValueError, FileNotFoundError, AssetKeyCollisionError) as err:
+    except (ValueError, FileNotFoundError, AssetKeyCollisionError, ConfigError) as err:
         # Issue #933: AssetKeyCollisionError is add refusing to replace one
-        # file's asset with another file.
+        # file's asset with another file. A ConfigError is a config.yaml key
+        # that add reads, such as a malformed ignored_files (#1044).
         _fail_on_add_error(err, resolved_paths, use_json=use_json)
     trace.current_span().set(elapsed_seconds=progress_reporter.elapsed_seconds)
-
-    # Compute affected collections before any post-processing
-    # Include both added AND skipped assets so --pmtiles works on already-tracked files
-    # Note: all_added contains ItemInfo objects, all_skipped contains Path objects
-    affected: set[str] = set()
-    # Collections this run actually wrote a version for. A side-step's derived
-    # asset folds into that snapshot instead of bumping a second version, so one
-    # `add` stays one version. A skipped collection is absent, so its backfill
-    # gets a version of its own rather than editing a published snapshot.
-    versioned: set[str] = set()
-    for a in all_added:
-        if hasattr(a, "collection_id") and a.collection_id:
-            affected.add(a.collection_id)
-            versioned.add(a.collection_id)
-    for p in all_skipped:
-        # Extract collection_id from path relative to catalog_root
-        try:
-            rel = p.relative_to(catalog_root)
-            # Collection ID is the first path component
-            if rel.parts:
-                affected.add(rel.parts[0])
-        except ValueError:
-            pass  # Path not relative to catalog_root
+    # add_files gives every skip a reason. A path without one reads as unchanged.
+    skips = [(p, skip_reasons.get(p, SKIP_UNCHANGED)) for p in all_skipped]
+    affected, versioned = _report_skips_and_find_collections(all_added, skips, catalog_root)
 
     # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state)
     # Always run parquet generation if --stac-geoparquet flag was passed, regardless of output mode
@@ -3476,7 +3523,7 @@ def add_cmd(
     )
 
     # Output combined results (after all processing complete)
-    _output_add_results(all_added, all_skipped, all_failures, verbose, use_json)
+    _output_add_results(all_added, skips, all_failures, verbose, use_json)
 
     # Exit with non-zero code if any failures occurred
     if all_failures:

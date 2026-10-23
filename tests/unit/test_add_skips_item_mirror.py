@@ -99,3 +99,24 @@ class TestAddSkipsItemMirror:
         )
 
         assert collected == []
+
+    @pytest.mark.unit
+    def test_each_skip_records_its_reason(self, tmp_path: Path) -> None:
+        """The mirror and a leftover rewrite scratch file each carry their own reason."""
+        collection_dir = tmp_path / "sites"
+        mirror = collection_dir / "items.parquet"
+        scratch = collection_dir / "sites.portolan-rewrite.parquet"
+        _touch_parquet(mirror)
+        _touch_parquet(scratch)
+
+        skipped: list[Path] = []
+        reasons: dict[Path, str] = {}
+        _collect_files_for_add(
+            [mirror, scratch], tmp_path, None, skipped, set(), force=True, skip_reasons=reasons
+        )
+
+        assert skipped == [mirror, scratch]
+        assert reasons == {
+            mirror: "it is the STAC-GeoParquet item mirror",
+            scratch: "it is a scratch file of an interrupted rewrite",
+        }

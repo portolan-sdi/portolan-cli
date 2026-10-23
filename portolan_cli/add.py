@@ -14,6 +14,7 @@ All logic lives here; the CLI is a thin wrapper.
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import logging
 import shutil
@@ -32,7 +33,7 @@ from portolan_cli.collection_id import (
     infer_nested_collection_id,
     resolve_collection_id,  # noqa: F401
 )
-from portolan_cli.config import get_setting, load_merged_metadata
+from portolan_cli.config import get_ignored_files, get_setting, load_merged_metadata
 from portolan_cli.constants import (
     GEOSPATIAL_EXTENSIONS,
     TABULAR_EXTENSIONS,
@@ -770,6 +771,20 @@ def _ensure_nested_catalogs(
     setup_collections.add(collection_id)
 
 
+#: Skip reasons for a file that is in the catalog after the add. Every other
+#: reason means the file stayed out of the catalog.
+SKIP_UNCHANGED = "unchanged since the last add"
+SKIP_COMPANION = "tracked as an asset next to its geospatial file, not converted"
+SKIP_ITEM_MIRROR = "it is the STAC-GeoParquet item mirror"
+SKIP_REWRITE_TEMP = "it is a scratch file of an interrupted rewrite"
+SKIPS_THAT_TRACK = frozenset({SKIP_UNCHANGED, SKIP_COMPANION, SKIP_ITEM_MIRROR})
+
+
+def _ignored_by(file_path: Path, patterns: list[str]) -> str | None:
+    """Return the first ``ignored_files`` pattern the file name matches, or None."""
+    return next((p for p in patterns if fnmatch.fnmatch(file_path.name, p)), None)
+
+
 def _collect_files_for_add(
     paths: list[Path],
     catalog_root: Path,
@@ -778,6 +793,7 @@ def _collect_files_for_add(
     setup_collections: set[str],
     *,
     force: bool = False,
+    skip_reasons: dict[Path, str] | None = None,
 ) -> list[tuple[Path, str]]:
     """Collect and filter files for add operation (Phase 1).
 
@@ -791,13 +807,21 @@ def _collect_files_for_add(
         skipped: List to append skipped paths to (mutated).
         setup_collections: Set to track which collections have been set up (mutated).
         force: If True, bypass change detection (Issue #386).
+        skip_reasons: Receives the reason for each file this phase skips (mutated).
 
     Returns:
         List of (file_path, collection_id) tuples to process.
     """
     processed_paths: set[Path] = set()
     files_to_process: list[tuple[Path, str]] = []
+    reasons = skip_reasons if skip_reasons is not None else {}
+
+    def skip(file_path: Path, reason: str) -> None:
+        skipped.append(file_path)
+        reasons[file_path] = reason
+
     geo_extensions = GEOSPATIAL_EXTENSIONS | plugin_extensions()
+    ignored_patterns = get_ignored_files(catalog_root)
 
     for path in paths:
         files = iter_files_with_sidecars(path) if path.is_dir() else [path] + get_sidecars(path)
@@ -816,12 +840,19 @@ def _collect_files_for_add(
             if file_path.suffix.lower() not in geo_extensions:
                 continue
 
+            # `ignored_files` in config.yaml excludes a file from the catalog,
+            # with the basename match rule of `portolan list` (#1044).
+            pattern = _ignored_by(file_path, ignored_patterns)
+            if pattern is not None:
+                skip(file_path, f"it matches ignored_files pattern {pattern!r}")
+                continue
+
             # Never re-ingest the item mirror the add flow itself publishes.
             # The spec reserves items.parquet in the collection root for the
             # STAC-GeoParquet mirror (PORTO-FMT-040), and with default-on
             # generation every item-bearing collection carries one (#654).
             if file_path.name == PARQUET_FILENAME:
-                skipped.append(file_path)
+                skip(file_path, SKIP_ITEM_MIRROR)
                 continue
 
             # Never ingest the scratch file the in-place GeoParquet rewrite
@@ -829,7 +860,7 @@ def _collect_files_for_add(
             # killed run leaves one behind, and this phase reads the directory
             # before conversion starts (issue #805).
             if is_rewrite_temp(file_path):
-                skipped.append(file_path)
+                skip(file_path, SKIP_REWRITE_TEMP)
                 continue
 
             # Determine collection ID (use full nested path)
@@ -838,17 +869,14 @@ def _collect_files_for_add(
                 try:
                     coll_id = infer_nested_collection_id(file_path, catalog_root)
                 except ValueError as err:
-                    from portolan_cli.output import warn as warn_output
-
-                    warn_output(f"Skipping {file_path.name}: {err}")
-                    skipped.append(file_path)
+                    skip(file_path, str(err))
                     continue
 
             # Check if unchanged (skip this check when force=True per Issue #386)
             if not force:
                 versions_path = catalog_root / Path(*coll_id.split("/")) / "versions.json"
                 if is_current(file_path, versions_path):
-                    skipped.append(file_path)
+                    skip(file_path, SKIP_UNCHANGED)
                     continue
 
             # Set up nested catalog structure if needed
@@ -1050,7 +1078,6 @@ def _phase_process(
     opts: _PrepareOptions,
     *,
     workers: int,
-    json_mode: bool,
     on_progress: Callable[[Path], None] | None,
 ) -> _ProcessResult:
     """Phase 2: prepare every collected file, sequentially or across workers.
@@ -1077,10 +1104,7 @@ def _phase_process(
     # Parallel execution with ThreadPoolExecutor
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    from portolan_cli.output import info
-
-    if not json_mode:
-        info(f"Using {workers} parallel workers for {len(files_to_process)} files")
+    logger.info("Using %d parallel workers for %d files", workers, len(files_to_process))
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         future_to_file = {
@@ -1194,11 +1218,11 @@ def add_files(
     item_datetime: datetime | None = None,
     on_progress: Callable[[Path], None] | None = None,
     workers: int = 1,
-    json_mode: bool = False,
     force: bool = False,
     reconvert: bool = False,
     skip_partitioning: bool = False,
     merge_strategy: MergeStrategy = MergeStrategy.SMART,
+    skip_reasons: dict[Path, str] | None = None,
 ) -> tuple[list[ItemInfo], list[Path], list[AddFailure]]:
     r"""Add files to a Portolan catalog.
 
@@ -1236,13 +1260,15 @@ def add_files(
             Receives the file path being processed. Use for progress display.
         workers: Number of parallel workers for metadata extraction.
             Default is 1 (sequential). Higher values parallelize GDAL reads.
-        json_mode: If True, suppress progress bar output.
         force: If True, bypass change detection and re-process all files.
         reconvert: If True, re-convert from source files (requires force=True).
         skip_partitioning: If True, skip partitioning even when a file exceeds
             the size threshold.
         merge_strategy: How to reconcile an existing item's metadata with the
             values this run detects. See ``MergeStrategy`` in ``stac.py``.
+        skip_reasons: Receives the reason for each skipped path (mutated). A
+            path in ``SKIPS_THAT_TRACK`` is in the catalog. Any other reason
+            means the file stayed out of it.
 
     Returns:
         Tuple of (added_items, skipped_paths, failures).
@@ -1257,8 +1283,15 @@ def add_files(
 
     # Phase 1: Collect + filter the files to process (fast, no GDAL).
     with span("add.collect") as stage:
+        reasons = skip_reasons if skip_reasons is not None else {}
         files_to_process = _collect_files_for_add(
-            paths, catalog_root, collection_id, skipped, setup_collections, force=force
+            paths,
+            catalog_root,
+            collection_id,
+            skipped,
+            setup_collections,
+            force=force,
+            skip_reasons=reasons,
         )
         stage.set(files=len(files_to_process), skipped=len(skipped))
     if not files_to_process:
@@ -1288,7 +1321,6 @@ def add_files(
             files_to_process,
             opts,
             workers=workers,
-            json_mode=json_mode,
             on_progress=on_progress,
         )
         stage.set(prepared=len(proc.prepared_items), failures=len(proc.failures))
@@ -1323,6 +1355,10 @@ def add_files(
     with span("add.enrich", items=len(touched_items)):
         _enrich_deferred_documents(catalog_root, affected_collections, touched_items)
 
+    # Phase 3 tracks a non-geospatial file next to a geo file as an asset and
+    # lists it as skipped, because it is not converted.
+    for path in skipped:
+        reasons.setdefault(path, SKIP_COMPANION)
     return added, skipped, failures
 
 

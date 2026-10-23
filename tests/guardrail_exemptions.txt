@@ -34,7 +34,6 @@ xfail	#972	E	tests/integration/test_push_faults.py test_list_permission_denied_w
 xfail	#981	F	tests/integration/test_extract_recorded.py test_wfs_api_key_stays_out_of_the_catalog
 xfail	#996	D	tests/integration/test_generated_catalog_conformance.py row realdata-nwi-wetlands
 xfail	#1003	F	tests/integration/test_extract_recorded.py test_arcgis_layers_matches_sparse_layer_ids, test_arcgis_exclude_layers_matches_sparse_layer_ids
-xfail	#1005	B	tests/integration/test_stdout_purity.py; tests/unit/test_cli_add_rm.py
 xfail	#1008	E	tests/integration/test_push_faults.py test_thread_pool_is_shut_down
 xfail	#1020	A	tests/integration/test_config_reachability.py
 xfail	#1023	C	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS P-SUMMARY-FROM-ITEMS; tests/integration/test_generated_catalog_conformance.py raster rows
@@ -43,7 +42,6 @@ xfail	#1038	D	tests/integration/test_generated_catalog_conformance.py PTL-VIZ-00
 xfail	#1039	F	tests/integration/test_generated_catalog_conformance.py row extract-arcgis
 xfail	#1041	D	tests/properties/test_rebuild_idempotence.py
 xfail	#1042	E	tests/integration/test_generated_catalog_conformance.py row clone; invariant stdout_purity reason
-xfail	#1044	B	tests/integration/test_config_reachability.py
 xfail	#1046	C	tests/integration/test_check_fix_no_regression.py; invariant check_fix --fix reason
 xfail	#1053	D	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS P-VERSIONS-KEY; tests/integration/test_generated_catalog_conformance.py raster rows
 

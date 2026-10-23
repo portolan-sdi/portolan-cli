@@ -1442,6 +1442,9 @@ def _announce_rewrite(source: Path, reason: str) -> None:
         source: The file about to be rewritten.
         reason: Why the rewrite runs, in the operator's terms.
     """
+    # A rewrite changes the operator's file, so the notice is user-facing and
+    # shows by default. It goes through the output writer, which sends it to
+    # stderr in JSON mode (#1005). Do not demote it to logging.info.
     from portolan_cli.output import info as info_output
     from portolan_cli.output import warn
     from portolan_cli.utils import format_size

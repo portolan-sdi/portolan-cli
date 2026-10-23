@@ -475,10 +475,7 @@ def test_tabular_convert_defaults_to_parquet(catalog: Path, run_cli: RunCli) -> 
 
 
 @_tests("ignored_files")
-@_forms(
-    config_set="#1044: add never reads ignored_files",
-    yaml="#1044: add never reads ignored_files",
-)
+@_forms(config_set="#1020: config set stores the list as one string")
 def test_ignored_files_skips_the_matching_file(form: str, catalog: Path, run_cli: RunCli) -> None:
     _copy(POINTS_PARQUET, catalog / "roads" / "roads.parquet")
     _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")

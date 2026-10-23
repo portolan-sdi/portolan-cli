@@ -43,7 +43,7 @@ DESIGN_REASONS = frozenset(
     }
 )
 
-EXPECTED_COUNTS = {"xfail": 39, "invariant": 8, "config-key": 6}
+EXPECTED_COUNTS = {"xfail": 37, "invariant": 8, "config-key": 6}
 
 
 def _sources() -> dict[Path, ast.Module]:
@@ -202,5 +202,4 @@ def test_the_scan_sees_the_markers_it_counts() -> None:
     reasons = {text for tree in _sources().values() for text in xfail_reasons(tree)}
 
     assert "#996: nwi-wetlands.parquet declares no CRS, so add refuses it" in reasons
-    assert "#1005: push prints its progress lines on stdout before the envelope" in reasons
-    assert "#1044: add never reads ignored_files" in reasons
+    assert "#1020: config set stores the list as one string" in reasons
