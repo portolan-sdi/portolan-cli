@@ -1431,7 +1431,7 @@ def _rewrite_or_keep(source: Path, settings: VectorSettings) -> None:
     except RewriteFidelityError as err:
         warn(f"Kept {source.name} as it is: it would lose {err.lost}")
     except Exception as err:  # noqa: BLE001 - a copy is better than a failed add
-        logger.warning("Rewrite of %s failed: %s", source, err, exc_info=True)
+        logger.info("Rewrite of %s failed: %s", source, err, exc_info=True)
         warn(f"Kept {source.name} as it is: geoparquet-io could not rewrite it ({err})")
 
 

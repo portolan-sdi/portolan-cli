@@ -12,6 +12,9 @@ Levels:
   and Python warnings go through the ``py.warnings`` logger
 - ``--quiet``: ERROR
 
+At WARNING and ERROR a ``portolan_cli`` record reads as an output line, such
+as ``⚠ message``. ``-v`` shows the full record format.
+
 Without a flag, ``PORTOLAN_LOG`` (``debug``, ``info``, or ``warning``) sets the level.
 ``PORTOLAN_LOG_FILE=<path>`` also writes one JSON object for each record.
 ``PORTOLAN_GDAL_DEBUG=1`` sets ``CPL_DEBUG=ON`` for GDAL and shows the GDAL
@@ -66,6 +69,22 @@ class _RelativeFormatter(logging.Formatter):
         if record.exc_info:
             line = f"{line}\n{self.formatException(record.exc_info)}"
         return line
+
+
+class _UserFormatter(_RelativeFormatter):
+    """Format a ``portolan_cli`` record as an output line: ``⚠ message``.
+
+    At the default level a library warning is a message for the operator, so
+    it reads like ``output.warn``. An error reads like ``output.error``. The
+    record format and the traceback need ``-v``. Other loggers keep the
+    record format.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        if record.name != PACKAGE_LOGGER and not record.name.startswith(f"{PACKAGE_LOGGER}."):
+            return super().format(record)
+        prefix = "✗" if record.levelno >= logging.ERROR else "⚠"
+        return f"{prefix} {record.getMessage()}"
 
 
 class _JsonFormatter(logging.Formatter):
@@ -135,7 +154,9 @@ def configure_logging(*, verbosity: int = 0, quiet: bool = False) -> None:
     # below still keep the DEBUG records of other loggers off stderr.
     stderr_handler = _StderrHandler()
     stderr_handler.setLevel(logging.DEBUG if gdal_debug else level)
-    stderr_handler.setFormatter(_RelativeFormatter())
+    stderr_handler.setFormatter(
+        _UserFormatter() if level >= logging.WARNING else _RelativeFormatter()
+    )
     stderr_handler._portolan = True  # type: ignore[attr-defined]
     root.addHandler(stderr_handler)
 
