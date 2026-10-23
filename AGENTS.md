@@ -99,7 +99,7 @@ uv run ruff check .                     # Lint
 uv run ruff format .                    # Format
 uv run mypy portolan_cli                # Type check
 uv run deptry .                         # Check dependencies (unused, missing, transitive)
-uv run vulture portolan_cli tests       # Dead code
+uv run vulture                          # Dead code
 uvx jscpd@5.2.1 portolan_cli tests \
   --baseline .jscpd-baseline.json \
   --fail-on-new-clones 0            # Duplicate code

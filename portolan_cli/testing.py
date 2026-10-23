@@ -188,18 +188,27 @@ def check_backend(factory: Callable[..., Any], catalog_root: Path) -> None:
     data.write_bytes(b"conformance")
     schema = SchemaFingerprint(columns=["id"], types={"id": "int64"}, hash="conformance")
 
+    # The backend under test is plugin code. Its return values are object
+    # until checked, so the isinstance checks below stay reachable for mypy.
+    first: object = backend.publish(
+        _COLLECTION, {"data.parquet": str(data)}, schema, False, "first"
+    )
+    second: object = backend.publish(
+        _COLLECTION, {"data.parquet": str(data)}, schema, True, "second"
+    )
+    if not isinstance(first, Version) or not isinstance(second, Version):
+        raise ConformanceError(
+            "\n".join(
+                f"publish returned {type(value).__name__}, expected Version."
+                for value in (first, second)
+                if not isinstance(value, Version)
+            )
+        )
     problems: list[str] = []
-    first = backend.publish(_COLLECTION, {"data.parquet": str(data)}, schema, False, "first")
-    second = backend.publish(_COLLECTION, {"data.parquet": str(data)}, schema, True, "second")
-    for label, value in (("publish", first), ("publish", second)):
-        if not isinstance(value, Version):
-            problems.append(f"{label} returned {type(value).__name__}, expected Version.")
-    if problems:
-        raise ConformanceError("\n".join(problems))
     if first.version == second.version:
         problems.append(f"publish returned version {first.version} twice.")
 
-    current = backend.get_current_version(_COLLECTION)
+    current: object = backend.get_current_version(_COLLECTION)
     if not isinstance(current, Version):
         problems.append(f"get_current_version returned {type(current).__name__}, expected Version.")
     elif current.version != second.version:
@@ -295,7 +304,7 @@ def check_extractor(
         _check_command(extractor.name, command, problems)
 
     if source is not None and output_dir is not None:
-        report = extractor.extract(source, output_dir, **options)
+        report: object = extractor.extract(source, output_dir, **options)
         if not isinstance(report, ExtractionReport):
             problems.append(
                 f"extract() returned {type(report).__name__}, expected ExtractionReport."

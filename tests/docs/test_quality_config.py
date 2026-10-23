@@ -112,20 +112,15 @@ MYPY_UNREACHABLE_RATCHET = frozenset(
         "portolan_cli.backends.iceberg.backend",
         "portolan_cli.backends.iceberg.hooks",
         "portolan_cli.conversion_config",
-        "portolan_cli.metadata.validation",
-        "portolan_cli.models.schema",
-        "portolan_cli.plugins.commands",
         "portolan_cli.readme",
-        "portolan_cli.scan.output",
         "portolan_cli.stac",
-        "portolan_cli.testing",
         "portolan_cli.viz.thumbnail",
     }
 )
 
 # Delete only. Lower these numbers when a name or a clone goes away.
-VULTURE_WHITELIST_NAMES = 127
-JSCPD_BASELINE_FINGERPRINTS = 2227
+VULTURE_WHITELIST_NAMES = 109
+JSCPD_BASELINE_FINGERPRINTS = 937
 
 
 def _pyproject() -> dict[str, Any]:
@@ -275,7 +270,7 @@ def test_prek_vulture_hook_has_no_args() -> None:
 def test_jscpd_baseline_only_shrinks() -> None:
     """Delete only: lower the pinned count after a real deduplication."""
     config = json.loads(JSCPD_CONFIG.read_text(encoding="utf-8"))
-    assert config["minTokens"] == 35
+    assert config["minTokens"] == 50
     assert config["failOnEmpty"] is True
     baseline = json.loads(JSCPD_BASELINE.read_text(encoding="utf-8"))
     assert len(baseline["fingerprints"]) == JSCPD_BASELINE_FINGERPRINTS

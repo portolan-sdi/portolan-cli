@@ -12,7 +12,6 @@ Fix Categories:
 
 Functions:
     apply_safe_fixes: Apply safe fixes to scan result.
-    apply_unsafe_fixes: Apply unsafe fixes to scan result.
     preview_fix: Generate a fix proposal for an issue.
 """
 
@@ -714,58 +713,6 @@ def apply_safe_fixes(
                 applied.append(fix)
 
     return proposed, applied
-
-
-def _compute_unsafe_split(
-    dir_path: Path,
-    files: list[Path],
-) -> tuple[dict[str, Any], str] | None:
-    """Compute unsafe directory split for multiple primaries.
-
-    Args:
-        dir_path: Directory containing multiple primaries.
-        files: List of primary files to split.
-
-    Returns:
-        Tuple of (details_dict, preview_message) or None if no split needed.
-    """
-    # TODO: Implement unsafe split computation
-    raise NotImplementedError("_compute_unsafe_split not yet implemented")
-
-
-def _compute_unsafe_rename(
-    path: Path,
-    _new_name: str,  # underscore prefix to mark as intentionally unused for now
-) -> tuple[dict[str, Any], str]:
-    """Compute unsafe rename for path conflicts.
-
-    Args:
-        path: Path to rename.
-        _new_name: New filename (underscore prefix: unused in stub).
-
-    Returns:
-        Tuple of (details_dict, preview_message).
-    """
-    # TODO: Implement unsafe rename computation
-    raise NotImplementedError("_compute_unsafe_rename not yet implemented")
-
-
-def apply_unsafe_fixes(
-    issues: list[ScanIssue],
-    dry_run: bool = False,
-) -> tuple[list[ProposedFix], list[ProposedFix]]:
-    """Apply unsafe fixes to detected issues.
-
-    Args:
-        issues: List of scan issues to fix.
-        dry_run: If True, compute fixes but don't apply them.
-
-    Returns:
-        Tuple of (proposed_fixes, applied_fixes).
-        If dry_run=True, applied_fixes is empty.
-    """
-    # TODO: Implement unsafe fix application
-    raise NotImplementedError("apply_unsafe_fixes not yet implemented")
 
 
 def preview_fix(issue: ScanIssue) -> ProposedFix | None:

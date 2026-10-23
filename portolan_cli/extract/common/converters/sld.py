@@ -563,14 +563,6 @@ def _extract_style_name(root: Element) -> str:
     return "Converted Style"
 
 
-def _get_uniform_opacity(opacity_cases: list[tuple[Any, float]]) -> float:
-    """Get uniform opacity if all cases have same value, else return 1.0."""
-    if not opacity_cases:
-        return 1.0
-    unique = {op for _, op in opacity_cases}
-    return next(iter(unique)) if len(unique) == 1 else 1.0
-
-
 def _build_categorical_fill(
     field: str,
     color_cases: list[tuple[Any, str]],

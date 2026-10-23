@@ -10,6 +10,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from portolan_cli.bbox import to_2d_bbox
 from portolan_cli.json_io import write_json_atomic
@@ -19,8 +20,10 @@ from portolan_cli.models.collection import (
     SpatialExtent,
     TemporalExtent,
 )
-from portolan_cli.models.schema import SchemaModel
 from portolan_cli.stac_links import catalog_collections
+
+if TYPE_CHECKING:
+    from portolan_cli.models.schema import SchemaModel
 
 logger = logging.getLogger(__name__)
 
@@ -175,27 +178,6 @@ def read_collection_json(path: Path) -> CollectionModel:
         data = json.load(f)
 
     return CollectionModel.from_dict(data)
-
-
-def read_schema_json(path: Path) -> SchemaModel:
-    """Read schema metadata from JSON file.
-
-    Args:
-        path: Path to schema.json file.
-
-    Returns:
-        SchemaModel loaded from file.
-
-    Raises:
-        FileNotFoundError: If file doesn't exist.
-    """
-    if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
-
-    with Path(path).open(encoding="utf-8") as f:
-        data = json.load(f)
-
-    return SchemaModel.from_dict(data)
 
 
 def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:

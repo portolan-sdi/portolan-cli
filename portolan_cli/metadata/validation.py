@@ -85,14 +85,6 @@ def validate_collection_extent(
 
     # Check each item's bbox is within collection extent
     for item in items:
-        if item.bbox is None:
-            result.warnings.append(
-                ValidationMessage(
-                    message=f"Item '{item.id}' has no bbox",
-                )
-            )
-            continue
-
         item_west, item_south, item_east, item_north = to_2d_bbox(item.bbox)
 
         # Check if item bbox is fully contained in collection bbox
