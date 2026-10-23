@@ -27,6 +27,14 @@ Selection:
   import legacy``, or ``from .legacy import Item``.
 - Any other changed file selects the test files whose source names it, such as
   a test that reads ``AGENTS.md``.
+- A change to a file in ``FOUNDATION_FILES`` also selects ``FOUNDATION_TESTS``.
+  Those tests run the real CLI on a generated catalog. They reach the
+  foundation through a subprocess or ``CliRunner``, so the import graph alone
+  does not select them (#1035).
+- A target that does not exist in the tree is dropped with a note on stderr,
+  so ``--run`` does not hand pytest a missing path. A test file that the
+  change deletes is never a target. When every target is missing, the script
+  exits 1, because an empty pytest run passes and checks nothing.
 """
 
 from __future__ import annotations
@@ -47,6 +55,24 @@ PACKAGE = "portolan_cli"
 TESTS_DIR = "tests"
 FULL_SUITE_FILES = frozenset({"pyproject.toml", "uv.lock", "tests/conftest.py"})
 FULL_SUITE_PREFIXES = ("tests/fixtures/",)
+# The modules that write or read derived catalog state on every command. A bug
+# in one shows up as a catalog that breaks an invariant, not as a failed import.
+FOUNDATION_FILES = frozenset(
+    {
+        "portolan_cli/config.py",
+        "portolan_cli/output.py",
+        "portolan_cli/stac.py",
+        "portolan_cli/finalization.py",
+        "portolan_cli/preparation.py",
+        "portolan_cli/sync/push.py",
+        "portolan_cli/extract/common/source.py",
+    }
+)
+FOUNDATION_TESTS = (
+    "tests/integration/test_generated_catalog_conformance.py",
+    "tests/integration/test_catalog_invariants.py",
+    "tests/properties",
+)
 
 
 @dataclass
@@ -184,8 +210,11 @@ def select(
     targets: set[str] = set()
     directories: set[str] = set()
     modules: set[str] = set()
+    deleted: set[str] = set()
     for status, path in changes:
         pure = PurePosixPath(path)
+        if status == "D":
+            deleted.add(path)
         if path in FULL_SUITE_FILES or path.startswith(FULL_SUITE_PREFIXES):
             return _full(f"{path} changed")
         if pure.name == "conftest.py" and pure.parts[0] == TESTS_DIR:
@@ -199,6 +228,8 @@ def select(
                 stem = ".".join(pure.with_suffix("").parts)
                 targets.update(t for t, text in test_texts.items() if stem in text)
             continue
+        if path in FOUNDATION_FILES:
+            targets.update(FOUNDATION_TESTS)
         name = module_name(path)
         if name is not None:
             if status == "D":
@@ -214,6 +245,9 @@ def select(
             continue
         targets.update(t for t, text in test_texts.items() if pure.name in text)
     targets |= _tests_importing(modules, test_imports)
+    # A deleted module's old importers can include a test file that the same
+    # change deletes. pytest exits with an error on a missing path.
+    targets -= deleted
     targets = {t for t in targets if not any(t.startswith(f"{d}/") for d in directories)}
     return Selection(targets=sorted(targets | directories))
 
@@ -304,6 +338,14 @@ def select_for_repo(
     )
 
 
+def existing_targets(repo: Path, targets: list[str]) -> list[str]:
+    """Return the targets that exist under ``repo``, and note the rest on stderr."""
+    missing = [target for target in targets if not (repo / target).exists()]
+    if missing:
+        print(f"Skipped {len(missing)} missing target(s): {' '.join(missing)}", file=sys.stderr)
+    return [target for target in targets if target not in missing]
+
+
 def main(argv: list[str] | None = None) -> int:
     """Print or run the affected tests."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -318,11 +360,18 @@ def main(argv: list[str] | None = None) -> int:
     if not selection.targets:
         print("No affected tests.", file=sys.stderr)
         return 0
+    targets = existing_targets(repo, selection.targets)
+    if not targets:
+        # An empty pytest run exits 0 and checks nothing.
+        print(
+            "Every selected target is missing from the tree. Run the full suite.", file=sys.stderr
+        )
+        return 1
     if not args.run:
-        print(" ".join(selection.targets))
+        print(" ".join(targets))
         return 0
     return subprocess.run(
-        [sys.executable, "-m", "pytest", *pytest_args, *selection.targets], cwd=repo, check=False
+        [sys.executable, "-m", "pytest", *pytest_args, *targets], cwd=repo, check=False
     ).returncode
 
 

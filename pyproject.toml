@@ -162,6 +162,11 @@ python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 addopts = "--tb=short"
+# A marker that is not in `markers` fails collection, so a misspelled marker
+# cannot move a test out of its CI lane. This is the ini key and not
+# --strict-markers in addopts: pytest 9.0.3 ignores that flag there
+# (https://github.com/pytest-dev/pytest/issues/14442).
+strict_markers = true
 markers = [
     "unit: Fast, isolated, no I/O (< 100ms each)",
     "integration: Multi-component, may touch filesystem",
