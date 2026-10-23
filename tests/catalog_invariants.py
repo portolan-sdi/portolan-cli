@@ -49,9 +49,6 @@ KNOWN_INVARIANT_GAPS: dict[str, str] = {
     "P-SUMMARY-FROM-ITEMS": "#1023",
     # add --force keeps the old extent after the data shrinks.
     "S-EXTENT-NOT-STALE": "#801",
-    # An Iceberg collection publishes the local sqlite path in
-    # iceberg:catalog_uri.
-    "P-NO-LOCAL-PATH": "#939",
 }
 
 COG_MEDIA_TYPE = "image/tiff; application=geotiff; profile=cloud-optimized"

@@ -208,11 +208,7 @@ def test_extract_arcgis_writes_one_document(
 
 @pytest.fixture
 def iceberg_catalog(tmp_path: Path, run_cli: RunCli) -> Path:
-    """A catalog on the Iceberg backend with one collection at version 1.0.0.
-
-    Its iceberg:catalog_uri holds a local path. The run_cli teardown drops
-    that code as the known gap #939.
-    """
+    """A catalog on the Iceberg backend with one collection at version 1.0.0."""
     pytest.importorskip("pyiceberg")
     root = tmp_path / "lake"
     (root / "roads").mkdir(parents=True)

@@ -563,7 +563,8 @@ class ArcGISLayerSource:
 
         A services root spans services with different licenses and the
         catalog carries one metadata.yaml, so no harvested license applies
-        (issue #686).
+        (issue #686). The services' shared attribution, when they agree on
+        one, names the producer (issue #1039).
         """
         client = self.options.client()
         services, coverage = _discover_and_filter_services(
@@ -576,6 +577,7 @@ class ArcGISLayerSource:
         )
         layers: list[LayerRef] = []
         errors: list[str] = []
+        attributions: set[str] = set()
         for service in services:
             service_url = service.get_url(base_url)
             try:
@@ -585,8 +587,14 @@ class ArcGISLayerSource:
                 logger.warning("Failed to discover layers from service '%s': %s", service.name, err)
                 continue
             layers += self._service_refs(found, service_url, service=service)
+            if found.copyright_text and found.copyright_text.strip():
+                attributions.add(found.copyright_text.strip())
         extractable = [ref.data.info for ref in layers if ref.skip_reason is None]
-        combined = ServiceDiscoveryResult(layers=extractable)
+        # The catalog names a producer only when every service names the same one.
+        combined = ServiceDiscoveryResult(
+            layers=extractable,
+            copyright_text=attributions.pop() if len(attributions) == 1 else None,
+        )
         discovery = self.discovery_from(source, _service_metadata(source, combined), layers)
         discovery.folder_coverage = coverage
         if not layers:
@@ -657,11 +665,10 @@ class ArcGISLayerSource:
         if "output_crs" in sig.parameters:
             kwargs["output_crs"] = options.output_crs
         else:
-            from portolan_cli.output import warn
-
-            warn(
+            logger.warning(
                 "Installed geoparquet-io does not support output CRS selection. "
-                f"Output uses WGS84 (EPSG:4326), not '{options.output_crs}'."
+                "Output uses WGS84 (EPSG:4326), not '%s'.",
+                options.output_crs,
             )
         try:
             table = gpio.extract_arcgis(arcgis_layer.url, **kwargs)

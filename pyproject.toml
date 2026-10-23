@@ -332,11 +332,9 @@ ignore = [
 "portolan_cli/sync/download.py" = ["TID251"] # E
 "portolan_cli/sync/pull.py" = ["TID251"] # E
 "portolan_cli/sync/push.py" = ["TID251"] # E
-"portolan_cli/extract/arcgis/orchestrator.py" = ["TID251"] # F
 "portolan_cli/extract/arcgis/imageserver/extractor.py" = ["TID251"] # F
 "portolan_cli/extract/arcgis/imageserver/orchestrator.py" = ["TID251"] # F
 "portolan_cli/extract/common/orchestrator_base.py" = ["TID251"] # F
-"portolan_cli/extract/common/source.py" = ["TID251"] # F
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # Library output on stdout corrupts the JSON envelope (#1005) and interleaves
@@ -744,11 +742,9 @@ ignore_imports = [
     "portolan_cli.sync.pull -> portolan_cli.output", # E
     "portolan_cli.sync.push -> portolan_cli.output", # E
     "portolan_cli.sync.upload -> portolan_cli.output", # E
-    "portolan_cli.extract.arcgis.orchestrator -> portolan_cli.output", # F
     "portolan_cli.extract.arcgis.imageserver.extractor -> portolan_cli.output", # F
     "portolan_cli.extract.arcgis.imageserver.orchestrator -> portolan_cli.output", # F
     "portolan_cli.extract.common.orchestrator_base -> portolan_cli.output", # F
-    "portolan_cli.extract.common.source -> portolan_cli.output", # F
 ]
 
 [[tool.importlinter.contracts]]

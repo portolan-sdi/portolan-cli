@@ -5,28 +5,17 @@
 #   invariant<TAB>a build_damaged_catalog reason, verbatim
 #   config-key<TAB>key: why the reachability test cannot observe it
 
-xfail	#652	F	tests/integration/test_extract_recorded.py test_arcgis_layer_url_extracts_that_layer
 # #748 has no owner. COG statistics land in a PAM sidecar, and no #1035 agent
 # owns raster statistics.
 xfail	#748	none	tests/integration/test_generated_catalog_conformance.py PTL-DAT-009 rows fresh, re-add, item-id, realdata-rapidai4eo-sample
-xfail	#768	F	tests/integration/test_extract_recorded.py test_wfs_exclude_layers_matches_the_leaf_name
 xfail	#801	C	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS S-EXTENT-NOT-STALE; tests/integration/test_generated_catalog_conformance.py row force-after-mutation; tests/properties/test_rebuild_idempotence.py
-xfail	#811	F	tests/integration/test_extract_recorded.py test_arcgis_discovery_retries_a_transient_error
-xfail	#812	F	tests/integration/test_extract_recorded.py test_arcgis_tables_only_service_fails_and_names_the_tables
 xfail	#813	C	tests/integration/test_generated_catalog_conformance.py PTL-PRV-001, PTL-SCH-001 row force-after-mutation
-xfail	#834	A	tests/integration/test_config_reachability.py
 xfail	#840	C	tests/integration/test_generated_catalog_conformance.py row item-id; invariant item-id reason
 xfail	#852	C	tests/integration/test_bbox_validation.py; invariant bbox_validation reason
-xfail	#855	F	tests/integration/test_extract_recorded.py test_arcgis_token_reaches_layer_discovery
 xfail	#914	spec	tests/integration/test_generated_catalog_conformance.py PTL-EXT-001, PTL-PRT-001, PTL-SCH-001 row partitioned
 xfail	#932	spec	tests/integration/test_generated_catalog_conformance.py PTL-DAT-005 row multi-file
-xfail	#939	F	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS P-NO-LOCAL-PATH; tests/integration/test_generated_catalog_conformance.py row iceberg
-xfail	#963	F	tests/integration/test_extract_recorded.py test_wfs_named_layer_with_no_features_fails
-xfail	#981	F	tests/integration/test_extract_recorded.py test_wfs_api_key_stays_out_of_the_catalog
-xfail	#1003	F	tests/integration/test_extract_recorded.py test_arcgis_layers_matches_sparse_layer_ids, test_arcgis_exclude_layers_matches_sparse_layer_ids
 xfail	#1020	A	tests/integration/test_config_reachability.py
 xfail	#1023	C	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS P-SUMMARY-FROM-ITEMS; tests/integration/test_generated_catalog_conformance.py raster rows
-xfail	#1039	F	tests/integration/test_generated_catalog_conformance.py row extract-arcgis
 xfail	#1046	C	tests/integration/test_check_fix_no_regression.py; invariant check_fix --fix reason
 
 invariant	catalog_invariants: file:size set to 1 for the __main__ test
@@ -35,7 +24,6 @@ invariant	bbox_validation: the two-bbox antimeridian extent of #852
 invariant	item-id: hrefs point at a directory that does not exist (#840)
 invariant	check_fix: the test deletes the item JSON on purpose
 invariant	check_fix: --fix rewrites items.parquet and leaves versions.json stale (#1046)
-invariant	extract_recorded: extract wfs writes the api_key into the catalog (#981)
 
 config-key	partitioning.prompt: read only when stderr is a TTY, so CliRunner never reaches it
 config-key	pmtiles.bbox: shows only in decoded tile contents

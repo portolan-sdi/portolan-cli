@@ -465,27 +465,8 @@ class TestKnownGapsStillFire:
             "bbox [-122.5, 37.7, -122.35, 37.85] != data union [-122.5, 37.7, -122.425, 37.7]"
         ]
 
-    def test_p_no_local_path(self, tmp_path: Path, run_cli: RunCli) -> None:
-        """#939: iceberg:catalog_uri names the sqlite file on this machine."""
-        pytest.importorskip("pyiceberg")
-        if sys.platform == "win32":
-            pytest.skip("PyIceberg SQL catalog warehouse paths break on Windows")
-        root = tmp_path / "catalog"
-        data = root / "roads" / "roads.parquet"
-        data.parent.mkdir(parents=True)
-        shutil.copy(POINTS, data)
-        run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
-        run_cli("config", "set", "backend", "iceberg", cwd=root)
-        run_cli("add", "--portolan-dir", str(root), str(data))
-
-        fired = [v for v in check_catalog_invariants(root) if v.code == "P-NO-LOCAL-PATH"]
-
-        sqlite = f"sqlite:///{root.resolve()}/.portolan/iceberg.db"
-        assert [v.detail for v in fired] == [f"local path {sqlite!r}"]
-
 
 GAP_TESTS = {
-    "P-NO-LOCAL-PATH": TestKnownGapsStillFire.test_p_no_local_path,
     "P-SUMMARY-FROM-ITEMS": TestKnownGapsStillFire.test_p_summary_from_items,
     "S-EXTENT-NOT-STALE": TestKnownGapsStillFire.test_s_extent_not_stale,
 }

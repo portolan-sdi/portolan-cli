@@ -141,9 +141,7 @@ def _wfs_layers(out: Path) -> list[tuple[str, str, int]]:
 
 # A case whose output breaks a catalog invariant because of an open bug. The
 # reason is an ``invariant`` line in tests/guardrail_exemptions.txt.
-DAMAGED = {
-    "geodata_gov_md": "extract_recorded: extract wfs writes the api_key into the catalog (#981)"
-}
+DAMAGED: dict[str, str] = {}
 
 
 @pytest.mark.parametrize("case", sorted(EXTRACTIONS))
@@ -173,7 +171,6 @@ def test_every_scenario_has_a_recording_gate() -> None:
     assert sorted(covered) == sorted(on_disk)
 
 
-@pytest.mark.xfail(strict=True, reason="#1003: --layers matches the list position, not the ID")
 def test_arcgis_layers_matches_sparse_layer_ids(tmp_path: Path, run_cli: RunCli) -> None:
     """``--layers 2`` extracts layer ID 2 of a service whose IDs are 2, 9, 10."""
     result, server, out = _run("sparse_ids-layers", tmp_path, run_cli)
@@ -183,9 +180,6 @@ def test_arcgis_layers_matches_sparse_layer_ids(tmp_path: Path, run_cli: RunCli)
     assert _layers(out) == [(2, "Municipal Boundary Lines", "success", 2)]
 
 
-@pytest.mark.xfail(
-    strict=True, reason="#1003: --exclude-layers matches the list position, not the ID"
-)
 def test_arcgis_exclude_layers_matches_sparse_layer_ids(tmp_path: Path, run_cli: RunCli) -> None:
     """``--exclude-layers 2`` keeps layer IDs 9 and 10."""
     result, server, out = _run("sparse_ids-exclude", tmp_path, run_cli)
@@ -198,7 +192,6 @@ def test_arcgis_exclude_layers_matches_sparse_layer_ids(tmp_path: Path, run_cli:
     ]
 
 
-@pytest.mark.xfail(strict=True, reason="#652: a layer URL extracts 0 layers and exits 0")
 def test_arcgis_layer_url_extracts_that_layer(tmp_path: Path, run_cli: RunCli) -> None:
     """A URL that ends in ``/MapServer/0`` extracts layer 0."""
     result, server, out = _run("layer_url", tmp_path, run_cli)
@@ -208,7 +201,6 @@ def test_arcgis_layer_url_extracts_that_layer(tmp_path: Path, run_cli: RunCli) -
     assert _layers(out) == [(0, "PRK.open_space", "success", 2)]
 
 
-@pytest.mark.xfail(strict=True, reason="#812: a tables-only FeatureServer reports 0/0 and exits 0")
 def test_arcgis_tables_only_service_fails_and_names_the_tables(
     tmp_path: Path, run_cli: RunCli
 ) -> None:
@@ -221,7 +213,6 @@ def test_arcgis_tables_only_service_fails_and_names_the_tables(
     assert "table" in result.output.lower()
 
 
-@pytest.mark.xfail(strict=True, reason="#855: layer discovery sends no token")
 def test_arcgis_token_reaches_layer_discovery(tmp_path: Path, run_cli: RunCli) -> None:
     """``--token`` reaches every request of a token-gated server."""
     result, server, out = _run("token_gated", tmp_path, run_cli)
@@ -232,7 +223,6 @@ def test_arcgis_token_reaches_layer_discovery(tmp_path: Path, run_cli: RunCli) -
     assert _layers(out) == [(0, "PRK.open_space", "success", 2)]
 
 
-@pytest.mark.xfail(strict=True, reason="#811: one transient discovery error ends the harvest")
 def test_arcgis_discovery_retries_a_transient_error(tmp_path: Path, run_cli: RunCli) -> None:
     """A 503 on the first service request is retried, and the layer extracts."""
     result, server, out = _run("transient_error", tmp_path, run_cli)
@@ -243,9 +233,6 @@ def test_arcgis_discovery_retries_a_transient_error(tmp_path: Path, run_cli: Run
     assert _layers(out) == [(0, "PRK.open_space", "success", 2)]
 
 
-@pytest.mark.xfail(
-    strict=True, reason="#768: --exclude-layers compares the leaf with workspace:layer"
-)
 def test_wfs_exclude_layers_matches_the_leaf_name(tmp_path: Path, run_cli: RunCli) -> None:
     """``--exclude-layers states`` excludes ``topp:states``."""
     result, server, out = _run("workspace_layer-exclude", tmp_path, run_cli)
@@ -264,7 +251,6 @@ def test_wfs_layers_matches_the_qualified_name(tmp_path: Path, run_cli: RunCli) 
     assert _wfs_layers(out) == [("topp:states", "success", 2)]
 
 
-@pytest.mark.xfail(strict=True, reason="#963: a named layer with 0 features exits 0")
 def test_wfs_named_layer_with_no_features_fails(tmp_path: Path, run_cli: RunCli) -> None:
     """A layer named with ``--layers`` that returns 0 features fails the run (#1034)."""
     result, server, out = _run("empty_collection", tmp_path, run_cli)
@@ -274,7 +260,6 @@ def test_wfs_named_layer_with_no_features_fails(tmp_path: Path, run_cli: RunCli)
     assert _wfs_layers(out) == [("N2000_WFS:N2000", "failed", 0)]
 
 
-@pytest.mark.xfail(strict=True, reason="#981: the WFS api_key reaches the published catalog")
 def test_wfs_api_key_stays_out_of_the_catalog(tmp_path: Path, run_cli: RunCli) -> None:
     """No file under the output root holds the API key of the service URL."""
     result, server, out = _run("geodata_gov_md", tmp_path, run_cli)

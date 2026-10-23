@@ -1876,3 +1876,40 @@ class TestCacheRateLimit:
                 )
 
         assert exc_info.value.retry_after == 7.0
+
+
+@pytest.mark.parametrize(("compression", "tag"), [("WEBP", "WEBP_LEVEL"), ("JPEG", "JPEG_QUALITY")])
+async def test_cog_quality_reaches_the_codec_option(
+    tmp_path: Path, compression: str, tag: str
+) -> None:
+    """conversion.cog.quality reaches the COG as the GTiff option of the codec.
+
+    The GTiff driver has no QUALITY option. It takes JPEG_QUALITY and
+    WEBP_LEVEL, and reports the value back in IMAGE_STRUCTURE.
+    """
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from portolan_cli.conversion_config import CogSettings
+    from portolan_cli.extract.arcgis.imageserver.extractor import _convert_to_cog
+
+    source = tmp_path / "tile.tif"
+    profile = {
+        "driver": "GTiff",
+        "width": 64,
+        "height": 64,
+        "count": 3,
+        "dtype": "uint8",
+        "crs": "EPSG:4326",
+        "transform": from_origin(0, 64, 1, 1),
+    }
+    with rasterio.open(source, "w", **profile) as dst:
+        dst.write(np.random.default_rng(0).integers(0, 255, (3, 64, 64), dtype="uint8"))
+
+    out = tmp_path / "tile_cog.tif"
+    await _convert_to_cog(source, out, CogSettings(compression=compression, quality=40))
+
+    with rasterio.open(out) as src:
+        assert src.compression.name.upper() == compression
+        assert src.tags(ns="IMAGE_STRUCTURE")[tag] == "40"

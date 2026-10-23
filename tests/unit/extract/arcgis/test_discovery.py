@@ -546,7 +546,7 @@ def test_recursive_builds_full_path_for_nested_folders(monkeypatch: pytest.Monke
 
 
 def _discover_with(monkeypatch: pytest.MonkeyPatch, body: dict[str, Any]) -> ServiceDiscoveryResult:
-    monkeypatch.setattr(ArcGISClient, "get_json", lambda self, url: body)
+    monkeypatch.setattr(ArcGISClient, "get_json", lambda self, url, **_: body)
     return discover_layers("https://x/rest/services/S/MapServer")
 
 
@@ -652,3 +652,34 @@ def test_permanent_failure_is_not_retried(answer: httpx.Response) -> None:
     with pytest.raises(ArcGISDiscoveryError):
         discover_layers("https://x/S/FeatureServer", client)
     assert len(seen) == 1
+
+
+_EMPTY_SERVICE = {"currentVersion": 12, "layers": [], "tables": []}
+
+
+@pytest.mark.unit
+def test_empty_layer_list_is_asked_again() -> None:
+    """ArcGIS Online answers about half the requests for one live service with no layers.
+
+    The live suite saw it on _Sharswood_Choice_Neighborhood_Boundary: 21 of 40
+    requests in a row listed ``"layers": []`` in an otherwise equal body.
+    """
+    seen: list[str] = []
+    answers = [httpx.Response(200, json=_EMPTY_SERVICE), httpx.Response(200, json=_SERVICE)]
+    client = ArcGISClient(retries=3, retry_delay=0.0, transport=_transport(answers, seen))
+
+    found = discover_layers("https://x/S/FeatureServer", client)
+
+    assert [layer.name for layer in found.layers] == ["Parcels"]
+    assert len(seen) == 2
+
+
+@pytest.mark.unit
+def test_service_that_stays_empty_returns_no_layers() -> None:
+    seen: list[str] = []
+    answers = [httpx.Response(200, json=_EMPTY_SERVICE) for _ in range(3)]
+    client = ArcGISClient(retries=3, retry_delay=0.0, transport=_transport(answers, seen))
+
+    found = discover_layers("https://x/S/FeatureServer", client)
+
+    assert (found.layers, found.tables, len(seen)) == ([], [], 3)

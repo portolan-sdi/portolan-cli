@@ -1536,7 +1536,7 @@ def test_fetch_forwards_explicit_output_crs(
 
 
 def test_fetch_warns_when_gpio_lacks_output_crs(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """An older gpio without output_crs must warn that it reprojects to WGS84."""
 
@@ -1545,10 +1545,14 @@ def test_fetch_warns_when_gpio_lacks_output_crs(
 
     _install_gpio(monkeypatch, fake_extract_arcgis)
 
-    _fetch_test_layer(
-        tmp_path / "out.parquet", ExtractionOptions(vector=VectorSettings(sort="none"))
-    )
-    assert "WGS84" in capsys.readouterr().err
+    with caplog.at_level("WARNING", logger="portolan_cli.extract.arcgis.orchestrator"):
+        _fetch_test_layer(
+            tmp_path / "out.parquet", ExtractionOptions(vector=VectorSettings(sort="none"))
+        )
+    assert caplog.messages == [
+        "Installed geoparquet-io does not support output CRS selection. "
+        "Output uses WGS84 (EPSG:4326), not 'native'."
+    ]
 
 
 def test_fetch_restamps_projected_source_crs(
@@ -1874,6 +1878,37 @@ def test_services_root_keeps_the_service_order_with_skipped_layers(tmp_path: Pat
         ("punten", "tiles/punten", f"Tiles: {NO_QUERY_REASON}"),
         ("roads", "good", None),
     ]
+
+
+@pytest.mark.parametrize(
+    ("copyrights", "producer"),
+    [
+        (("City of Philadelphia", "City of Philadelphia "), "City of Philadelphia"),
+        (("A", "B"), None),
+    ],
+)
+def test_services_root_names_the_producer_the_services_share(
+    copyrights: tuple[str, str], producer: str | None
+) -> None:
+    """#1039: one attribution across the services names the catalog producer."""
+    roads = [LayerInfo(id=0, name="roads", layer_type="Feature Layer")]
+    services = [ServiceInfo("A", "FeatureServer"), ServiceInfo("B", "FeatureServer")]
+    results = iter(ServiceDiscoveryResult(layers=roads, copyright_text=text) for text in copyrights)
+
+    with (
+        patch(
+            "portolan_cli.extract.arcgis.orchestrator.discover_services_recursive",
+            return_value=(services, FolderTraversal(visited=[], skipped=[], service_count=2)),
+        ),
+        patch(
+            "portolan_cli.extract.arcgis.orchestrator.discover_layers",
+            side_effect=lambda url, client=None: next(results),
+        ),
+    ):
+        found = ArcGISLayerSource().discover("https://x/rest/services", LayerSourceOptions())
+
+    assert found.catalog_seed is not None
+    assert found.catalog_seed.attribution == producer
 
 
 def test_services_root_reports_no_query_layers_as_skipped_not_failed(tmp_path: Path) -> None:

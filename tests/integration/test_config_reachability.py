@@ -519,9 +519,10 @@ def test_backend_iceberg_writes_the_iceberg_fields(
     assert sorted(k for k in collection if k.startswith("iceberg:")) == ICEBERG_FIELDS
 
 
+# The default SQLite catalog URI is a local path, so the collection omits
+# iceberg:catalog_uri (#939).
 ICEBERG_FIELDS = [
     "iceberg:catalog_type",
-    "iceberg:catalog_uri",
     "iceberg:current_snapshot_id",
     "iceberg:format_version",
     "iceberg:table_id",
@@ -559,7 +560,6 @@ def test_add_writes_a_bbox_column_by_default(catalog: Path, run_cli: RunCli) -> 
 
 
 @pytest.mark.realdata
-@pytest.mark.xfail(strict=True, reason="#834: extract arcgis ignores the conversion.vector block")
 def test_extract_arcgis_reads_conversion_vector(
     catalog: Path, run_cli: RunCli, arcgis_url: str
 ) -> None:

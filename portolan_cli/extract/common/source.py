@@ -845,13 +845,12 @@ def _seed_collection(
 ) -> None:
     from portolan_cli.extract.common.metadata_seeding import seed_collection_metadata
     from portolan_cli.metadata_seeding import seed_metadata_yaml
-    from portolan_cli.output import detail
     from portolan_cli.stac import update_stac_metadata
 
     if meta.record is not None:
         from portolan_cli.extract.common.urls import sanitize_published_string
 
-        detail(f"Using {meta.record_label} for {layer.name}")
+        logger.info("Using %s for %s", meta.record_label, layer.name)
         record = meta.record
         if record.source_url:
             record = replace(record, source_url=sanitize_published_string(record.source_url))

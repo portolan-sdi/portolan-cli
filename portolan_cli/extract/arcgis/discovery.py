@@ -45,6 +45,19 @@ class ArcGISTransientError(ArcGISDiscoveryError):
     """A discovery failure that a retry can change, such as HTTP 503."""
 
 
+class _EmptyListingError(ArcGISTransientError):
+    """A service answer that lists no layers and no tables.
+
+    ArcGIS Online sometimes answers a healthy service with ``"layers": []``.
+    The live suite saw it for 21 of 40 requests in a row to one service. The
+    client asks again, and keeps the last answer when every answer is empty.
+    """
+
+    def __init__(self, url: str, data: dict[str, Any]) -> None:
+        super().__init__(f"{url} lists no layers and no tables")
+        self.data = data
+
+
 NO_QUERY_SKIP_REASON = "skipped: no Query capability (tiles-only)"
 
 
@@ -143,8 +156,13 @@ class ArcGISClient:
     retry_delay: float = 1.0
     transport: httpx.BaseTransport | None = None
 
-    def get_json(self, url: str) -> dict[str, Any]:
+    def get_json(self, url: str, *, listing: bool = False) -> dict[str, Any]:
         """Fetch ``url`` as JSON, with ``f=json`` and the token, and retry transient failures.
+
+        Args:
+            url: The REST URL.
+            listing: The URL is a service. An answer with no layers and no
+                tables is asked again, and the last answer is returned.
 
         Raises:
             ArcGISDiscoveryError: On a permanent failure, or on a transient
@@ -156,14 +174,17 @@ class ArcGISClient:
             self._get_once,
             RetryConfig(max_attempts=max(self.retries, 1), initial_delay=self.retry_delay),
             url,
+            listing,
             retry_on=(ArcGISTransientError,),
             on_retry=lambda attempt, err: logger.debug("Retry %d for %s: %s", attempt, url, err),
         )
+        if isinstance(outcome.error, _EmptyListingError):
+            return outcome.error.data
         if outcome.error is not None:
             raise outcome.error
         return cast("dict[str, Any]", outcome.value)
 
-    def _get_once(self, url: str) -> dict[str, Any]:
+    def _get_once(self, url: str, listing: bool = False) -> dict[str, Any]:
         """Make one request. ArcGIS reports some errors in an HTTP 200 body."""
         request_url = ensure_json_format(url)
         if self.token:
@@ -190,6 +211,8 @@ class ArcGISClient:
             message = embedded.get("message", "ArcGIS error")
             error = ArcGISTransientError if _is_transient_status(code) else ArcGISDiscoveryError
             raise error(f"ArcGIS error from {url}: {code} {message}")
+        if listing and not (data.get("layers") or data.get("tables")):
+            raise _EmptyListingError(url, data)
         return data
 
 
@@ -218,7 +241,7 @@ def discover_layers(url: str, client: ArcGISClient | None = None) -> ServiceDisc
     Raises:
         ArcGISDiscoveryError: If the request fails or response is invalid
     """
-    data = (client or ArcGISClient()).get_json(url)
+    data = (client or ArcGISClient()).get_json(url, listing=True)
 
     def infos(key: str, default_type: str) -> list[LayerInfo]:
         return [
