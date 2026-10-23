@@ -8,12 +8,13 @@ the gate to go red.
 
 For each fault the script:
 
-1. Copies ``HEAD`` to a temporary directory with ``git archive``.
-2. Applies the clean variant of the fault and runs each gate. The gate must
-   pass. A gate that fails on a clean tree proves nothing, so the row is
-   BROKEN.
-3. Copies ``HEAD`` again, applies the fault, and runs each gate. Each gate
-   must fail. A gate that stays green is MISSED.
+1. Copies ``HEAD`` to a temporary directory with ``git archive`` and applies
+   the fault. A fault that does not apply is an ERROR.
+2. Copies ``HEAD`` again, applies the clean variant of the fault, and runs
+   each gate. The gate must pass. A gate that fails on a clean tree proves
+   nothing, so the row is BROKEN.
+3. Runs each gate on the faulty copy. Each gate must fail. A gate that stays
+   green is MISSED.
 
 The gates run in the copy with the caller's virtual environment.
 ``UV_PROJECT_ENVIRONMENT`` points ``uv run`` at it, ``UV_NO_SYNC`` keeps uv
@@ -424,7 +425,11 @@ FAULTS_BY_NAME = {fault.name: fault for fault in FAULTS}
 def run_fault(fault: Fault, repo: Path, workdir: Path) -> Result:
     """Test one fault against copies of ``repo`` under ``workdir``."""
     try:
+        # Apply the fault before the PENDING check, so a fault whose setup
+        # breaks (a CLI change that stops the catalog build) is an ERROR now
+        # and not a surprise on the day its gate lands.
         faulty_root = copy_head(repo, workdir / f"{fault.name}-faulty")
+        fault.apply(faulty_root, True)
         reason = fault.requires(faulty_root)
         if reason:
             return Result(fault.name, "PENDING", reason)
@@ -439,7 +444,6 @@ def run_fault(fault: Fault, repo: Path, workdir: Path) -> Result:
                         "BROKEN",
                         f"{' '.join(gate.command)} fails on a clean tree: {_tail(proc)}",
                     )
-        fault.apply(faulty_root, True)
         for gate in fault.gates:
             proc = run(faulty_root, gate.command)
             if not gate.caught(proc):

@@ -508,7 +508,9 @@ jobs:
       - name: Run every property test with random examples
         run: |
           set -o pipefail
-          mapfile -t FILES < <(grep -rl "@given" tests --include="test_*.py" | sort)
+          # The decorator at the start of a line. A bare "@given" also
+          # matches docstrings that name the decorator.
+          mapfile -t FILES < <(grep -rlE '^\s*@given\(' tests --include="test_*.py" | sort)
           if [ "${#FILES[@]}" -eq 0 ]; then
             echo "::error::No @given test files found; the property run tests nothing."
             exit 1

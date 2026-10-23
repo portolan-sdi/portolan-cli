@@ -144,7 +144,7 @@ def test_diff_cover_gates_the_changed_lines() -> None:
     assert 'cat diff-cover.md >> "$GITHUB_STEP_SUMMARY"' in run
     env = job["env"]
     assert re.fullmatch(r"\d+\.\d+\.\d+", env["DIFF_COVER_VERSION"])
-    assert int(env["FLOOR"]) == 80
+    assert int(env["FLOOR"]) == 90
 
 
 def test_only_the_live_network_step_continues_on_error() -> None:
@@ -188,9 +188,27 @@ def test_nightly_runs_every_property_test_unseeded() -> None:
     run = _run_text(job)
 
     assert job["env"] == {"HYPOTHESIS_PROFILE": "nightly"}
-    assert 'grep -rl "@given" tests --include="test_*.py"' in run
+    assert """grep -rlE '^\\s*@given\\(' tests --include="test_*.py\"""" in run
     assert "set -o pipefail" in run
     assert "reproduce_failure" in run
+
+
+def test_the_property_selector_picks_decorated_tests_only() -> None:
+    """A file that names the decorator in a docstring is not a property test.
+
+    The first nightly run on this branch selected this module, because its
+    text holds the selector, and ran the whole module under the nightly profile.
+    """
+    decorated = re.compile(r"^\s*@given\(", re.MULTILINE)
+    selected = {
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in (REPO_ROOT / "tests").rglob("test_*.py")
+        if decorated.search(path.read_text(encoding="utf-8"))
+    }
+
+    assert "tests/docs/test_ci_wiring.py" not in selected
+    assert "tests/integration/test_mutmut_hypothesis_guard.py" not in selected
+    assert "tests/unit/test_add_rm_hypothesis.py" in selected
 
 
 def test_nightly_runs_the_gate_selftest() -> None:

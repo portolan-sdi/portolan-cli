@@ -380,10 +380,11 @@ jobs:
     # merged report of the whole matrix. A line that only Windows or macOS
     # runs counts as uncovered.
     #
-    # FLOOR comes from five merged pull requests (#868, #985, #1004, #1011,
-    # #1031), measured on the marker set of the coverage cell. The pull
-    # request that added this job records the numbers. The floor is
-    # min(90, median rounded down to a multiple of 5).
+    # FLOOR comes from the last five merged pull requests that changed
+    # portolan_cli, measured with the marker sets of the two coverage cells:
+    # #868 100%, #985 100%, #1004 97%, #1011 100%, #1031 99%. The floor is
+    # min(90, median rounded down to a multiple of 5), so 90. This matches
+    # the portolan-ops norm for Python repos.
     name: Diff Coverage
     needs: [test, iceberg-test]
     if: always() && github.event_name == 'pull_request' && needs.test.result == 'success'
@@ -392,7 +393,7 @@ jobs:
     env:
       # renovate: datasource=pypi depName=diff-cover
       DIFF_COVER_VERSION: "10.6.0"
-      FLOOR: "80"
+      FLOOR: "90"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
