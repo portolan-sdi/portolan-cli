@@ -460,9 +460,11 @@ class TestKnownGapsStillFire:
             "bbox [-122.5, 37.7, -122.35, 37.85] != data union [-122.5, 37.7, -122.425, 37.7]"
         ]
 
-    @pytest.mark.usefixtures("pyiceberg_home")
     def test_p_no_local_path(self, tmp_path: Path, run_cli: RunCli) -> None:
         """#939: iceberg:catalog_uri names the sqlite file on this machine."""
+        pytest.importorskip("pyiceberg")
+        if sys.platform == "win32":
+            pytest.skip("PyIceberg SQL catalog warehouse paths break on Windows")
         root = tmp_path / "catalog"
         data = root / "roads" / "roads.parquet"
         data.parent.mkdir(parents=True)

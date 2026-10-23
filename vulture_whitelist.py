@@ -117,7 +117,6 @@ _create_extraction_mock  # unused function (tests/integration/extract/test_featu
 broken_profile_environ  # unused function (tests/integration/test_push_integration.py:1852)
 catalog_with_vectors  # unused function (tests/integration/test_add_rm_integration.py:38)
 make_imageserver_report  # unused function (tests/integration/extract/test_imageserver_metadata_seeding.py:64)
-moto  # unused variable (tests/integration/test_s3_moto.py:23)
 
 # --- tests/plugins ---
 fresh_manager  # unused function (tests/plugins/test_example_plugin.py:31)

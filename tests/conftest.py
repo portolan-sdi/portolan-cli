@@ -1033,27 +1033,6 @@ def s3_bucket(moto_server: str) -> tuple[str, str]:
 
 
 @pytest.fixture
-def pyiceberg_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Skip without the iceberg extra, and hide the developer's PyIceberg config.
-
-    PyIceberg reads the first ``.pyiceberg.yaml`` it finds, so a developer's
-    own file would replace the local SQLite catalog that the backend defaults
-    to. ``tests/iceberg/conftest.py`` gives the full reason. The stub file
-    holds one key that PyIceberg does not read.
-    """
-    pytest.importorskip("pyiceberg")
-    if sys.platform == "win32":
-        pytest.skip("PyIceberg SQL catalog warehouse paths break on Windows")
-    stub = tmp_path / "pyiceberg-home" / ".pyiceberg.yaml"
-    stub.parent.mkdir(parents=True, exist_ok=True)
-    stub.write_text("portolan-test-isolation: true\n", encoding="utf-8")
-    monkeypatch.setenv("PYICEBERG_HOME", str(stub.parent))
-    for name in os.environ.copy():
-        if name.startswith("PYICEBERG_CATALOG__"):
-            monkeypatch.delenv(name)
-
-
-@pytest.fixture
 def _aws_env(s3_bucket: tuple[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
     """Point obstore and boto3 at the moto server of ``s3_bucket``."""
     _, endpoint_url = s3_bucket
@@ -1125,7 +1104,7 @@ class CliHarness:
 
         from portolan_cli.cli import cli
 
-        with _working_directory(cwd or self.base):
+        with _working_directory(cwd or self.base), self._pyiceberg_isolated():
             result = CliRunner().invoke(cli, list(args), input=input, catch_exceptions=False)
         self.roots.update(
             path.parent.resolve()
@@ -1138,6 +1117,24 @@ class CliHarness:
                 f"{result.output}"
             )
         return result
+
+    @contextmanager
+    def _pyiceberg_isolated(self) -> Iterator[None]:
+        """Hide the developer's PyIceberg config from the command.
+
+        PyIceberg reads the first ``.pyiceberg.yaml`` it finds, and it reads
+        ``PYICEBERG_CATALOG__*`` variables. Either one replaces the local
+        SQLite catalog that the Iceberg backend defaults to.
+        ``tests/iceberg/conftest.py`` gives the full reason. The stub file holds
+        one key that PyIceberg does not read.
+        """
+        stub = self.base / ".pyiceberg-home" / ".pyiceberg.yaml"
+        stub.parent.mkdir(parents=True, exist_ok=True)
+        stub.write_text("portolan-test-isolation: true\n", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"PYICEBERG_HOME": str(stub.parent)}):
+            for name in [n for n in os.environ if n.startswith("PYICEBERG_CATALOG__")]:
+                del os.environ[name]
+            yield
 
     def violations(self) -> str:
         """Return the formatted violations outside the known gaps, or ''."""

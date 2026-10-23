@@ -283,22 +283,31 @@ class TestNoFabricatedItem:
 class TestCreatedItemConforms:
     """A genuinely missing item comes back whole, not as a new set of defects."""
 
-    @pytest.fixture(autouse=True)
-    def _stale_mirror(
-        self, tmp_path: Path, build_damaged_catalog: Callable[[Path, str], Path]
-    ) -> None:
-        """``--fix`` rewrites items.parquet and leaves its versions.json digest stale."""
-        build_damaged_catalog(tmp_path / "cat", STALE_MIRROR_REASON)
+    @pytest.fixture
+    def stale_mirror_catalog(
+        self,
+        run_cli: RunCli,
+        tmp_path: Path,
+        valid_rgb_cog: Path,
+        build_damaged_catalog: Callable[[Path, str], Path],
+    ) -> Path:
+        """A raster catalog that run_cli does not check at teardown.
+
+        ``--fix`` rewrites items.parquet and leaves its versions.json digest
+        stale (#1046), and each test below runs ``--fix``.
+        """
+        root = build_damaged_catalog(tmp_path / "cat", STALE_MIRROR_REASON)
+        return _added_raster_catalog(run_cli, root, valid_rgb_cog)
 
     def test_recreated_item_restores_the_original_error_count(
-        self, run_cli: RunCli, tmp_path: Path, valid_rgb_cog: Path
+        self, run_cli: RunCli, stale_mirror_catalog: Path
     ) -> None:
         """Delete the item JSON, run `--fix`, and land back where you started.
 
         Before the fix the count went from 4 errors to 10, because
         `create_missing_item` wrote an item with no links and no checksums.
         """
-        root = _added_raster_catalog(run_cli, tmp_path / "cat", valid_rgb_cog)
+        root = stale_mirror_catalog
         errors_before, warnings_before = _counts(run_cli, root)
 
         (root / "imagery" / "rapidai4eo" / "rapidai4eo.json").unlink()
@@ -308,10 +317,10 @@ class TestCreatedItemConforms:
         assert (errors_after, warnings_after) == (errors_before, warnings_before)
 
     def test_recreated_item_carries_its_structural_links(
-        self, run_cli: RunCli, tmp_path: Path, valid_rgb_cog: Path
+        self, run_cli: RunCli, stale_mirror_catalog: Path
     ) -> None:
         """PTL-LNK-001 requires root, parent and collection on an item."""
-        root = _added_raster_catalog(run_cli, tmp_path / "cat", valid_rgb_cog)
+        root = stale_mirror_catalog
 
         (root / "imagery" / "rapidai4eo" / "rapidai4eo.json").unlink()
         run_cli("check", str(root), "--fix", expect=None)
@@ -320,10 +329,10 @@ class TestCreatedItemConforms:
         assert {"root", "parent", "collection"} <= rels
 
     def test_recreated_item_is_linked_from_its_collection(
-        self, run_cli: RunCli, tmp_path: Path, valid_rgb_cog: Path
+        self, run_cli: RunCli, stale_mirror_catalog: Path
     ) -> None:
         """PTL-LNK-002 requires a rel='item' link for every contained object."""
-        root = _added_raster_catalog(run_cli, tmp_path / "cat", valid_rgb_cog)
+        root = stale_mirror_catalog
 
         (root / "imagery" / "rapidai4eo" / "rapidai4eo.json").unlink()
         run_cli("check", str(root), "--fix", expect=None)
@@ -333,10 +342,10 @@ class TestCreatedItemConforms:
         assert any("rapidai4eo.json" in href for href in item_hrefs)
 
     def test_recreated_item_carries_file_size_and_checksum(
-        self, run_cli: RunCli, tmp_path: Path, valid_rgb_cog: Path
+        self, run_cli: RunCli, stale_mirror_catalog: Path
     ) -> None:
         """PTL-AST-003 requires file:size and file:checksum on every asset."""
-        root = _added_raster_catalog(run_cli, tmp_path / "cat", valid_rgb_cog)
+        root = stale_mirror_catalog
 
         (root / "imagery" / "rapidai4eo" / "rapidai4eo.json").unlink()
         run_cli("check", str(root), "--fix", expect=None)
