@@ -638,6 +638,98 @@ class TestPushToMemoryStore:
         assert stored_json(remote, "catalog/test/versions.json") == {"by": "B"}
 
 
+def _add_version(catalog: Path, data: bytes, new_file: bytes) -> None:
+    """Record version 1.2.0: new bytes for data.parquet and a new extra.parquet."""
+    item_dir = catalog / "test" / "data"
+    (item_dir / "data.parquet").write_bytes(data)
+    (item_dir / "extra.parquet").write_bytes(new_file)
+    versions = _local_versions(catalog)
+    assets = {
+        "data.parquet": {"sha256": "v3-data", "href": "test/data/data.parquet"},
+        "extra.parquet": {"sha256": "v3-extra", "href": "test/data/extra.parquet"},
+    }
+    versions["versions"].append({"version": "1.2.0", "created": "2024-02-01", "assets": assets})
+    versions["current_version"] = "1.2.0"
+    (catalog / "test" / "versions.json").write_text(json.dumps(versions))
+
+
+def _stored_bytes(store: MemoryStore, key: str) -> bytes:
+    return bytes(obs.get(store, key).bytes())
+
+
+class TestRollbackRestoresOverwrittenKeys:
+    """After a failed push, each overwritten key holds the bytes the remote manifest names."""
+
+    @pytest.fixture
+    def second_push(self, local_catalog: Path, remote: MemoryStore) -> dict[str, bytes]:
+        """Push once, then record a version that overwrites and adds a key."""
+        from portolan_cli.sync.push import push
+
+        assert push(local_catalog, "test", "s3://mybucket/catalog").success
+        before = {key: _stored_bytes(remote, key) for key in stored_keys(remote)}
+        _add_version(local_catalog, b"bytes of 1.2.0", b"extra of 1.2.0")
+        return before
+
+    @pytest.mark.unit
+    def test_failed_push_restores_the_old_bytes(
+        self,
+        local_catalog: Path,
+        remote: MemoryStore,
+        second_push: dict[str, bytes],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Issue #965: a failed versions.json write puts the old bytes back."""
+        from portolan_cli.sync.push import push
+
+        async def fail_manifest(key: str) -> None:
+            if key == "catalog/test/versions.json":
+                raise ConnectionError("network down")
+
+        record_puts(monkeypatch, fail_manifest)
+        result = push(local_catalog, "test", "s3://mybucket/catalog")
+
+        assert result.success is False
+        after = {key: _stored_bytes(remote, key) for key in stored_keys(remote)}
+        assert after == second_push
+
+    @pytest.mark.unit
+    def test_conflict_restores_the_old_bytes_and_keeps_created_keys(
+        self,
+        local_catalog: Path,
+        remote: MemoryStore,
+        second_push: dict[str, bytes],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Issue #971: the winner's manifest describes the old bytes, so they come back."""
+        from portolan_cli.sync.push import PushConflictError, push
+
+        async def other_writer_wins(key: str) -> None:
+            if key == "catalog/test/versions.json":
+                obs.put(remote, key, b'{"by": "B"}')
+
+        record_puts(monkeypatch, other_writer_wins)
+        with pytest.raises(PushConflictError, match="Remote changed during push"):
+            push(local_catalog, "test", "s3://mybucket/catalog")
+
+        after = {key: _stored_bytes(remote, key) for key in stored_keys(remote)}
+        assert after == {
+            **second_push,
+            "catalog/test/versions.json": b'{"by": "B"}',
+            "catalog/test/data/extra.parquet": b"extra of 1.2.0",
+        }
+
+    @pytest.mark.unit
+    def test_successful_push_deletes_the_backups(
+        self, local_catalog: Path, remote: MemoryStore, second_push: dict[str, bytes]
+    ) -> None:
+        from portolan_cli.sync.push import push
+
+        assert push(local_catalog, "test", "s3://mybucket/catalog").success
+
+        assert stored_keys(remote) == {*second_push, "catalog/test/data/extra.parquet"}
+        assert _stored_bytes(remote, "catalog/test/data/data.parquet") == b"bytes of 1.2.0"
+
+
 class TestUploadVersionsJsonAsync:
     """_upload_versions_json_async writes under the ETag the push read."""
 

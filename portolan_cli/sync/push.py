@@ -23,6 +23,7 @@ import fnmatch  # Module-level import for performance (used in hot path)
 import json
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -622,13 +623,56 @@ async def _absent_keys(
     return absent | {key for key, gone in zip(probe, results, strict=True) if gone}
 
 
+async def _back_up(
+    store: ObjectStore, keys: list[str], prefix: str, concurrency: int
+) -> dict[str, str]:
+    """Copy each key that the push will overwrite to a backup key on the server.
+
+    Asset hrefs carry no version segment, so a push overwrites the objects of
+    the remote current version. After a failed push, each such key must hold
+    the bytes that the remote versions.json describes again (#965). PR #968 by
+    Youssef Harby designed this backup. Each push uses its own token. A key
+    that the copy cannot read keeps the new bytes after a failed push.
+
+    Returns:
+        The backup key of each key that the copy reached.
+    """
+    base = f"{prefix}/.portolan/push-backup/{uuid.uuid4().hex}".lstrip("/")
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def copy(key: str) -> str | None:
+        async with semaphore:
+            try:
+                await obs.copy_async(store, key, f"{base}/{key}")
+                return f"{base}/{key}"
+            except Exception as e:
+                if not (isinstance(e, FileNotFoundError) or _is_not_found(e)):
+                    warn(f"Cannot back up {key}, a failed push leaves its new bytes: {e}")
+                return None
+
+    copies = await asyncio.gather(*(copy(k) for k in keys))
+    return {key: backup for key, backup in zip(keys, copies, strict=True) if backup}
+
+
+async def _drop_backups(store: ObjectStore, backups: dict[str, str], *, restore: bool) -> None:
+    """Delete each backup key. With ``restore``, first copy it back over its key."""
+    if restore and backups:
+        warn(f"Restoring {len(backups)} overwritten key(s) from the backups...")
+    for key, backup in backups.items():
+        try:
+            if restore:
+                await obs.copy_async(store, backup, key)
+            await obs.delete_async(store, backup)
+        except Exception as e:
+            warn(f"Failed to restore or delete the backup of {key} at {backup}: {e}")
+
+
 def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> None:
     """Delete the keys that a failed push created.
 
     The caller passes only keys that did not exist before the push (#965).
     The PushConflictError path calls nothing, because another writer can own
-    a key that this push also wrote (#971). An overwritten key keeps the new
-    bytes. Only a version segment in the asset href can fix that.
+    a key that this push created (#971).
 
     Args:
         store: Object store instance.
@@ -1852,9 +1896,11 @@ async def _execute_push_uploads_async(
     planned = [_target_key(catalog_root, prefix, p) for p in [*assets, *stac_paths]]
     list_prefix = f"{prefix}/{collection}".lstrip("/")
     created = await _absent_keys(store, planned, list_prefix, concurrency)
+    backups = await _back_up(store, [k for k in planned if k not in created], prefix, concurrency)
     uploaded_keys: list[str] = []
 
-    def failed(errors: list[str], metadata_errors: list[str] | None = None) -> PushResult:
+    async def failed(errors: list[str], metadata_errors: list[str] | None = None) -> PushResult:
+        await _drop_backups(store, backups, restore=True)
         _cleanup_uploaded_assets(store, [k for k in uploaded_keys if k in created])
         return PushResult(
             success=False,
@@ -1886,7 +1932,7 @@ async def _execute_push_uploads_async(
 
     if upload_errors:
         error("Asset upload failed, aborting push")
-        return failed(upload_errors)
+        return await failed(upload_errors)
 
     # Upload STAC metadata files (async)
     with span("push.stac_files", collection=collection):
@@ -1904,7 +1950,7 @@ async def _execute_push_uploads_async(
 
         if stac_errors:
             error("STAC metadata upload failed, aborting push")
-            return failed(stac_errors)
+            return await failed(stac_errors)
 
     # Upload metadata files (style.json, thumbnails, etc.) - Issue #426
     # This happens after STAC files, before versions.json (manifest-last)
@@ -1940,13 +1986,16 @@ async def _execute_push_uploads_async(
                 msg += f" ({format_file_size(metrics.total_bytes)}, {format_speed(metrics.average_speed)})"
             success(msg)
         except PushConflictError:
-            # Another writer won the race. It can own a key that this push also
-            # wrote, so rollback deletes nothing (#971). The keys that only this
-            # push wrote stay as orphans, which no versions.json names.
+            # Another writer won the race. Its versions.json still describes the
+            # old bytes of each key that this push overwrote, so the backups go
+            # back. It can own a key that this push created, so rollback deletes
+            # none (#971). Such a key stays as an orphan that no manifest names.
+            await _drop_backups(store, backups, restore=True)
             raise
         except Exception as e:
             error(f"Failed to upload versions.json: {e}")
-            return failed([f"Failed to upload versions.json: {e}"], all_metadata_errors)
+            return await failed([f"Failed to upload versions.json: {e}"], all_metadata_errors)
+        await _drop_backups(store, backups, restore=False)
 
     # Upload READMEs last (async, parallel)
     with span("push.readmes", collection=collection):

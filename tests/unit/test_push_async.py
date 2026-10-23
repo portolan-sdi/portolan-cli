@@ -510,7 +510,7 @@ class TestPushAsyncConcurrency:
     async def test_push_async_rollback_keeps_keys_that_existed(
         self, async_catalog: Path, remote: MemoryStore, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Issue #965: an overwritten key survives the rollback with the new bytes."""
+        """Issue #965: an overwritten key survives the rollback with its old bytes."""
         from portolan_cli.sync.push import push_async
 
         obs.put(remote, "catalog/test/data/file0.parquet", b"live bytes")
@@ -530,6 +530,7 @@ class TestPushAsyncConcurrency:
 
         assert result.success is False
         assert stored_keys(remote) == {"catalog/test/data/file0.parquet"}
+        assert bytes(obs.get(remote, "catalog/test/data/file0.parquet").bytes()) == b"live bytes"
 
     async def test_push_async_circuit_breaker_on_failures(
         self, async_catalog: Path, remote: MemoryStore, monkeypatch: pytest.MonkeyPatch
