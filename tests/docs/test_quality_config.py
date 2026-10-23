@@ -74,7 +74,6 @@ NOT_CLI_LAYER = frozenset({"portolan_cli/api.py", "portolan_cli/sync/upload.py"}
 # module is clean.
 RATCHET_TID251 = frozenset(
     {
-        "portolan_cli/add.py",
         "portolan_cli/catalog.py",
         "portolan_cli/collection_thumbnail.py",
         "portolan_cli/conversion_config.py",

@@ -319,7 +319,6 @@ ignore = [
 # or calls obstore.put. The letter names the #1035 agent that owns the module.
 # Delete a line when its module is clean, and delete the same module from
 # RATCHET_TID251 and from the output-is-cli-only ignore_imports. Never add one.
-"portolan_cli/add.py" = ["TID251"] # B
 "portolan_cli/preparation.py" = ["TID251"] # B
 "portolan_cli/convert.py" = ["TID251"] # B
 "portolan_cli/conversion_config.py" = ["TID251"] # A
@@ -733,7 +732,6 @@ ignore_imports = [
     # [tool.ruff.lint.per-file-ignores], plus sync.upload: ruff exempts that
     # file for obstore.put, so only this contract sees its output import.
     # The letter names the owning #1035 agent. Delete only.
-    "portolan_cli.add -> portolan_cli.output", # B
     "portolan_cli.preparation -> portolan_cli.output", # B
     "portolan_cli.convert -> portolan_cli.output", # B
     "portolan_cli.conversion_config -> portolan_cli.output", # A

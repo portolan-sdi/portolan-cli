@@ -27,6 +27,12 @@ Writers:
     imports no Click, so a library caller can use this module without the CLI
     shell (#947). ``cli.py`` installs a writer that uses ``click.echo``, which
     keeps the CLI behavior of CliRunner color handling and Windows consoles.
+
+JSON Mode:
+    In JSON mode stdout holds the JSON envelope and nothing else (#1005).
+    Library code calls these functions without knowing the output mode, so
+    the CLI wraps a JSON run in ``stdout_to_stderr()``. Inside it, a message
+    that would go to stdout goes to stderr instead.
 """
 
 from __future__ import annotations
@@ -145,6 +151,25 @@ def get_writer() -> Writer:
     return _writer
 
 
+_stdout_to_stderr = False
+
+
+@contextmanager
+def stdout_to_stderr() -> Generator[None, None, None]:
+    """Send the stdout-bound messages to stderr until the block ends.
+
+    The switch is process-wide, so messages from worker threads follow it too.
+    A message with an explicit ``file`` keeps that stream.
+    """
+    global _stdout_to_stderr
+    previous = _stdout_to_stderr
+    _stdout_to_stderr = True
+    try:
+        yield
+    finally:
+        _stdout_to_stderr = previous
+
+
 def _output(
     message: str,
     style: str,
@@ -169,6 +194,9 @@ def _output(
     style_kwargs = _STYLES[style]
     fg = str(style_kwargs["fg"]) if "fg" in style_kwargs else None
     dim = bool(style_kwargs.get("dim", False))
+
+    if file is None and _stdout_to_stderr:
+        file = sys.stderr
 
     # Thread-safe output to prevent interleaving from concurrent threads
     with _output_lock:

@@ -453,40 +453,36 @@ conversion:
         with rasterio.open(result.output) as src:
             assert src.compression.name.upper() == "DEFLATE"
 
-    def test_webp_compression_with_quality(
-        self,
-        non_cog_tif: Path,
-        tmp_path: Path,
+    @pytest.mark.parametrize(
+        ("compression", "tag"), [("WEBP", "WEBP_LEVEL"), ("JPEG", "JPEG_QUALITY")]
+    )
+    def test_lossy_compression_with_quality(
+        self, tmp_path: Path, compression: str, tag: str
     ) -> None:
-        """Convert uses WEBP compression with quality from config."""
+        """conversion.cog.quality reaches the COG as the GTiff quality option of the codec.
+
+        The GTiff driver has no QUALITY option. It takes JPEG_QUALITY and
+        WEBP_LEVEL, and reports the value back in IMAGE_STRUCTURE. The source
+        is RGB, because the WebP codec refuses a single band.
+        """
+        import rasterio
+
         from portolan_cli.convert import ConversionStatus, convert_file
 
-        # Create catalog with WEBP compression config
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        config_file = portolan_dir / "config.yaml"
-        config_file.write_text("""
-conversion:
-  cog:
-    compression: WEBP
-    quality: 80
-""")
-
-        source = tmp_path / "input.tif"
-        shutil.copy(non_cog_tif, source)
+        (portolan_dir / "config.yaml").write_text(
+            f"conversion:\n  cog:\n    compression: {compression}\n    quality: 40\n"
+        )
+        source = _write_raster(tmp_path / "input.tif", dtype="uint8", count=3)
 
         result = convert_file(source, output_dir=tmp_path, catalog_path=tmp_path)
 
-        # WEBP may not be available in all GDAL builds, so check if it succeeded
-        if result.status == ConversionStatus.SUCCESS:
-            import rasterio
-
-            assert result.output is not None
-            with rasterio.open(result.output) as src:
-                assert src.compression.name.upper() == "WEBP"
-        else:
-            # WEBP not available - that's OK, just verify error is clear
-            assert result.error is not None
+        assert result.status == ConversionStatus.SUCCESS, result.error
+        assert result.output is not None
+        with rasterio.open(result.output) as src:
+            assert src.compression.name.upper() == compression
+            assert src.tags(ns="IMAGE_STRUCTURE")[tag] == "40"
 
 
 # =============================================================================

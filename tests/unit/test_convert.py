@@ -1505,8 +1505,20 @@ class TestGenerateCogThumbnail:
     """Tests for generate_cog_thumbnail() function."""
 
     @pytest.mark.unit
-    def test_generates_jpeg_next_to_cog(self, valid_rgb_cog: Path, tmp_path: Path) -> None:
-        """A thumbnail JPEG is created next to the COG file."""
+    def test_generates_jpeg_next_to_cog(
+        self,
+        valid_rgb_cog: Path,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        recwarn: pytest.WarningsRecorder,
+    ) -> None:
+        """A thumbnail JPEG is created next to the COG file, with no GDAL or rasterio warning.
+
+        The JPEG driver rejects a PHOTOMETRIC creation option, and GDAL logs
+        that through ``rasterio._env`` on every render. A thumbnail carries no
+        georeference on purpose, so ``NotGeoreferencedWarning`` is noise too.
+        """
+        import logging
         import shutil
 
         from portolan_cli.convert import generate_cog_thumbnail
@@ -1514,13 +1526,44 @@ class TestGenerateCogThumbnail:
         cog = tmp_path / "data.tif"
         shutil.copy(valid_rgb_cog, cog)
 
-        thumb = generate_cog_thumbnail(cog)
+        with caplog.at_level(logging.WARNING, logger="rasterio"):
+            thumb = generate_cog_thumbnail(cog)
 
         assert thumb is not None
         assert thumb.exists()
         assert thumb.suffix == ".jpg"
         assert thumb.parent == cog.parent
         assert thumb.stat().st_size > 0
+        assert [r.getMessage() for r in caplog.records if r.name.startswith("rasterio")] == []
+        assert [str(w.message) for w in recwarn] == []
+
+    @pytest.mark.unit
+    def test_a_single_band_cog_gives_a_single_band_thumbnail(
+        self,
+        valid_singleband_cog: Path,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        recwarn: pytest.WarningsRecorder,
+    ) -> None:
+        """A 1-band COG renders a grayscale JPEG, with no GDAL or rasterio warning."""
+        import logging
+        import shutil
+
+        import rasterio
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        cog = tmp_path / "gray.tif"
+        shutil.copy(valid_singleband_cog, cog)
+
+        with caplog.at_level(logging.WARNING, logger="rasterio"):
+            thumb = generate_cog_thumbnail(cog)
+
+        assert [r.getMessage() for r in caplog.records if r.name.startswith("rasterio")] == []
+        assert [str(w.message) for w in recwarn] == []
+        assert thumb is not None
+        with rasterio.open(thumb) as src:
+            assert (src.driver, src.count) == ("JPEG", 1)
 
     @pytest.mark.unit
     def test_thumbnail_is_smaller_than_max_size(self, valid_rgb_cog: Path, tmp_path: Path) -> None:

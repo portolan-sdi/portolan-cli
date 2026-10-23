@@ -110,29 +110,6 @@ CASES: dict[str, Case] = {
     "skills-show": Case(("skills", "show", "portolan-cli")),
 }
 
-# The JSON-mode cases on main whose stdout is not one document.
-# #1005 names the library modules that print through output.py: the rewrite
-# notice in add, and the progress lines in sync/push.py, sync/pull.py, and
-# extract/common/source.py.
-XFAIL: dict[str, str] = {
-    "add": "#1005: add prints the GeoParquet rewrite notice on stdout before the envelope",
-    "push": "#1005: push prints its progress lines on stdout before the envelope",
-    "pull": "#1005: pull prints its progress lines on stdout before the envelope",
-    "sync": "#1005: sync prints its progress lines on stdout before the envelope",
-    "clone": "#1005: clone prints its progress lines on stdout before the envelope",
-}
-
-
-def _params() -> list[object]:
-    return [
-        pytest.param(
-            name,
-            id=name,
-            marks=([pytest.mark.xfail(strict=True, reason=XFAIL[name])] if name in XFAIL else []),
-        )
-        for name in CASES
-    ]
-
 
 def assert_one_json_document(stdout: str) -> Any:
     """Parse ``stdout`` and fail unless it holds exactly one JSON document."""
@@ -197,7 +174,7 @@ def _prepare(
     return values
 
 
-@pytest.mark.parametrize("name", _params())
+@pytest.mark.parametrize("name", list(CASES))
 def test_json_mode_writes_one_document(
     name: str,
     catalog: Path,
@@ -216,10 +193,6 @@ def test_json_mode_writes_one_document(
 
 
 @pytest.mark.realdata
-@pytest.mark.xfail(
-    strict=True,
-    reason="#1005: extract arcgis prints the metadata.yaml seed notice on stdout",
-)
 def test_extract_arcgis_writes_one_document(
     arcgis_url: str, tmp_path: Path, run_cli: RunCli
 ) -> None:

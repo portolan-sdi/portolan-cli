@@ -435,3 +435,54 @@ class TestWriter:
         )
 
         assert result.stdout.strip() == "False"
+
+
+class TestStdoutToStderr:
+    """JSON mode keeps stdout for the envelope alone (#1005).
+
+    Library code calls ``info``, ``success``, ``detail``, and ``progress``,
+    and does not know the output mode. While ``stdout_to_stderr`` is active,
+    those messages go to stderr.
+    """
+
+    @pytest.mark.unit
+    @pytest.mark.usefixtures("default_writer")
+    def test_stdout_bound_messages_go_to_stderr(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Every stdout-bound helper writes to stderr, and stdout stays empty."""
+        from portolan_cli import output
+
+        with output.stdout_to_stderr():
+            success("done")
+            info("note")
+            detail("step")
+            output.progress("a.shp", current=1, total=2)
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == "✓ done\n→ note\n  step\n→ Processing file 1 of 2: a.shp\n"
+
+    @pytest.mark.unit
+    @pytest.mark.usefixtures("default_writer")
+    def test_route_ends_with_the_block(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """After the block, stdout-bound messages reach stdout again."""
+        from portolan_cli import output
+
+        with output.stdout_to_stderr():
+            pass
+        info("back")
+
+        captured = capsys.readouterr()
+        assert (captured.out, captured.err) == ("→ back\n", "")
+
+    @pytest.mark.unit
+    @pytest.mark.usefixtures("default_writer")
+    def test_explicit_stream_is_kept(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """A caller that names a stream still gets that stream."""
+        from portolan_cli import output
+
+        stream = StringIO()
+        with output.stdout_to_stderr():
+            info("to the stream", file=stream)
+
+        assert stream.getvalue() == "→ to the stream\n"
+        assert capsys.readouterr() == ("", "")
