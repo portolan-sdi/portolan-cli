@@ -76,8 +76,6 @@ KNOWN_SETTINGS: dict[str, str] = {
     "partitioning.threshold_gb": "number",
     "partitioning.strategy": "str",
     "partitioning.target_rows": "int",
-    "partitioning.columns": "list",  # Partition column names (#443)
-    "partitioning.description": "str",
     "pmtiles.enabled": "bool",
     "pmtiles.min_zoom": "int",
     "pmtiles.max_zoom": "int",
@@ -159,8 +157,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "partitioning.threshold_gb": 2.0,  # 2GB per OGC best practices
     "partitioning.strategy": "kdtree",  # KD-tree: data-driven, auto-balancing
     "partitioning.target_rows": 120_000,  # geoparquet-io default
-    "partitioning.columns": None,  # Auto-detect from Hive directory structure
-    "partitioning.description": None,  # No semantic description by default
     "pmtiles.enabled": False,  # Disabled by default (requires tippecanoe)
     "pmtiles.min_zoom": None,  # None = tippecanoe auto-detection
     "pmtiles.max_zoom": None,  # None = tippecanoe auto-detection

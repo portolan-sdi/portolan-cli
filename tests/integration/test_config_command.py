@@ -289,6 +289,33 @@ class TestDottedKeysReachTheReaders:
         )
 
     @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("key", "text", "stored"),
+        [
+            ("statistics.enabled", "false", False),
+            ("push.exclude", '["*.md"]', ["*.md"]),
+            ("tabular.convert", "false", False),
+        ],
+    )
+    def test_value_is_stored_as_the_type_of_its_setting(
+        self, catalog: Path, key: str, text: str, stored: object
+    ) -> None:
+        from portolan_cli.config import get_setting
+
+        result = CliRunner().invoke(cli, ["config", "set", key, text])
+
+        assert result.exit_code == 0, result.output
+        assert get_setting(key, catalog_path=catalog) == stored
+        assert type(get_setting(key, catalog_path=catalog)) is type(stored)
+
+    @pytest.mark.integration
+    def test_value_that_does_not_parse_exits_1_and_names_the_type(self, catalog: Path) -> None:
+        result = CliRunner().invoke(cli, ["config", "set", "tabular.convert", "maybe"])
+
+        assert result.exit_code == 1
+        assert "Setting 'tabular.convert' takes true or false, got 'maybe'" in result.output
+
+    @pytest.mark.integration
     def test_set_get_list_round_trip_through_the_vector_reader(self, catalog: Path) -> None:
         from portolan_cli.conversion_config import get_vector_settings
 

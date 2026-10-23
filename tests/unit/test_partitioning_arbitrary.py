@@ -268,22 +268,15 @@ class TestPartitionConfigSupport:
     """Tests for config-based partition column specification."""
 
     @pytest.mark.unit
-    def test_config_partition_columns_setting(self, tmp_path: Path) -> None:
-        """Config supports partitioning.columns setting for custom column names."""
-        from portolan_cli.config import DEFAULT_SETTINGS, KNOWN_SETTINGS
+    @pytest.mark.parametrize("key", ["partitioning.columns", "partitioning.description"])
+    def test_config_set_rejects_partition_keys_that_no_reader_reads(
+        self, tmp_path: Path, key: str
+    ) -> None:
+        """No code reads these keys from the config, so `config set` rejects them (#1020)."""
+        from portolan_cli.config import set_setting
 
-        # Verify the setting is registered
-        assert "partitioning.columns" in KNOWN_SETTINGS
-
-        # Default should be None (auto-detect)
-        assert DEFAULT_SETTINGS.get("partitioning.columns") is None
-
-    @pytest.mark.unit
-    def test_config_partition_description_setting(self, tmp_path: Path) -> None:
-        """Config supports partitioning.description for semantic documentation."""
-        from portolan_cli.config import KNOWN_SETTINGS
-
-        assert "partitioning.description" in KNOWN_SETTINGS
+        with pytest.raises(ValueError, match=f"Unknown setting '{key}'"):
+            set_setting(tmp_path, key, "kdtree_cell")
 
     @pytest.mark.unit
     def test_get_partition_metadata_uses_config_columns(self, tmp_path: Path) -> None:
