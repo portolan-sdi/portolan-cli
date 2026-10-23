@@ -270,9 +270,9 @@ def test_dry_run_sends_nothing(
     result = _push(run_cli, fault_catalog, s3_bucket, "--dry-run")
 
     assert result.exit_code == 0, result.output
-    assert "would push up to 1 version(s)" in result.output
     assert fault_store.keys() == []
     assert s3_bucket.keys() == set()
+    assert "would push up to 1 version(s)" in result.output
 
 
 @pytest.mark.xfail(
