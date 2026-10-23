@@ -461,6 +461,34 @@ def apply_human_metadata(
     apply_provenance(collection, merged)
 
 
+def _preflight_asset_keys(
+    catalog_root: Path,
+    by_collection: dict[str, list[PreparedItem]],
+    merge_strategy: MergeStrategy,
+) -> None:
+    """Refuse the batch before any write when an asset key collides (Issue #933).
+
+    ``finalize_items`` writes one collection at a time. A collision in a later
+    collection would otherwise leave the earlier collections written. This
+    check merges each collection-level asset into an in-memory copy of its
+    collection and discards the copy.
+
+    Raises:
+        AssetKeyCollisionError: A key holds a different file of another media
+            type.
+    """
+    for collection_id, items in by_collection.items():
+        level_items = [p for p in items if p.is_collection_level_asset and p.stac_assets]
+        if not level_items:
+            continue
+        collection = _get_or_create_collection(catalog_root, collection_id, level_items[0].bbox)
+        for p in level_items:
+            for asset_key, asset in (p.stac_assets or {}).items():
+                add_asset_to_collection(
+                    collection, asset_key, asset.clone(), merge_strategy=merge_strategy
+                )
+
+
 def _add_prepared_items_to_collection(
     collection: pystac.Collection,
     items: list[PreparedItem],
@@ -1226,6 +1254,10 @@ def finalize_items(
 
     Returns:
         List of ItemInfo for each finalized item.
+
+    Raises:
+        AssetKeyCollisionError: A key holds a different file of another media
+            type. No collection of the batch is written.
     """
     if not prepared:
         return []
@@ -1236,6 +1268,8 @@ def finalize_items(
     by_collection: dict[str, list[PreparedItem]] = defaultdict(list)
     for p in prepared:
         by_collection[p.collection_id].append(p)
+
+    _preflight_asset_keys(catalog_root, by_collection, merge_strategy)
 
     results: list[ItemInfo] = []
     for collection_id, items in by_collection.items():

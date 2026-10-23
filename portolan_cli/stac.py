@@ -14,20 +14,22 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 import pystac
 from pystac.summaries import Summarizer, SummaryStrategy
 
-from portolan_cli.constants import PARTITION_EXTENSION_URI, PORTOLAN_SCHEMA_URI
+from portolan_cli.constants import PARTITION_EXTENSION_URI, PORTOLAN_SCHEMA_URI, ROLE_VISUAL
+from portolan_cli.errors import AssetKeyCollisionError
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.providers import derive_provenance, resolve_providers
 from portolan_cli.utils import href_root
+from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
-    from pathlib import Path
 
     from portolan_cli.metadata.tabular import TabularMetadata
 
@@ -414,6 +416,14 @@ def add_asset_to_collection(
     - OVERWRITE: Replace the existing asset entirely.
     - INTERACTIVE: Not yet implemented.
 
+    Issue #933: when the key holds another data file, the two files are never
+    merged. A same-stem file that ranks below the incoming file moves to the key
+    a fresh add gives it (see ``preparation._stem_group_keys``). Another data
+    file of a different media type raises ``AssetKeyCollisionError`` under every
+    strategy, because every strategy loses one of the two files. The rule
+    covers assets with the ``data`` or ``visual`` role. Assets under a role key,
+    such as ``thumbnail``, merge as before.
+
     Args:
         collection: The collection to add the asset to.
         asset_key: Key for the asset (e.g., "data", "boundaries").
@@ -421,12 +431,16 @@ def add_asset_to_collection(
         update_extent_from_bbox: If provided, update collection's spatial extent
             to encompass this bbox [min_x, min_y, max_x, max_y].
         merge_strategy: How to handle conflicts with existing assets.
+
+    Raises:
+        AssetKeyCollisionError: The key holds a different file of another media
+            type.
     """
     # Issue #447: Check if any existing asset already points to the same href
     # This prevents duplicate entries when human-authored key differs from auto-key
     existing_key_by_href = None
     for key, existing in collection.assets.items():
-        if existing.href == asset.href:
+        if _same_href(existing.href, asset.href):
             existing_key_by_href = key
             break
 
@@ -435,6 +449,17 @@ def add_asset_to_collection(
     final_key = existing_key_by_href if existing_key_by_href is not None else asset_key
     existing_asset = collection.assets.get(final_key)
 
+    if (
+        existing_asset is not None
+        and not _same_href(existing_asset.href, asset.href)
+        and _both_data(existing_asset, asset)
+    ):
+        if _is_displaced_by(collection, existing_asset, asset):
+            asset = _move_displaced_aside(collection, final_key, existing_asset, asset)
+            existing_asset = None
+        elif _media_types_differ(existing_asset.media_type, asset.media_type):
+            raise AssetKeyCollisionError(collection.id, final_key, existing_asset.href, asset.href)
+
     if existing_asset is not None:
         asset = _merge_asset(existing_asset, asset, merge_strategy)
 
@@ -442,6 +467,152 @@ def add_asset_to_collection(
 
     if update_extent_from_bbox:
         _update_collection_extent_from_bbox(collection, update_extent_from_bbox, merge_strategy)
+
+
+_PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
+
+# Media types an older catalog or a hand edit wrote for GeoParquet.
+_LEGACY_MEDIA_TYPES: dict[str, str] = {
+    "application/x-parquet": _PARQUET_MEDIA_TYPE,
+    "application/geo+parquet": _PARQUET_MEDIA_TYPE,
+    "application/x-geoparquet": _PARQUET_MEDIA_TYPE,
+}
+
+
+def _canonical_media_type(media_type: str) -> str:
+    return _LEGACY_MEDIA_TYPES.get(media_type, media_type)
+
+
+def _same_href(first: str, second: str) -> bool:
+    """Report whether two collection-relative hrefs name one file."""
+    return first.removeprefix("./") == second.removeprefix("./")
+
+
+# Roles of the assets that #933 could replace: the data and its tile derivative.
+_GUARDED_ROLES = frozenset({"data", ROLE_VISUAL})
+
+
+def _both_data(existing: pystac.Asset, new: pystac.Asset) -> bool:
+    """Report whether both assets are data files or their tile derivatives."""
+    return bool(_GUARDED_ROLES & set(existing.roles or [])) and bool(
+        _GUARDED_ROLES & set(new.roles or [])
+    )
+
+
+def _media_types_differ(existing: str | None, new: str | None) -> bool:
+    """Report whether two media types name different formats.
+
+    An absent type matches every type. A legacy type matches its current type.
+    """
+    if existing is None or new is None:
+        return False
+    return _canonical_media_type(existing) != _canonical_media_type(new)
+
+
+def _stem_rank(collection: pystac.Collection, asset: pystac.Asset) -> int:
+    """Rank a data file for the stem key, as ``preparation._stem_rank`` does.
+
+    A Parquet file without GeoParquet metadata ranks below PMTiles. The tabular
+    add path keys such a table by its stem, so the footer decides. Only a
+    same-stem collision reaches this read.
+    """
+    canonical = _canonical_media_type(asset.media_type or "")
+    if canonical == PMTILES_MEDIA_TYPE:
+        return 2
+    if canonical != _PARQUET_MEDIA_TYPE:
+        return 1
+    return 3 if _is_plain_table(collection, asset.href) else 0
+
+
+def _is_plain_table(collection: pystac.Collection, href: str) -> bool:
+    """Report whether a local Parquet asset has no GeoParquet metadata.
+
+    An asset with no local file, or a collection with no file location, counts
+    as GeoParquet, as its media type says.
+    """
+    self_href = collection.get_self_href()
+    if self_href is None or "://" in self_href:
+        return False
+    path = Path(self_href).parent / href.removeprefix("./")
+    if not path.is_file():
+        return False
+
+    from portolan_cli.formats import is_geoparquet
+
+    return not is_geoparquet(path)
+
+
+def _is_displaced_by(
+    collection: pystac.Collection, existing: pystac.Asset, new: pystac.Asset
+) -> bool:
+    """Report whether ``existing`` is a same-stem file that ranks below ``new``.
+
+    portolan-cli 0.8.0 renamed the primary ``data`` key to the stem after the
+    scan had keyed a same-stem file by that stem. ``iterdir`` order then left
+    the PMTiles, the converted source, or a sidecar such as ``.dbf`` under the
+    GeoParquet key. A re-add of the GeoParquet finds that file under its own
+    key. An add of two same-stem files in two runs meets the same layout.
+    """
+    if existing.media_type is None or new.media_type is None:
+        return False
+    return PurePosixPath(existing.href).stem == PurePosixPath(new.href).stem and _stem_rank(
+        collection, existing
+    ) > _stem_rank(collection, new)
+
+
+def _move_displaced_aside(
+    collection: pystac.Collection,
+    key: str,
+    displaced: pystac.Asset,
+    data: pystac.Asset,
+) -> pystac.Asset:
+    """Move a displaced same-stem asset from ``key`` to the key it gets today.
+
+    The key follows ``preparation._stem_group_keys``. A PMTiles beside a
+    GeoParquet moves to its ``-tiles`` key with the ``visual`` role. Any other
+    file moves to its filename. When that key already holds the same file, the copy under ``key``
+    is dropped. The human title and description under ``key`` described the
+    data, so they go back to the data asset.
+
+    Args:
+        collection: The collection that holds the assets.
+        key: The GeoParquet key that the displaced asset occupies.
+        displaced: The asset under ``key``.
+        data: The incoming GeoParquet asset.
+
+    Returns:
+        The GeoParquet asset to store under ``key``.
+
+    Raises:
+        AssetKeyCollisionError: The target key holds a different file.
+    """
+    roles: list[str] | None
+    if displaced.media_type == PMTILES_MEDIA_TYPE and _stem_rank(collection, data) == 0:
+        target_key = pmtiles_asset_key(key)
+        roles = [ROLE_VISUAL]
+    else:
+        target_key = PurePosixPath(displaced.href).name
+        roles = displaced.roles
+    holder = collection.assets.get(target_key)
+    if holder is not None and not _same_href(holder.href, displaced.href):
+        raise AssetKeyCollisionError(collection.id, target_key, holder.href, displaced.href)
+
+    del collection.assets[key]
+    if holder is None:
+        collection.add_asset(
+            target_key,
+            pystac.Asset(
+                href=displaced.href,
+                media_type=displaced.media_type,
+                roles=roles,
+                extra_fields=dict(displaced.extra_fields),
+            ),
+        )
+
+    restored = data.clone()
+    restored.title = data.title or displaced.title
+    restored.description = data.description or displaced.description
+    return restored
 
 
 def add_collection_properties_from_metadata(

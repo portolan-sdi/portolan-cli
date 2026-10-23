@@ -13,6 +13,7 @@ import pytest
 
 from portolan_cli.errors import (
     ArcGISAuthError,
+    AssetKeyCollisionError,
     CatalogAlreadyExistsError,
     # Catalog errors
     CatalogError,
@@ -161,6 +162,22 @@ class TestCollectionErrors:
 
         assert error.code == "PRTLN-COL002"
         assert error.collection_id == "missing-collection"
+
+    @pytest.mark.unit
+    def test_asset_key_collision_error(self) -> None:
+        """AssetKeyCollisionError names the key and both files."""
+        error = AssetKeyCollisionError("land", "zoning", "./zoning.fgb", "./zoning.parquet")
+
+        assert error.code == "PRTLN-COL003"
+        assert isinstance(error, CollectionError)
+        assert error.collection_id == "land"
+        assert "Collection 'land'" in str(error)
+        assert error.asset_key == "zoning"
+        assert error.existing_href == "./zoning.fgb"
+        assert error.new_href == "./zoning.parquet"
+        assert "'zoning'" in str(error)
+        assert "./zoning.fgb" in str(error)
+        assert "./zoning.parquet" in str(error)
 
 
 class TestSchemaErrors:

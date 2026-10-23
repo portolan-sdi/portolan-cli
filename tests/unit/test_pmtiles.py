@@ -296,6 +296,27 @@ class TestAddPMTilesAssetToCollection:
         assert len(updated["assets"]) == 2
 
     @pytest.mark.unit
+    def test_reuses_the_key_that_already_holds_the_href(self, tmp_path: Path) -> None:
+        """Issue #933: a tracked PMTiles under another key gets no second entry."""
+        from portolan_cli.viz.pmtiles import add_pmtiles_asset_to_collection
+
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+        collection_json = {
+            "type": "Collection",
+            "assets": {
+                "zoning": {"href": "./zoning.parquet"},
+                "zoning.pmtiles": {"href": "./zoning.pmtiles", "roles": ["visual"]},
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+
+        add_pmtiles_asset_to_collection(collection_dir, "zoning", "./zoning.pmtiles")
+
+        updated = json.loads((collection_dir / "collection.json").read_text())
+        assert set(updated["assets"]) == {"zoning", "zoning.pmtiles"}
+
+    @pytest.mark.unit
     def test_stamps_file_fields_on_a_new_asset(self, tmp_path: Path) -> None:
         """PORTO-CORE-028: the tiles asset claims its own size and checksum.
 

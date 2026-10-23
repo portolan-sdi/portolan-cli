@@ -31,6 +31,16 @@ PMTILES_SUFFIX = ".pmtiles"
 WEB_MAP_LINKS_EXTENSION = "https://stac-extensions.github.io/web-map-links/v1.3.0/schema.json"
 
 
+def pmtiles_asset_key(parquet_key: str) -> str:
+    """Return the asset key of the PMTiles derivative of a GeoParquet asset.
+
+    The PMTiles writer and the ``add`` key assignment both call this. A key
+    derived any other way can equal the GeoParquet key and replace that asset
+    (Issue #933).
+    """
+    return f"{parquet_key}-tiles"
+
+
 def pmtiles_asset_hrefs(assets: dict[str, Any]) -> list[str]:
     """Return the hrefs of all PMTiles assets in a collection's asset dict.
 

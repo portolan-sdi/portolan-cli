@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import shutil
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
 
 import pystac
@@ -26,6 +26,7 @@ from pyproj import CRS
 from portolan_cli import extension_registry as _reg
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
 from portolan_cli.config import get_setting, load_merged_metadata
+from portolan_cli.constants import ROLE_VISUAL
 from portolan_cli.conversion_config import VectorSettings, get_vector_settings
 from portolan_cli.convert import apply_vector_settings, run_with_transient_convert_retry
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
@@ -57,12 +58,14 @@ from portolan_cli.stac import (
     add_vector_extension,
     create_item,
 )
+from portolan_cli.stac_parquet import PARQUET_MEDIA_TYPE
 from portolan_cli.sync.checksums import (
     compute_checksum,
     compute_dir_checksum,
     compute_dir_size,
     file_fields_from,
 )
+from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
 from portolan_cli.viz.style import enrich_cog_assets
 
 if TYPE_CHECKING:
@@ -757,6 +760,7 @@ def _add_statistics_to_properties(
 
 def _fix_collection_level_asset_hrefs(
     stac_assets: dict[str, pystac.Asset],
+    tabular_names: frozenset[str] = frozenset(),
 ) -> dict[str, pystac.Asset]:
     """Fix asset hrefs and keys for collection-level assets.
 
@@ -765,17 +769,17 @@ def _fix_collection_level_asset_hrefs(
     Since both collection.json and assets are in the same directory,
     href should be ./filename (not ../filename).
 
-    Also fixes asset keys: _scan_item_assets assigns "data" to primary files,
-    but for collection-level assets we need unique keys to avoid collisions
-    when multiple vectors exist in the same collection. Use file stem instead.
+    Also fixes asset keys. See :func:`_stem_group_keys` for the rule.
 
     Args:
         stac_assets: Assets with hrefs relative to item.json location.
+        tabular_names: Names of the scanned Parquet files that carry no
+            GeoParquet metadata.
 
     Returns:
         Assets with hrefs relative to collection.json location, with unique keys.
     """
-    fixed_assets: dict[str, pystac.Asset] = {}
+    entries: list[tuple[str, str, pystac.Asset]] = []
     for key, asset in stac_assets.items():
         href = asset.href
 
@@ -784,21 +788,137 @@ def _fix_collection_level_asset_hrefs(
             href = href[3:]
         elif href.startswith("./"):
             href = href[2:]
-        fixed_href = f"./{href}"
+        entries.append((key, href, asset))
 
-        # Fix asset key: "data" → file stem for uniqueness across collection
-        # e.g., "data" with href "./census.parquet" → key "census"
-        fixed_key = Path(href).stem if key == "data" else key
+    groups: dict[str, list[int]] = {}
+    for index, (_, href, _) in enumerate(entries):
+        groups.setdefault(PurePosixPath(href).stem, []).append(index)
 
+    keys: dict[int, tuple[str, bool]] = {}
+    for stem, indexes in groups.items():
+        keys.update(_stem_group_keys(stem, indexes, entries, tabular_names))
+
+    fixed_assets: dict[str, pystac.Asset] = {}
+    for index, (key, href, asset) in enumerate(entries):
+        fixed_key, is_tiles = keys.get(index, (key, False))
         fixed_assets[fixed_key] = pystac.Asset(
-            href=fixed_href,
+            href=f"./{href}",
             media_type=asset.media_type,
-            roles=asset.roles,
+            roles=[ROLE_VISUAL] if is_tiles else asset.roles,
             title=asset.title,
             description=asset.description,
             extra_fields=asset.extra_fields,
         )
     return fixed_assets
+
+
+def _tabular_parquet_names(item_dir: Path, stac_assets: dict[str, pystac.Asset]) -> frozenset[str]:
+    """Names of scanned Parquet files without GeoParquet metadata.
+
+    Only a Parquet file that shares its stem with another scanned file can
+    change a key, so only those footers are read.
+    """
+    from collections import Counter
+
+    from portolan_cli.formats import is_geoparquet
+
+    names = [PurePosixPath(asset.href).name for asset in stac_assets.values()]
+    stem_counts = Counter(PurePosixPath(name).stem for name in names)
+    return frozenset(
+        name
+        for name, asset in zip(names, stac_assets.values(), strict=True)
+        if asset.media_type == PARQUET_MEDIA_TYPE
+        and stem_counts[PurePosixPath(name).stem] > 1
+        and not is_geoparquet(item_dir / name)
+    )
+
+
+# Rank of a file when same-stem files compete for the stem key (Issue #933).
+# The lowest rank owns the stem.
+_STEM_RANK_GEOPARQUET = 0
+_STEM_RANK_DATA = 1
+_STEM_RANK_PMTILES = 2
+_STEM_RANK_TABLE = 3
+_STEM_RANK_NOT_DATA = 4
+
+
+def _stem_rank(name: str, asset: pystac.Asset, tabular_names: frozenset[str]) -> int:
+    if "data" not in (asset.roles or []):
+        return _STEM_RANK_NOT_DATA
+    if asset.media_type == PARQUET_MEDIA_TYPE:
+        return _STEM_RANK_TABLE if name in tabular_names else _STEM_RANK_GEOPARQUET
+    if asset.media_type == PMTILES_MEDIA_TYPE:
+        return _STEM_RANK_PMTILES
+    return _STEM_RANK_DATA
+
+
+def _stem_group_keys(
+    stem: str,
+    indexes: list[int],
+    entries: list[tuple[str, str, pystac.Asset]],
+    tabular_names: frozenset[str],
+) -> dict[int, tuple[str, bool]]:
+    """Pick the collection asset keys of the scanned files of one stem (Issue #933).
+
+    ``_scan_item_assets`` keys the primary ``data`` and other files by stem in
+    ``iterdir`` order, so two files of one stem both want the stem as key. A
+    single-file add also scans the companions of other stems. Every item that
+    scans a file must give it the same key, so the key depends on the files and
+    not on the scan order or on which file is the primary:
+
+    - The file of the lowest rank owns the stem: GeoParquet, then other data
+      files, then PMTiles, then Parquet without GeoParquet metadata, then files
+      without the ``data`` role. The primary wins a tie, then
+      ``<stem>.parquet``, then the first name.
+    - A PMTiles beside a GeoParquet is its tile derivative. It takes the key the
+      PMTiles writer uses and the ``visual`` role.
+    - Any other file that wants the stem takes its filename.
+
+    A file under a role key, such as ``thumbnail``, keeps that key.
+
+    Args:
+        stem: The stem that the files share.
+        indexes: Positions of the files in ``entries``.
+        entries: ``(scan key, href, asset)`` for every scanned file.
+        tabular_names: Names of Parquet files without GeoParquet metadata.
+
+    Returns:
+        ``(key, is_tiles)`` by position, for the files that compete for the stem.
+    """
+    competing = [
+        index
+        for index in indexes
+        if entries[index][0] in ("data", stem, PurePosixPath(entries[index][1]).name)
+    ]
+    if len(competing) < 2 and all(entries[i][0] != "data" for i in competing):
+        return {}
+
+    def rank(index: int) -> tuple[int, bool, bool, str]:
+        key, href, asset = entries[index]
+        name = PurePosixPath(href).name
+        return (
+            _stem_rank(name, asset, tabular_names),
+            key != "data",
+            name != f"{stem}.parquet",
+            name,
+        )
+
+    owner = min(competing, key=rank)
+    has_geoparquet = any(
+        _stem_rank(PurePosixPath(entries[i][1]).name, entries[i][2], tabular_names)
+        == _STEM_RANK_GEOPARQUET
+        for i in competing
+    )
+    keys: dict[int, tuple[str, bool]] = {}
+    for index in competing:
+        asset = entries[index][2]
+        if index == owner:
+            keys[index] = (stem, False)
+        elif has_geoparquet and asset.media_type == PMTILES_MEDIA_TYPE:
+            keys[index] = (pmtiles_asset_key(stem), True)
+        else:
+            keys[index] = (PurePosixPath(entries[index][1]).name, False)
+    return keys
 
 
 def _create_and_save_item(
@@ -1095,7 +1215,9 @@ def prepare_item(
             item_json_path=None,  # No item.json for collection-level vector
             is_collection_level_asset=True,
             stac_item=None,
-            stac_assets=_fix_collection_level_asset_hrefs(stac_assets),
+            stac_assets=_fix_collection_level_asset_hrefs(
+                stac_assets, _tabular_parquet_names(item_dir, stac_assets)
+            ),
             metadata=metadata,
             format_name=handler.name,
             created_output=created_output,

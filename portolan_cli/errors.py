@@ -139,6 +139,28 @@ class CollectionNotFoundError(CollectionError):
         super().__init__(f"Collection '{collection_id}' not found", collection_id=collection_id)
 
 
+class AssetKeyCollisionError(CollectionError):
+    """Raised when two different files claim one collection asset key.
+
+    Error code: PRTLN-COL003
+    """
+
+    code = "PRTLN-COL003"
+
+    def __init__(
+        self, collection_id: str, asset_key: str, existing_href: str, new_href: str
+    ) -> None:
+        super().__init__(
+            f"Collection '{collection_id}': asset key '{asset_key}' already holds "
+            f"'{existing_href}'. Adding '{new_href}' under the same key would remove "
+            "that asset. Remove one of the two files from the collection, or rename it.",
+            collection_id=collection_id,
+            asset_key=asset_key,
+            existing_href=existing_href,
+            new_href=new_href,
+        )
+
+
 # Schema Errors (PRTLN-SCH*)
 class SchemaError(PortolanError):
     """Base class for schema-related errors."""

@@ -91,6 +91,26 @@ Derive collection-level asset keys from the **file stem** (`census.parquet` ->
 `census`), never a hardcoded literal like `"data"`. Multiple vector assets in one
 collection all keyed `"data"` silently overwrite each other.
 
+Two files with one stem must never both get the stem key (issue #933).
+`_stem_group_keys` in `preparation.py` holds the rule. It groups every scanned
+file by stem, including the companions of other stems that a single-file add
+scans. The lowest rank owns the stem: GeoParquet, then other data files, then
+PMTiles, then Parquet without GeoParquet metadata, then files without the
+`data` role. A PMTiles beside a
+GeoParquet gets `pmtiles_asset_key(stem)` (`<stem>-tiles`, role `visual`), the
+same key the PMTiles writer uses. Any other same-stem file, such as a `.shp`
+source, takes its filename. The rule reads the files, never the `iterdir`
+order or the choice of primary.
+
+`add_asset_to_collection` applies the same ranks to an existing collection,
+for assets with the `data` or `visual` role. A same-stem file under the key of
+a higher-ranked incoming file moves to the key the rule gives it. That also
+repairs catalogs that 0.8.0 damaged. It reads the footer of a competing Parquet
+file to tell a plain table from GeoParquet. Any other data file of another media type
+under the key raises `AssetKeyCollisionError`. `finalize_items` checks every
+collection of the batch for that error before it writes any of them. Hrefs
+compare without the `./` prefix.
+
 Before inserting an asset, scan **all** existing assets for one whose resolved
 href already matches and reuse that key, so you preserve human-authored keys
 instead of generating a duplicate. (See `add_asset_to_collection` in `stac.py`.)
