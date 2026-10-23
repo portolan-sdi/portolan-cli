@@ -620,3 +620,120 @@ class TestSameStemGeoParquetAndPMTiles:
         assert result.exit_code == 0, result.output
         assets = self._pmtiles_owns_roads(collection_dir)
         assert assets["roads.parquet"]["href"] == "./roads.parquet"
+
+
+def _write_providers(catalog: Path) -> None:
+    """Declare one producer and host, so PTL-PRV-001 does not mask the findings."""
+    (catalog / ".portolan" / "metadata.yaml").write_text(
+        "license: CC-BY-4.0\n"
+        "source: Example open-data portal\n"
+        "providers:\n"
+        "  - name: Example Agency\n"
+        "    roles: [producer, host]\n"
+        "    url: https://example.org\n",
+        encoding="utf-8",
+    )
+
+
+def _errors(runner: CliRunner, catalog: Path) -> list[str]:
+    """Rule ids of the error findings ``portolan check`` reports."""
+    result = runner.invoke(cli, ["--format=json", "check", str(catalog)])
+    findings = json.loads(result.stdout)["data"]["findings"]
+    return sorted(f["rule_id"] for f in findings if f["severity"] == "error")
+
+
+class TestAssetLineage:
+    """The converted file is data, its source is source, its tiles are visual."""
+
+    @pytest.mark.integration
+    def test_converted_geojson_is_the_source_of_the_geoparquet(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        """Issue #960: the GeoJSON carried the data role beside its GeoParquet."""
+        collection_dir = initialized_catalog / "points"
+        collection_dir.mkdir()
+        shutil.copy(fixtures_dir / "vector" / "valid" / "points.geojson", collection_dir)
+
+        result = runner.invoke(
+            cli,
+            [
+                "add",
+                "--portolan-dir",
+                str(initialized_catalog),
+                str(collection_dir / "points.geojson"),
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0, result.output
+
+        assets = json.loads((collection_dir / "collection.json").read_text())["assets"]
+        assert {key: (a["href"], a["type"], a["roles"]) for key, a in assets.items()} == {
+            "points": ("./points.parquet", "application/vnd.apache.parquet", ["data"]),
+            "points.geojson": ("./points.geojson", "application/geo+json", ["source"]),
+            "thumbnail": ("./points.thumb.jpg", "image/jpeg", ["thumbnail"]),
+        }
+        check = runner.invoke(cli, ["check", str(initialized_catalog), "--metadata"])
+        assert "not registered" not in check.output
+
+    @pytest.mark.integration
+    def test_prebuilt_sibling_pmtiles_passes_check(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        fixtures_dir: Path,
+        sample_pmtiles: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Issues #929 and #934: tiles built outside Portolan, no tippecanoe, no flag."""
+        monkeypatch.setattr("portolan_cli.viz.pmtiles.shutil.which", lambda _name: None)
+        _write_providers(initialized_catalog)
+        collection_dir = initialized_catalog / "points"
+        collection_dir.mkdir()
+        shutil.copy(fixtures_dir / "vector" / "valid" / "points.parquet", collection_dir)
+        shutil.copy(sample_pmtiles, collection_dir / "points.pmtiles")
+
+        result = runner.invoke(
+            cli,
+            [
+                "add",
+                "--portolan-dir",
+                str(initialized_catalog),
+                str(collection_dir / "points.parquet"),
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0, result.output
+
+        collection = json.loads((collection_dir / "collection.json").read_text())
+        assert collection["assets"]["points-tiles"]["roles"] == ["visual"]
+        assert [link["href"] for link in collection["links"] if link["rel"] == "pmtiles"] == [
+            "./points.pmtiles"
+        ]
+        assert _errors(runner, initialized_catalog) == []
+
+    @pytest.mark.integration
+    def test_pmtiles_flag_registers_prebuilt_tiles_without_tippecanoe(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        fixtures_dir: Path,
+        sample_pmtiles: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Issue #934: the tippecanoe preflight ran before the up-to-date skip."""
+        monkeypatch.setattr("portolan_cli.viz.pmtiles.shutil.which", lambda _name: None)
+        collection_dir = initialized_catalog / "points"
+        collection_dir.mkdir()
+        shutil.copy(fixtures_dir / "vector" / "valid" / "points.parquet", collection_dir)
+        args = ["add", "--portolan-dir", str(initialized_catalog)]
+        parquet = str(collection_dir / "points.parquet")
+        assert runner.invoke(cli, [*args, parquet], catch_exceptions=False).exit_code == 0
+        # The tiles are newer than the GeoParquet, so nothing needs tippecanoe.
+        shutil.copy(sample_pmtiles, collection_dir / "points.pmtiles")
+
+        result = runner.invoke(cli, [*args, "--pmtiles", parquet], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        assert "tippecanoe is required" not in result.output
+        collection = json.loads((collection_dir / "collection.json").read_text())
+        assert collection["assets"]["points-tiles"]["href"] == "./points.pmtiles"

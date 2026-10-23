@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 from portolan_cli.constants import ROLE_VISUAL
 from portolan_cli.errors import PortolanError
+from portolan_cli.formats import is_geoparquet
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import error, info, success, warn
 from portolan_cli.stac_parquet import stamp_file_fields, sync_file_extension
@@ -56,6 +57,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+PARQUET_SUFFIX = ".parquet"
 
 
 # --- Errors ---
@@ -185,29 +188,14 @@ def _find_geoparquet_assets(collection_path: Path) -> list[tuple[str, Path]]:
 
     geoparquet_assets = []
     for key, asset in assets.items():
-        href = asset.get("href", "")
-        media_type = asset.get("type", "")
-
-        # Check if it's a GeoParquet asset
-        is_geoparquet = (
-            media_type == "application/vnd.apache.parquet"
-            or media_type == "application/x-parquet"
-            or href.endswith(".parquet")
-        )
-
-        # Skip the item mirror (that's metadata, not geodata). The spec role
-        # is collection-mirror; stac-items covers catalogs written before
-        # #654 upgraded the roles.
-        roles = asset.get("roles", [])
-        if "collection-mirror" in roles or "stac-items" in roles:
+        # Only the data is a tile source. This skips the item mirror
+        # (collection-mirror), which is a Parquet of STAC items, and a source.
+        if "data" not in asset.get("roles", []):
             continue
-
-        if is_geoparquet:
-            # Resolve href relative to collection
-            href = href.removeprefix("./")
-            asset_path = collection_path / href
-            if asset_path.exists():
-                geoparquet_assets.append((key, asset_path))
+        asset_path = collection_path / str(asset.get("href", "")).removeprefix("./")
+        # The footer decides, not the suffix: a plain table is no tile source.
+        if asset_path.suffix.lower() == PARQUET_SUFFIX and is_geoparquet(asset_path):
+            geoparquet_assets.append((key, asset_path))
 
     return geoparquet_assets
 
@@ -389,6 +377,17 @@ def _style_geometry_type(geometry_types: list[str]) -> str:
             if family in geometry_type.lower():
                 return geometry_type
     return geometry_types[0]
+
+
+def _archive_layer(pmtiles_path: Path) -> str | None:
+    """The first vector layer a PMTiles archive names, or None if unreadable."""
+    try:
+        from portolan_cli.metadata.pmtiles import extract_pmtiles_metadata
+
+        return extract_pmtiles_metadata(pmtiles_path).layer_name
+    except Exception as e:  # noqa: BLE001 - the layer name falls back to the stem
+        logger.debug("Could not read the PMTiles layer of %s: %s", pmtiles_path, e)
+        return None
 
 
 def _pmtiles_zoom_range(pmtiles_path: Path) -> tuple[int | None, int | None]:
@@ -688,6 +687,7 @@ def generate_pmtiles_for_collection(
     catalog_root: Path,
     *,
     force: bool = False,
+    generate: bool = True,
     min_zoom: int | None = None,
     max_zoom: int | None = None,
     layer: str | None = None,
@@ -704,10 +704,18 @@ def generate_pmtiles_for_collection(
     file if it doesn't exist or if the source is newer. Updates collection.json
     with PMTiles assets and tracks them in versions.json.
 
+    A sibling PMTiles that this run does not build is registered as it is: the
+    asset, the ``rel: pmtiles`` link, and the default style (rashid PTL-VIZ-002
+    and PTL-VIZ-003). tippecanoe is checked only when a tile is built, so
+    pre-built tiles need no tippecanoe (Issue #934).
+
     Args:
         collection_path: Path to collection directory.
         catalog_root: Path to catalog root.
         force: If True, regenerate even if PMTiles exists and is up-to-date.
+        generate: If False, build nothing and only register the sibling PMTiles
+            that exist. ``add`` runs this without ``--pmtiles``, so tiles a user
+            built with tippecanoe get the same registration (Issue #929).
         min_zoom: Minimum zoom level (None = auto-detect via tippecanoe).
         max_zoom: Maximum zoom level (None = auto-detect via tippecanoe).
         layer: Layer name in PMTiles (None = use filename).
@@ -722,20 +730,29 @@ def generate_pmtiles_for_collection(
         PMTilesResult with generated, skipped, and failed counts.
 
     Raises:
-        PMTilesNotAvailableError: If geoparquet-io has no PMTiles support.
-        TippecanoeNotFoundError: If tippecanoe not in PATH.
+        PMTilesNotAvailableError: If a tile must be built and geoparquet-io has
+            no PMTiles support.
+        TippecanoeNotFoundError: If a tile must be built and tippecanoe is not
+            in PATH.
     """
-    # Check dependencies upfront
-    check_pmtiles_available()
-
     result = PMTilesResult()
+    plan = [
+        (asset_key, parquet_path, parquet_path.with_suffix(PMTILES_SUFFIX))
+        for asset_key, parquet_path in _find_geoparquet_assets(collection_path)
+    ]
+    if not generate:
+        plan = [entry for entry in plan if entry[2].exists()]
+        if not plan:
+            return result
+    builds = {
+        pmtiles_path
+        for _, parquet_path, pmtiles_path in plan
+        if generate and _should_generate(parquet_path, pmtiles_path, force)
+    }
+    if builds:
+        check_pmtiles_available()
 
-    # Find all GeoParquet assets
-    geoparquet_assets = _find_geoparquet_assets(collection_path)
-
-    for asset_key, parquet_path in geoparquet_assets:
-        pmtiles_path = parquet_path.with_suffix(PMTILES_SUFFIX)
-
+    for asset_key, parquet_path, pmtiles_path in plan:
         # Compute href relative to collection (preserves subdirectory structure)
         # Use as_posix() for STAC-compliant forward slashes on all platforms
         try:
@@ -744,16 +761,15 @@ def generate_pmtiles_for_collection(
         except ValueError:
             pmtiles_href = f"./{pmtiles_path.name}"
 
-        # Determine layer name (Issue #13)
-        layer_name = layer or parquet_path.stem
-
         # Compute collection-relative PMTiles path for style source URLs
         try:
             pmtiles_col_rel = pmtiles_path.relative_to(collection_path).as_posix()
         except ValueError:
             pmtiles_col_rel = pmtiles_path.name
 
-        if not _should_generate(parquet_path, pmtiles_path, force):
+        if pmtiles_path not in builds:
+            # Tiles built elsewhere name their layer themselves (Issue #929).
+            layer_name = layer or _archive_layer(pmtiles_path) or parquet_path.stem
             # Ensure asset is registered/updated in collection.json even when skipping
             add_pmtiles_asset_to_collection(collection_path, asset_key, pmtiles_href)
             # Emit the rel="pmtiles" web-map-links link alongside the asset (#569)
@@ -772,6 +788,8 @@ def generate_pmtiles_for_collection(
             result.skipped.append(pmtiles_path)
             continue
 
+        # Determine layer name (Issue #13)
+        layer_name = layer or parquet_path.stem
         # Track success to clean up partial files on any failure (Issue #385)
         # Using finally ensures cleanup even on KeyboardInterrupt/SystemExit
         generation_succeeded = False
@@ -931,7 +949,8 @@ def generate_or_suggest_pmtiles(
 
     For each affected collection, resolves PMTiles settings and generates when
     ``--pmtiles`` or ``--force-pmtiles`` was passed, or ``pmtiles.enabled`` is
-    configured. Generation runs
+    configured. Otherwise it only registers the sibling PMTiles that exist
+    (Issue #929). Generation runs
     regardless of output mode so the JSON envelope reflects the final state; an explicitly-requested generation that fails exits non-zero.
 
     Args:
@@ -957,14 +976,14 @@ def generate_or_suggest_pmtiles(
             continue
 
         settings = get_pmtiles_settings(catalog_root, coll_id, coll_path)
-        if not (requested or settings.enabled):
-            continue
-
+        # Without a request, register the tiles a user built and build none.
+        generate = requested or settings.enabled
         try:
             result = generate_pmtiles_for_collection(
                 coll_path,
                 catalog_root,
                 force=force,
+                generate=generate,
                 min_zoom=settings.min_zoom,
                 max_zoom=settings.max_zoom,
                 layer=settings.layer,
