@@ -156,6 +156,12 @@ class TestResolveProviders:
 
         assert providers == [{"name": "GIS Office", "roles": ["host"]}]
 
+    @pytest.mark.parametrize("name", ["Todos Santos GIS", "Todorov Mapping"])
+    def test_a_real_name_that_starts_with_todo_is_a_host(self, name: str) -> None:
+        providers = resolve_providers({"contact": {"name": name}})
+
+        assert providers == [{"name": name, "roles": ["host"]}]
+
     def test_contact_alone_yields_a_host_only_array(self) -> None:
         """PTL-PRV-001 still fires, but PTL-PRV-002 and -003 are satisfied."""
         providers = resolve_providers(dict(CONTACT))

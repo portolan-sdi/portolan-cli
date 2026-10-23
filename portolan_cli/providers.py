@@ -22,6 +22,7 @@ and validation never disagree about which kind of catalog this is.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any, Literal
 
@@ -55,7 +56,8 @@ def _contact_text(value: object) -> str | None:
     The placeholder is not a maintainer, so it never becomes a published host.
     """
     text = _text(value)
-    if text is None or text.upper().startswith("TODO"):
+    # The word TODO, not a name such as "Todos Santos" that starts with it.
+    if text is None or re.match(r"todo\b", text, re.IGNORECASE):
         return None
     return text
 
