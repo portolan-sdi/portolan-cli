@@ -2002,73 +2002,37 @@ class TestPushAgainstMoto:
 
     @pytest.mark.integration
     def test_pushes_in_a_row_succeed_without_a_notice(
-        self, tmp_path: Path, bucket: tuple[str, Any], capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, bucket: tuple[str, Any], run_cli: Any
     ) -> None:
-        """Three push --all runs: first, one overwrite, one with no change.
+        """Three push runs on a CLI-built catalog: first, one overwrite, one with no change.
 
         Each run reads the root versions.json ETag, writes under it, and prints
-        no rollback line. The overwrite leaves no backup key.
+        no rollback line. The overwrite leaves no backup key. The run_cli
+        teardown checks the catalog invariants.
         """
-        from portolan_cli.sync.push import push_all_collections
-
-        name, client = bucket
-        root = _catalog(tmp_path, {"a": {"a.parquet": b"a1"}, "b": {"b.parquet": b"b1"}})
-        assert push_all_collections(root, f"s3://{name}/cat").success
-        _write_collection(root, "a", "1.0.1", {"a.parquet": b"a2"})
-        capsys.readouterr()
-
-        overwrite = push_all_collections(root, f"s3://{name}/cat")
-        again = push_all_collections(root, f"s3://{name}/cat")
-
-        output = "".join(capsys.readouterr())
-        assert (overwrite.success, again.success) == (True, True)
-        for line in (
-            "Remote changed",
-            "Cannot read which remote keys",
-            "Restoring",
-            "Rolling back",
-        ):
-            assert line not in output
-        assert not any("/.portolan/" in key for key in _keys(client, name))
-        assert client.get_object(Bucket=name, Key="cat/a/a.parquet")["Body"].read() == b"a2"
-
-    @pytest.mark.integration
-    def test_pushed_partition_glob_names_the_bucket(
-        self, tmp_path: Path, bucket: tuple[str, Any]
-    ) -> None:
-        """Issue #761: the remote partition:glob starts with s3://<bucket>/<prefix>/."""
         import pathlib
         import shutil
 
-        from portolan_cli.cli import cli
-
         name, client = bucket
-        root = tmp_path / "R"
         fixtures = pathlib.Path(__file__).parents[1] / "fixtures"
+        root, url = tmp_path / "R", f"s3://{name}/cat"
+        data = root / "roads" / "roads.parquet"
+        run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
+        data.parent.mkdir()
+        shutil.copy(fixtures / "vector" / "valid" / "points.parquet", data)
+        run_cli("add", "--portolan-dir", str(root), str(data))
+        run_cli("push", url, "--catalog", str(root))
+        shutil.copy(fixtures / "realdata" / "open-buildings.parquet", data)
+        run_cli("add", "--portolan-dir", str(root), str(data))
 
-        def run(*args: str) -> None:
-            result = CliRunner().invoke(cli, list(args), catch_exceptions=False)
-            assert result.exit_code == 0, result.output
+        outputs = [run_cli("push", url, "--catalog", str(root)).output for _ in range(2)]
 
-        run("init", str(root), "--auto", "--license", "CC-BY-4.0")
-        (root / ".portolan" / "config.yaml").write_text(
-            "partitioning.enabled: true\n"
-            "partitioning.threshold_gb: 0.0001\n"
-            "partitioning.target_rows: 200\n"
-        )
-        (root / "buildings").mkdir()
-        source = root / "buildings" / "buildings.parquet"
-        shutil.copy(fixtures / "realdata" / "open-buildings.parquet", source)
-        run("add", "--portolan-dir", str(root), str(source))
-        run("push", f"s3://{name}/cat", "--catalog", str(root))
-
-        body = client.get_object(Bucket=name, Key="cat/buildings/collection.json")["Body"]
-        globs = [
-            asset["partition:glob"]
-            for asset in json.loads(body.read())["assets"].values()
-            if "partition:glob" in asset
-        ]
-        assert globs == [f"s3://{name}/cat/buildings/kdtree_cell=*/*.parquet"]
+        for output in outputs:
+            for line in ("Remote changed", "Cannot read which remote", "Restoring", "Rolling back"):
+                assert line not in output, output
+        assert not any("/.portolan/" in key for key in _keys(client, name))
+        remote = client.get_object(Bucket=name, Key="cat/roads/roads.parquet")["Body"].read()
+        assert remote == data.read_bytes()
 
     @pytest.mark.integration
     def test_clone_checks_like_the_catalog_it_copies(

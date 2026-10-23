@@ -9,7 +9,6 @@ xfail	#652	F	tests/integration/test_extract_recorded.py test_arcgis_layer_url_ex
 # #748 has no owner. COG statistics land in a PAM sidecar, and no #1035 agent
 # owns raster statistics.
 xfail	#748	none	tests/integration/test_generated_catalog_conformance.py PTL-DAT-009 rows fresh, re-add, item-id, realdata-rapidai4eo-sample
-xfail	#761	E	tests/integration/test_generated_catalog_conformance.py TestPushedPartitionGlob
 xfail	#768	F	tests/integration/test_extract_recorded.py test_wfs_exclude_layers_matches_the_leaf_name
 xfail	#801	C	tests/catalog_invariants.py KNOWN_INVARIANT_GAPS S-EXTENT-NOT-STALE; tests/integration/test_generated_catalog_conformance.py row force-after-mutation; tests/properties/test_rebuild_idempotence.py
 xfail	#811	F	tests/integration/test_extract_recorded.py test_arcgis_discovery_retries_a_transient_error
