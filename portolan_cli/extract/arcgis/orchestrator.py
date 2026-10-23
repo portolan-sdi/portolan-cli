@@ -459,11 +459,21 @@ class ArcGISLayerSource:
         self.service_exclude = service_exclude
 
     def discover(self, source: str, options: LayerSourceOptions) -> Discovery:  # noqa: ARG002 - LayerSource signature
-        """List the layers of a service, of one layer URL, or of every service under a root."""
+        """List the layers of a service, of one layer URL, or of every service under a root.
+
+        A token in the URL query works as ``--token``. Each request URL is
+        built from the URL without its query, so a pasted ``?f=json`` does
+        not end up in front of a layer id.
+        """
+        from urllib.parse import parse_qsl, urlparse
+
+        query = {name.lower(): value for name, value in parse_qsl(urlparse(source).query)}
+        if query.get("token") and not self.options.token:
+            self.options = replace(self.options, token=query["token"])
         parsed = parse_arcgis_url(source)
         if parsed.url_type in (ArcGISURLType.SERVICES_ROOT, ArcGISURLType.SERVICES_FOLDER):
             return self._discover_root(source, parsed.base_url, parsed.folder)
-        service_url = source if parsed.layer_id is None else parsed.base_url
+        service_url = parsed.base_url
         found = discover_layers(service_url, self.options.client())
         layers = self._service_refs(found, service_url)
         empty_reason = None
