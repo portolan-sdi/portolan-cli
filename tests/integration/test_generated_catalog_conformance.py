@@ -706,12 +706,7 @@ SCENARIOS: dict[str, Scenario] = {
         },
     ),
     "push": Scenario(build_push, expected_advisories=ONE_MIRROR),
-    "clone": Scenario(
-        build_clone,
-        # The clone holds no roads/collection.json.
-        known_errors={},
-        known_invariants={"P-VERSIONS-MATCH": "#1042"},
-    ),
+    "clone": Scenario(build_clone, expected_advisories=ONE_MIRROR),
 }
 
 
