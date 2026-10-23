@@ -12,9 +12,11 @@ Additionally, it provides cloud-native status classification (see issue #10):
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, replace
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli import extension_registry as _reg
@@ -43,7 +45,7 @@ from portolan_cli.format_families import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    import pyarrow.parquet as pq
 
     from portolan_cli.conversion_config import ConversionOverrides
     from portolan_cli.plugins.formats import FormatHandler
@@ -174,11 +176,13 @@ def read_kv_metadata(path: Path) -> dict[bytes, bytes]:
         return {}
 
 
-def read_geo_metadata(path: Path) -> dict[str, Any] | None:
+def read_geo_metadata(source: Path | pq.ParquetFile) -> dict[str, Any] | None:
     """Read and parse the ``geo`` footer key of a GeoParquet file.
 
     Args:
-        path: Path to a Parquet file.
+        source: Path to a Parquet file, or a file the caller already opened.
+            An open file gives its raw footer (``metadata.metadata``), so the
+            caller pays for one footer read, not two.
 
     Returns:
         The parsed GeoParquet metadata object. None for a plain Parquet file,
@@ -188,9 +192,12 @@ def read_geo_metadata(path: Path) -> dict[str, Any] | None:
     from geoparquet_io.core.duckdb_metadata import get_geo_metadata
 
     try:
-        geo = get_geo_metadata(str(path))
+        if isinstance(source, Path):
+            geo = get_geo_metadata(str(source))
+        else:
+            geo = json.loads((source.metadata.metadata or {}).get(b"geo", b"null"))
     except Exception:  # noqa: BLE001 - an unreadable file is not a GeoParquet
-        logger.debug("Failed to read GeoParquet metadata from %s", path, exc_info=True)
+        logger.debug("Failed to read GeoParquet metadata from %s", source, exc_info=True)
         return None
     return geo if isinstance(geo, dict) else None
 

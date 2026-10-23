@@ -115,6 +115,25 @@ def test_extract_geoparquet_metadata_reads_the_geo_key(appended_geo_parquet: Pat
     assert metadata.geometry_type == ["Point"]
 
 
+def test_an_open_file_is_not_read_twice(
+    appended_geo_parquet: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The extractors that open the file parse its footer, not a second read."""
+    import geoparquet_io.core.duckdb_metadata as gpio_metadata
+
+    from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata, read_spatial_layout
+    from portolan_cli.metadata.tabular import extract_tabular_metadata
+
+    def _second_read(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("the footer was read a second time")
+
+    monkeypatch.setattr(gpio_metadata, "get_geo_metadata", _second_read)
+
+    assert extract_geoparquet_metadata(appended_geo_parquet).geometry_type == ["Point"]
+    assert read_spatial_layout(appended_geo_parquet).is_geoparquet is True
+    assert extract_tabular_metadata(appended_geo_parquet) is None
+
+
 def test_spatial_layout_sees_geoparquet(appended_geo_parquet: Path) -> None:
     """``read_spatial_layout`` reports a GeoParquet. It reported False before the fix."""
     from portolan_cli.metadata.geoparquet import read_spatial_layout

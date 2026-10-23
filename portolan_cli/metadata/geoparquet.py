@@ -129,7 +129,7 @@ def extract_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
     pf = pq.ParquetFile(path)
 
     # Parse GeoParquet geo metadata
-    geo_metadata = read_geo_metadata(path) or {}
+    geo_metadata = read_geo_metadata(pf) or {}
 
     # Extract schema
     schema = {field.name: str(field.type) for field in pf.schema_arrow}
@@ -205,7 +205,7 @@ def read_spatial_layout(path: Path) -> SpatialLayout:
     except Exception:  # noqa: BLE001 - an unreadable file is not a conformant one
         return SpatialLayout(is_geoparquet=False, has_bbox_covering=False)
 
-    geo = read_geo_metadata(path) or {}
+    geo = read_geo_metadata(parquet) or {}
     if not geo:
         return SpatialLayout(is_geoparquet=False, has_bbox_covering=False)
 
@@ -260,7 +260,7 @@ def read_rewrite_fidelity(path: Path) -> RewriteFidelity | None:
     except Exception:  # noqa: BLE001 - an unreadable file cannot be compared
         return None
 
-    geo = read_geo_metadata(path) or {}
+    geo = read_geo_metadata(parquet) or {}
     primary = geo.get("primary_column", "geometry")
     columns = geo.get("columns")
     column_meta = columns.get(primary, {}) if isinstance(columns, dict) else {}
@@ -408,7 +408,7 @@ def extract_schema_from_geoparquet(
     pf = pq.ParquetFile(path)
 
     # Parse GeoParquet geo metadata
-    geo_metadata = read_geo_metadata(path) or {}
+    geo_metadata = read_geo_metadata(pf) or {}
 
     # Get geometry column name
     geometry_column = geo_metadata.get("primary_column", "geometry")
