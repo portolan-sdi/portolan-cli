@@ -10,7 +10,9 @@ import pytest
 
 if sys.version_info >= (3, 11):
     import tomllib
-else:  # pytest itself depends on tomli before 3.11
+else:
+    # tomli is not a project dependency. It arrives through pytest, which
+    # requires it on Python 3.10.
     import tomli as tomllib
 
 pytestmark = [pytest.mark.unit, pytest.mark.source_scan]

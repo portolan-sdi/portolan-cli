@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import ast
 import json
+import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -20,7 +22,9 @@ import pytest
 
 if sys.version_info >= (3, 11):
     import tomllib
-else:  # pytest itself depends on tomli before 3.11
+else:
+    # tomli is not a project dependency. It arrives through pytest, which
+    # requires it on Python 3.10.
     import tomli as tomllib
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -246,6 +250,74 @@ def test_vulture_whitelist_is_pinned() -> None:
     duplicates = sorted({name for name in names if names.count(name) > 1})
     assert duplicates == []
     assert len(names) == VULTURE_WHITELIST_NAMES
+
+
+def test_vulture_whitelist_entries_are_still_unused() -> None:
+    """A whitelist name whose code is gone or used now must leave the list.
+
+    vulture runs at 60 without the whitelist. Every whitelisted name must be
+    in its findings, so a stale line fails here the way a stale import-linter
+    ignore fails lint-imports.
+    """
+    vulture = _pyproject()["tool"]["vulture"]
+    paths = [path for path in vulture["paths"] if path != "vulture_whitelist.py"]
+    run = subprocess.run(  # noqa: S603 - fixed argument list
+        [
+            sys.executable,
+            "-m",
+            "vulture",
+            *paths,
+            "--min-confidence",
+            str(vulture["min_confidence"]),
+            "--exclude",
+            ",".join(vulture["exclude"]),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    reported = set(re.findall(r"unused \w+ '([^']+)'", run.stdout))
+    assert run.returncode == 3, run.stderr
+    stale = sorted(name for name in _whitelist_names() if name.removeprefix("_.") not in reported)
+    assert stale == []
+
+
+def _without_unreachable_override(text: str) -> str:
+    start = text.index("# warn_unreachable ratchet (#1035).")
+    end = text.index("warn_unreachable = false\n", start) + len("warn_unreachable = false\n")
+    return text[:start] + text[end:]
+
+
+def test_mypy_ratchet_modules_still_need_it(tmp_path: Path) -> None:
+    """A ratchet module that mypy no longer reports must leave the override.
+
+    mypy runs on the ratchet modules with a copy of pyproject.toml that drops
+    the override. Each module must still report an unreachable statement.
+    """
+    config = tmp_path / "pyproject.toml"
+    config.write_text(
+        _without_unreachable_override(PYPROJECT.read_text(encoding="utf-8")), encoding="utf-8"
+    )
+    modules = sorted(MYPY_UNREACHABLE_RATCHET)
+    run = subprocess.run(  # noqa: S603 - fixed argument list
+        [
+            sys.executable,
+            "-m",
+            "mypy",
+            "--config-file",
+            str(config),
+            "--no-error-summary",
+            *(arg for module in modules for arg in ("-m", module)),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    unreachable = re.findall(r"^(\S+?\.py):\d+: error: .*\[unreachable\]$", run.stdout, re.MULTILINE)
+    reported = {_path_to_module(path) for path in unreachable}
+    assert sorted(set(modules) - reported) == [], run.stdout + run.stderr
 
 
 def test_vulture_min_confidence_is_60() -> None:

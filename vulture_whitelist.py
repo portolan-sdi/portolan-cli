@@ -20,7 +20,7 @@ _.blocked  # unused attribute (portolan_cli/version_ops.py:142)
 _now_utc  # unused function (portolan_cli/stac.py:256). C deletes it in #1035.
 add_cmd  # unused function (portolan_cli/cli.py:3140)
 add_external_cmd  # unused function (portolan_cli/cli.py:3486)
-all_known_sidecar_extensions  # unused function (portolan_cli/extension_registry.py:412)
+all_known_sidecar_extensions  # unused function (portolan_cli/extension_registry.py:412). D deletes it in #1035.
 bump  # unused function (portolan_cli/cli.py:6651)
 config_get  # unused function (portolan_cli/cli.py:4942)
 config_list  # unused function (portolan_cli/cli.py:5013)
@@ -70,11 +70,11 @@ ProgressCallback  # unused variable (portolan_cli/scan/core.py:42)
 SPECIAL_DIRECTORY  # unused variable (portolan_cli/scan/classify.py:134)
 
 # --- portolan_cli/sync ---
-_.start_timer  # unused method (portolan_cli/sync/push.py:172)
-_.stop_timer  # unused method (portolan_cli/sync/push.py:176)
-_upload_readmes  # unused function (portolan_cli/sync/push.py:1225)
-_upload_stac_files  # unused function (portolan_cli/sync/push.py:1121)
-SyncError  # unused class (portolan_cli/sync/core.py:38)
+_.start_timer  # unused method (portolan_cli/sync/push.py:172). E deletes it in #1035.
+_.stop_timer  # unused method (portolan_cli/sync/push.py:176). E deletes it in #1035.
+_upload_readmes  # unused function (portolan_cli/sync/push.py:1225). E deletes it in #1035.
+_upload_stac_files  # unused function (portolan_cli/sync/push.py:1121). E deletes it in #1035.
+SyncError  # unused class (portolan_cli/sync/core.py:38). E deletes it in #1035.
 
 # --- portolan_cli/viz ---
 fig  # unused variable (portolan_cli/viz/thumbnail.py:772, 1 more)
