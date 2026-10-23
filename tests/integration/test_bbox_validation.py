@@ -148,23 +148,8 @@ class TestBboxValidationIntegration:
             spatial = extent.get("spatial", {})
             bboxes = spatial.get("bbox", [[]])
 
-            # The invalid file's poison value must NOT appear in any extent bbox,
-            # and every coordinate must be finite and in WGS84 range.
-            assert bboxes and any(bboxes), "collection extent should have a bbox"
-            for bbox in bboxes:
-                if bbox:
-                    for coord in bbox[:4]:
-                        assert np.isfinite(coord), f"Collection bbox has non-finite: {bbox}"
-                        assert abs(coord) < 1e9, f"Collection bbox has poison coord: {bbox}"
-                    assert -180 <= bbox[0] <= 180, f"west out of range: {bbox}"
-                    assert -90 <= bbox[1] <= 90, f"south out of range: {bbox}"
-                    assert -180 <= bbox[2] <= 180, f"east out of range: {bbox}"
-                    assert -90 <= bbox[3] <= 90, f"north out of range: {bbox}"
-
-            # The surviving extent must be exactly the valid file's bbox.
-            assert [b[:4] for b in bboxes if b] == [[-74.0, 40.0, -73.0, 41.0]], (
-                f"Expected only the valid bbox to survive, got: {bboxes}"
-            )
+            # The poison bbox of the invalid file contributes nothing (issue #516).
+            assert bboxes == [[-74.0, 40.0, -73.0, 41.0]]
 
     def test_check_detects_invalid_bbox_in_collection(self) -> None:
         """Check command should detect collections with invalid bbox."""
