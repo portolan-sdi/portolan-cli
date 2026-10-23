@@ -59,7 +59,6 @@ class Case:
 
 
 REMOTE = frozenset({"remote"})
-CLONE_REASON = "stdout_purity: clone writes no collection.json (#1042)"
 PUSHED = frozenset({"remote", "pushed"})
 
 CASES: dict[str, Case] = {
@@ -86,11 +85,7 @@ CASES: dict[str, Case] = {
     "push": Case(("push", "{remote}"), needs=REMOTE),
     "pull": Case(("pull", "{remote}"), needs=PUSHED),
     "sync": Case(("sync", "{remote}", "--collection", "roads"), needs=PUSHED),
-    # clone writes no collection.json (#1042), so the clone is registered as a
-    # damaged catalog and the run_cli teardown skips it.
-    "clone": Case(
-        ("clone", "{remote}", "{tmp}/cloned"), needs=frozenset({"remote", "pushed", "clone"})
-    ),
+    "clone": Case(("clone", "{remote}", "{tmp}/cloned"), needs=PUSHED),
     "clean": Case(("clean", "--dry-run")),
     "readme": Case(("readme",)),
     "logo": Case(("logo", "{tmp}/brand.png"), needs=frozenset({"logo"})),
@@ -165,8 +160,6 @@ def _prepare(
     if "new-file" in case.needs:
         (root / "places").mkdir()
         shutil.copy(POINTS, root / "places" / "places.parquet")
-    if "clone" in case.needs:
-        request.getfixturevalue("build_damaged_catalog")(tmp_path / "cloned", CLONE_REASON)
     if "logo" in case.needs:
         (tmp_path / "brand.png").write_bytes(LOGO_PNG)
     if "setting" in case.needs:

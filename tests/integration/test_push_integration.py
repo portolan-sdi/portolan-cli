@@ -11,7 +11,7 @@ These tests verify:
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -481,34 +481,6 @@ class TestPushCLI:
             # CLI flag should override env var
             call_kwargs = mock_push.call_args[1]
             assert call_kwargs.get("profile") == "cli-override"
-
-    @pytest.mark.integration
-    def test_push_conflict_shows_error(self, catalog_with_versions: Path) -> None:
-        """Push conflict should show error message to user."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.push import PushConflictError
-
-        runner = CliRunner()
-
-        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.side_effect = PushConflictError(
-                "Remote has changes not present locally. Use --force to overwrite."
-            )
-
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-            )
-
-            assert result.exit_code == 1
-            assert "conflict" in result.output.lower() or "force" in result.output.lower()
 
 
 # =============================================================================
@@ -1182,32 +1154,6 @@ class TestPushCLIErrorBranches:
 
         assert result.exit_code == 1
 
-    @pytest.mark.integration
-    def test_push_cli_conflict_human_advice(self, catalog_with_versions: Path) -> None:
-        """Push CLI should show advice about --force on conflict."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.push import PushConflictError
-
-        runner = CliRunner()
-
-        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.side_effect = PushConflictError("Remote has diverged")
-
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-            )
-
-        assert result.exit_code == 1
-        assert "force" in result.output.lower() or "pull" in result.output.lower()
-
 
 # =============================================================================
 # Property-Based Tests (Hypothesis)
@@ -1692,7 +1638,9 @@ class TestPushAssetDiffingIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_push_only_uploads_new_assets(self, tmp_path: Path) -> None:
+    async def test_push_only_uploads_new_assets(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Issue #329: Push should only upload assets not on remote.
 
         Scenario: Local version 2.0.0 adds 1 new file to a catalog that
@@ -1812,29 +1760,18 @@ class TestPushAssetDiffingIntegration:
             ],
         }
 
-        # Track which assets are uploaded
-        uploaded_assets: list[str] = []
+        import obstore
 
-        async def mock_put(store, path, data, **kwargs):
-            """Mock put that accepts any keyword arguments."""
-            uploaded_assets.append(path)
-            return
+        from tests.memory_remote import memory_remote, record_puts
 
-        with patch(
-            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
-        ) as mock_fetch:
-            mock_fetch.return_value = (remote_versions, "etag123")
-
-            with patch(
-                "portolan_cli.sync.push.obs.put_async", new_callable=AsyncMock
-            ) as mock_put_call:
-                mock_put_call.side_effect = mock_put
-
-                result = await push_async(
-                    catalog_root=catalog_dir,
-                    collection="test",
-                    destination="s3://bucket/prefix",
-                )
+        uploaded_assets = record_puts(monkeypatch)
+        with memory_remote("prefix") as store:
+            obstore.put(store, "prefix/test/versions.json", json.dumps(remote_versions).encode())
+            result = await push_async(
+                catalog_root=catalog_dir,
+                collection="test",
+                destination="s3://bucket/prefix",
+            )
 
         # Verify only the new file was uploaded (not the 2 existing ones)
         assert result.success is True
@@ -1913,3 +1850,284 @@ class TestBrokenProfileCli:
         assert result.exit_code == 1
         assert "PRTLN-CFG004" in result.output
         assert "broken" in result.output
+
+
+# =============================================================================
+# Push against a real S3 API (moto): rollback, conditional writes, headers
+# =============================================================================
+
+
+@pytest.fixture(scope="module")
+def moto_endpoint() -> Iterator[str]:
+    """Start a moto S3 server on the loopback interface."""
+    moto_server = pytest.importorskip("moto.server")
+    server = moto_server.ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
+    server.start()
+    host, port = server.get_host_and_port()
+    yield f"http://{host}:{port}"
+    server.stop()
+
+
+@pytest.fixture
+def bucket(moto_endpoint: str, monkeypatch: pytest.MonkeyPatch) -> tuple[str, Any]:
+    """Create an empty bucket and point obstore at moto. Returns (name, boto3 client)."""
+    import uuid
+
+    boto3 = pytest.importorskip("boto3")
+    for key, value in {
+        "AWS_ENDPOINT_URL": moto_endpoint,
+        "AWS_ACCESS_KEY_ID": "testing",
+        "AWS_SECRET_ACCESS_KEY": "testing",
+        "AWS_DEFAULT_REGION": "us-east-1",
+        "AWS_ALLOW_HTTP": "true",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    client = boto3.client("s3", endpoint_url=moto_endpoint, region_name="us-east-1")
+    name = f"push-{uuid.uuid4().hex[:8]}"
+    client.create_bucket(Bucket=name)
+    return name, client
+
+
+def _keys(client: Any, name: str) -> set[str]:
+    pages = client.get_paginator("list_objects_v2").paginate(Bucket=name)
+    return {obj["Key"] for page in pages for obj in page.get("Contents", [])}
+
+
+def _write_collection(root: Path, coll: str, version: str, files: dict[str, bytes]) -> None:
+    """Write the files of ``coll`` and record them as ``version`` in its versions.json."""
+    import hashlib
+
+    coll_dir = root / coll
+    coll_dir.mkdir(parents=True, exist_ok=True)
+    (coll_dir / "collection.json").write_text(
+        json.dumps({"type": "Collection", "id": coll, "version": version, "links": []})
+    )
+    for name, data in files.items():
+        (coll_dir / name).write_bytes(data)
+    versions_path = coll_dir / "versions.json"
+    history = (
+        json.loads(versions_path.read_text())
+        if versions_path.exists()
+        else {"spec_version": "1.0.0", "versions": []}
+    )
+    assets = {
+        name: {
+            "href": f"{coll}/{name}",
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "size_bytes": len(data),
+        }
+        for name, data in files.items()
+    }
+    history["versions"].append(
+        {
+            "version": version,
+            "created": "2026-01-01T00:00:00Z",
+            "breaking": False,
+            "changes": sorted(files),
+            "assets": assets,
+        }
+    )
+    history["current_version"] = version
+    versions_path.write_text(json.dumps(history))
+
+
+def _catalog(tmp_path: Path, collections: dict[str, dict[str, bytes]]) -> Path:
+    root = tmp_path / "catalog"
+    (root / ".portolan").mkdir(parents=True)
+    (root / ".portolan" / "config.yaml").write_text("version: 1\n")
+    links = [{"rel": "child", "href": f"./{coll}/collection.json"} for coll in collections]
+    (root / "catalog.json").write_text(json.dumps({"type": "Catalog", "id": "c", "links": links}))
+    (root / "versions.json").write_text(json.dumps({"collections": {}}))
+    for coll, files in collections.items():
+        _write_collection(root, coll, "1.0.0", files)
+    return root
+
+
+def _fail_put(monkeypatch: pytest.MonkeyPatch, before: Any) -> None:
+    """Run ``before(key)`` ahead of every put that obstore sends."""
+    import obstore
+
+    real_put_async, real_put = obstore.put_async, obstore.put
+
+    async def put_async(store: Any, key: str, *args: Any, **kwargs: Any) -> Any:
+        before(key)
+        return await real_put_async(store, key, *args, **kwargs)
+
+    def put(store: Any, key: str, *args: Any, **kwargs: Any) -> Any:
+        before(key)
+        return real_put(store, key, *args, **kwargs)
+
+    monkeypatch.setattr(obstore, "put_async", put_async)
+    monkeypatch.setattr(obstore, "put", put)
+
+
+class TestPushAgainstMoto:
+    """The bucket holds what the push promised, also when the push fails."""
+
+    @pytest.mark.integration
+    def test_clone_downloads_every_object_push_wrote(
+        self, tmp_path: Path, bucket: tuple[str, Any]
+    ) -> None:
+        """Issue #1042: the clone holds collection.json, README.md, and AGENTS.md."""
+        from portolan_cli.sync.core import clone
+        from portolan_cli.sync.push import push_all_collections
+
+        name, client = bucket
+        root = _catalog(tmp_path, {"roads": {"roads.parquet": b"P"}})
+        (root / "roads" / "README.md").write_text("# roads\n")
+        (root / "roads" / "AGENTS.md").write_text("# agents\n")
+        assert push_all_collections(root, f"s3://{name}/cat").success
+
+        result = clone(f"s3://{name}/cat", tmp_path / "cloned")
+
+        assert result.success is True
+        pushed = {k.removeprefix("cat/") for k in _keys(client, name) if k.startswith("cat/roads/")}
+        cloned = {
+            p.relative_to(tmp_path / "cloned").as_posix()
+            for p in (tmp_path / "cloned" / "roads").rglob("*")
+            if p.is_file()
+        }
+        assert pushed == {
+            "roads/AGENTS.md",
+            "roads/README.md",
+            "roads/collection.json",
+            "roads/roads.parquet",
+            "roads/versions.json",
+        }
+        assert cloned == pushed
+        local_collection = (root / "roads" / "collection.json").read_bytes()
+        assert (tmp_path / "cloned" / "roads" / "collection.json").read_bytes() == local_collection
+
+    @pytest.mark.integration
+    def test_pushes_in_a_row_succeed_without_a_notice(
+        self, tmp_path: Path, bucket: tuple[str, Any], run_cli: Any
+    ) -> None:
+        """Three push runs on a CLI-built catalog: first, one overwrite, one with no change.
+
+        Each run reads the root versions.json ETag, writes under it, and prints
+        no rollback line. The overwrite leaves no backup key. The run_cli
+        teardown checks the catalog invariants.
+        """
+        import pathlib
+        import shutil
+
+        name, client = bucket
+        fixtures = pathlib.Path(__file__).parents[1] / "fixtures"
+        root, url = tmp_path / "R", f"s3://{name}/cat"
+        data = root / "roads" / "roads.parquet"
+        run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
+        data.parent.mkdir()
+        shutil.copy(fixtures / "vector" / "valid" / "points.parquet", data)
+        run_cli("add", "--portolan-dir", str(root), str(data))
+        run_cli("push", url, "--catalog", str(root))
+        shutil.copy(fixtures / "realdata" / "open-buildings.parquet", data)
+        run_cli("add", "--portolan-dir", str(root), str(data))
+
+        outputs = [run_cli("push", url, "--catalog", str(root)).output for _ in range(2)]
+
+        for output in outputs:
+            for line in ("Remote changed", "Cannot read which remote", "Restoring", "Rolling back"):
+                assert line not in output, output
+        assert not any("/.portolan/" in key for key in _keys(client, name))
+        remote = client.get_object(Bucket=name, Key="cat/roads/roads.parquet")["Body"].read()
+        assert remote == data.read_bytes()
+
+    @pytest.mark.integration
+    def test_clone_checks_like_the_catalog_it_copies(
+        self, tmp_path: Path, bucket: tuple[str, Any]
+    ) -> None:
+        """Issue #1042: rashid reports the same findings on the clone as on the source.
+
+        The source catalog comes from the CLI, as in the issue. Its collection
+        has no providers, so both catalogs report PTL-PRV-001. A clone without
+        the remote catalog.json also reports PTL-LNK-002 (no child link).
+        """
+        import pathlib
+        import shutil
+
+        from portolan_cli.cli import cli
+
+        name, client = bucket
+        root, cloned = tmp_path / "R", tmp_path / "cloned"
+
+        def run(*args: str) -> str:
+            result = CliRunner().invoke(cli, list(args), catch_exceptions=False)
+            return result.output
+
+        run(
+            "init",
+            "--auto",
+            "--title",
+            "t",
+            "--description",
+            "d",
+            "--license",
+            "CC-BY-4.0",
+            str(root),
+        )
+        (root / "roads").mkdir()
+        fixture = (
+            pathlib.Path(__file__).parents[1] / "fixtures" / "vector" / "valid" / "points.parquet"
+        )
+        shutil.copy(fixture, root / "roads" / "roads.parquet")
+        run("add", "--portolan-dir", str(root), str(root / "roads" / "roads.parquet"))
+        run("push", f"s3://{name}/cat", "--catalog", str(root))
+        run("clone", f"s3://{name}/cat", str(cloned))
+
+        def findings(catalog: Path) -> list[tuple[str, str]]:
+            data = json.loads(run("check", str(catalog), "--json"))["data"]
+            return sorted((f["rule_id"], f["path"]) for f in data["findings"])
+
+        assert (cloned / "catalog.json").read_bytes() == (root / "catalog.json").read_bytes()
+        assert findings(cloned) == findings(root)
+
+    @pytest.mark.integration
+    def test_credential_without_list_warns_once_and_deletes_nothing(
+        self,
+        tmp_path: Path,
+        bucket: tuple[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Issue #972: without s3:ListBucket, S3 refuses LIST and a HEAD of a missing key."""
+        import obstore
+        from obstore.exceptions import PermissionDeniedError
+
+        from portolan_cli.sync.push import push_all_collections
+
+        name, client = bucket
+        root = _catalog(tmp_path, {"a": {"a.parquet": b"a"}, "b": {"b.parquet": b"b"}})
+        assert push_all_collections(root, f"s3://{name}/cat").success
+        keys_after_first_push = _keys(client, name)
+        for coll in ("a", "b"):
+            _write_collection(root, coll, "1.0.1", {f"{coll}.parquet": b"x", "new.parquet": b"n"})
+        real_head_async = obstore.head_async
+
+        async def head_without_list(store: Any, key: str) -> Any:
+            try:
+                return await real_head_async(store, key)
+            except FileNotFoundError as e:
+                raise PermissionDeniedError("403 Forbidden") from e
+
+        def list_denied(*_args: Any, **_kwargs: Any) -> Any:
+            raise PermissionDeniedError("403 Forbidden")
+
+        def fail_manifest(key: str) -> None:
+            if key.endswith("/versions.json") and key != "cat/versions.json":
+                raise ConnectionError("simulated versions.json write failure")
+
+        monkeypatch.setattr(obstore, "list", list_denied)
+        monkeypatch.setattr(obstore, "head_async", head_without_list)
+        _fail_put(monkeypatch, fail_manifest)
+        capsys.readouterr()
+        result = push_all_collections(root, f"s3://{name}/cat")
+
+        assert result.failed_collections == 2
+        notice = "Cannot read which remote keys exist before the upload"
+        assert capsys.readouterr().err.count(notice) == 1
+        assert _keys(client, name) == keys_after_first_push | {
+            "cat/a/new.parquet",
+            "cat/b/new.parquet",
+        }

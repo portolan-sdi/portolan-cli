@@ -32,6 +32,22 @@ import pytest
 # =============================================================================
 
 
+@pytest.fixture(autouse=True)
+def empty_remote(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The mocked remote holds no key: a LIST is empty and each HEAD answers 404."""
+    import obstore
+
+    async def head_async(store: Any, key: str) -> None:
+        raise FileNotFoundError(key)
+
+    async def no_pages(*_args: Any, **_kwargs: Any) -> Any:
+        for page in ():
+            yield page
+
+    monkeypatch.setattr(obstore, "head_async", head_async)
+    monkeypatch.setattr(obstore, "list", no_pages)
+
+
 @pytest.fixture
 def full_catalog(tmp_path: Path) -> Path:
     """Create a complete catalog with catalog.json, collection.json, {item_id}.json.

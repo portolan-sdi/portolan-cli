@@ -706,12 +706,7 @@ SCENARIOS: dict[str, Scenario] = {
         },
     ),
     "push": Scenario(build_push, expected_advisories=ONE_MIRROR),
-    "clone": Scenario(
-        build_clone,
-        # The clone holds no roads/collection.json.
-        known_errors={},
-        known_invariants={"P-VERSIONS-MATCH": "#1042"},
-    ),
+    "clone": Scenario(build_clone, expected_advisories=ONE_MIRROR),
 }
 
 
@@ -922,10 +917,6 @@ class TestScenarioConformance:
 class TestPushedPartitionGlob:
     """``push`` writes the bulk-access glob of a partitioned collection (#761)."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#761: push builds partition:glob from the prefix without the scheme and bucket",
-    )
     def test_the_remote_glob_names_the_scheme_and_bucket(
         self, tmp_path: Path, run_cli: RunCli
     ) -> None:

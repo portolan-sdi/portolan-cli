@@ -69,13 +69,6 @@ FILEGDB_INTERNAL_EXTENSIONS  # unused variable (portolan_cli/scan/detect.py:35)
 ProgressCallback  # unused variable (portolan_cli/scan/core.py:42)
 SPECIAL_DIRECTORY  # unused variable (portolan_cli/scan/classify.py:134)
 
-# --- portolan_cli/sync ---
-_.start_timer  # unused method (portolan_cli/sync/push.py:172). E deletes it in #1035.
-_.stop_timer  # unused method (portolan_cli/sync/push.py:176). E deletes it in #1035.
-_upload_readmes  # unused function (portolan_cli/sync/push.py:1225). E deletes it in #1035.
-_upload_stac_files  # unused function (portolan_cli/sync/push.py:1121). E deletes it in #1035.
-SyncError  # unused class (portolan_cli/sync/core.py:38). E deletes it in #1035.
-
 # --- portolan_cli/viz ---
 fig  # unused variable (portolan_cli/viz/thumbnail.py:772, 1 more)
 
@@ -141,6 +134,7 @@ _no_rashid  # unused function (tests/unit/validation/test_workflow_notice.py:36)
 converted_parquet  # unused function (tests/unit/test_check_remove_legacy.py:108)
 csv_safe_values  # unused variable (tests/unit/test_csv_skip.py:429)
 DEFAULT_ESRI_COLOR  # unused variable (tests/unit/extract/common/converters/test_esri.py:343)
+empty_remote  # unused function (tests/unit/test_issue_252_catalog_json_roundtrip.py:35)
 default_root_level  # unused function (tests/unit/test_logging_setup.py:28)
 fake_echo  # unused function (tests/unit/test_scan_output_batching.py:69)
 hello  # unused function (tests/unit/plugin_fixtures/commands.py:13)

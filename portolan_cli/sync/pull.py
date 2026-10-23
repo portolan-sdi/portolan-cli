@@ -25,23 +25,31 @@ Async Migration (Wave 2A):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import posixpath
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import obstore as obs
+from obstore.exceptions import NotFoundError
 
 from portolan_cli.async_utils import (
     CircuitBreaker,
     CircuitBreakerError,
     get_default_concurrency,
 )
+from portolan_cli.catalog import intermediate_catalog_ids
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import detail, error, info, output_section, success, warn
 from portolan_cli.sync.checksums import compute_checksum
-from portolan_cli.sync.download import download_file, get_remote_file_size_async
+from portolan_cli.sync.download import (
+    download_directory,
+    download_file,
+    get_remote_file_size_async,
+)
 from portolan_cli.sync.upload import _setup_store_and_kwargs, parse_object_store_url
 from portolan_cli.trace import count, span
 from portolan_cli.versions import (
@@ -1225,6 +1233,7 @@ def pull(
     concurrency: int = DEFAULT_CONCURRENCY,
     verbose: bool = False,
     json_mode: bool = False,
+    every_object: bool = False,
 ) -> PullResult:
     """Pull updates from a remote catalog (sync wrapper).
 
@@ -1251,6 +1260,10 @@ def pull(
         concurrency: Maximum concurrent downloads (default: 50).
         verbose: If True, show per-file download messages.
         json_mode: If True, suppress progress output (for agent/batch usage).
+        every_object: If True, also download each object under the collection
+            prefix that the local catalog lacks. clone sets it: push writes
+            collection.json, the items, README.md, AGENTS.md, and the metadata
+            files there, and versions.json names only the assets (#1042).
 
     Returns:
         PullResult with operation results.
@@ -1258,7 +1271,7 @@ def pull(
     Raises:
         ValueError: If remote_url is invalid.
     """
-    return asyncio.run(
+    result = asyncio.run(
         pull_async(
             remote_url=remote_url,
             local_root=local_root,
@@ -1272,6 +1285,68 @@ def pull(
             json_mode=json_mode,
         )
     )
+    if not every_object or not result.success:
+        return result
+    rest = download_directory(
+        f"{remote_url.rstrip('/')}/{collection}/",
+        local_root / collection,
+        profile=profile,
+        overwrite=False,
+        verbose=verbose,
+    )
+    result.files_downloaded += rest.files_downloaded + _download_catalog_documents(
+        remote_url, local_root, collection, profile
+    )
+    if not rest.success:
+        result.success = False
+        error(f"Failed to download {rest.files_failed} file(s) of '{collection}'")
+    return result
+
+
+# The links that walk the catalog tree. Every other relative link of a catalog
+# names a file that push wrote beside it, such as README.md, AGENTS.md, a logo.
+_TREE_RELS = frozenset({"child", "item", "self", "root", "parent"})
+
+
+def _download_catalog_documents(
+    remote_url: str, local_root: Path, collection: str, profile: str | None
+) -> int:
+    """Download the catalog documents above ``collection`` as push wrote them (#1042).
+
+    clone starts from a fresh local catalog.json with no child links. The remote
+    root and intermediate catalog.json files hold those links. With each catalog
+    come the files that its other relative links name, and the root versions.json.
+    A missing optional file is skipped.
+
+    Returns:
+        The number of files written.
+    """
+    bucket_url, prefix = parse_object_store_url(remote_url)
+    store, _ = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=4)
+
+    def fetch(rel: str) -> bool:
+        try:
+            data = bytes(obs.get(store, f"{prefix}/{rel}".lstrip("/")).bytes())
+        except (NotFoundError, FileNotFoundError):
+            return False
+        target = _validate_safe_path(local_root, rel)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        return True
+
+    written = int(fetch("versions.json"))
+    for catalog_id in ["", *intermediate_catalog_ids(collection)]:
+        catalog_rel = posixpath.join(catalog_id, "catalog.json")
+        if not fetch(catalog_rel):
+            continue
+        written += 1
+        links = json.loads((local_root / catalog_rel).read_text(encoding="utf-8")).get("links", [])
+        for link in links:
+            href = str(link.get("href", ""))
+            if link.get("rel") in _TREE_RELS or "://" in href or href.startswith("/"):
+                continue
+            written += fetch(posixpath.normpath(posixpath.join(catalog_id, href)))
+    return written
 
 
 # =============================================================================

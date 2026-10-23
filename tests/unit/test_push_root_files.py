@@ -8,18 +8,23 @@ root README.md and versions.json were being skipped.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import obstore
 import pytest
 
 from portolan_cli.sync.push import (
     PushResult,
     push_all_collections,
 )
+from tests.memory_remote import memory_remote, record_puts, stored_keys
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
+
+    from obstore.store import MemoryStore
 
 pytestmark = pytest.mark.unit
 
@@ -96,13 +101,39 @@ def _create_collection(catalog_root: Path, name: str, with_readme: bool = False)
         (collection_dir / "README.md").write_text(f"# {name}\n\nCollection README.\n")
 
 
+@pytest.fixture
+def store() -> Iterator[MemoryStore]:
+    """The remote bucket: push_all_collections writes to this in-memory store."""
+    with memory_remote() as memory:
+        yield memory
+
+
+def _keys(store: MemoryStore) -> list[str]:
+    return sorted(stored_keys(store))
+
+
+def _push_ok(mock_push: AsyncMock, files_uploaded: int = 5) -> None:
+    mock_push.return_value = PushResult(
+        success=True, files_uploaded=files_uploaded, versions_pushed=1, conflicts=[], errors=[]
+    )
+
+
+def _push_all(tmp_path: Path, *, dry_run: bool = False) -> Any:
+    return push_all_collections(
+        catalog_root=tmp_path,
+        destination="s3://bucket/catalog",
+        force=False,
+        dry_run=dry_run,
+        profile=None,
+    )
+
+
 class TestPushAllCollectionsRootFiles:
     """Tests for root-level file uploads in push_all_collections (Issue #357)."""
 
-    @patch("portolan_cli.sync.push.obs.put")
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_uploads_all_root_files_after_collections(
-        self, mock_push: MagicMock, mock_obs_put: MagicMock, tmp_path: Path
+        self, mock_push: AsyncMock, store: MemoryStore, tmp_path: Path
     ) -> None:
         """push_all_collections uploads README.md, catalog.json, and versions.json."""
         _setup_valid_catalog(tmp_path)
@@ -110,43 +141,26 @@ class TestPushAllCollectionsRootFiles:
         _create_root_readme(tmp_path)
         _create_root_versions(tmp_path)
         _create_collection(tmp_path, "col1", with_readme=True)
+        _push_ok(mock_push)
 
-        mock_push.return_value = PushResult(
-            success=True,
-            files_uploaded=5,
-            versions_pushed=1,
-            conflicts=[],
-            errors=[],
-        )
-
-        result = push_all_collections(
-            catalog_root=tmp_path,
-            destination="s3://bucket/catalog",
-            force=False,
-            dry_run=False,
-            profile=None,
-        )
+        result = _push_all(tmp_path)
 
         assert result.success is True
+        assert _keys(store) == [
+            "catalog/README.md",
+            "catalog/catalog.json",
+            "catalog/versions.json",
+        ]
+        stored = obstore.get(store, "catalog/versions.json").bytes()
+        assert bytes(stored) == (tmp_path / "versions.json").read_bytes()
 
-        # Verify obs.put was called for all three root files
-        put_calls = mock_obs_put.call_args_list
-        uploaded_keys = [c.args[1] for c in put_calls]
-
-        assert any(k.endswith("/README.md") or k == "README.md" for k in uploaded_keys), (
-            f"Root README.md should be uploaded, got: {uploaded_keys}"
-        )
-        assert any(k.endswith("/catalog.json") or k == "catalog.json" for k in uploaded_keys), (
-            f"catalog.json should be uploaded, got: {uploaded_keys}"
-        )
-        assert any(k.endswith("/versions.json") or k == "versions.json" for k in uploaded_keys), (
-            f"Root versions.json should be uploaded, got: {uploaded_keys}"
-        )
-
-    @patch("portolan_cli.sync.push.obs.put")
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_versions_json_uploaded_last(
-        self, mock_push: MagicMock, mock_obs_put: MagicMock, tmp_path: Path
+        self,
+        mock_push: AsyncMock,
+        store: MemoryStore,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """versions.json is uploaded last (manifest-last atomicity)."""
         _setup_valid_catalog(tmp_path)
@@ -154,77 +168,31 @@ class TestPushAllCollectionsRootFiles:
         _create_root_readme(tmp_path)
         _create_root_versions(tmp_path)
         _create_collection(tmp_path, "col1")
+        _push_ok(mock_push)
+        order = record_puts(monkeypatch)
 
-        mock_push.return_value = PushResult(
-            success=True,
-            files_uploaded=5,
-            versions_pushed=1,
-            conflicts=[],
-            errors=[],
-        )
+        _push_all(tmp_path)
 
-        push_all_collections(
-            catalog_root=tmp_path,
-            destination="s3://bucket/catalog",
-            force=False,
-            dry_run=False,
-            profile=None,
-        )
+        assert order == ["catalog/README.md", "catalog/catalog.json", "catalog/versions.json"]
 
-        # Check order: versions.json should be last
-        put_calls = mock_obs_put.call_args_list
-        uploaded_keys = [c.args[1] for c in put_calls]
-
-        # Find indices
-        versions_idx = next((i for i, k in enumerate(uploaded_keys) if "versions.json" in k), -1)
-        catalog_idx = next((i for i, k in enumerate(uploaded_keys) if "catalog.json" in k), -1)
-
-        assert versions_idx > catalog_idx, (
-            f"versions.json should be uploaded after catalog.json. Order: {uploaded_keys}"
-        )
-
-    @patch("portolan_cli.sync.push.obs.put")
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_skips_optional_files_when_not_present(
-        self, mock_push: MagicMock, mock_obs_put: MagicMock, tmp_path: Path
+        self, mock_push: AsyncMock, store: MemoryStore, tmp_path: Path
     ) -> None:
         """push_all_collections doesn't fail if README.md or versions.json missing."""
         _setup_valid_catalog(tmp_path)
         _create_catalog_json(tmp_path)
-        # No root README.md or versions.json
         _create_collection(tmp_path, "col1")
+        _push_ok(mock_push)
 
-        mock_push.return_value = PushResult(
-            success=True,
-            files_uploaded=5,
-            versions_pushed=1,
-            conflicts=[],
-            errors=[],
-        )
-
-        result = push_all_collections(
-            catalog_root=tmp_path,
-            destination="s3://bucket/catalog",
-            force=False,
-            dry_run=False,
-            profile=None,
-        )
+        result = _push_all(tmp_path)
 
         assert result.success is True
+        assert _keys(store) == ["catalog/catalog.json"]
 
-        put_calls = mock_obs_put.call_args_list
-        uploaded_keys = [c.args[1] for c in put_calls]
-
-        # catalog.json should be uploaded
-        assert any(k.endswith("/catalog.json") or k == "catalog.json" for k in uploaded_keys)
-        # Optional files should NOT be uploaded
-        assert not any(k.endswith("/README.md") or k == "README.md" for k in uploaded_keys)
-        assert not any(k.endswith("/versions.json") or k == "versions.json" for k in uploaded_keys)
-
-    @patch("portolan_cli.sync.push.obs.put")
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_skips_root_files_when_collection_fails(
-        self, mock_push: MagicMock, mock_obs_put: MagicMock, tmp_path: Path
+        self, mock_push: AsyncMock, store: MemoryStore, tmp_path: Path
     ) -> None:
         """push_all_collections skips root files when any collection fails."""
         _setup_valid_catalog(tmp_path)
@@ -232,69 +200,39 @@ class TestPushAllCollectionsRootFiles:
         _create_root_readme(tmp_path)
         _create_root_versions(tmp_path)
         _create_collection(tmp_path, "col1")
-
         mock_push.return_value = PushResult(
-            success=False,
-            files_uploaded=0,
-            versions_pushed=0,
-            conflicts=[],
-            errors=["Upload failed"],
+            success=False, files_uploaded=0, versions_pushed=0, conflicts=[], errors=["Failed"]
         )
 
-        result = push_all_collections(
-            catalog_root=tmp_path,
-            destination="s3://bucket/catalog",
-            force=False,
-            dry_run=False,
-            profile=None,
-        )
+        result = _push_all(tmp_path)
 
         assert result.success is False
+        assert _keys(store) == []
 
-        # No root files should be uploaded when collections fail
-        mock_obs_put.assert_not_called()
-
-    @patch("portolan_cli.sync.push.obs.put")
-    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_skips_root_files_when_zero_successful(
-        self, mock_push: MagicMock, mock_obs_put: MagicMock, tmp_path: Path
+        self, store: MemoryStore, tmp_path: Path
     ) -> None:
-        """push_all_collections skips root files when no collections succeeded.
-
-        This handles edge cases like empty catalogs or all collections skipped.
-        """
+        """push_all_collections skips root files when the catalog has no collection."""
         _setup_valid_catalog(tmp_path)
         _create_catalog_json(tmp_path)
         _create_root_versions(tmp_path)
-        # No collections - push won't be called but stats["successful"] == 0
 
-        # Simulate scenario where discover_collections returns empty
-        # This is handled before _push_all_upload_root_files is called
-        result = push_all_collections(
-            catalog_root=tmp_path,
-            destination="s3://bucket/catalog",
-            force=False,
-            dry_run=False,
-            profile=None,
-        )
+        result = _push_all(tmp_path)
 
-        # Should succeed but with 0 files uploaded
         assert result.success is True
         assert result.total_files_uploaded == 0
-        mock_obs_put.assert_not_called()
+        assert _keys(store) == []
 
-    @patch("portolan_cli.sync.push.obs.put")
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_dry_run_shows_all_root_files(
-        self, mock_push: MagicMock, mock_obs_put: MagicMock, tmp_path: Path
+        self, mock_push: AsyncMock, store: MemoryStore, tmp_path: Path
     ) -> None:
-        """push_all_collections in dry_run mode mentions all root files."""
+        """push_all_collections in dry_run mode writes nothing."""
         _setup_valid_catalog(tmp_path)
         _create_catalog_json(tmp_path)
         _create_root_readme(tmp_path)
         _create_root_versions(tmp_path)
         _create_collection(tmp_path, "col1")
-
         mock_push.return_value = PushResult(
             success=True,
             files_uploaded=0,
@@ -305,22 +243,14 @@ class TestPushAllCollectionsRootFiles:
             would_push_versions=1,
         )
 
-        result = push_all_collections(
-            catalog_root=tmp_path,
-            destination="s3://bucket/catalog",
-            force=False,
-            dry_run=True,
-            profile=None,
-        )
+        result = _push_all(tmp_path, dry_run=True)
 
         assert result.success is True
-        # In dry_run, obs.put should NOT be called
-        mock_obs_put.assert_not_called()
+        assert _keys(store) == []
 
-    @patch("portolan_cli.sync.push.obs.put")
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_counts_all_root_files_in_total(
-        self, mock_push: MagicMock, mock_obs_put: MagicMock, tmp_path: Path
+        self, mock_push: AsyncMock, store: MemoryStore, tmp_path: Path
     ) -> None:
         """All root files are counted in total_files_uploaded."""
         _setup_valid_catalog(tmp_path)
@@ -328,22 +258,9 @@ class TestPushAllCollectionsRootFiles:
         _create_root_readme(tmp_path)
         _create_root_versions(tmp_path)
         _create_collection(tmp_path, "col1")
+        _push_ok(mock_push)
 
-        mock_push.return_value = PushResult(
-            success=True,
-            files_uploaded=5,
-            versions_pushed=1,
-            conflicts=[],
-            errors=[],
-        )
-
-        result = push_all_collections(
-            catalog_root=tmp_path,
-            destination="s3://bucket/catalog",
-            force=False,
-            dry_run=False,
-            profile=None,
-        )
+        result = _push_all(tmp_path)
 
         assert result.success is True
         # 5 from collection + 3 root files (README.md + catalog.json + versions.json)
@@ -352,75 +269,45 @@ class TestPushAllCollectionsRootFiles:
     @patch("portolan_cli.sync.push.setup_store")
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_handles_upload_error(
-        self, mock_push: MagicMock, mock_setup_store: MagicMock, tmp_path: Path
+        self, mock_push: AsyncMock, mock_setup_store: MagicMock, tmp_path: Path
     ) -> None:
         """push_all_collections handles errors during root file upload."""
         _setup_valid_catalog(tmp_path)
         _create_catalog_json(tmp_path)
         _create_root_readme(tmp_path)
         _create_collection(tmp_path, "col1")
-
-        mock_push.return_value = PushResult(
-            success=True,
-            files_uploaded=5,
-            versions_pushed=1,
-            conflicts=[],
-            errors=[],
-        )
-
-        # Make setup_store raise an error
+        _push_ok(mock_push)
         mock_setup_store.side_effect = ConnectionError("Network unreachable")
 
-        result = push_all_collections(
-            catalog_root=tmp_path,
-            destination="s3://bucket/catalog",
-            force=False,
-            dry_run=False,
-            profile=None,
-        )
+        result = _push_all(tmp_path)
 
-        # Should fail due to root file upload error
         assert result.success is False
-        assert "root_files" in result.collection_errors
+        assert result.collection_errors["root_files"] == ["Network unreachable"]
 
-    @patch("portolan_cli.sync.push.obs.put")
-    @patch("portolan_cli.sync.push.setup_store")
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_handles_partial_upload_failure(
         self,
-        mock_push: MagicMock,
-        mock_setup_store: MagicMock,
-        mock_obs_put: MagicMock,
+        mock_push: AsyncMock,
+        store: MemoryStore,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """push_all_collections handles failure after partial upload."""
+        """A failed catalog.json write fails the push and skips versions.json."""
         _setup_valid_catalog(tmp_path)
         _create_catalog_json(tmp_path)
         _create_root_readme(tmp_path)
         _create_root_versions(tmp_path)
         _create_collection(tmp_path, "col1")
+        _push_ok(mock_push)
 
-        mock_push.return_value = PushResult(
-            success=True,
-            files_uploaded=5,
-            versions_pushed=1,
-            conflicts=[],
-            errors=[],
-        )
+        async def disk_full_on_catalog(key: str) -> None:
+            if key == "catalog/catalog.json":
+                raise OSError("Disk full")
 
-        mock_setup_store.return_value = (MagicMock(), "catalog")
+        record_puts(monkeypatch, disk_full_on_catalog)
 
-        # First call (README) succeeds, second call (catalog.json) fails
-        mock_obs_put.side_effect = [None, OSError("Disk full")]
+        result = _push_all(tmp_path)
 
-        result = push_all_collections(
-            catalog_root=tmp_path,
-            destination="s3://bucket/catalog",
-            force=False,
-            dry_run=False,
-            profile=None,
-        )
-
-        # Should fail due to partial upload error
         assert result.success is False
-        assert "root_files" in result.collection_errors
+        assert result.collection_errors["root_files"] == ["Disk full"]
+        assert _keys(store) == ["catalog/README.md"]

@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
+from obstore.store import MemoryStore
 
 from portolan_cli.cli import cli
 from portolan_cli.sync.push import (
@@ -105,12 +106,12 @@ class TestParallelPushIntegration:
     """Integration tests for parallel push_all_collections."""
 
     @pytest.mark.integration
-    @patch("portolan_cli.sync.push.obs.put")  # For catalog.json upload
+    @patch("portolan_cli.sync.push.setup_store", return_value=(MemoryStore(), "catalog"))
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_parallel_execution_observes_worker_count(
         self,
         mock_push_async: AsyncMock,
-        _mock_obs_put: MagicMock,
+        _mock_setup_store: MagicMock,
         multi_collection_catalog: Path,
     ) -> None:
         """Parallel execution respects the workers parameter."""
@@ -141,12 +142,12 @@ class TestParallelPushIntegration:
         assert mock_push_async.call_count == 4
 
     @pytest.mark.integration
-    @patch("portolan_cli.sync.push.obs.put")  # For catalog.json upload
+    @patch("portolan_cli.sync.push.setup_store", return_value=(MemoryStore(), "catalog"))
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_sequential_execution_with_workers_1(
         self,
         mock_push_async: AsyncMock,
-        _mock_obs_put: MagicMock,
+        _mock_setup_store: MagicMock,
         multi_collection_catalog: Path,
     ) -> None:
         """workers=1 executes collections sequentially."""
@@ -171,10 +172,13 @@ class TestParallelPushIntegration:
         assert call_order == ["collection_a", "collection_b", "collection_c", "collection_d"]
 
     @pytest.mark.integration
-    @patch("portolan_cli.sync.push.obs.put")  # For catalog.json upload (skipped on failure)
+    @patch("portolan_cli.sync.push.setup_store", return_value=(MemoryStore(), "catalog"))
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_parallel_continues_on_individual_failure(
-        self, mock_push_async: AsyncMock, _mock_obs_put: MagicMock, multi_collection_catalog: Path
+        self,
+        mock_push_async: AsyncMock,
+        _mock_setup_store: MagicMock,
+        multi_collection_catalog: Path,
     ) -> None:
         """Parallel execution continues when individual collections fail."""
 

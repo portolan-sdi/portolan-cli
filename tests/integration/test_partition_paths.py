@@ -215,17 +215,19 @@ def test_duckdb_can_read_via_glob(partitioned_catalog: tuple[Path, Path]) -> Non
 def test_push_dryrun_shows_correct_glob_url(
     partitioned_catalog: tuple[Path, Path],
 ) -> None:
-    """Push dry-run should show correct glob URL transformation."""
-    _catalog_root, collection_dir = partitioned_catalog
+    """The pushed collection.json carries a partition:glob under the destination URL.
 
-    # Verify transformation function works correctly
-    from portolan_cli.sync.push import _transform_collection_glob_assets
+    The push goes through setup_store, so the glob comes from the destination
+    and not from the bare key prefix (#761).
+    """
+    catalog_root, _collection_dir = partitioned_catalog
 
-    collection_path = collection_dir / "collection.json"
-    content = collection_path.read_bytes()
+    from portolan_cli.sync.push import push
+    from tests.memory_remote import memory_remote, stored_json
 
-    transformed = _transform_collection_glob_assets(content, "s3://bucket/catalog", "points")
-    transformed_data = json.loads(transformed)
+    with memory_remote() as store:
+        assert push(catalog_root, "points", "s3://bucket/catalog").success
+        transformed_data = stored_json(store, "catalog/points/collection.json")
 
     # Find glob asset and verify partition:glob structure (not exact match)
     for asset in transformed_data.get("assets", {}).values():
