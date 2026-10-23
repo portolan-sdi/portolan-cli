@@ -35,7 +35,6 @@ from portolan_cli.hookspecs import EnrichContext
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata import extract_geoparquet_metadata
-from portolan_cli.metadata.detection import versions_asset_key
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
 from portolan_cli.query import ItemInfo
 from portolan_cli.stac import (
@@ -70,6 +69,7 @@ from portolan_cli.versions import (
     _increment_version,
     add_version,
     read_versions,
+    versions_asset_key,
     write_versions,
 )
 
