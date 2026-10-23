@@ -397,6 +397,18 @@ def get_cloud_native_status(path: Path, catalog_root: Path | None = None) -> For
     Raises:
         FileNotFoundError: If the file does not exist.
     """
+    info = _default_status(path, catalog_root)
+    if catalog_root is None:
+        return info
+    # The catalog's conversion.extensions and conversion.paths lists win over
+    # the default status, so convert and check agree on a file (#1020).
+    from portolan_cli.conversion_config import get_conversion_overrides
+
+    return _apply_overrides(path, info, get_conversion_overrides(catalog_root), catalog_root)
+
+
+def _default_status(path: Path, catalog_root: Path | None) -> FormatInfo:
+    """The status of a file by format alone. See ``get_cloud_native_status``."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
@@ -544,13 +556,16 @@ def get_effective_status(
         >>> result = get_effective_status(Path("data.fgb"), overrides=overrides)
         >>> result.status  # CONVERTIBLE instead of CLOUD_NATIVE
     """
-    # Get original status
-    info = get_cloud_native_status(path, root)
-
-    # No overrides? Return original
+    info = _default_status(path, root)
     if overrides is None:
         return info
+    return _apply_overrides(path, info, overrides, root)
 
+
+def _apply_overrides(
+    path: Path, info: FormatInfo, overrides: ConversionOverrides, root: Path | None
+) -> FormatInfo:
+    """Apply the preserve and force-convert lists to a default status."""
     # UNSUPPORTED formats cannot be overridden - they're genuinely unsupported
     if info.status == CloudNativeStatus.UNSUPPORTED:
         return info
