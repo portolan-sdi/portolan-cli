@@ -518,11 +518,7 @@ def get_ignored_files(catalog_path: Path | None) -> list[str]:
     ``ignored_files``, they take full control over the list. This matches how
     ``.gitignore`` works: a file at a given scope replaces inherited patterns.
 
-    .. warning::
-       Nothing on the asset-write path calls this function, so setting
-       ``ignored_files`` in ``.portolan/config.yaml`` currently has no effect.
-       Only the unit tests exercise it. Wire it into asset preparation before
-       documenting the key as user-facing.
+    ``add`` and ``list`` both apply these patterns.
 
     Args:
         catalog_path: Root path of the catalog, or None to get defaults.
