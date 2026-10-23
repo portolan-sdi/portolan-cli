@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from portolan_cli.metadata.cog import extract_cog_metadata
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
 from portolan_cli.trace import count
+from portolan_cli.versions import versions_asset_key
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -53,21 +54,6 @@ class StoredMetadata:
     sha256: str | None
     feature_count: int | None
     schema_fingerprint: str | None
-
-
-def versions_asset_key(file_path: Path, collection_dir: Path) -> str:
-    """The versions.json key ``add`` writes for an asset under a collection.
-
-    ``_batch_update_versions`` (finalization.py) keys a collection-level asset by
-    its bare file name and an item-level asset by ``{item_id}/{filename}``. Both
-    are the asset's path relative to the collection directory, so one expression
-    produces either. A path outside the collection has no key and falls back to
-    the file name.
-    """
-    try:
-        return PurePath(file_path.resolve().relative_to(collection_dir.resolve())).as_posix()
-    except ValueError:
-        return file_path.name
 
 
 def versions_asset_lookup_keys(file_path: Path, collection_dir: Path) -> tuple[str, ...]:
