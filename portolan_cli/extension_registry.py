@@ -409,13 +409,3 @@ def unsupported_extensions() -> frozenset[str]:
     return frozenset(
         spec.ext for spec in EXTENSION_REGISTRY if spec.unsupported_message is not None
     )
-
-
-def all_known_sidecar_extensions() -> frozenset[str]:
-    """Return every sidecar suffix the system knows.
-
-    The set holds the flat scanner suffixes plus every per-primary pattern in
-    :data:`SIDECAR_OF`.
-    """
-    from_patterns = {ext for patterns in SIDECAR_OF.values() for ext in patterns}
-    return extensions_where(scan_category="known_sidecar") | frozenset(from_patterns)
