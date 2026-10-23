@@ -1,14 +1,1 @@
-{
- "currentVersion": 12,
- "serviceDescription": "Philadelphia City Council districts redrawn after the 2020 census.",
- "description": "Philadelphia City Council districts redrawn after the 2020 census.",
- "copyrightText": "City of Philadelphia",
- "layers": [
-  {
-   "id": 0,
-   "name": "Council_Districts_2024",
-   "type": "Feature Layer"
-  }
- ],
- "tables": []
-}
+{"currentVersion":12,"serviceDescription":"Philadelphia City Council districts redrawn after the 2020 census.","description":"Philadelphia City Council districts redrawn after the 2020 census.","copyrightText":"City of Philadelphia","layers":[{"id":0,"name":"Council_Districts_2024","type":"Feature Layer"}],"tables":[]}
