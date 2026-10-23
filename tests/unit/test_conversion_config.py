@@ -11,8 +11,8 @@ See GitHub Issue #75 for context on FlatGeobuf handling.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -1476,7 +1476,9 @@ class TestInvalidValuesReachTheOperator:
     """
 
     @pytest.mark.unit
-    def test_unknown_sort_warns_the_operator(self, tmp_path: Path, capsys: Any) -> None:
+    def test_unknown_sort_warns_the_operator(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """The message names the value and the fallback."""
         from portolan_cli.conversion_config import DEFAULT_SORT, get_vector_settings
 
@@ -1486,14 +1488,16 @@ class TestInvalidValuesReachTheOperator:
             "conversion:\n  vector:\n    sort: hilbertt\n", encoding="utf-8"
         )
 
-        settings = get_vector_settings(tmp_path)
+        with caplog.at_level(logging.WARNING, logger="portolan_cli.conversion_config"):
+            settings = get_vector_settings(tmp_path)
 
         assert settings.sort == DEFAULT_SORT
-        captured = capsys.readouterr()
-        assert "hilbertt" in captured.out + captured.err
+        assert caplog.messages == ["Vector config: unknown sort 'hilbertt', using 'hilbert'"]
 
     @pytest.mark.unit
-    def test_unknown_spatial_index_warns_the_operator(self, tmp_path: Path, capsys: Any) -> None:
+    def test_unknown_spatial_index_warns_the_operator(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """The same holds for an unknown index name."""
         from portolan_cli.conversion_config import get_vector_settings
 
@@ -1503,14 +1507,16 @@ class TestInvalidValuesReachTheOperator:
             "conversion:\n  vector:\n    spatial_index: h4\n", encoding="utf-8"
         )
 
-        settings = get_vector_settings(tmp_path)
+        with caplog.at_level(logging.WARNING, logger="portolan_cli.conversion_config"):
+            settings = get_vector_settings(tmp_path)
 
         assert settings.spatial_index == "none"
-        captured = capsys.readouterr()
-        assert "h4" in captured.out + captured.err
+        assert caplog.messages == ["Vector config: unknown spatial_index 'h4', using 'none'"]
 
     @pytest.mark.unit
-    def test_a_valid_config_warns_about_nothing(self, tmp_path: Path, capsys: Any) -> None:
+    def test_a_valid_config_warns_about_nothing(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """The warning must not fire on the default configuration."""
         from portolan_cli.conversion_config import get_vector_settings
 
@@ -1520,7 +1526,7 @@ class TestInvalidValuesReachTheOperator:
             "conversion:\n  vector:\n    sort: hilbert\n    add_bbox: true\n", encoding="utf-8"
         )
 
-        get_vector_settings(tmp_path)
+        with caplog.at_level(logging.DEBUG, logger="portolan_cli.conversion_config"):
+            get_vector_settings(tmp_path)
 
-        captured = capsys.readouterr()
-        assert "unknown" not in (captured.out + captured.err).lower()
+        assert caplog.messages == []

@@ -1388,6 +1388,10 @@ class TestDottedKeysNest:
 
         set_setting(tmp_path, "backend", "file")
         set_setting(tmp_path, "conversion.vector.sort", "none")
+        assert _read_yaml(tmp_path) == {
+            "backend": "file",
+            "conversion": {"vector": {"sort": "none"}},
+        }
 
         assert unset_setting(tmp_path, "conversion.vector.sort") is True
         assert _read_yaml(tmp_path) == {"backend": "file"}
@@ -1584,3 +1588,137 @@ class TestOneParsePerFile:
         patterns.append("mutated")
 
         assert get_setting("push.exclude", catalog_path=tmp_path) == ["*.tmp"]
+
+
+def _write_config(directory: Path, text: str) -> None:
+    (directory / ".portolan").mkdir(parents=True, exist_ok=True)
+    (directory / ".portolan" / "config.yaml").write_text(text, encoding="utf-8")
+
+
+class TestTypedValues:
+    """Each schema type parses the text of a ``config set`` VALUE (issue #1020)."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(("text", "stored"), [("auto", "auto"), ("7", 7)])
+    def test_int_or_auto_takes_an_integer_or_auto(
+        self, tmp_path: Path, text: str, stored: object
+    ) -> None:
+        from portolan_cli.config import set_setting
+
+        set_setting(tmp_path, "conversion.vector.resolution", text)
+
+        assert _read_yaml(tmp_path) == {"conversion": {"vector": {"resolution": stored}}}
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("value", ["high", True])
+    def test_int_or_auto_rejects_other_values(self, tmp_path: Path, value: object) -> None:
+        from portolan_cli.config import set_setting
+
+        with pytest.raises(ConfigError, match="takes an integer or 'auto'"):
+            set_setting(tmp_path, "conversion.vector.resolution", value)
+
+    @pytest.mark.unit
+    def test_a_string_setting_keeps_yaml_like_text_as_text(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+
+        set_setting(tmp_path, "pmtiles.layer", "true")
+        set_setting(tmp_path, "backend", "123")
+
+        assert _read_yaml(tmp_path) == {"pmtiles": {"layer": "true"}, "backend": "123"}
+
+
+class TestPatternKeys:
+    """A key below a ``.*`` pattern reads and unsets as one name (issue #1020)."""
+
+    @pytest.mark.unit
+    def test_get_and_unset_a_handler_pin(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting, set_setting, unset_setting
+
+        set_setting(tmp_path, "backend", "file")
+        set_setting(tmp_path, "conversion.handlers..tif", "cog")
+
+        assert get_setting("conversion.handlers..tif", catalog_path=tmp_path) == "cog"
+        assert unset_setting(tmp_path, "conversion.handlers..tif") is True
+        assert _read_yaml(tmp_path) == {"backend": "file"}
+
+
+class TestLegacyFlatKeysInCollections:
+    """The fold also reads the flat keys under ``collections:`` (issue #1020)."""
+
+    @pytest.mark.unit
+    def test_flat_key_under_a_collection_reads_as_its_typed_nested_value(
+        self, tmp_path: Path
+    ) -> None:
+        from portolan_cli.config import get_setting
+
+        _write_config(tmp_path, "collections:\n  demo:\n    pmtiles.enabled: 'true'\n")
+
+        assert get_setting("pmtiles.enabled", catalog_path=tmp_path, collection="demo") is True
+
+    @pytest.mark.unit
+    def test_flat_key_with_a_bad_value_keeps_the_value_for_the_reader(self, tmp_path: Path) -> None:
+        from portolan_cli.config import load_config
+
+        _write_config(tmp_path, "statistics.enabled: banana\n")
+
+        assert load_config(tmp_path) == {"statistics": {"enabled": "banana"}}
+
+
+class TestLegacyCollectionsMerge:
+    """``load_merged_config`` merges root, legacy ``collections:``, then the hierarchy."""
+
+    @pytest.mark.unit
+    def test_legacy_section_overrides_the_root_and_the_folder_overrides_both(
+        self, tmp_path: Path
+    ) -> None:
+        from portolan_cli.config import load_merged_config
+
+        root = tmp_path / "catalog"
+        _write_config(
+            root,
+            "backend: file\npmtiles:\n  enabled: false\n  min_zoom: 1\n"
+            "collections:\n  demo:\n    pmtiles:\n      enabled: true\n      min_zoom: 2\n",
+        )
+        _write_config(root / "demo", "pmtiles:\n  min_zoom: 3\n")
+        # An unresolved root once merged the root file twice, over the legacy values.
+        (tmp_path / "other").mkdir()
+        unresolved_root = tmp_path / "other" / ".." / "catalog"
+
+        merged = load_merged_config(root / "demo", unresolved_root)
+
+        assert merged == {"backend": "file", "pmtiles": {"enabled": True, "min_zoom": 3}}
+
+
+class TestLoadersReturnDeepCopies:
+    """An edit of a nested value in a result does not reach the next read (issue #1006)."""
+
+    @pytest.mark.unit
+    def test_get_setting_and_load_merged_config(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting, load_merged_config
+
+        _write_config(tmp_path, "check:\n  severity:\n    PTL-PRV-001: warning\n")
+
+        get_setting("check", catalog_path=tmp_path)["severity"]["PTL-PRV-001"] = "edited"
+        load_merged_config(tmp_path, tmp_path)["check"]["severity"]["PTL-PRV-001"] = "edited"
+
+        assert get_setting("check", catalog_path=tmp_path) == {
+            "severity": {"PTL-PRV-001": "warning"}
+        }
+
+    @pytest.mark.unit
+    def test_metadata_loaders(self, tmp_path: Path) -> None:
+        from portolan_cli.config import load_merged_metadata, load_own_metadata
+
+        collection = tmp_path / "demo"
+        (collection / ".portolan").mkdir(parents=True)
+        (collection / ".portolan" / "metadata.yaml").write_text(
+            "title: Demo\ncontact:\n  name: Ana\n", encoding="utf-8"
+        )
+
+        load_own_metadata(collection)["contact"]["name"] = "edited"
+        load_merged_metadata(collection, tmp_path)["contact"]["name"] = "edited"
+
+        expected = {"title": "Demo", "contact": {"name": "Ana"}}
+        assert load_own_metadata(collection) == expected
+        assert load_merged_metadata(collection, tmp_path) == expected
+        assert load_own_metadata(tmp_path / "absent") == {}

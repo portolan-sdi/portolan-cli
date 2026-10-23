@@ -332,6 +332,25 @@ class TestDottedKeysReachTheReaders:
         assert get_vector_settings(catalog).sort == "none"
 
     @pytest.mark.integration
+    def test_list_shows_nested_leaves_and_pattern_maps(self, catalog: Path) -> None:
+        runner = CliRunner()
+        for args in (
+            ["pmtiles.min_zoom", "3", "--collection", "demo"],
+            ["pmtiles.max_zoom", "9"],
+            ["conversion.handlers.tif", "cog"],
+        ):
+            assert runner.invoke(cli, ["config", "set", *args]).exit_code == 0
+
+        result = runner.invoke(cli, ["--format", "json", "config", "list", "--collection", "demo"])
+
+        settings = json.loads(result.output)["data"]["settings"]
+        assert settings["pmtiles.min_zoom"] == {"value": 3, "source": "collection"}
+        assert settings["pmtiles.max_zoom"] == {"value": 9, "source": "catalog"}
+        # A map below a .* pattern lists as one value.
+        assert settings["conversion.handlers"] == {"value": {"tif": "cog"}, "source": "catalog"}
+        assert "conversion.handlers.tif" not in settings
+
+    @pytest.mark.integration
     def test_add_applies_the_vector_settings_that_config_set_wrote(self, catalog: Path) -> None:
         import pyarrow.parquet as pq
 
