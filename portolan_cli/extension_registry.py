@@ -27,7 +27,7 @@ be a valid COG), so those extensions are deliberately excluded from the static
 
 ConvertTarget = Literal["GeoParquet", "COG"]
 Routes = Literal["vector", "raster"]
-Role = Literal["data", "visual", "thumbnail", "metadata", "documentation"]
+Role = Literal["data", "thumbnail", "metadata", "documentation"]
 
 
 @dataclass(frozen=True)
@@ -166,9 +166,9 @@ EXTENSION_REGISTRY: tuple[ExtensionSpec, ...] = (
         ".pmtiles",
         display_name="PMTiles",
         media_type="application/vnd.pmtiles",
-        # The visualization derivative of the data. A PMTiles that a user adds
-        # on its own owns its stem and is data (preparation._resolve_assets).
-        role="visual",
+        # A lone PMTiles is data. preparation._resolve_assets makes a PMTiles
+        # beside other data of its stem the visual derivative.
+        role="data",
         cloud_native="yes",
         routes_as="vector",
         scan_category="geo_asset",

@@ -59,7 +59,11 @@ from portolan_cli.stac import (
     add_vector_extension,
     create_item,
 )
-from portolan_cli.stac_parquet import PARQUET_MEDIA_TYPE, declare_extensions_in_use
+from portolan_cli.stac_parquet import (
+    PARQUET_FILENAME,
+    PARQUET_MEDIA_TYPE,
+    declare_extensions_in_use,
+)
 from portolan_cli.sync.checksums import (
     compute_checksum,
     compute_dir_checksum,
@@ -136,8 +140,8 @@ def _get_asset_role(path: Path) -> str:
         path: Path to the file.
 
     Returns:
-        Role string: "data", "visual", "thumbnail", "metadata", or
-        "documentation". Defaults to "data" for unknown extensions.
+        Role string: "data", "thumbnail", "metadata", or "documentation".
+        Defaults to "data" for unknown extensions.
         :func:`_resolve_assets` then gives each scanned file its final role.
     """
     return _ROLE_MAP.get(path.suffix.lower(), "data")
@@ -256,7 +260,9 @@ def _scan_item_assets(
         # The collection README is a rel="describedby" link that `readme`
         # rewrites, never an asset. The first add runs before the README exists,
         # so a scan that registered it made add --force differ (issue #1041).
-        if in_collection_dir and file_path.name == README_FILENAME:
+        # The item mirror has one writer, register_mirror_asset. The scan gave
+        # it the data role, so the PMTiles side-step drew tiles of it.
+        if in_collection_dir and file_path.name in (README_FILENAME, PARQUET_FILENAME):
             continue
         measured = _measure(file_path)
         if measured is not None:

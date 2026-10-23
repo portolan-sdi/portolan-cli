@@ -19,6 +19,7 @@ from portolan_cli.preparation import (
     _convert_and_extract_metadata,
     _extract_bbox_wgs84,
     _extract_statistics_best_effort,
+    _get_asset_role,
     _scan_item_assets,
     _validate_collection_id,
 )
@@ -305,6 +306,28 @@ class TestStemGroupResolver:
         _write(tmp_path, "basemap.pmtiles")
 
         assert _scan(tmp_path, "basemap.pmtiles") == {"basemap": ("./basemap.pmtiles", ["data"])}
+
+    def test_extension_role_of_a_lone_file_is_the_role_the_scan_gives(self, tmp_path: Path) -> None:
+        """``check --fix`` backfills a missing role from the extension alone.
+
+        It must give a lone PMTiles the role a fresh ``add`` gives it, or a
+        repair turns the only data of a collection into a visual.
+        """
+        _write(tmp_path, "basemap.pmtiles")
+
+        _href, roles = _scan(tmp_path, "basemap.pmtiles")["basemap"]
+        assert [_get_asset_role(tmp_path / "basemap.pmtiles")] == roles
+
+    def test_the_item_mirror_is_never_a_scanned_asset(self, tmp_path: Path) -> None:
+        """``items.parquet`` is GeoParquet, so the scan gave the mirror the data role.
+
+        ``register_mirror_asset`` is its one writer, with the role
+        ``collection-mirror``. The PMTiles and thumbnail side-steps read data
+        assets, so a mirror with the data role became a tile source.
+        """
+        _write(tmp_path, "roads.parquet", "items.parquet")
+
+        assert _scan(tmp_path, "roads.parquet") == {"roads": ("./roads.parquet", ["data"])}
 
     def test_a_gdal_statistics_sidecar_is_never_an_asset(self, tmp_path: Path) -> None:
         """GDAL writes ``.aux.xml`` after the first scan, so a rebuild differed."""
