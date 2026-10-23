@@ -293,6 +293,47 @@ class TestStemGroupResolver:
             "a1.PARQUET": ("./a1.PARQUET", ["data"]),
         }
 
+    def test_a_same_rank_tie_without_the_primary_goes_to_the_parquet_name(
+        self, tmp_path: Path
+    ) -> None:
+        """The name order alone would give the stem to ``a1.PARQUET``."""
+        probe = tmp_path / "probe"
+        probe.write_bytes(b"")
+        case_insensitive = (tmp_path / "PROBE").exists()
+        probe.unlink()
+        if case_insensitive:
+            pytest.skip("a case-insensitive filesystem holds one file for both names")
+        _write(tmp_path, "a1.parquet", "a1.PARQUET", "b.parquet")
+
+        assert _scan(tmp_path, "b.parquet") == {
+            "a1": ("./a1.parquet", ["data"]),
+            "a1.PARQUET": ("./a1.PARQUET", ["data"]),
+            "b": ("./b.parquet", ["data"]),
+        }
+
+    def test_a_file_beside_an_owner_that_is_not_cloud_native_keeps_its_role(
+        self, tmp_path: Path
+    ) -> None:
+        """A GeoPackage kept as it is converts nothing, so its CSV is no source."""
+        _write(tmp_path, "roads.gpkg", "roads.csv")
+
+        assert _scan(tmp_path, "roads.gpkg") == {
+            "roads": ("./roads.gpkg", ["data"]),
+            "roads.csv": ("./roads.csv", ["data"]),
+        }
+
+    def test_the_item_primary_keeps_data_over_a_file_whose_stem_is_data(
+        self, tmp_path: Path
+    ) -> None:
+        """The primary group goes first, though ``data`` sorts before ``scene``."""
+        item_dir = tmp_path / "scene"
+        _write(item_dir, "scene.tif", "data.csv")
+
+        assert _scan(item_dir, "scene.tif", collection_level=False) == {
+            "data": ("scene.tif", ["data"]),
+            "data.csv": ("data.csv", ["data"]),
+        }
+
     def test_role_files_never_own_the_stem(self, tmp_path: Path) -> None:
         _write(tmp_path, "roads.pmtiles", "roads.md", "roads.txt")
 
