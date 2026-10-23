@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import shutil
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
 
 import pystac
@@ -26,6 +26,7 @@ from pyproj import CRS
 from portolan_cli import extension_registry as _reg
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
 from portolan_cli.config import get_setting, load_merged_metadata
+from portolan_cli.constants import ROLE_VISUAL
 from portolan_cli.conversion_config import VectorSettings, get_vector_settings
 from portolan_cli.convert import apply_vector_settings, run_with_transient_convert_retry
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
@@ -57,12 +58,14 @@ from portolan_cli.stac import (
     add_vector_extension,
     create_item,
 )
+from portolan_cli.stac_parquet import PARQUET_MEDIA_TYPE
 from portolan_cli.sync.checksums import (
     compute_checksum,
     compute_dir_checksum,
     compute_dir_size,
     file_fields_from,
 )
+from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
 from portolan_cli.viz.style import enrich_cog_assets
 
 if TYPE_CHECKING:
@@ -765,9 +768,7 @@ def _fix_collection_level_asset_hrefs(
     Since both collection.json and assets are in the same directory,
     href should be ./filename (not ../filename).
 
-    Also fixes asset keys: _scan_item_assets assigns "data" to primary files,
-    but for collection-level assets we need unique keys to avoid collisions
-    when multiple vectors exist in the same collection. Use file stem instead.
+    Also fixes asset keys. See :func:`_collection_level_key` for the rule.
 
     Args:
         stac_assets: Assets with hrefs relative to item.json location.
@@ -775,7 +776,7 @@ def _fix_collection_level_asset_hrefs(
     Returns:
         Assets with hrefs relative to collection.json location, with unique keys.
     """
-    fixed_assets: dict[str, pystac.Asset] = {}
+    entries: list[tuple[str, str, pystac.Asset]] = []
     for key, asset in stac_assets.items():
         href = asset.href
 
@@ -784,21 +785,69 @@ def _fix_collection_level_asset_hrefs(
             href = href[3:]
         elif href.startswith("./"):
             href = href[2:]
-        fixed_href = f"./{href}"
+        entries.append((key, href, asset))
 
-        # Fix asset key: "data" → file stem for uniqueness across collection
-        # e.g., "data" with href "./census.parquet" → key "census"
-        fixed_key = Path(href).stem if key == "data" else key
+    primary_href = next((href for key, href, _ in entries if key == "data"), None)
+    stem = PurePosixPath(primary_href).stem if primary_href is not None else None
+    has_parquet = any(
+        asset.media_type == PARQUET_MEDIA_TYPE and PurePosixPath(href).stem == stem
+        for _, href, asset in entries
+    )
 
+    fixed_assets: dict[str, pystac.Asset] = {}
+    for key, href, asset in entries:
+        fixed_key, is_tiles = _collection_level_key(key, href, asset, stem, has_parquet)
         fixed_assets[fixed_key] = pystac.Asset(
-            href=fixed_href,
+            href=f"./{href}",
             media_type=asset.media_type,
-            roles=asset.roles,
+            roles=[ROLE_VISUAL] if is_tiles else asset.roles,
             title=asset.title,
             description=asset.description,
             extra_fields=asset.extra_fields,
         )
     return fixed_assets
+
+
+def _collection_level_key(
+    key: str,
+    href: str,
+    asset: pystac.Asset,
+    stem: str | None,
+    has_parquet: bool,
+) -> tuple[str, bool]:
+    """Pick the collection asset key of one scanned asset (Issue #933).
+
+    ``_scan_item_assets`` keys the primary ``data`` and a same-stem sibling by
+    its stem. Both files then want the stem as their collection key. The key
+    must depend on the file and not on the ``iterdir`` order of the scan:
+
+    - A same-stem GeoParquet owns the stem. Without one, the primary owns it.
+    - A same-stem PMTiles beside that GeoParquet is its tile derivative. It takes
+      the key the PMTiles writer uses and the ``visual`` role.
+    - Any other file that wants the stem takes its filename.
+
+    The parquet item and the PMTiles item of one stem then agree on both keys.
+
+    Args:
+        key: Key from ``_scan_item_assets``. The primary has key ``data``.
+        href: Href without the ``./`` or ``../`` prefix.
+        asset: The scanned asset.
+        stem: Stem of the primary file.
+        has_parquet: True when a GeoParquet with the primary's stem is scanned.
+
+    Returns:
+        Tuple of (key, is_tiles). ``is_tiles`` is True for the tile derivative.
+    """
+    if stem is None or PurePosixPath(href).stem != stem:
+        return key, False
+    if has_parquet and asset.media_type == PMTILES_MEDIA_TYPE:
+        return pmtiles_asset_key(stem), True
+    owns_stem = asset.media_type == PARQUET_MEDIA_TYPE if has_parquet else key == "data"
+    if owns_stem:
+        return stem, False
+    if key in ("data", stem):
+        return PurePosixPath(href).name, False
+    return key, False
 
 
 def _create_and_save_item(

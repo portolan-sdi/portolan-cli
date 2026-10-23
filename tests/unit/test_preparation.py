@@ -191,6 +191,79 @@ class TestFixCollectionLevelAssetHrefs:
         assert fixed["thumbnail"].href == "./thumb.png"
 
 
+def _scanned(href: str, media_type: str) -> pystac.Asset:
+    """Build an asset in the shape ``_scan_item_assets`` returns it."""
+    return pystac.Asset(href=href, media_type=media_type, roles=["data"])
+
+
+_PARQUET = "application/vnd.apache.parquet"
+_PMTILES = "application/vnd.pmtiles"
+
+
+class TestSameStemCollectionLevelKeys:
+    """Issue #933: a same-stem sibling never takes the primary's stem key.
+
+    ``_scan_item_assets`` keys the primary ``data`` and a same-stem sibling by
+    its stem. The rename of ``data`` to the stem collided with the sibling, and
+    ``iterdir`` order chose which file survived.
+    """
+
+    @pytest.mark.parametrize("parquet_first", [True, False])
+    @pytest.mark.parametrize("primary", ["parquet", "pmtiles"])
+    def test_parquet_keeps_stem_and_pmtiles_becomes_tiles(
+        self, primary: str, parquet_first: bool
+    ) -> None:
+        """The parquet's prepared item and the PMTiles item agree on both keys."""
+        parquet_key, pmtiles_key = (
+            ("data", "zoning") if primary == "parquet" else ("zoning", "data")
+        )
+        parquet = (parquet_key, _scanned("../zoning.parquet", _PARQUET))
+        pmtiles = (pmtiles_key, _scanned("../zoning.pmtiles", _PMTILES))
+        entries = [parquet, pmtiles] if parquet_first else [pmtiles, parquet]
+
+        fixed = _fix_collection_level_asset_hrefs(dict(entries))
+
+        assert set(fixed) == {"zoning", "zoning-tiles"}
+        assert fixed["zoning"].href == "./zoning.parquet"
+        assert fixed["zoning"].media_type == _PARQUET
+        assert fixed["zoning"].roles == ["data"]
+        assert fixed["zoning-tiles"].href == "./zoning.pmtiles"
+        assert fixed["zoning-tiles"].media_type == _PMTILES
+        assert fixed["zoning-tiles"].roles == ["visual"]
+
+    @pytest.mark.parametrize("parquet_first", [True, False])
+    def test_converted_source_takes_its_filename(self, parquet_first: bool) -> None:
+        """A shapefile source beside its GeoParquet output never takes the stem."""
+        parquet = ("data", _scanned("../roads.parquet", _PARQUET))
+        source = ("roads", _scanned("../roads.shp", "application/x-shapefile"))
+        entries = [parquet, source] if parquet_first else [source, parquet]
+
+        fixed = _fix_collection_level_asset_hrefs(dict(entries))
+
+        assert set(fixed) == {"roads", "roads.shp"}
+        assert fixed["roads"].href == "./roads.parquet"
+        assert fixed["roads.shp"].href == "./roads.shp"
+
+    def test_standalone_pmtiles_stays_primary_data(self) -> None:
+        """PMTiles without a same-stem GeoParquet is the data, not a derivative."""
+        fixed = _fix_collection_level_asset_hrefs(
+            {"data": _scanned("../basemap.pmtiles", _PMTILES)}
+        )
+
+        assert set(fixed) == {"basemap"}
+        assert fixed["basemap"].roles == ["data"]
+
+    def test_other_stem_companion_keeps_its_key(self) -> None:
+        fixed = _fix_collection_level_asset_hrefs(
+            {
+                "data": _scanned("../zoning.parquet", _PARQUET),
+                "readme": _scanned("../readme.txt", "text/plain"),
+            }
+        )
+
+        assert set(fixed) == {"zoning", "readme"}
+
+
 class TestValidateCollectionId:
     """_validate_collection_id security + STAC-compliance checks."""
 

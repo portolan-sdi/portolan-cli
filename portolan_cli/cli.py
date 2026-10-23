@@ -39,7 +39,12 @@ from portolan_cli.cli_types import FLEXIBLE_DATETIME
 from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.discovery import get_sidecars
 from portolan_cli.emit import emit_error, emit_success
-from portolan_cli.errors import InvalidLiveUrlError, MissingLicenseError
+from portolan_cli.errors import (
+    AssetKeyCollisionError,
+    InvalidLiveUrlError,
+    MissingLicenseError,
+    PortolanError,
+)
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.licensing import (
     CLI_LICENSE_REMEDIATION,
@@ -178,7 +183,8 @@ def _fail_on_add_error(
         SystemExit: Always, with status 1.
     """
     path_context = f"{resolved_paths[0]}: " if len(resolved_paths) == 1 else ""
-    emit_error("add", type(err).__name__, f"{path_context}{err}", use_json=use_json)
+    code = err.code if isinstance(err, PortolanError) else None
+    emit_error("add", type(err).__name__, f"{path_context}{err}", use_json=use_json, code=code)
     raise SystemExit(1) from err
 
 
@@ -3569,7 +3575,9 @@ def add_cmd(
         # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
         # check reads it, so add refuses the write and names what to supply.
         _fail_on_missing_license("add", err, use_json=use_json)
-    except (ValueError, FileNotFoundError) as err:
+    except (ValueError, FileNotFoundError, AssetKeyCollisionError) as err:
+        # Issue #933: AssetKeyCollisionError is add refusing to replace one
+        # file's asset with another file.
         _fail_on_add_error(err, resolved_paths, use_json=use_json)
     trace.current_span().set(elapsed_seconds=progress_reporter.elapsed_seconds)
 

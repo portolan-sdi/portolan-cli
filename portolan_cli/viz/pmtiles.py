@@ -44,6 +44,7 @@ from portolan_cli.viz.pmtiles_links import (
     PMTILES_MEDIA_TYPE,
     PMTILES_SUFFIX,
     WEB_MAP_LINKS_EXTENSION,
+    pmtiles_asset_key,
 )
 from portolan_cli.viz.thumbnail import (
     generate_vector_thumbnail,
@@ -403,6 +404,8 @@ def add_pmtiles_asset_to_collection(
 
     Adds a collection-level asset with role ["visual"] for the PMTiles file.
     The asset key is derived from the source parquet key with "-tiles" suffix.
+    An asset that already points at ``pmtiles_href`` keeps its key, so the file
+    never gets a second entry (Issue #933).
 
     Args:
         collection_path: Path to collection directory.
@@ -420,8 +423,12 @@ def add_pmtiles_asset_to_collection(
     data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     assets = data.get("assets", {})
 
-    # Generate asset key from parquet key
-    pmtiles_key = f"{parquet_key}-tiles"
+    # An asset that already tracks this file keeps its key. Otherwise derive the
+    # key from the parquet key (Issue #933).
+    pmtiles_key = next(
+        (key for key, asset in assets.items() if asset.get("href") == pmtiles_href),
+        pmtiles_asset_key(parquet_key),
+    )
 
     # Get title from source asset if available
     source_asset = assets.get(parquet_key, {})

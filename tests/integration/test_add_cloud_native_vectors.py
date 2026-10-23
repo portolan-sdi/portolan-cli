@@ -318,3 +318,119 @@ class TestCollectionLevelAssetBehavior:
         data = json.loads((collection_dir / "collection.json").read_text())
         assert "borders" in data.get("assets", {})
         assert data["assets"]["borders"]["type"] == "application/vnd.flatgeobuf"
+
+
+class TestSameStemGeoParquetAndPMTiles:
+    """Issue #933: a same-stem PMTiles never replaces the GeoParquet asset.
+
+    ``iterdir`` order decided which of ``<stem>.parquet`` and ``<stem>.pmtiles``
+    kept the ``<stem>`` key. Eight collections give several orders on one
+    filesystem, so the pre-fix code loses the GeoParquet in some of them.
+    """
+
+    _STEMS = [f"zone{i}" for i in range(8)]
+
+    def _make_collections(self, catalog: Path, fixtures_dir: Path, sample_pmtiles: Path) -> None:
+        parquet = fixtures_dir / "realdata" / "road-detections.parquet"
+        for stem in self._STEMS:
+            collection_dir = catalog / stem
+            collection_dir.mkdir()
+            shutil.copy(parquet, collection_dir / f"{stem}.parquet")
+            shutil.copy(sample_pmtiles, collection_dir / f"{stem}.pmtiles")
+
+    @staticmethod
+    def _shape(collection_dir: Path) -> dict[str, tuple[str, str, list[str]]]:
+        """Data and visual assets only. ``add`` also writes a thumbnail asset."""
+        data = json.loads((collection_dir / "collection.json").read_text())
+        return {
+            key: (asset["href"], asset["type"], asset["roles"])
+            for key, asset in data["assets"].items()
+            if {"data", "visual"} & set(asset["roles"])
+        }
+
+    @staticmethod
+    def _expected(stem: str) -> dict[str, tuple[str, str, list[str]]]:
+        return {
+            stem: (f"./{stem}.parquet", "application/vnd.apache.parquet", ["data"]),
+            f"{stem}-tiles": (f"./{stem}.pmtiles", "application/vnd.pmtiles", ["visual"]),
+        }
+
+    @pytest.mark.integration
+    def test_add_registers_both_assets_with_distinct_keys(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        fixtures_dir: Path,
+        sample_pmtiles: Path,
+    ) -> None:
+        self._make_collections(initialized_catalog, fixtures_dir, sample_pmtiles)
+
+        result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(initialized_catalog), str(initialized_catalog)],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0, result.output
+
+        for stem in self._STEMS:
+            assert self._shape(initialized_catalog / stem) == self._expected(stem), stem
+
+    @pytest.mark.integration
+    def test_add_force_repairs_a_collection_damaged_by_933(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        fixtures_dir: Path,
+        sample_pmtiles: Path,
+    ) -> None:
+        """A 0.8.0 catalog with the PMTiles under the parquet key recovers."""
+        self._make_collections(initialized_catalog, fixtures_dir, sample_pmtiles)
+        args = ["add", "--portolan-dir", str(initialized_catalog), str(initialized_catalog)]
+        assert runner.invoke(cli, args, catch_exceptions=False).exit_code == 0
+
+        # Write the exact damage the issue reports into one collection.
+        damaged = initialized_catalog / "zone0"
+        collection_path = damaged / "collection.json"
+        data = json.loads(collection_path.read_text())
+        tiles = data["assets"].pop("zone0-tiles")
+        tiles["roles"] = ["data"]
+        data["assets"]["zone0"] = tiles
+        collection_path.write_text(json.dumps(data))
+
+        result = runner.invoke(cli, [*args, "--force"], catch_exceptions=False)
+        assert result.exit_code == 0, result.output
+
+        assert self._shape(damaged) == self._expected("zone0")
+
+    @pytest.mark.integration
+    def test_add_refuses_a_parquet_that_would_replace_a_flatgeobuf(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        fixtures_dir: Path,
+        sample_fgb: Path,
+    ) -> None:
+        """A same-stem GeoParquet never silently replaces a tracked FlatGeobuf."""
+        collection_dir = initialized_catalog / "roads"
+        collection_dir.mkdir()
+        shutil.copy(sample_fgb, collection_dir / "roads.fgb")
+        base = ["--portolan-dir", str(initialized_catalog)]
+        result = runner.invoke(cli, ["add", *base, str(collection_dir / "roads.fgb")])
+        assert result.exit_code == 0, result.output
+        collection_before = (collection_dir / "collection.json").read_text()
+        versions_before = (collection_dir / "versions.json").read_text()
+
+        # This fixture carries a bbox covering. add then rewrites nothing and
+        # prints no progress line before the JSON envelope.
+        parquet = collection_dir / "roads.parquet"
+        housing = fixtures_dir / "realdata" / "philadelphia-housing"
+        shutil.copy(housing / "council_districts_2024.parquet", parquet)
+        result = runner.invoke(cli, ["--format=json", "add", *base, str(parquet)])
+
+        assert result.exit_code == 1, result.output
+        envelope = json.loads(result.stdout)
+        assert envelope["success"] is False
+        assert envelope["errors"][0]["type"] == "AssetKeyCollisionError"
+        assert envelope["errors"][0]["code"] == "PRTLN-COL003"
+        assert (collection_dir / "collection.json").read_text() == collection_before
+        assert (collection_dir / "versions.json").read_text() == versions_before

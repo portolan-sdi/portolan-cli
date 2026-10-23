@@ -11,6 +11,7 @@ from __future__ import annotations
 import pystac
 import pytest
 
+from portolan_cli.errors import AssetKeyCollisionError
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
 from portolan_cli.stac import (
     MergeStrategy,
@@ -209,6 +210,143 @@ class TestAddAssetToCollectionMerge:
         assert asset.extra_fields.get("file:size") == 12345
         # Custom fields preserved (not in machine-derivable list)
         assert asset.extra_fields.get("custom:note") == "Hand-authored annotation"
+
+
+_PARQUET = "application/vnd.apache.parquet"
+_PMTILES = "application/vnd.pmtiles"
+
+
+class TestAssetKeyCollision:
+    """Issue #933: add never lets one file replace a different file's asset."""
+
+    @staticmethod
+    def _collection(**assets: pystac.Asset) -> pystac.Collection:
+        collection = create_collection(collection_id="zoning", description="Zoning")
+        for key, asset in assets.items():
+            collection.add_asset(key, asset)
+        return collection
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("strategy", list(MergeStrategy))
+    def test_different_file_and_media_type_raises(self, strategy: MergeStrategy) -> None:
+        collection = self._collection(
+            zoning=pystac.Asset(href="./zoning.fgb", media_type="application/vnd.flatgeobuf")
+        )
+        incoming = pystac.Asset(href="./zoning.parquet", media_type=_PARQUET, roles=["data"])
+
+        with pytest.raises(AssetKeyCollisionError) as excinfo:
+            add_asset_to_collection(collection, "zoning", incoming, merge_strategy=strategy)
+
+        assert excinfo.value.code == "PRTLN-COL003"
+        assert excinfo.value.asset_key == "zoning"
+        assert excinfo.value.existing_href == "./zoning.fgb"
+        assert excinfo.value.new_href == "./zoning.parquet"
+        assert collection.assets["zoning"].href == "./zoning.fgb"
+
+    @pytest.mark.unit
+    def test_legacy_parquet_media_type_counts_as_the_same(self) -> None:
+        collection = self._collection(
+            zoning=pystac.Asset(href="./old.parquet", media_type="application/x-parquet")
+        )
+        incoming = pystac.Asset(href="./zoning.parquet", media_type=_PARQUET, roles=["data"])
+
+        add_asset_to_collection(collection, "zoning", incoming)
+
+        assert collection.assets["zoning"].href == "./zoning.parquet"
+
+    @pytest.mark.unit
+    def test_parquet_moves_the_displaced_pmtiles_to_its_tiles_key(self) -> None:
+        """The exact damage #933 wrote into catalogs is repaired on re-add."""
+        collection = self._collection(
+            zoning=pystac.Asset(
+                href="./zoning.pmtiles",
+                media_type=_PMTILES,
+                roles=["data"],
+                title="Zoning districts",
+                extra_fields={"file:size": 10},
+            )
+        )
+        incoming = pystac.Asset(href="./zoning.parquet", media_type=_PARQUET, roles=["data"])
+
+        add_asset_to_collection(collection, "zoning", incoming)
+
+        assert set(collection.assets) == {"zoning", "zoning-tiles"}
+        parquet = collection.assets["zoning"]
+        assert (parquet.href, parquet.media_type, parquet.roles) == (
+            "./zoning.parquet",
+            _PARQUET,
+            ["data"],
+        )
+        # The human title described the data, so it returns to the data asset.
+        assert parquet.title == "Zoning districts"
+        tiles = collection.assets["zoning-tiles"]
+        assert (tiles.href, tiles.media_type, tiles.roles) == (
+            "./zoning.pmtiles",
+            _PMTILES,
+            ["visual"],
+        )
+        assert tiles.title is None
+        assert tiles.extra_fields == {"file:size": 10}
+
+    @pytest.mark.unit
+    def test_repair_converges_when_the_tiles_item_lands_first(self) -> None:
+        collection = self._collection(
+            zoning=pystac.Asset(href="./zoning.pmtiles", media_type=_PMTILES, roles=["data"])
+        )
+        tiles = pystac.Asset(href="./zoning.pmtiles", media_type=_PMTILES, roles=["visual"])
+        parquet = pystac.Asset(href="./zoning.parquet", media_type=_PARQUET, roles=["data"])
+
+        add_asset_to_collection(collection, "zoning-tiles", tiles)
+        add_asset_to_collection(collection, "zoning", parquet)
+
+        assert {k: a.href for k, a in collection.assets.items()} == {
+            "zoning": "./zoning.parquet",
+            "zoning-tiles": "./zoning.pmtiles",
+        }
+        assert collection.assets["zoning-tiles"].roles == ["visual"]
+
+    @pytest.mark.unit
+    def test_repair_drops_the_duplicate_when_the_tiles_key_holds_it(self) -> None:
+        collection = self._collection(
+            zoning=pystac.Asset(href="./zoning.pmtiles", media_type=_PMTILES, roles=["data"]),
+            **{
+                "zoning-tiles": pystac.Asset(
+                    href="./zoning.pmtiles", media_type=_PMTILES, roles=["visual"]
+                )
+            },
+        )
+        parquet = pystac.Asset(href="./zoning.parquet", media_type=_PARQUET, roles=["data"])
+
+        add_asset_to_collection(collection, "zoning", parquet)
+
+        assert {k: a.href for k, a in collection.assets.items()} == {
+            "zoning": "./zoning.parquet",
+            "zoning-tiles": "./zoning.pmtiles",
+        }
+
+    @pytest.mark.unit
+    def test_untyped_asset_never_moves_the_pmtiles(self) -> None:
+        """Only a GeoParquet repairs the key. An untyped file merges as before."""
+        collection = self._collection(
+            zoning=pystac.Asset(href="./zoning.pmtiles", media_type=_PMTILES, roles=["data"])
+        )
+        incoming = pystac.Asset(href="./zoning.bin", roles=["data"])
+
+        add_asset_to_collection(collection, "zoning", incoming)
+
+        assert set(collection.assets) == {"zoning"}
+        assert collection.assets["zoning"].href == "./zoning.bin"
+
+    @pytest.mark.unit
+    def test_pmtiles_of_another_stem_is_not_moved(self) -> None:
+        """Only a same-stem PMTiles is the #933 damage. Anything else raises."""
+        collection = self._collection(
+            zoning=pystac.Asset(href="./basemap.pmtiles", media_type=_PMTILES, roles=["data"])
+        )
+        parquet = pystac.Asset(href="./zoning.parquet", media_type=_PARQUET, roles=["data"])
+
+        with pytest.raises(AssetKeyCollisionError):
+            add_asset_to_collection(collection, "zoning", parquet)
 
 
 class TestAddTableExtensionMerge:
