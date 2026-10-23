@@ -298,6 +298,13 @@ def seed_catalog_metadata(
         if extracted.attribution:
             _append_producer(metadata_path, extracted.attribution)
         info(f"Seeded metadata.yaml from {extracted.source_type}")
+        if not extracted.attribution:
+            # A producer is a fact of the source. Portolan does not invent one.
+            warn(
+                "No producer provider: the source publishes no attribution. Add a provider "
+                f"with the producer role to {metadata_path}. Until then, check reports "
+                "PTL-PRV-001."
+            )
         if not (extracted.contact_name or extracted.contact_email):
             # The host serves the catalog. Only the person who runs extract knows it,
             # and a placeholder is never published as one (issue #1039).

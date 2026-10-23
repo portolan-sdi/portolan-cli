@@ -652,11 +652,11 @@ def _resumed_result(
     if relative in done_by_path:
         return done_by_path[relative]
     previous = by_name.get(layer.name)
-    if previous is not None and previous.status == "empty":
-        # A named layer must have data, so a resumed run tries it again.
-        return None if layer.explicit else previous
     if previous is None:
         return None
+    if previous.status == "empty":
+        # A named layer must have data, so a resumed run tries it again.
+        return None if layer.explicit else previous
     # A legacy "skipped" result counts only when its data file is still there.
     # It becomes "success", because the catalog build adds only those.
     data_file = output_dir / relative

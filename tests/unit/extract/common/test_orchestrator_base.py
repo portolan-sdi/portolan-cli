@@ -110,6 +110,18 @@ def _recording_add(events: list[str]) -> Any:
     return add
 
 
+def _init_with_recorded_add(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    report: ExtractionReport,
+    events: list[str],
+    post_init: Any,
+) -> list[Path] | None:
+    """Run ``init_extracted_catalog`` with an ``add_files`` that records its call."""
+    monkeypatch.setattr("portolan_cli.add.add_files", _recording_add(events))
+    return init_extracted_catalog(tmp_path, report, title="t", description="d", post_init=post_init)
+
+
 class TestInitExtractedCatalog:
     def test_returns_none_and_skips_hooks_when_no_assets(self, tmp_path: Path) -> None:
         report = _report([_layer(0, "a", status="failed")])
@@ -157,11 +169,7 @@ class TestInitExtractedCatalog:
             assert fresh is True
 
         monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
-        monkeypatch.setattr("portolan_cli.add.add_files", _recording_add(events))
-
-        result = init_extracted_catalog(
-            tmp_path, report, title="t", description="d", post_init=_post_init
-        )
+        result = _init_with_recorded_add(monkeypatch, tmp_path, report, events, _post_init)
 
         assert result == [tmp_path / "a/a.parquet"]
         assert events == ["init", "post_init", "add"]
@@ -238,11 +246,7 @@ class TestInitExtractedCatalog:
             assert fresh is False
 
         monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
-        monkeypatch.setattr("portolan_cli.add.add_files", _recording_add(events))
-
-        result = init_extracted_catalog(
-            tmp_path, report, title="t", description="d", post_init=_post_init
-        )
+        result = _init_with_recorded_add(monkeypatch, tmp_path, report, events, _post_init)
 
         assert result == [tmp_path / "a/a.parquet"]
         # init_catalog is skipped for an existing catalog; the new collection is
@@ -417,7 +421,23 @@ class TestSeedCatalogMetadata:
             f"{tmp_path / '<collection>' / '.portolan' / 'metadata.yaml'}, then run "
             "'portolan add --force <collection>'."
         )
-        assert capsys.readouterr().err.count(warning) == 1
+        err = capsys.readouterr().err
+        assert err.count(warning) == 1
+        assert "No producer provider" not in err
+
+    def test_source_without_attribution_warns_of_the_missing_producer(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        seed_catalog_metadata(tmp_path, ExtractedMetadata(source_type="arcgis_featureserver"))
+
+        metadata_path = tmp_path / ".portolan" / "metadata.yaml"
+        assert (
+            capsys.readouterr().err.count(
+                "No producer provider: the source publishes no attribution. Add a provider with "
+                f"the producer role to {metadata_path}."
+            )
+            == 1
+        )
 
 
 class TestLegendFileFields:

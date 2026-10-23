@@ -12,8 +12,9 @@ MapServer services, and ``extract_arcgis_catalog`` runs it with
   #1012). A single-layer service becomes one collection at the service
   directory. A multi-layer service nests one collection per layer. Tables
   join the layers only with ``include_tables`` (issue #812).
-- ``fetch`` calls ``gpio.extract_arcgis``, adds the bbox covering column,
-  sorts, writes, and restores the source CRS (issues #802, #805).
+- ``fetch`` calls ``gpio.extract_arcgis``, applies the catalog's
+  ``conversion.vector`` layout (issues #805, #834), writes, and restores the
+  source CRS (issue #802). A failure names the layer (issue #866).
 - ``styles`` converts the layer's ESRI drawingInfo (issue #490).
 
 Typical usage:
@@ -589,7 +590,9 @@ class ArcGISLayerSource:
         discovery = self.discovery_from(source, _service_metadata(source, combined), layers)
         discovery.folder_coverage = coverage
         if not layers:
-            failed = f" {len(errors)} failed discovery, first: {errors[0]}" if errors else ""
+            failed = (
+                f" Discovery failed for {len(errors)}. First error: {errors[0]}" if errors else ""
+            )
             discovery.empty_reason = (
                 f"The services root lists {len(services)} services with no layer.{failed}"
             )
