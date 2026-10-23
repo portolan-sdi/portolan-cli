@@ -1514,6 +1514,29 @@ class TestInvalidValuesReachTheOperator:
         assert caplog.messages == ["Vector config: unknown spatial_index 'h4', using 'none'"]
 
     @pytest.mark.unit
+    def test_a_repeat_logs_at_debug_and_another_catalog_warns_again(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from portolan_cli.conversion_config import get_vector_settings
+
+        for name in ("first", "second"):
+            (tmp_path / name / ".portolan").mkdir(parents=True)
+            (tmp_path / name / ".portolan" / "config.yaml").write_text(
+                "conversion:\n  vector:\n    sort: hilbertt\n", encoding="utf-8"
+            )
+
+        with caplog.at_level(logging.DEBUG, logger="portolan_cli.conversion_config"):
+            for name in ("first", "first", "second"):
+                get_vector_settings(tmp_path / name)
+
+        message = "Vector config: unknown sort 'hilbertt', using 'hilbert'"
+        assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+            ("WARNING", message),
+            ("DEBUG", message),
+            ("WARNING", message),
+        ]
+
+    @pytest.mark.unit
     def test_a_valid_config_warns_about_nothing(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:

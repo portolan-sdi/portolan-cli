@@ -1724,3 +1724,78 @@ class TestLoadersReturnDeepCopies:
         assert load_own_metadata(collection) == expected
         assert load_merged_metadata(collection, tmp_path) == expected
         assert load_own_metadata(tmp_path / "absent") == {}
+
+
+class TestListNestedSettings:
+    """``list_settings`` lists nested leaves with their sources (issue #1020)."""
+
+    @pytest.mark.unit
+    def test_catalog_listing_holds_leaves_but_not_the_collections_section(
+        self, tmp_path: Path
+    ) -> None:
+        from portolan_cli.config import list_settings
+
+        _write_config(
+            tmp_path,
+            "backend: file\ncollections:\n  demo:\n    plugin_key: on\n",
+        )
+
+        with cleared_environ():
+            settings = list_settings(tmp_path)
+
+        assert settings["backend"] == {"value": "file", "source": "catalog"}
+        assert settings["statistics.enabled"] == {"value": True, "source": "default"}
+        assert [key for key in settings if key.startswith("collections")] == []
+        assert "conversion.handlers.*" not in settings
+
+    @pytest.mark.unit
+    def test_collection_listing_holds_a_key_outside_the_schema(self, tmp_path: Path) -> None:
+        from portolan_cli.config import list_settings
+
+        _write_config(tmp_path, "collections:\n  demo:\n    plugin:\n      key: on\n")
+
+        with cleared_environ():
+            settings = list_settings(tmp_path, collection="demo")
+
+        assert settings["plugin.key"] == {"value": True, "source": "collection"}
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("text", "collection"),
+        [
+            ("remote: s3://stale/\n", None),
+            ("collections:\n  demo:\n    remote: s3://stale/\n", "demo"),
+        ],
+    )
+    def test_a_sensitive_key_in_the_file_lists_as_insecure(
+        self, tmp_path: Path, text: str, collection: str | None
+    ) -> None:
+        from portolan_cli.config import list_settings
+
+        _write_config(tmp_path, text)
+
+        with cleared_environ():
+            settings = list_settings(tmp_path, collection=collection)
+
+        assert settings["remote"] == {"value": "s3://stale/", "source": "config (INSECURE)"}
+
+    @pytest.mark.unit
+    def test_an_unset_key_has_the_default_source(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting_source
+
+        _write_config(tmp_path, "backend: file\n")
+
+        with cleared_environ():
+            assert get_setting_source("pmtiles.min_zoom", tmp_path, None) == "default"
+            assert get_setting_source("backend", tmp_path, None) == "catalog"
+
+    @pytest.mark.unit
+    def test_the_unknown_key_message_lists_pattern_keys_by_name(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+
+        with pytest.raises(ConfigError) as excinfo:
+            set_setting(tmp_path, "workers", "8")
+
+        assert "backend, check.disabled, check.severity.<name>, conversion.cog.compression" in str(
+            excinfo.value
+        )

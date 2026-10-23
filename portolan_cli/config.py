@@ -869,8 +869,8 @@ def list_settings(
     collection_config = config.section("collections", collection) if collection else {}
     all_keys.update(_leaf_keys(collection_config))
 
-    # Add known settings
-    all_keys.update(key for key in KNOWN_SETTINGS if not key.endswith(".*"))
+    # Add known settings. A ``.*`` pattern resolves to nothing and drops out.
+    all_keys.update(KNOWN_SETTINGS)
 
     # Check environment variables for all known + sensitive settings
     # Sensitive settings can still be read from env vars, just not saved to config
@@ -884,7 +884,7 @@ def list_settings(
         try:
             value = get_setting(key, catalog_path=catalog_path, collection=collection)
             source = get_setting_source(key, catalog_path, collection)
-            if value is not None or source != "default":
+            if value is not None:
                 result[key] = {"value": value, "source": source}
         except ValueError:
             # Sensitive key in config without env var - show with warning source
