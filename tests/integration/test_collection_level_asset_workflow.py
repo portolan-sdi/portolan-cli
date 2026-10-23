@@ -189,14 +189,13 @@ class TestCollectionLevelAssetWorkflow:
 
         # Verify NO item.json and correct collection.json assets
         _assert_no_item_json(collection_dir)
-        # The generated README.md (issue #654) is tracked like every other file
-        # in the collection directory, keyed by its documentation role.
+        # The generated README.md (issue #654) is a describedby link, not an
+        # asset. The second add once registered it (issue #1041).
         _assert_collection_assets(
             collection_dir,
             {
                 "census": "./census.parquet",
                 "parcels": "./parcels.parquet",
-                "documentation": "./README.md",
             },
         )
 

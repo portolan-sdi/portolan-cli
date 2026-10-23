@@ -1629,3 +1629,96 @@ class TestGenerateParquetMirrors:
         assert not (collection_with_items / "items.parquet").exists()
         assert report.generated == []
         assert str(report.failed["landsat"]) == "boom"
+
+
+_FILE_URI = "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+_TABLE_URI = "https://stac-extensions.github.io/table/v1.2.0/schema.json"
+
+
+def _stale_collection(tmp_path: Path) -> Path:
+    """A collection whose README asset and item asset carry stale file fields.
+
+    An older ``add --force`` registered the README as a documentation asset
+    (issue #1041). ``readme`` then rewrote the file (issue #930).
+    """
+    collection_dir = tmp_path / "roads"
+    item_dir = collection_dir / "scene"
+    item_dir.mkdir(parents=True)
+    (collection_dir / "README.md").write_text("# new text\n", encoding="utf-8")
+    (item_dir / "scene.tif").write_bytes(b"new bytes")
+    stale = {"file:size": 1, "file:checksum": "1220" + "0" * 64}
+    item = {
+        "type": "Feature",
+        "id": "scene",
+        "stac_extensions": [],
+        "properties": {"table:column_statistics": {}},
+        "assets": {"data": {"href": "scene.tif", "roles": ["data"], **stale}},
+        "links": [],
+    }
+    (item_dir / "scene.json").write_text(json.dumps(item), encoding="utf-8")
+    collection = {
+        "type": "Collection",
+        "id": "roads",
+        "stac_extensions": [],
+        "assets": {"documentation": {"href": "./README.md", "roles": ["documentation"], **stale}},
+        "links": [{"rel": "item", "href": "./scene/scene.json"}],
+    }
+    (collection_dir / "collection.json").write_text(json.dumps(collection), encoding="utf-8")
+    return collection_dir
+
+
+class TestRestampCollectionAssets:
+    """One pass stamps file fields and declares the extensions they use."""
+
+    @pytest.mark.unit
+    def test_it_stamps_the_collection_and_its_items(self, tmp_path: Path) -> None:
+        from portolan_cli.stac_parquet import restamp_collection_assets
+        from portolan_cli.sync.checksums import file_fields
+
+        collection_dir = _stale_collection(tmp_path)
+
+        assert restamp_collection_assets(collection_dir) is True
+
+        collection = json.loads((collection_dir / "collection.json").read_text())
+        item = json.loads((collection_dir / "scene" / "scene.json").read_text())
+        readme_fields = file_fields(collection_dir / "README.md")
+        assert {k: collection["assets"]["documentation"][k] for k in readme_fields} == (
+            readme_fields
+        )
+        tif_fields = file_fields(collection_dir / "scene" / "scene.tif")
+        assert {k: item["assets"]["data"][k] for k in tif_fields} == tif_fields
+        assert collection["stac_extensions"] == [_FILE_URI]
+        # Issue #1037: the item declares the extensions of its own fields.
+        assert item["stac_extensions"] == [_FILE_URI, _TABLE_URI]
+        assert restamp_collection_assets(collection_dir) is False
+
+    @pytest.mark.unit
+    def test_only_limits_the_stamp_to_the_named_files(self, tmp_path: Path) -> None:
+        from portolan_cli.stac_parquet import restamp_collection_assets
+
+        collection_dir = _stale_collection(tmp_path)
+
+        restamp_collection_assets(collection_dir, only={collection_dir / "README.md"})
+
+        item = json.loads((collection_dir / "scene" / "scene.json").read_text())
+        assert item["assets"]["data"]["file:size"] == 1
+
+
+class TestWriteReadme:
+    """Issue #930: ``readme`` left the documentation asset stale."""
+
+    @pytest.mark.unit
+    def test_writing_the_readme_restamps_its_asset(self, tmp_path: Path) -> None:
+        from portolan_cli.readme import write_readme
+        from portolan_cli.sync.checksums import file_fields
+
+        collection_dir = _stale_collection(tmp_path)
+        readme = collection_dir / "README.md"
+
+        write_readme(readme, "# regenerated\n")
+
+        asset = json.loads((collection_dir / "collection.json").read_text())["assets"][
+            "documentation"
+        ]
+        assert asset["file:size"] == readme.stat().st_size
+        assert asset["file:checksum"] == file_fields(readme)["file:checksum"]

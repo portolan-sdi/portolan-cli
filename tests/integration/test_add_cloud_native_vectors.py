@@ -737,3 +737,54 @@ class TestAssetLineage:
         assert "tippecanoe is required" not in result.output
         collection = json.loads((collection_dir / "collection.json").read_text())
         assert collection["assets"]["points-tiles"]["href"] == "./points.pmtiles"
+
+    @pytest.mark.integration
+    def test_force_rebuild_registers_what_the_first_add_registered(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        """Issue #1041: add --force registered the README the first add wrote."""
+        collection_dir = initialized_catalog / "roads"
+        collection_dir.mkdir()
+        shutil.copy(
+            fixtures_dir / "vector" / "valid" / "points.parquet", collection_dir / "roads.parquet"
+        )
+        args = [
+            "add",
+            "--portolan-dir",
+            str(initialized_catalog),
+            str(collection_dir / "roads.parquet"),
+        ]
+
+        def keys() -> tuple[list[str], list[str]]:
+            collection = json.loads((collection_dir / "collection.json").read_text())
+            versions = json.loads((collection_dir / "versions.json").read_text())
+            return sorted(collection["assets"]), sorted(versions["versions"][-1]["assets"])
+
+        assert runner.invoke(cli, args, catch_exceptions=False).exit_code == 0
+        first = keys()
+        assert runner.invoke(cli, [*args, "--force"], catch_exceptions=False).exit_code == 0
+
+        assert keys() == first
+        assert first == (["roads", "thumbnail"], ["roads.parquet", "roads.thumb.jpg"])
+
+    @pytest.mark.integration
+    def test_item_declares_the_file_extension_of_its_assets(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        """Issue #1037: only the collection declared the file extension."""
+        item_dir = initialized_catalog / "imagery" / "scene-a"
+        item_dir.mkdir(parents=True)
+        shutil.copy(fixtures_dir / "raster" / "valid" / "rgb.tif", item_dir / "rgb.tif")
+
+        result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(initialized_catalog), str(item_dir / "rgb.tif")],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0, result.output
+        item = json.loads((item_dir / "scene-a.json").read_text())
+        assert all("file:size" in asset for asset in item["assets"].values())
+        assert (
+            "https://stac-extensions.github.io/file/v2.1.0/schema.json" in item["stac_extensions"]
+        )

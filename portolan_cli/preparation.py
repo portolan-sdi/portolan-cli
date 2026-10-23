@@ -51,6 +51,7 @@ from portolan_cli.metadata_yaml import (
     validate_metadata,
 )
 from portolan_cli.plugins.formats import FormatContext, extension_of, handler_for
+from portolan_cli.readme import README_FILENAME
 from portolan_cli.scan.detect import is_filegdb
 from portolan_cli.stac import (
     add_projection_extension,
@@ -58,7 +59,7 @@ from portolan_cli.stac import (
     add_vector_extension,
     create_item,
 )
-from portolan_cli.stac_parquet import PARQUET_MEDIA_TYPE
+from portolan_cli.stac_parquet import PARQUET_MEDIA_TYPE, declare_extensions_in_use
 from portolan_cli.sync.checksums import (
     compute_checksum,
     compute_dir_checksum,
@@ -221,9 +222,10 @@ def _scan_item_assets(
         - asset_files: Dict mapping filename to (path, checksum, size) tuples
         - asset_paths: List of absolute path strings
     """
+    in_collection_dir = item_dir.resolve() == collection_dir.resolve()
     # Issue #465: only prune cross-item siblings for collection-level (flat)
     # scans. Resolve once, not per file: a flat collection holds n files.
-    is_flat = bool(exclude_names) and item_dir.resolve() == collection_dir.resolve()
+    is_flat = bool(exclude_names) and in_collection_dir
     # _create_and_save_item writes the item JSON into item_dir, whatever the
     # item id, so an item's hrefs are bare names. A "../" prefix assumed a JSON
     # in {collection_dir}/{item_id}/ and broke --item-id (issue #840).
@@ -240,6 +242,11 @@ def _scan_item_assets(
         if is_flat and file_path.stem != primary_file.stem and file_path.name in exclude_names:
             continue
         if file_path.name in IGNORED_FILES or file_path.name == f"{item_id}.json":
+            continue
+        # The collection README is a rel="describedby" link that `readme`
+        # rewrites, never an asset. The first add runs before the README exists,
+        # so a scan that registered it made add --force differ (issue #1041).
+        if in_collection_dir and file_path.name == README_FILENAME:
             continue
         measured = _measure(file_path)
         if measured is not None:
@@ -885,6 +892,11 @@ def _create_and_save_item(
     )
     add_projection_extension(item, metadata)
     describe(item)
+    # The item carries file:* on its assets and may carry table:* statistics,
+    # so it declares those extensions itself (issue #1037).
+    document = item.to_dict(include_self_link=False, transform_hrefs=False)
+    if declare_extensions_in_use(document):
+        item.stac_extensions = document["stac_extensions"]
 
     item_json_path = item_dir / f"{item_id}.json"
     item.set_self_href(str(item_json_path))

@@ -40,6 +40,7 @@ from portolan_cli.sync.checksums import file_fields
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
+    from collections.abc import Set as AbstractSet
     from pathlib import Path
 
 # Constants
@@ -338,6 +339,105 @@ def sync_file_extension(
         return False
     extensions.remove(url)
     return True
+
+
+def declare_extensions_in_use(document: dict[str, Any]) -> bool:
+    """Declare the file and table extensions whose fields one STAC document uses.
+
+    Issue #1037: items carried ``file:size``, ``file:checksum`` and
+    ``table:column_statistics`` while only their collection declared the URIs.
+    A reader validates each document against the extensions it declares, so
+    every document declares its own. Only the document's own fields count: its
+    top level, its ``properties``, and its assets. The call never withdraws a
+    URI. :func:`sync_file_extension` owns the withdrawal on a collection.
+
+    Args:
+        document: A parsed item or collection, mutated in place.
+
+    Returns:
+        Whether ``stac_extensions`` changed.
+    """
+    from portolan_cli.stac import EXTENSION_URLS
+
+    holders: list[Any] = [document, document.get("properties")]
+    assets = document.get("assets")
+    if isinstance(assets, dict):
+        holders.extend(assets.values())
+    prefixes = {
+        f"{name}:"
+        for holder in holders
+        if isinstance(holder, dict)
+        for key in holder
+        for name in ("file", "table")
+        if key.startswith(f"{name}:")
+    }
+    extensions = document.get("stac_extensions")
+    if not prefixes or (extensions is not None and not isinstance(extensions, list)):
+        return False
+    if extensions is None:
+        extensions = document["stac_extensions"] = []
+    missing = [EXTENSION_URLS[p[:-1]] for p in sorted(prefixes)]
+    missing = [url for url in missing if url not in extensions]
+    extensions.extend(missing)
+    return bool(missing)
+
+
+def _is_selected(asset: dict[str, Any], base_dir: Path, only: AbstractSet[Path] | None) -> bool:
+    """Whether ``asset`` points at one of ``only``. Every asset is when it is None."""
+    if only is None:
+        return True
+    href = asset.get("href")
+    if not isinstance(href, str) or not href or is_absolute_href(href):
+        return False
+    return resolve_href(base_dir, href).resolve() in {path.resolve() for path in only}
+
+
+def restamp_collection_assets(
+    collection_dir: Path, *, only: AbstractSet[Path] | None = None
+) -> bool:
+    """Stamp ``file:size``/``file:checksum`` on the local assets of a collection.
+
+    The one pass for a writer that changed files under a collection, such as
+    ``readme`` (issue #930). It walks collection.json and every item the
+    collection owns, stamps each asset with :func:`stamp_file_fields`, and
+    declares the extensions each document uses. A document is written only
+    when it changed.
+
+    Args:
+        collection_dir: Directory that holds collection.json.
+        only: Stamp only the assets whose href resolves to one of these files.
+            A stamp hashes every byte, so a writer that changed one file names
+            it. None stamps every asset.
+
+    Returns:
+        Whether any document changed.
+    """
+    collection_json = collection_dir / "collection.json"
+    if not collection_json.is_file():
+        return False
+    documents = [collection_json, *(path for _href, path in owned_item_hrefs(collection_json))]
+    changed_any = False
+    for path in documents:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        assets = data.get("assets") if isinstance(data, dict) else None
+        if not isinstance(assets, dict):
+            continue
+        stamped = [
+            stamp_file_fields(asset, path.parent)
+            for asset in assets.values()
+            if isinstance(asset, dict) and _is_selected(asset, path.parent, only)
+        ]
+        changed = any(stamped)
+        if path == collection_json:
+            changed = sync_file_extension(data, assets, collection_json) or changed
+        changed = declare_extensions_in_use(data) or changed
+        if changed:
+            write_json_atomic(path, data)
+            changed_any = True
+    return changed_any
 
 
 def register_mirror_asset(collection_path: Path) -> None:
