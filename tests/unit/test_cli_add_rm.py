@@ -1200,6 +1200,40 @@ class TestReportSkipsAndFindCollections:
         )
 
 
+class TestAddUnknownHandlerPin:
+    """A ``conversion.handlers`` pin to a missing handler fails add with a typed error."""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("json_mode", [False, True], ids=["text", "json"])
+    def test_the_error_names_the_pin_and_the_known_handlers(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_points_geojson: Path,
+        json_mode: bool,
+    ) -> None:
+        root = conformant_catalog
+        config = root / ".portolan" / "config.yaml"
+        config.write_text(config.read_text() + "conversion:\n  handlers:\n    geojson: nosuch\n")
+        (root / "pts").mkdir()
+        points = root / "pts" / "points.geojson"
+        points.write_bytes(valid_points_geojson.read_bytes())
+        prefix = ["--format", "json"] if json_mode else []
+
+        result = run_cli(*prefix, "add", "--portolan-dir", str(root), str(points), expect=1)
+
+        if json_mode:
+            errors = json.loads(result.stdout)["errors"]
+            assert [e["type"] for e in errors] == ["UnknownFormatHandlerError"]
+            message = errors[0]["message"]
+        else:
+            message = result.stderr
+        assert "conversion.handlers pins 'nosuch' for .geojson" in message
+        assert "Available: " in message
+        assert "geoparquet" in message.split("Available: ")[1]
+        assert not (root / "pts" / "collection.json").exists()
+
+
 class TestRmJsonOutput:
     """Tests for rm command JSON output mode."""
 
