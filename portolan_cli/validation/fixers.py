@@ -244,7 +244,10 @@ def _rebuild_links(node: Node, graph: CatalogGraph) -> list[dict[str, Any]]:
         link["href"] = href
         link["type"] = _GEOJSON_TYPE if rel == "item" else _JSON_TYPE
         if rel in ("child", "item") and not link.get("title"):
-            title = target.data.get("title") or target.id
+            # An item holds its title under properties, a catalog at the top.
+            properties = target.data.get("properties")
+            own = properties if rel == "item" and isinstance(properties, dict) else target.data
+            title = own.get("title") or target.id
             if isinstance(title, str) and title:
                 link["title"] = title
         rebuilt.append(link)
@@ -364,12 +367,6 @@ def _asset_bboxes(node: Node) -> list[list[float]]:
     return found
 
 
-def _union_of(boxes: list[list[float]]) -> list[float] | None:
-    from portolan_cli.bbox import compute_bbox_union
-
-    return compute_bbox_union(boxes, wgs84_only=True).bbox if boxes else None
-
-
 _BBOX_SKIP_MESSAGE = (
     "Cannot recompute the bbox: nothing readable to derive it from; "
     "re-run `portolan add` so the bbox comes from the data"
@@ -378,12 +375,13 @@ _BBOX_SKIP_MESSAGE = (
 
 def _fix_item_bbox(node: Node, *, dry_run: bool) -> FixResult | None:
     """Recompute one item's bbox (and, if absent, its geometry) from its assets."""
+    from portolan_cli.bbox import compute_bbox_union
     from portolan_cli.item import _bbox_to_polygon
 
     declared = "bbox" in node.data
     if declared and _looks_valid(node.data["bbox"]):
         return None
-    union = _union_of(_asset_bboxes(node))
+    union = compute_bbox_union(_asset_bboxes(node), wgs84_only=True).bbox
     if union is None:
         # An item with no bbox key at all is another rule's finding; only a
         # declared-but-broken bbox is this fixer's to report.
@@ -400,12 +398,17 @@ def _fix_container_bbox(node: Node, graph: CatalogGraph, *, dry_run: bool) -> Fi
     boxes = _extent_bboxes(node)
     if boxes is None or all(_looks_valid(box) for box in boxes):
         return None
+    from portolan_cli.errors import InvalidBboxError
+    from portolan_cli.stac import build_spatial_extent
+
     # Items were repaired first and graph nodes are shared objects, so a bbox
-    # written above is already visible here without reloading the tree.
-    union = _union_of(_child_bboxes(node, graph) or _asset_bboxes(node))
-    if union is None:
+    # written above is already visible here without reloading the tree. The
+    # extent constructor of ``add`` builds it, so a repair equals a rebuild.
+    try:
+        extent = build_spatial_extent(_child_bboxes(node, graph) or _asset_bboxes(node))
+    except InvalidBboxError:
         return _skipped(node.abs_path, _BBOX_SKIP_MESSAGE)
-    node.data["extent"]["spatial"]["bbox"] = [union]
+    node.data["extent"]["spatial"]["bbox"] = extent.bboxes
     _write_node(node, dry_run=dry_run)
     return _updated(node, "Recomputed the spatial extent from contained bboxes")
 

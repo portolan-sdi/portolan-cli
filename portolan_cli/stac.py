@@ -1548,10 +1548,11 @@ _RANGE_FIELDS = frozenset({"gsd"})
 def _is_summarized(key: str) -> bool:
     """Whether derivation owns the summary of ``key``.
 
-    Every extension-prefixed item property is summarized, plus ``gsd``. A
-    summary under any other key came from elsewhere and is kept.
+    Derivation owns every extension-prefixed key, plus ``gsd``. It writes no
+    summary for a per-item grid field, so a stored one is dropped. A summary
+    under any other key came from elsewhere and is kept.
     """
-    return key in _RANGE_FIELDS or (":" in key and key not in _PER_ITEM_GRID_FIELDS)
+    return key in _RANGE_FIELDS or ":" in key
 
 
 def _summary_values(value: object) -> list[object]:
@@ -1582,7 +1583,7 @@ def summarize_properties(properties: Iterable[Mapping[str, Any]]) -> dict[str, A
     ranges: dict[str, list[float]] = {}
     for props in properties:
         for key, value in props.items():
-            if value is None or not _is_summarized(key):
+            if value is None or not _is_summarized(key) or key in _PER_ITEM_GRID_FIELDS:
                 continue
             if key in _RANGE_FIELDS:
                 if isinstance(value, (int, float)) and not isinstance(value, bool):

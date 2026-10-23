@@ -211,6 +211,24 @@ class TestSummaries:
             "proj:code": ["EPSG:4326"],
         }
 
+    def test_a_stored_grid_summary_is_dropped(self) -> None:
+        """A catalog from an older release stores the flattened transform (#1023)."""
+        data: dict[str, object] = {
+            "summaries": {
+                "proj:transform": [364800.0, 3.0, 0.0, 4824000.0, -3.0],
+                "proj:shape": [200],
+            },
+            "stac_extensions": [
+                "https://stac-extensions.github.io/projection/v2.0.0/schema.json"
+            ],
+        }
+        fields = derive_collection_fields(
+            [CollectionMember(properties={"proj:transform": VALENCIA_TRANSFORM})], {}
+        )
+        apply_collection_fields_to_dict(data, fields)
+        assert "summaries" not in data
+        assert data["stac_extensions"] == []
+
 
 class TestApplyToDict:
     def test_dict_gets_extent_summaries_and_extension(self) -> None:
