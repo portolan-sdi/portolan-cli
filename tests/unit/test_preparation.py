@@ -300,6 +300,15 @@ class TestStemGroupResolver:
 
         assert _scan(tmp_path, "basemap.pmtiles") == {"basemap": ("./basemap.pmtiles", ["data"])}
 
+    def test_a_gdal_statistics_sidecar_is_never_an_asset(self, tmp_path: Path) -> None:
+        """GDAL writes ``.aux.xml`` after the first scan, so a rebuild differed."""
+        item_dir = tmp_path / "scene"
+        _write(item_dir, "scene.tif", "scene.tif.aux.xml")
+
+        assert _scan(item_dir, "scene.tif", collection_level=False) == {
+            "data": ("scene.tif", ["data"]),
+        }
+
     def test_item_level_primary_is_data_and_its_source_is_source(self, tmp_path: Path) -> None:
         item_dir = tmp_path / "scene"
         _write(item_dir, "scene.tif", "scene.jp2", "scene.thumb.jpg")

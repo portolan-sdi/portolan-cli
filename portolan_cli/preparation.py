@@ -143,16 +143,24 @@ def _get_asset_role(path: Path) -> str:
     return _ROLE_MAP.get(path.suffix.lower(), "data")
 
 
+# The GDAL persistent auxiliary metadata (PAM) sidecar, such as x.tif.aux.xml.
+GDAL_PAM_SUFFIX = ".aux.xml"
+
+
 def _is_never_an_asset(file_path: Path) -> bool:
     """Report whether a directory entry can never be a tracked asset.
 
-    Three entries qualify, and none of them depend on the item being scanned:
+    Four entries qualify, and none of them depend on the item being scanned:
 
     - A hidden file. Editors and tools leave them beside the data.
     - A symlink. This check must precede any ``is_dir()`` branching, because
       ``is_dir()`` follows symlinks, so a symlinked ``.gdb`` directory would
       otherwise be checksummed as a container asset and escape the intended
       item boundary.
+    - A GDAL ``.aux.xml`` statistics sidecar. GDAL writes it after the first
+      scan, when it computes band statistics, so a later ``add --force``
+      registered it and the rebuild differed. The spec does not count it as
+      the embedded statistics (PORTO-FMT-026), so it is a cache, not an asset.
     - The scratch file of an in-place GeoParquet rewrite. The hidden test
       already covers the name the current writer uses. A killed run of an
       earlier version can leave a visible one, and tracking that as an asset
@@ -167,6 +175,8 @@ def _is_never_an_asset(file_path: Path) -> bool:
     if file_path.name.startswith("."):
         return True
     if file_path.is_symlink():
+        return True
+    if file_path.name.lower().endswith(GDAL_PAM_SUFFIX):
         return True
     return is_rewrite_temp(file_path)
 
