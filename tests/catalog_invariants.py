@@ -385,15 +385,16 @@ def _check_columns(cat: _Catalog, node: _Node) -> list[Violation]:
 
     An asset that carries its own ``table:columns`` matches its file. The
     ``table:columns`` of the item or collection matches the schema of its one
-    Parquet data asset, or, for a collection of several files, the union of
-    their column names in order of first appearance.
+    Parquet data asset, in order. For a collection of several files it holds
+    the union of their column names. ``add`` reads the files in directory
+    order, which differs between platforms, so the union compares as a set.
     """
     import pyarrow.parquet as pq
 
     owner_level = (
         node.data.get("properties", {}) if node.data.get("type") == "Feature" else node.data
     )
-    shared: list[str] = []
+    shared: list[list[str]] = []
     checks: list[tuple[str, list[str] | None, list[str]]] = []
     for key, asset in _assets(node).items():
         target = _local(node, str(asset.get("href", "")))
@@ -408,9 +409,13 @@ def _check_columns(cat: _Catalog, node: _Node) -> list[Violation]:
         if "table:columns" in asset:
             checks.append((f"asset {key!r}", _names(asset["table:columns"]), actual))
         else:
-            shared += [name for name in actual if name not in shared]
-    if shared:
-        checks.append(("table:columns", _names(owner_level.get("table:columns")), shared))
+            shared.append(actual)
+    declared_shared = _names(owner_level.get("table:columns"))
+    if len(shared) == 1:
+        checks.append(("table:columns", declared_shared, shared[0]))
+    elif shared and declared_shared is not None:
+        union = sorted({name for names in shared for name in names})
+        checks.append(("table:columns", sorted(declared_shared), union))
     return [
         Violation(
             "P-COLUMNS",
