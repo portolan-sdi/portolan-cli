@@ -748,7 +748,7 @@ def _render_geometries(
         True if successful, False otherwise.
     """
     try:
-        import matplotlib.pyplot as plt
+        plt = _pyplot()
         from matplotlib.collections import PatchCollection
         from matplotlib.patches import Polygon as MplPolygon
     except ImportError:
@@ -1084,7 +1084,7 @@ def _render_geoparquet(
         True if successful, False otherwise.
     """
     try:
-        import matplotlib.pyplot as plt
+        plt = _pyplot()
     except ImportError:
         logger.debug("matplotlib not available")
         return False
@@ -1167,6 +1167,20 @@ def _render_geoparquet(
 # =============================================================================
 # Public API
 # =============================================================================
+
+
+def _pyplot() -> Any:
+    """Import pyplot on the Agg backend, which draws to a file and needs no GUI.
+
+    The default backend is TkAgg on Windows. A thread that frees a TkAgg figure
+    there can abort the process.
+    """
+    import matplotlib as mpl
+
+    mpl.use("Agg")
+    import matplotlib.pyplot as plt
+
+    return plt
 
 
 def add_basemap(

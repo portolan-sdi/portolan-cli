@@ -1388,3 +1388,19 @@ class TestGeoparquetSampling:
         gdf, _bbox, _crs = _read_geoparquet_for_thumbnail(gpq, max_features=None)
 
         assert len(gdf) == 1000
+
+
+@pytest.mark.unit
+def test_the_thumbnail_pyplot_draws_on_the_agg_backend() -> None:
+    """TkAgg, the Windows default, can abort the process from a thread."""
+    import matplotlib as mpl
+
+    from portolan_cli.viz.thumbnail import _pyplot
+
+    previous = mpl.get_backend()
+    mpl.use("svg")
+    try:
+        _pyplot()
+        assert mpl.get_backend().lower() == "agg"
+    finally:
+        mpl.use(previous)
