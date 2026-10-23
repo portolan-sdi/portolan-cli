@@ -318,7 +318,8 @@ def test_mypy_ratchet_modules_still_need_it(tmp_path: Path) -> None:
     unreachable = re.findall(
         r"^(\S+?\.py):\d+: error: .*\[unreachable\]$", run.stdout, re.MULTILINE
     )
-    reported = {_path_to_module(path) for path in unreachable}
+    # mypy prints native paths, so Windows reports portolan_cli\stac.py.
+    reported = {_path_to_module(path.replace("\\", "/")) for path in unreachable}
     assert sorted(set(modules) - reported) == [], run.stdout + run.stderr
 
 
