@@ -1034,7 +1034,9 @@ def _read_geoparquet_for_thumbnail(
                 # Sampling is an optimization; a full read is always correct.
                 logger.debug("Falling back to a full read of %s: %s", gpq_path, exc)
         if gdf is None:
-            gdf = gpd.read_parquet(gpq_path)
+            # One file, not a dataset: a hive directory name such as
+            # kdtree_cell=000 would add a clashing partition column (#1038).
+            gdf = gpd.read_parquet(gpq_path, partitioning=None)
         if gdf.empty:
             return None, None, None
 
@@ -1056,7 +1058,7 @@ def _read_geoparquet_for_thumbnail(
         return gdf, full_bbox, source_crs
 
     except Exception as e:
-        logger.debug("Failed to read GeoParquet for thumbnail: %s", e)
+        logger.warning("Could not read %s for its thumbnail: %s", gpq_path.name, e)
         return None, None, None
 
 
