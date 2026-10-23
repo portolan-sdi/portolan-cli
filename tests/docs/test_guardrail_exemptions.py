@@ -43,7 +43,7 @@ DESIGN_REASONS = frozenset(
     }
 )
 
-EXPECTED_COUNTS = {"xfail": 21, "invariant": 7, "config-key": 6}
+EXPECTED_COUNTS = {"xfail": 10, "invariant": 6, "config-key": 6}
 
 
 def _sources() -> dict[Path, ast.Module]:

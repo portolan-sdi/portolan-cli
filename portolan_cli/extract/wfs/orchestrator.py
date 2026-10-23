@@ -28,7 +28,6 @@ import logging
 from collections import Counter
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from portolan_cli.extract.common.report import MetadataExtracted
 from portolan_cli.extract.common.source import (
@@ -43,6 +42,7 @@ from portolan_cli.extract.common.source import (
     slugify,
 )
 from portolan_cli.extract.common.styles import extract_wms_legend, extract_wms_style
+from portolan_cli.extract.common.urls import merge_query
 from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult, discover_layers
 from portolan_cli.licensing import license_url_from_text
 
@@ -205,6 +205,7 @@ class WFSLayerSource:
             catalog_title=title,
             catalog_description=description,
             root_metadata=(title, description),
+            filtered=True,
         )
 
     def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
@@ -290,7 +291,7 @@ class WFSLayerSource:
 
     @staticmethod
     def _layer_url(source: str, typename: str) -> str:
-        return _build_wfs_url(
+        return merge_query(
             source, {"service": "WFS", "request": "GetFeature", "typename": typename}
         )
 
@@ -353,25 +354,6 @@ def extract_wfs_catalog(
         driver_options(options, layer_filter, layer_exclude),
         on_progress=on_progress,
     )
-
-
-def _build_wfs_url(base_url: str, params: dict[str, str]) -> str:
-    """Build a WFS URL by merging params into base_url.
-
-    Properly handles existing query params and URL-encodes values.
-
-    Args:
-        base_url: Base WFS service URL (may already have query params).
-        params: Parameters to add/override (e.g., service, request, typename).
-
-    Returns:
-        Complete URL with merged and encoded parameters.
-    """
-    parsed = urlparse(base_url)
-    existing_params = dict(parse_qsl(parsed.query))
-    existing_params.update(params)
-    new_query = urlencode(existing_params)
-    return urlunparse(parsed._replace(query=new_query))
 
 
 def _build_metadata(url: str, discovery_result: WFSDiscoveryResult | None) -> MetadataExtracted:

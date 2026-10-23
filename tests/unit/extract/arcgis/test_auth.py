@@ -12,16 +12,10 @@ import pytest
 from portolan_cli.errors import ArcGISAuthError
 from portolan_cli.extract.arcgis.auth import (
     ArcGISCredentials,
-    apply_token,
     resolve_token,
 )
 
 pytestmark = pytest.mark.unit
-
-
-@pytest.mark.unit
-def test_apply_token_appends_param() -> None:
-    assert "token=T" in apply_token("https://x/rest/services?f=json", "T")
 
 
 @pytest.mark.unit

@@ -130,6 +130,21 @@ class TestBuildWMSGetStylesURL:
         assert "GetCapabilities" not in result
         assert "service=WFS" not in result
 
+    def test_wfs_request_params_do_not_reach_wms_urls(self) -> None:
+        """#981: typeNames and outputFormat are WFS parameters. WMS URLs drop them."""
+        from portolan_cli.extract.common.styles import _build_wms_getlegendgraphic_url
+
+        wfs_url = "https://h.example/geoserver/wfs?apikey=k%2B1&typeNames=x&outputFormat=json"
+
+        assert _build_wms_getstyles_url(wfs_url, "ws:lyr") == (
+            "https://h.example/geoserver/wms?apikey=k%2B1&service=WMS&version=1.1.1"
+            "&request=GetStyles&layers=ws%3Alyr"
+        )
+        assert _build_wms_getlegendgraphic_url(wfs_url, "ws:lyr") == (
+            "https://h.example/geoserver/wms?apikey=k%2B1&service=WMS&version=1.1.1"
+            "&request=GetLegendGraphic&layer=ws%3Alyr&format=image%2Fpng"
+        )
+
 
 class TestFetchWMSStyle:
     """Tests for WMS style fetching."""
@@ -282,13 +297,7 @@ class TestExtractESRIStyle:
         collection_path = tmp_path / "test-collection"
         collection_path.mkdir()
 
-        with patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch:
-            mock_fetch.return_value = sample_layer_json
-
-            result = extract_esri_style(
-                layer_url="https://example.com/FeatureServer/0",
-                collection_path=collection_path,
-            )
+        result = extract_esri_style(sample_layer_json, collection_path)
 
         assert result is not None
         assert result.path.exists()
@@ -305,28 +314,7 @@ class TestExtractESRIStyle:
         collection_path = tmp_path / "test-collection"
         collection_path.mkdir()
 
-        with patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch:
-            mock_fetch.return_value = {"name": "TestLayer"}
-
-            result = extract_esri_style(
-                layer_url="https://example.com/FeatureServer/0",
-                collection_path=collection_path,
-            )
-
-        assert result is None
-
-    def test_returns_none_on_fetch_failure(self, tmp_path: Path) -> None:
-        """Returns None when ESRI request fails."""
-        collection_path = tmp_path / "test-collection"
-        collection_path.mkdir()
-
-        with patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch:
-            mock_fetch.side_effect = StyleExtractionError("Connection failed")
-
-            result = extract_esri_style(
-                layer_url="https://example.com/FeatureServer/0",
-                collection_path=collection_path,
-            )
+        result = extract_esri_style({"name": "TestLayer"}, collection_path)
 
         assert result is None
 
@@ -337,13 +325,7 @@ class TestExtractESRIStyle:
         collection_path = tmp_path / "test-collection"
         collection_path.mkdir()
 
-        with patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch:
-            mock_fetch.return_value = sample_layer_json
-
-            result = extract_esri_style(
-                layer_url="https://example.com/FeatureServer/0",
-                collection_path=collection_path,
-            )
+        result = extract_esri_style(sample_layer_json, collection_path)
 
         assert result is not None
         style = json.loads(result.path.read_text())
@@ -356,19 +338,20 @@ class TestExtractESRIStyle:
         collection_path = tmp_path / "test-collection"
         collection_path.mkdir()
 
-        with (
-            patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch,
-            patch("portolan_cli.extract.common.styles.convert_esri_renderer") as mock_convert,
-        ):
-            mock_fetch.return_value = sample_layer_json
+        with patch("portolan_cli.extract.common.styles.convert_esri_renderer") as mock_convert:
             mock_convert.side_effect = ValueError("Unexpected internal error")
 
-            result = extract_esri_style(
-                layer_url="https://example.com/FeatureServer/0",
-                collection_path=collection_path,
-            )
+            result = extract_esri_style(sample_layer_json, collection_path)
 
         assert result is None
+
+
+_BLUE_FILL_LAYER: dict[str, Any] = {
+    "name": "Test",
+    "drawingInfo": {
+        "renderer": {"type": "simple", "symbol": {"type": "esriSFS", "color": [0, 0, 255, 255]}}
+    },
+}
 
 
 class TestStyleFileOutput:
@@ -379,23 +362,7 @@ class TestStyleFileOutput:
         collection_path = tmp_path / "test-collection"
         collection_path.mkdir()
 
-        sample_json = {
-            "name": "Test",
-            "drawingInfo": {
-                "renderer": {
-                    "type": "simple",
-                    "symbol": {"type": "esriSFS", "color": [0, 0, 255, 255]},
-                }
-            },
-        }
-
-        with patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch:
-            mock_fetch.return_value = sample_json
-
-            result = extract_esri_style(
-                layer_url="https://example.com/FeatureServer/0",
-                collection_path=collection_path,
-            )
+        result = extract_esri_style(_BLUE_FILL_LAYER, collection_path)
 
         assert result is not None
         assert (collection_path / "styles").is_dir()
@@ -406,24 +373,7 @@ class TestStyleFileOutput:
         collection_path = tmp_path / "test-collection"
         collection_path.mkdir()
 
-        sample_json = {
-            "name": "Test",
-            "drawingInfo": {
-                "renderer": {
-                    "type": "simple",
-                    "symbol": {"type": "esriSFS", "color": [0, 0, 255, 255]},
-                }
-            },
-        }
-
-        with patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch:
-            mock_fetch.return_value = sample_json
-
-            result = extract_esri_style(
-                layer_url="https://example.com/FeatureServer/0",
-                collection_path=collection_path,
-                style_name="original",
-            )
+        result = extract_esri_style(_BLUE_FILL_LAYER, collection_path, style_name="original")
 
         assert result is not None
         assert result.path.name == "original.json"

@@ -475,9 +475,9 @@ requires. rashid reads both `PTL-DAT-006` and `PTL-DAT-007` through the bbox
 covering column, so a file without that column fails `portolan check`. Set
 `sort: none` or `add_bbox: false` to turn either off.
 
-These settings apply to `portolan add` and `portolan convert`. `portolan
-extract arcgis` always writes the covering column and does not read this
-block.
+These settings apply to `portolan add`, `portolan convert`, and `portolan
+extract arcgis`. `extract arcgis --raw` writes no catalog, so it uses the
+defaults.
 
 `add` also rewrites a GeoParquet you hand it when that file carries no
 covering column. A file that already has one is copied untouched, so a large

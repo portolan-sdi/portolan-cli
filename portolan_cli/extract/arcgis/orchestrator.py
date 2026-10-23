@@ -5,12 +5,16 @@ MapServer services, and ``extract_arcgis_catalog`` runs it with
 ``run_layer_extraction``. ImageServer rasters take their own path in
 ``imageserver/``.
 
-- ``discover`` handles a single service or a services root. For a root it
-  walks the folders, applies the service filters, and lists each service's
-  layers. A single-layer service becomes one collection at the service
-  directory. A multi-layer service nests one collection per layer.
-- ``fetch`` calls ``gpio.extract_arcgis``, adds the bbox covering column,
-  sorts, writes, and restores the source CRS (issues #802, #805).
+- ``discover`` handles a single service, a layer URL, or a services root.
+  A layer URL such as ``.../MapServer/0`` selects that one layer and marks
+  it ``explicit`` (issue #652). For a root it walks the folders, applies the
+  service filters, and lists each service's layers in service order (issue
+  #1012). A single-layer service becomes one collection at the service
+  directory. A multi-layer service nests one collection per layer. Tables
+  join the layers only with ``include_tables`` (issue #812).
+- ``fetch`` calls ``gpio.extract_arcgis``, applies the catalog's
+  ``conversion.vector`` layout (issues #805, #834), writes, and restores the
+  source CRS (issue #802). A failure names the layer (issue #866).
 - ``styles`` converts the layer's ESRI drawingInfo (issue #490).
 
 Typical usage:
@@ -28,12 +32,15 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from portolan_cli.convert import has_geometry
+from portolan_cli.conversion_config import VectorSettings, get_vector_settings
+from portolan_cli.convert import apply_vector_settings
 from portolan_cli.extract.arcgis.discovery import (
+    ArcGISClient,
+    ArcGISDiscoveryError,
     FolderTraversal,
     LayerInfo,
     ServiceDiscoveryResult,
@@ -142,29 +149,22 @@ def list_services(
     Raises:
         ValueError: If URL is not a services root or folder URL.
     """
-    from portolan_cli.extract.arcgis.filters import filter_services
+    from portolan_cli.extract.common.filters import filter_services
 
     parsed = parse_arcgis_url(url)
     if parsed.url_type not in (ArcGISURLType.SERVICES_ROOT, ArcGISURLType.SERVICES_FOLDER):
         msg = f"URL is not a services root or folder URL: {url}"
         raise ValueError(msg)
 
+    client = ArcGISClient(timeout=timeout, token=token)
+    types = list(service_types) if service_types else None
     if recurse:
-        services, traversal = discover_services_recursive(
-            url,
-            service_types=list(service_types) if service_types else None,
-            token=token,
-            timeout=timeout,
-        )
+        services, traversal = discover_services_recursive(url, client=client, service_types=types)
         coverage: FolderCoverage | None = _coverage_from_traversal(traversal)
         folders = traversal.visited
     else:
         services, folders = discover_services(
-            url,
-            service_types=list(service_types) if service_types else None,
-            return_folders=True,
-            timeout=timeout,
-            token=token,
+            url, client=client, service_types=types, return_folders=True
         )
         coverage = None
 
@@ -211,14 +211,15 @@ class ExtractionOptions:
 
     Attributes:
         workers: Number of parallel page requests per layer (gpio max_workers)
-        retries: Number of retry attempts per failed layer
+        retries: Attempts per layer, and per discovery request that fails
+            with a transient error (issue #811)
         timeout: Per-request timeout in seconds, for layer discovery and for
             the feature-page requests gpio makes (issue #898)
         resume: Whether to resume from existing extraction report
         dry_run: If True, list layers without extracting
-        sort_hilbert: Whether to apply Hilbert spatial sorting
-        add_bbox: Whether to add a bbox covering column. rashid reads both
-            PTL-DAT-006 and PTL-DAT-007 through this column (issue #805).
+        vector: The GeoParquet layout to write. ``extract_arcgis_catalog``
+            reads it from the catalog's ``conversion.vector`` block, except
+            with ``raw``, which runs without a catalog (issue #834).
         raw: If True, skip auto-init (only create extraction files, no STAC catalog)
         no_styles: If True, skip style extraction from ESRI drawingInfo
         token: Optional ArcGIS token for authenticated endpoints
@@ -232,6 +233,8 @@ class ExtractionOptions:
             reprojects the coordinates to that CRS (issue #802).
         catalog_id: Catalog id for the created catalog. None derives it from
             the output directory name, which is the behavior before issue #821.
+        include_tables: Extract the tables of a service too, as Parquet with
+            no geometry (issue #812).
     """
 
     workers: int = 3
@@ -240,8 +243,7 @@ class ExtractionOptions:
     resume: bool = False
     raw: bool = False
     dry_run: bool = False
-    sort_hilbert: bool = True
-    add_bbox: bool = True
+    vector: VectorSettings = field(default_factory=VectorSettings)
     no_styles: bool = False
     token: str | None = None
     recurse: bool = True
@@ -249,6 +251,11 @@ class ExtractionOptions:
     license_url: str | None = None
     output_crs: str = "native"
     catalog_id: str | None = None
+    include_tables: bool = False
+
+    def client(self) -> ArcGISClient:
+        """Return the discovery client with this run's token, timeout, and retries."""
+        return ArcGISClient(timeout=self.timeout, token=self.token, retries=self.retries)
 
 
 def _is_wgs84_crs(crs: dict[str, object]) -> bool:
@@ -351,9 +358,8 @@ def _discover_and_filter_services(
     url: str,
     service_filter: list[str] | None,
     service_exclude: list[str] | None,
-    timeout: float,
     *,
-    token: str | None = None,
+    client: ArcGISClient,
     folder: str | None = None,
     recurse: bool = True,
 ) -> tuple[list[ServiceInfo], FolderCoverage | None]:
@@ -363,24 +369,16 @@ def _discover_and_filter_services(
     discovery is used and coverage is None. When folder is set (SERVICES_FOLDER
     URL) only services under that folder prefix are kept.
     """
-    from portolan_cli.extract.arcgis.filters import filter_services
+    from portolan_cli.extract.common.filters import filter_services
 
     coverage: FolderCoverage | None
+    types = ["FeatureServer", "MapServer"]
     if recurse:
-        services, traversal = discover_services_recursive(
-            url,
-            service_types=["FeatureServer", "MapServer"],
-            token=token,
-            timeout=timeout,
-        )
+        services, traversal = discover_services_recursive(url, client=client, service_types=types)
         coverage = _coverage_from_traversal(traversal)
     else:
         services, _folders = discover_services(
-            url,
-            service_types=["FeatureServer", "MapServer"],
-            return_folders=True,
-            timeout=timeout,
-            token=token,
+            url, client=client, service_types=types, return_folders=True
         )
         coverage = None
 
@@ -399,57 +397,6 @@ def _discover_and_filter_services(
         services = [s for s in services if s.name in filtered_names]
 
     return services, coverage
-
-
-def _collect_layers_from_services(
-    services: list[ServiceInfo],
-    base_url: str,
-    timeout: float,
-    skipped_out: list[tuple[ServiceInfo, LayerInfo, str]] | None = None,
-) -> tuple[list[LayerInfo], dict[int, ServiceInfo], dict[str, int], list[tuple[str, str]]]:
-    """Collect all layers from multiple services.
-
-    Returns:
-        Tuple of (all_layers, service_for_layer, layer_count_per_service, discovery_errors).
-        - all_layers: Flat list of all discovered layers
-        - service_for_layer: Maps layer index to its source service
-        - layer_count_per_service: Maps service name to total layer count (for flatten logic)
-        - discovery_errors: List of (service_name, error_message) tuples
-
-    Layers of services without Query capability are not returned as extractable.
-    When skipped_out is given, they are appended to it as (service, layer, reason).
-    """
-    all_layers: list[LayerInfo] = []
-    service_for_layer: dict[int, ServiceInfo] = {}
-    layer_count_per_service: dict[str, int] = {}
-    discovery_errors: list[tuple[str, str]] = []
-
-    for service in services:
-        service_url = service.get_url(base_url)
-        try:
-            service_discovery = discover_layers(service_url, timeout=timeout)
-            if skipped_out is not None and service_discovery.skip_reason:
-                skipped_out.extend(
-                    (service, layer, service_discovery.skip_reason)
-                    for layer in service_discovery.skipped_layers
-                )
-            # Track layer count for this service (for flatten logic)
-            layer_count_per_service[service.name] = len(service_discovery.layers)
-            for layer in service_discovery.layers:
-                layer_idx = len(all_layers)
-                all_layers.append(layer)
-                service_for_layer[layer_idx] = service
-        except Exception as e:
-            error_msg = str(e)
-            discovery_errors.append((service.name, error_msg))
-            logger.warning(
-                "Failed to discover layers from service '%s': %s",
-                service.name,
-                error_msg,
-            )
-            continue  # Skip services that fail to discover
-
-    return all_layers, service_for_layer, layer_count_per_service, discovery_errors
 
 
 def _service_metadata(url: str, found: ServiceDiscoveryResult) -> MetadataExtracted:
@@ -475,6 +422,10 @@ def _service_metadata(url: str, found: ServiceDiscoveryResult) -> MetadataExtrac
         known_issues=arcgis_metadata.known_issues,
         license_info_raw=arcgis_metadata.license_info_raw,
     )
+
+
+class ArcGISLayerError(Exception):
+    """A layer fetch failed. The message names the layer and keeps the cause."""
 
 
 @dataclass(frozen=True)
@@ -508,79 +459,152 @@ class ArcGISLayerSource:
         self.service_exclude = service_exclude
 
     def discover(self, source: str, options: LayerSourceOptions) -> Discovery:  # noqa: ARG002 - LayerSource signature
-        """List the layers of a service, or of every service under a root."""
+        """List the layers of a service, of one layer URL, or of every service under a root."""
         parsed = parse_arcgis_url(source)
         if parsed.url_type in (ArcGISURLType.SERVICES_ROOT, ArcGISURLType.SERVICES_FOLDER):
             return self._discover_root(source, parsed.base_url, parsed.folder)
-        found = discover_layers(source, timeout=self.options.timeout)
-        layers = [
-            LayerRef(id=layer.id, name=layer.name, data=ArcGISLayer(layer, source))
-            for layer in found.layers
-        ]
-        layers += [
-            LayerRef(
-                id=layer.id,
-                name=layer.name,
-                data=ArcGISLayer(layer, source),
-                skip_reason=found.skip_reason,
-            )
-            for layer in found.skipped_layers
-        ]
-        return self.discovery_from(
-            source, _service_metadata(source, found), layers, license_info=found.license_info
+        service_url = source if parsed.layer_id is None else parsed.base_url
+        found = discover_layers(service_url, self.options.client())
+        layers = self._service_refs(found, service_url)
+        empty_reason = None
+        if parsed.layer_id is not None:
+            # A layer URL names one layer of the service (issue #652).
+            named = self._service_refs(found, service_url, tables=True)
+            layers = [replace(ref, explicit=True) for ref in named if ref.id == parsed.layer_id]
+            if not layers:
+                listed = ", ".join(f"{ref.id} ({ref.name})" for ref in named) or "none"
+                raise ArcGISDiscoveryError(
+                    f"The service {service_url} has no layer {parsed.layer_id}. "
+                    f"Its layers and tables: {listed}"
+                )
+        elif found.tables and not self.options.include_tables:
+            count = len(found.tables)
+            noun = "table" if count == 1 else "tables"
+            if layers:
+                logger.warning(
+                    "The service lists %d %s that are not extracted. "
+                    "Pass --include-tables to extract them.",
+                    count,
+                    noun,
+                )
+            else:
+                empty_reason = (
+                    f"The service lists {count} {noun} and no layers. "
+                    "Pass --include-tables to extract tables."
+                )
+        discovery = self.discovery_from(
+            service_url,
+            _service_metadata(service_url, found),
+            layers,
+            license_info=found.license_info,
         )
+        discovery.empty_reason = empty_reason
+        return discovery
+
+    def _service_refs(
+        self,
+        found: ServiceDiscoveryResult,
+        service_url: str,
+        *,
+        tables: bool | None = None,
+        service: ServiceInfo | None = None,
+    ) -> list[LayerRef]:
+        """Return a service's layers, then its tables, then its skipped layers.
+
+        Args:
+            found: The service's discovery result.
+            service_url: The service URL that each layer's data keeps.
+            tables: Include the tables. None follows ``include_tables``.
+            service: The service of a services-root walk. Each layer then
+                gets a path under the service directory.
+        """
+        extractable = [(info, "layer") for info in found.layers]
+        if self.options.include_tables if tables is None else tables:
+            extractable += [(info, "table") for info in found.tables]
+        service_dir = _service_output_dir(Path(), service.name).as_posix() if service else None
+        refs: list[LayerRef] = []
+        for info, kind in extractable:
+            path = None
+            if service_dir is not None:
+                # A single-layer service is one collection at the service directory.
+                # A multi-layer service is a subcatalog with one collection per layer.
+                single = len(extractable) == 1
+                path = service_dir if single else f"{service_dir}/{slugify(info.name)}"
+            refs.append(
+                LayerRef(
+                    id=info.id,
+                    name=info.name,
+                    path=path,
+                    data=ArcGISLayer(info, service_url),
+                    kind="table" if kind == "table" else "layer",
+                )
+            )
+        reason = found.skip_reason
+        if service is not None:
+            reason = f"{service.name}: {reason}"
+        refs += [
+            LayerRef(
+                id=info.id,
+                name=info.name,
+                path=f"{service_dir}/{slugify(info.name)}" if service_dir else None,
+                data=ArcGISLayer(info, service_url),
+                skip_reason=reason,
+            )
+            for info in found.skipped_layers
+        ]
+        return refs
 
     def _discover_root(self, source: str, base_url: str, folder: str | None) -> Discovery:
         """Walk a services root. Each layer keeps the URL of its own service.
 
+        The layers keep the service order, skipped layers included, so the
+        ``[i/N]`` progress index follows the services (issue #1012). A
+        service that fails discovery is logged and left out.
+
         A services root spans services with different licenses and the
         catalog carries one metadata.yaml, so no harvested license applies
-        (issue #686).
+        (issue #686). The services' shared attribution, when they agree on
+        one, names the producer (issue #1039).
         """
+        client = self.options.client()
         services, coverage = _discover_and_filter_services(
             source,
             self.service_filter,
             self.service_exclude,
-            self.options.timeout,
-            token=self.options.token,
+            client=client,
             folder=folder,
             recurse=self.options.recurse,
         )
-        skipped: list[tuple[ServiceInfo, LayerInfo, str]] = []
-        all_layers, service_for_layer, layer_counts, _errors = _collect_layers_from_services(
-            services, base_url, self.options.timeout, skipped_out=skipped
+        layers: list[LayerRef] = []
+        errors: list[str] = []
+        attributions: set[str] = set()
+        for service in services:
+            service_url = service.get_url(base_url)
+            try:
+                found = discover_layers(service_url, client)
+            except Exception as err:  # noqa: BLE001 - one service must not stop the walk
+                errors.append(f"{service.name}: {err}")
+                logger.warning("Failed to discover layers from service '%s': %s", service.name, err)
+                continue
+            layers += self._service_refs(found, service_url, service=service)
+            if found.copyright_text and found.copyright_text.strip():
+                attributions.add(found.copyright_text.strip())
+        extractable = [ref.data.info for ref in layers if ref.skip_reason is None]
+        # The catalog names a producer only when every service names the same one.
+        combined = ServiceDiscoveryResult(
+            layers=extractable,
+            copyright_text=attributions.pop() if len(attributions) == 1 else None,
         )
-        layers = []
-        for index, layer in enumerate(all_layers):
-            service = service_for_layer[index]
-            service_dir = _service_output_dir(Path(), service.name).as_posix()
-            # A single-layer service is one collection at the service directory.
-            # A multi-layer service is a subcatalog with one collection per layer.
-            single = layer_counts.get(service.name, 0) == 1
-            path = service_dir if single else f"{service_dir}/{slugify(layer.name)}"
-            layers.append(
-                LayerRef(
-                    id=layer.id,
-                    name=layer.name,
-                    path=path,
-                    data=ArcGISLayer(layer, service.get_url(base_url)),
-                )
+        discovery = self.discovery_from(source, _service_metadata(source, combined), layers)
+        discovery.folder_coverage = coverage
+        if not layers:
+            failed = (
+                f" Discovery failed for {len(errors)}. First error: {errors[0]}" if errors else ""
             )
-        for service, layer, reason in skipped:
-            service_dir = _service_output_dir(Path(), service.name).as_posix()
-            layers.append(
-                LayerRef(
-                    id=layer.id,
-                    name=layer.name,
-                    path=f"{service_dir}/{slugify(layer.name)}",
-                    data=ArcGISLayer(layer, service.get_url(base_url)),
-                    skip_reason=f"{service.name}: {reason}",
-                )
+            discovery.empty_reason = (
+                f"The services root lists {len(services)} services with no layer.{failed}"
             )
-        combined = ServiceDiscoveryResult(layers=list(all_layers))
-        found = self.discovery_from(source, _service_metadata(source, combined), layers)
-        found.folder_coverage = coverage
-        return found
+        return discovery
 
     @staticmethod
     def discovery_from(
@@ -641,13 +665,20 @@ class ArcGISLayerSource:
         if "output_crs" in sig.parameters:
             kwargs["output_crs"] = options.output_crs
         else:
-            from portolan_cli.output import warn
-
-            warn(
+            logger.warning(
                 "Installed geoparquet-io does not support output CRS selection. "
-                f"Output uses WGS84 (EPSG:4326), not '{options.output_crs}'."
+                "Output uses WGS84 (EPSG:4326), not '%s'.",
+                options.output_crs,
             )
-        table = gpio.extract_arcgis(arcgis_layer.url, **kwargs)
+        try:
+            table = gpio.extract_arcgis(arcgis_layer.url, **kwargs)
+        except Exception as err:
+            # gpio reads the features through DuckDB, whose error names only a
+            # temp file. Keep the layer identity with it (issue #866).
+            raise ArcGISLayerError(
+                f"Layer {layer.name} (id {layer.id}) at {arcgis_layer.url}: "
+                f"{type(err).__name__}: {err}"
+            ) from err
 
         # Capture the CRS the extractor detected before the write drops it. gpio.Table
         # tags the native SR on the table but its writer emits crs: null, so a native
@@ -657,20 +688,9 @@ class ArcGISLayerSource:
         captured_crs = getattr(table, "crs", None)
         source_crs = captured_crs if isinstance(captured_crs, dict) else None
 
-        # Add the bbox covering column, then sort. Same order as
-        # convert.apply_vector_settings, so both writers produce the same layout.
-        # Portolan needs row-group spatial statistics for efficient remote reads.
-        # ArcGIS extraction writes GeoParquet directly, so the covering column is
-        # added here rather than by a later conversion pass.
-        #
-        # An ArcGIS service publishes non-spatial Table layers beside its Feature
-        # Layers, and both operations raise a DuckDB binder error on a table with
-        # no geometry column, so the same guard applies here (issue #805).
-        if has_geometry(table):
-            if options.add_bbox:
-                table = table.add_bbox()
-            if options.sort_hilbert:
-                table = table.sort_hilbert()
+        # The same layout step as `add` and `convert`. It skips a table with
+        # no geometry column, such as an ArcGIS Table layer (issue #805).
+        table = apply_vector_settings(table, options.vector)
 
         # Write to parquet
         table.write(str(dest))
@@ -689,9 +709,7 @@ class ArcGISLayerSource:
         name = layer.name
         description = None
         try:
-            details = fetch_layer_details(
-                arcgis_layer.service_url, layer.id, timeout=self.options.timeout
-            )
+            details = fetch_layer_details(arcgis_layer.service_url, layer.id, self.options.client())
             description = details.get("description")
             name = details.get("name", layer.name)
         except Exception as err:  # noqa: BLE001 - a missing description must not fail the catalog
@@ -712,14 +730,20 @@ class ArcGISLayerSource:
 
     def styles(self, source: str, layer: LayerRef, collection_dir: Path) -> None:  # noqa: ARG002 - LayerSource signature
         """Convert the layer's ESRI drawingInfo to a style (issue #490)."""
-        if self.options.no_styles:
+        from portolan_cli.extract.arcgis.discovery import fetch_layer_details
+
+        if self.options.no_styles or layer.kind == "table":
             return
         arcgis_layer: ArcGISLayer = layer.data
-        style = extract_esri_style(
-            layer_url=arcgis_layer.url,
-            collection_path=collection_dir,
-            source_layer=slugify(layer.name),
-        )
+        try:
+            # The client sends the token, so a secured layer has a style too.
+            layer_json = fetch_layer_details(
+                arcgis_layer.service_url, layer.id, self.options.client()
+            )
+        except ArcGISDiscoveryError as err:
+            logger.warning("Could not fetch the ESRI layer JSON for %s: %s", layer.name, err)
+            return
+        style = extract_esri_style(layer_json, collection_dir, source_layer=slugify(layer.name))
         if style:
             logger.debug("Extracted style for %s: %s", layer.name, style.path)
 
@@ -761,6 +785,8 @@ def extract_arcgis_catalog(
         MissingLicenseError: If no license can be resolved (issue #686).
     """
     options = options or ExtractionOptions()
+    if not options.raw:
+        options = replace(options, vector=get_vector_settings(output_dir))
     # ``workers`` is gpio's page concurrency inside one layer. Layers run one
     # at a time.
     driver = LayerSourceOptions(

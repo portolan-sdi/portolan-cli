@@ -34,8 +34,9 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePath
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
+from portolan_cli.errors import PortolanError
 from portolan_cli.trace import span, submit
 
 if TYPE_CHECKING:
@@ -62,18 +63,32 @@ _METADATA_WORKERS = 4
 class EmptyLayerError(Exception):
     """Raised by ``fetch`` when the layer has no features.
 
-    The driver records the layer as ``empty``, not ``failed``. A resumed run
-    does not try it again.
+    The driver does not retry it. A layer that the user did not name is
+    recorded as ``empty``, and a resumed run does not try it again. A layer
+    that the user named is ``failed`` (issue #1034).
     """
+
+
+class NoLayersSelectedError(PortolanError):
+    """Raised when a run selects no layer to extract (issue #1034).
+
+    Error code: PRTLN-EXT003
+    """
+
+    code = "PRTLN-EXT003"
 
 
 @dataclass(frozen=True)
 class LayerRef:
-    """One layer that a source serves.
+    """One layer that a source serves, and the one identity of that layer.
 
     Attributes:
-        id: Layer id as the source knows it. The report records it.
-        name: Layer name. Filters and resume match on it.
+        id: Layer id as the source knows it, such as an ArcGIS layer id. A
+            numeric filter pattern matches it (issue #1003). The report
+            records it.
+        name: Qualified layer name as the source knows it, such as a WFS
+            ``workspace:layer``. Filters match it and its leaf after the
+            last ``:`` (issue #768). Resume matches on it.
         path: Collection directory relative to the catalog, ``/``-separated.
             The data file is ``<path>/<last segment>.parquet``. None uses a
             slug of the name.
@@ -83,6 +98,12 @@ class LayerRef:
         skip_reason: Why the layer cannot be fetched, such as a source with
             no query support. The driver records the layer as ``skipped``
             and does not call ``fetch``. None means fetch the layer.
+        kind: ``layer`` for a spatial layer, ``table`` for a table with no
+            geometry, ``raster`` for an image layer.
+        explicit: True when the user named this layer, with a ``--layers``
+            name or id, or with a layer URL. A named layer with 0 features
+            is ``failed``, not ``empty`` (issue #1034). ``filter_refs`` sets
+            it for a name match. A source sets it for a layer URL.
     """
 
     id: int
@@ -91,6 +112,8 @@ class LayerRef:
     data: Any = None
     notes: tuple[str, ...] = ()
     skip_reason: str | None = None
+    kind: Literal["layer", "table", "raster"] = "layer"
+    explicit: bool = False
 
 
 @dataclass
@@ -109,6 +132,10 @@ class Discovery:
         root_metadata: ``(title, description)`` written to ``catalog.json``
             after a new catalog is created, or None to leave it.
         folder_coverage: Folders that a services-root traversal visited.
+        empty_reason: Why ``layers`` is empty, for the error that a run with
+            no layers raises, such as a service that lists only tables.
+        filtered: True when ``discover`` already applied the layer filters
+            with ``filter_refs``. The driver then does not filter again.
     """
 
     source_url: str
@@ -120,6 +147,8 @@ class Discovery:
     catalog_description: str | None = None
     root_metadata: tuple[str | None, str | None] | None = None
     folder_coverage: FolderCoverage | None = None
+    empty_reason: str | None = None
+    filtered: bool = False
 
 
 @dataclass(frozen=True)
@@ -218,7 +247,7 @@ class LayerSource(Protocol):
         """Write ``layer`` to ``dest`` as Parquet. Return the row count.
 
         Raise ``EmptyLayerError`` for a layer with no features. Raise any
-        other exception for a failure. The driver retries both.
+        other exception for a failure. The driver retries a failure only.
         """
         ...
 
@@ -268,18 +297,68 @@ def layer_path(layer: LayerRef) -> str:
 def filter_refs(
     layers: list[LayerRef], include: list[str] | None, exclude: list[str] | None
 ) -> list[LayerRef]:
-    """Keep the layers whose names pass the include and exclude glob patterns."""
-    from portolan_cli.extract.common.filters import filter_layers
+    """Keep the layers that the include and exclude patterns select.
 
-    if not include and not exclude:
+    A pattern matches a layer as ``filters.layer_matches`` says. A layer
+    that a non-glob include pattern matches becomes ``explicit``, because
+    the user named it. A pattern that matches no layer logs a warning that
+    names the pattern and 3 layers of the source (issue #1034).
+
+    Args:
+        layers: The discovered layers, in discovery order.
+        include: Patterns to keep. None keeps every layer.
+        exclude: Patterns to drop, applied after ``include``.
+
+    Returns:
+        The kept layers, in discovery order.
+    """
+    from portolan_cli.extract.common.filters import is_glob, layer_matches
+
+    include = include or []
+    exclude = exclude or []
+    sample = ", ".join(layer.name for layer in layers[:3]) or "none"
+    for pattern in (*include, *exclude):
+        if not any(layer_matches(layer.id, layer.name, pattern) for layer in layers):
+            logger.warning(
+                "Layer pattern %r matches no layer. Layers at the source include: %s",
+                pattern,
+                sample,
+            )
+    kept: list[LayerRef] = []
+    for layer in layers:
+        hits = [p for p in include if layer_matches(layer.id, layer.name, p)]
+        if include and not hits:
+            continue
+        if any(layer_matches(layer.id, layer.name, p) for p in exclude):
+            continue
+        named = any(not is_glob(p) for p in hits)
+        kept.append(replace(layer, explicit=True) if named else layer)
+    return kept
+
+
+def _select_layers(discovery: Discovery, options: LayerSourceOptions) -> list[LayerRef]:
+    """Filter the discovered layers. Raise when the run selects none (issue #1034).
+
+    Raises:
+        NoLayersSelectedError: When no layer is left. The message names the
+            cause: the source lists no layers, or the filters match none.
+    """
+    layers = discovery.layers
+    filters = options.layer_filter or options.layer_exclude
+    if not discovery.filtered:
+        layers = filter_refs(layers, options.layer_filter, options.layer_exclude)
+    if layers:
         return layers
-    kept = filter_layers(
-        [{"id": index, "name": layer.name} for index, layer in enumerate(layers)],
-        include=include,
-        exclude=exclude,
-    )
-    kept_ids = {item["id"] for item in kept}
-    return [layer for index, layer in enumerate(layers) if index in kept_ids]
+    source = discovery.source_url
+    if filters and (discovery.layers or discovery.filtered):
+        count = len(discovery.layers)
+        noun = "layer" if count == 1 else "layers"
+        listed = f" The source lists {count} {noun}." if not discovery.filtered else ""
+        raise NoLayersSelectedError(
+            f"No layer at {source} matches the layer filters.{listed}", source=source
+        )
+    reason = discovery.empty_reason or "The source lists no layers."
+    raise NoLayersSelectedError(f"No layers to extract from {source}. {reason}", source=source)
 
 
 def _package_version(name: str) -> str:
@@ -310,6 +389,11 @@ def build_report(
         ExtractionSummary,
         MetadataExtracted,
     )
+    from portolan_cli.extract.common.urls import sanitize_published_string
+
+    # The report keeps a local source path, because push never publishes
+    # .portolan. A credential goes (issue #981).
+    source_url = sanitize_published_string(discovery.source_url) or discovery.source_url
 
     summary = ExtractionSummary(
         total_layers=len(results),
@@ -322,8 +406,9 @@ def build_report(
         total_duration_seconds=sum(r.duration_seconds or 0.0 for r in results),
         wall_duration_seconds=wall_duration_seconds,
     )
-    metadata = discovery.metadata or MetadataExtracted(
-        source_url=discovery.source_url,
+    metadata = replace(discovery.metadata, source_url=source_url) if discovery.metadata else None
+    metadata = metadata or MetadataExtracted(
+        source_url=source_url,
         description=None,
         attribution=None,
         keywords=None,
@@ -334,7 +419,7 @@ def build_report(
     )
     return ExtractionReport(
         extraction_date=datetime.now(timezone.utc).isoformat(),
-        source_url=discovery.source_url,
+        source_url=source_url,
         portolan_version=_package_version("portolan-cli"),
         gpio_version=_package_version("geoparquet-io"),
         metadata_extracted=metadata,
@@ -446,6 +531,9 @@ class _Run:
             staged.parent.mkdir(parents=True, exist_ok=True)
             start = time.monotonic()
             rows = self.source.fetch(source_url, layer, staged)
+            if rows == 0:
+                # A source that writes 0 rows has no features, as one that raises.
+                raise EmptyLayerError(f"Layer {layer.name} has no features")
             return rows, time.monotonic() - start
 
         outcome = retry_with_backoff(
@@ -453,6 +541,7 @@ class _Run:
             RetryConfig(
                 max_attempts=max(self.options.retries, 1), initial_delay=self.options.retry_delay
             ),
+            give_up_on=(EmptyLayerError,),
             on_retry=lambda count, err: logger.debug(
                 "Retry %d for layer %s: %s", count, layer.name, err
             ),
@@ -481,7 +570,10 @@ class _Run:
             return _Staged(result, staged)
         shutil.rmtree(root, ignore_errors=True)
         error = str(outcome.error) if outcome.error else "Unknown error"
-        if isinstance(outcome.error, EmptyLayerError):
+        if isinstance(outcome.error, EmptyLayerError) and layer.explicit:
+            # The user asked for this layer, so no data is a failure (issue #963).
+            error = f"Layer {layer.name} returned 0 features, and the run named it: {error}"
+        elif isinstance(outcome.error, EmptyLayerError):
             logger.warning("Layer %s is empty (0 features), skipping", layer.name)
             return _Staged(
                 _result(
@@ -560,8 +652,11 @@ def _resumed_result(
     if relative in done_by_path:
         return done_by_path[relative]
     previous = by_name.get(layer.name)
-    if previous is None or previous.status == "empty":
-        return previous
+    if previous is None:
+        return None
+    if previous.status == "empty":
+        # A named layer must have data, so a resumed run tries it again.
+        return None if layer.explicit else previous
     # A legacy "skipped" result counts only when its data file is still there.
     # It becomes "success", because the catalog build adds only those.
     data_file = output_dir / relative
@@ -587,10 +682,19 @@ def _resumed_result(
 
 
 def _fetch_sequential(
-    run: _Run, jobs: list[tuple[int, LayerRef]], total: int
+    run: _Run, plan: list[tuple[int, LayerRef, LayerResult | None]], total: int
 ) -> list[tuple[int, LayerResult]]:
+    """Fetch the layers in order. A layer with a kept result reports at its own index.
+
+    The ``[i/N]`` index then only increases, also with skipped and resumed
+    layers in the run (issue #1012).
+    """
     results: list[tuple[int, LayerResult]] = []
-    for index, layer in jobs:
+    for index, layer, kept in plan:
+        if kept is not None:
+            _report_kept(run, index, total, layer)
+            results.append((index, kept))
+            continue
         run.emit(index, total, layer, "starting")
         run.emit(index, total, layer, "extracting")
         result = run.fetch_layer(layer)
@@ -599,6 +703,13 @@ def _fetch_sequential(
         )
         results.append((index, result))
     return results
+
+
+def _report_kept(run: _Run, index: int, total: int, layer: LayerRef) -> None:
+    """Report a layer that the run does not fetch: a skip reason, or a resumed result."""
+    # "starting" prints the "[i/N] <name>" line that the skip line follows.
+    run.emit(index, total, layer, "starting")
+    run.emit(index, total, layer, "skipped", layer.skip_reason)
 
 
 def _fetch_parallel(
@@ -734,14 +845,18 @@ def _seed_collection(
 ) -> None:
     from portolan_cli.extract.common.metadata_seeding import seed_collection_metadata
     from portolan_cli.metadata_seeding import seed_metadata_yaml
-    from portolan_cli.output import detail
     from portolan_cli.stac import update_stac_metadata
 
     if meta.record is not None:
-        detail(f"Using {meta.record_label} for {layer.name}")
-        # No license placeholder: a collection inherits the catalog's license.
+        from portolan_cli.extract.common.urls import sanitize_published_string
+
+        logger.info("Using %s for %s", meta.record_label, layer.name)
+        record = meta.record
+        if record.source_url:
+            record = replace(record, source_url=sanitize_published_string(record.source_url))
+        # No placeholder: a collection inherits the catalog's license and contact.
         seed_metadata_yaml(
-            meta.record, collection_dir / ".portolan" / "metadata.yaml", license_placeholder=False
+            record, collection_dir / ".portolan" / "metadata.yaml", placeholders=False
         )
         update_stac_metadata(
             collection_dir / "collection.json", title=meta.title, description=meta.description
@@ -812,7 +927,8 @@ def build_catalog(
     """Build or extend the catalog around the layers that succeeded.
 
     Steps: init the catalog and add the files, register styles and legends,
-    add a ``via`` link to each collection, then seed collection metadata.
+    add a ``via`` link to each collection, seed collection metadata, then
+    draw the thumbnails.
 
     Args:
         layer_source: The source the layers come from.
@@ -822,6 +938,7 @@ def build_catalog(
         resolved_license: The license to seed (issue #686).
         catalog_id: Catalog id. None derives it from the directory name.
     """
+    from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
     from portolan_cli.extract.common.orchestrator_base import (
         add_source_links,
         init_extracted_catalog,
@@ -852,6 +969,15 @@ def build_catalog(
         title_builder=lambda result: found.title if (found := link(result)) else result.name,
     )
     seed_collections(layer_source, discovery, output_dir, report)
+    # Thumbnails come last, as in `add`. The renderer's GUI objects then never
+    # meet the metadata thread pool above. A Tk object that a worker thread
+    # frees aborts the process on Windows.
+    files, versioned = added
+    ensure_collection_thumbnails(
+        output_dir,
+        {path.parent.relative_to(output_dir).as_posix() for path in files},
+        versioned_collections=versioned,
+    )
 
 
 def run_layer_extraction(
@@ -895,7 +1021,7 @@ def run_layer_extraction(
             layer_path(layer)
         stage.set(layers=len(discovery.layers))
     with span("extract.filter") as stage:
-        layers = filter_refs(discovery.layers, options.layer_filter, options.layer_exclude)
+        layers = _select_layers(discovery, options)
         stage.set(layers=len(layers))
     if options.dry_run:
         return build_report(discovery, [_pending(layer) for layer in layers])
@@ -909,29 +1035,29 @@ def run_layer_extraction(
 
     run = _Run(layer_source, discovery, output_dir, options, on_progress)
     total = len(layers)
-    collected: list[tuple[int, LayerResult]] = []
-    jobs: list[tuple[int, LayerRef]] = []
-    for index, layer in enumerate(layers):
-        if layer.skip_reason:
-            run.emit(index, total, layer, "starting")
-            run.emit(index, total, layer, "skipped", layer.skip_reason)
-            collected.append((index, _skipped(layer)))
-            continue
-        previous = _resumed_result(layer, output_dir, done_by_path, by_name)
-        if previous is not None:
-            # "starting" prints the "[i/N] <name>" line that the skip line follows.
-            run.emit(index, total, layer, "starting")
-            run.emit(index, total, layer, "skipped")
-            collected.append((index, previous))
-        else:
-            jobs.append((index, layer))
+    plan = [
+        (
+            index,
+            layer,
+            _skipped(layer)
+            if layer.skip_reason
+            else _resumed_result(layer, output_dir, done_by_path, by_name),
+        )
+        for index, layer in enumerate(layers)
+    ]
+    jobs = [(index, layer) for index, layer, kept in plan if kept is None]
 
     fetch_start = time.monotonic()
     with span("extract.fetch", layers=len(jobs), workers=options.workers):
         if options.workers > 1 and len(jobs) > 1:
+            # Parallel downloads end in any order, so the kept layers report first.
+            collected = [(index, kept) for index, _, kept in plan if kept is not None]
+            for index, layer, kept in plan:
+                if kept is not None:
+                    _report_kept(run, index, total, layer)
             collected += _fetch_parallel(run, jobs, total)
         else:
-            collected += _fetch_sequential(run, jobs, total)
+            collected = _fetch_sequential(run, plan, total)
     wall_duration = time.monotonic() - fetch_start
     collected.sort(key=lambda item: item[0])
     # A timed-out worker can still write here. After this event, that worker

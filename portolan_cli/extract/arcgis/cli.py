@@ -262,13 +262,13 @@ def _default_arcgis_output_dir(parsed: ParsedArcGISURL) -> Path:
     "--layers",
     type=str,
     default=None,
-    help="Include layers matching glob patterns (comma-separated). Example: 'Census*,Transport*'",
+    help="Include layers by layer id or name glob (comma-separated). Example: 'Census*,3'",
 )
 @click.option(
     "--exclude-layers",
     type=str,
     default=None,
-    help="Exclude layers matching glob patterns (comma-separated). Example: 'Legacy*,Test*'",
+    help="Exclude layers by layer id or name glob (comma-separated). Example: 'Legacy*,7'",
 )
 @click.option(
     "--filter",
@@ -317,6 +317,11 @@ def _default_arcgis_output_dir(parsed: ParsedArcGISURL) -> Path:
     help="Do not traverse folders for services-root URLs (default: recurse).",
 )
 @click.option(
+    "--include-tables",
+    is_flag=True,
+    help="Also extract the tables of a service, as Parquet with no geometry.",
+)
+@click.option(
     "--output-crs",
     type=str,
     default="native",
@@ -333,7 +338,7 @@ def _default_arcgis_output_dir(parsed: ParsedArcGISURL) -> Path:
     "--retries",
     type=click.IntRange(min=1),
     default=3,
-    help="Retry attempts per failed layer or tile (default: 3).",
+    help="Attempts per layer, tile, or discovery request that fails (default: 3).",
 )
 @click.option(
     "--timeout",
@@ -408,6 +413,7 @@ def extract_arcgis_cmd(
     username: str | None,
     password: str | None,
     no_recurse: bool,
+    include_tables: bool,
     output_crs: str,
     workers: int,
     retries: int,
@@ -592,6 +598,7 @@ def extract_arcgis_cmd(
         license=license_id,
         license_url=license_url,
         output_crs=output_crs,
+        include_tables=include_tables,
     )
 
     on_progress = cli_helpers.make_extract_progress_callback()

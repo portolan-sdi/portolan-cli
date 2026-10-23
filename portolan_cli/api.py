@@ -27,6 +27,8 @@ Groups:
 - Terminal output: ``success``, ``info``, ``warn``, ``error``, ``detail``.
 - JSON output for commands: ``success_envelope``, ``error_envelope``,
   ``ErrorDetail``. A command writes ``envelope.to_json()`` to stdout.
+- Published strings: ``sanitize_published_string`` drops credentials and
+  local paths from a value before it goes into a published file.
 - Warnings: ``PluginWarning``.
 - Timings: ``span``. A stage wrapped in it shows in ``--timings`` output.
 - Format handler helpers: the converters, metadata readers, describe and
@@ -70,6 +72,7 @@ if TYPE_CHECKING:
         extractor_from,
         run_layer_extraction,
     )
+    from portolan_cli.extract.common.urls import sanitize_published_string
     from portolan_cli.finalization import aggregate_table_extension
     from portolan_cli.format_families import RASTER_EXTENSIONS, VECTOR_EXTENSIONS, is_geojson
     from portolan_cli.formats import is_geoparquet
@@ -155,6 +158,7 @@ __all__ = [
     "parse_version",
     "partition_vector_file",
     "run_layer_extraction",
+    "sanitize_published_string",
     "span",
     "success",
     "success_envelope",
@@ -222,6 +226,7 @@ _EXPORTS = {
     "parse_version": "portolan_cli.versions",
     "partition_vector_file": "portolan_cli.partitioning",
     "run_layer_extraction": "portolan_cli.extract.common.source",
+    "sanitize_published_string": "portolan_cli.extract.common.urls",
     "span": "portolan_cli.trace",
     "success": "portolan_cli.output",
     "success_envelope": "portolan_cli.json_output",

@@ -143,3 +143,31 @@ class TestRetryWithBackoff:
         assert len(retries) == 2
         assert retries[0][0] == 1
         assert retries[1][0] == 2
+
+    def test_only_retries_specified_exceptions(self) -> None:
+        """An error outside retry_on propagates on the first attempt."""
+        calls: list[int] = []
+
+        def fail() -> str:
+            calls.append(1)
+            raise KeyError("permanent")
+
+        with pytest.raises(KeyError):
+            retry_with_backoff(fail, RetryConfig(initial_delay=0.0), retry_on=(ValueError,))
+        assert len(calls) == 1
+
+    def test_give_up_on_ends_the_retries_with_a_failed_result(self) -> None:
+        """An empty layer is not retried: the next answer is empty too (#1034)."""
+        calls: list[int] = []
+        error = LookupError("no features")
+
+        def empty() -> str:
+            calls.append(1)
+            raise error
+
+        result = retry_with_backoff(
+            empty, RetryConfig(max_attempts=3, initial_delay=0.0), give_up_on=(LookupError,)
+        )
+
+        assert (result.success, result.attempts, result.error) == (False, 1, error)
+        assert len(calls) == 1

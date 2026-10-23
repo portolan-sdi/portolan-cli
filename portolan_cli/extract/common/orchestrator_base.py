@@ -5,9 +5,16 @@ The ArcGIS, WFS, and Carto orchestrators each run the same lifecycle after their
 
 1. Collect the successfully-extracted assets.
 2. Initialize a Portolan catalog and add those assets.
-3. Register any discovered style/legend sidecars as STAC assets.
+3. Register any discovered style/legend sidecars as STAC assets, with
+   ``file:size`` and ``file:checksum`` (PTL-AST-003).
 4. Add a provenance ``via`` link to each collection.
 5. Seed the catalog-level ``metadata.yaml`` from harvested service metadata.
+   The source's attribution names the producer (PTL-PRV-001).
+6. Give each collection a thumbnail (PTL-VIZ-001). ``source.build_catalog``
+   does it last, as ``add`` does.
+
+The output of ``portolan extract`` passes ``portolan check`` when the source
+publishes an attribution.
 
 Only three things actually differ between the sources: the per-source title used
 for a ``via`` link, the source-URL that link points at, and the metadata
@@ -22,6 +29,7 @@ pattern, to keep import time low and sidestep import cycles through ``add.py``.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -32,6 +40,7 @@ if TYPE_CHECKING:
     from portolan_cli.extract.common.report import ExtractionReport, LayerResult
     from portolan_cli.licensing import ResolvedLicense
     from portolan_cli.metadata_extraction import ExtractedMetadata
+    from portolan_cli.viz.style import LegendInfo
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +77,7 @@ def init_extracted_catalog(
     title: str | None,
     description: str | None,
     post_init: Callable[[Path, list[Path], bool], None] | None = None,
-) -> list[Path] | None:
+) -> tuple[list[Path], set[str]] | None:
     """Initialize a catalog and add the extracted assets.
 
     Shared core of ``build_catalog`` and the ImageServer catalog step: collect
@@ -98,8 +107,9 @@ def init_extracted_catalog(
             (issue #832).
 
     Returns:
-        The list of added parquet files, or ``None`` when there was nothing to
-        add (the caller should then stop — no catalog was created).
+        The added parquet files and the collections that this add wrote a
+        version for, or ``None`` when there was nothing to add. The caller
+        then stops, because no catalog exists.
     """
     from portolan_cli.add import add_files
     from portolan_cli.catalog import CatalogState, detect_state, init_catalog
@@ -145,8 +155,8 @@ def init_extracted_catalog(
     if post_init is not None:
         post_init(output_dir, parquet_files, fresh)
 
-    add_files(paths=parquet_files, catalog_root=output_dir)
-    return parquet_files
+    added, _skipped, _failures = add_files(paths=parquet_files, catalog_root=output_dir)
+    return parquet_files, {item.collection_id for item in added}
 
 
 def register_collection_styles(
@@ -187,7 +197,25 @@ def register_collection_styles(
             legends = discover_legends(collection_dir)
             if legends:
                 register_legend_assets(collection_dir, legends)
+                # Each asset states its size and checksum (PTL-AST-003).
+                _stamp_legends(collection_dir, legends)
                 logger.debug("Registered %d legend(s) for %s", len(legends), result.name)
+
+
+def _stamp_legends(collection_dir: Path, legends: list[LegendInfo]) -> None:
+    """Write ``file:size`` and ``file:checksum`` on the legend assets (PTL-AST-003)."""
+    from portolan_cli.json_io import write_json_atomic
+    from portolan_cli.stac_parquet import stamp_file_fields
+
+    collection_json = collection_dir / "collection.json"
+    if not collection_json.exists():
+        return
+    data = json.loads(collection_json.read_text(encoding="utf-8"))
+    assets = data.get("assets", {})
+    keys = [legend.key for legend in legends if legend.key in assets]
+    stamped = [stamp_file_fields(assets[key], collection_dir) for key in keys]
+    if any(stamped):
+        write_json_atomic(collection_json, data)
 
 
 def add_source_links(
@@ -209,6 +237,7 @@ def add_source_links(
         url_builder: Builds the ``via`` href from ``(source_url, layer)``.
         title_builder: Builds the ``via`` link title from ``layer``.
     """
+    from portolan_cli.extract.common.urls import sanitize_published_string
     from portolan_cli.stac import add_via_link
 
     source_url = report.source_url
@@ -223,11 +252,10 @@ def add_source_links(
         if not collection_path.exists():
             continue
 
-        add_via_link(
-            collection_path,
-            url_builder(source_url, layer),
-            title=title_builder(layer),
-        )
+        # The link is published, so it carries no credential (issue #981).
+        href = sanitize_published_string(url_builder(source_url, layer))
+        if href is not None:
+            add_via_link(collection_path, href, title=title_builder(layer))
 
 
 def seed_catalog_metadata(
@@ -247,12 +275,55 @@ def seed_catalog_metadata(
         license_override: License resolved from the command line, which wins over
             anything harvested (issue #686).
     """
+    from dataclasses import replace
+
+    from portolan_cli.extract.common.urls import sanitize_published_string
     from portolan_cli.metadata_seeding import seed_metadata_yaml
-    from portolan_cli.output import info
+    from portolan_cli.output import info, warn
 
     if extracted is None:
         return
+    # The source URL reaches the published via link (issue #981).
+    if extracted.source_url:
+        extracted = replace(extracted, source_url=sanitize_published_string(extracted.source_url))
 
     metadata_path = output_dir / ".portolan" / "metadata.yaml"
     if seed_metadata_yaml(extracted, metadata_path, license_override=license_override):
+        if extracted.attribution:
+            _append_producer(metadata_path, extracted.attribution)
         info(f"Seeded metadata.yaml from {extracted.source_type}")
+        if not extracted.attribution:
+            # A producer is a fact of the source. Portolan does not invent one.
+            warn(
+                "No producer provider: the source publishes no attribution. Add a provider "
+                f"with the producer role to {metadata_path}. Until then, check reports "
+                "PTL-PRV-001."
+            )
+        if not (extracted.contact_name or extracted.contact_email):
+            # The host serves the catalog. Only the person who runs extract knows it,
+            # and a placeholder is never published as one (issue #1039).
+            # A collection takes an inherited contact only on its first add, so the
+            # warning names the collection file, which a re-add applies (#755).
+            warn(
+                "No host provider: set contact.name and contact.email in "
+                f"{output_dir / '<collection>' / '.portolan' / 'metadata.yaml'}, then run "
+                "'portolan add --force <collection>'. Until then, check reports PTL-PRV-002."
+            )
+
+
+def _append_producer(metadata_path: Path, attribution: str) -> None:
+    """Name the source's attribution as the producer in a seeded metadata.yaml.
+
+    A collection names a producer (PTL-PRV-001). The source states who made
+    the data in its attribution, so the seed takes it from there. The host
+    comes from ``contact``, as ``providers.resolve_providers`` does it.
+    """
+    import yaml
+
+    block = yaml.safe_dump(
+        {"providers": [{"name": attribution, "roles": ["producer"]}]},
+        sort_keys=False,
+        allow_unicode=True,
+    )
+    with metadata_path.open("a", encoding="utf-8") as stream:
+        stream.write("# The producer is the attribution that the source publishes.\n" + block)

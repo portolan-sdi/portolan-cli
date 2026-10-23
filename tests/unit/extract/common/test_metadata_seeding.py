@@ -160,6 +160,23 @@ class TestSeedCollectionMetadata:
         metadata_path = collection_dir / ".portolan" / "metadata.yaml"
         assert metadata_path.exists()
 
+    def test_child_file_holds_no_placeholder_and_no_credential(self, tmp_path: Path) -> None:
+        """#1039, #981: the child inherits the catalog contact, and its URL holds no key."""
+        import yaml
+
+        from portolan_cli.extract.common.metadata_seeding import seed_collection_metadata
+
+        seed_collection_metadata(
+            tmp_path,
+            source_type="wfs",
+            source_url="https://example.com/wfs?apikey=SECRET&typename=buildings",
+            layer_name="buildings",
+        )
+
+        metadata = yaml.safe_load((tmp_path / ".portolan" / "metadata.yaml").read_text())
+        assert "contact" not in metadata
+        assert metadata["source_url"] == "https://example.com/wfs?typename=buildings"
+
     def test_includes_layer_description(self, tmp_path: Path) -> None:
         """Description from layer abstract is included in seeded file."""
         from portolan_cli.extract.common.metadata_seeding import seed_collection_metadata

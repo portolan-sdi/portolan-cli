@@ -502,6 +502,11 @@ async def download_tile(
         raise ImageServerExtractionError(msg) from e
 
 
+#: The GTiff creation option that carries ``conversion.cog.quality`` for each
+#: lossy codec.
+_GTIFF_QUALITY_OPTION = {"JPEG": "jpeg_quality", "WEBP": "webp_level"}
+
+
 async def _convert_to_cog(
     input_path: Path,
     output_path: Path,
@@ -534,12 +539,10 @@ async def _convert_to_cog(
         if settings.compression.upper() not in ("JPEG", "WEBP"):
             profile["predictor"] = settings.predictor
 
-        # Apply quality for lossy compression
-        if settings.quality is not None and settings.compression.upper() in (
-            "JPEG",
-            "WEBP",
-        ):
-            profile["quality"] = settings.quality
+        # The GTiff driver has no QUALITY option. Each lossy codec has its own.
+        option = _GTIFF_QUALITY_OPTION.get(settings.compression.upper())
+        if settings.quality is not None and option is not None:
+            profile[option] = settings.quality
 
         # Apply tile size
         profile["blockxsize"] = settings.tile_size

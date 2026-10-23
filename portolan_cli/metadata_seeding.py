@@ -47,7 +47,7 @@ def seed_metadata_yaml(
     metadata_path: Path,
     *,
     overwrite: bool = False,
-    license_placeholder: bool = True,
+    placeholders: bool = True,
     license_override: ResolvedLicense | None = None,
 ) -> bool:
     """Seed a metadata.yaml file from extracted metadata.
@@ -62,12 +62,13 @@ def seed_metadata_yaml(
         extracted: Extracted metadata from a data source.
         metadata_path: Path to write metadata.yaml (usually .portolan/metadata.yaml).
         overwrite: If False (default), skip if file already exists.
-        license_placeholder: Whether a TODO placeholder may stand in for a license
-            the harvest did not find. False for a collection-level file, which
-            inherits the catalog's license through the hierarchical merge: the child
-            wins, so a placeholder there would override the real license the catalog
-            carries (issue #686). A license the harvest did find is written either
-            way, since a layer's own license beats an inherited one.
+        placeholders: Whether a TODO placeholder may stand in for a license or a
+            contact the harvest did not find. False for a collection-level file,
+            which inherits the catalog's license and contact through the
+            hierarchical merge: the child wins, so a placeholder there would
+            override the real value the catalog carries (issues #686, #1039). A
+            value the harvest did find is written either way, since a layer's own
+            value beats an inherited one.
         license_override: License to write instead of anything harvested, from a
             command-line flag. An identifier a human named beats a guess.
 
@@ -96,7 +97,7 @@ def seed_metadata_yaml(
     # Build metadata structure
     metadata = _build_metadata_dict(
         extracted,
-        license_placeholder=license_placeholder,
+        placeholders=placeholders,
         license_override=license_override,
     )
 
@@ -129,7 +130,7 @@ def seed_metadata_yaml(
 def _build_metadata_dict(
     extracted: ExtractedMetadata,
     *,
-    license_placeholder: bool = True,
+    placeholders: bool = True,
     license_override: ResolvedLicense | None = None,
 ) -> dict[str, Any]:
     """Build metadata.yaml dictionary from extracted metadata.
@@ -139,24 +140,19 @@ def _build_metadata_dict(
 
     Args:
         extracted: Extracted metadata from a data source.
-        license_placeholder: Whether a TODO placeholder may stand in for a license
-            the harvest did not find. See ``seed_metadata_yaml``.
+        placeholders: Whether a TODO placeholder may stand in for a license or a
+            contact the harvest did not find. See ``seed_metadata_yaml``.
         license_override: License to write instead of anything harvested.
 
     Returns:
         Dictionary ready for YAML serialization.
     """
-    # Build contact section
-    contact: dict[str, str] = {
-        "name": extracted.contact_name or TODO_MARKER,
-        "email": extracted.contact_email or TODO_MARKER,
-    }
-
-    # Build main metadata structure
-    metadata: dict[str, Any] = {
-        # Required fields
-        "contact": contact,
-    }
+    metadata: dict[str, Any] = {}
+    contact = {"name": extracted.contact_name, "email": extracted.contact_email}
+    if placeholders:
+        metadata["contact"] = {key: value or TODO_MARKER for key, value in contact.items()}
+    elif any(contact.values()):
+        metadata["contact"] = {key: value for key, value in contact.items() if value}
 
     # A harvested licence is never an SPDX identifier, but when the source published
     # a licence URL, "other" plus a rel="license" link to it is the second shape the
@@ -170,7 +166,7 @@ def _build_metadata_dict(
     elif extracted.license_url:
         metadata["license"] = OTHER_LICENSE
         metadata["license_url"] = extracted.license_url
-    elif license_placeholder:
+    elif placeholders:
         metadata["license"] = TODO_MARKER
 
     # Optional fields - only include if we have data

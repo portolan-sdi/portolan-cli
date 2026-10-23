@@ -202,6 +202,7 @@ class CartoLayerSource:
             metadata=_build_metadata(sql_api_url, found.account_name),
             catalog_seed=extract_carto_metadata(sql_api_url, found.account_name).to_extracted(),
             catalog_title=found.account_name,
+            filtered=True,
         )
 
     def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:

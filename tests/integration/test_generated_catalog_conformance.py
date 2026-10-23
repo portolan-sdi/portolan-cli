@@ -498,8 +498,11 @@ COG_STATS = {"PTL-DAT-009": "#748"}
 # A design reason, not an issue: tests/docs/test_guardrail_exemptions.py
 # lists it in DESIGN_REASONS.
 SINGLE_COG_LAYOUT = "single COG layout: spec and CLI disagree (PTL-COL-001), maintainer decision"
-# extract writes a placeholder host provider, no producer, and no thumbnail.
-EXTRACT_PROVIDERS = "#1039"
+# extract names the producer from the source attribution, and no host. Only the
+# person who runs extract knows the organization that serves the catalog, and a
+# seeded placeholder is never published as one (#1039). PTL-SCH-001 fires
+# because the profile schema requires a host provider.
+HOST_UNSET = {"PTL-PRV-002": "host unset by design", "PTL-SCH-001": "host unset by design"}
 
 # Invariants every raster collection breaks today.
 RASTER_INVARIANTS = {
@@ -623,7 +626,6 @@ SCENARIOS: dict[str, Scenario] = {
             # The incubating Iceberg extension is not in rashid's registry.
             "PTL-EXT-002": 1,
         },
-        known_invariants={"P-NO-LOCAL-PATH": "#939"},
     ),
     "realdata-fieldmaps-boundaries": _realdata_row(REALDATA / "fieldmaps-boundaries.parquet"),
     "realdata-nwi-wetlands": _realdata_row(REALDATA / "nwi-wetlands.parquet"),
@@ -652,31 +654,16 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     "extract-arcgis": Scenario(
         build_extract_arcgis,
-        known_errors={
-            "PTL-PRV-001": EXTRACT_PROVIDERS,
-            "PTL-SCH-001": EXTRACT_PROVIDERS,
-            "PTL-VIZ-001": EXTRACT_PROVIDERS,
-        },
+        known_errors=HOST_UNSET,
         marks=(pytest.mark.realdata,),
     ),
     "extract-wfs": Scenario(
         build_extract_wfs,
-        known_errors={
-            "PTL-PRV-001": EXTRACT_PROVIDERS,
-            "PTL-SCH-001": EXTRACT_PROVIDERS,
-            "PTL-VIZ-001": EXTRACT_PROVIDERS,
-        },
-        # register_legend_assets in viz/style.py writes the legends/source
-        # asset of topp_states with no file:size and no file:checksum.
-        expected_advisories={"PTL-AST-003": 2},
+        known_errors=HOST_UNSET,
     ),
     "extract-carto": Scenario(
         build_extract_carto,
-        known_errors={
-            "PTL-PRV-001": EXTRACT_PROVIDERS,
-            "PTL-SCH-001": EXTRACT_PROVIDERS,
-            "PTL-VIZ-001": EXTRACT_PROVIDERS,
-        },
+        known_errors=HOST_UNSET,
     ),
     "push": Scenario(build_push, expected_advisories=ONE_MIRROR),
     "clone": Scenario(build_clone, expected_advisories=ONE_MIRROR),

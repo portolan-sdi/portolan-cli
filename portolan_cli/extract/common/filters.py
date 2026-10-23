@@ -1,14 +1,9 @@
 """Filtering for extraction operations.
 
-This module provides filtering logic for extraction commands.
-Both services and layers can be filtered using glob patterns (fnmatch).
-
-Supports:
-- `--layer-filter` accepts glob patterns OR IDs to include
-- `--layer-exclude` accepts glob patterns OR IDs to exclude
-- `--service-filter` accepts glob patterns to include services
-- `--service-exclude` accepts glob patterns to exclude services
-- Patterns use fnmatch semantics: `*` matches any, `?` matches single char
+Services and layers are filtered with glob patterns (fnmatch): ``*``
+matches any text and ``?`` one character. ``source.filter_refs`` applies
+``layer_matches`` to the layers of a run. ``filter_services`` filters the
+services of an ArcGIS services root.
 """
 
 from __future__ import annotations
@@ -63,101 +58,6 @@ def filter_services(
     return result
 
 
-def filter_layers(
-    layers: list[dict[str, int | str]],
-    include: list[str] | None = None,
-    exclude: list[str] | None = None,
-    *,
-    case_sensitive: bool = False,
-) -> list[dict[str, int | str]]:
-    """Filter layers by ID or glob pattern on name.
-
-    Supports both exact ID matching and glob patterns on names:
-    - Numeric strings ("0", "1") match layer IDs exactly
-    - Glob patterns ("sdn_*", "*_2024*") match layer names
-    - Plain strings match layer names (case-insensitive by default)
-
-    Args:
-        layers: List of layer dicts with {"id": int, "name": str}.
-        include: List of layer IDs or glob patterns to include. If None or
-            empty, all layers are included.
-        exclude: List of layer IDs or glob patterns to exclude. Applied after
-            include filtering.
-        case_sensitive: Whether name matching is case-sensitive (default False)
-
-    Returns:
-        Filtered list of layers, preserving original order.
-
-    Examples:
-        >>> layers = [
-        ...     {"id": 0, "name": "sdn_admin_boundaries"},
-        ...     {"id": 1, "name": "sdn_health_facilities"},
-        ...     {"id": 2, "name": "ukr_admin_boundaries"},
-        ... ]
-
-        # Filter by glob pattern
-        >>> filter_layers(layers, include=["sdn_*"])
-        [{'id': 0, 'name': 'sdn_admin_boundaries'}, {'id': 1, 'name': 'sdn_health_facilities'}]
-
-        # Filter by ID
-        >>> filter_layers(layers, include=["0", "1"])
-        [{'id': 0, 'name': 'sdn_admin_boundaries'}, {'id': 1, 'name': 'sdn_health_facilities'}]
-    """
-    result = layers
-
-    # Apply include filter
-    if include:
-        result = [layer for layer in result if _layer_matches(layer, include, case_sensitive)]
-
-    # Apply exclude filter
-    if exclude:
-        result = [layer for layer in result if not _layer_matches(layer, exclude, case_sensitive)]
-
-    return result
-
-
-def apply_unified_filter(
-    services: list[str] | None,
-    layers: list[dict[str, int | str]] | None,
-    filter_pattern: list[str] | None,
-    exclude_pattern: list[str] | None = None,
-) -> tuple[list[str] | None, list[dict[str, int | str]] | None]:
-    """Apply unified filter pattern to both services and layers.
-
-    This is a convenience function for the `--filter` CLI option that applies
-    the same glob pattern to both services and layers.
-
-    Args:
-        services: List of service names (None if not applicable)
-        layers: List of layer dicts (None if not applicable)
-        filter_pattern: Glob patterns to include (applied to both)
-        exclude_pattern: Glob patterns to exclude (applied to both)
-
-    Returns:
-        Tuple of (filtered_services, filtered_layers)
-    """
-    filtered_services = None
-    filtered_layers = None
-
-    if services is not None:
-        filtered_services = filter_services(
-            services,
-            include=filter_pattern,
-            exclude=exclude_pattern,
-            case_sensitive=False,  # Unified filter is case-insensitive
-        )
-
-    if layers is not None:
-        filtered_layers = filter_layers(
-            layers,
-            include=filter_pattern,
-            exclude=exclude_pattern,
-            case_sensitive=False,
-        )
-
-    return filtered_services, filtered_layers
-
-
 def _matches_any_glob(
     value: str,
     patterns: list[str],
@@ -174,29 +74,30 @@ def _matches_any_glob(
     return False
 
 
-def _layer_matches(
-    layer: dict[str, int | str],
-    patterns: list[str],
-    case_sensitive: bool,
-) -> bool:
-    """Check if a layer matches any pattern (by ID or name glob)."""
-    layer_id = layer.get("id")
-    layer_name = str(layer.get("name", ""))
+def is_glob(pattern: str) -> bool:
+    """Return True when ``pattern`` holds a glob character, so it names no single layer."""
+    return any(char in pattern for char in "*?[")
 
-    for pattern in patterns:
-        pattern_stripped = pattern.strip()
 
-        # Check if pattern is a numeric ID
-        if pattern_stripped.isdigit():
-            if layer_id is not None and str(layer_id) == pattern_stripped:
-                return True
-        else:
-            # Glob pattern on name
-            if case_sensitive:
-                if fnmatchcase(layer_name, pattern_stripped):
-                    return True
-            else:
-                if fnmatch(layer_name.lower(), pattern_stripped.lower()):
-                    return True
+def layer_matches(layer_id: int | str, name: str, pattern: str) -> bool:
+    """Return True when ``pattern`` selects the layer.
 
-    return False
+    An all-digit pattern matches the layer id that the source uses, not the
+    position in a list (issue #1003). Any other pattern is a glob that
+    matches, without case, the full name or its leaf after the last ``:``.
+    So ``terenuri`` matches the WFS layer ``cadastru_data:terenuri`` (issue
+    #768).
+
+    Args:
+        layer_id: The layer id at the source.
+        name: The qualified layer name, such as ``workspace:layer``.
+        pattern: One ``--layers`` or ``--exclude-layers`` pattern.
+
+    Returns:
+        True when the pattern matches.
+    """
+    pattern = pattern.strip()
+    if pattern.isdigit():
+        return str(layer_id) == pattern
+    lowered = pattern.lower()
+    return any(fnmatch(candidate.lower(), lowered) for candidate in (name, name.rsplit(":", 1)[-1]))

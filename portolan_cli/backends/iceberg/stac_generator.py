@@ -26,6 +26,8 @@ from pyiceberg.types import (
     TimestamptzType,
 )
 
+from portolan_cli.api import sanitize_published_string
+
 if TYPE_CHECKING:
     from pyiceberg.table import Table
 
@@ -217,16 +219,19 @@ def generate_collection_metadata(table: Table) -> dict[str, Any]:
     if partition_spec:
         metadata["iceberg:partition_spec"] = partition_spec
 
+    # Omit a local location. A file:// or sqlite:// path is the absolute path
+    # of the machine that ran the command, so publishing it leaks the layout of
+    # that machine and names a document no reader can fetch (issue #939). A
+    # credential in a catalog URI query is dropped too.
     catalog_uri = _get_catalog_uri(table)
-    if catalog_uri:
-        metadata["iceberg:catalog_uri"] = catalog_uri
+    published_uri = sanitize_published_string(catalog_uri) if catalog_uri else None
+    if published_uri:
+        metadata["iceberg:catalog_uri"] = published_uri
 
-    # Omit a local location. A file:// path is the absolute path of the machine
-    # that ran the command, so publishing it leaks the layout of that machine
-    # and names a document no reader can fetch.
     location = table.metadata_location
-    if location and not location.startswith("file://"):
-        metadata["iceberg:metadata_location"] = location
+    published_location = sanitize_published_string(location) if location else None
+    if published_location:
+        metadata["iceberg:metadata_location"] = published_location
 
     # A string: an Iceberg snapshot id is 64-bit, and a JSON parser that stores
     # numbers as doubles rounds it above 2^53. A table with no snapshot has no

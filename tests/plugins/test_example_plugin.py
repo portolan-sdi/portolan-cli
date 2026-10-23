@@ -203,8 +203,10 @@ def test_example_extractor_builds_a_catalog(geojson_dir: Path, tmp_path: Path) -
     assert result.exit_code == 0, result.output
     assert "Extracted 2/2 layers" in result.output
     collection = _read(out / "points" / "collection.json")
+    # The source link is a file:// URI. A local path names the machine that ran
+    # the command, so the catalog publishes no via link for it (issue #939).
     vias = [link["href"] for link in collection["links"] if link["rel"] == "via"]
-    assert vias == [(geojson_dir / "points.geojson").resolve().as_uri()]
+    assert vias == []
     assert collection["sci:citation"].startswith("Example Agency (2026).")
 
 
