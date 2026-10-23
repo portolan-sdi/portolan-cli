@@ -788,3 +788,50 @@ class TestAssetLineage:
         assert (
             "https://stac-extensions.github.io/file/v2.1.0/schema.json" in item["stac_extensions"]
         )
+
+
+class TestVersionsKeys:
+    """Issue #1053: every versions.json key is the file's path in the collection."""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "scenes",
+        [
+            pytest.param({"rapidai4eo": "realdata/rapidai4eo-sample.tif"}, id="one-scene"),
+            pytest.param(
+                {"scene-a": "raster/valid/rgb.tif", "scene-b": "raster/valid/singleband.tif"},
+                id="two-scenes",
+            ),
+        ],
+    )
+    def test_the_adopted_item_thumbnail_keeps_its_item_key(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        fixtures_dir: Path,
+        scenes: dict[str, str],
+    ) -> None:
+        """The collection thumbnail step tracked an item sidecar a second time.
+
+        It keyed the file by its name, so versions.json gained a key at the
+        collection root where no file is.
+        """
+        collection_dir = initialized_catalog / "imagery"
+        paths = []
+        for scene, fixture in scenes.items():
+            (collection_dir / scene).mkdir(parents=True)
+            paths.append(str(collection_dir / scene / f"{scene}.tif"))
+            shutil.copy(fixtures_dir / fixture, paths[-1])
+
+        result = runner.invoke(
+            cli, ["add", "--portolan-dir", str(initialized_catalog), *paths], catch_exceptions=False
+        )
+
+        assert result.exit_code == 0, result.output
+        versions = json.loads((collection_dir / "versions.json").read_text())
+        keys = sorted(versions["versions"][-1]["assets"])
+        expected = ["items.parquet"]
+        for scene in scenes:
+            expected += [f"{scene}/{scene}.thumb.jpg", f"{scene}/{scene}.tif"]
+        assert keys == sorted(expected)
+        assert all((collection_dir / key).is_file() for key in keys)
