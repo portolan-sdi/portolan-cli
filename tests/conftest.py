@@ -216,6 +216,11 @@ def _root_entries() -> frozenset[str] | None:
     )
 
 
+# trylast: pytest tears down the session fixtures in its own
+# pytest_sessionfinish. The guard lists the root after that, so a session
+# fixture that cleans up after itself, such as the per-worker site of
+# tests/docs/test_site_build.py, leaves no entry.
+@pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session: pytest.Session) -> None:
     """Fail the run when a test left a new file in the repository.
 
