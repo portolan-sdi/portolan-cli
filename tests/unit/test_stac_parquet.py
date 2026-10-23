@@ -1722,3 +1722,48 @@ class TestWriteReadme:
         ]
         assert asset["file:size"] == readme.stat().st_size
         assert asset["file:checksum"] == file_fields(readme)["file:checksum"]
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("recursive", [True, False])
+    def test_the_readme_command_restamps_the_documentation_asset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recursive: bool
+    ) -> None:
+        """The issue's repro: a catalog that carries the README as an asset."""
+        import shutil
+        from pathlib import Path
+
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+        from portolan_cli.sync.checksums import file_fields
+
+        runner = CliRunner()
+        assert (
+            runner.invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC0-1.0"]).exit_code
+            == 0
+        )
+        collection_dir = tmp_path / "roads"
+        collection_dir.mkdir()
+        fixture = Path(__file__).parents[1] / "fixtures" / "vector" / "valid" / "points.parquet"
+        shutil.copy(fixture, collection_dir / "roads.parquet")
+        add = ["add", "--portolan-dir", str(tmp_path), str(collection_dir / "roads.parquet")]
+        assert runner.invoke(cli, add).exit_code == 0
+        # An older add --force registered the README (issue #1041).
+        collection_json = collection_dir / "collection.json"
+        data = json.loads(collection_json.read_text())
+        data["assets"]["documentation"] = {
+            "href": "./README.md",
+            "roles": ["documentation"],
+            **file_fields(collection_dir / "README.md"),
+        }
+        collection_json.write_text(json.dumps(data))
+        (collection_dir / "README.md").write_text("# hand edit\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        args = ["readme"] if recursive else ["readme", "roads", "--no-recursive"]
+        result = runner.invoke(cli, args)
+
+        assert result.exit_code == 0, result.output
+        asset = json.loads(collection_json.read_text())["assets"]["documentation"]
+        fields = file_fields(collection_dir / "README.md")
+        assert {key: asset[key] for key in fields} == fields
