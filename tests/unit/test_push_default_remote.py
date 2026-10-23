@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -25,6 +26,9 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from portolan_cli.cli import cli
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # =============================================================================
 # Test fixtures
@@ -398,6 +402,17 @@ class TestPushDefaultRemoteDryRun:
 class TestPushDefaultRemoteInvariants:
     """Property-based tests for push default remote behavior."""
 
+    @pytest.fixture(autouse=True)
+    def credentials_ok(self) -> Iterator[None]:
+        """Skip the credential lookup, which these tests do not cover.
+
+        The first lookup in a process builds a botocore session. Under a full
+        xdist run that took 466 ms and broke the 200 ms Hypothesis deadline on
+        the first example only (FlakyFailure).
+        """
+        with patch("portolan_cli.sync.upload.check_credentials", return_value=(True, "")):
+            yield
+
     @pytest.mark.unit
     @given(
         remote_url=st.from_regex(r"s3://[a-z][a-z0-9-]{2,20}/[a-z][a-z0-9-/]{2,30}", fullmatch=True)
@@ -408,6 +423,7 @@ class TestPushDefaultRemoteInvariants:
             HealthCheck.function_scoped_fixture,
             HealthCheck.differing_executors,
         ],
+        deadline=None,  # A CliRunner run takes as long as the host load makes it.
     )
     def test_configured_remote_used_when_no_arg(self, remote_url: str, tmp_path: Path) -> None:
         """Any valid remote URL via env var should be used when no arg provided."""
@@ -467,6 +483,7 @@ class TestPushDefaultRemoteInvariants:
             HealthCheck.function_scoped_fixture,
             HealthCheck.differing_executors,
         ],
+        deadline=None,  # A CliRunner run takes as long as the host load makes it.
     )
     def test_explicit_always_overrides_env(
         self, explicit_url: str, env_url: str, tmp_path: Path

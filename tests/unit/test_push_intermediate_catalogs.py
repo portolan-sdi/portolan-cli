@@ -23,8 +23,10 @@ from portolan_cli.sync.push import (
     push,
     push_all_collections,
 )
+from tests.memory_remote import memory_remote, record_puts
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
@@ -126,13 +128,20 @@ class TestDiscoverIntermediateCatalogFiles:
         assert _discover_intermediate_catalog_files(tmp_path, ["demographics"]) == []
 
 
+@pytest.fixture
+def put_order(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
+    """Send push_all_collections to a MemoryStore and record the key of each write."""
+    order = record_puts(monkeypatch)
+    with memory_remote():
+        yield order
+
+
 class TestCatalogWidePushIntermediateCatalogs:
     """push_all_collections must upload intermediate catalog.json (Issue #547, #552)."""
 
-    @patch("portolan_cli.sync.push.obs.put")
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_uploads_intermediate_catalogs(
-        self, mock_push: MagicMock, mock_obs_put: MagicMock, nested_catalog: Path
+        self, mock_push: MagicMock, put_order: list[str], nested_catalog: Path
     ) -> None:
         # The scaffolded AGENTS.md beside an intermediate catalog (#905, #935).
         (nested_catalog / "tst" / "AGENTS.md").write_text("# tst agents\n")
@@ -149,17 +158,16 @@ class TestCatalogWidePushIntermediateCatalogs:
         )
 
         assert result.success is True
-        uploaded_keys = [c.args[1] for c in mock_obs_put.call_args_list]
+        uploaded_keys = put_order
 
         assert "catalog/tst/catalog.json" in uploaded_keys, uploaded_keys
         assert "catalog/tst/latest/catalog.json" in uploaded_keys, uploaded_keys
         assert "catalog/tst/README.md" in uploaded_keys, uploaded_keys
         assert "catalog/tst/AGENTS.md" in uploaded_keys, uploaded_keys
 
-    @patch("portolan_cli.sync.push.obs.put")
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_versions_json_uploaded_after_intermediate_catalogs(
-        self, mock_push: MagicMock, mock_obs_put: MagicMock, nested_catalog: Path
+        self, mock_push: MagicMock, put_order: list[str], nested_catalog: Path
     ) -> None:
         """Manifest-last: root versions.json uploads after intermediate catalogs."""
         # Root versions.json is required for the manifest-last upload to fire.
@@ -178,7 +186,7 @@ class TestCatalogWidePushIntermediateCatalogs:
             profile=None,
         )
 
-        uploaded_keys = [c.args[1] for c in mock_obs_put.call_args_list]
+        uploaded_keys = put_order
         versions_idx = uploaded_keys.index("catalog/versions.json")
         inter_idx = uploaded_keys.index("catalog/tst/latest/catalog.json")
         assert versions_idx > inter_idx, uploaded_keys

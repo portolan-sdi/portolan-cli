@@ -60,13 +60,14 @@ Note:
 from __future__ import annotations
 
 import configparser
+import mimetypes
 import os
 import re
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 import obstore as obs
@@ -84,6 +85,7 @@ from portolan_cli.output import detail, error, info, success
 from portolan_cli.trace import submit
 
 if TYPE_CHECKING:
+    from obstore import PutMode, PutResult
     from obstore.store import S3Credential, S3CredentialProvider
 
 # Type alias for all supported object stores
@@ -824,7 +826,7 @@ def _setup_store_and_kwargs(
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
 
     Returns:
-        Tuple of (store, kwargs) where kwargs are passed to obs.put
+        Tuple of (store, kwargs) where kwargs are passed to put_object
 
     Note: For S3, credentials are loaded from (in order):
     1. --profile flag (reads the shared AWS credentials file)
@@ -923,6 +925,93 @@ def _get_target_key(source: Path, prefix: str, is_dir_destination: bool) -> str:
 
 
 # =============================================================================
+# The one put helper (issues #807, #908)
+# =============================================================================
+
+# Azure stores no type that the client does not send, so an object without one
+# is served as application/octet-stream (#807). The stdlib table lacks or
+# disagrees on these types. bertt proposed the table in PR #1022.
+_CONTENT_TYPES: dict[str, str] = {
+    ".json": "application/json",
+    ".geojson": "application/geo+json",
+    ".parquet": "application/vnd.apache.parquet",
+    ".tif": "image/tiff; application=geotiff; profile=cloud-optimized",
+    ".tiff": "image/tiff; application=geotiff; profile=cloud-optimized",
+    ".pmtiles": "application/vnd.pmtiles",
+    ".png": "image/png",
+    ".md": "text/markdown",
+}
+
+# S3 and GCS accept at most 10000 parts in one multipart upload. obstore sends
+# 5 MiB parts by default, so a file over 48.8 GiB fails at part 10001 (#908).
+# The part size grows so that no file needs more than 9000 parts.
+MIN_PART_SIZE = 5 * 1024 * 1024
+_MAX_PARTS = 9000
+
+
+def content_type_for(key: str) -> str:
+    """Return the Content-Type for an object key, from its extension."""
+    suffix = PurePosixPath(key).suffix.lower()
+    guessed = _CONTENT_TYPES.get(suffix) or mimetypes.guess_type(key)[0]
+    return guessed or "application/octet-stream"
+
+
+def multipart_chunk_size(size: int) -> int:
+    """Return the multipart part size for an object of ``size`` bytes."""
+    return max(MIN_PART_SIZE, -(-size // _MAX_PARTS))
+
+
+def _put_kwargs(
+    key: str,
+    data: bytes | Path,
+    *,
+    content_type: str | None = None,
+    chunk_size: int | None = None,
+    mode: PutMode | None = None,
+    max_concurrency: int | None = None,
+) -> dict[str, Any]:
+    """Build the obstore put arguments. The parameters are those of ``put_object``."""
+    size = data.stat().st_size if isinstance(data, Path) else len(data)
+    kwargs: dict[str, Any] = {
+        "attributes": {"Content-Type": content_type or content_type_for(key)},
+        "chunk_size": chunk_size or multipart_chunk_size(size),
+    }
+    if mode is not None:
+        kwargs["mode"] = mode
+    if max_concurrency is not None:
+        kwargs["max_concurrency"] = max_concurrency
+    return kwargs
+
+
+def put_object(store: ObjectStore, key: str, data: bytes | Path, **options: Any) -> PutResult:
+    """Write one object. Every write in portolan goes through this function.
+
+    Args:
+        store: Object store instance.
+        key: Object key.
+        data: The bytes, or a file path that obstore streams.
+        **options: ``content_type`` (None derives it from ``key``), ``chunk_size``
+            (None derives the multipart part size from the size), ``mode`` (the
+            obstore put mode, such as ``"create"`` or ``{"e_tag": ...}``), and
+            ``max_concurrency`` (parts in flight at once).
+
+    Returns:
+        The obstore put result, which holds the new ETag.
+    """
+    return obs.put(store, key, data, **_put_kwargs(key, data, **options))
+
+
+async def put_object_async(
+    store: ObjectStore, key: str, data: bytes | Path, **options: Any
+) -> PutResult:
+    """Write one object without blocking the event loop.
+
+    ``options`` takes the keyword arguments of ``put_object``.
+    """
+    return await obs.put_async(store, key, data, **_put_kwargs(key, data, **options))
+
+
+# =============================================================================
 # Upload Functions
 # =============================================================================
 
@@ -946,7 +1035,7 @@ def _upload_one_file(
         source: Source directory for relative path calculation
         prefix: Prefix for target key
         verbose: If True, show per-file upload/success messages.
-        **kwargs: Additional args passed to obs.put
+        **kwargs: Additional args passed to put_object
 
     Returns:
         Tuple of (file_path, error_or_none, bytes_uploaded)
@@ -961,7 +1050,7 @@ def _upload_one_file(
         if verbose:
             info(f"Uploading {file_path.name} ({size_mb:.2f} MB) -> {target_key}")
 
-        obs.put(store, target_key, file_path, max_concurrency=kwargs.get("max_concurrency", 4))
+        put_object(store, target_key, file_path, max_concurrency=kwargs.get("max_concurrency", 4))
 
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
@@ -1039,7 +1128,7 @@ def upload_file(
         start_time = time.time()
         info(f"Uploading {source.name} ({size_mb:.2f} MB) -> {target_key}")
 
-        obs.put(store, target_key, source, max_concurrency=kwargs.get("max_concurrency", 4))
+        put_object(store, target_key, source, max_concurrency=kwargs.get("max_concurrency", 4))
 
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
@@ -1112,7 +1201,7 @@ def _execute_parallel_uploads(
         prefix: Prefix for target keys
         max_files: Max concurrent file uploads
         fail_fast: Stop on first error if True
-        kwargs: Additional args for obs.put
+        kwargs: Additional args for put_object
         verbose: If True, show per-file upload messages.
 
     Returns:

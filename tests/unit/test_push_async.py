@@ -17,8 +17,8 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import TYPE_CHECKING, Any
-from unittest.mock import patch
 
+import obstore as obs
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -30,13 +30,21 @@ from portolan_cli.async_utils import (
     CircuitBreakerError,
     get_default_concurrency,
 )
+from tests.memory_remote import memory_remote, record_puts, stored_keys
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
+
+    from obstore.store import MemoryStore
 
 # =============================================================================
 # Test fixtures
 # =============================================================================
+
+
+# push uploads collection.json as it is, so the fixtures need no more fields.
+_COLLECTION_JSON = json.dumps({"type": "Collection", "id": "test", "links": []})
 
 
 @pytest.fixture
@@ -94,19 +102,7 @@ def async_catalog(tmp_path: Path) -> Path:
     (versions_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
 
     # Create collection.json
-    collection_data = {
-        "type": "Collection",
-        "id": "test",
-        "stac_version": "1.0.0",
-        "description": "Test collection",
-        "license": "proprietary",
-        "extent": {
-            "spatial": {"bbox": [[-180, -90, 180, 90]]},
-            "temporal": {"interval": [[None, None]]},
-        },
-        "links": [],
-    }
-    (versions_dir / "collection.json").write_text(json.dumps(collection_data, indent=2))
+    (versions_dir / "collection.json").write_text(_COLLECTION_JSON)
 
     # Create actual data files
     item_dir = versions_dir / "data"
@@ -184,19 +180,7 @@ def many_files_catalog(tmp_path: Path) -> Path:
     (versions_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
 
     # Create collection.json
-    collection_data = {
-        "type": "Collection",
-        "id": "test",
-        "stac_version": "1.0.0",
-        "description": "Test collection",
-        "license": "proprietary",
-        "extent": {
-            "spatial": {"bbox": [[-180, -90, 180, 90]]},
-            "temporal": {"interval": [[None, None]]},
-        },
-        "links": [],
-    }
-    (versions_dir / "collection.json").write_text(json.dumps(collection_data, indent=2))
+    (versions_dir / "collection.json").write_text(_COLLECTION_JSON)
 
     # Create data files
     item_dir = versions_dir / "data"
@@ -448,151 +432,127 @@ class TestAsyncProgressReporter:
 # =============================================================================
 
 
+@pytest.fixture
+def remote() -> Iterator[MemoryStore]:
+    """The remote bucket. push_async writes to this store under the prefix "catalog"."""
+    with memory_remote() as store:
+        yield store
+
+
 @pytest.mark.unit
 class TestPushAsyncConcurrency:
     """Tests for push_async() concurrent upload behavior."""
 
-    @pytest.mark.asyncio
-    async def test_push_async_uploads_concurrently(self, async_catalog: Path) -> None:
-        """Verify push_async() uses concurrent uploads."""
+    @pytest.mark.parametrize("limit", [5, 10])
+    async def test_push_async_runs_uploads_concurrently_within_the_limit(
+        self,
+        many_files_catalog: Path,
+        remote: MemoryStore,
+        monkeypatch: pytest.MonkeyPatch,
+        limit: int,
+    ) -> None:
+        """More than one upload is in flight, and never more than the limit."""
         from portolan_cli.sync.push import push_async
 
-        # Track upload timing to verify concurrency
-        upload_times: list[float] = []
-        upload_lock = asyncio.Lock()
+        in_flight = 0
+        peak = 0
 
-        async def mock_put(store: Any, key: str, content: Any, **kwargs: Any) -> None:
-            import time
-
-            start = time.perf_counter()
-            await asyncio.sleep(0.01)  # Simulate network latency
-            async with upload_lock:
-                upload_times.append(time.perf_counter() - start)
-
-        with (
-            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put),
-            patch("portolan_cli.sync.push.obs.get_async", return_value=None),
-            patch("portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)),
-        ):
-            result = await push_async(
-                catalog_root=async_catalog,
-                collection="test",
-                destination="s3://test-bucket/catalog",
-                concurrency=5,
-                json_mode=True,
-            )
-
-        # With concurrency, total time should be less than sequential
-        # (10 files * 0.01s each = 0.1s sequential vs ~0.02s concurrent with 5 workers)
-        assert result.success or "push_async" not in dir(
-            result
-        )  # TDD: test passes once implemented
-
-    @pytest.mark.asyncio
-    async def test_push_async_respects_concurrency_limit(self, many_files_catalog: Path) -> None:
-        """Verify push_async() respects the concurrency parameter."""
-        from portolan_cli.sync.push import push_async
-
-        max_concurrent = 0
-        current_concurrent = 0
-        lock = asyncio.Lock()
-
-        async def mock_put(store: Any, key: str, content: Any, **kwargs: Any) -> None:
-            nonlocal max_concurrent, current_concurrent
-            async with lock:
-                current_concurrent += 1
-                max_concurrent = max(max_concurrent, current_concurrent)
+        async def slow(_key: str) -> None:
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
             await asyncio.sleep(0.005)
-            async with lock:
-                current_concurrent -= 1
+            in_flight -= 1
 
-        concurrency_limit = 10
+        record_puts(monkeypatch, slow)
+        result = await push_async(
+            catalog_root=many_files_catalog,
+            collection="test",
+            destination="s3://test-bucket/catalog",
+            concurrency=limit,
+            adaptive=False,
+            json_mode=True,
+        )
 
-        with (
-            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put),
-            patch("portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)),
-        ):
-            await push_async(
-                catalog_root=many_files_catalog,
-                collection="test",
-                destination="s3://test-bucket/catalog",
-                concurrency=concurrency_limit,
-                json_mode=True,
-            )
+        assert result.success is True
+        assert 1 < peak <= limit
 
-        # Verify concurrency was limited
-        assert max_concurrent <= concurrency_limit
-
-    @pytest.mark.asyncio
-    async def test_push_async_handles_rate_limit(self, async_catalog: Path) -> None:
+    async def test_push_async_handles_rate_limit(
+        self, async_catalog: Path, remote: MemoryStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Two rate-limited uploads abort the push and roll back the others.
 
-        The rollback deletes each uploaded asset. `obs.delete` must be mocked:
-        unmocked, it called the real S3 API for `s3://test-bucket` and the test
-        took 110 s waiting on the network.
+        The remote is empty before the push, so every key it wrote is a key it
+        created, and rollback deletes each one (#965).
         """
         from portolan_cli.sync.push import push_async
 
-        put_keys: list[str] = []
-        failed_keys: list[str] = []
-        deleted_keys: list[str] = []
+        async def rate_limit_first_two(_key: str) -> None:
+            if len(attempts) <= 2:
+                raise ConnectionError("SlowDown: Rate limit exceeded")
 
-        async def mock_put_with_rate_limit(
-            store: Any, key: str, content: Any, **kwargs: Any
-        ) -> None:
-            put_keys.append(key)
-            if len(put_keys) <= 2:
-                failed_keys.append(key)
-                raise Exception("SlowDown: Rate limit exceeded")
-            await asyncio.sleep(0.001)
-
-        with (
-            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_with_rate_limit),
-            patch(
-                "portolan_cli.sync.push.obs.delete",
-                side_effect=lambda store, key: deleted_keys.append(key),
-            ),
-            patch("portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)),
-        ):
-            result = await push_async(
-                catalog_root=async_catalog,
-                collection="test",
-                destination="s3://test-bucket/catalog",
-                concurrency=50,
-                json_mode=True,
-            )
+        attempts = record_puts(monkeypatch, rate_limit_first_two)
+        result = await push_async(
+            catalog_root=async_catalog,
+            collection="test",
+            destination="s3://test-bucket/catalog",
+            concurrency=50,
+            json_mode=True,
+        )
 
         assert result.success is False
         assert result.versions_pushed == 0
-        assert len(put_keys) == 10
+        assert len(attempts) == 10
         assert len(result.errors) == 2
         assert all("SlowDown: Rate limit exceeded" in error for error in result.errors)
-        # Exactly the uploads that succeeded are rolled back.
-        assert sorted(deleted_keys) == sorted(set(put_keys) - set(failed_keys))
-        assert len(deleted_keys) == 8
+        assert stored_keys(remote) == set()
 
-    @pytest.mark.asyncio
-    async def test_push_async_circuit_breaker_on_failures(self, async_catalog: Path) -> None:
+    async def test_push_async_rollback_keeps_keys_that_existed(
+        self, async_catalog: Path, remote: MemoryStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Issue #965: an overwritten key survives the rollback with the new bytes."""
+        from portolan_cli.sync.push import push_async
+
+        obs.put(remote, "catalog/test/data/file0.parquet", b"live bytes")
+
+        async def fail_one(key: str) -> None:
+            if key == "catalog/test/data/file9.parquet":
+                raise ConnectionError("reset by peer")
+
+        record_puts(monkeypatch, fail_one)
+        result = await push_async(
+            catalog_root=async_catalog,
+            collection="test",
+            destination="s3://test-bucket/catalog",
+            concurrency=50,
+            json_mode=True,
+        )
+
+        assert result.success is False
+        assert stored_keys(remote) == {"catalog/test/data/file0.parquet"}
+
+    async def test_push_async_circuit_breaker_on_failures(
+        self, async_catalog: Path, remote: MemoryStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Verify push_async() circuit breaker trips on cascading failures."""
         from portolan_cli.sync.push import push_async
 
-        async def mock_put_always_fails(store: Any, key: str, content: Any, **kwargs: Any) -> None:
+        async def always_fail(_key: str) -> None:
             raise ConnectionError("Network unavailable")
 
-        with (
-            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_always_fails),
-            patch("portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)),
-        ):
-            result = await push_async(
-                catalog_root=async_catalog,
-                collection="test",
-                destination="s3://test-bucket/catalog",
-                concurrency=50,
-                json_mode=True,
-            )
+        record_puts(monkeypatch, always_fail)
+        result = await push_async(
+            catalog_root=async_catalog,
+            collection="test",
+            destination="s3://test-bucket/catalog",
+            concurrency=1,
+            adaptive=False,
+            json_mode=True,
+        )
 
-        # Should fail due to circuit breaker or accumulated errors
-        assert not result.success
+        assert result.success is False
+        assert any(e.startswith("Circuit breaker tripped") for e in result.errors)
+        assert stored_keys(remote) == set()
 
 
 # =============================================================================

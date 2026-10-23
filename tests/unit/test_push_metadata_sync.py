@@ -6,10 +6,12 @@ This includes style.json, thumbnails, collection.json updates, etc.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import obstore as obs
 import pytest
 
 if TYPE_CHECKING:
@@ -427,32 +429,29 @@ class TestPushMetadataSync:
         """_upload_metadata_files_async should upload style.json files."""
         import asyncio
 
+        from obstore.store import MemoryStore
+
         from portolan_cli.sync.push import _upload_metadata_files_async
 
-        uploaded_keys: list[str] = []
-
-        async def mock_put_async(store, key, content):
-            uploaded_keys.append(key)
-
-        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async):
-            mock_store = MagicMock()
-
-            count, errors = asyncio.run(
-                _upload_metadata_files_async(
-                    mock_store,
-                    catalog_with_metadata,
-                    "prefix",
-                    "collection1",
-                    include_catalog_root=False,
-                    concurrency=10,
-                )
+        store = MemoryStore()
+        count, errors = asyncio.run(
+            _upload_metadata_files_async(
+                store,
+                catalog_with_metadata,
+                "prefix",
+                "collection1",
+                include_catalog_root=False,
+                concurrency=10,
             )
+        )
 
-        # Should have uploaded style.json and thumbnail
-        assert count >= 2
-        assert any("style.json" in k for k in uploaded_keys)
+        from tests.memory_remote import stored_keys
+
+        uploaded_keys = sorted(stored_keys(store))
+        assert count == len(uploaded_keys)
+        assert any(k.endswith("style.json") for k in uploaded_keys)
         assert any(".thumb." in k for k in uploaded_keys)
-        assert len(errors) == 0
+        assert errors == []
 
     @pytest.mark.unit
     def test_push_dry_run_shows_metadata_files(self, catalog_with_metadata: Path, capsys) -> None:
@@ -523,13 +522,15 @@ class TestPushAllMetadataSync:
             "errors": {},
         }
 
-        result = _push_all_upload_root_files(
-            catalog_root=catalog_with_metadata,
-            destination="s3://test-bucket/catalog",
-            profile=None,
-            region=None,
-            dry_run=True,
-            stats=stats,
+        result = asyncio.run(
+            _push_all_upload_root_files(
+                catalog_root=catalog_with_metadata,
+                destination="s3://test-bucket/catalog",
+                profile=None,
+                region=None,
+                dry_run=True,
+                stats=stats,
+            )
         )
 
         assert result is True
@@ -574,23 +575,25 @@ class TestPushCatalogLogo:
             "total_versions": 0,
             "errors": {},
         }
-        store = MagicMock()
-        with (
-            patch("portolan_cli.sync.push.setup_store", return_value=(store, "prefix")),
-            patch("portolan_cli.sync.push.obs.put") as put,
-        ):
-            result = _push_all_upload_root_files(
-                catalog_root=catalog_with_metadata,
-                destination="s3://test-bucket/catalog",
-                profile=None,
-                region=None,
-                dry_run=False,
-                stats=stats,
+        from obstore.store import MemoryStore
+
+        store = MemoryStore()
+        with patch("portolan_cli.sync.push.setup_store", return_value=(store, "prefix")):
+            result = asyncio.run(
+                _push_all_upload_root_files(
+                    catalog_root=catalog_with_metadata,
+                    destination="s3://test-bucket/catalog",
+                    profile=None,
+                    region=None,
+                    dry_run=False,
+                    stats=stats,
+                )
             )
 
         assert result is True
-        keys = [call.args[1] for call in put.call_args_list]
-        assert "prefix/_assets/brand.png" in keys
+        logo = obs.get(store, "prefix/_assets/brand.png")
+        assert bytes(logo.bytes()) == b"\x89PNG\r\n\x1a\n"
+        assert logo.attributes["Content-Type"] == "image/png"
 
 
 # =============================================================================

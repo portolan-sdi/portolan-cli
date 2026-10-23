@@ -31,15 +31,6 @@ from portolan_cli.sync.push import PushConflictError, PushResult, push_async
 from portolan_cli.trace import span
 
 # =============================================================================
-# Exceptions
-# =============================================================================
-
-
-class SyncError(Exception):
-    """Base exception for sync operations."""
-
-
-# =============================================================================
 # URL Parsing Utilities
 # =============================================================================
 
@@ -902,6 +893,7 @@ def clone(
                 force=False,  # No local changes to force-overwrite
                 dry_run=False,
                 profile=profile,
+                every_object=True,
             )
 
             if not pull_result.success:

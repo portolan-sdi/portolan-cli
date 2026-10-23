@@ -41,7 +41,11 @@ from portolan_cli.async_utils import (
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import detail, error, info, output_section, success, warn
 from portolan_cli.sync.checksums import compute_checksum
-from portolan_cli.sync.download import download_file, get_remote_file_size_async
+from portolan_cli.sync.download import (
+    download_directory,
+    download_file,
+    get_remote_file_size_async,
+)
 from portolan_cli.sync.upload import _setup_store_and_kwargs, parse_object_store_url
 from portolan_cli.trace import count, span
 from portolan_cli.versions import (
@@ -1225,6 +1229,7 @@ def pull(
     concurrency: int = DEFAULT_CONCURRENCY,
     verbose: bool = False,
     json_mode: bool = False,
+    every_object: bool = False,
 ) -> PullResult:
     """Pull updates from a remote catalog (sync wrapper).
 
@@ -1251,6 +1256,10 @@ def pull(
         concurrency: Maximum concurrent downloads (default: 50).
         verbose: If True, show per-file download messages.
         json_mode: If True, suppress progress output (for agent/batch usage).
+        every_object: If True, also download each object under the collection
+            prefix that the local catalog lacks. clone sets it: push writes
+            collection.json, the items, README.md, AGENTS.md, and the metadata
+            files there, and versions.json names only the assets (#1042).
 
     Returns:
         PullResult with operation results.
@@ -1258,7 +1267,7 @@ def pull(
     Raises:
         ValueError: If remote_url is invalid.
     """
-    return asyncio.run(
+    result = asyncio.run(
         pull_async(
             remote_url=remote_url,
             local_root=local_root,
@@ -1272,6 +1281,20 @@ def pull(
             json_mode=json_mode,
         )
     )
+    if not every_object or not result.success:
+        return result
+    rest = download_directory(
+        f"{remote_url.rstrip('/')}/{collection}/",
+        local_root / collection,
+        profile=profile,
+        overwrite=False,
+        verbose=verbose,
+    )
+    result.files_downloaded += rest.files_downloaded
+    if not rest.success:
+        result.success = False
+        error(f"Failed to download {rest.files_failed} file(s) of '{collection}'")
+    return result
 
 
 # =============================================================================
