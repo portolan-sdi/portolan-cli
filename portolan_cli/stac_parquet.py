@@ -425,11 +425,16 @@ def restamp_collection_assets(
         assets = data.get("assets") if isinstance(data, dict) else None
         if not isinstance(assets, dict):
             continue
-        stamped = [
-            stamp_file_fields(asset, path.parent)
+        selected = [
+            asset
             for asset in assets.values()
             if isinstance(asset, dict) and _is_selected(asset, path.parent, only)
         ]
+        if not selected:
+            # A document that names no selected file is not this writer's.
+            continue
+        # A list, not a generator: any() would stop at the first stamp.
+        stamped = [stamp_file_fields(asset, path.parent) for asset in selected]
         changed = any(stamped)
         if path == collection_json:
             changed = sync_file_extension(data, assets, collection_json) or changed
@@ -481,9 +486,10 @@ def register_mirror_asset(collection_path: Path) -> None:
     assets = data.get("assets", {})
     asset_key = "geoparquet-items"
 
-    # Match by key or by href, then upgrade every match to the spec roles: a
-    # catalog written before "collection-mirror" existed has the asset but
-    # only the community role, and PTL-MIR-002 flags it.
+    # Match by key or by href, then set every match to the spec role. A catalog
+    # written before "collection-mirror" existed has only the community role
+    # "stac-items", which PTL-MIR-002 flags. An older asset scan also gave the
+    # mirror the "data" role, which made it a tile source.
     matching = [
         asset
         for key, asset in assets.items()
@@ -491,12 +497,8 @@ def register_mirror_asset(collection_path: Path) -> None:
     ]
     if matching:
         for asset in matching:
-            roles = asset.setdefault("roles", [])
-            if ROLE_COLLECTION_MIRROR not in roles:
-                roles.append(ROLE_COLLECTION_MIRROR)
-                modified = True
-            if "stac-items" in roles:
-                roles.remove("stac-items")
+            if asset.get("roles") != [ROLE_COLLECTION_MIRROR]:
+                asset["roles"] = [ROLE_COLLECTION_MIRROR]
                 modified = True
             # Refresh, do not skip: generate_items_parquet overwrote the bytes
             # moments ago, so an asset carried over from an earlier run describes

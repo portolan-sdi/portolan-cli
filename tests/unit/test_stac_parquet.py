@@ -865,11 +865,15 @@ class TestCollectionLevelAsset:
         assert len(parquet_assets) == 1
 
     @pytest.mark.unit
-    def test_legacy_asset_is_upgraded_to_the_spec_role(self, collection_with_items: Path) -> None:
+    @pytest.mark.parametrize("legacy_roles", [["stac-items"], ["data", "collection-mirror"]])
+    def test_legacy_asset_is_upgraded_to_the_spec_role(
+        self, collection_with_items: Path, legacy_roles: list[str]
+    ) -> None:
         """An asset written before the spec role existed is upgraded in place.
 
-        The undefined community role ``stac-items`` is dropped and the spec
-        role ``collection-mirror`` is added; unrelated assets stay untouched.
+        The mirror gets exactly the spec role ``collection-mirror``. That drops
+        the undefined community role ``stac-items``, and the ``data`` role that
+        the asset scan gave the mirror. Unrelated assets stay untouched.
         """
         from portolan_cli.stac_parquet import (
             generate_items_parquet,
@@ -883,7 +887,7 @@ class TestCollectionLevelAsset:
         data = json.loads(collection_json_path.read_text())
         # Simulate a catalog written by an older version: community role only,
         # plus an unrelated asset that must stay untouched.
-        data["assets"]["geoparquet-items"]["roles"] = ["stac-items"]
+        data["assets"]["geoparquet-items"]["roles"] = legacy_roles
         data["assets"]["thumbnail"] = {"href": "./thumb.png", "roles": ["thumbnail"]}
         collection_json_path.write_text(json.dumps(data, indent=2))
 
@@ -1698,10 +1702,14 @@ class TestRestampCollectionAssets:
 
         collection_dir = _stale_collection(tmp_path)
 
+        item_json = collection_dir / "scene" / "scene.json"
+        item_bytes = item_json.read_bytes()
+
         restamp_collection_assets(collection_dir, only={collection_dir / "README.md"})
 
-        item = json.loads((collection_dir / "scene" / "scene.json").read_text())
-        assert item["assets"]["data"]["file:size"] == 1
+        # The item names no selected file, so the pass leaves it as it was. A
+        # write there would also leave items.parquet behind the item.
+        assert item_json.read_bytes() == item_bytes
 
 
 class TestWriteReadme:
