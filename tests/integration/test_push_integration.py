@@ -2033,6 +2033,44 @@ class TestPushAgainstMoto:
         assert client.get_object(Bucket=name, Key="cat/a/a.parquet")["Body"].read() == b"a2"
 
     @pytest.mark.integration
+    def test_pushed_partition_glob_names_the_bucket(
+        self, tmp_path: Path, bucket: tuple[str, Any]
+    ) -> None:
+        """Issue #761: the remote partition:glob starts with s3://<bucket>/<prefix>/."""
+        import pathlib
+        import shutil
+
+        from portolan_cli.cli import cli
+
+        name, client = bucket
+        root = tmp_path / "R"
+        fixtures = pathlib.Path(__file__).parents[1] / "fixtures"
+
+        def run(*args: str) -> None:
+            result = CliRunner().invoke(cli, list(args), catch_exceptions=False)
+            assert result.exit_code == 0, result.output
+
+        run("init", str(root), "--auto", "--license", "CC-BY-4.0")
+        (root / ".portolan" / "config.yaml").write_text(
+            "partitioning.enabled: true\n"
+            "partitioning.threshold_gb: 0.0001\n"
+            "partitioning.target_rows: 200\n"
+        )
+        (root / "buildings").mkdir()
+        source = root / "buildings" / "buildings.parquet"
+        shutil.copy(fixtures / "realdata" / "open-buildings.parquet", source)
+        run("add", "--portolan-dir", str(root), str(source))
+        run("push", f"s3://{name}/cat", "--catalog", str(root))
+
+        body = client.get_object(Bucket=name, Key="cat/buildings/collection.json")["Body"]
+        globs = [
+            asset["partition:glob"]
+            for asset in json.loads(body.read())["assets"].values()
+            if "partition:glob" in asset
+        ]
+        assert globs == [f"s3://{name}/cat/buildings/kdtree_cell=*/*.parquet"]
+
+    @pytest.mark.integration
     def test_clone_checks_like_the_catalog_it_copies(
         self, tmp_path: Path, bucket: tuple[str, Any]
     ) -> None:

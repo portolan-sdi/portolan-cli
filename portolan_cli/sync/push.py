@@ -282,7 +282,7 @@ def format_speed(bytes_per_second: float) -> str:
 
 def _transform_collection_glob_assets(
     content: bytes,
-    prefix: str,
+    destination: str,
     collection_path: str,
 ) -> bytes:
     """Transform collection.json to populate the glob field for partitioned assets.
@@ -297,7 +297,9 @@ def _transform_collection_glob_assets(
 
     Args:
         content: Original collection.json bytes.
-        prefix: Remote storage prefix (e.g., "s3://bucket/catalog").
+        destination: The push destination URL with its scheme and bucket, such as
+            "s3://bucket/catalog". The key prefix that setup_store returns has
+            lost both, so a glob built from it lists nothing (#761).
         collection_path: Relative path to collection (e.g., "buildings").
 
     Returns:
@@ -320,7 +322,7 @@ def _transform_collection_glob_assets(
             # We need to convert to absolute remote URL
             glob_pattern = href.lstrip("./")
             # Build URL preserving protocol separator
-            base = prefix.rstrip("/")
+            base = destination.rstrip("/")
             remote_glob = f"{base}/{collection_path}/{glob_pattern}"
 
             # Always overwrite to keep the field in sync with the current remote
@@ -1529,6 +1531,7 @@ async def _upload_stac_files_async(
     prefix: str,
     stac_files: dict[str, list[Path]],
     *,
+    destination: str,
     concurrency: int = 50,
     json_mode: bool = False,
     verbose: bool = False,
@@ -1545,6 +1548,7 @@ async def _upload_stac_files_async(
         catalog_root: Path to catalog root.
         prefix: Prefix in object storage.
         stac_files: Dict of STAC files from _discover_stac_files().
+        destination: The push destination URL, for the partition:glob (#761).
         concurrency: Maximum concurrent uploads.
         json_mode: If True, suppress progress bar.
         verbose: If True, print per-file upload details.
@@ -1593,7 +1597,9 @@ async def _upload_stac_files_async(
                 if file_path.name == "collection.json":
                     # Extract collection path (e.g., "buildings" from "buildings/collection.json")
                     collection_path = rel_path.parent.as_posix()
-                    content = _transform_collection_glob_assets(content, prefix, collection_path)
+                    content = _transform_collection_glob_assets(
+                        content, destination, collection_path
+                    )
 
                 await put_object_async(store, target_key, content)
                 return target_key, file_size
@@ -1848,6 +1854,7 @@ async def _execute_push_uploads_async(
     diff: PushVersionDiff,
     etag: str | None,
     *,
+    destination: str,
     concurrency: int,
     chunk_concurrency: int,
     json_mode: bool,
@@ -1871,6 +1878,8 @@ async def _execute_push_uploads_async(
         local_data: Local versions.json content.
         diff: Asset differences between the local and the remote manifest.
         etag: ETag of the remote versions.json, for the conditional write.
+        destination: The push destination URL, for the partition:glob of
+            collection.json (#761).
         concurrency: Maximum concurrent file uploads.
         chunk_concurrency: Maximum concurrent chunks per file upload.
             For files >5MB, this limits per-file multipart parallelism.
@@ -1954,6 +1963,7 @@ async def _execute_push_uploads_async(
             catalog_root,
             prefix,
             stac_files,
+            destination=destination,
             concurrency=concurrency,
             json_mode=json_mode,
             verbose=verbose,
@@ -2215,6 +2225,7 @@ async def push_async(
         local_data,
         diff,
         etag,
+        destination=destination,
         concurrency=concurrency,
         chunk_concurrency=chunk_concurrency,
         json_mode=json_mode,
