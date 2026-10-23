@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import re
-from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,7 +29,7 @@ import pytest
 from tests.replay_server import ReplayServer
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
 
     from click.testing import Result
 
@@ -43,17 +43,72 @@ LayerRow = tuple[Any, str, str, int]
 SCENARIOS = sorted(path.parent for path in NETWORK.glob("*/*/routes.json"))
 
 
-@contextmanager
-def _replay(scenario: str) -> Iterator[tuple[str, ReplayServer]]:
-    server = ReplayServer(NETWORK / scenario)
+@dataclass(frozen=True)
+class Extraction:
+    """One ``extract`` run against one scenario."""
+
+    scenario: str
+    kind: str
+    path: str
+    args: tuple[str, ...] = ()
+
+
+EXTRACTIONS = {
+    "sparse_ids-layers": Extraction("arcgis/sparse_ids", "arcgis", EAST_HAMPTON, ("--layers", "2")),
+    "sparse_ids-exclude": Extraction(
+        "arcgis/sparse_ids", "arcgis", EAST_HAMPTON, ("--exclude-layers", "2")
+    ),
+    "layer_url": Extraction("arcgis/layer_url", "arcgis", f"{BOSTON}/0"),
+    "tables_only": Extraction(
+        "arcgis/tables_only", "arcgis", "/arcgis/rest/services/zoning_descriptions/FeatureServer"
+    ),
+    "token_gated": Extraction(
+        "arcgis/token_gated",
+        "arcgis",
+        "/arcgis/rest/services/Secured/Open_Space_Public/MapServer",
+        ("--token", "REPLAY-TOKEN"),
+    ),
+    "transient_error": Extraction("arcgis/transient_error", "arcgis", BOSTON, ("--retries", "2")),
+    "workspace_layer-exclude": Extraction(
+        "wfs/workspace_layer", "wfs", "/geoserver/wfs", ("--exclude-layers", "states")
+    ),
+    "workspace_layer-layers": Extraction(
+        "wfs/workspace_layer", "wfs", "/geoserver/wfs", ("--layers", "topp:states")
+    ),
+    "empty_collection": Extraction(
+        "wfs/empty_collection",
+        "wfs",
+        "/n2000/wfs",
+        ("--layers", "N2000_WFS:N2000", "--wfs-version", "2.0.0"),
+    ),
+    "geodata_gov_md": Extraction("wfs/geodata_gov_md", "wfs", "/geoserver/wfs?api_key=SECRET"),
+}
+# tests/docs/test_v1_examples.py replays arcgis/philadelphia. It asserts
+# server.unmatched == [] with no xfail marker.
+CHECKED_ELSEWHERE = {"arcgis/philadelphia"}
+
+
+def _run(
+    case: str, tmp_path: Path, run_cli: Callable[..., Result]
+) -> tuple[Result, ReplayServer, Path]:
+    """Run one extraction against its scenario and return the result, server, and output."""
+    extraction = EXTRACTIONS[case]
+    out = tmp_path / "out"
+    server = ReplayServer(NETWORK / extraction.scenario)
     with server as base_url:
-        yield base_url, server
-
-
-def _extract(run_cli: Callable[..., Result], kind: str, url: str, out: Path, *extra: str) -> Result:
-    return run_cli(
-        "extract", kind, url, str(out), "--auto", "--license", "CC-BY-4.0", "--retries", "1", *extra
-    )
+        result = run_cli(
+            "extract",
+            extraction.kind,
+            base_url + extraction.path,
+            str(out),
+            "--auto",
+            "--license",
+            "CC-BY-4.0",
+            "--retries",
+            "1",
+            *extraction.args,
+        )
+    return result, server, out
 
 
 def _report(out: Path) -> list[dict[str, Any]]:
@@ -77,14 +132,34 @@ def _wfs_layers(out: Path) -> list[tuple[str, str, int]]:
     )
 
 
+@pytest.mark.parametrize("case", sorted(EXTRACTIONS))
+def test_recording_answers_every_request(
+    case: str, tmp_path: Path, run_cli: Callable[..., Result]
+) -> None:
+    """The scenario answers each request of the extraction.
+
+    This test has no xfail marker. A strict xfail on a behavior test also
+    swallows a lost route, so this test keeps the recording gate visible.
+    """
+    _result, server, _out = _run(case, tmp_path, run_cli)
+
+    assert server.unmatched == []
+
+
+@pytest.mark.unit
+def test_every_scenario_has_a_recording_gate() -> None:
+    """Each scenario directory has an extraction in ``EXTRACTIONS`` or a gate elsewhere."""
+    covered = {extraction.scenario for extraction in EXTRACTIONS.values()} | CHECKED_ELSEWHERE
+    on_disk = {f"{path.parent.name}/{path.name}" for path in SCENARIOS}
+    assert sorted(covered) == sorted(on_disk)
+
+
 @pytest.mark.xfail(strict=True, reason="#1003: --layers matches the list position, not the ID")
 def test_arcgis_layers_matches_sparse_layer_ids(
     tmp_path: Path, run_cli: Callable[..., Result]
 ) -> None:
     """``--layers 2`` extracts layer ID 2 of a service whose IDs are 2, 9, 10."""
-    out = tmp_path / "out"
-    with _replay("arcgis/sparse_ids") as (base_url, server):
-        result = _extract(run_cli, "arcgis", base_url + EAST_HAMPTON, out, "--layers", "2")
+    result, server, out = _run("sparse_ids-layers", tmp_path, run_cli)
 
     assert server.unmatched == []
     assert result.exit_code == 0, result.output
@@ -98,9 +173,7 @@ def test_arcgis_exclude_layers_matches_sparse_layer_ids(
     tmp_path: Path, run_cli: Callable[..., Result]
 ) -> None:
     """``--exclude-layers 2`` keeps layer IDs 9 and 10."""
-    out = tmp_path / "out"
-    with _replay("arcgis/sparse_ids") as (base_url, server):
-        result = _extract(run_cli, "arcgis", base_url + EAST_HAMPTON, out, "--exclude-layers", "2")
+    result, server, out = _run("sparse_ids-exclude", tmp_path, run_cli)
 
     assert server.unmatched == []
     assert result.exit_code == 0, result.output
@@ -115,9 +188,7 @@ def test_arcgis_layer_url_extracts_that_layer(
     tmp_path: Path, run_cli: Callable[..., Result]
 ) -> None:
     """A URL that ends in ``/MapServer/0`` extracts layer 0."""
-    out = tmp_path / "out"
-    with _replay("arcgis/layer_url") as (base_url, server):
-        result = _extract(run_cli, "arcgis", f"{base_url}{BOSTON}/0", out)
+    result, server, out = _run("layer_url", tmp_path, run_cli)
 
     assert server.unmatched == []
     assert result.exit_code == 0, result.output
@@ -129,10 +200,7 @@ def test_arcgis_tables_only_service_fails_and_names_the_tables(
     tmp_path: Path, run_cli: Callable[..., Result]
 ) -> None:
     """A service that holds one table and no layer exits 1 and says why (#1034)."""
-    out = tmp_path / "out"
-    url = "/arcgis/rest/services/zoning_descriptions/FeatureServer"
-    with _replay("arcgis/tables_only") as (base_url, server):
-        result = _extract(run_cli, "arcgis", base_url + url, out)
+    result, server, _out = _run("tables_only", tmp_path, run_cli)
 
     assert server.unmatched == []
     assert result.exit_code == 1, result.output
@@ -145,10 +213,7 @@ def test_arcgis_token_reaches_layer_discovery(
     tmp_path: Path, run_cli: Callable[..., Result]
 ) -> None:
     """``--token`` reaches every request of a token-gated server."""
-    out = tmp_path / "out"
-    url = "/arcgis/rest/services/Secured/Open_Space_Public/MapServer"
-    with _replay("arcgis/token_gated") as (base_url, server):
-        result = _extract(run_cli, "arcgis", base_url + url, out, "--token", "REPLAY-TOKEN")
+    result, server, out = _run("token_gated", tmp_path, run_cli)
 
     assert server.unmatched == []
     assert [r.path for r in server.requests if "token" not in r.query] == []
@@ -161,9 +226,7 @@ def test_arcgis_discovery_retries_a_transient_error(
     tmp_path: Path, run_cli: Callable[..., Result]
 ) -> None:
     """A 503 on the first service request is retried, and the layer extracts."""
-    out = tmp_path / "out"
-    with _replay("arcgis/transient_error") as (base_url, server):
-        result = _extract(run_cli, "arcgis", base_url + BOSTON, out, "--retries", "2")
+    result, server, out = _run("transient_error", tmp_path, run_cli)
 
     assert server.unmatched == []
     assert [r.status for r in server.requests if r.path == BOSTON] == [503, 200]
@@ -178,11 +241,7 @@ def test_wfs_exclude_layers_matches_the_leaf_name(
     tmp_path: Path, run_cli: Callable[..., Result]
 ) -> None:
     """``--exclude-layers states`` excludes ``topp:states``."""
-    out = tmp_path / "out"
-    with _replay("wfs/workspace_layer") as (base_url, server):
-        result = _extract(
-            run_cli, "wfs", f"{base_url}/geoserver/wfs", out, "--exclude-layers", "states"
-        )
+    result, server, out = _run("workspace_layer-exclude", tmp_path, run_cli)
 
     assert server.unmatched == []
     assert result.exit_code == 0, result.output
@@ -193,11 +252,7 @@ def test_wfs_layers_matches_the_qualified_name(
     tmp_path: Path, run_cli: Callable[..., Result]
 ) -> None:
     """``--layers topp:states`` extracts that layer only. This is the control for #768."""
-    out = tmp_path / "out"
-    with _replay("wfs/workspace_layer") as (base_url, server):
-        result = _extract(
-            run_cli, "wfs", f"{base_url}/geoserver/wfs", out, "--layers", "topp:states"
-        )
+    result, server, out = _run("workspace_layer-layers", tmp_path, run_cli)
 
     assert server.unmatched == []
     assert result.exit_code == 0, result.output
@@ -209,18 +264,7 @@ def test_wfs_named_layer_with_no_features_fails(
     tmp_path: Path, run_cli: Callable[..., Result]
 ) -> None:
     """A layer named with ``--layers`` that returns 0 features fails the run (#1034)."""
-    out = tmp_path / "out"
-    with _replay("wfs/empty_collection") as (base_url, server):
-        result = _extract(
-            run_cli,
-            "wfs",
-            f"{base_url}/n2000/wfs",
-            out,
-            "--layers",
-            "N2000_WFS:N2000",
-            "--wfs-version",
-            "2.0.0",
-        )
+    result, server, out = _run("empty_collection", tmp_path, run_cli)
 
     assert server.unmatched == []
     assert result.exit_code == 1, result.output
@@ -232,9 +276,7 @@ def test_wfs_api_key_stays_out_of_the_catalog(
     tmp_path: Path, run_cli: Callable[..., Result]
 ) -> None:
     """No file under the output root holds the API key of the service URL."""
-    out = tmp_path / "out"
-    with _replay("wfs/geodata_gov_md") as (base_url, server):
-        result = _extract(run_cli, "wfs", f"{base_url}/geoserver/wfs?api_key=SECRET", out)
+    result, server, out = _run("geodata_gov_md", tmp_path, run_cli)
 
     assert server.unmatched == []
     assert result.exit_code == 0, result.output
