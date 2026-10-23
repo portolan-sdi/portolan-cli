@@ -1,9 +1,13 @@
-# WFS URL with an API key (#981)
+# Service address with a key (#981)
 
-The service URL carries `?api_key=SECRET`. Each request without `api_key`
-gets HTTP 401. No file under the output root may hold `SECRET`.
+The service address contains `?api_key=SECRET`. For a request with no
+`api_key`, the replay server returns HTTP 401. No file in the output root may
+contain `SECRET`.
 
-- Source: the bodies are the `workspace_layer` recording of
-  `https://gs-stable.geo-solutions.it/geoserver/wfs`, trimmed to
-  `topp:tasmania_roads`. The key gate is authored, because the public server
-  needs no key. `SECRET` is a test value.
+## Source
+
+- The bodies are the `workspace_layer` responses of
+  `https://gs-stable.geo-solutions.it/geoserver/wfs`, cut to
+  `topp:tasmania_roads`.
+- The key gate is hand-written, because the public server requires no key.
+- `SECRET` is a test value.

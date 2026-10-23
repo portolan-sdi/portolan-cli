@@ -1,11 +1,15 @@
-# Sparse ArcGIS layer IDs (#1003)
+# Layer IDs with gaps (#1003)
 
-A MapServer whose layer IDs have gaps. Its first three layers have the IDs 2,
-9, and 10. `--layers 2` must extract layer ID 2, not the layer at list
+The IDs of the first three layers of this map service are 2, 9, and 10.
+`--layers 2` must select layer ID 2. It must not select the layer at list
 position 2.
 
-- Source: `https://eh-gis.ehamptonny.gov/arcgis/rest/services/MapServiceForOpenGov/MapServer`,
-  recorded on 2026-10-23.
-- The service document keeps only the layers 2, 9, and 10 of 59.
-- Each feature page keeps 2 features, with each geometry reduced to its
-  largest ring of at most 40 vertices. Each count response says 2.
+## Source
+
+- The upstream service is
+  `https://eh-gis.ehamptonny.gov/arcgis/rest/services/MapServiceForOpenGov/MapServer`.
+- The responses date from 2026-10-23.
+- The service document keeps the layers 2, 9, and 10 of 59.
+- Each feature page keeps 2 features. Each geometry keeps its largest ring,
+  with 40 vertices or fewer.
+- Each count response says 2.

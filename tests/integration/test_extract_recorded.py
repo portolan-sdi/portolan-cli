@@ -295,7 +295,7 @@ def test_scenario_is_documented_small_and_has_no_stray_file(scenario: Path) -> N
     """Each scenario names its issue or test, stays under 100 KB, and serves every file."""
     readme = (scenario / "README.md").read_text(encoding="utf-8")
     assert re.search(r"#\d+|`tests/[\w/]+\.py`", readme), scenario
-    assert "Source:" in readme, scenario
+    assert "\n## Source\n" in readme, scenario
     assert sum(path.stat().st_size for path in scenario.iterdir()) < 100_000
 
     bodies = {route.body_file for route in ReplayServer(scenario).routes}

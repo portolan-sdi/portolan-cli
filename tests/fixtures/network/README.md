@@ -1,19 +1,22 @@
 # Recorded service responses
 
 Each directory `<kind>/<scenario>/` is one scenario for `tests/replay_server.py`.
-It holds `routes.json`, the body files, and a README. The README names the issue,
-the source of the recording, and what was trimmed or authored.
+The directory contains `routes.json`, the body files, and a README. The README
+states the issue, the source of the responses, and the changes to them.
 
 `tests/integration/test_extract_recorded.py` runs the real `extract` command
 against each scenario. `tests/network/test_recorded_services_live.py` checks
-nightly that each public source still answers in the recorded shape.
+each night that each public source still sends the recorded shape.
 
-Rules for a new recording:
+## Source
 
-- Record the real responses where a public server exists. Remove every
-  credential. Replace the upstream origin in a link with `{{base_url}}`.
-- Trim feature pages to a few features and decimate their geometries. Set the
-  feature count responses to match.
-- Keep each scenario under 100 KB.
-- Author a response only when no public server shows the shape, and say so in
-  the README.
+Follow these rules for a new scenario:
+
+- Record the real responses when a public server shows the shape.
+- Remove each credential.
+- Put `{{base_url}}` in place of the upstream origin in a link.
+- Keep a few features in each page. Cut the vertices of each geometry.
+- Make each count response match the page.
+- Keep each scenario below 100 KB.
+- Write a response by hand only when no public server shows the shape. Say so
+  in the README.
