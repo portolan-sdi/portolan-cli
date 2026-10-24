@@ -260,19 +260,23 @@ class ExtractGroup(PluginGroup):
         if extractor is None:
             return None
         if id(extractor) not in self._extractor_commands:
+            # Plugin code returns object until checked, so the isinstance
+            # check stays reachable for mypy.
+            loaded: click.Command | None = None
             try:
-                loaded: click.Command | None = extractor.cli_command()
+                raw: object = extractor.cli_command()
             except Exception as err:  # noqa: BLE001 - one broken extractor must not break the group
                 warn(
                     f"Extractor '{cmd_name}' from {extractor_owner(cmd_name)} did not load "
                     f"its command: {err}"
                 )
-                loaded = None
-            if loaded is not None and not isinstance(loaded, click.Command):
-                warn(
-                    f"Extractor '{cmd_name}' from {extractor_owner(cmd_name)} is not a "
-                    "Click command."
-                )
-                loaded = None
+            else:
+                if isinstance(raw, click.Command):
+                    loaded = raw
+                elif raw is not None:
+                    warn(
+                        f"Extractor '{cmd_name}' from {extractor_owner(cmd_name)} is not a "
+                        "Click command."
+                    )
             self._extractor_commands[id(extractor)] = (extractor, loaded)
         return self._extractor_commands[id(extractor)][1]

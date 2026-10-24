@@ -75,7 +75,7 @@ from portolan_cli.extract.common import cli_helpers
     "--retries",
     type=click.IntRange(min=1),
     default=3,
-    help="Retry attempts per failed table (default: 3).",
+    help="Attempts per table for a transient failure (default: 3).",
 )
 @click.option(
     "--timeout",

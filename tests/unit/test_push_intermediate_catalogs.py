@@ -23,8 +23,10 @@ from portolan_cli.sync.push import (
     push,
     push_all_collections,
 )
+from tests.memory_remote import memory_remote, record_puts
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
@@ -74,6 +76,13 @@ def _write_leaf_collection(catalog_root: Path, collection_id: str) -> None:
             }
         )
     )
+
+
+def _link(catalog_json: Path, *hrefs: str) -> None:
+    """Add a ``describedby`` link to each href, because push uploads only named files."""
+    document = json.loads(catalog_json.read_text(encoding="utf-8"))
+    document.setdefault("links", []).extend({"rel": "describedby", "href": h} for h in hrefs)
+    catalog_json.write_text(json.dumps(document), encoding="utf-8")
 
 
 @pytest.fixture
@@ -126,13 +135,20 @@ class TestDiscoverIntermediateCatalogFiles:
         assert _discover_intermediate_catalog_files(tmp_path, ["demographics"]) == []
 
 
+@pytest.fixture
+def put_order(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
+    """Send push_all_collections to a MemoryStore and record the key of each write."""
+    order = record_puts(monkeypatch)
+    with memory_remote():
+        yield order
+
+
 class TestCatalogWidePushIntermediateCatalogs:
     """push_all_collections must upload intermediate catalog.json (Issue #547, #552)."""
 
-    @patch("portolan_cli.sync.push.obs.put")
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_uploads_intermediate_catalogs(
-        self, mock_push: MagicMock, mock_obs_put: MagicMock, nested_catalog: Path
+        self, mock_push: MagicMock, put_order: list[str], nested_catalog: Path
     ) -> None:
         # The scaffolded AGENTS.md beside an intermediate catalog (#905, #935).
         (nested_catalog / "tst" / "AGENTS.md").write_text("# tst agents\n")
@@ -149,17 +165,16 @@ class TestCatalogWidePushIntermediateCatalogs:
         )
 
         assert result.success is True
-        uploaded_keys = [c.args[1] for c in mock_obs_put.call_args_list]
+        uploaded_keys = put_order
 
         assert "catalog/tst/catalog.json" in uploaded_keys, uploaded_keys
         assert "catalog/tst/latest/catalog.json" in uploaded_keys, uploaded_keys
         assert "catalog/tst/README.md" in uploaded_keys, uploaded_keys
         assert "catalog/tst/AGENTS.md" in uploaded_keys, uploaded_keys
 
-    @patch("portolan_cli.sync.push.obs.put")
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_versions_json_uploaded_after_intermediate_catalogs(
-        self, mock_push: MagicMock, mock_obs_put: MagicMock, nested_catalog: Path
+        self, mock_push: MagicMock, put_order: list[str], nested_catalog: Path
     ) -> None:
         """Manifest-last: root versions.json uploads after intermediate catalogs."""
         # Root versions.json is required for the manifest-last upload to fire.
@@ -178,7 +193,7 @@ class TestCatalogWidePushIntermediateCatalogs:
             profile=None,
         )
 
-        uploaded_keys = [c.args[1] for c in mock_obs_put.call_args_list]
+        uploaded_keys = put_order
         versions_idx = uploaded_keys.index("catalog/versions.json")
         inter_idx = uploaded_keys.index("catalog/tst/latest/catalog.json")
         assert versions_idx > inter_idx, uploaded_keys
@@ -236,7 +251,7 @@ class TestSingleCollectionIntermediateCatalogs:
 
 
 class TestIntermediateSidecarFiles:
-    """Every file beside an intermediate catalog.json reaches the remote (#905, #935).
+    """Every file that an intermediate catalog names reaches the remote (#905, #935).
 
     The fixed name list held only catalog.json and README.md. The scaffolded
     AGENTS.md, which the catalog's rel="agents" link names, was never uploaded.
@@ -258,9 +273,10 @@ class TestIntermediateSidecarFiles:
         ]
 
     def test_discovers_other_sidecar_files(self, nested_catalog: Path) -> None:
-        """A thumbnail or style beside the catalog is published like the root's."""
+        """A thumbnail or style that the catalog links is published like the root's."""
         (nested_catalog / "tst" / "thumbnail.png").write_bytes(b"\x89PNG")
         (nested_catalog / "tst" / "style.json").write_text("{}")
+        _link(nested_catalog / "tst" / "catalog.json", "./thumbnail.png", "./style.json")
 
         files = _discover_intermediate_catalog_files(nested_catalog, ["tst/latest/adm0"])
         rel = {f.relative_to(nested_catalog).as_posix() for f in files}
@@ -285,6 +301,7 @@ class TestIntermediateSidecarFiles:
     def test_keeps_file_named_after_its_directory(self, nested_catalog: Path) -> None:
         """The STAC item heuristic must not drop tst/tst.json at a catalog level."""
         (nested_catalog / "tst" / "tst.json").write_text("{}")
+        _link(nested_catalog / "tst" / "catalog.json", "./tst.json")
 
         files = _discover_intermediate_catalog_files(nested_catalog, ["tst/latest/adm0"])
         rel = {f.relative_to(nested_catalog).as_posix() for f in files}

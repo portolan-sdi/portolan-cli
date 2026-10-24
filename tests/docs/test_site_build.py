@@ -13,6 +13,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -37,27 +38,57 @@ SITE_STYLES = PROJECT_ROOT / "docs/assets/stylesheets/extra.css"
 LITERAL_COLOR = re.compile(r"#[0-9a-fA-F]{3,8}\b|rgba?\(")
 
 
-@pytest.fixture(scope="session")
-def built_site() -> Path:
-    """Build the site once and return the output directory.
-
-    Remove the output directory first. `zensical build --clean` clears
-    the cache and keeps the output. A page whose source is gone stays
-    on disk, and a test that reads it passes against stale HTML.
-    """
-    site = PROJECT_ROOT / "site"
-    shutil.rmtree(site, ignore_errors=True)
-
-    result = subprocess.run(
-        ["uv", "run", "zensical", "build", "--strict", "--clean"],
+def _copy_working_tree(dest: Path) -> None:
+    """Copy each tracked or untracked, not ignored, file of the working tree to ``dest``."""
+    listed = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         cwd=PROJECT_ROOT,
+        capture_output=True,
+        check=True,
+    ).stdout.decode("utf-8")
+    for relative in filter(None, listed.split("\0")):
+        source = PROJECT_ROOT / relative
+        if not source.is_symlink() and not source.exists():
+            continue  # deleted in the working tree
+        target = dest / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target, follow_symlinks=False)
+
+
+@pytest.fixture(scope="session")
+def built_site(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build the site once per xdist worker and return the output directory.
+
+    Each worker builds a copy of the working tree in its own temporary
+    directory. Under `-n 3` the workers shared `site/`, and one worker
+    deleted it while another read it. Zensical has no output flag. It
+    writes `site/` and `.cache/` under the project root, and it reads
+    snippets relative to the working directory. So only a copy keeps the
+    repository root clean. The `site/` that the docs job uploads stays as
+    the build step wrote it.
+
+    `zensical build --clean` clears the cache and keeps the output. A
+    fresh copy has no old output, so no page outlives its source.
+    """
+    root = tmp_path_factory.mktemp("site-build")
+    _copy_working_tree(root)
+    result = subprocess.run(
+        [sys.executable, "-m", "zensical", "build", "--strict", "--clean"],
+        cwd=root,
         capture_output=True,
         text=True,
         check=False,
     )
     assert result.returncode == 0, f"Build failed:\n{result.stdout}\n{result.stderr}"
+    site = root / "site"
     assert site.is_dir(), f"Build reported success but {site} does not exist."
     return site
+
+
+def test_the_site_builds_outside_the_repository(built_site: Path) -> None:
+    """Workers that share one output directory delete each other's pages."""
+    assert PROJECT_ROOT not in built_site.parents
+    assert (built_site / "index.html").is_file()
 
 
 def _page(site: Path, relative: str) -> str:

@@ -39,19 +39,19 @@ def build_command(layer_source: LayerSource) -> click.Command:
         "--layers",
         type=str,
         default=None,
-        help="Include layers matching glob patterns (comma-separated).",
+        help="Include layers by id, name, or glob (comma-separated).",
     )
     @click.option(
         "--exclude-layers",
         type=str,
         default=None,
-        help="Exclude layers matching glob patterns (comma-separated).",
+        help="Exclude layers by id, name, or glob (comma-separated).",
     )
     @click.option(
         "--retries",
         type=int,
         default=3,
-        help="Attempts per layer (default: 3).",
+        help="Attempts per layer for a transient failure (default: 3).",
     )
     @cli_helpers.run_options("layers")
     @cli_helpers.catalog_options

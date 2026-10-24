@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, TextIO
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from datetime import datetime
 
     from portolan_cli.convert import ConversionResult
@@ -26,9 +25,14 @@ import click
 from rashid.model import Severity as RashidSeverity
 
 from portolan_cli import trace
-from portolan_cli.add import AddFailure, add_files
+from portolan_cli.add import (
+    SKIP_UNCHANGED,
+    SKIPS_THAT_TRACK,
+    AddFailure,
+    add_files,
+)
 from portolan_cli.add_progress import AddProgressReporter, count_files
-from portolan_cli.catalog import find_catalog_root
+from portolan_cli.catalog import find_catalog_root, sync_catalog_index
 from portolan_cli.catalog_list import (
     AssetInfo,
     AssetStatus,
@@ -41,9 +45,11 @@ from portolan_cli.discovery import get_sidecars
 from portolan_cli.emit import emit_error, emit_success
 from portolan_cli.errors import (
     AssetKeyCollisionError,
+    ConfigError,
     InvalidLiveUrlError,
     MissingLicenseError,
     PortolanError,
+    UnknownFormatHandlerError,
 )
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.licensing import (
@@ -54,11 +60,11 @@ from portolan_cli.licensing import (
 )
 from portolan_cli.logging_setup import configure_logging
 from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
-from portolan_cli.output import detail, error, set_writer, success, warn
+from portolan_cli.output import detail, error, set_writer, stdout_to_stderr, success, warn
 from portolan_cli.output import info as info_output
 from portolan_cli.plugins.commands import ExtractGroup, PluginGroup
 from portolan_cli.plugins.manager import PluginWarning
-from portolan_cli.remove import remove_files
+from portolan_cli.remove import _resolve_collection_dir, remove_files
 from portolan_cli.scan.core import (
     IssueType,
     ScanIssue,
@@ -145,11 +151,16 @@ warnings.showwarning = show_warning
 
 
 def should_output_json(ctx: click.Context, json_flag: bool = False) -> bool:
-    """Determine if JSON output should be used.
+    """Determine if JSON output should be used, and keep stdout for the envelope.
 
     Checks both the global --format option and per-command --json flags.
     Global --format=json takes precedence, but per-command flags also work
     for backward compatibility.
+
+    In JSON mode this also routes the stdout-bound ``output`` messages to
+    stderr until the root context closes, so the library messages of the
+    run cannot break the JSON document on stdout (#1005). A second call in
+    the same run changes nothing.
 
     Args:
         ctx: Click context containing the format preference.
@@ -158,12 +169,16 @@ def should_output_json(ctx: click.Context, json_flag: bool = False) -> bool:
     Returns:
         True if JSON output should be used, False for text output.
     """
-    # Get format from context (set by global --format option)
-    obj = ctx.find_root().obj or {}
-    global_format = obj.get("format", "text")
+    root = ctx.find_root()
+    obj = root.obj or {}
+    use_json = obj.get("format", "text") == "json" or json_flag
+    if use_json and not root.meta.get(_STDOUT_ROUTED):
+        root.meta[_STDOUT_ROUTED] = True
+        root.with_resource(stdout_to_stderr())
+    return use_json
 
-    # Global format takes precedence, but per-command --json also works
-    return global_format == "json" or json_flag
+
+_STDOUT_ROUTED = "portolan.stdout_to_stderr"
 
 
 def _fail_on_add_error(
@@ -370,32 +385,6 @@ def resolve_aws_profile(
     )
 
 
-def resolve_aws_region(
-    region: str | None,
-    catalog_path: Path | None,
-    collection: str | None = None,
-) -> str | None:
-    """Resolve AWS region with precedence: CLI > env var > config.
-
-    Args:
-        region: CLI-provided region value (None if not specified).
-        catalog_path: Path to catalog root for config lookup.
-        collection: Optional collection name for collection-level config.
-
-    Returns:
-        Resolved region name or None if not configured.
-    """
-    from portolan_cli.config import get_setting
-
-    return get_setting(
-        "region",
-        cli_value=region,
-        catalog_path=catalog_path,
-        collection=collection,
-        collection_path=_collection_path(catalog_path, collection),
-    )
-
-
 @click.group(cls=PluginGroup)
 @click.version_option()
 @click.option(
@@ -438,6 +427,8 @@ def cli(ctx: click.Context, output_format: str, verbosity: int, quiet: bool, tim
     # Store format in context for subcommands
     ctx.ensure_object(dict)
     ctx.obj["format"] = output_format
+    # A command that never asks should_output_json still gets a clean stdout.
+    should_output_json(ctx)
 
     configure_logging(verbosity=verbosity, quiet=quiet)
     # Tracing state is process-wide. A second run in the same process (a
@@ -737,55 +728,6 @@ def _get_format_display_name(format_type: str | None) -> str:
     if format_type == RASTER:
         return "COG"
     return format_type or "Unknown"
-
-
-def _get_asset_format_display_name(asset_href: str) -> str:
-    """Get human-readable format name for an individual asset based on extension.
-
-    Uses FORMAT_DISPLAY_NAMES from formats.py for known geospatial extensions,
-    falls back to the uppercase extension for unknown types.
-
-    Args:
-        asset_href: Asset href (e.g., "./data.parquet", "./thumb.png").
-
-    Returns:
-        Human-readable format name (e.g., "GeoParquet", "PMTiles", "PNG").
-    """
-    from portolan_cli.formats import FORMAT_DISPLAY_NAMES
-
-    ext = Path(asset_href).suffix.lower()
-    if ext in FORMAT_DISPLAY_NAMES:
-        return FORMAT_DISPLAY_NAMES[ext]
-    if ext:
-        return ext.upper().lstrip(".")
-    return "Unknown"
-
-
-def _get_asset_file_size(
-    catalog_path: Path, collection_id: str, item_id: str, asset_href: str
-) -> int | None:
-    """Get the file size for an asset.
-
-    Args:
-        catalog_path: Path to catalog root.
-        collection_id: Collection ID.
-        item_id: Item ID (subdirectory under collection).
-        asset_href: Asset href (relative to item directory).
-
-    Returns:
-        File size in bytes, or None if file not found.
-    """
-    # Asset hrefs are relative to the item directory: collection/item/
-    # The href looks like "./data.parquet" or just "data.parquet"
-    clean_href = asset_href.removeprefix("./")
-
-    # Full path: catalog_root / collection / item / asset
-    asset_path = catalog_path / collection_id / item_id / clean_href
-
-    if asset_path.exists():
-        return asset_path.stat().st_size
-
-    return None
 
 
 def _apply_list_status_filter(
@@ -1444,7 +1386,12 @@ def _output_check_json(payload: dict[str, Any], *, failed: bool) -> None:
 @click.option(
     "--metadata",
     is_flag=True,
-    help="Only check/fix STAC metadata (links, schema, staleness)",
+    help=(
+        "Only check/fix STAC metadata (links, schema, staleness). With --fix this is "
+        "the metadata refresh. It exits 1 while an error remains, and the JSON success "
+        "field is false only when a fix fails, an auto-fixable error remains, or a file "
+        "does not parse or breaks the STAC schema. --strict also exits 1 on a warning."
+    ),
 )
 @click.option(
     "--geo-assets",
@@ -1829,7 +1776,7 @@ def _execute_check_workflow(
                 else [],
             )
         payload["fix"] = fix_data
-    failed = fix_failed or _check_failed(payload, strict=strict)
+    failed = fix_failed or _check_failed(payload, strict=strict, refresh=fix and mode == "metadata")
 
     if use_json:
         _output_check_json(payload, failed=failed)
@@ -1839,7 +1786,9 @@ def _execute_check_workflow(
         if fix_data is not None:
             _print_fix_split(payload, dry_run=dry_run)
 
-    if failed:
+    # The exit code follows ``passed``: a blocking finding fails the command,
+    # whatever ``--fix`` repaired. ``failed`` sets the envelope's ``success``.
+    if failed or not payload["passed"]:
         raise SystemExit(1)
 
 
@@ -1928,19 +1877,40 @@ def _should_validate(path: Path, *, run_metadata: bool, fix: bool) -> bool:
     return resolve_catalog_root_for_check(path) is not None
 
 
-def _check_failed(payload: dict[str, Any], *, strict: bool) -> bool:
-    """Decide the exit code: errors always fail, warnings only under --strict.
+def _check_failed(payload: dict[str, Any], *, strict: bool, refresh: bool = False) -> bool:
+    """Decide the envelope's ``success`` from the findings the mode owns.
 
-    The workflow notice (unregistered or vanished data files) is not a
-    conformance defect, so on its own it never flips a default run. Under
-    ``--strict``, where a catalog is asserted to be publishable, an unaccounted
-    file is a failure.
+    A default run fails on any error. Under ``--strict``, where a catalog is
+    asserted to be publishable, it also fails on a warning or on the workflow
+    notice (unregistered or vanished data files). The notice is not a
+    conformance defect, so on its own it never flips a default run.
+
+    ``refresh`` is ``--fix --metadata`` without ``--strict``: the metadata
+    refresh (#853). It fails on an AUTO error that is still in the findings,
+    which is a repair the refresh did not make. It also fails on a document
+    that does not parse or breaks the STAC schema, because the refresh cannot
+    use it. The findings keep the two cases apart by rule id. Any other
+    INSTRUCT or EXTERNAL error is work for a person or a host. The refresh
+    did its job, so ``success`` stays true. The caller still exits 1, because
+    the error leaves ``passed`` false. A fixer that could not write fails the
+    run through ``fix_failed`` in the caller.
     """
-    if payload.get("error_count"):
-        return True
-    if not strict:
-        return False
-    return bool(payload.get("warning_count")) or bool(payload.get("workflow"))
+    if strict:
+        return any(payload.get(key) for key in ("error_count", "warning_count", "workflow"))
+    if refresh:
+        return any(
+            finding["severity"] == "error"
+            and (finding["remediation"] == "auto" or finding["rule_id"] in _UNUSABLE_DOCUMENT_RULES)
+            for finding in payload.get("findings", [])
+        )
+    return bool(payload.get("error_count"))
+
+
+#: rashid rules for a document the refresh cannot use. PTL-GEN-000 and
+#: PTL-GEN-001 report a syntax error: a catalog.json or an object file that
+#: does not parse. PTL-STR-001 reports a schema violation: the file parses but
+#: breaks the STAC schema. Each one fails the refresh.
+_UNUSABLE_DOCUMENT_RULES = frozenset({"PTL-GEN-000", "PTL-GEN-001", "PTL-STR-001"})
 
 
 def _render_check(
@@ -2121,7 +2091,7 @@ def _run_legacy_fix_workflow(
 
     Returns:
         The fix reports as JSON data, whether a fix failed, and the data files
-        whose items the freshness pass wrote. The caller repairs those items,
+        whose items the freshness pass updated. The caller repairs those items,
         which the finding-driven registry ran too early to see (#709).
     """
     from portolan_cli.scan.check import run_fix_workflow
@@ -2165,10 +2135,12 @@ def _run_legacy_fix_workflow(
             dry_run=dry_run,
         )
 
+    # A created item went through finalize_items and the mirror writer, as after
+    # add, so it needs no repair. A repair would run the catalog-wide sweeps again.
     written_items = [
         result.file_path
         for result in (metadata_fix_report.results if metadata_fix_report else [])
-        if result.success and result.action in (FixAction.CREATED, FixAction.UPDATED)
+        if result.success and result.action is FixAction.UPDATED
     ]
 
     return (
@@ -2649,99 +2621,8 @@ def _print_format_breakdown(result: ScanResult) -> None:
         detail(f"  {count} {ext} file{'s' if count != 1 else ''}")
 
 
-# Default maximum issues to show per severity before truncation
-DEFAULT_ISSUE_LIMIT = 10
-
 # Maximum example paths to show per batched issue group
 BATCH_EXAMPLES_LIMIT = 3
-
-
-def _print_issue_group(
-    issues: list[ScanIssue],
-    severity: ScanSeverity,
-    header_fn: Callable[[str], None],
-    count: int,
-    label: str,
-    *,
-    show_all: bool = False,
-    limit: int = DEFAULT_ISSUE_LIMIT,
-) -> None:
-    """Print a group of issues with the same severity.
-
-    Args:
-        issues: List of all issues.
-        severity: Severity level to filter for.
-        header_fn: Function to print header (error/warn/info).
-        count: Total count of issues with this severity.
-        label: Label for the issue type (e.g., "error", "warning").
-        show_all: If True, show all issues without truncation.
-        limit: Maximum issues to show per severity (default: 10).
-    """
-    if count == 0:
-        return
-    header_fn(f"{count} {label}{'s' if count != 1 else ''}")
-
-    # Filter issues by severity
-    severity_issues = [i for i in issues if i.severity == severity]
-
-    # Apply truncation if needed
-    displayed = severity_issues if show_all else severity_issues[:limit]
-    truncated_count = len(severity_issues) - len(displayed)
-
-    for issue in displayed:
-        header_fn(f"  {issue.relative_path}: {issue.message}")
-        if issue.suggestion is not None:
-            detail(f"    Hint: {issue.suggestion}")
-
-    # Show truncation message if issues were hidden
-    if truncated_count > 0:
-        detail(f"  ... and {truncated_count} more (use --all to see all)")
-
-
-def _print_issues_by_severity(result: ScanResult, *, show_all: bool = False) -> None:
-    """Print issues grouped by severity.
-
-    Args:
-        result: The scan result containing issues.
-        show_all: If True, show all issues without truncation.
-    """
-    if not result.issues:
-        return
-
-    _print_issue_group(
-        result.issues, ScanSeverity.ERROR, error, result.error_count, "error", show_all=show_all
-    )
-    _print_issue_group(
-        result.issues,
-        ScanSeverity.WARNING,
-        warn,
-        result.warning_count,
-        "warning",
-        show_all=show_all,
-    )
-    _print_issue_group(
-        result.issues,
-        ScanSeverity.INFO,
-        info_output,
-        result.info_count,
-        "info message",
-        show_all=show_all,
-    )
-
-
-def _print_scan_summary(result: ScanResult, *, show_all: bool = False) -> None:
-    """Print human-readable scan summary (legacy).
-
-    Args:
-        result: The scan result to print.
-        show_all: If True, show all issues without truncation.
-    """
-    _print_scan_header(result)
-    _print_format_breakdown(result)
-    _print_issues_by_severity(result, show_all=show_all)
-
-    if result.skipped:
-        detail(f"{len(result.skipped)} files skipped (unrecognized format)")
 
 
 def _print_scan_summary_enhanced(
@@ -2959,7 +2840,7 @@ def _print_next_steps(result: ScanResult) -> None:
 
 def _output_add_json(
     added: list[ItemInfo],
-    skipped: list[Path],
+    skipped: list[tuple[Path, str]],
     failures: list[AddFailure],
 ) -> None:
     """Output add command results as JSON."""
@@ -2973,7 +2854,7 @@ def _output_add_json(
             }
             for ds in added
         ],
-        "skipped": [str(p) for p in skipped],
+        "skipped": [{"path": str(p), "reason": reason} for p, reason in skipped],
         "failures": [{"path": str(f.path), "error": f.error} for f in failures],
     }
     if failures:
@@ -3069,13 +2950,17 @@ def _print_add_failures_batched(failures: list[AddFailure]) -> None:
                 detail(f"    Examples: {paths}")
 
 
-def _output_add_unchanged(skipped: list[Path], verbose: bool) -> None:
-    """Output message when all files are already tracked (unchanged)."""
+def _output_add_unchanged(skipped: list[tuple[Path, str]], verbose: bool) -> None:
+    """Say that the add changed nothing, and why each file was skipped."""
     skip_count = len(skipped)
-    success(f"All {skip_count} file{'s' if skip_count != 1 else ''} already tracked (unchanged)")
+    noun = "file" if skip_count == 1 else "files"
+    if all(reason in SKIPS_THAT_TRACK for _, reason in skipped):
+        success(f"All {skip_count} {noun} already tracked (unchanged)")
+    else:
+        info_output(f"Nothing added: {skip_count} {noun} skipped")
     if verbose:
-        for p in skipped:
-            detail(f"  {p.name}")
+        for p, reason in skipped:
+            detail(f"  {p.name}: {reason}")
 
 
 def _output_add_summary(added: list[ItemInfo]) -> None:
@@ -3103,7 +2988,7 @@ def _output_add_summary(added: list[ItemInfo]) -> None:
 
 def _output_add_human(
     added: list[ItemInfo],
-    skipped: list[Path],
+    skipped: list[tuple[Path, str]],
     failures: list[AddFailure],
     verbose: bool,
 ) -> None:
@@ -3126,8 +3011,8 @@ def _output_add_human(
 
     # Show skipped files in verbose mode
     if verbose and skipped:
-        for p in skipped:
-            detail(f"Skipping {p.name} (unchanged)")
+        for p, reason in skipped:
+            detail(f"Skipping {p.name} ({reason})")
 
     # Final success summary (always show if we added something, even with failures)
     # Summary is always shown, failures are shown separately
@@ -3139,9 +3024,42 @@ def _output_add_human(
         _print_add_failures_batched(failures)
 
 
+def _report_skips_and_find_collections(
+    added: list[ItemInfo], skips: list[tuple[Path, str]], catalog_root: Path
+) -> tuple[set[str], set[str]]:
+    """Warn about each file that stayed out of the catalog, and find the collections to refresh.
+
+    The warning goes to stderr in both modes. The affected set holds the
+    collections of the added files and of the skips still in the catalog, so
+    --pmtiles works on already-tracked files. An ignored file has no
+    collection to refresh.
+
+    The versioned set holds the collections this run wrote a version for. A
+    side-step's derived asset folds into that snapshot instead of bumping a
+    second version, so one `add` stays one version. A skipped collection is
+    absent, so its backfill gets a version of its own rather than editing a
+    published snapshot.
+    """
+    affected: set[str] = set()
+    versioned: set[str] = set()
+    for a in added:
+        if a.collection_id:
+            affected.add(a.collection_id)
+            versioned.add(a.collection_id)
+    for p, reason in skips:
+        if reason not in SKIPS_THAT_TRACK:
+            warn(f"Skipping {p.name}: {reason}")
+            continue
+        # A nested collection id spans several path segments.
+        collection_dir = _resolve_collection_dir(p, catalog_root)
+        if collection_dir is not None:
+            affected.add(collection_dir.relative_to(catalog_root.resolve()).as_posix())
+    return affected, versioned
+
+
 def _output_add_results(
     added: list[ItemInfo],
-    skipped: list[Path],
+    skipped: list[tuple[Path, str]],
     failures: list[AddFailure],
     verbose: bool,
     use_json: bool,
@@ -3405,11 +3323,12 @@ def _generate_add_mirrors(
     type=click.Choice(["smart", "keep", "overwrite"], case_sensitive=False),
     default="smart",
     help=(
-        "How to merge auto-detected metadata with existing values. "
-        "'smart' (default): preserve human-authored fields (title, description), "
-        "update machine-derivable fields (href, type, row_count). "
-        "'keep': preserve all existing fields. "
-        "'overwrite': replace everything with auto-detected values."
+        "How to merge the human-authored fields with the detected values. "
+        "Human fields are the asset title and description, custom asset fields, "
+        "and column descriptions. Fields read from the data always follow the data. "
+        "'smart' (default): keep a human value and fill a missing one from the data. "
+        "'keep': keep a human value and never fill it from the data. "
+        "'overwrite': drop the human values."
     ),
 )
 @click.pass_context
@@ -3555,6 +3474,7 @@ def add_cmd(
     )
 
     # item_datetime is parsed by Click via FLEXIBLE_DATETIME type
+    skip_reasons: dict[Path, str] = {}
     try:
         with progress_reporter:
             all_added, all_skipped, all_failures = add_files(
@@ -3565,44 +3485,33 @@ def add_cmd(
                 item_datetime=item_datetime,
                 on_progress=on_file_progress,
                 workers=workers,
-                json_mode=use_json,
                 force=force,
                 reconvert=reconvert,
                 skip_partitioning=skip_partitioning,
                 merge_strategy=MergeStrategy(merge_strategy),
+                skip_reasons=skip_reasons,
             )
     except MissingLicenseError as err:
         # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
         # check reads it, so add refuses the write and names what to supply.
         _fail_on_missing_license("add", err, use_json=use_json)
-    except (ValueError, FileNotFoundError, AssetKeyCollisionError) as err:
+    except (
+        ValueError,
+        FileNotFoundError,
+        AssetKeyCollisionError,
+        ConfigError,
+        UnknownFormatHandlerError,
+    ) as err:
         # Issue #933: AssetKeyCollisionError is add refusing to replace one
-        # file's asset with another file.
+        # file's asset with another file. A ConfigError is a config.yaml key
+        # that add reads, such as a malformed ignored_files (#1044). An
+        # UnknownFormatHandlerError is a conversion.handlers pin to a handler
+        # that no plugin provides. Its message names the known handlers.
         _fail_on_add_error(err, resolved_paths, use_json=use_json)
     trace.current_span().set(elapsed_seconds=progress_reporter.elapsed_seconds)
-
-    # Compute affected collections before any post-processing
-    # Include both added AND skipped assets so --pmtiles works on already-tracked files
-    # Note: all_added contains ItemInfo objects, all_skipped contains Path objects
-    affected: set[str] = set()
-    # Collections this run actually wrote a version for. A side-step's derived
-    # asset folds into that snapshot instead of bumping a second version, so one
-    # `add` stays one version. A skipped collection is absent, so its backfill
-    # gets a version of its own rather than editing a published snapshot.
-    versioned: set[str] = set()
-    for a in all_added:
-        if hasattr(a, "collection_id") and a.collection_id:
-            affected.add(a.collection_id)
-            versioned.add(a.collection_id)
-    for p in all_skipped:
-        # Extract collection_id from path relative to catalog_root
-        try:
-            rel = p.relative_to(catalog_root)
-            # Collection ID is the first path component
-            if rel.parts:
-                affected.add(rel.parts[0])
-        except ValueError:
-            pass  # Path not relative to catalog_root
+    # add_files gives every skip a reason. A path without one reads as unchanged.
+    skips = [(p, skip_reasons.get(p, SKIP_UNCHANGED)) for p in all_skipped]
+    affected, versioned = _report_skips_and_find_collections(all_added, skips, catalog_root)
 
     # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state)
     # Always run parquet generation if --stac-geoparquet flag was passed, regardless of output mode
@@ -3641,9 +3550,10 @@ def add_cmd(
         versioned_collections=versioned,
         verbose=verbose,
     )
+    sync_catalog_index(catalog_root, affected)
 
     # Output combined results (after all processing complete)
-    _output_add_results(all_added, all_skipped, all_failures, verbose, use_json)
+    _output_add_results(all_added, skips, all_failures, verbose, use_json)
 
     # Exit with non-zero code if any failures occurred
     if all_failures:
@@ -4091,19 +4001,29 @@ def _report_push_all_result(all_result: Any, *, use_json: bool) -> None:
         SystemExit: If any collection failed.
     """
     if use_json:
-        envelope = success_envelope(
-            "push",
-            {
-                "total_collections": all_result.total_collections,
-                "successful_collections": all_result.successful_collections,
-                "failed_collections": all_result.failed_collections,
-                "total_files_uploaded": all_result.total_files_uploaded,
-                "total_versions_pushed": all_result.total_versions_pushed,
-                "dry_run": all_result.dry_run,
-                "total_would_push_files": all_result.total_would_push_files,
-                "total_would_push_versions": all_result.total_would_push_versions,
-                "collection_errors": all_result.collection_errors,
-            },
+        data = {
+            "total_collections": all_result.total_collections,
+            "successful_collections": all_result.successful_collections,
+            "failed_collections": all_result.failed_collections,
+            "total_files_uploaded": all_result.total_files_uploaded,
+            "total_versions_pushed": all_result.total_versions_pushed,
+            "dry_run": all_result.dry_run,
+            "total_would_push_files": all_result.total_would_push_files,
+            "total_would_push_versions": all_result.total_would_push_versions,
+            "collection_errors": all_result.collection_errors,
+        }
+        # A failed push returns success=false, with one error per message.
+        errors = [
+            ErrorDetail(type="PushError", message=f"{name}: {message}")
+            for name, messages in all_result.collection_errors.items()
+            for message in messages
+        ]
+        envelope = (
+            success_envelope("push", data)
+            if all_result.success
+            else error_envelope(
+                "push", errors or [ErrorDetail("PushError", "Push failed")], data=data
+            )
         )
         output_json_envelope(envelope)
 
@@ -5049,8 +4969,11 @@ def config_set(
 ) -> None:
     r"""Set a configuration value.
 
-    KEY is the setting name (e.g., backend, statistics.enabled).
-    VALUE is the value to set.
+    KEY is the setting name (e.g., backend, statistics.enabled). A dotted KEY
+    names a nested value: conversion.vector.sort writes sort under the
+    conversion and vector blocks. An unknown KEY fails and lists the known keys.
+    VALUE is the value to set. It takes the type of the setting, so "false" is
+    stored as a boolean.
 
     Note: Sensitive settings (remote, profile, region) cannot be stored in
     config.yaml. Use environment variables or .env files instead.
@@ -5059,6 +4982,7 @@ def config_set(
     Examples:
         portolan config set backend iceberg
         portolan config set statistics.enabled true
+        portolan config set conversion.vector.sort none
         portolan config set pmtiles.enabled false --collection demographics
     """
     from portolan_cli.config import set_setting
@@ -5080,10 +5004,10 @@ def config_set(
         raise SystemExit(1)
 
     try:
-        set_setting(catalog_path, key, value, collection=collection)
+        stored = set_setting(catalog_path, key, value, collection=collection)
 
         if use_json:
-            data = {"key": key, "value": value}
+            data = {"key": key, "value": stored}
             if collection:
                 data["collection"] = collection
             envelope = success_envelope("config set", data)
@@ -5129,7 +5053,7 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
         portolan config get remote
         portolan config get aws_profile --collection restricted
     """
-    from portolan_cli.config import get_setting, get_setting_source
+    from portolan_cli.config import _get_env_var_name, get_setting, get_setting_source
 
     use_json = should_output_json(ctx, json_output)
 
@@ -5147,14 +5071,14 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
-    # Load .env for credential precedence
-    load_dotenv_and_warn_sensitive(catalog_path)
-
     try:
+        # Load .env for credential precedence
+        load_dotenv_and_warn_sensitive(catalog_path)
         value = get_setting(key, catalog_path=catalog_path, collection=collection)
         source = get_setting_source(key, catalog_path, collection)
-    except ValueError as e:
-        emit_error("config get", "ConfigError", str(e), use_json=use_json)
+    except (ConfigError, ValueError) as e:
+        error_type = type(e).__name__ if isinstance(e, ConfigError) else "ConfigError"
+        emit_error("config get", error_type, str(e), use_json=use_json)
         raise SystemExit(1) from None
 
     if use_json:
@@ -5174,7 +5098,7 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
         else:
             info_output(f"{key} is not set")
             detail(f"  Set via: portolan config set {key} <value>")
-            detail(f"  Or set:  PORTOLAN_{key.upper()}=<value>")
+            detail(f"  Or set:  {_get_env_var_name(key)}=<value>")
 
 
 @config.command("list")
@@ -5215,10 +5139,13 @@ def config_list(ctx: click.Context, json_output: bool, collection: str | None) -
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
-    # Load .env for credential precedence
-    load_dotenv_and_warn_sensitive(catalog_path)
-
-    settings = list_settings(catalog_path, collection=collection)
+    try:
+        # Load .env for credential precedence
+        load_dotenv_and_warn_sensitive(catalog_path)
+        settings = list_settings(catalog_path, collection=collection)
+    except ConfigError as e:
+        emit_error("config list", type(e).__name__, str(e), use_json=use_json)
+        raise SystemExit(1) from None
 
     if use_json:
         data: dict[str, Any] = {"settings": settings}
@@ -5282,7 +5209,11 @@ def config_unset(ctx: click.Context, json_output: bool, key: str, collection: st
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
-    removed = unset_setting(catalog_path, key, collection=collection)
+    try:
+        removed = unset_setting(catalog_path, key, collection=collection)
+    except ConfigError as e:
+        emit_error("config unset", type(e).__name__, str(e), use_json=use_json)
+        raise SystemExit(1) from None
 
     if use_json:
         data = {"key": key, "removed": removed}
@@ -6162,7 +6093,9 @@ def _process_readme_entry(
         is_fresh = readme_path.exists() and readme_path.read_text(encoding="utf-8") == content
         (generated if is_fresh else stale).append(rel_path)
     else:
-        readme_path.write_text(content, encoding="utf-8")
+        from portolan_cli.readme import write_readme
+
+        write_readme(readme_path, content)
         generated.append(rel_path)
 
 
@@ -6378,8 +6311,10 @@ def readme(
         # Print to stdout
         click.echo(readme_content)
     else:
-        # Write to file
-        readme_path.write_text(readme_content, encoding="utf-8")
+        # Write to file, and re-stamp an asset that points at it (issue #930)
+        from portolan_cli.readme import write_readme
+
+        write_readme(readme_path, readme_content)
         if not emit_success(
             "readme",
             {"path": str(readme_path.relative_to(catalog_path)), "generated": True},

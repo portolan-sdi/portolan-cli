@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import time
+import warnings
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -220,6 +221,7 @@ def generate_cog_thumbnail(
         import numpy as np
         import rasterio
         from rasterio.enums import Resampling
+        from rasterio.errors import NotGeoreferencedWarning
     except ImportError:
         logger.debug("rasterio/numpy not available, skipping thumbnail generation")
         return None
@@ -270,26 +272,23 @@ def generate_cog_thumbnail(
                 # Fill masked samples with 0 (black) after stretch
                 data = np.clip(stretched.filled(0), 0, 255).astype("uint8")
 
-            # JPEG needs 1 or 3 bands
-            if data.shape[0] == 1:
-                jpeg_data = data
-                photometric = "minisblack"
-            else:
-                jpeg_data = data[:3]
-                photometric = "rgb"
-
+            # `indexes` reads 1 or 3 bands, the two counts JPEG takes. The
+            # driver reads the colour model from the band count, and rejects
+            # a PHOTOMETRIC creation option.
             profile = {
                 "driver": "JPEG",
                 "width": out_w,
                 "height": out_h,
-                "count": jpeg_data.shape[0],
+                "count": data.shape[0],
                 "dtype": "uint8",
                 "quality": int(max(1, min(100, quality))),
-                "photometric": photometric,
             }
 
-            with rasterio.open(thumb_path, "w", **profile) as dst:
-                dst.write(jpeg_data)
+            # A thumbnail is a picture, not a map, so it has no georeference.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", NotGeoreferencedWarning)
+                with rasterio.open(thumb_path, "w", **profile) as dst:
+                    dst.write(data)
     except Exception as e:
         logger.debug("Could not generate thumbnail for %s: %s", cog_path, e)
         if thumb_path.exists():
@@ -710,6 +709,8 @@ def repair_shapefile_encoding_sidecar(shp: Path) -> Path | None:
     """
     import struct
 
+    # The sidecar write changes the operator's files, so the notice is
+    # user-facing. The output writer sends it to stderr in JSON mode (#1005).
     from portolan_cli.output import info as _output_info
 
     dbf, cpg = shp.with_suffix(".dbf"), shp.with_suffix(".cpg")
@@ -902,6 +903,11 @@ def _write_partitioned(table: Any, output_dir: Path, settings: VectorSettings) -
     partition(str(output_dir), hive=True, **{f"keep_{index_type}_column": True}, **sizing)
 
 
+#: The GTiff creation option that carries ``conversion.cog.quality`` for each
+#: codec in ``QUALITY_COMPRESSIONS``.
+_GTIFF_QUALITY_OPTION = {"JPEG": "jpeg_quality", "WEBP": "webp_level"}
+
+
 def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = None) -> Path:
     """Write a raster file as a COG with the given settings.
 
@@ -965,9 +971,9 @@ def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = Non
     if settings.compression not in LOSSY_COMPRESSIONS:
         profile["predictor"] = settings.predictor
 
-    # Apply quality for JPEG and WEBP compression
+    # The GTiff driver has no QUALITY option. Each lossy codec takes its own.
     if settings.quality is not None and settings.compression in QUALITY_COMPRESSIONS:
-        profile["quality"] = settings.quality
+        profile[_GTIFF_QUALITY_OPTION[settings.compression]] = settings.quality
 
     # Write to temp file first to avoid corrupting source if output_path == source
     # Use same directory as output for atomic rename across filesystems

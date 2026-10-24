@@ -12,7 +12,9 @@ Git-style implicit tracking
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -20,6 +22,13 @@ from click.testing import CliRunner
 
 from portolan_cli.add import ItemInfo
 from portolan_cli.cli import cli
+
+if TYPE_CHECKING:
+    from tests.catalog_invariants import RunCli
+
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+# `add --item-id` writes asset hrefs relative to a directory that does not
+# exist, so run_cli must not check those catalogs at teardown.
 
 
 @pytest.fixture
@@ -251,68 +260,50 @@ class TestAdd:
                 or "item-level" in result.output
             ), f"warning should explain the raster item-subdir rule; got:\n{result.output}"
 
-    @pytest.mark.unit
-    def test_add_with_item_id_override(self, runner: CliRunner) -> None:
+    @pytest.mark.integration
+    def test_add_with_item_id_override(
+        self,
+        tmp_path: Path,
+        run_cli: RunCli,
+    ) -> None:
         """add --item-id overrides automatic item ID derivation."""
-        with runner.isolated_filesystem() as temp_dir:
-            temp_path = Path(temp_dir)
-            setup_catalog(temp_path)
+        root = tmp_path / "catalog"
+        collection_dir = root / "demographics"
+        collection_dir.mkdir(parents=True)
+        test_file = collection_dir / "census.geojson"
+        shutil.copy(FIXTURES / "vector" / "valid" / "points.geojson", test_file)
+        run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
 
-            collection_dir = temp_path / "demographics"
-            collection_dir.mkdir()
-            test_file = collection_dir / "census.geojson"
-            test_file.write_text('{"type": "FeatureCollection", "features": []}')
+        result = run_cli(
+            "--format", "json", "add", "--item-id", "custom-item-id", str(test_file), cwd=root
+        )
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = (
-                    [
-                        ItemInfo(
-                            item_id="custom-item-id",
-                            collection_id="demographics",
-                            format_type="vector",
-                            bbox=[-122.5, 37.5, -122.0, 38.0],
-                            asset_paths=["census.parquet"],
-                        )
-                    ],
-                    [],  # skipped
-                    [],  # failures
-                )
+        added = json.loads(result.stdout)["data"]["added"]
+        assert [(a["item_id"], a["collection_id"]) for a in added] == [
+            ("custom-item-id", "demographics")
+        ]
+        item = json.loads((collection_dir / "custom-item-id.json").read_text(encoding="utf-8"))
+        assert item["id"] == "custom-item-id"
 
-                result = runner.invoke(
-                    cli,
-                    ["add", "--item-id", "custom-item-id", str(test_file)],
-                    catch_exceptions=False,
-                )
+    @pytest.mark.integration
+    def test_add_item_id_passed_to_add_files(
+        self,
+        tmp_path: Path,
+        run_cli: RunCli,
+    ) -> None:
+        """--item-id reaches add_files: the raster item takes the given id."""
+        root = tmp_path / "catalog"
+        item_dir = root / "imagery" / "scene"
+        item_dir.mkdir(parents=True)
+        test_file = item_dir / "satellite.tif"
+        shutil.copy(FIXTURES / "raster" / "valid" / "singleband.tif", test_file)
+        run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
 
-                assert result.exit_code == 0
-                mock_add.assert_called_once()
-                call_kwargs = mock_add.call_args.kwargs
-                assert call_kwargs.get("item_id") == "custom-item-id"
+        run_cli("add", "--item-id", "my-custom-id", str(test_file), cwd=root)
 
-    @pytest.mark.unit
-    def test_add_item_id_passed_to_add_files(self, runner: CliRunner) -> None:
-        """--item-id parameter is correctly passed through to add_files."""
-        with runner.isolated_filesystem() as temp_dir:
-            temp_path = Path(temp_dir)
-            setup_catalog(temp_path)
-
-            collection_dir = temp_path / "imagery"
-            collection_dir.mkdir()
-            test_file = collection_dir / "satellite.tif"
-            test_file.write_bytes(b"GeoTIFF content")
-
-            with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [], [])
-
-                runner.invoke(
-                    cli,
-                    ["add", "--item-id", "my-custom-id", str(test_file)],
-                    catch_exceptions=False,
-                )
-
-                call_args = mock_add.call_args
-                assert call_args is not None
-                assert call_args.kwargs.get("item_id") == "my-custom-id"
+        item = json.loads((item_dir / "my-custom-id.json").read_text(encoding="utf-8"))
+        assert item["id"] == "my-custom-id"
+        assert not (item_dir / "scene.json").exists()
 
     @pytest.mark.unit
     def test_add_without_item_id_passes_none(self, runner: CliRunner) -> None:
@@ -340,22 +331,15 @@ class TestAdd:
                 assert call_args.kwargs.get("item_id") is None
 
     @pytest.mark.unit
-    def test_add_item_id_with_directory_fails(self, runner: CliRunner) -> None:
+    def test_add_item_id_with_directory_fails(self, tmp_path: Path, run_cli: RunCli) -> None:
         """--item-id with a directory path should fail (ambiguous for multiple files)."""
-        with runner.isolated_filesystem() as temp_dir:
-            temp_path = Path(temp_dir)
-            setup_catalog(temp_path)
+        setup_catalog(tmp_path)
+        collection_dir = tmp_path / "demographics"
+        collection_dir.mkdir()
 
-            collection_dir = temp_path / "demographics"
-            collection_dir.mkdir()
+        result = run_cli("add", "--item-id", "my-id", str(collection_dir), expect=1)
 
-            result = runner.invoke(
-                cli,
-                ["add", "--item-id", "my-id", str(collection_dir)],
-            )
-
-            assert result.exit_code != 0
-            assert "single file" in result.output.lower() or "directory" in result.output.lower()
+        assert "--item-id can only be used with a single file, not a directory" in result.output
 
     @pytest.mark.unit
     def test_add_multiple_paths(self, runner: CliRunner) -> None:
@@ -607,27 +591,20 @@ class TestAdd:
             assert "missing argument" in result.output.lower() or "paths" in result.output.lower()
 
     @pytest.mark.unit
-    def test_add_item_id_with_multiple_paths_fails(self, runner: CliRunner) -> None:
+    def test_add_item_id_with_multiple_paths_fails(self, tmp_path: Path, run_cli: RunCli) -> None:
         """--item-id with multiple paths fails (ambiguous)."""
-        with runner.isolated_filesystem() as temp_dir:
-            temp_path = Path(temp_dir)
-            setup_catalog(temp_path)
+        setup_catalog(tmp_path)
+        coll = tmp_path / "data"
+        coll.mkdir()
+        file1 = coll / "data1.geojson"
+        file1.write_text("{}")
+        file2 = coll / "data2.geojson"
+        file2.write_text("{}")
 
-            coll = temp_path / "data"
-            coll.mkdir()
-            file1 = coll / "data1.geojson"
-            file1.write_text("{}")
-            file2 = coll / "data2.geojson"
-            file2.write_text("{}")
+        result = run_cli("add", "--item-id", "my-id", str(file1), str(file2), expect=1)
 
-            result = runner.invoke(
-                cli,
-                ["add", "--item-id", "my-id", str(file1), str(file2)],
-            )
-
-            assert result.exit_code != 0
-            # Should reject using --item-id with multiple paths
-            assert "single" in result.output.lower() or "multiple" in result.output.lower()
+        # Should reject using --item-id with multiple paths
+        assert "--item-id can only be used with a single file, not multiple paths" in result.output
 
 
 class TestRm:
@@ -956,45 +933,452 @@ class TestPathToCollectionResolution:
 
 
 class TestAddJsonOutput:
-    """Tests for add command JSON output mode."""
+    """Stdout of a JSON add is one JSON document (#1005).
+
+    Each test runs the real add. A library message that reaches stdout
+    breaks ``json.loads(result.stdout)``.
+    """
+
+    @pytest.mark.integration
+    @pytest.mark.realdata
+    @pytest.mark.parametrize(
+        "flags",
+        [["--format", "json", "add"], ["add", "--json"]],
+        ids=["format-json", "json-flag"],
+    )
+    def test_add_json_of_a_rewritten_geoparquet(
+        self,
+        run_cli: RunCli,
+        flags: list[str],
+        conformant_catalog: Path,
+        open_buildings_path: Path,
+    ) -> None:
+        """A GeoParquet with no bbox covering column is rewritten, and stdout stays JSON."""
+        root = conformant_catalog
+        (root / "buildings").mkdir()
+        (root / "buildings" / open_buildings_path.name).write_bytes(
+            open_buildings_path.read_bytes()
+        )
+
+        result = run_cli(*flags, "--portolan-dir", str(root), str(root / "buildings"))
+
+        envelope = json.loads(result.stdout)
+        assert envelope["success"] is True
+        assert envelope["command"] == "add"
+        assert [item["item_id"] for item in envelope["data"]["added"]] == ["open-buildings"]
+        assert (
+            "→ Rewriting open-buildings.parquet (142.4KB): it carries no bbox covering column\n"
+        ) in result.stderr
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "flags",
+        [["--format", "json", "add"], ["add", "--json"]],
+        ids=["format-json", "json-flag"],
+    )
+    def test_library_detail_goes_to_stderr(
+        self,
+        run_cli: RunCli,
+        flags: list[str],
+        conformant_catalog: Path,
+        valid_points_geojson: Path,
+    ) -> None:
+        """The thumbnail line of ``add --verbose`` goes to stderr in JSON mode."""
+        root = conformant_catalog
+        (root / "collection").mkdir()
+        (root / "collection" / "good.geojson").write_bytes(valid_points_geojson.read_bytes())
+
+        result = run_cli(
+            *[*flags, "--verbose", "--portolan-dir", str(root), str(root / "collection")]
+        )
+
+        assert json.loads(result.stdout)["success"] is True
+        assert "  Rendered thumbnail for collection: good.thumb.jpg\n" in result.stderr
+
+
+class TestAddWorkerNotice:
+    """The worker count is log chatter, not a user-facing message."""
+
+    @pytest.mark.integration
+    def test_worker_count_is_an_info_log_record(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_points_geojson: Path,
+    ) -> None:
+        """Text mode keeps stdout free of it. ``-v`` shows it on stderr as a log record."""
+        root = conformant_catalog
+        (root / "collection").mkdir()
+        for name in ("a.geojson", "b.geojson"):
+            (root / "collection" / name).write_bytes(valid_points_geojson.read_bytes())
+        args = [
+            "add",
+            "--workers",
+            "2",
+            "--portolan-dir",
+            str(root),
+            str(root / "collection"),
+        ]
+
+        result = run_cli("-v", *args)
+
+        assert "parallel workers" not in result.stdout
+        assert "INFO portolan_cli.add: Using 2 parallel workers for 2 files\n" in result.stderr
+
+
+class TestAddIgnoredFiles:
+    """``add`` skips the files that ``ignored_files`` in config.yaml excludes (#1044).
+
+    Every skipped file keeps its reason, in the human summary, on stderr, and
+    in the JSON envelope.
+    """
+
+    IGNORED = "it matches ignored_files pattern '*.geojson'"
+    NOTICE = f"⚠ Skipping places.geojson: {IGNORED}\n"
+
+    @staticmethod
+    def _catalog(root: Path, geojson: Path, parquet: Path | None) -> Path:
+        config = root / ".portolan" / "config.yaml"
+        config.write_text(config.read_text() + 'ignored_files:\n  - "*.geojson"\n')
+        (root / "places").mkdir()
+        (root / "places" / "places.geojson").write_bytes(geojson.read_bytes())
+        if parquet is not None:
+            (root / "roads").mkdir()
+            (root / "roads" / "roads.parquet").write_bytes(parquet.read_bytes())
+        return root / "places" / "places.geojson"
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("json_mode", [False, True], ids=["text", "json"])
+    def test_an_ignored_file_is_skipped_with_the_reason(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_points_geojson: Path,
+        valid_points_parquet: Path,
+        json_mode: bool,
+    ) -> None:
+        """The ignored GeoJSON stays out of the catalog. The kept GeoParquet goes in."""
+        root = conformant_catalog
+        places = self._catalog(root, valid_points_geojson, valid_points_parquet)
+        prefix = ["--format", "json"] if json_mode else []
+
+        result = run_cli(*prefix, "add", "--portolan-dir", str(root), str(root))
+
+        assert self.NOTICE in result.stderr
+        assert not (root / "places" / "collection.json").exists()
+        assert not (root / "places" / "places.parquet").exists()
+        assert (root / "roads" / "collection.json").exists()
+        if json_mode:
+            envelope = json.loads(result.stdout)
+            assert [item["item_id"] for item in envelope["data"]["added"]] == ["roads"]
+            assert envelope["data"]["skipped"] == [{"path": str(places), "reason": self.IGNORED}]
+
+    @pytest.mark.integration
+    def test_an_ignored_sibling_stays_out_of_the_assets(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_points_geojson: Path,
+        valid_points_parquet: Path,
+    ) -> None:
+        """An ignored file beside an added file is not scanned in as its companion."""
+        root = conformant_catalog
+        self._catalog(root, valid_points_geojson, valid_points_parquet)
+        (root / "roads" / "notes.geojson").write_bytes(valid_points_geojson.read_bytes())
+
+        run_cli("add", "--portolan-dir", str(root), str(root / "roads" / "roads.parquet"))
+
+        collection = json.loads((root / "roads" / "collection.json").read_text())
+        hrefs = sorted(asset["href"] for asset in collection["assets"].values())
+        assert hrefs == ["./roads.parquet", "./roads.thumb.jpg"]
+        versions = json.loads((root / "roads" / "versions.json").read_text())
+        assert sorted(versions["versions"][-1]["assets"]) == ["roads.parquet", "roads.thumb.jpg"]
+
+    @pytest.mark.integration
+    def test_a_source_whose_output_is_ignored_is_skipped_before_conversion(
+        self, run_cli: RunCli, conformant_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """A pattern that excludes the converted file rejects the add of its source.
+
+        Without this, the GeoJSON passes the input filter, its GeoParquet is
+        written and then dropped by the asset scan, and the catalog publishes
+        the source with the data role.
+        """
+        root = conformant_catalog
+        config = root / ".portolan" / "config.yaml"
+        config.write_text(config.read_text() + 'ignored_files:\n  - "*.parquet"\n')
+        (root / "places").mkdir()
+        places = root / "places" / "places.geojson"
+        places.write_bytes(valid_points_geojson.read_bytes())
+
+        result = run_cli("--format", "json", "add", "--portolan-dir", str(root), str(root))
+
+        assert json.loads(result.stdout)["data"]["skipped"] == [
+            {
+                "path": str(places),
+                "reason": "its output places.parquet matches ignored_files pattern '*.parquet'",
+            }
+        ]
+        assert not (root / "places" / "collection.json").exists()
+        assert not (root / "places" / "places.parquet").exists()
+
+    @pytest.mark.integration
+    def test_a_run_that_only_skips_names_the_reason(
+        self, run_cli: RunCli, conformant_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """The issue's reproduction: the summary does not call an ignored file tracked."""
+        root = conformant_catalog
+        self._catalog(root, valid_points_geojson, None)
+
+        result = run_cli("add", "--verbose", "--portolan-dir", str(root), str(root))
+
+        assert self.NOTICE in result.stderr
+        assert "already tracked" not in result.output
+        assert f"→ Nothing added: 1 file skipped\n    places.geojson: {self.IGNORED}\n" in (
+            result.stdout
+        )
+
+    @pytest.mark.integration
+    def test_a_second_add_gives_each_skip_its_own_reason(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_points_geojson: Path,
+        valid_points_parquet: Path,
+    ) -> None:
+        """An unchanged file and an ignored file carry different reasons."""
+        root = conformant_catalog
+        places = self._catalog(root, valid_points_geojson, valid_points_parquet)
+        args = ["--format", "json", "add", "--portolan-dir", str(root), str(root)]
+        run_cli(*args)
+
+        result = run_cli(*args)
+
+        skipped = sorted(json.loads(result.stdout)["data"]["skipped"], key=lambda s: s["path"])
+        assert skipped == [
+            {"path": str(places), "reason": self.IGNORED},
+            {
+                "path": str(root / "roads" / "roads.parquet"),
+                "reason": "unchanged since the last add",
+            },
+        ]
+
+    @pytest.mark.integration
+    def test_an_ignored_files_value_that_is_not_a_list_fails_the_add(
+        self, run_cli: RunCli, conformant_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """A malformed ``ignored_files`` is a typed error envelope, not a traceback."""
+        root = conformant_catalog
+        config = root / ".portolan" / "config.yaml"
+        config.write_text(config.read_text() + 'ignored_files: "*.geojson"\n')
+        (root / "places").mkdir()
+        (root / "places" / "places.geojson").write_bytes(valid_points_geojson.read_bytes())
+
+        result = run_cli(
+            "--format", "json", "add", "--portolan-dir", str(root), str(root), expect=1
+        )
+
+        errors = json.loads(result.stdout)["errors"]
+        assert [e["type"] for e in errors] == ["ConfigInvalidStructureError"]
+        assert "'ignored_files' must be a list of glob patterns (strings)" in errors[0]["message"]
+
+    @pytest.mark.integration
+    def test_the_skip_summary_counts_in_the_plural(
+        self, run_cli: RunCli, conformant_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """Two ignored files read as "2 files", each with its own line."""
+        root = conformant_catalog
+        self._catalog(root, valid_points_geojson, None)
+        (root / "places" / "parks.geojson").write_bytes(valid_points_geojson.read_bytes())
+
+        result = run_cli("add", "--verbose", "--portolan-dir", str(root), str(root))
+
+        assert "→ Nothing added: 2 files skipped\n" in result.stdout
+        assert f"    parks.geojson: {self.IGNORED}\n" in result.stdout
+        assert f"    places.geojson: {self.IGNORED}\n" in result.stdout
+
+    @pytest.mark.integration
+    def test_verbose_names_each_skip_beside_an_added_file(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_points_geojson: Path,
+        valid_points_parquet: Path,
+    ) -> None:
+        """When a run adds files, ``--verbose`` still gives each skip its reason."""
+        root = conformant_catalog
+        self._catalog(root, valid_points_geojson, valid_points_parquet)
+        run_cli("add", "--portolan-dir", str(root), str(root))
+        (root / "trails").mkdir()
+        (root / "trails" / "trails.parquet").write_bytes(valid_points_parquet.read_bytes())
+
+        result = run_cli("add", "--verbose", "--portolan-dir", str(root), str(root))
+
+        assert "  Skipping roads.parquet (unchanged since the last add)\n" in result.stdout
+        assert f"  Skipping places.geojson ({self.IGNORED})\n" in result.stdout
+        assert "✓ Added 1 file to 1 collection\n" in result.stdout
+
+
+class TestReportSkipsAndFindCollections:
+    """Skips that stay in the catalog keep their collection affected. Others warn."""
 
     @pytest.mark.unit
-    def test_add_json_output(self, runner: CliRunner) -> None:
-        """add --format json outputs valid JSON envelope."""
-        with runner.isolated_filesystem() as temp_dir:
-            temp_path = Path(temp_dir)
-            setup_catalog(temp_path)
+    def test_an_ignored_file_before_a_tracked_skip(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The warning for the ignored file does not stop the walk over the later skips.
 
-            collection_dir = temp_path / "data"
-            collection_dir.mkdir()
-            test_file = collection_dir / "test.geojson"
-            test_file.write_text("{}")
+        A tracked skip belongs to the nearest collection above it, which can
+        sit below a subcatalog.
+        """
+        from portolan_cli.cli import _report_skips_and_find_collections
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = (
-                    [
-                        ItemInfo(
-                            item_id="test",
-                            collection_id="data",
-                            format_type="vector",
-                            bbox=[0, 0, 1, 1],
-                            asset_paths=["test.parquet"],
-                        )
-                    ],
-                    [],  # skipped
-                    [],  # failures
-                )
+        for collection in ("roads", "parks", "region/trails"):
+            (tmp_path / collection).mkdir(parents=True)
+            (tmp_path / collection / "collection.json").write_text("{}")
+        skips = [
+            (tmp_path / "places" / "places.geojson", "it matches ignored_files pattern '*'"),
+            (tmp_path / "roads" / "scene" / "roads.tif", "unchanged since the last add"),
+            (tmp_path / "parks" / "items.parquet", "it is the STAC-GeoParquet item mirror"),
+            (tmp_path / "region" / "trails" / "trails.parquet", "unchanged since the last add"),
+            (tmp_path.parent / "elsewhere.parquet", "unchanged since the last add"),
+        ]
 
-                result = runner.invoke(
-                    cli,
-                    ["--format", "json", "add", str(test_file)],
-                    catch_exceptions=False,
-                )
+        affected, versioned = _report_skips_and_find_collections([], skips, tmp_path)
 
-                assert result.exit_code == 0
-                envelope = json.loads(result.output)
-                assert envelope["success"] is True
-                assert envelope["command"] == "add"
+        assert (affected, versioned) == ({"roads", "parks", "region/trails"}, set())
+        assert capsys.readouterr().err == (
+            "⚠ Skipping places.geojson: it matches ignored_files pattern '*'\n"
+        )
+
+    @pytest.mark.integration
+    def test_a_second_add_restores_the_thumbnail_of_a_nested_collection(
+        self, run_cli: RunCli, conformant_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """An unchanged file keeps its nested collection in the side steps of the add."""
+        root = conformant_catalog
+        collection_dir = root / "region" / "roads"
+        collection_dir.mkdir(parents=True)
+        (collection_dir / "roads.geojson").write_bytes(valid_points_geojson.read_bytes())
+        args = ["add", "--portolan-dir", str(root), str(root)]
+        run_cli(*args)
+        thumbnail = collection_dir / "roads.thumb.jpg"
+        thumbnail.unlink()
+        collection_file = collection_dir / "collection.json"
+        collection = json.loads(collection_file.read_text(encoding="utf-8"))
+        del collection["assets"]["thumbnail"]
+        collection_file.write_text(json.dumps(collection), encoding="utf-8")
+
+        run_cli(*args)
+
+        collection = json.loads(collection_file.read_text(encoding="utf-8"))
+        assert collection["assets"]["thumbnail"]["href"] == "./roads.thumb.jpg"
+        assert thumbnail.is_file()
+
+
+class TestOutputAddUnchanged:
+    """A run that adds nothing calls the files tracked only when all of them are."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("reasons", "summary"),
+        [
+            (
+                ["unchanged since the last add", "it is the STAC-GeoParquet item mirror"],
+                "✓ All 2 files already tracked (unchanged)\n",
+            ),
+            (
+                ["unchanged since the last add", "it matches ignored_files pattern '*'"],
+                "→ Nothing added: 2 files skipped\n",
+            ),
+        ],
+        ids=["tracked", "ignored"],
+    )
+    def test_summary(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], reasons: list[str], summary: str
+    ) -> None:
+        from portolan_cli.cli import _output_add_unchanged
+
+        skips = [(tmp_path / f"{index}.parquet", reason) for index, reason in enumerate(reasons)]
+
+        _output_add_unchanged(skips, verbose=False)
+
+        assert capsys.readouterr().out == summary
+
+
+class TestCatalogIndexAfterAdd:
+    """The catalog-level versions.json matches each collection after one add."""
+
+    @pytest.mark.integration
+    def test_the_index_counts_the_side_step_assets(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_rgb_cog: Path,
+        valid_points_parquet: Path,
+    ) -> None:
+        """The item mirror and the thumbnails are in both files, and a no-op re-add writes neither."""
+        root = conformant_catalog
+        (root / "imagery" / "scene").mkdir(parents=True)
+        (root / "imagery" / "scene" / "scene.tif").write_bytes(valid_rgb_cog.read_bytes())
+        (root / "roads").mkdir()
+        (root / "roads" / "roads.parquet").write_bytes(valid_points_parquet.read_bytes())
+
+        args = ["add", "--portolan-dir", str(root), str(root)]
+        run_cli(*args)
+        after_first = (root / "versions.json").read_bytes()
+        run_cli(*args)
+
+        # A second add changes nothing, so it leaves the index bytes alone.
+        assert (root / "versions.json").read_bytes() == after_first
+        index = json.loads(after_first)["collections"]
+        for collection_id in ("imagery", "roads"):
+            versions = json.loads(
+                (root / collection_id / "versions.json").read_text(encoding="utf-8")
+            )
+            current = next(
+                v for v in versions["versions"] if v["version"] == versions["current_version"]
+            )
+            entry = index[collection_id]
+            assert (entry["current_version"], entry["asset_count"], entry["total_size_bytes"]) == (
+                versions["current_version"],
+                len(current["assets"]),
+                sum(asset["size_bytes"] for asset in current["assets"].values()),
+            ), collection_id
+
+
+class TestAddUnknownHandlerPin:
+    """A ``conversion.handlers`` pin to a missing handler fails add with a typed error."""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("json_mode", [False, True], ids=["text", "json"])
+    def test_the_error_names_the_pin_and_the_known_handlers(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_points_geojson: Path,
+        json_mode: bool,
+    ) -> None:
+        root = conformant_catalog
+        config = root / ".portolan" / "config.yaml"
+        config.write_text(config.read_text() + "conversion:\n  handlers:\n    geojson: nosuch\n")
+        (root / "pts").mkdir()
+        points = root / "pts" / "points.geojson"
+        points.write_bytes(valid_points_geojson.read_bytes())
+        prefix = ["--format", "json"] if json_mode else []
+
+        result = run_cli(*prefix, "add", "--portolan-dir", str(root), str(points), expect=1)
+
+        if json_mode:
+            errors = json.loads(result.stdout)["errors"]
+            assert [e["type"] for e in errors] == ["UnknownFormatHandlerError"]
+            message = errors[0]["message"]
+        else:
+            message = result.stderr
+        assert "conversion.handlers pins 'nosuch' for .geojson" in message
+        assert "Available: " in message
+        assert "geoparquet" in message.split("Available: ")[1]
+        assert not (root / "pts" / "collection.json").exists()
 
 
 class TestRmJsonOutput:

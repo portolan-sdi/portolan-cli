@@ -14,6 +14,8 @@ Two walks live here:
   missing link as PTL-LNK-002.
 - The link walk follows the ``rel`` links of one STAC object.
   ``owned_item_hrefs`` uses it to find the items of a collection.
+  ``published_files`` uses it to find the files that push publishes and
+  clone downloads, so the two commands agree on one set.
 
 The module imports only the standard library. A read module can call it
 without the CLI or the geospatial stack.
@@ -22,11 +24,97 @@ without the CLI or the geospatial stack.
 from __future__ import annotations
 
 import json
+import posixpath
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
     from pathlib import Path
+
+
+#: Link order for a written catalog, collection, or item: the order the links
+#: fixer rebuilds (``validation.fixers._rebuild_links``). Other rels follow in
+#: their own order. One order for every writer makes the links fixer a no-op on
+#: a tree that add wrote, and a repaired item byte-identical to an added one.
+_LINK_RANK = {"root": 0, "parent": 1, "collection": 2, "child": 3, "item": 3}
+
+
+def in_link_order(links: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``links`` in the order the links fixer writes. The sort is stable."""
+    return sorted(links, key=lambda link: _LINK_RANK.get(str(link.get("rel")), len(_LINK_RANK)))
+
+
+# The links that walk the catalog tree. Every other relative link of a STAC
+# object names a file beside it, such as a style or a logo.
+TREE_RELS = frozenset({"child", "item", "self", "root", "parent"})
+# A catalog or a collection carries these files with or without a link.
+SIDE_FILES = ("README.md", "AGENTS.md")
+# The GDAL persistent auxiliary metadata (PAM) sidecar, such as x.tif.aux.xml.
+# GDAL writes it beside a raster when it computes statistics.
+GDAL_PAM_SUFFIX = ".aux.xml"
+
+
+def published_files(document: dict[str, Any], document_rel: str) -> tuple[set[str], set[str]]:
+    """Return the files that one STAC object publishes, and its item documents.
+
+    The files are the targets of its asset hrefs and of its relative links
+    outside the tree, the README.md and AGENTS.md beside it, and the GDAL PAM
+    sidecar of each GeoTIFF it names. An absolute or a remote href names no
+    file. Push uploads these files, and clone downloads them.
+
+    Args:
+        document: A parsed STAC object.
+        document_rel: The catalog-relative POSIX path of the object.
+
+    Returns:
+        The catalog-relative POSIX paths of the files, and of the items that
+        its ``item`` links name.
+    """
+    base = posixpath.dirname(document_rel)
+    links = [link for link in document.get("links", []) if isinstance(link, dict)]
+    named = [asset.get("href") for asset in document.get("assets", {}).values()]
+    named += [link.get("href") for link in links if link.get("rel") not in TREE_RELS]
+    items = [link.get("href") for link in links if link.get("rel") == "item"]
+
+    def resolve(hrefs: list[Any]) -> set[str]:
+        local = [h for h in hrefs if isinstance(h, str) and h and "://" not in h]
+        return {posixpath.normpath(posixpath.join(base, h)) for h in local if h[0] != "/"}
+
+    files = resolve(named) | {posixpath.join(base, name) for name in SIDE_FILES}
+    files |= {f + GDAL_PAM_SUFFIX for f in files if f.lower().endswith((".tif", ".tiff"))}
+    return files, resolve(items)
+
+
+def published_tree(catalog_root: Path, documents: Iterable[str]) -> set[str]:
+    """Return the files that local STAC objects, and the items below them, publish.
+
+    Args:
+        catalog_root: The catalog root directory.
+        documents: Catalog-relative POSIX paths of catalogs or collections.
+
+    Returns:
+        The catalog-relative POSIX paths from ``published_files``, and the
+        paths of the documents that the walk read.
+    """
+    pending = list(documents)
+    files: set[str] = set()
+    read: set[str] = set()
+    while pending:
+        rel = pending.pop()
+        path = catalog_root / rel
+        if rel in read or not path.is_file():
+            continue
+        read.add(rel)
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(document, dict):
+            continue
+        named, items = published_files(document, rel)
+        files |= named
+        pending += sorted(items)
+    return files | read
 
 
 def resolve_href(base_dir: Path, href: str) -> Path:

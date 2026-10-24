@@ -6,6 +6,7 @@ tears down after. Provides REST catalog and RustFS S3 client fixtures.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -42,9 +43,21 @@ def _wait_for_service(url: str, timeout: int = 60) -> None:
     raise TimeoutError(f"Service at {url} not ready after {timeout}s")
 
 
+def require_docker() -> None:
+    """Skip the test when the docker binary is absent.
+
+    A machine without Docker raised FileNotFoundError from subprocess, which
+    reported each e2e test as an error. CI installs Docker, so the e2e jobs
+    still run these tests.
+    """
+    if shutil.which("docker") is None:
+        pytest.skip("the e2e tests need the docker binary on PATH")
+
+
 @pytest.fixture(scope="session")
 def docker_services():
     """Start REST catalog + RustFS via docker-compose, tear down after session."""
+    require_docker()
     subprocess.run(
         ["docker", "compose", "-f", str(COMPOSE_FILE), "up", "-d", "--wait"],
         check=True,

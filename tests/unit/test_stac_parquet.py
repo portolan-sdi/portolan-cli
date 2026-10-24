@@ -865,11 +865,15 @@ class TestCollectionLevelAsset:
         assert len(parquet_assets) == 1
 
     @pytest.mark.unit
-    def test_legacy_asset_is_upgraded_to_the_spec_role(self, collection_with_items: Path) -> None:
+    @pytest.mark.parametrize("legacy_roles", [["stac-items"], ["data", "collection-mirror"]])
+    def test_legacy_asset_is_upgraded_to_the_spec_role(
+        self, collection_with_items: Path, legacy_roles: list[str]
+    ) -> None:
         """An asset written before the spec role existed is upgraded in place.
 
-        The undefined community role ``stac-items`` is dropped and the spec
-        role ``collection-mirror`` is added; unrelated assets stay untouched.
+        The mirror gets exactly the spec role ``collection-mirror``. That drops
+        the undefined community role ``stac-items``, and the ``data`` role that
+        the asset scan gave the mirror. Unrelated assets stay untouched.
         """
         from portolan_cli.stac_parquet import (
             generate_items_parquet,
@@ -883,7 +887,7 @@ class TestCollectionLevelAsset:
         data = json.loads(collection_json_path.read_text())
         # Simulate a catalog written by an older version: community role only,
         # plus an unrelated asset that must stay untouched.
-        data["assets"]["geoparquet-items"]["roles"] = ["stac-items"]
+        data["assets"]["geoparquet-items"]["roles"] = legacy_roles
         data["assets"]["thumbnail"] = {"href": "./thumb.png", "roles": ["thumbnail"]}
         collection_json_path.write_text(json.dumps(data, indent=2))
 
@@ -1629,3 +1633,145 @@ class TestGenerateParquetMirrors:
         assert not (collection_with_items / "items.parquet").exists()
         assert report.generated == []
         assert str(report.failed["landsat"]) == "boom"
+
+
+_FILE_URI = "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+_TABLE_URI = "https://stac-extensions.github.io/table/v1.2.0/schema.json"
+
+
+def _stale_collection(tmp_path: Path) -> Path:
+    """A collection whose README asset and item asset carry stale file fields.
+
+    An older ``add --force`` registered the README as a documentation asset
+    (issue #1041). ``readme`` then rewrote the file (issue #930).
+    """
+    collection_dir = tmp_path / "roads"
+    item_dir = collection_dir / "scene"
+    item_dir.mkdir(parents=True)
+    (collection_dir / "README.md").write_text("# new text\n", encoding="utf-8")
+    (item_dir / "scene.tif").write_bytes(b"new bytes")
+    stale = {"file:size": 1, "file:checksum": "1220" + "0" * 64}
+    item = {
+        "type": "Feature",
+        "id": "scene",
+        "stac_extensions": [],
+        "properties": {"table:column_statistics": {}},
+        "assets": {"data": {"href": "scene.tif", "roles": ["data"], **stale}},
+        "links": [],
+    }
+    (item_dir / "scene.json").write_text(json.dumps(item), encoding="utf-8")
+    collection = {
+        "type": "Collection",
+        "id": "roads",
+        "stac_extensions": [],
+        "assets": {"documentation": {"href": "./README.md", "roles": ["documentation"], **stale}},
+        "links": [{"rel": "item", "href": "./scene/scene.json"}],
+    }
+    (collection_dir / "collection.json").write_text(json.dumps(collection), encoding="utf-8")
+    return collection_dir
+
+
+class TestRestampCollectionAssets:
+    """One pass stamps file fields and declares the extensions they use."""
+
+    @pytest.mark.unit
+    def test_it_stamps_the_collection_and_its_items(self, tmp_path: Path) -> None:
+        from portolan_cli.stac_parquet import restamp_collection_assets
+        from portolan_cli.sync.checksums import file_fields
+
+        collection_dir = _stale_collection(tmp_path)
+
+        assert restamp_collection_assets(collection_dir) is True
+
+        collection = json.loads((collection_dir / "collection.json").read_text())
+        item = json.loads((collection_dir / "scene" / "scene.json").read_text())
+        readme_fields = file_fields(collection_dir / "README.md")
+        assert {k: collection["assets"]["documentation"][k] for k in readme_fields} == (
+            readme_fields
+        )
+        tif_fields = file_fields(collection_dir / "scene" / "scene.tif")
+        assert {k: item["assets"]["data"][k] for k in tif_fields} == tif_fields
+        assert collection["stac_extensions"] == [_FILE_URI]
+        # Issue #1037: the item declares the extensions of its own fields.
+        assert item["stac_extensions"] == [_FILE_URI, _TABLE_URI]
+        assert restamp_collection_assets(collection_dir) is False
+
+    @pytest.mark.unit
+    def test_only_limits_the_stamp_to_the_named_files(self, tmp_path: Path) -> None:
+        from portolan_cli.stac_parquet import restamp_collection_assets
+
+        collection_dir = _stale_collection(tmp_path)
+
+        item_json = collection_dir / "scene" / "scene.json"
+        item_bytes = item_json.read_bytes()
+
+        restamp_collection_assets(collection_dir, only={collection_dir / "README.md"})
+
+        # The item names no selected file, so the pass leaves it as it was. A
+        # write there would also leave items.parquet behind the item.
+        assert item_json.read_bytes() == item_bytes
+
+
+class TestWriteReadme:
+    """Issue #930: ``readme`` left the documentation asset stale."""
+
+    @pytest.mark.unit
+    def test_writing_the_readme_restamps_its_asset(self, tmp_path: Path) -> None:
+        from portolan_cli.readme import write_readme
+        from portolan_cli.sync.checksums import file_fields
+
+        collection_dir = _stale_collection(tmp_path)
+        readme = collection_dir / "README.md"
+
+        write_readme(readme, "# regenerated\n")
+
+        asset = json.loads((collection_dir / "collection.json").read_text())["assets"][
+            "documentation"
+        ]
+        assert asset["file:size"] == readme.stat().st_size
+        assert asset["file:checksum"] == file_fields(readme)["file:checksum"]
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("recursive", [True, False])
+    def test_the_readme_command_restamps_the_documentation_asset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recursive: bool
+    ) -> None:
+        """The issue's repro: a catalog that carries the README as an asset."""
+        import shutil
+        from pathlib import Path
+
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+        from portolan_cli.sync.checksums import file_fields
+
+        runner = CliRunner()
+        assert (
+            runner.invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC0-1.0"]).exit_code
+            == 0
+        )
+        collection_dir = tmp_path / "roads"
+        collection_dir.mkdir()
+        fixture = Path(__file__).parents[1] / "fixtures" / "vector" / "valid" / "points.parquet"
+        shutil.copy(fixture, collection_dir / "roads.parquet")
+        add = ["add", "--portolan-dir", str(tmp_path), str(collection_dir / "roads.parquet")]
+        assert runner.invoke(cli, add).exit_code == 0
+        # An older add --force registered the README (issue #1041).
+        collection_json = collection_dir / "collection.json"
+        data = json.loads(collection_json.read_text())
+        data["assets"]["documentation"] = {
+            "href": "./README.md",
+            "roles": ["documentation"],
+            **file_fields(collection_dir / "README.md"),
+        }
+        collection_json.write_text(json.dumps(data))
+        (collection_dir / "README.md").write_text("# hand edit\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        args = ["readme"] if recursive else ["readme", "roads", "--no-recursive"]
+        result = runner.invoke(cli, args)
+
+        assert result.exit_code == 0, result.output
+        asset = json.loads(collection_json.read_text())["assets"]["documentation"]
+        fields = file_fields(collection_dir / "README.md")
+        assert {key: asset[key] for key in fields} == fields

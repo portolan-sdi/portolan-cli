@@ -180,36 +180,8 @@ class TestAddAtCatalogRoot:
                     f"Expected '2 collections' in output: {result.output}"
                 )
 
-    @pytest.mark.unit
-    def test_add_dot_at_catalog_root_with_json_output(self, runner: CliRunner) -> None:
-        """add. --format json at catalog root returns valid JSON envelope."""
-        with runner.isolated_filesystem() as temp_dir:
-            temp_path = Path(temp_dir)
-            setup_catalog(temp_path)
-
-            (temp_path / "col").mkdir()
-            (temp_path / "col" / "data.geojson").write_text("{}")
-
-            with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [], [])
-
-                result = runner.invoke(
-                    cli,
-                    [
-                        "--format",
-                        "json",
-                        "add",
-                        "--portolan-dir",
-                        str(temp_path),
-                        str(temp_path),
-                    ],
-                    catch_exceptions=False,
-                )
-
-                assert result.exit_code == 0
-                envelope = json.loads(result.output)
-                assert envelope["success"] is True
-                assert envelope["command"] == "add"
+    # The JSON envelope of `add .` at the root runs the real add_files in
+    # tests/integration/test_stdout_purity.py::TestAddEnvelope.
 
     @pytest.mark.unit
     def test_add_dot_empty_catalog_succeeds(self, runner: CliRunner) -> None:

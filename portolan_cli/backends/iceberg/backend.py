@@ -2,17 +2,11 @@
 
 Implements the VersioningBackend protocol from portolan-cli, storing actual
 data in Iceberg tables and version metadata in snapshot summary properties.
+
+``hooks.iceberg_backend`` checks for Python 3.11+ before it imports this module.
 """
 
 from __future__ import annotations
-
-import sys
-
-if sys.version_info[:2] < (3, 11):
-    raise ImportError(
-        "The Iceberg backend requires Python 3.11+. "
-        f"You are running Python {sys.version_info[0]}.{sys.version_info[1]}."
-    )
 
 import contextlib
 from pathlib import Path
@@ -45,6 +39,8 @@ from portolan_cli.backends.iceberg.versioning import (
 if TYPE_CHECKING:
     from pyiceberg.catalog import Catalog
     from pyiceberg.table import Table
+
+    from portolan_cli.api import PostAddContext, PullResult
 
 NAMESPACE = "portolake"
 
@@ -381,10 +377,10 @@ class IcebergBackend:
         )
 
     # ------------------------------------------------------------------
-    # Optional lifecycle hooks (not part of VersioningBackend protocol)
+    # Lifecycle hooks of the VersioningBackend protocol
     # ------------------------------------------------------------------
 
-    def on_post_add(self, context: dict[str, Any]) -> None:
+    def on_post_add(self, context: PostAddContext) -> None:
         """Post-add hook: update STAC extensions and upload metadata to remote.
 
         Called by portolan-cli's finalize_items() after versioning completes.
@@ -524,7 +520,7 @@ class IcebergBackend:
         collection: str,
         *,
         dry_run: bool = False,
-    ) -> object:
+    ) -> PullResult:
         """Pull files from remote using Iceberg version info.
 
         Queries get_current_version() for asset info, then downloads each

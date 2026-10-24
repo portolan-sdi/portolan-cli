@@ -17,6 +17,8 @@ from typing import Any
 
 import requests  # type: ignore[import-untyped]
 
+from portolan_cli.extract.common.urls import redact_credentials
+
 
 class WFSDiscoveryError(Exception):
     """Raised when WFS discovery fails."""
@@ -49,14 +51,6 @@ class LayerInfo:
     bbox: tuple[float, float, float, float] | None = None
     id: int = 0
 
-    def to_filter_dict(self) -> dict[str, int | str]:
-        """Convert to dict format expected by filter_layers.
-
-        Returns:
-            Dict with 'id' and 'name' keys for glob filtering.
-        """
-        return {"id": self.id, "name": self.name}
-
 
 @dataclass
 class WFSDiscoveryResult:
@@ -69,7 +63,6 @@ class WFSDiscoveryResult:
         service_abstract: Service description from GetCapabilities.
         provider: Provider name from GetCapabilities.
         keywords: Keywords from GetCapabilities.
-        contact_name: Contact person/organization name.
         access_constraints: Access constraints or license info.
         fees: Fee information (typically "none" for public services).
     """
@@ -80,7 +73,6 @@ class WFSDiscoveryResult:
     service_abstract: str | None = None
     provider: str | None = None
     keywords: list[str] | None = None
-    contact_name: str | None = None
     access_constraints: str | None = None
     fees: str | None = None
 
@@ -101,7 +93,10 @@ def gpio_list_layers(service_url: str, version: str = "1.1.0") -> list[dict[str,
     This function exists to make mocking easier in tests.
     """
     try:
-        from geoparquet_io.core.wfs import list_available_layers  # type: ignore[import-untyped]
+        from geoparquet_io.core.wfs import (  # type: ignore[import-untyped]
+            WFSError,
+            list_available_layers,
+        )
 
         result: list[dict[str, Any]] = list_available_layers(service_url, version=version)
         return result
@@ -109,8 +104,8 @@ def gpio_list_layers(service_url: str, version: str = "1.1.0") -> list[dict[str,
         raise WFSDiscoveryError(
             "geoparquet-io is required for WFS extraction. Install with: pip install geoparquet-io"
         ) from e
-    except _NETWORK_ERRORS as e:
-        raise WFSDiscoveryError(f"Failed to list WFS layers: {e}") from e
+    except (WFSError, *_NETWORK_ERRORS) as e:
+        raise WFSDiscoveryError(redact_credentials(f"Failed to list WFS layers: {e}")) from e
 
 
 def list_layers(
@@ -161,7 +156,6 @@ def _extract_service_metadata(wfs: Any) -> dict[str, Any]:
         "service_abstract": None,
         "provider": None,
         "keywords": None,
-        "contact_name": None,
         "access_constraints": None,
         "fees": None,
     }
@@ -178,15 +172,6 @@ def _extract_service_metadata(wfs: Any) -> dict[str, Any]:
     if hasattr(wfs, "provider") and wfs.provider:
         prov = wfs.provider
         result["provider"] = getattr(prov, "name", None)
-        if hasattr(prov, "contact") and prov.contact:
-            contact = prov.contact
-            parts = []
-            if hasattr(contact, "name") and contact.name:
-                parts.append(contact.name)
-            if hasattr(contact, "organization") and contact.organization:
-                parts.append(contact.organization)
-            if parts:
-                result["contact_name"] = ", ".join(parts)
 
     return result
 
@@ -238,7 +223,7 @@ def discover_layers(
         WFSDiscoveryError: If connection or parsing fails.
     """
     try:
-        from geoparquet_io.core.wfs import get_wfs_capabilities
+        from geoparquet_io.core.wfs import WFSError, get_wfs_capabilities
 
         wfs = get_wfs_capabilities(service_url, version)
         svc = _extract_service_metadata(wfs)
@@ -255,7 +240,6 @@ def discover_layers(
             service_abstract=svc["service_abstract"],
             provider=svc["provider"],
             keywords=svc["keywords"],
-            contact_name=svc["contact_name"],
             access_constraints=svc["access_constraints"],
             fees=svc["fees"],
         )
@@ -264,5 +248,6 @@ def discover_layers(
         raise WFSDiscoveryError(
             "geoparquet-io is required for WFS extraction. Install with: pip install geoparquet-io"
         ) from e
-    except _NETWORK_ERRORS as e:
-        raise WFSDiscoveryError(f"Failed to discover WFS layers: {e}") from e
+    except (WFSError, *_NETWORK_ERRORS) as e:
+        # geoparquet-io and requests quote the service URL with its key (#981).
+        raise WFSDiscoveryError(redact_credentials(f"Failed to discover WFS layers: {e}")) from e

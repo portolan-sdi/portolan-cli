@@ -1257,6 +1257,7 @@ class TestMultiAssetProperties:
                 item_id="test",
                 primary_file=primary,
                 collection_dir=Path(tmp_dir),  # Use temp dir as collection
+                collection_id="land",
             )
 
             # No hidden files should be in results
@@ -1287,6 +1288,7 @@ class TestMultiAssetProperties:
                 item_id="test",
                 primary_file=primary,
                 collection_dir=item_dir,  # Same dir for this test
+                collection_id="land",
             )
 
             # No structural files should be in results

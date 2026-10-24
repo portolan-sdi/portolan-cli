@@ -51,7 +51,7 @@ def test_extraction_report_folder_coverage_save_load_roundtrip(tmp_path: Path) -
             description=None,
             attribution=None,
             keywords=None,
-            contact_name=None,
+            producer=None,
             processing_notes=None,
             known_issues=None,
             license_info_raw=None,

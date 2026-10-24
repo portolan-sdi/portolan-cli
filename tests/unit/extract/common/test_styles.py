@@ -9,12 +9,12 @@ import json
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 from portolan_cli.extract.common.styles import (
     StyleExtractionError,
     _build_wms_getstyles_url,
-    _redact_url_for_logging,
     extract_esri_style,
     extract_wms_style,
 )
@@ -25,24 +25,54 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-class TestRedactURLForLogging:
-    """Tests for query-string redaction before logging (security review)."""
+class TestWMSErrorsKeepNoKey:
+    """#981: an error or a warning about a WMS request names the service, not its key."""
 
-    def test_strips_api_key_from_query_string(self) -> None:
-        """An apikey query parameter is not present in the redacted URL."""
-        url = "https://example.com/geoserver/wms?service=WMS&apikey=SECRET123"
-        result = _redact_url_for_logging(url)
+    URL = "https://h.example/geoserver/wms?apikey=SECRET&service=WMS"
+    CLEAN = "https://h.example/geoserver/wms?service=WMS"
 
-        assert "SECRET123" not in result
-        assert "apikey" not in result
-        assert "?" not in result
+    @staticmethod
+    def _refuse(url: str, timeout: float) -> Any:
+        raise httpx.ConnectError(f"refused: {url}")
 
-    def test_keeps_scheme_host_and_path(self) -> None:
-        """Scheme, host and path survive redaction."""
-        url = "https://example.com/geoserver/wms?apikey=SECRET123"
-        result = _redact_url_for_logging(url)
+    def test_getstyles_transport_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from portolan_cli.extract.common.styles import _fetch_wms_style
 
-        assert result == "https://example.com/geoserver/wms"
+        monkeypatch.setattr("portolan_cli.extract.common.styles._guarded_get", self._refuse)
+
+        with pytest.raises(StyleExtractionError) as caught:
+            _fetch_wms_style(self.URL)
+
+        assert str(caught.value) == f"WMS GetStyles request failed: refused: {self.CLEAN}"
+
+    def test_getstyles_error_page(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from portolan_cli.extract.common.styles import _fetch_wms_style
+
+        page = f"<ServiceException>Bad request {self.URL}</ServiceException>"
+        monkeypatch.setattr(
+            "portolan_cli.extract.common.styles._guarded_get",
+            lambda url, timeout: httpx.Response(
+                200, text=page, headers={"content-type": "text/plain"}
+            ),
+        )
+
+        with pytest.raises(StyleExtractionError) as caught:
+            _fetch_wms_style(self.URL)
+
+        assert str(caught.value) == (
+            f"WMS GetStyles returned error: <ServiceException>Bad request {self.CLEAN}"
+            "</ServiceException>"
+        )
+
+    def test_legend_warning(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from portolan_cli.extract.common.styles import _fetch_wms_legend
+
+        monkeypatch.setattr("portolan_cli.extract.common.styles._guarded_get", self._refuse)
+
+        assert _fetch_wms_legend(self.URL) is None
+        assert caplog.messages == [f"WMS GetLegendGraphic request failed: refused: {self.CLEAN}"]
 
 
 class TestRejectCredentialBearingHTTPURL:
@@ -129,6 +159,21 @@ class TestBuildWMSGetStylesURL:
         assert "request=GetStyles" in result
         assert "GetCapabilities" not in result
         assert "service=WFS" not in result
+
+    def test_wfs_request_params_do_not_reach_wms_urls(self) -> None:
+        """#981: typeNames and outputFormat are WFS parameters. WMS URLs drop them."""
+        from portolan_cli.extract.common.styles import _build_wms_getlegendgraphic_url
+
+        wfs_url = "https://h.example/geoserver/wfs?apikey=k%2B1&typeNames=x&outputFormat=json"
+
+        assert _build_wms_getstyles_url(wfs_url, "ws:lyr") == (
+            "https://h.example/geoserver/wms?apikey=k%2B1&service=WMS&version=1.1.1"
+            "&request=GetStyles&layers=ws%3Alyr"
+        )
+        assert _build_wms_getlegendgraphic_url(wfs_url, "ws:lyr") == (
+            "https://h.example/geoserver/wms?apikey=k%2B1&service=WMS&version=1.1.1"
+            "&request=GetLegendGraphic&layer=ws%3Alyr&format=image%2Fpng"
+        )
 
 
 class TestFetchWMSStyle:
@@ -282,13 +327,7 @@ class TestExtractESRIStyle:
         collection_path = tmp_path / "test-collection"
         collection_path.mkdir()
 
-        with patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch:
-            mock_fetch.return_value = sample_layer_json
-
-            result = extract_esri_style(
-                layer_url="https://example.com/FeatureServer/0",
-                collection_path=collection_path,
-            )
+        result = extract_esri_style(sample_layer_json, collection_path)
 
         assert result is not None
         assert result.path.exists()
@@ -305,28 +344,7 @@ class TestExtractESRIStyle:
         collection_path = tmp_path / "test-collection"
         collection_path.mkdir()
 
-        with patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch:
-            mock_fetch.return_value = {"name": "TestLayer"}
-
-            result = extract_esri_style(
-                layer_url="https://example.com/FeatureServer/0",
-                collection_path=collection_path,
-            )
-
-        assert result is None
-
-    def test_returns_none_on_fetch_failure(self, tmp_path: Path) -> None:
-        """Returns None when ESRI request fails."""
-        collection_path = tmp_path / "test-collection"
-        collection_path.mkdir()
-
-        with patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch:
-            mock_fetch.side_effect = StyleExtractionError("Connection failed")
-
-            result = extract_esri_style(
-                layer_url="https://example.com/FeatureServer/0",
-                collection_path=collection_path,
-            )
+        result = extract_esri_style({"name": "TestLayer"}, collection_path)
 
         assert result is None
 
@@ -337,13 +355,7 @@ class TestExtractESRIStyle:
         collection_path = tmp_path / "test-collection"
         collection_path.mkdir()
 
-        with patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch:
-            mock_fetch.return_value = sample_layer_json
-
-            result = extract_esri_style(
-                layer_url="https://example.com/FeatureServer/0",
-                collection_path=collection_path,
-            )
+        result = extract_esri_style(sample_layer_json, collection_path)
 
         assert result is not None
         style = json.loads(result.path.read_text())
@@ -356,19 +368,20 @@ class TestExtractESRIStyle:
         collection_path = tmp_path / "test-collection"
         collection_path.mkdir()
 
-        with (
-            patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch,
-            patch("portolan_cli.extract.common.styles.convert_esri_renderer") as mock_convert,
-        ):
-            mock_fetch.return_value = sample_layer_json
+        with patch("portolan_cli.extract.common.styles.convert_esri_renderer") as mock_convert:
             mock_convert.side_effect = ValueError("Unexpected internal error")
 
-            result = extract_esri_style(
-                layer_url="https://example.com/FeatureServer/0",
-                collection_path=collection_path,
-            )
+            result = extract_esri_style(sample_layer_json, collection_path)
 
         assert result is None
+
+
+_BLUE_FILL_LAYER: dict[str, Any] = {
+    "name": "Test",
+    "drawingInfo": {
+        "renderer": {"type": "simple", "symbol": {"type": "esriSFS", "color": [0, 0, 255, 255]}}
+    },
+}
 
 
 class TestStyleFileOutput:
@@ -379,23 +392,7 @@ class TestStyleFileOutput:
         collection_path = tmp_path / "test-collection"
         collection_path.mkdir()
 
-        sample_json = {
-            "name": "Test",
-            "drawingInfo": {
-                "renderer": {
-                    "type": "simple",
-                    "symbol": {"type": "esriSFS", "color": [0, 0, 255, 255]},
-                }
-            },
-        }
-
-        with patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch:
-            mock_fetch.return_value = sample_json
-
-            result = extract_esri_style(
-                layer_url="https://example.com/FeatureServer/0",
-                collection_path=collection_path,
-            )
+        result = extract_esri_style(_BLUE_FILL_LAYER, collection_path)
 
         assert result is not None
         assert (collection_path / "styles").is_dir()
@@ -406,24 +403,7 @@ class TestStyleFileOutput:
         collection_path = tmp_path / "test-collection"
         collection_path.mkdir()
 
-        sample_json = {
-            "name": "Test",
-            "drawingInfo": {
-                "renderer": {
-                    "type": "simple",
-                    "symbol": {"type": "esriSFS", "color": [0, 0, 255, 255]},
-                }
-            },
-        }
-
-        with patch("portolan_cli.extract.common.styles._fetch_esri_layer_json") as mock_fetch:
-            mock_fetch.return_value = sample_json
-
-            result = extract_esri_style(
-                layer_url="https://example.com/FeatureServer/0",
-                collection_path=collection_path,
-                style_name="original",
-            )
+        result = extract_esri_style(_BLUE_FILL_LAYER, collection_path, style_name="original")
 
         assert result is not None
         assert result.path.name == "original.json"

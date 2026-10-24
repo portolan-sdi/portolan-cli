@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -739,8 +739,7 @@ class TestUploadFile:
 
             # Verify endpoint was passed to S3Store
             call_kwargs = mock_s3_store.call_args[1]
-            assert "endpoint" in call_kwargs
-            assert "minio.example.com:9000" in call_kwargs["endpoint"]
+            assert call_kwargs["endpoint"] == "https://minio.example.com:9000"
 
     @pytest.mark.unit
     def test_upload_file_strips_existing_scheme_from_endpoint(self, temp_file: Path) -> None:
@@ -1401,9 +1400,9 @@ class TestProfileEndpointRegion:
         with cleared_environ(), patch("portolan_cli.sync.upload.S3Store"):
             _create_s3_store("s3://mybucket", None, None, None, None)
 
-        output = capsys.readouterr().out
-        assert "https://data.source.coop" in output
-        assert "default" in output
+        assert capsys.readouterr().out.splitlines() == [
+            "  Endpoint https://data.source.coop from AWS profile 'default'"
+        ]
 
     @pytest.mark.unit
     def test_explicit_region_wins(self, default_profile_endpoint: Path) -> None:
@@ -1793,3 +1792,136 @@ class TestDelegatedCredentialProvider:
 
         assert valid is True
         assert hint == ""
+
+
+# =============================================================================
+# put_object: one helper for every write (issues #807, #908)
+# =============================================================================
+
+MIB = 1024 * 1024
+
+
+def _stored_content_type(store: Any, key: str) -> str:
+    import obstore as obs
+
+    return str(obs.get(store, key).attributes["Content-Type"])
+
+
+class TestPutObject:
+    """put_object sets Content-Type and the part size on every write."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("key", "expected"),
+        [
+            ("catalog.json", "application/json"),
+            ("col/item/item.JSON", "application/json"),
+            ("col/boundary.geojson", "application/geo+json"),
+            ("col/data.parquet", "application/vnd.apache.parquet"),
+            ("col/dem.tif", "image/tiff; application=geotiff; profile=cloud-optimized"),
+            ("col/dem.TIFF", "image/tiff; application=geotiff; profile=cloud-optimized"),
+            ("col/map.pmtiles", "application/vnd.pmtiles"),
+            ("col/thumbnail.png", "image/png"),
+            ("README.md", "text/markdown"),
+            ("col/photo.jpg", "image/jpeg"),
+            ("col/scene/rgb.tif.aux.xml", "application/xml"),
+            ("col/blob.unknownext", "application/octet-stream"),
+            ("col/noextension", "application/octet-stream"),
+        ],
+    )
+    def test_content_type_comes_from_the_key(self, key: str, expected: str) -> None:
+        """The stored object carries the type of its extension."""
+        from obstore.store import MemoryStore
+
+        from portolan_cli.sync.upload import put_object
+
+        store = MemoryStore()
+        put_object(store, key, b"{}")
+
+        assert _stored_content_type(store, key) == expected
+
+    @pytest.mark.unit
+    def test_xml_type_does_not_come_from_the_platform_registry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A .aux.xml sidecar is application/xml on Windows too.
+
+        The stdlib reads the Windows registry, which maps .xml to text/xml.
+        The table decides, not the registry.
+        """
+        import mimetypes
+
+        from portolan_cli.sync.upload import content_type_for
+
+        monkeypatch.setattr(mimetypes, "guess_type", lambda key: ("text/xml", None))
+
+        assert content_type_for("col/scene/rgb.tif.aux.xml") == "application/xml"
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("size", "expected"),
+        [
+            (0, 5 * MIB),
+            (9000 * 5 * MIB, 5 * MIB),
+            (9000 * 5 * MIB + 1, 5 * MIB + 1),
+            (60 * 1024 * MIB, 7158279),
+        ],
+    )
+    def test_multipart_chunk_size_boundaries(self, size: int, expected: int) -> None:
+        """The part size stays at 5 MiB up to 9000 parts, then grows."""
+        from portolan_cli.sync.upload import multipart_chunk_size
+
+        assert multipart_chunk_size(size) == expected
+
+    @pytest.mark.unit
+    @given(size=st.integers(min_value=0, max_value=5 * 1024**4))
+    def test_multipart_part_count_stays_under_the_limit(self, size: int) -> None:
+        """S3 and GCS allow 10000 parts. The helper never needs more than 9000."""
+        from portolan_cli.sync.upload import multipart_chunk_size
+
+        chunk = multipart_chunk_size(size)
+        assert chunk >= 5 * MIB
+        assert -(-size // chunk) <= 9000
+
+    @pytest.mark.unit
+    def test_file_put_passes_part_size_and_concurrency(self, tmp_path: Path) -> None:
+        """A file put sends chunk_size from the file size (issue #908)."""
+        from portolan_cli.sync.upload import put_object
+
+        src = tmp_path / "dem.tif"
+        src.write_bytes(b"x" * 1000)
+        with (
+            patch("portolan_cli.sync.upload.obs.put") as mock_put,
+            patch("portolan_cli.sync.upload.multipart_chunk_size", return_value=7 * MIB) as m,
+        ):
+            put_object(MagicMock(), "k/dem.tif", src, max_concurrency=3)
+
+        m.assert_called_once_with(1000)
+        kwargs = mock_put.call_args.kwargs
+        assert kwargs["chunk_size"] == 7 * MIB
+        assert kwargs["max_concurrency"] == 3
+        assert kwargs["attributes"] == {
+            "Content-Type": "image/tiff; application=geotiff; profile=cloud-optimized"
+        }
+
+    @pytest.mark.unit
+    async def test_async_put_passes_the_mode(self) -> None:
+        """mode="create" refuses to overwrite, so the condition reaches the store."""
+        from obstore.exceptions import AlreadyExistsError
+        from obstore.store import MemoryStore
+
+        from portolan_cli.sync.upload import put_object_async
+
+        store = MemoryStore()
+        await put_object_async(store, "v/versions.json", b"{}", mode="create")
+        with pytest.raises(AlreadyExistsError):
+            await put_object_async(store, "v/versions.json", b"[]", mode="create")
+
+        assert _stored_content_type(store, "v/versions.json") == "application/json"
+        assert _stored_bytes(store, "v/versions.json") == b"{}"
+
+
+def _stored_bytes(store: Any, key: str) -> bytes:
+    import obstore as obs
+
+    return bytes(obs.get(store, key).bytes())

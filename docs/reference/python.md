@@ -203,6 +203,12 @@ versioning.
     options:
       heading_level: 4
 
+### Published strings
+
+::: portolan_cli.api.sanitize_published_string
+    options:
+      heading_level: 4
+
 ### Warnings
 
 ::: portolan_cli.api.PluginWarning

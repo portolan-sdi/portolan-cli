@@ -209,24 +209,20 @@ jobs:
         # Speed decisions:
         # - `-n logical`: `-n auto` counts physical cores and started only 2
         #   workers on the 4-vCPU ubuntu/windows runners. Logical count starts 4.
-        # - Coverage only on the one cell that uploads to Codecov. Branch
-        #   coverage on the other 9 cells cost 20-40% wall time and was
-        #   discarded.
+        # - Every cell measures coverage. The diff-cover job reads the
+        #   report of every cell, so a line that only Windows or macOS runs
+        #   counts as covered there. No `# pragma: no cover` for
+        #   platform-only code. The diff-cover summary lists the missed
+        #   lines, so no cell prints the term-missing report.
         # - HYPOTHESIS_PROFILE=ci selects the reduced deterministic profile
         #   from tests/conftest.py. Nightly keeps the full default profile.
         # - --durations=25 records the slowest tests so a slow-test regression
         #   is visible in the log.
         env:
           HYPOTHESIS_PROFILE: ci
-          MATRIX_OS: ${{ matrix.os }}
-          MATRIX_PY: ${{ matrix.python-version }}
           MATRIX_SUITE: ${{ matrix.suite }}
         shell: bash
         run: |
-          cov_args=()
-          if [ "$MATRIX_OS" = "ubuntu-latest" ] && [ "$MATRIX_PY" = "3.11" ]; then
-            cov_args=(--cov=portolan_cli --cov-report=term-missing --cov-report=xml)
-          fi
           marker="not network and not slow and not benchmark"
           if [ "$MATRIX_SUITE" = "unit" ] && [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             marker="unit and not network and not slow and not benchmark"
@@ -235,7 +231,7 @@ jobs:
             -m "$marker" \
             -n logical --dist loadscope \
             --durations=25 --durations-min=1.0 \
-            "${cov_args[@]}"
+            --cov=portolan_cli --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
@@ -244,6 +240,16 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: portolan-sdi/portolan-cli
           flags: main
+
+      # The diff-cover job reads this report. A missing report fails the
+      # upload, so a cell that stops writing it cannot pass quietly.
+      - name: Upload coverage XML
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-${{ matrix.os }}-${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: error
+          retention-days: 7
 
   plugin-test:
     # The example plugin uses the public plugin API alone (#947). A change to
@@ -297,7 +303,10 @@ jobs:
   iceberg-test:
     name: Iceberg Unit & Integration Tests (Python ${{ matrix.python-version }} / ${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.iceberg == 'true' || github.event_name == 'push'
+    # Core Python changes run these tests too. #977 merged because a change to
+    # the core backend calls skipped them. The Docker e2e job below keeps the
+    # narrow filter, and nightly runs the full e2e suite.
+    if: needs.changes.outputs.iceberg == 'true' || needs.changes.outputs.python == 'true' || github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -343,6 +352,81 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: portolan-sdi/portolan-cli
           flags: iceberg
+
+      # Every cell uploads its report. On a change that touches neither
+      # filter, the job skips and the diff-cover job reads no Iceberg report.
+      - name: Upload coverage XML
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-iceberg-${{ matrix.os }}-${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: error
+          retention-days: 7
+
+  diff-cover:
+    # The coverage gate on the lines a pull request changes. Codecov reports
+    # but never blocks (codecov.yml), so this job is the gate.
+    #
+    # Every cell of the test and Iceberg matrices uploads a coverage report
+    # named coverage-<os>-<python> or coverage-iceberg-<os>-<python>. This
+    # job downloads every artifact that matches coverage-* and passes all
+    # the reports to diff-cover. diff-cover marks a line as missed only when
+    # every report that measures the file misses it. Thus a line that only
+    # Windows or macOS runs counts as covered. relative_files in
+    # [tool.coverage.run] writes paths relative to the checkout, so the
+    # Windows and macOS reports match the Linux checkout here.
+    #
+    # FLOOR comes from the last five merged pull requests that changed
+    # portolan_cli, measured with the marker sets of the two coverage cells:
+    # #868 100%, #985 100%, #1004 97%, #1011 100%, #1031 99%. The floor is
+    # min(90, median rounded down to a multiple of 5), so 90. This matches
+    # the portolan-ops norm for Python repos.
+    name: Diff Coverage
+    needs: [test, iceberg-test]
+    if: always() && github.event_name == 'pull_request' && needs.test.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # diff-cover compares against the base branch of the pull request, so
+      # a stacked pull request into an integration or release branch is
+      # measured on its own diff. Passed through env, not spliced into the
+      # script (zizmor).
+      BASE_REF: ${{ github.base_ref }}
+      # renovate: datasource=pypi depName=diff-cover
+      DIFF_COVER_VERSION: "10.6.0"
+      FLOOR: "90"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.6.14"
+
+      # Each artifact lands in coverage/<artifact name>/coverage.xml. Do not
+      # set merge-multiple: the reports share one file name and overwrite
+      # each other.
+      - name: Download the coverage of every cell
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-*
+          path: coverage
+
+      - name: Check coverage of the changed lines
+        run: |
+          git fetch --no-tags origin "$BASE_REF"
+          reports=(coverage/*/coverage.xml)
+          echo "diff-cover reads ${#reports[@]} reports"
+          status=0
+          uvx "diff-cover==${DIFF_COVER_VERSION}" "${reports[@]}" \
+            --compare-branch="origin/$BASE_REF" \
+            --fail-under="$FLOOR" \
+            --format "markdown:diff-cover.md" || status=$?
+          cat diff-cover.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
   iceberg-e2e:
     name: Iceberg E2E Tests (Python ${{ matrix.python-version }})
@@ -512,9 +596,10 @@ jobs:
     # context (see scripts/apply_branch_protection.sh) instead of every matrix
     # cell means adding a Python version or OS never silently drops a required
     # check, and the conditionally-skipped iceberg jobs don't block PRs that
-    # don't touch iceberg.
+    # don't touch iceberg. needs lists every job but `changes`, and
+    # tests/docs/test_ci_wiring.py fails when one is missing.
     if: always()
-    needs: [quality, security, test, iceberg-test, iceberg-e2e, docs, site-links, build]
+    needs: [quality, security, test, plugin-test, iceberg-test, iceberg-e2e, diff-cover, docs, site-links, build]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

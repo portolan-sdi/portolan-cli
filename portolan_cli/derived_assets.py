@@ -25,9 +25,9 @@ nothing.
 
 Filenames are a fallback for an href no STAC object claims. That happens when the
 manifest outlives the metadata. A name cannot replace a role. A publisher may ship
-PMTiles as the primary asset. The extension registry gives ``.pmtiles`` the role
-``data``, so a name alone would skip a file nothing can rebuild. Each pattern
-comes from the module that writes the file.
+PMTiles as the primary asset, and ``add`` then gives it the role ``data``, so a
+name alone would skip a file nothing can rebuild. Each pattern comes from the
+module that writes the file.
 
 * ``items.parquet``, from ``stac_parquet.PARQUET_FILENAME``
 * ``*.pmtiles``, from ``viz.pmtiles_links.PMTILES_SUFFIX``

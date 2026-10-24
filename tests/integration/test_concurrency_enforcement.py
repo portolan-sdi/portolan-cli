@@ -231,93 +231,61 @@ class TestConnectionFootprintAccuracy:
         assert calculate_connection_footprint(50, 4, workers=1) > MAX_SAFE_CONNECTIONS
 
 
+async def _record_asset_puts(
+    tmp_path: Path, size: int, chunk_concurrency: int
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Upload one asset of ``size`` bytes and record the sync and async puts."""
+    from unittest.mock import MagicMock
+
+    from portolan_cli.sync.push import _upload_assets_async
+
+    asset = tmp_path / "asset.bin"
+    asset.write_bytes(b"x" * size)
+    sync_puts: list[dict[str, Any]] = []
+    async_puts: list[str] = []
+
+    def put(store: Any, key: str, data: Any, **kwargs: Any) -> None:
+        sync_puts.append({"key": key, "max_concurrency": kwargs.get("max_concurrency")})
+
+    async def put_async(store: Any, key: str, data: Any, **kwargs: Any) -> None:
+        async_puts.append(key)
+
+    with (
+        patch("portolan_cli.sync.push.obs.put", side_effect=put),
+        patch("portolan_cli.sync.push.obs.put_async", side_effect=put_async),
+    ):
+        await _upload_assets_async(
+            store=MagicMock(),
+            catalog_root=tmp_path,
+            prefix="test",
+            assets=[asset],
+            concurrency=8,
+            chunk_concurrency=chunk_concurrency,
+            adaptive=False,
+        )
+    return sync_puts, async_puts
+
+
 class TestChunkConcurrencyEnforcement:
     """Tests that chunk_concurrency actually limits per-file multipart."""
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_large_file_uses_chunk_concurrency(self, tmp_path: Path) -> None:
-        """Verify large files use sync path with chunk_concurrency.
+        """A file over the 5 MiB threshold goes through the sync put with chunk_concurrency."""
+        sync_puts, async_puts = await _record_asset_puts(tmp_path, 6 * 1024 * 1024, 6)
 
-        This test creates a mock that tracks whether obs.put() is called
-        with the correct max_concurrency parameter for large files.
-        """
-        from unittest.mock import MagicMock
-
-        # Create a large file (>5MB threshold)
-        large_file = tmp_path / "large.bin"
-        large_file.write_bytes(b"x" * (6 * 1024 * 1024))  # 6MB
-
-        # Track calls to obs.put (sync) and obs.put_async (async)
-        put_calls: list[dict[str, Any]] = []
-        put_async_calls: list[dict[str, Any]] = []
-
-        def mock_put(store: Any, key: str, data: Any, **kwargs: Any) -> None:
-            put_calls.append({"key": key, "max_concurrency": kwargs.get("max_concurrency")})
-
-        async def mock_put_async(store: Any, key: str, data: bytes) -> None:
-            put_async_calls.append({"key": key, "size": len(data)})
-
-        with (
-            patch("portolan_cli.sync.push.obs.put", side_effect=mock_put),
-            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
-        ):
-            from portolan_cli.sync.push import _upload_assets_async
-
-            mock_store = MagicMock()
-            await _upload_assets_async(
-                store=mock_store,
-                catalog_root=tmp_path,
-                prefix="test",
-                assets=[large_file],
-                concurrency=8,
-                chunk_concurrency=6,  # Custom chunk concurrency
-                adaptive=False,
-            )
-
-        # Large file should use sync put() with max_concurrency
-        assert len(put_calls) == 1, "Large file should use sync obs.put()"
-        assert put_calls[0]["max_concurrency"] == 6, f"chunk_concurrency not passed: {put_calls[0]}"
+        assert sync_puts == [{"key": "test/asset.bin", "max_concurrency": 6}]
+        assert async_puts == []
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_small_file_uses_async_path(self, tmp_path: Path) -> None:
-        """Verify small files use efficient async path."""
-        from unittest.mock import MagicMock
+        """A small file goes through put_async."""
+        sync_puts, async_puts = await _record_asset_puts(tmp_path, 13, 4)
 
-        # Create a small file (<5MB threshold)
-        small_file = tmp_path / "small.txt"
-        small_file.write_bytes(b"small content")
-
-        put_calls: list[dict[str, Any]] = []
-        put_async_calls: list[dict[str, Any]] = []
-
-        def mock_put(store: Any, key: str, data: Any, **kwargs: Any) -> None:
-            put_calls.append({"key": key})
-
-        async def mock_put_async(store: Any, key: str, data: bytes) -> None:
-            put_async_calls.append({"key": key, "size": len(data)})
-
-        with (
-            patch("portolan_cli.sync.push.obs.put", side_effect=mock_put),
-            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
-        ):
-            from portolan_cli.sync.push import _upload_assets_async
-
-            mock_store = MagicMock()
-            await _upload_assets_async(
-                store=mock_store,
-                catalog_root=tmp_path,
-                prefix="test",
-                assets=[small_file],
-                concurrency=8,
-                chunk_concurrency=4,
-                adaptive=False,
-            )
-
-        # Small file should use async put_async()
-        assert len(put_async_calls) == 1, "Small file should use async obs.put_async()"
-        assert len(put_calls) == 0, "Small file should NOT use sync obs.put()"
+        assert sync_puts == []
+        assert async_puts == ["test/asset.bin"]
 
 
 class TestCLIIntegration:

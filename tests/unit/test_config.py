@@ -9,14 +9,17 @@ Tests the configuration system including:
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 from unittest import mock
 
 import pytest
 
+from portolan_cli.errors import ConfigError
 from tests.conftest import cleared_environ
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -524,13 +527,13 @@ class TestSetSetting:
         from portolan_cli.config import load_config, save_config, set_setting
 
         (tmp_path / ".portolan").mkdir()
-        save_config(tmp_path, {"backend": "stac", "custom_key": "old"})
+        save_config(tmp_path, {"backend": "stac", "statistics": {"enabled": True}})
 
-        set_setting(tmp_path, "custom_key", "new")
+        set_setting(tmp_path, "statistics.enabled", False)
 
         config = load_config(tmp_path)
         assert config["backend"] == "stac"
-        assert config["custom_key"] == "new"
+        assert config["statistics"] == {"enabled": False}
 
     @pytest.mark.unit
     def test_set_creates_collections_section_if_missing(self, tmp_path: Path) -> None:
@@ -833,7 +836,7 @@ class TestSensitiveSettings:
 
         (tmp_path / ".portolan").mkdir()
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ConfigError) as exc_info:
             set_setting(tmp_path, "remote", "s3://bucket/")
 
         assert "remote" in str(exc_info.value)
@@ -847,7 +850,7 @@ class TestSensitiveSettings:
 
         (tmp_path / ".portolan").mkdir()
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ConfigError) as exc_info:
             set_setting(tmp_path, "profile", "myprofile")
 
         assert "profile" in str(exc_info.value)
@@ -860,7 +863,7 @@ class TestSensitiveSettings:
 
         (tmp_path / ".portolan").mkdir()
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ConfigError) as exc_info:
             set_setting(tmp_path, "aws_profile", "myprofile")
 
         assert "aws_profile" in str(exc_info.value)
@@ -872,7 +875,7 @@ class TestSensitiveSettings:
 
         (tmp_path / ".portolan").mkdir()
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ConfigError) as exc_info:
             set_setting(tmp_path, "region", "us-west-2")
 
         assert "region" in str(exc_info.value)
@@ -1316,3 +1319,569 @@ class TestResolvePushSettings:
             os.environ.pop("PORTOLAN_REMOTE", None)
             with pytest.raises(ValueError):
                 resolve_push_settings(None, None, tmp_path, None)
+
+
+def _read_yaml(catalog: Path) -> object:
+    """Parse ``config.yaml`` directly, without the code under test."""
+    import yaml
+
+    return yaml.safe_load((catalog / ".portolan" / "config.yaml").read_text(encoding="utf-8"))
+
+
+class TestDottedKeysNest:
+    """``set_setting`` writes a dotted key as a nested path (issue #1020)."""
+
+    @pytest.mark.unit
+    def test_dotted_key_writes_nested_yaml(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+
+        set_setting(tmp_path, "conversion.vector.sort", "none")
+
+        assert _read_yaml(tmp_path) == {"conversion": {"vector": {"sort": "none"}}}
+
+    @pytest.mark.unit
+    def test_second_dotted_key_merges_into_existing_block(self, tmp_path: Path) -> None:
+        from portolan_cli.config import save_config, set_setting
+
+        save_config(tmp_path, {"backend": "file", "conversion": {"cog": {"tile_size": 256}}})
+
+        set_setting(tmp_path, "conversion.vector.sort", "none")
+        set_setting(tmp_path, "conversion.vector.add_bbox", "false")
+
+        assert _read_yaml(tmp_path) == {
+            "backend": "file",
+            "conversion": {
+                "cog": {"tile_size": 256},
+                "vector": {"sort": "none", "add_bbox": False},
+            },
+        }
+
+    @pytest.mark.unit
+    def test_cli_strings_are_stored_as_the_schema_type(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+
+        set_setting(tmp_path, "statistics.enabled", "false")
+        set_setting(tmp_path, "partitioning.target_rows", "5000")
+        set_setting(tmp_path, "partitioning.threshold_gb", "0.5")
+        set_setting(tmp_path, "push.exclude", "*.tmp, scratch/")
+        set_setting(tmp_path, "pmtiles.src_crs", "EPSG:2263")
+
+        assert _read_yaml(tmp_path) == {
+            "statistics": {"enabled": False},
+            "partitioning": {"target_rows": 5000, "threshold_gb": 0.5},
+            "push": {"exclude": ["*.tmp", "scratch/"]},
+            "pmtiles": {"src_crs": "EPSG:2263"},
+        }
+
+    @pytest.mark.unit
+    def test_collection_level_dotted_key_nests_under_the_collection(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting, set_setting
+
+        set_setting(tmp_path, "pmtiles.enabled", "true", collection="demo")
+
+        assert _read_yaml(tmp_path) == {"collections": {"demo": {"pmtiles": {"enabled": True}}}}
+        assert get_setting("pmtiles.enabled", catalog_path=tmp_path, collection="demo") is True
+
+    @pytest.mark.unit
+    def test_unset_removes_the_nested_leaf_and_empty_parents(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting, unset_setting
+
+        set_setting(tmp_path, "backend", "file")
+        set_setting(tmp_path, "conversion.vector.sort", "none")
+        assert _read_yaml(tmp_path) == {
+            "backend": "file",
+            "conversion": {"vector": {"sort": "none"}},
+        }
+
+        assert unset_setting(tmp_path, "conversion.vector.sort") is True
+        assert _read_yaml(tmp_path) == {"backend": "file"}
+        assert unset_setting(tmp_path, "conversion.vector.sort") is False
+
+
+class TestUnknownKeysRejected:
+    """``set_setting`` rejects a key that no reader reads (issue #1020)."""
+
+    @pytest.mark.unit
+    def test_unknown_key_raises_with_the_known_keys(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+
+        with pytest.raises(ConfigError, match=r"Unknown setting 'conversion\.vector\.compression'"):
+            set_setting(tmp_path, "conversion.vector.compression", "zstd")
+
+        with pytest.raises(ConfigError) as excinfo:
+            set_setting(tmp_path, "workers", "8")
+        message = str(excinfo.value)
+        assert "conversion.vector.sort" in message
+        assert "statistics.enabled" in message
+        assert not (tmp_path / ".portolan" / "config.yaml").exists()
+
+    @pytest.mark.unit
+    def test_value_of_the_wrong_type_raises(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+
+        with pytest.raises(
+            ConfigError, match=r"'conversion\.vector\.add_bbox' takes true or false"
+        ):
+            set_setting(tmp_path, "conversion.vector.add_bbox", "maybe")
+        with pytest.raises(ConfigError, match=r"'pmtiles\.min_zoom' takes an integer"):
+            set_setting(tmp_path, "pmtiles.min_zoom", "low")
+
+    @pytest.mark.unit
+    def test_handler_pin_takes_any_extension(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+        from portolan_cli.conversion_config import get_handler_pins
+
+        set_setting(tmp_path, "conversion.handlers..tif", "cog")
+
+        assert _read_yaml(tmp_path) == {"conversion": {"handlers": {".tif": "cog"}}}
+        assert get_handler_pins(tmp_path) == {".tif": "cog"}
+
+
+class TestConversionReadersSeeConfigSet:
+    """Each conversion reader returns what ``set_setting`` wrote (issue #1020)."""
+
+    @pytest.mark.unit
+    def test_vector_settings(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+        from portolan_cli.conversion_config import get_vector_settings
+
+        set_setting(tmp_path, "conversion.vector.sort", "none")
+        set_setting(tmp_path, "conversion.vector.add_bbox", "false")
+
+        settings = get_vector_settings(tmp_path)
+        assert (settings.sort, settings.add_bbox) == ("none", False)
+
+    @pytest.mark.unit
+    def test_cog_settings(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+        from portolan_cli.conversion_config import get_cog_settings
+
+        set_setting(tmp_path, "conversion.cog.compression", "zstd")
+        set_setting(tmp_path, "conversion.cog.tile_size", "256")
+
+        settings = get_cog_settings(tmp_path)
+        assert (settings.compression, settings.tile_size) == ("ZSTD", 256)
+
+    @pytest.mark.unit
+    def test_conversion_overrides(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+        from portolan_cli.conversion_config import get_conversion_overrides
+
+        set_setting(tmp_path, "conversion.extensions.convert", "fgb")
+        set_setting(tmp_path, "conversion.paths.preserve", "legacy/**")
+
+        overrides = get_conversion_overrides(tmp_path)
+        assert overrides.extensions_convert == frozenset({".fgb"})
+        assert overrides.paths_preserve == ("legacy/**",)
+
+
+class TestLegacyFlatKeys:
+    """A flat dotted key from an older ``config set`` keeps its effect (issue #1020)."""
+
+    @pytest.mark.unit
+    def test_flat_key_reads_as_its_nested_equivalent(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting
+        from portolan_cli.conversion_config import get_vector_settings
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text(
+            "conversion.vector.sort: none\n"
+            "conversion.vector.add_bbox: 'false'\n"
+            "statistics.enabled: 'false'\n"
+        )
+
+        settings = get_vector_settings(tmp_path)
+        assert (settings.sort, settings.add_bbox) == ("none", False)
+        assert get_setting("statistics.enabled", catalog_path=tmp_path) is False
+
+    @pytest.mark.unit
+    def test_next_set_rewrites_flat_keys_as_nested(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text(
+            "conversion.vector.sort: none\nconversion:\n  vector:\n    sort: hilbert\n"
+        )
+
+        set_setting(tmp_path, "backend", "file")
+
+        # The flat key wins: get_setting read it first before this change.
+        assert _read_yaml(tmp_path) == {
+            "conversion": {"vector": {"sort": "none"}},
+            "backend": "file",
+        }
+
+
+@contextmanager
+def _tracing() -> Iterator[None]:
+    """Turn the trace counters on for one block."""
+    from portolan_cli import trace
+
+    trace.enable()
+    try:
+        yield
+    finally:
+        trace.reset()
+
+
+def _parses() -> int:
+    from portolan_cli import trace
+
+    return trace.counters().get("config.yaml_parses", 0)
+
+
+class TestOneParsePerFile:
+    """Readers share one parse of each YAML file until it changes (issue #1006)."""
+
+    @pytest.mark.unit
+    def test_repeated_reads_parse_once(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting, load_merged_config, set_setting
+        from portolan_cli.conversion_config import (
+            get_cog_settings,
+            get_conversion_overrides,
+            get_handler_pins,
+            get_vector_settings,
+        )
+
+        set_setting(tmp_path, "conversion.vector.sort", "none")
+        collection = tmp_path / "demo"
+        collection.mkdir()
+
+        with _tracing():
+            for _ in range(5):
+                get_setting("statistics.enabled", catalog_path=tmp_path)
+                get_setting("pmtiles.enabled", catalog_path=tmp_path, collection_path=collection)
+                load_merged_config(collection, tmp_path)
+                get_vector_settings(tmp_path)
+                get_cog_settings(tmp_path)
+                get_conversion_overrides(tmp_path)
+                get_handler_pins(tmp_path)
+
+            assert _parses() == 1
+
+    @pytest.mark.unit
+    def test_changed_file_is_parsed_again(self, tmp_path: Path) -> None:
+        from portolan_cli.conversion_config import get_vector_settings
+
+        config_file = tmp_path / ".portolan" / "config.yaml"
+        config_file.parent.mkdir()
+        config_file.write_text("conversion:\n  vector:\n    sort: hilbert\n")
+        with _tracing():
+            assert get_vector_settings(tmp_path).sort == "hilbert"
+
+            # Same size and the same mtime window: only the content differs.
+            config_file.write_text("conversion:\n  vector:\n    sort: quadkey\n")
+
+            assert get_vector_settings(tmp_path).sort == "quadkey"
+            assert _parses() == 2
+
+    @pytest.mark.unit
+    def test_caller_mutation_does_not_reach_the_next_read(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting, load_config, load_merged_config, set_setting
+
+        set_setting(tmp_path, "push.exclude", "*.tmp")
+
+        load_config(tmp_path)["push"]["exclude"].append("mutated")
+        load_merged_config(tmp_path, tmp_path)["push"]["exclude"].append("mutated")
+        patterns = get_setting("push.exclude", catalog_path=tmp_path)
+        assert isinstance(patterns, list)
+        patterns.append("mutated")
+
+        assert get_setting("push.exclude", catalog_path=tmp_path) == ["*.tmp"]
+
+
+def _write_config(directory: Path, text: str) -> None:
+    (directory / ".portolan").mkdir(parents=True, exist_ok=True)
+    (directory / ".portolan" / "config.yaml").write_text(text, encoding="utf-8")
+
+
+class TestTypedValues:
+    """Each schema type parses the text of a ``config set`` VALUE (issue #1020)."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(("text", "stored"), [("auto", "auto"), ("7", 7)])
+    def test_int_or_auto_takes_an_integer_or_auto(
+        self, tmp_path: Path, text: str, stored: object
+    ) -> None:
+        from portolan_cli.config import set_setting
+
+        set_setting(tmp_path, "conversion.vector.resolution", text)
+
+        assert _read_yaml(tmp_path) == {"conversion": {"vector": {"resolution": stored}}}
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("value", ["high", True])
+    def test_int_or_auto_rejects_other_values(self, tmp_path: Path, value: object) -> None:
+        from portolan_cli.config import set_setting
+
+        with pytest.raises(ConfigError, match="takes an integer or 'auto'"):
+            set_setting(tmp_path, "conversion.vector.resolution", value)
+
+    @pytest.mark.unit
+    def test_a_string_setting_keeps_yaml_like_text_as_text(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+
+        set_setting(tmp_path, "pmtiles.layer", "true")
+        set_setting(tmp_path, "backend", "123")
+
+        assert _read_yaml(tmp_path) == {"pmtiles": {"layer": "true"}, "backend": "123"}
+
+
+class TestPatternKeys:
+    """A key below a ``.*`` pattern reads and unsets as one name (issue #1020)."""
+
+    @pytest.mark.unit
+    def test_get_and_unset_a_handler_pin(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting, set_setting, unset_setting
+
+        set_setting(tmp_path, "backend", "file")
+        set_setting(tmp_path, "conversion.handlers..tif", "cog")
+
+        assert get_setting("conversion.handlers..tif", catalog_path=tmp_path) == "cog"
+        assert unset_setting(tmp_path, "conversion.handlers..tif") is True
+        assert _read_yaml(tmp_path) == {"backend": "file"}
+
+
+class TestLegacyFlatKeysInCollections:
+    """The fold also reads the flat keys under ``collections:`` (issue #1020)."""
+
+    @pytest.mark.unit
+    def test_flat_key_under_a_collection_reads_as_its_typed_nested_value(
+        self, tmp_path: Path
+    ) -> None:
+        from portolan_cli.config import get_setting
+
+        _write_config(tmp_path, "collections:\n  demo:\n    pmtiles.enabled: 'true'\n")
+
+        assert get_setting("pmtiles.enabled", catalog_path=tmp_path, collection="demo") is True
+
+    @pytest.mark.unit
+    def test_flat_key_with_a_bad_value_keeps_the_value_for_the_reader(self, tmp_path: Path) -> None:
+        from portolan_cli.config import load_config
+
+        _write_config(tmp_path, "statistics.enabled: banana\n")
+
+        assert load_config(tmp_path) == {"statistics": {"enabled": "banana"}}
+
+
+class TestLegacyCollectionsMerge:
+    """``load_merged_config`` merges root, legacy ``collections:``, then the hierarchy."""
+
+    @pytest.mark.unit
+    def test_legacy_section_overrides_the_root_and_the_folder_overrides_both(
+        self, tmp_path: Path
+    ) -> None:
+        from portolan_cli.config import load_merged_config
+
+        root = tmp_path / "catalog"
+        _write_config(
+            root,
+            "backend: file\npmtiles:\n  enabled: false\n  min_zoom: 1\n"
+            "collections:\n  demo:\n    pmtiles:\n      enabled: true\n      min_zoom: 2\n",
+        )
+        _write_config(root / "demo", "pmtiles:\n  min_zoom: 3\n")
+        # An unresolved root once merged the root file twice, over the legacy values.
+        (tmp_path / "other").mkdir()
+        unresolved_root = tmp_path / "other" / ".." / "catalog"
+
+        merged = load_merged_config(root / "demo", unresolved_root)
+
+        assert merged == {"backend": "file", "pmtiles": {"enabled": True, "min_zoom": 3}}
+
+
+class TestLoadersReturnDeepCopies:
+    """An edit of a nested value in a result does not reach the next read (issue #1006)."""
+
+    @pytest.mark.unit
+    def test_get_setting_and_load_merged_config(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting, load_merged_config
+
+        _write_config(tmp_path, "check:\n  severity:\n    PTL-PRV-001: warning\n")
+
+        check = get_setting("check", catalog_path=tmp_path)
+        assert isinstance(check, dict)
+        check["severity"]["PTL-PRV-001"] = "edited"
+        load_merged_config(tmp_path, tmp_path)["check"]["severity"]["PTL-PRV-001"] = "edited"
+
+        assert get_setting("check", catalog_path=tmp_path) == {
+            "severity": {"PTL-PRV-001": "warning"}
+        }
+
+    @pytest.mark.unit
+    def test_metadata_loaders(self, tmp_path: Path) -> None:
+        from portolan_cli.config import load_merged_metadata, load_own_metadata
+
+        collection = tmp_path / "demo"
+        (collection / ".portolan").mkdir(parents=True)
+        (collection / ".portolan" / "metadata.yaml").write_text(
+            "title: Demo\ncontact:\n  name: Ana\n", encoding="utf-8"
+        )
+
+        load_own_metadata(collection)["contact"]["name"] = "edited"
+        load_merged_metadata(collection, tmp_path)["contact"]["name"] = "edited"
+
+        expected = {"title": "Demo", "contact": {"name": "Ana"}}
+        assert load_own_metadata(collection) == expected
+        assert load_merged_metadata(collection, tmp_path) == expected
+        assert load_own_metadata(tmp_path / "absent") == {}
+
+
+class TestListNestedSettings:
+    """``list_settings`` lists nested leaves with their sources (issue #1020)."""
+
+    @pytest.mark.unit
+    def test_catalog_listing_holds_leaves_but_not_the_collections_section(
+        self, tmp_path: Path
+    ) -> None:
+        from portolan_cli.config import list_settings
+
+        _write_config(
+            tmp_path,
+            "backend: file\ncollections:\n  demo:\n    plugin_key: on\n",
+        )
+
+        with cleared_environ():
+            settings = list_settings(tmp_path)
+
+        assert settings["backend"] == {"value": "file", "source": "catalog"}
+        assert settings["statistics.enabled"] == {"value": True, "source": "default"}
+        assert [key for key in settings if key.startswith("collections")] == []
+        assert "conversion.handlers.*" not in settings
+
+    @pytest.mark.unit
+    def test_collection_listing_holds_a_key_outside_the_schema(self, tmp_path: Path) -> None:
+        from portolan_cli.config import list_settings
+
+        _write_config(tmp_path, "collections:\n  demo:\n    plugin:\n      key: on\n")
+
+        with cleared_environ():
+            settings = list_settings(tmp_path, collection="demo")
+
+        assert settings["plugin.key"] == {"value": True, "source": "collection"}
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("text", "collection"),
+        [
+            ("remote: s3://stale/\n", None),
+            ("collections:\n  demo:\n    remote: s3://stale/\n", "demo"),
+        ],
+    )
+    def test_a_sensitive_key_in_the_file_lists_as_insecure(
+        self, tmp_path: Path, text: str, collection: str | None
+    ) -> None:
+        from portolan_cli.config import list_settings
+
+        _write_config(tmp_path, text)
+
+        with cleared_environ():
+            settings = list_settings(tmp_path, collection=collection)
+
+        assert settings["remote"] == {"value": "s3://stale/", "source": "config (INSECURE)"}
+
+    @pytest.mark.unit
+    def test_an_unset_key_has_the_default_source(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting_source
+
+        _write_config(tmp_path, "backend: file\n")
+
+        with cleared_environ():
+            assert get_setting_source("pmtiles.min_zoom", tmp_path, None) == "default"
+            assert get_setting_source("backend", tmp_path, None) == "catalog"
+
+    @pytest.mark.unit
+    def test_the_unknown_key_message_lists_pattern_keys_by_name(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+
+        with pytest.raises(ConfigError) as excinfo:
+            set_setting(tmp_path, "workers", "8")
+
+        assert "backend, check.disabled, check.severity.<name>, conversion.cog.compression" in str(
+            excinfo.value
+        )
+
+
+class TestCollectionScope:
+    """``set_setting`` writes a collection value only where a reader reads it."""
+
+    @pytest.mark.unit
+    def test_a_catalog_only_setting_rejects_a_collection(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+
+        with pytest.raises(
+            ConfigError,
+            match=r"^\[PRTLN-CFG000\] Setting 'conversion\.vector\.sort' applies to the "
+            r"whole catalog\. Run the command again without --collection\.$",
+        ):
+            set_setting(tmp_path, "conversion.vector.sort", "none", collection="demo")
+        assert not (tmp_path / ".portolan" / "config.yaml").exists()
+
+    @pytest.mark.unit
+    def test_a_nested_collection_reads_its_own_section(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting, set_setting
+
+        set_setting(tmp_path, "pmtiles.enabled", "true", collection="parent/child")
+
+        def read(*parts: str) -> object:
+            return get_setting(
+                "pmtiles.enabled", catalog_path=tmp_path, collection_path=tmp_path.joinpath(*parts)
+            )
+
+        assert read("parent", "child") is True
+        assert read("parent", "child", "item") is True
+        assert read("parent") is False
+
+
+class TestEnvironmentValuesTakeTheSchemaType:
+    """A ``PORTOLAN_<KEY>`` value reads as the type of its setting."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("key", "text", "expected"),
+        [
+            ("statistics.enabled", "false", False),
+            ("push.exclude", "*.md, scratch/", ["*.md", "scratch/"]),
+            ("pmtiles.min_zoom", "3", 3),
+            ("backend", "123", "123"),
+            ("statistics.enabled", "banana", "banana"),
+        ],
+    )
+    def test_env_value(self, tmp_path: Path, key: str, text: str, expected: object) -> None:
+        from portolan_cli.config import _get_env_var_name, get_setting
+
+        with cleared_environ(), mock.patch.dict(os.environ, {_get_env_var_name(key): text}):
+            value = get_setting(key, catalog_path=tmp_path)
+
+        assert (value, type(value)) == (expected, type(expected))
+
+    @pytest.mark.unit
+    def test_config_set_keeps_the_environment_out_of_the_file(self, tmp_path: Path) -> None:
+        """The readers see PORTOLAN_<KEY>, but a save writes the file content only."""
+        from portolan_cli.config import get_config_path, load_catalog_config, set_setting
+
+        with cleared_environ(PORTOLAN_THUMBNAILS_QUALITY="20"):
+            set_setting(tmp_path, "thumbnails.enabled", "false")
+            seen = load_catalog_config(tmp_path).section("thumbnails")
+
+        assert seen == {"enabled": False, "quality": 20}
+        saved = get_config_path(tmp_path).read_text(encoding="utf-8")
+        assert saved == "thumbnails:\n  enabled: false\n"
+
+
+class TestSchemaEdges:
+    """``set_setting`` rejects the values that no reader can use."""
+
+    @pytest.mark.unit
+    def test_a_pattern_is_not_a_key(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+
+        with pytest.raises(ConfigError, match=r"Unknown setting 'conversion\.handlers\.\*'"):
+            set_setting(tmp_path, "conversion.handlers.*", "cog")
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("text", ["[2024-01-01]", "[[a]]", "[{a: 1}]"])
+    def test_a_list_holds_only_scalars(self, tmp_path: Path, text: str) -> None:
+        from portolan_cli.config import set_setting
+
+        with pytest.raises(ConfigError, match=r"'push\.exclude' takes a comma-separated list"):
+            set_setting(tmp_path, "push.exclude", text)

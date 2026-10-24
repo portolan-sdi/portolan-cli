@@ -669,6 +669,19 @@ class TestPmtilesBoundsExtraction:
 class TestGeoparquetMetadataBounds:
     """Tests for GeoParquet metadata-based bbox reading (Issue #423 Performance)."""
 
+    @staticmethod
+    def _write_parquet_with_geo(path: Path, geo_metadata: dict) -> Path:
+        """Write a Parquet file that declares ``geo_metadata`` in its footer."""
+        import json
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        table = pa.table({"geometry": pa.array([b""], pa.binary())})
+        schema = table.schema.with_metadata({b"geo": json.dumps(geo_metadata).encode("utf-8")})
+        pq.write_table(table.cast(schema), str(path))
+        return path
+
     @pytest.mark.unit
     @pytest.mark.parametrize(
         "bbox",
@@ -681,47 +694,33 @@ class TestGeoparquetMetadataBounds:
     )
     def test_read_bounds_from_metadata(self, tmp_path: Path, bbox: list[float]) -> None:
         """_read_geoparquet_bounds extracts the XY bbox from GeoParquet metadata (O(1))."""
-        import json
-        from unittest.mock import MagicMock, patch
-
         from portolan_cli.viz.thumbnail import _read_geoparquet_bounds
 
-        gpq_path = tmp_path / "test.parquet"
+        gpq_path = self._write_parquet_with_geo(
+            tmp_path / "test.parquet",
+            {"columns": {"geometry": {"bbox": bbox}}},
+        )
 
-        # Mock ParquetFile with geo metadata containing bbox
-        mock_pq_file = MagicMock()
-        geo_metadata = {"columns": {"geometry": {"bbox": bbox}}}
-        mock_pq_file.schema_arrow.metadata = {b"geo": json.dumps(geo_metadata).encode("utf-8")}
-
-        with patch("pyarrow.parquet.ParquetFile", return_value=mock_pq_file):
-            bounds = _read_geoparquet_bounds(gpq_path)
-
-        assert bounds == (-60.5, -32.5, -60.0, -32.0)
+        assert _read_geoparquet_bounds(gpq_path) == (-60.5, -32.5, -60.0, -32.0)
 
     @pytest.mark.unit
     def test_read_bounds_fallback_when_no_metadata(self, tmp_path: Path) -> None:
         """_read_geoparquet_bounds falls back to data read when no bbox in metadata."""
-        import json
         from unittest.mock import MagicMock, patch
 
         from portolan_cli.viz.thumbnail import _read_geoparquet_bounds
 
-        gpq_path = tmp_path / "test.parquet"
-
-        # Mock ParquetFile with geo metadata but NO bbox
-        mock_pq_file = MagicMock()
-        geo_metadata = {"columns": {"geometry": {}}}  # No bbox
-        mock_pq_file.schema_arrow.metadata = {b"geo": json.dumps(geo_metadata).encode("utf-8")}
+        gpq_path = self._write_parquet_with_geo(
+            tmp_path / "test.parquet",
+            {"columns": {"geometry": {}}},  # No bbox
+        )
 
         # Mock fallback geopandas read
         mock_gdf = MagicMock()
         mock_gdf.empty = False
         mock_gdf.total_bounds = [-61.0, -33.0, -59.0, -31.0]
 
-        with (
-            patch("pyarrow.parquet.ParquetFile", return_value=mock_pq_file),
-            patch("geopandas.read_parquet", return_value=mock_gdf),
-        ):
+        with patch("geopandas.read_parquet", return_value=mock_gdf):
             bounds = _read_geoparquet_bounds(gpq_path)
 
         assert bounds == (-61.0, -33.0, -59.0, -31.0)
@@ -1389,3 +1388,48 @@ class TestGeoparquetSampling:
         gdf, _bbox, _crs = _read_geoparquet_for_thumbnail(gpq, max_features=None)
 
         assert len(gdf) == 1000
+
+
+@pytest.mark.unit
+def test_the_thumbnail_pyplot_draws_on_the_agg_backend() -> None:
+    """TkAgg, the Windows default, can abort the process from a thread."""
+    import matplotlib as mpl
+
+    from portolan_cli.viz.thumbnail import _pyplot
+
+    previous = mpl.get_backend()
+    mpl.use("svg")
+    try:
+        _pyplot()
+        assert mpl.get_backend().lower() == "agg"
+    finally:
+        mpl.use(previous)
+
+
+@pytest.mark.unit
+def test_thumbnails_quality_reaches_the_geoparquet_render(tmp_path: Path) -> None:
+    """thumbnails.quality set the COG thumbnail only. The GeoParquet one kept 75."""
+    import shutil
+    from pathlib import Path as _Path
+
+    pytest.importorskip("geopandas")
+    from PIL import Image
+
+    from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+    fixture = _Path(__file__).parents[1] / "fixtures" / "realdata" / "open-buildings.parquet"
+    sizes = {}
+    for quality in (5, 95):
+        source = tmp_path / f"q{quality}" / "buildings.parquet"
+        source.parent.mkdir()
+        shutil.copy(fixture, source)
+        config = ThumbnailConfig(quality=quality, basemap_provider="none")
+
+        thumbnail = generate_thumbnail_from_geoparquet(source, config)
+
+        assert thumbnail is not None
+        with Image.open(thumbnail) as image:
+            assert image.format == "JPEG"
+        sizes[quality] = thumbnail.stat().st_size
+
+    assert sizes[5] < sizes[95] / 2

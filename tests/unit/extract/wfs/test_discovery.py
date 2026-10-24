@@ -91,9 +91,6 @@ class TestDiscoverLayers:
         # Mock provider
         mock_wfs.provider = MagicMock()
         mock_wfs.provider.name = "Test Provider"
-        mock_wfs.provider.contact = MagicMock()
-        mock_wfs.provider.contact.name = "Test Contact"
-        mock_wfs.provider.contact.organization = "Test Org"
 
         # Mock layer contents
         mock_layer = MagicMock()
@@ -115,7 +112,6 @@ class TestDiscoverLayers:
         assert result.service_title == "Test WFS Service"
         assert result.service_abstract == "A test WFS service"
         assert result.provider == "Test Provider"
-        assert result.contact_name == "Test Contact, Test Org"
         assert result.keywords == ["test", "wfs"]
 
     def test_discover_layers_handles_missing_metadata(self) -> None:
@@ -182,35 +178,6 @@ class TestDiscoverLayers:
 class TestLayerInfo:
     """Tests for LayerInfo dataclass."""
 
-    def test_layer_info_to_dict(self) -> None:
-        """LayerInfo converts to dict for filtering."""
-        layer = LayerInfo(
-            name="buildings",
-            typename="ns:buildings",
-            title="Building Footprints",
-            abstract="Polygons",
-            bbox=(-122.5, 37.5, -122.0, 38.0),
-        )
-
-        d = layer.to_filter_dict()
-
-        assert d["id"] == 0  # Default ID
-        assert d["name"] == "buildings"
-
-    def test_layer_info_with_id(self) -> None:
-        """LayerInfo can have explicit ID for filtering."""
-        layer = LayerInfo(
-            name="roads",
-            typename="roads",
-            title="Roads",
-            abstract=None,
-            bbox=None,
-            id=5,
-        )
-
-        d = layer.to_filter_dict()
-        assert d["id"] == 5
-
     def test_layer_info_with_keywords(self) -> None:
         """LayerInfo stores layer-specific keywords."""
         layer = LayerInfo(
@@ -243,3 +210,41 @@ class TestWFSDiscoveryError:
         """Error includes message."""
         error = WFSDiscoveryError("Connection failed")
         assert str(error) == "Connection failed"
+
+
+class TestDiscoveryErrorKeepsNoCredential:
+    """#981: a failed discovery names the service and drops its key."""
+
+    URL = "https://h.example/geoserver/wfs?api_key=SECRET"
+    QUOTED = (
+        f"Could not connect to WFS service: {URL}\nError: Max retries exceeded with url: "
+        "/geoserver/wfs?api_key=SECRET&service=WFS"
+    )
+    CLEAN = (
+        "Could not connect to WFS service: https://h.example/geoserver/wfs\nError: "
+        "Max retries exceeded with url: /geoserver/wfs?service=WFS"
+    )
+
+    def test_discover_layers(self) -> None:
+        from geoparquet_io.core.wfs import WFSError  # type: ignore[import-untyped]
+
+        with (
+            patch("geoparquet_io.core.wfs.get_wfs_capabilities", side_effect=WFSError(self.QUOTED)),
+            pytest.raises(WFSDiscoveryError) as caught,
+        ):
+            discover_layers(self.URL)
+
+        assert str(caught.value) == f"Failed to discover WFS layers: {self.CLEAN}"
+
+    def test_list_layers(self) -> None:
+        from geoparquet_io.core.wfs import WFSError
+
+        with (
+            patch(
+                "geoparquet_io.core.wfs.list_available_layers", side_effect=WFSError(self.QUOTED)
+            ),
+            pytest.raises(WFSDiscoveryError) as caught,
+        ):
+            list_layers(self.URL)
+
+        assert str(caught.value) == f"Failed to list WFS layers: {self.CLEAN}"

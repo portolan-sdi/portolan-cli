@@ -35,6 +35,13 @@ def initialized_catalog(tmp_path: Path) -> Path:
     return tmp_path
 
 
+if TYPE_CHECKING:
+    from tests.catalog_invariants import RunCli
+
+# `add --item-id` writes asset hrefs relative to a directory that does not
+# exist, so run_cli must not check those catalogs at teardown.
+
+
 @pytest.fixture
 def catalog_with_vectors(initialized_catalog: Path, valid_points_geojson: Path) -> Path:
     """Create catalog with a vector collection."""
@@ -304,7 +311,10 @@ class TestAddItemIdOverrideIntegration:
 
     @pytest.mark.integration
     def test_add_with_item_id_creates_item_with_custom_id(
-        self, runner: CliRunner, initialized_catalog: Path, valid_singleband_cog: Path
+        self,
+        run_cli: RunCli,
+        initialized_catalog: Path,
+        valid_singleband_cog: Path,
     ) -> None:
         """add --item-id creates STAC item with the custom ID.
 
@@ -324,21 +334,16 @@ class TestAddItemIdOverrideIntegration:
         shutil.copy(valid_singleband_cog, test_file)
 
         # Act: add with --item-id override
-        result = runner.invoke(
-            cli,
-            [
-                "add",
-                "--portolan-dir",
-                str(initialized_catalog),
-                "--item-id",
-                "custom-scene-2024",
-                str(test_file),
-            ],
-            catch_exceptions=False,
+        run_cli(
+            "add",
+            "--portolan-dir",
+            str(initialized_catalog),
+            "--item-id",
+            "custom-scene-2024",
+            str(test_file),
         )
 
         # Assert
-        assert result.exit_code == 0, f"Add failed: {result.output}"
 
         # Versions.json is at the collection level (imagery/)
         versions_path = collection_dir / "versions.json"
@@ -360,7 +365,10 @@ class TestAddItemIdOverrideIntegration:
 
     @pytest.mark.integration
     def test_add_with_item_id_stac_item_uses_custom_id(
-        self, runner: CliRunner, initialized_catalog: Path, valid_singleband_cog: Path
+        self,
+        run_cli: RunCli,
+        initialized_catalog: Path,
+        valid_singleband_cog: Path,
     ) -> None:
         """add --item-id results in STAC item.json with custom ID field.
 
@@ -376,20 +384,14 @@ class TestAddItemIdOverrideIntegration:
         shutil.copy(valid_singleband_cog, test_file)
 
         # Act
-        result = runner.invoke(
-            cli,
-            [
-                "add",
-                "--portolan-dir",
-                str(initialized_catalog),
-                "--item-id",
-                "my-custom-item",
-                str(test_file),
-            ],
-            catch_exceptions=False,
+        run_cli(
+            "add",
+            "--portolan-dir",
+            str(initialized_catalog),
+            "--item-id",
+            "my-custom-item",
+            str(test_file),
         )
-
-        assert result.exit_code == 0, f"Add failed: {result.output}"
 
         # Raster item JSON at item_dir/{item_id}.json (flat structure)
         item_json_path = item_dir / "my-custom-item.json"
@@ -446,7 +448,7 @@ class TestAddItemIdOverrideIntegration:
 
     @pytest.mark.integration
     def test_add_item_id_with_invalid_characters_fails(
-        self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
+        self, run_cli: RunCli, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
         """add --item-id with path separators fails with clear error."""
         # Set up
@@ -457,25 +459,22 @@ class TestAddItemIdOverrideIntegration:
         shutil.copy(valid_points_geojson, test_file)
 
         # Act: try to use invalid item_id with path separator
-        result = runner.invoke(
-            cli,
-            [
-                "add",
-                "--portolan-dir",
-                str(initialized_catalog),
-                "--item-id",
-                "invalid/item-id",
-                str(test_file),
-            ],
+        result = run_cli(
+            "add",
+            "--portolan-dir",
+            str(initialized_catalog),
+            "--item-id",
+            "invalid/item-id",
+            str(test_file),
+            expect=1,
         )
 
         # Should fail
-        assert result.exit_code != 0, "Should fail for item_id with '/'"
-        assert "single path segment" in result.output.lower() or "invalid" in result.output.lower()
+        assert "Invalid item_id 'invalid/item-id': must be a single path segment" in result.output
 
     @pytest.mark.integration
     def test_add_item_id_with_directory_rejects(
-        self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
+        self, run_cli: RunCli, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
         """add --item-id with a directory path fails (ambiguous for multiple files)."""
         # Set up: directory with a geo file
@@ -486,21 +485,18 @@ class TestAddItemIdOverrideIntegration:
         shutil.copy(valid_points_geojson, test_file)
 
         # Act: use --item-id with a directory path
-        result = runner.invoke(
-            cli,
-            [
-                "add",
-                "--portolan-dir",
-                str(initialized_catalog),
-                "--item-id",
-                "my-custom-id",
-                str(collection_dir),
-            ],
+        result = run_cli(
+            "add",
+            "--portolan-dir",
+            str(initialized_catalog),
+            "--item-id",
+            "my-custom-id",
+            str(collection_dir),
+            expect=1,
         )
 
         # Should fail because --item-id is ambiguous with directories
-        assert result.exit_code != 0, "Should fail for --item-id with directory"
-        assert "single file" in result.output.lower() or "directory" in result.output.lower()
+        assert "--item-id can only be used with a single file, not a directory" in result.output
 
 
 class TestRmIntegration:
@@ -779,3 +775,55 @@ class TestOldCommandsRemoved:
         # Should fail because the command group doesn't exist
         assert result.exit_code != 0
         assert "no such command" in result.output.lower()
+
+
+class TestLonePMTilesIsRefused:
+    """The spec has no PMTiles that stands alone as the data of a collection.
+
+    portolan-spec formats.md "PMTiles" makes it the visualization derivative
+    of the GeoParquet data asset. add registered a lone PMTiles as the data.
+    """
+
+    _REASON = (
+        "PMTiles is a visualization derivative. "
+        "Add the GeoParquet it renders, and keep the tiles beside it."
+    )
+
+    @staticmethod
+    def _lone_tiles(run_cli: RunCli, tmp_path: Path, fixtures_dir: Path) -> tuple[Path, Path]:
+        catalog = tmp_path / "catalog"
+        run_cli("init", str(catalog), "--auto", "--license", "CC-BY-4.0")
+        collection_dir = catalog / "basemap"
+        collection_dir.mkdir()
+        tiles = collection_dir / "basemap.pmtiles"
+        shutil.copy(fixtures_dir / "cloud_native" / "sample.pmtiles", tiles)
+        return catalog, tiles
+
+    @pytest.mark.integration
+    def test_text_mode_skips_the_tiles_with_the_reason(
+        self, run_cli: RunCli, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        catalog, tiles = self._lone_tiles(run_cli, tmp_path, fixtures_dir)
+
+        result = run_cli("add", "--portolan-dir", str(catalog), str(tiles))
+
+        assert f"Skipping basemap.pmtiles: {self._REASON}" in " ".join(result.output.split())
+        assert sorted(p.name for p in tiles.parent.iterdir()) == ["basemap.pmtiles"]
+
+    @pytest.mark.integration
+    def test_json_mode_lists_the_skip_with_the_reason(
+        self, run_cli: RunCli, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        import json
+
+        catalog, tiles = self._lone_tiles(run_cli, tmp_path, fixtures_dir)
+
+        result = run_cli("--format=json", "add", "--portolan-dir", str(catalog), str(tiles))
+
+        envelope = json.loads(result.stdout)
+        assert envelope["success"] is True
+        assert envelope["data"]["added"] == []
+        assert [(s["path"], s["reason"]) for s in envelope["data"]["skipped"]] == [
+            (str(tiles), self._REASON)
+        ]
+        assert sorted(p.name for p in tiles.parent.iterdir()) == ["basemap.pmtiles"]

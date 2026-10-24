@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pyarrow as pa
@@ -17,71 +18,45 @@ from click.testing import CliRunner
 
 from portolan_cli.cli import cli
 
+if TYPE_CHECKING:
+    from tests.catalog_invariants import RunCli
+
+# The #852 extent of two bboxes breaks S-BBOX-COUNT, so run_cli must not
+# check this catalog at teardown while the bug is open.
+
+
+def _write_point_geoparquet(path: Path, bbox: list[float]) -> None:
+    """Write a one-row GeoParquet 1.0.0 file whose ``geo`` metadata declares ``bbox``."""
+    # WKB for POINT(0 0)
+    wkb_point = bytes.fromhex("0101000000000000000000000000000000")
+    table = pa.table(
+        {
+            "geometry": pa.array([wkb_point], type=pa.binary()),
+            "id": pa.array([1], type=pa.int64()),
+        }
+    )
+    geo_meta = {
+        "version": "1.0.0",
+        "primary_column": "geometry",
+        "columns": {"geometry": {"encoding": "WKB", "geometry_types": ["Point"], "bbox": bbox}},
+    }
+    schema_with_meta = table.schema.with_metadata({b"geo": json.dumps(geo_meta).encode()})
+    pq.write_table(table.cast(schema_with_meta), path)
+
 
 def _create_geoparquet_with_inf_bbox(path: Path) -> None:
     """Create a GeoParquet file with inf values in the bbox metadata.
 
     This simulates the IGN Argentina issue where upstream WFS served
-    coordinates like -1.79e308 (near float min, effectively -inf).
+    coordinates like -1.79e308 (near float min, effectively -inf). The bbox
+    is the issue #516 sentinel value.
     """
-    # Create a simple geometry (point at origin)
-    # WKB for POINT(0 0)
-    wkb_point = bytes.fromhex("0101000000000000000000000000000000")
-
-    # Create table with one feature
-    table = pa.table(
-        {
-            "geometry": pa.array([wkb_point], type=pa.binary()),
-            "id": pa.array([1], type=pa.int64()),
-        }
-    )
-
-    # Add geo metadata with poisoned bbox (issue #516 sentinel value)
-    geo_meta = {
-        "version": "1.0.0",
-        "primary_column": "geometry",
-        "columns": {
-            "geometry": {
-                "encoding": "WKB",
-                "geometry_types": ["Point"],
-                # This is the poisoned bbox - contains -inf-like sentinel values
-                "bbox": [-1.79e308, -1.79e308, 180.0, 66.55],
-            }
-        },
-    }
-
-    # Write with geo metadata
-    schema_with_meta = table.schema.with_metadata({b"geo": json.dumps(geo_meta).encode()})
-    table = table.cast(schema_with_meta)
-    pq.write_table(table, path)
+    _write_point_geoparquet(path, [-1.79e308, -1.79e308, 180.0, 66.55])
 
 
 def _create_valid_geoparquet(path: Path) -> None:
-    """Create a valid GeoParquet file with proper bbox."""
-    wkb_point = bytes.fromhex("0101000000000000000000000000000000")
-
-    table = pa.table(
-        {
-            "geometry": pa.array([wkb_point], type=pa.binary()),
-            "id": pa.array([1], type=pa.int64()),
-        }
-    )
-
-    geo_meta = {
-        "version": "1.0.0",
-        "primary_column": "geometry",
-        "columns": {
-            "geometry": {
-                "encoding": "WKB",
-                "geometry_types": ["Point"],
-                "bbox": [-74.0, 40.0, -73.0, 41.0],  # Valid NYC-area bbox
-            }
-        },
-    }
-
-    schema_with_meta = table.schema.with_metadata({b"geo": json.dumps(geo_meta).encode()})
-    table = table.cast(schema_with_meta)
-    pq.write_table(table, path)
+    """Create a valid GeoParquet file with a NYC-area bbox."""
+    _write_point_geoparquet(path, [-74.0, 40.0, -73.0, 41.0])
 
 
 @pytest.mark.integration
@@ -173,23 +148,8 @@ class TestBboxValidationIntegration:
             spatial = extent.get("spatial", {})
             bboxes = spatial.get("bbox", [[]])
 
-            # The invalid file's poison value must NOT appear in any extent bbox,
-            # and every coordinate must be finite and in WGS84 range.
-            assert bboxes and any(bboxes), "collection extent should have a bbox"
-            for bbox in bboxes:
-                if bbox:
-                    for coord in bbox[:4]:
-                        assert np.isfinite(coord), f"Collection bbox has non-finite: {bbox}"
-                        assert abs(coord) < 1e9, f"Collection bbox has poison coord: {bbox}"
-                    assert -180 <= bbox[0] <= 180, f"west out of range: {bbox}"
-                    assert -90 <= bbox[1] <= 90, f"south out of range: {bbox}"
-                    assert -180 <= bbox[2] <= 180, f"east out of range: {bbox}"
-                    assert -90 <= bbox[3] <= 90, f"north out of range: {bbox}"
-
-            # The surviving extent must be exactly the valid file's bbox.
-            assert [b[:4] for b in bboxes if b] == [[-74.0, 40.0, -73.0, 41.0]], (
-                f"Expected only the valid bbox to survive, got: {bboxes}"
-            )
+            # The poison bbox of the invalid file contributes nothing (issue #516).
+            assert bboxes == [[-74.0, 40.0, -73.0, 41.0]]
 
     def test_check_detects_invalid_bbox_in_collection(self) -> None:
         """Check command should detect collections with invalid bbox."""
@@ -287,103 +247,50 @@ class TestBboxValidationIntegration:
 class TestAntimeridianBboxIntegration:
     """Integration tests for anti-meridian crossing bbox handling."""
 
-    def test_collection_with_antimeridian_crossing_item(self) -> None:
-        """Collection with anti-meridian crossing should produce valid extent."""
-        runner = CliRunner()
+    def test_collection_with_antimeridian_crossing_item(
+        self, tmp_path: Path, run_cli: RunCli
+    ) -> None:
+        """Collection with an anti-meridian crossing item writes a STAC 1.1.0 extent.
 
-        with runner.isolated_filesystem():
-            # Initialize catalog
-            Path(".portolan").mkdir()
-            Path(".portolan/config.yaml").write_text("version: 1\n")
-            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
-            Path("catalog.json").write_text(
-                json.dumps(
-                    {
-                        "type": "Catalog",
-                        "id": "test-catalog",
-                        "stac_version": "1.1.0",
-                        "description": "Test",
-                        "links": [],
-                    }
-                )
-            )
+        STAC 1.1.0 allows one bbox, or an overall bbox followed by two or more
+        sub-bboxes. A list of exactly two is invalid (#852). The overall bbox is
+        the [-180, ..., 180] envelope, because rashid's PTL-DAT-005 compares
+        bbox[0] with the plain min/max of the data. The two parts that follow
+        it keep the gap over the prime meridian.
+        """
+        root = tmp_path / "catalog"
+        collection_dir = root / "fiji-data"
+        collection_dir.mkdir(parents=True)
+        run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
 
-            # Create collection directory
-            collection_dir = Path("fiji-data")
-            collection_dir.mkdir()
+        # A Fiji-like bbox that crosses 180 degrees.
+        parquet_path = collection_dir / "data.parquet"
+        _write_point_geoparquet(parquet_path, [177.0, -20.0, -175.0, -15.0])
 
-            # Create GeoParquet with Fiji-like bbox (crosses antimeridian)
-            parquet_path = collection_dir / "data.parquet"
-            wkb_point = bytes.fromhex("0101000000000000000000000000000000")
+        run_cli("add", "--portolan-dir", str(root), str(parquet_path))
 
-            table = pa.table(
-                {
-                    "geometry": pa.array([wkb_point], type=pa.binary()),
-                    "id": pa.array([1], type=pa.int64()),
-                }
-            )
+        collection_data = json.loads((collection_dir / "collection.json").read_text())
+        bboxes = collection_data["extent"]["spatial"]["bbox"]
 
-            # Fiji-style anti-meridian crossing bbox
-            geo_meta = {
-                "version": "1.0.0",
-                "primary_column": "geometry",
-                "columns": {
-                    "geometry": {
-                        "encoding": "WKB",
-                        "geometry_types": ["Point"],
-                        "bbox": [177.0, -20.0, -175.0, -15.0],  # Crosses 180°
-                    }
-                },
-            }
+        # All bboxes are finite and inside WGS84 bounds.
+        for bbox in bboxes:
+            for coord in bbox[:4]:
+                assert np.isfinite(coord), f"Bbox contains non-finite: {bbox}"
+            assert -180 <= bbox[0] <= 180
+            assert -90 <= bbox[1] <= 90
+            assert -180 <= bbox[2] <= 180
+            assert -90 <= bbox[3] <= 90
+        # STAC 1.1.0 allows one bbox, or three or more with the envelope first,
+        # never two (issue #852). The crossing input is the envelope, then its
+        # western and eastern parts.
+        assert [b[:4] for b in bboxes] == [
+            [-180.0, -20.0, 180.0, -15.0],
+            [-180.0, -20.0, -175.0, -15.0],
+            [177.0, -20.0, 180.0, -15.0],
+        ]
 
-            schema_with_meta = table.schema.with_metadata({b"geo": json.dumps(geo_meta).encode()})
-            table = table.cast(schema_with_meta)
-            pq.write_table(table, parquet_path)
-
-            # Add the file
-            result = runner.invoke(cli, ["add", str(parquet_path)])
-            assert result.exit_code == 0, f"add failed: {result.output}"
-
-            # Check the collection extent - should be valid
-            collection_json = collection_dir / "collection.json"
-            with open(collection_json) as f:
-                collection_data = json.load(f)
-
-            bboxes = collection_data["extent"]["spatial"]["bbox"]
-
-            # All bboxes should be valid (finite, within WGS84 bounds)
-            for bbox in bboxes:
-                for coord in bbox[:4]:
-                    assert np.isfinite(coord), f"Bbox contains non-finite: {bbox}"
-                assert -180 <= bbox[0] <= 180
-                assert -90 <= bbox[1] <= 90
-                assert -180 <= bbox[2] <= 180
-                assert -90 <= bbox[3] <= 90
-
-            # An anti-meridian crossing input ([177, -20, -175, -15]) must be
-            # represented in STAC-compliant form: either a split into a western
-            # and an eastern half, or preserved as a single crossing bbox (west >
-            # east). It must NOT collapse into a whole-world-width [-180, ..., 180]
-            # envelope, which would falsely claim the data spans the globe.
-            halves = [b[:4] for b in bboxes]
-            if len(bboxes) == 2:
-                # Split form: one western half (touches -180), one eastern (touches 180)
-                western = [-180.0, -20.0, -175.0, -15.0]
-                eastern = [177.0, -20.0, 180.0, -15.0]
-                assert western in halves and eastern in halves, (
-                    f"Anti-meridian extent not split into expected halves: {bboxes}"
-                )
-            else:
-                # Single-bbox form must keep the crossing (west > east), not an envelope
-                assert len(bboxes) == 1, f"Unexpected bbox count: {bboxes}"
-                bbox = bboxes[0]
-                assert bbox[0] > bbox[2], (
-                    f"Anti-meridian extent collapsed to a non-crossing envelope: {bbox}"
-                )
-
-            # Run check - should pass
-            result = runner.invoke(cli, ["check", "."])
-            assert "invalid bbox" not in result.output.lower()
+        result = run_cli("check", str(root), expect=None)
+        assert "invalid bbox" not in result.output.lower()
 
     def test_add_fails_loudly_when_projected_bbox_assumed_wgs84(self, tmp_path: Path) -> None:
         """A projected source whose CRS is lost in conversion must not publish

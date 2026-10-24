@@ -535,13 +535,32 @@ def _compute_sha256(path: Path) -> str:
 
 
 def _asset_href(asset_path: Path, catalog_root: Path, collection_path: Path) -> str:
-    """The catalog-root-relative href recorded for a generated asset."""
+    """The catalog-root-relative href recorded for a generated asset.
+
+    Both sides resolve: the thumbnail step passes a resolved item path, and a
+    catalog reached through a symlink has a root that is not resolved.
+    """
+    asset_path = asset_path.resolve()
     try:
-        rel_path = asset_path.relative_to(catalog_root)
+        rel_path = asset_path.relative_to(catalog_root.resolve())
     except ValueError:
         # Fallback when the asset is not under the catalog root.
-        rel_path = asset_path.relative_to(collection_path.parent)
+        rel_path = asset_path.relative_to(collection_path.resolve().parent)
     return rel_path.as_posix()
+
+
+def versions_asset_key(asset_path: Path, collection_path: Path) -> str:
+    """The versions.json key of a file: its POSIX path below the collection.
+
+    ``add`` keys a collection file by its name and an item file
+    ``<item dir>/<name>``. A key of the bare name gave an adopted item
+    thumbnail a second key at the collection root, where no file is (issue
+    #1053). A path outside the collection falls back to the file name.
+    """
+    try:
+        return asset_path.resolve().relative_to(collection_path.resolve()).as_posix()
+    except ValueError:
+        return asset_path.name
 
 
 def _is_tracked(
@@ -556,7 +575,7 @@ def _is_tracked(
     ``data.thumb.jpg``, and a basename match would treat the second as already
     tracked and drop it from the snapshot.
     """
-    existing = tracked.get(asset_path.name)
+    existing = tracked.get(versions_asset_key(asset_path, collection_path))
     if existing is None:
         return False
     return existing.href == _asset_href(asset_path, catalog_root, collection_path)
@@ -639,7 +658,7 @@ def track_generated_assets(
     assets: dict[str, Asset] = {}
     for asset_path in paths_to_track:
         stat = asset_path.stat()
-        assets[asset_path.name] = Asset(
+        assets[versions_asset_key(asset_path, collection_path)] = Asset(
             sha256=_compute_sha256(asset_path),
             size_bytes=stat.st_size,
             href=_asset_href(asset_path, catalog_root, collection_path),

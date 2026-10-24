@@ -43,6 +43,26 @@ COPY (SELECT * FROM read_parquet(
   TO 'fieldmaps-boundaries.parquet' (FORMAT PARQUET);
 ```
 
+The DuckDB copy drops the `crs` of the source `geo` metadata. The NWI source
+declares EPSG:5070 (NAD83 / Conus Albers), and a missing `crs` means OGC:CRS84,
+so `add` refused the fixture (issue #996). The source's `crs` object is copied
+onto the fixture after the query:
+
+```python
+import json
+import pyarrow.parquet as pq
+from geoparquet_io.core.duckdb_metadata import get_geo_metadata
+
+source = get_geo_metadata(
+    "https://data.source.coop/giswqs/nwi/wetlands/DC_Wetlands.parquet")
+table = pq.read_table("nwi-wetlands.parquet")
+metadata = dict(table.schema.metadata)
+geo = json.loads(metadata[b"geo"])
+geo["columns"]["geometry"]["crs"] = source["columns"]["geometry"]["crs"]
+metadata[b"geo"] = json.dumps(geo).encode()
+pq.write_table(table.replace_schema_metadata(metadata), "nwi-wetlands.parquet")
+```
+
 The raster is one tile, downloaded as-is:
 
 ```bash

@@ -47,18 +47,11 @@ hooks = [
 
 [[repos]]
 repo = "https://github.com/jendrikseipp/vulture"
-rev = "v2.14"
+rev = "v2.16"
 hooks = [
-  {
-    id = "vulture",
-    args = [
-      "portolan_cli",
-      "tests",
-      "vulture_whitelist.py",
-      "--exclude",
-      "portolan_cli/backends/protocol.py,portolan_cli/backends/json_file.py,portolan_cli/backends/iceberg/backend.py",
-    ],
-  },
+  # No args. The hook reads paths, exclude, and min_confidence from
+  # [tool.vulture], so it checks what `uv run vulture` checks.
+  { id = "vulture" },
 ]
 
 [[repos]]
@@ -197,8 +190,9 @@ hooks = [
     pass_filenames = false,
   },
   # Duplication is gated against a committed baseline, not a percentage. The
-  # repo carries 977 known clones. The gate fails only when a commit adds one.
-  # Pay the baseline down with `jscpd --update-baseline` after a real dedup.
+  # gate fails only when a commit adds a clone. Pay the baseline down with
+  # `jscpd --update-baseline` after a real dedup. test_jscpd_baseline_only_shrinks
+  # in tests/docs/test_quality_config.py pins the clone count and minTokens.
   #
   # This replaces a pylint R0801 hook that could not fail: pylint scores a run
   # as 10 - (findings / statements) * 10, so 93 duplicate blocks over 23908

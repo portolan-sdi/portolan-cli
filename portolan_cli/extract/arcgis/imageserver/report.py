@@ -14,7 +14,6 @@ and enable resume capabilities across both extraction types.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -154,7 +153,7 @@ class ImageServerMetadataExtracted:
 
         # FeatureServer-parity fields (for metadata.yaml population):
         service_description: Extended service description (maps to processing_notes).
-        author: Author from documentInfo (maps to contact.name).
+        author: Author from documentInfo (maps to a producer provider).
         keywords: Keywords from documentInfo (list of strings).
         license_info: License text from licenseInfo field.
         access_information: Access restrictions from accessInformation (maps to known_issues).
@@ -308,7 +307,7 @@ class ImageServerMetadataExtracted:
             description=self.description,
             attribution=self.copyright_text,
             keywords=self.keywords,
-            contact_name=self.author,
+            producer=self.author,
             processing_notes="\n".join(processing_notes_parts),
             known_issues=self.access_information,
             license_raw=self.license_info,
@@ -442,22 +441,3 @@ def save_imageserver_report(report: ImageServerExtractionReport, path: Path) -> 
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(path, report.to_dict())
-
-
-def load_imageserver_report(path: Path) -> ImageServerExtractionReport:
-    """Load ImageServer extraction report from JSON file.
-
-    Args:
-        path: Path to the JSON file.
-
-    Returns:
-        The loaded extraction report.
-
-    Raises:
-        FileNotFoundError: If the file doesn't exist.
-    """
-    if not path.exists():
-        raise FileNotFoundError(f"Report not found: {path}")
-
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return ImageServerExtractionReport.from_dict(data)

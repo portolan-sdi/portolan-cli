@@ -99,37 +99,6 @@ def publish_version(
     )
 
 
-def rollback_version(
-    collection: str,
-    target_version: str,
-    *,
-    backend_name: str | None = None,
-    catalog_root: Path | None = None,
-) -> Version:
-    """Rollback a collection to a previous version."""
-    from portolan_cli.backends import get_backend
-
-    name = _resolve_backend_name(backend_name, catalog_root)
-    backend = get_backend(name, catalog_root=catalog_root)
-    return backend.rollback(collection, target_version)
-
-
-def prune_versions(
-    collection: str,
-    *,
-    keep: int,
-    dry_run: bool,
-    backend_name: str | None = None,
-    catalog_root: Path | None = None,
-) -> list[Version]:
-    """Prune old versions, keeping the N most recent."""
-    from portolan_cli.backends import get_backend
-
-    name = _resolve_backend_name(backend_name, catalog_root)
-    backend = get_backend(name, catalog_root=catalog_root)
-    return backend.prune(collection, keep=keep, dry_run=dry_run)
-
-
 # =============================================================================
 # Backend routing helpers (used by CLI for push/pull/version commands)
 # =============================================================================
@@ -139,7 +108,6 @@ class PushBlockedResult:
     """Result from check_backend_supports_push when push is blocked."""
 
     def __init__(self, message: str) -> None:
-        self.blocked = True
         self.message = message
 
 
@@ -160,16 +128,11 @@ def check_backend_supports_push(
         return None
 
     backend = get_backend(active_backend, catalog_root=catalog_path)
-    if not (hasattr(backend, "supports_push") and not backend.supports_push()):
+    if backend.supports_push():
         return None
 
     remote = get_setting("remote", catalog_path=catalog_path, collection=collection)
-    if hasattr(backend, "push_blocked_message"):
-        msg = backend.push_blocked_message(remote)
-    else:
-        msg = f"Push is not supported with the '{active_backend}' backend."
-
-    return PushBlockedResult(msg)
+    return PushBlockedResult(backend.push_blocked_message(remote))
 
 
 class BackendPullResult:
@@ -204,31 +167,33 @@ def try_backend_pull(
 
     Returns a BackendPullResult with handled=True if the backend handled the pull,
     or handled=False if the file-based pull should proceed as normal.
+
+    Without ``collection`` the backend pulls each collection of the catalog in
+    turn, and the result sums them (issue #977).
     """
     from portolan_cli.backends import get_backend
     from portolan_cli.config import get_setting
+    from portolan_cli.stac_links import catalog_collections
 
     active_backend = get_setting("backend", catalog_path=catalog_path, collection=collection)
     if active_backend is None or active_backend == "file":
         return BackendPullResult(handled=False)
 
     backend = get_backend(active_backend, catalog_root=catalog_path)
-    if not hasattr(backend, "pull"):
-        return BackendPullResult(handled=False)
-
-    result = backend.pull(
-        remote_url=remote_url,
-        local_root=catalog_path,
-        collection=collection,
-        dry_run=dry_run,
-    )
+    targets = [collection] if collection is not None else catalog_collections(catalog_path)
+    results = []
+    for target in targets:
+        result = backend.pull(remote_url, catalog_path, target, dry_run=dry_run)
+        if result is None:
+            return BackendPullResult(handled=False)
+        results.append(result)
 
     return BackendPullResult(
         handled=True,
-        success=result.success,
-        files_downloaded=result.files_downloaded,
-        files_skipped=result.files_skipped,
-        local_version=result.local_version,
-        remote_version=result.remote_version,
-        up_to_date=getattr(result, "up_to_date", False),
+        success=all(r.success for r in results),
+        files_downloaded=sum(r.files_downloaded for r in results),
+        files_skipped=sum(r.files_skipped for r in results),
+        local_version=results[0].local_version if len(results) == 1 else None,
+        remote_version=results[0].remote_version if len(results) == 1 else None,
+        up_to_date=all(r.up_to_date for r in results),
     )

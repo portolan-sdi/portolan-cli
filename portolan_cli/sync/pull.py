@@ -25,23 +25,31 @@ Async Migration (Wave 2A):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import posixpath
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import obstore as obs
+from obstore.exceptions import NotFoundError
 
 from portolan_cli.async_utils import (
     CircuitBreaker,
     CircuitBreakerError,
     get_default_concurrency,
 )
+from portolan_cli.catalog import intermediate_catalog_ids
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import detail, error, info, output_section, success, warn
+from portolan_cli.stac_links import SIDE_FILES, published_files
 from portolan_cli.sync.checksums import compute_checksum
-from portolan_cli.sync.download import download_file, get_remote_file_size_async
+from portolan_cli.sync.download import (
+    download_file,
+    get_remote_file_size_async,
+)
 from portolan_cli.sync.upload import _setup_store_and_kwargs, parse_object_store_url
 from portolan_cli.trace import count, span
 from portolan_cli.versions import (
@@ -1225,6 +1233,7 @@ def pull(
     concurrency: int = DEFAULT_CONCURRENCY,
     verbose: bool = False,
     json_mode: bool = False,
+    stac_tree: bool = False,
 ) -> PullResult:
     """Pull updates from a remote catalog (sync wrapper).
 
@@ -1251,6 +1260,9 @@ def pull(
         concurrency: Maximum concurrent downloads (default: 50).
         verbose: If True, show per-file download messages.
         json_mode: If True, suppress progress output (for agent/batch usage).
+        stac_tree: If True, also download the STAC documents of the collection
+            and the catalogs above it, and the objects that they name. clone
+            sets it, because versions.json names only the assets (#1042).
 
     Returns:
         PullResult with operation results.
@@ -1258,20 +1270,138 @@ def pull(
     Raises:
         ValueError: If remote_url is invalid.
     """
-    return asyncio.run(
-        pull_async(
-            remote_url=remote_url,
-            local_root=local_root,
-            collection=collection,
-            force=force,
-            dry_run=dry_run,
-            restore=restore,
-            profile=profile,
-            concurrency=concurrency,
-            verbose=verbose,
-            json_mode=json_mode,
+    # A push can land between the asset download and the tree download. The
+    # tree download then checks the remote version against the one the assets
+    # came from, and a changed remote starts the clone of the collection again.
+    for attempt in range(1, _CLONE_ATTEMPTS + 1):
+        result = asyncio.run(
+            pull_async(
+                remote_url=remote_url,
+                local_root=local_root,
+                collection=collection,
+                force=force,
+                dry_run=dry_run,
+                restore=restore,
+                profile=profile,
+                concurrency=concurrency,
+                verbose=verbose,
+                json_mode=json_mode,
+            )
         )
+        if not stac_tree or not result.success:
+            return result
+        written, failed, changed = asyncio.run(
+            _download_stac_tree(
+                remote_url,
+                local_root,
+                collection,
+                profile,
+                concurrency,
+                expected_version=result.remote_version,
+            )
+        )
+        if not changed:
+            break
+        warn(
+            f"The remote published a new version of '{collection}' during the clone. "
+            f"Downloading it ({attempt}/{_CLONE_ATTEMPTS})."
+        )
+    else:
+        result.success = False
+        error(f"The remote of '{collection}' changed during each of {_CLONE_ATTEMPTS} attempts")
+        return result
+    result.files_downloaded += written
+    if failed:
+        result.success = False
+        error(f"Failed to download {failed} file(s) of '{collection}'")
+    return result
+
+
+# How many times clone starts a collection again when the remote changes under it.
+_CLONE_ATTEMPTS = 3
+
+
+async def _download_stac_tree(
+    remote_url: str,
+    local_root: Path,
+    collection: str,
+    profile: str | None,
+    concurrency: int,
+    *,
+    expected_version: str | None = None,
+) -> tuple[int, int, bool]:
+    """Download the STAC tree of ``collection`` and the objects it names (#1042).
+
+    clone starts from a fresh local catalog.json with no child links. The remote
+    root and intermediate catalog.json files hold those links. collection.json
+    names the items. Each document brings the files that ``published_files``
+    names, the same set that push uploads. The root and the collection
+    versions.json come as push wrote them. An object that no document names,
+    such as a stale object of a removed asset, stays remote.
+
+    ``expected_version`` is the version the assets came from. When the remote
+    manifest names another version, nothing is written and the third value is
+    True, so the caller pulls again before the tree is read.
+
+    Returns:
+        The number of files written, the number of files that failed, and
+        whether the remote changed.
+    """
+    if expected_version is not None:
+        remote = await _fetch_remote_versions_async(remote_url, collection, profile)
+        if remote.current_version != expected_version:
+            return 0, 0, True
+    bucket_url, prefix = parse_object_store_url(remote_url)
+    store, _ = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=4)
+    semaphore = asyncio.Semaphore(concurrency)
+    counts = {"written": 0, "failed": 0}
+    walked: set[str] = set()
+
+    async def fetch(rel: str) -> bool:
+        """Download one object. A missing object is skipped."""
+        async with semaphore:
+            try:
+                target = _validate_safe_path(local_root, rel)
+                await _download_file_async(store, f"{prefix}/{rel}".lstrip("/"), target)
+            except (NotFoundError, FileNotFoundError):
+                return False
+            except Exception as e:
+                error(f"Failed to download {rel}: {e}")
+                counts["failed"] += 1
+                return False
+        counts["written"] += 1
+        return True
+
+    async def walk(document_rel: str) -> None:
+        """Download one STAC document, the files it names, and its items."""
+        if document_rel in walked:
+            return
+        walked.add(document_rel)
+        if not await fetch(document_rel):
+            return
+        document = json.loads((local_root / document_rel).read_text(encoding="utf-8"))
+        files, items = published_files(document, document_rel)
+        # pull already wrote the assets that versions.json names. clone wrote
+        # its own README.md and AGENTS.md, which the remote ones replace.
+        files = {
+            rel
+            for rel in files
+            if posixpath.basename(rel) in SIDE_FILES or not (local_root / rel).exists()
+        }
+        await asyncio.gather(
+            *(fetch(rel) for rel in sorted(files)),
+            *(walk(rel) for rel in sorted(items)),
+        )
+
+    documents = [
+        posixpath.join(c, "catalog.json") for c in ["", *intermediate_catalog_ids(collection)]
+    ]
+    await asyncio.gather(
+        fetch("versions.json"),
+        fetch(f"{collection}/versions.json"),
+        *(walk(rel) for rel in [*documents, f"{collection}/collection.json"]),
     )
+    return counts["written"], counts["failed"], False
 
 
 # =============================================================================

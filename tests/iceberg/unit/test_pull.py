@@ -143,3 +143,34 @@ def test_pull_reports_failed_downloads(iceberg_backend, parquet_file):
         )
 
     assert result.success is False
+
+
+@pytest.mark.integration
+def test_pull_without_collection_pulls_every_collection(tmp_path, monkeypatch):
+    """#977: `portolan pull <remote>` with no --collection exits 0 on Iceberg.
+
+    On main the backend got collection=None and raised "Collection name cannot
+    be empty". The catalog holds one collection with no Iceberg table yet, so
+    the pull reports it as having no versions.
+    """
+    import json
+
+    from click.testing import CliRunner
+
+    from portolan_cli.cli import cli
+
+    root = tmp_path / "catalog"
+    root.mkdir()
+    monkeypatch.chdir(root)
+    runner = CliRunner()
+    init = runner.invoke(cli, ["init", "--backend", "iceberg", "--license", "CC0-1.0", "--auto"])
+    assert init.exit_code == 0, init.output
+    (root / "demo").mkdir()
+    (root / "demo" / "collection.json").write_text(
+        json.dumps({"type": "Collection", "id": "demo"}), encoding="utf-8"
+    )
+
+    result = runner.invoke(cli, ["pull", "s3://example-bucket/catalog"])
+
+    assert result.exit_code == 0, result.output
+    assert "No versions found for collection 'demo'" in result.output

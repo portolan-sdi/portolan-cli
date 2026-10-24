@@ -103,9 +103,10 @@ subsystem table below and the path-scoped rules for each.
   it). `version rollback` and `version prune` live in
   `backends/iceberg/cli.py` and load through `portolan.commands` entry points
   in `pyproject.toml`.
-- **Optional hooks are duck-typed, NOT in the Protocol.** `on_post_add`, `pull`,
-  `supports_push`, `push_blocked_message` are checked via `hasattr`. If you add
-  one, document it in `protocol.py`, do not widen the Protocol.
+- **Lifecycle hooks are Protocol methods (#977).** `on_post_add`, `pull`,
+  `supports_push`, `push_blocked_message` are members of `VersioningBackend`,
+  and the core calls them without `hasattr`, so mypy checks each call.
+  `JsonFileBackend` holds the neutral defaults. A new hook goes in the Protocol.
 - `PostAddContext.collection` is typed `Any` on purpose, to avoid a hard `pystac`
   import in `protocol.py`. Do not add a pystac import there.
 - The file backend is **single-writer** and not thread-safe, it relies on drift

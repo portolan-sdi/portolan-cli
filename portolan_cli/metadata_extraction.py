@@ -14,7 +14,7 @@ Usage:
         source_type="arcgis_featureserver",
         source_url="https://services.arcgis.com/.../FeatureServer",
         attribution="City of Philadelphia",
-        contact_name="GIS Team",
+        producer="GIS Team",
         keywords=["census", "demographics"],
     )
 
@@ -45,8 +45,7 @@ class ExtractedMetadata:
         attribution: Copyright or attribution text.
         description: Human-readable description of the data.
         keywords: List of discovery keywords/tags.
-        contact_name: Name of the data maintainer/author.
-        contact_email: Email of the data maintainer (rarely available).
+        producer: Organization the source names as the author of the data.
         license_raw: Raw license text (not SPDX identifier).
         license_url: URL of the license text, read out of license_raw.
         processing_notes: Notes about data processing or updates.
@@ -68,11 +67,11 @@ class ExtractedMetadata:
     keywords: list[str] | None = None
     """List of discovery keywords/tags."""
 
-    contact_name: str | None = None
-    """Name of the data maintainer/author."""
-
-    contact_email: str | None = None
-    """Email of the data maintainer (rarely available from extraction)."""
+    # The source names who made the data. It never names who maintains this copy.
+    # So the seed has a producer field and no contact field. The contact and the
+    # host belong to whoever runs the copy. Only metadata.yaml knows them.
+    producer: str | None = None
+    """Organization the source names as the author of the data."""
 
     license_raw: str | None = None
     # Sources publish a licence page but never an SPDX id. When license_raw holds a

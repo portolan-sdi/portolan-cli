@@ -892,6 +892,7 @@ class TestCloneFunction:
             force=False,
             dry_run=False,
             profile="my-profile",
+            stac_tree=True,
         )
 
     @pytest.mark.unit
@@ -1041,10 +1042,8 @@ class TestDryRunNetworkIsolation:
         return catalog_dir
 
     @pytest.mark.unit
-    def test_sync_dry_run_pull_step_makes_no_network_calls(
-        self, catalog_with_versions: Path
-    ) -> None:
-        """sync(dry_run=True) must not make network calls in the pull step.
+    def test_sync_dry_run_makes_no_network_calls(self, catalog_with_versions: Path) -> None:
+        """sync(dry_run=True) makes no network call in the pull or the push step.
 
         Regression test for bug #137: pull() called fetch_remote_versions
         unconditionally even when dry_run=True.
@@ -1054,38 +1053,7 @@ class TestDryRunNetworkIsolation:
         with (
             patch("portolan_cli.sync.pull.fetch_remote_versions") as mock_pull_fetch,
             patch("portolan_cli.sync.push.setup_store") as mock_push_setup,
-            patch("portolan_cli.sync.push._fetch_remote_versions") as mock_push_fetch,
-            patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.core.check_directory") as mock_check,
-        ):
-            mock_scan.return_value = MagicMock(ready=[], has_errors=False)
-            mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
-
-            sync(
-                catalog_root=catalog_with_versions,
-                collection="test-collection",
-                destination="s3://bucket/catalog",
-                dry_run=True,
-            )
-
-        # The pull sub-step must not touch the network
-        mock_pull_fetch.assert_not_called()
-        # The push sub-step must not touch the network either
-        mock_push_setup.assert_not_called()
-        mock_push_fetch.assert_not_called()
-
-    @pytest.mark.unit
-    def test_sync_dry_run_push_step_makes_no_network_calls(
-        self, catalog_with_versions: Path
-    ) -> None:
-        """sync(dry_run=True) must not make network calls in the push step."""
-        from portolan_cli.sync.core import sync
-
-        with (
-            patch("portolan_cli.sync.pull.fetch_remote_versions") as mock_pull_fetch,
-            patch("portolan_cli.sync.push.setup_store") as mock_setup,
-            patch("portolan_cli.sync.push._fetch_remote_versions") as mock_push_fetch,
+            patch("portolan_cli.sync.push._fetch_remote_versions_async") as mock_push_fetch,
             patch("portolan_cli.sync.core.init_catalog"),
             patch("portolan_cli.sync.core.scan_directory") as mock_scan,
             patch("portolan_cli.sync.core.check_directory") as mock_check,
@@ -1101,9 +1069,9 @@ class TestDryRunNetworkIsolation:
             )
 
         assert result.success is True
-        mock_setup.assert_not_called()
-        mock_push_fetch.assert_not_called()
         mock_pull_fetch.assert_not_called()
+        mock_push_setup.assert_not_called()
+        mock_push_fetch.assert_not_called()
 
 
 # =============================================================================

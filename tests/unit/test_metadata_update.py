@@ -2,8 +2,7 @@
 
 Tests for Phase 2c: Update Functions
 - update_item_metadata(item_path, file_path)
-- create_missing_item(file_path, collection_path)
-- update_collection_extent(collection_path)
+- prepare_missing_item(file_path, collection_path)
 - update_versions_tracking(file_path, versions_path)
 """
 
@@ -21,14 +20,12 @@ import rasterio
 from portolan_cli.catalog import init_catalog
 from portolan_cli.collection import (
     create_collection,
-    read_collection_json,
     write_collection_json,
 )
 from portolan_cli.item import create_item, read_item_json, write_item_json
 from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.update import (
-    create_missing_item,
-    update_collection_extent,
+    prepare_missing_item,
     update_item_metadata,
     update_versions_tracking,
 )
@@ -623,12 +620,17 @@ class TestUpdateItemMetadata:
         assert _read_bands(item_path) == bands
 
 
-class TestCreateMissingItem:
-    """Tests for create_missing_item function."""
+class TestPrepareMissingItem:
+    """Tests for prepare_missing_item function.
+
+    The caller passes the prepared item to ``finalize_items``, which sets the
+    collection field and the links. tests/integration/test_check_fix_no_regression.py
+    checks the finalized item byte for byte.
+    """
 
     @pytest.mark.unit
-    def test_create_missing_item_creates_item(self, tmp_path: Path) -> None:
-        """Test that create_missing_item creates a new STAC item for a file."""
+    def test_prepare_missing_item_writes_the_item(self, tmp_path: Path) -> None:
+        """prepare_missing_item writes the item JSON and names the catalog root."""
         collection_dir = tmp_path / "my-collection"
         collection_dir.mkdir()
 
@@ -647,18 +649,16 @@ class TestCreateMissingItem:
         )
         write_collection_json(collection, collection_dir)
 
-        # Create item for the file
-        item_path = create_missing_item(data_file, collection_dir)
+        catalog_root, prepared = prepare_missing_item(data_file, collection_dir)
 
-        # Verify item was created
-        assert item_path.exists()
-        item = read_item_json(item_path)
-        assert item.id == "data"
-        assert item.collection == "my-collection"
+        assert catalog_root == tmp_path
+        assert prepared.collection_id == "my-collection"
+        assert prepared.item_json_path is not None
+        assert json.loads(prepared.item_json_path.read_text())["id"] == "data"
 
     @pytest.mark.unit
-    def test_create_missing_item_links_to_collection(self, tmp_path: Path) -> None:
-        """Test that create_missing_item properly links to parent collection."""
+    def test_prepare_missing_item_extracts_metadata(self, tmp_path: Path) -> None:
+        """Test that prepare_missing_item extracts metadata from file."""
         collection_dir = tmp_path / "my-collection"
         collection_dir.mkdir()
 
@@ -676,54 +676,30 @@ class TestCreateMissingItem:
         )
         write_collection_json(collection, collection_dir)
 
-        item_path = create_missing_item(data_file, collection_dir)
-        item = read_item_json(item_path)
-
-        # Verify collection reference
-        assert item.collection == "my-collection"
-
-    @pytest.mark.unit
-    def test_create_missing_item_extracts_metadata(self, tmp_path: Path) -> None:
-        """Test that create_missing_item extracts metadata from file."""
-        collection_dir = tmp_path / "my-collection"
-        collection_dir.mkdir()
-
-        source_file = REALDATA_FIXTURES / "open-buildings.parquet"
-        if not source_file.exists():
-            pytest.skip("Test fixture not available")
-
-        data_file = collection_dir / "data.parquet"
-        shutil.copy(source_file, data_file)
-
-        collection = create_collection(
-            collection_id="my-collection",
-            data_path=data_file,
-            description="Test collection",
-        )
-        write_collection_json(collection, collection_dir)
-
-        item_path = create_missing_item(data_file, collection_dir)
-        item = read_item_json(item_path)
+        _root, prepared = prepare_missing_item(data_file, collection_dir)
+        assert prepared.item_json_path is not None
+        item = json.loads(prepared.item_json_path.read_text())
 
         # Verify metadata was extracted
-        assert item.bbox is not None
-        assert len(item.bbox) == 4
-        assert item.geometry is not None
-        assert item.properties.get("datetime") is not None
+        assert len(item["bbox"]) == 4
+        assert item["geometry"] is not None
+        # The datetime is unknown, as in the item add writes (issue #1046).
+        assert item["properties"]["datetime"] is None
+        assert item["properties"]["start_datetime"] == "1900-01-01T00:00:00Z"
 
     @pytest.mark.unit
-    def test_create_missing_item_file_not_found(self, tmp_path: Path) -> None:
-        """Test that create_missing_item raises FileNotFoundError for missing file."""
+    def test_prepare_missing_item_file_not_found(self, tmp_path: Path) -> None:
+        """Test that prepare_missing_item raises FileNotFoundError for missing file."""
         collection_dir = tmp_path / "my-collection"
         collection_dir.mkdir()
         file_path = collection_dir / "nonexistent.parquet"
 
         with pytest.raises(FileNotFoundError):
-            create_missing_item(file_path, collection_dir)
+            prepare_missing_item(file_path, collection_dir)
 
     @pytest.mark.unit
-    def test_create_missing_item_uses_filename_as_id(self, tmp_path: Path) -> None:
-        """Test that create_missing_item uses filename stem as item ID."""
+    def test_prepare_missing_item_uses_filename_as_id(self, tmp_path: Path) -> None:
+        """Test that prepare_missing_item uses filename stem as item ID."""
         collection_dir = tmp_path / "my-collection"
         collection_dir.mkdir()
 
@@ -741,192 +717,9 @@ class TestCreateMissingItem:
         )
         write_collection_json(collection, collection_dir)
 
-        item_path = create_missing_item(data_file, collection_dir)
-        item = read_item_json(item_path)
+        _root, prepared = prepare_missing_item(data_file, collection_dir)
 
-        assert item.id == "my_custom_name"
-
-
-class TestUpdateCollectionExtent:
-    """Tests for update_collection_extent function."""
-
-    @pytest.mark.unit
-    def test_update_collection_extent_single_item(self, tmp_path: Path) -> None:
-        """Test that update_collection_extent calculates extent from single item."""
-        collection_dir = tmp_path / "my-collection"
-        collection_dir.mkdir()
-
-        source_file = REALDATA_FIXTURES / "open-buildings.parquet"
-        if not source_file.exists():
-            pytest.skip("Test fixture not available")
-
-        data_file = collection_dir / "data.parquet"
-        shutil.copy(source_file, data_file)
-
-        # Create collection with initial extent
-        collection = create_collection(
-            collection_id="my-collection",
-            data_path=data_file,
-            description="Test collection",
-        )
-        write_collection_json(collection, collection_dir)
-
-        # Create an item
-        item = create_item(
-            item_id="data",
-            data_path=data_file,
-            collection_id="my-collection",
-        )
-        write_item_json(item, collection_dir)
-
-        # Update collection extent
-        updated_collection = update_collection_extent(collection_dir)
-
-        # Verify extent was updated
-        assert updated_collection.extent.spatial.bbox is not None
-        assert len(updated_collection.extent.spatial.bbox) >= 1
-
-    @pytest.mark.unit
-    def test_update_collection_extent_multiple_items(self, tmp_path: Path) -> None:
-        """Test that update_collection_extent computes union bbox from multiple items."""
-        collection_dir = tmp_path / "my-collection"
-        collection_dir.mkdir()
-
-        source_file = REALDATA_FIXTURES / "open-buildings.parquet"
-        if not source_file.exists():
-            pytest.skip("Test fixture not available")
-
-        # Create first data file
-        data_file1 = collection_dir / "data1.parquet"
-        shutil.copy(source_file, data_file1)
-
-        # Create second data file
-        data_file2 = collection_dir / "data2.parquet"
-        shutil.copy(source_file, data_file2)
-
-        # Create collection
-        collection = create_collection(
-            collection_id="my-collection",
-            data_path=data_file1,
-            description="Test collection",
-        )
-        write_collection_json(collection, collection_dir)
-
-        # Create items with different bboxes
-        item1 = create_item(
-            item_id="data1",
-            data_path=data_file1,
-            collection_id="my-collection",
-        )
-        # Manually modify bbox for testing union
-        item1 = item1.__class__(
-            id=item1.id,
-            geometry=item1.geometry,
-            bbox=[-10.0, -10.0, 0.0, 0.0],
-            properties=item1.properties,
-            assets=item1.assets,
-            collection=item1.collection,
-        )
-        write_item_json(item1, collection_dir)
-
-        item2 = create_item(
-            item_id="data2",
-            data_path=data_file2,
-            collection_id="my-collection",
-        )
-        item2 = item2.__class__(
-            id=item2.id,
-            geometry=item2.geometry,
-            bbox=[0.0, 0.0, 10.0, 10.0],
-            properties=item2.properties,
-            assets=item2.assets,
-            collection=item2.collection,
-        )
-        write_item_json(item2, collection_dir)
-
-        # Update collection extent
-        updated_collection = update_collection_extent(collection_dir)
-
-        # Verify union bbox
-        bbox = updated_collection.extent.spatial.bbox[0]
-        assert bbox[0] == -10.0  # west
-        assert bbox[1] == -10.0  # south
-        assert bbox[2] == 10.0  # east
-        assert bbox[3] == 10.0  # north
-
-    @pytest.mark.unit
-    def test_update_collection_extent_no_items(self, tmp_path: Path) -> None:
-        """Test that update_collection_extent handles empty collection."""
-        collection_dir = tmp_path / "my-collection"
-        collection_dir.mkdir()
-
-        # Create collection with default extent (global)
-        source_file = REALDATA_FIXTURES / "open-buildings.parquet"
-        if not source_file.exists():
-            pytest.skip("Test fixture not available")
-
-        data_file = collection_dir / "data.parquet"
-        shutil.copy(source_file, data_file)
-
-        collection = create_collection(
-            collection_id="my-collection",
-            data_path=data_file,
-            description="Test collection",
-        )
-        write_collection_json(collection, collection_dir)
-
-        # Remove the data file to simulate empty collection
-        data_file.unlink()
-
-        # Update collection extent - should return existing extent
-        updated_collection = update_collection_extent(collection_dir)
-
-        # Collection extent should still exist (unchanged)
-        assert updated_collection.extent is not None
-
-    @pytest.mark.unit
-    def test_update_collection_extent_writes_to_disk(self, tmp_path: Path) -> None:
-        """Test that update_collection_extent writes updated collection to disk."""
-        collection_dir = tmp_path / "my-collection"
-        collection_dir.mkdir()
-
-        source_file = REALDATA_FIXTURES / "open-buildings.parquet"
-        if not source_file.exists():
-            pytest.skip("Test fixture not available")
-
-        data_file = collection_dir / "data.parquet"
-        shutil.copy(source_file, data_file)
-
-        collection = create_collection(
-            collection_id="my-collection",
-            data_path=data_file,
-            description="Test collection",
-        )
-        write_collection_json(collection, collection_dir)
-
-        item = create_item(
-            item_id="data",
-            data_path=data_file,
-            collection_id="my-collection",
-        )
-        write_item_json(item, collection_dir)
-
-        # Update collection extent
-        update_collection_extent(collection_dir)
-
-        # Verify file was updated
-        collection_path = collection_dir / "collection.json"
-        assert collection_path.exists()
-        updated_from_disk = read_collection_json(collection_path)
-        assert updated_from_disk.extent.spatial.bbox is not None
-
-    @pytest.mark.unit
-    def test_update_collection_extent_collection_not_found(self, tmp_path: Path) -> None:
-        """Test that update_collection_extent raises FileNotFoundError."""
-        collection_dir = tmp_path / "nonexistent"
-
-        with pytest.raises(FileNotFoundError):
-            update_collection_extent(collection_dir)
+        assert prepared.item_id == "my_custom_name"
 
 
 class TestUpdateVersionsTracking:
@@ -1114,8 +907,8 @@ class TestEdgeCases:
         assert updated_item.bbox is not None
 
     @pytest.mark.unit
-    def test_create_missing_item_collection_json_missing(self, tmp_path: Path) -> None:
-        """Test create_missing_item when collection.json doesn't exist."""
+    def test_prepare_missing_item_collection_json_missing(self, tmp_path: Path) -> None:
+        """Test prepare_missing_item when collection.json doesn't exist."""
         collection_dir = tmp_path / "my-collection"
         collection_dir.mkdir()
 
@@ -1129,4 +922,22 @@ class TestEdgeCases:
         # Don't create collection.json
         # Should raise FileNotFoundError
         with pytest.raises(FileNotFoundError):
-            create_missing_item(data_file, collection_dir)
+            prepare_missing_item(data_file, collection_dir)
+
+
+@pytest.mark.integration
+def test_the_item_module_imports_first() -> None:
+    """``item`` -> ``metadata`` -> ``fix`` -> ``update`` -> ``item`` was a cycle.
+
+    Run alone, this test module stopped at collection with an ImportError.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import portolan_cli.item"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode, result.stderr) == (0, "")

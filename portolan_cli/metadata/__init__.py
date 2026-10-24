@@ -22,8 +22,7 @@ Validation functions:
 
 Update functions:
 - update_item_metadata(): Re-extract and update existing STAC item
-- create_missing_item(): Create new STAC item for file without metadata
-- update_collection_extent(): Recalculate extent from child items
+- prepare_missing_item(): Prepare a new STAC item for a file without metadata
 - update_versions_tracking(): Update source_mtime in versions.json
 
 Fix functions:
@@ -69,8 +68,6 @@ from portolan_cli.metadata.geoparquet import (
     RewriteFidelity,
     SpatialLayout,
     extract_geoparquet_metadata,
-    has_bbox_covering_column,
-    is_geoparquet,
     read_extra_schema_metadata,
     read_rewrite_fidelity,
     read_spatial_layout,
@@ -96,8 +93,7 @@ from portolan_cli.metadata.tabular import (
     extract_tabular_metadata,
 )
 from portolan_cli.metadata.update import (
-    create_missing_item,
-    update_collection_extent,
+    prepare_missing_item,
     update_item_metadata,
     update_versions_tracking,
 )
@@ -122,8 +118,6 @@ __all__ = [
     "extract_pmtiles_metadata",
     "RewriteFidelity",
     "SpatialLayout",
-    "has_bbox_covering_column",
-    "is_geoparquet",
     "read_extra_schema_metadata",
     "read_rewrite_fidelity",
     "read_spatial_layout",
@@ -153,8 +147,7 @@ __all__ = [
     "validate_catalog_links",
     "validate_collection_extent",
     # Update functions
-    "create_missing_item",
-    "update_collection_extent",
+    "prepare_missing_item",
     "update_item_metadata",
     "update_versions_tracking",
     # Check models

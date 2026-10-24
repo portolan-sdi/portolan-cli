@@ -19,15 +19,16 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from typing import Any, cast
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
 
+from portolan_cli.extract.arcgis.discovery import ensure_json_format
 from portolan_cli.extract.arcgis.imageserver.tilecache import (
     TileCacheInfo,
     export_image_supported,
     parse_tile_info,
 )
+from portolan_cli.extract.common.urls import redact_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,7 @@ class ImageServerMetadata:
 
         # FeatureServer-parity fields (for metadata.yaml population):
         service_description: Extended service description (processing_notes)
-        author: Author from documentInfo (contact_name)
+        author: Author from documentInfo (a producer provider, never the contact)
         keywords: Keywords from documentInfo (comma-separated list)
         license_info: License text from licenseInfo
         access_information: Access restrictions from accessInformation (known_issues)
@@ -177,29 +178,6 @@ class ImageServerMetadata:
             raise ValueError(f"full_extent values must be numeric. Got: {self.full_extent}") from e
 
 
-def _ensure_json_format(url: str) -> str:
-    """Ensure URL has f=json parameter for ArcGIS REST API.
-
-    Args:
-        url: Original URL
-
-    Returns:
-        URL with f=json parameter added if not present
-    """
-    parsed = urlparse(url)
-    query_params = parse_qs(parsed.query)
-
-    # Check if f parameter already exists
-    if "f" not in query_params:
-        query_params["f"] = ["json"]
-
-    # Rebuild query string
-    new_query = urlencode(query_params, doseq=True)
-    new_parsed = parsed._replace(query=new_query)
-
-    return urlunparse(new_parsed)
-
-
 def _parse_capabilities(capabilities_value: str | list[str] | None) -> list[str]:
     """Parse capabilities from various formats.
 
@@ -235,7 +213,7 @@ async def _fetch_json(url: str, timeout: float) -> dict[str, Any]:
     Raises:
         ImageServerDiscoveryError: On HTTP or parsing errors
     """
-    request_url = _ensure_json_format(url)
+    request_url = ensure_json_format(url)
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -244,19 +222,19 @@ async def _fetch_json(url: str, timeout: float) -> dict[str, Any]:
             return cast("dict[str, Any]", response.json())
     except httpx.HTTPStatusError as e:
         msg = f"Failed to fetch from {url}: HTTP {e.response.status_code}"
-        raise ImageServerDiscoveryError(msg) from e
+        raise ImageServerDiscoveryError(redact_credentials(msg)) from e
     except httpx.ConnectError as e:
         msg = f"Failed to connect to {url}: {e}"
-        raise ImageServerDiscoveryError(msg) from e
+        raise ImageServerDiscoveryError(redact_credentials(msg)) from e
     except httpx.TimeoutException as e:
         msg = f"Request timed out for {url}: {e}"
-        raise ImageServerDiscoveryError(msg) from e
+        raise ImageServerDiscoveryError(redact_credentials(msg)) from e
     except httpx.RequestError as e:
         msg = f"Failed to fetch from {url}: {e}"
-        raise ImageServerDiscoveryError(msg) from e
+        raise ImageServerDiscoveryError(redact_credentials(msg)) from e
     except ValueError as e:
         msg = f"Invalid JSON response from {url}: {e}"
-        raise ImageServerDiscoveryError(msg) from e
+        raise ImageServerDiscoveryError(redact_credentials(msg)) from e
 
 
 def _check_arcgis_error(data: dict[str, Any]) -> None:

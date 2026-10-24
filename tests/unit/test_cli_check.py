@@ -9,6 +9,8 @@ test asserts on are ones it introduces itself.
 from __future__ import annotations
 
 import json
+import shutil
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
@@ -21,7 +23,8 @@ from portolan_cli.cli import cli
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
+
+VECTOR_FIXTURES = Path(__file__).parent.parent / "fixtures" / "vector" / "valid"
 
 # =============================================================================
 # Shared fixtures
@@ -874,3 +877,238 @@ class TestFixSplitRendering:
             ],
         )
         assert out.count("the automatic fix did not resolve this") == 2
+
+
+# =============================================================================
+# Exit-code contract per mode (#853)
+# =============================================================================
+
+
+def _mirror_catalog_with_a_lost_child_link(root: Path) -> Path:
+    """Add a collection through the CLI, then break it with one AUTO and one INSTRUCT error.
+
+    The collection names a producer and a different host, so rashid sees a
+    mirror with no rel:'via' link (PTL-PRO-001, INSTRUCT), the case #853
+    reports. The catalog loses its child link (PTL-LNK-002, AUTO), which the
+    links fixer restores.
+    """
+    (root / "roads").mkdir()
+    shutil.copy2(VECTOR_FIXTURES / "points.geojson", root / "roads" / "roads.geojson")
+    add = CliRunner().invoke(cli, ["add", "--portolan-dir", str(root), str(root / "roads")])
+    assert add.exit_code == 0, add.output
+
+    collection_file = root / "roads" / "collection.json"
+    collection = json.loads(collection_file.read_text())
+    collection["providers"] = [
+        {"name": "Upstream Agency", "roles": ["producer"]},
+        {"name": "Portolan Mirror", "roles": ["host"], "url": "https://example.org"},
+    ]
+    collection_file.write_text(json.dumps(collection, indent=2))
+
+    catalog_file = root / "catalog.json"
+    catalog = json.loads(catalog_file.read_text())
+    catalog["links"] = [link for link in catalog["links"] if link["rel"] != "child"]
+    catalog_file.write_text(json.dumps(catalog, indent=2))
+    return root
+
+
+def _errors(envelope: dict[str, Any]) -> list[tuple[str, str]]:
+    return sorted(
+        (f["rule_id"], f["remediation"])
+        for f in envelope["data"]["findings"]
+        if f["severity"] == "error"
+    )
+
+
+class TestExitCodePerMode:
+    """Each mode exits on the findings it owns (#853).
+
+    A check command exits 1 while a blocking finding remains, whether or not
+    ``--fix`` repaired something. ``--fix --metadata`` is the metadata refresh.
+    Its ``success`` field says whether the refresh did its job, and ``passed``
+    says whether the catalog conforms. An INSTRUCT error is work for a person:
+    the refresh succeeds, the catalog does not pass, and the exit code follows
+    ``passed``. ``--strict`` adds the warnings and the workflow notice.
+    """
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("flags", "exit_code"),
+        [
+            ([], 1),
+            (["--metadata"], 1),
+            (["--geo-assets"], 0),
+            (["--strict"], 1),
+            (["--metadata", "--strict"], 1),
+            (["--fix"], 1),
+            (["--fix", "--geo-assets"], 0),
+            (["--fix", "--metadata"], 1),
+            (["--fix", "--metadata", "--strict"], 1),
+            (["--fix", "--metadata", "--dry-run"], 1),
+        ],
+        ids=lambda value: " ".join(value) if isinstance(value, list) else str(value),
+    )
+    def test_exit_code(
+        self, runner: CliRunner, valid_catalog: Path, flags: list[str], exit_code: int
+    ) -> None:
+        """One AUTO and one INSTRUCT error; the exit code follows the mode."""
+        root = _mirror_catalog_with_a_lost_child_link(valid_catalog)
+
+        result = runner.invoke(cli, ["check", str(root), "--json", *flags])
+
+        assert result.exit_code == exit_code, result.output
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("output_flags", [["--json"], []], ids=["json", "text"])
+    def test_refresh_exits_1_while_an_instruct_error_remains(
+        self, runner: CliRunner, valid_catalog: Path, output_flags: list[str]
+    ) -> None:
+        """The refresh repairs the AUTO error, but a person must still act, so it exits 1."""
+        root = _mirror_catalog_with_a_lost_child_link(valid_catalog)
+
+        result = runner.invoke(cli, ["check", str(root), *output_flags, "--fix", "--metadata"])
+
+        assert result.exit_code == 1, result.output
+
+    @pytest.mark.integration
+    def test_refresh_keeps_the_instruct_errors_in_the_report(
+        self, runner: CliRunner, valid_catalog: Path
+    ) -> None:
+        """The refresh succeeds, the catalog does not pass, and the payload says what to do."""
+        root = _mirror_catalog_with_a_lost_child_link(valid_catalog)
+
+        result = runner.invoke(cli, ["check", str(root), "--json", "--fix", "--metadata"])
+
+        envelope = json.loads(result.stdout)
+        assert envelope["success"] is True
+        assert envelope["data"]["passed"] is False
+        assert envelope["data"]["error_count"] == 3
+        assert _errors(envelope) == [
+            ("PTL-PRO-001", "instruct"),
+            ("PTL-PRO-003", "instruct"),
+            ("PTL-PRO-003", "instruct"),
+        ]
+        assert envelope["data"]["fix"]["survivors"] == []
+
+    @pytest.mark.integration
+    def test_refresh_fails_when_an_auto_error_survives(
+        self, runner: CliRunner, valid_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A links fixer that changes nothing leaves PTL-LNK-002, so the refresh fails."""
+        from portolan_cli.validation import fixers
+
+        root = _mirror_catalog_with_a_lost_child_link(valid_catalog)
+        monkeypatch.setitem(fixers.FIXERS, "links", lambda _root, _dry_run: [])
+
+        result = runner.invoke(cli, ["check", str(root), "--json", "--fix", "--metadata"])
+
+        assert result.exit_code == 1, result.output
+        assert ("PTL-LNK-002", "auto") in _errors(json.loads(result.stdout))
+
+    @pytest.mark.integration
+    def test_refresh_fails_when_a_fixer_fails(
+        self, runner: CliRunner, valid_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A fixer that reports a failed write fails the refresh."""
+        from portolan_cli.metadata.fix import FixAction, FixResult
+        from portolan_cli.validation import fixers
+
+        root = _mirror_catalog_with_a_lost_child_link(valid_catalog)
+
+        def _failing(fix_root: Path, _dry_run: bool) -> list[FixResult]:
+            target = fix_root / "catalog.json"
+            return [FixResult(target, FixAction.UPDATED, success=False, message="injected")]
+
+        monkeypatch.setitem(fixers.FIXERS, "links", _failing)
+
+        result = runner.invoke(cli, ["check", str(root), "--json", "--fix", "--metadata"])
+
+        assert result.exit_code == 1, result.output
+        assert json.loads(result.stdout)["data"]["passed"] is False
+
+    @pytest.mark.integration
+    def test_refresh_fails_when_the_catalog_does_not_parse(
+        self, runner: CliRunner, valid_catalog: Path
+    ) -> None:
+        """The refresh cannot read a catalog.json that does not parse, so it refreshed nothing."""
+        root = _mirror_catalog_with_a_lost_child_link(valid_catalog)
+        (root / "catalog.json").write_text("{ not json", encoding="utf-8")
+
+        result = runner.invoke(cli, ["check", str(root), "--json", "--fix", "--metadata"])
+
+        envelope = json.loads(result.stdout)
+        assert result.exit_code == 1, result.output
+        assert envelope["success"] is False
+        assert _errors(envelope) == [("PTL-GEN-000", "instruct")]
+
+    @pytest.mark.integration
+    def test_refresh_fails_when_a_collection_breaks_the_stac_schema(
+        self, runner: CliRunner, valid_catalog: Path
+    ) -> None:
+        """A collection.json that parses but breaks the STAC schema fails the refresh.
+
+        The envelope names the schema rule, which a syntax error (PTL-GEN-000)
+        does not share.
+        """
+        (valid_catalog / "roads").mkdir()
+        shutil.copy2(VECTOR_FIXTURES / "points.geojson", valid_catalog / "roads" / "roads.geojson")
+        add = runner.invoke(
+            cli, ["add", "--portolan-dir", str(valid_catalog), str(valid_catalog / "roads")]
+        )
+        assert add.exit_code == 0, add.output
+        collection_file = valid_catalog / "roads" / "collection.json"
+        collection = json.loads(collection_file.read_text())
+        collection["extent"] = "everywhere"
+        collection_file.write_text(json.dumps(collection, indent=2))
+
+        result = runner.invoke(cli, ["check", str(valid_catalog), "--json", "--fix", "--metadata"])
+
+        envelope = json.loads(result.stdout)
+        assert result.exit_code == 1, result.output
+        assert envelope["success"] is False
+        assert {
+            "type": "PTL-STR-001",
+            "message": "STAC 1.1.0 structural validation failed: "
+            "'everywhere' is not of type 'object'",
+        } in envelope["errors"]
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("rule_id", "failed"),
+        [
+            ("PTL-GEN-000", True),
+            ("PTL-GEN-001", True),
+            ("PTL-STR-001", True),
+            ("PTL-PRO-001", False),
+        ],
+    )
+    def test_refresh_fails_on_a_document_it_cannot_read(self, rule_id: str, failed: bool) -> None:
+        """An unreadable document fails the refresh. Other INSTRUCT errors do not."""
+        from portolan_cli.cli import _check_failed
+
+        finding = {"rule_id": rule_id, "severity": "error", "remediation": "instruct"}
+        payload = {"error_count": 1, "findings": [finding]}
+
+        assert _check_failed(payload, strict=False, refresh=True) is failed
+
+
+class TestCheckFailedStrict:
+    """Under ``--strict``, each of the three payload keys fails the run on its own."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("payload", "failed"),
+        [
+            ({}, False),
+            ({"error_count": 1}, True),
+            ({"warning_count": 1}, True),
+            ({"workflow": {"unregistered": ["a.parquet"]}}, True),
+            ({"error_count": 0, "warning_count": 0, "workflow": None}, False),
+        ],
+        ids=["clean", "error", "warning", "workflow", "zero-counts"],
+    )
+    def test_each_strict_key_alone(self, payload: dict[str, Any], failed: bool) -> None:
+        from portolan_cli.cli import _check_failed
+
+        assert _check_failed(payload, strict=True) is failed
+        assert _check_failed(payload, strict=True, refresh=True) is failed

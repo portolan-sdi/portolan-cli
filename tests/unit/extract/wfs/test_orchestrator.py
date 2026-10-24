@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from portolan_cli.extract.common import source as source_module
 from portolan_cli.extract.common.report import ExtractionReport, LayerResult
@@ -283,7 +284,7 @@ class TestWFSMetadataSeeding:
             description="A test WFS service",
             attribution="Test Provider",
             keywords=["test", "wfs"],
-            contact_name="Test Contact",
+            producer="Test Contact",
             processing_notes="WFS service: Test Service",
             known_issues=None,
             license_info_raw="CC-BY-4.0",
@@ -416,6 +417,10 @@ class TestWFSMetadataSeeding:
         content = (collection_dir / ".portolan" / "metadata.yaml").read_text()
         assert "Rich ISO description from CSW" in content
         assert "WFS Abstract" not in content
+        # The ISO point of contact made the data. It does not maintain this copy.
+        seeded = yaml.safe_load(content)
+        assert seeded["providers"] == [{"name": "ISO Contact Org", "roles": ["producer"]}]
+        assert "contact" not in seeded
 
     def test_seed_collection_metadata_wfs_nested_output_path(self, tmp_path: Path) -> None:
         """Collection seeding handles nested output paths correctly."""
@@ -718,3 +723,22 @@ class TestTimeoutEnforcement:
         assert [r.duration_seconds for r in report.layers] == [1.0] * 48
         # The run lasted 24 virtual seconds, more than twice the timeout.
         assert clock.monotonic() == 24.0
+
+
+def test_failed_version_negotiation_logs_no_key(caplog: pytest.LogCaptureFixture) -> None:
+    """#981: geoparquet-io quotes the keyed URL. The warning names the service without the key."""
+    from geoparquet_io.core.wfs import WFSError  # type: ignore[import-untyped]
+
+    from portolan_cli.extract.wfs.orchestrator import _negotiate_version
+
+    url = "https://h.example/geoserver/wfs?api_key=SECRET"
+    failure = WFSError(f"Could not connect to WFS service: {url}")
+
+    with patch("geoparquet_io.core.wfs.negotiate_wfs_version", side_effect=failure):
+        version = _negotiate_version(url, "auto")
+
+    assert version == "1.1.0"
+    assert caplog.messages == [
+        "Version negotiation failed, using 1.1.0: "
+        "Could not connect to WFS service: https://h.example/geoserver/wfs"
+    ]

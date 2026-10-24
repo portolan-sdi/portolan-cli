@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from portolan_cli.extract.arcgis.orchestrator import ExtractionOptions
-from portolan_cli.extract.arcgis.report import (
+from portolan_cli.extract.common.report import (
     ExtractionReport,
     LayerResult,
     MetadataExtracted,
@@ -227,7 +227,7 @@ class TestAutoInitCatalog:
                 description=description,
                 attribution=None,
                 keywords=None,
-                contact_name=None,
+                producer=None,
                 processing_notes=None,
                 known_issues=None,
                 license_info_raw=None,
@@ -379,7 +379,7 @@ class TestMetadataPropagation:
             description="This dataset contains housing information for the municipality including parcels, buildings, and addresses.",
             attribution="Municipal GIS Department",
             keywords=["housing", "parcels", "buildings"],
-            contact_name="John Doe",
+            producer="John Doe",
             processing_notes=None,
             known_issues=None,
             license_info_raw=None,

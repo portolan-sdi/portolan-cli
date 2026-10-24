@@ -141,15 +141,17 @@ def test_standalone_tabular_collection_is_enriched(catalog: Path) -> None:
 
 def test_metadata_fix_enriches_a_created_item(catalog: Path, fixtures_dir: Path) -> None:
     """`metadata fix` creates a missing item, and the item hook runs on it."""
-    from portolan_cli.metadata.update import create_missing_item
+    from portolan_cli.metadata.fix import fix_metadata
+    from portolan_cli.metadata.scan import scan_catalog_metadata
 
     _add_raster(catalog, fixtures_dir, "scene-a")
     loose = catalog / "imagery" / "scene-b" / "scene-b.tif"
     loose.parent.mkdir()
     shutil.copy(fixtures_dir / "raster" / "valid" / "singleband.tif", loose)
 
-    created = create_missing_item(loose, catalog / "imagery")
+    fix_metadata(catalog, scan_catalog_metadata(catalog))
 
+    created = loose.parent / "scene-b.json"
     assert _read(created)["properties"]["test:item_id"] == "scene-b"
 
 

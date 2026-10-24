@@ -908,12 +908,13 @@ class TestTableExtensionAggregation:
 
             # Should have raised a warning about mixed geometry types
             assert len(w) == 1
-            assert "Mixed geometry types" in str(w[0].message)
-            assert "Point" in str(w[0].message)
-            assert "Polygon" in str(w[0].message)
+            assert str(w[0].message) == (
+                "Mixed geometry types detected: [['Point'], ['Polygon']]. "
+                "The collection lists every type."
+            )
 
-        # First item's type is used
-        assert aggregated.geometry_type == "Point"
+        # Every type is kept, in first-seen order (issue #1010)
+        assert aggregated.geometry_type == ["Point", "Polygon"]
 
     @pytest.mark.unit
     def test_aggregate_table_metadata_raises_on_no_valid_bboxes(self) -> None:
@@ -1235,118 +1236,3 @@ class TestExtensionRegistryVersions:
             WEB_MAP_LINKS_EXTENSION
             == "https://stac-extensions.github.io/web-map-links/v1.3.0/schema.json"
         )
-
-
-class TestCollectionExtensionAggregation:
-    """Tests for collection-level extension declaration (Issue #336).
-
-    Collections should declare extensions used by their items, detected via summaries.
-    """
-
-    @pytest.mark.unit
-    def test_add_collection_extensions_from_summaries_adds_projection(self) -> None:
-        """add_collection_extensions_from_summaries declares projection when proj: in summaries."""
-        from portolan_cli.stac import add_collection_extensions_from_summaries, create_collection
-
-        collection = create_collection(
-            collection_id="test-proj-summary",
-            description="Test projection in summaries",
-        )
-        summaries: dict[str, Any] = {
-            "proj:code": ["EPSG:4326", "EPSG:32618"],
-            "proj:shape": [[100, 100], [200, 200]],
-        }
-
-        add_collection_extensions_from_summaries(collection, summaries)
-
-        from portolan_cli.stac import EXTENSION_URLS
-
-        assert EXTENSION_URLS["projection"] in (collection.stac_extensions or [])
-
-    @pytest.mark.unit
-    def test_add_collection_extensions_from_summaries_adds_raster(self) -> None:
-        """add_collection_extensions_from_summaries declares raster when raster: in summaries."""
-        from portolan_cli.stac import add_collection_extensions_from_summaries, create_collection
-
-        collection = create_collection(
-            collection_id="test-raster-summary",
-            description="Test raster in summaries",
-        )
-        summaries: dict[str, Any] = {
-            "raster:spatial_resolution": [10.0, 30.0],
-        }
-
-        add_collection_extensions_from_summaries(collection, summaries)
-
-        from portolan_cli.stac import EXTENSION_URLS
-
-        assert EXTENSION_URLS["raster"] in (collection.stac_extensions or [])
-
-    @pytest.mark.unit
-    def test_add_collection_extensions_from_summaries_adds_vector(self) -> None:
-        """add_collection_extensions_from_summaries declares vector when vector: in summaries."""
-        from portolan_cli.stac import add_collection_extensions_from_summaries, create_collection
-
-        collection = create_collection(
-            collection_id="test-vector-summary",
-            description="Test vector in summaries",
-        )
-        summaries: dict[str, Any] = {
-            "vector:geometry_types": ["Point", "Polygon"],
-        }
-
-        add_collection_extensions_from_summaries(collection, summaries)
-
-        from portolan_cli.stac import EXTENSION_URLS
-
-        assert EXTENSION_URLS["vector"] in (collection.stac_extensions or [])
-
-    @pytest.mark.unit
-    def test_add_collection_extensions_preserves_existing(self) -> None:
-        """add_collection_extensions_from_summaries doesn't remove existing extensions."""
-        from portolan_cli.stac import (
-            EXTENSION_URLS,
-            add_collection_extensions_from_summaries,
-            create_collection,
-        )
-
-        collection = create_collection(
-            collection_id="test-preserve",
-            description="Test preservation",
-        )
-        # Pre-populate with table extension
-        collection.stac_extensions = [EXTENSION_URLS["table"]]
-
-        summaries: dict[str, Any] = {
-            "proj:code": ["EPSG:4326"],
-        }
-
-        add_collection_extensions_from_summaries(collection, summaries)
-
-        assert EXTENSION_URLS["table"] in collection.stac_extensions
-        assert EXTENSION_URLS["projection"] in collection.stac_extensions
-
-    @pytest.mark.unit
-    def test_add_collection_extensions_idempotent(self) -> None:
-        """add_collection_extensions_from_summaries doesn't duplicate extensions."""
-        from portolan_cli.stac import (
-            EXTENSION_URLS,
-            add_collection_extensions_from_summaries,
-            create_collection,
-        )
-
-        collection = create_collection(
-            collection_id="test-idempotent",
-            description="Test idempotence",
-        )
-        summaries: dict[str, Any] = {
-            "proj:code": ["EPSG:4326"],
-        }
-
-        add_collection_extensions_from_summaries(collection, summaries)
-        add_collection_extensions_from_summaries(collection, summaries)
-
-        proj_count = sum(
-            1 for ext in (collection.stac_extensions or []) if ext == EXTENSION_URLS["projection"]
-        )
-        assert proj_count == 1

@@ -6,10 +6,15 @@ Issue #250: portolan add creates incorrect asset paths for collection-level asse
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from portolan_cli.add import add
+from portolan_cli.stac import MergeStrategy
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture
@@ -37,6 +42,31 @@ def initialized_catalog(tmp_path):
 
 
 @pytest.mark.unit
+def _run_deferred(
+    catalog_root: Path,
+    deferred_non_geo: list[Any],
+    source_to_item_dir: dict[Any, Any],
+    source_to_collection_dir: dict[Any, Any],
+) -> tuple[list[Any], list[Any], list[Any]]:
+    """Run phase 3 of add on the deferred files, and return added, skipped, failures."""
+    from portolan_cli.add import _process_deferred_non_geo_files
+
+    added: list[Any] = []
+    skipped: list[Any] = []
+    failures: list[Any] = []
+    _process_deferred_non_geo_files(
+        merge_strategy=MergeStrategy.SMART,
+        deferred_non_geo=deferred_non_geo,
+        source_to_item_dir=source_to_item_dir,
+        source_to_collection_dir=source_to_collection_dir,
+        catalog_root=catalog_root,
+        added=added,
+        skipped=skipped,
+        failures=failures,
+    )
+    return added, skipped, failures
+
+
 class TestCollectionLevelAssets:
     """Test collection-level asset handling."""
 
@@ -289,25 +319,12 @@ class TestCollectionLevelNonGeoCompanions:
 
         TDD: Verify the function signature includes the new parameter.
         """
-        from portolan_cli.add import _process_deferred_non_geo_files
-
         # Set up minimal arguments
         deferred_non_geo: list = []
         source_to_item_dir: dict = {}
         source_to_collection_dir: dict = {}  # NEW parameter
-        added: list = []
-        skipped: list = []
-        failures: list = []
-
-        # Should not raise TypeError for unexpected keyword argument
-        _process_deferred_non_geo_files(
-            deferred_non_geo=deferred_non_geo,
-            source_to_item_dir=source_to_item_dir,
-            source_to_collection_dir=source_to_collection_dir,
-            catalog_root=initialized_catalog,
-            added=added,
-            skipped=skipped,
-            failures=failures,
+        added, skipped, failures = _run_deferred(
+            initialized_catalog, deferred_non_geo, source_to_item_dir, source_to_collection_dir
         )
 
     def test_non_geo_with_collection_level_geo_is_tracked(self, initialized_catalog, fixtures_dir):
@@ -317,8 +334,6 @@ class TestCollectionLevelNonGeoCompanions:
         companion parquet should also be registered as a collection-level asset
         in collection.json.
         """
-        from portolan_cli.add import _process_deferred_non_geo_files
-
         # Set up collection with collection.json
         collection_dir = initialized_catalog / "my-collection"
         collection_dir.mkdir()
@@ -367,18 +382,8 @@ class TestCollectionLevelNonGeoCompanions:
         source_to_item_dir: dict = {}
         source_to_collection_dir = {collection_dir: (collection_dir, "my-collection")}
         deferred_non_geo = [(non_geo_file, collection_dir, "my-collection")]
-        added: list = []
-        skipped: list = []
-        failures: list = []
-
-        _process_deferred_non_geo_files(
-            deferred_non_geo=deferred_non_geo,
-            source_to_item_dir=source_to_item_dir,
-            source_to_collection_dir=source_to_collection_dir,
-            catalog_root=initialized_catalog,
-            added=added,
-            skipped=skipped,
-            failures=failures,
+        added, skipped, failures = _run_deferred(
+            initialized_catalog, deferred_non_geo, source_to_item_dir, source_to_collection_dir
         )
 
         # Verify: non-geo file was tracked (not failed)
@@ -407,8 +412,6 @@ class TestCollectionLevelNonGeoCompanions:
 
     def test_non_geo_without_any_companion_warns(self, initialized_catalog):
         """Non-geo file without geo companion logs warning (existing behavior)."""
-        from portolan_cli.add import _process_deferred_non_geo_files
-
         # Source dir with no geo companion
         orphan_dir = initialized_catalog / "orphan"
         orphan_dir.mkdir()
@@ -419,18 +422,8 @@ class TestCollectionLevelNonGeoCompanions:
         source_to_item_dir: dict = {}
         source_to_collection_dir: dict = {}
         deferred_non_geo = [(non_geo_file, orphan_dir, "orphan")]
-        added: list = []
-        skipped: list = []
-        failures: list = []
-
-        _process_deferred_non_geo_files(
-            deferred_non_geo=deferred_non_geo,
-            source_to_item_dir=source_to_item_dir,
-            source_to_collection_dir=source_to_collection_dir,
-            catalog_root=initialized_catalog,
-            added=added,
-            skipped=skipped,
-            failures=failures,
+        added, skipped, failures = _run_deferred(
+            initialized_catalog, deferred_non_geo, source_to_item_dir, source_to_collection_dir
         )
 
         # Issue #432: Now fails with helpful hint when tabular.enabled=false (default)

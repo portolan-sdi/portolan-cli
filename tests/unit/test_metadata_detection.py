@@ -127,6 +127,24 @@ class TestGetStoredMetadata:
         assert result.source_mtime == 1705312200.0
 
     @pytest.mark.unit
+    @pytest.mark.parametrize(("href", "found"), [("rgb.tif", True), ("other.tif", False)])
+    def test_an_item_named_by_item_id_registers_its_file(
+        self, tmp_path: Path, href: str, found: bool
+    ) -> None:
+        """Issue #840: ``add --item-id scene`` writes ``scene.json`` beside ``rgb.tif``."""
+        import json
+
+        from portolan_cli.metadata.detection import get_stored_metadata
+
+        (tmp_path / "rgb.tif").write_bytes(b"tif")
+        item = {"type": "Feature", "bbox": [0, 0, 1, 1], "assets": {"data": {"href": href}}}
+        (tmp_path / "scene.json").write_text(json.dumps(item))
+
+        result = get_stored_metadata(tmp_path / "rgb.tif", tmp_path)
+
+        assert (result is not None and result.bbox == [0, 0, 1, 1]) is found
+
+    @pytest.mark.unit
     def test_returns_none_when_item_missing(self, tmp_path: Path) -> None:
         """get_stored_metadata returns None when no STAC item exists."""
         from portolan_cli.metadata.detection import get_stored_metadata

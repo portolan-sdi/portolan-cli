@@ -99,7 +99,6 @@ def make_wfs_discovery(
         service_abstract="A test WFS service",
         provider="Test Provider",
         keywords=["test", "wfs"],
-        contact_name="Test Contact",
         access_constraints=None,
         fees=None,
     )

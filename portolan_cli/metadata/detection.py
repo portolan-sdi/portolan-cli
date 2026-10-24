@@ -20,8 +20,11 @@ from typing import TYPE_CHECKING, Any
 from portolan_cli.metadata.cog import extract_cog_metadata
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
 from portolan_cli.trace import count
+from portolan_cli.versions import versions_asset_key
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.models import (
     FileMetadataState,
@@ -51,21 +54,6 @@ class StoredMetadata:
     sha256: str | None
     feature_count: int | None
     schema_fingerprint: str | None
-
-
-def versions_asset_key(file_path: Path, collection_dir: Path) -> str:
-    """The versions.json key ``add`` writes for an asset under a collection.
-
-    ``_batch_update_versions`` (finalization.py) keys a collection-level asset by
-    its bare file name and an item-level asset by ``{item_id}/{filename}``. Both
-    are the asset's path relative to the collection directory, so one expression
-    produces either. A path outside the collection has no key and falls back to
-    the file name.
-    """
-    try:
-        return PurePath(file_path.resolve().relative_to(collection_dir.resolve())).as_posix()
-    except ValueError:
-        return file_path.name
 
 
 def versions_asset_lookup_keys(file_path: Path, collection_dir: Path) -> tuple[str, ...]:
@@ -135,13 +123,44 @@ def stored_baseline_mtime(entry: dict[str, Any]) -> float | None:
     return baseline if isinstance(baseline, (int, float)) else None
 
 
+def _item_registering(file_path: Path) -> dict[str, Any] | None:
+    """The STAC item beside ``file_path`` that registers it, or None.
+
+    ``add`` names the item ``<stem>.json``, but ``add --item-id`` names it
+    after the id. Then the item is the one whose asset href resolves to the
+    file. Asking only for ``<stem>.json`` reported such a file as MISSING, and
+    ``check --fix`` wrote a second item for it (issue #840).
+    """
+    named = file_path.parent / f"{file_path.stem}.json"
+    candidates = [named] if named.exists() else sorted(file_path.parent.glob("*.json"))
+    target = file_path.resolve()
+    for path in candidates:
+        try:
+            item = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            continue
+        if not isinstance(item, dict) or item.get("type") != "Feature":
+            continue
+        if path == named:
+            return item
+        assets = item.get("assets")
+        hrefs = (
+            [a.get("href") for a in assets.values() if isinstance(a, dict)]
+            if isinstance(assets, dict)
+            else []
+        )
+        if any(isinstance(h, str) and (path.parent / h).resolve() == target for h in hrefs):
+            return item
+    return None
+
+
 def get_stored_metadata(
     file_path: Path,
     collection_dir: Path,
 ) -> StoredMetadata | None:
     """Read existing STAC item and versions.json metadata.
 
-    Looks for a STAC item JSON file matching the asset filename,
+    Looks for the STAC item beside the asset that registers it,
     and extracts tracking data from versions.json if present.
 
     Args:
@@ -157,19 +176,8 @@ def get_stored_metadata(
     # legacy flat sibling-JSON layout is intentionally not supported here
     # — the scanner reports such files as ORPHANED and directs the user
     # to migrate via `portolan add`.
-    item_name = file_path.stem + ".json"
-    item_path = file_path.parent / item_name
-    if not item_path.exists():
-        return None
-
-    try:
-        with Path(item_path).open(encoding="utf-8") as f:
-            item_data = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return None
-
-    # Validate it's a STAC item
-    if item_data.get("type") != "Feature":
+    item_data = _item_registering(file_path)
+    if item_data is None:
         return None
 
     # Extract bbox from item (None if not explicitly provided)
@@ -252,7 +260,7 @@ def get_current_metadata(file_path: Path) -> FileMetadataState:
             file_path=file_path,
             current_mtime=current_mtime,
             stored_mtime=None,
-            current_bbox=list(gp_metadata.bbox) if gp_metadata.bbox else None,
+            current_bbox=_comparable_bbox(gp_metadata.bbox, gp_metadata.crs, unset_is_wgs84=True),
             stored_bbox=None,
             current_feature_count=gp_metadata.feature_count,
             stored_feature_count=None,
@@ -272,7 +280,9 @@ def get_current_metadata(file_path: Path) -> FileMetadataState:
             file_path=file_path,
             current_mtime=current_mtime,
             stored_mtime=None,
-            current_bbox=list(cog_metadata.bbox) if cog_metadata.bbox else None,
+            current_bbox=_comparable_bbox(
+                cog_metadata.bbox, cog_metadata.crs, unset_is_wgs84=False
+            ),
             stored_bbox=None,
             current_feature_count=pixel_count,
             stored_feature_count=None,
@@ -284,6 +294,42 @@ def get_current_metadata(file_path: Path) -> FileMetadataState:
         )
 
     raise ValueError(f"Unsupported format: {suffix}")
+
+
+def _comparable_bbox(
+    bbox: Sequence[float] | None,
+    crs: object,
+    *,
+    unset_is_wgs84: bool,
+) -> list[float] | None:
+    """The file's bbox when it is in WGS84, else None.
+
+    The item stores its bbox in WGS84. A file bbox in another CRS, such as the
+    metres of a UTM raster, never equals it, so every touched file read as
+    changed (issue #839). Freshness compares only bboxes in one CRS. For any
+    other file the pixel or feature count and the schema fingerprint carry the
+    signal.
+
+    Args:
+        bbox: The bbox the file declares, in its own CRS.
+        crs: The file's CRS: an EPSG or WKT string, a PROJJSON dict, or None.
+        unset_is_wgs84: Read a missing CRS as WGS84. GeoParquet defines an
+            absent ``crs`` as OGC:CRS84. A GeoTIFF without a CRS has no frame.
+    """
+    if not bbox:
+        return None
+    if crs is None:
+        return list(bbox) if unset_is_wgs84 else None
+    from pyproj import CRS
+    from pyproj.exceptions import CRSError
+
+    from portolan_cli.crs import _is_wgs84
+
+    try:
+        parsed = CRS.from_user_input(crs)
+    except (CRSError, TypeError):
+        return None
+    return list(bbox) if _is_wgs84(parsed) else None
 
 
 def compute_schema_fingerprint(
@@ -385,12 +431,12 @@ def detect_changes(state: FileMetadataState) -> list[str]:
     if state.mtime_changed:
         changes.append("mtime")
 
-    # Check bbox with tolerance-aware comparison
+    # Check bbox with tolerance-aware comparison. A file bbox in another CRS
+    # than the item's WGS84 one is None, and gives no bbox signal (#839).
     from portolan_cli.metadata.models import BBOX_TOLERANCE, _bboxes_equal
 
-    if (
+    if state.current_bbox is not None and (
         state.stored_bbox is None
-        and state.current_bbox is not None
         or not _bboxes_equal(state.stored_bbox, state.current_bbox, BBOX_TOLERANCE)
     ):
         changes.append("bbox")

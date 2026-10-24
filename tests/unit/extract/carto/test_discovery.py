@@ -137,3 +137,35 @@ def test_tables_from_names_lists_without_network() -> None:
     result = tables_from_names("https://phl.carto.com", ["parcels", "zoning"])
     assert result.service_url == "https://phl.carto.com/api/v2/sql"
     assert [(t.name, t.id) for t in result.tables] == [("parcels", 0), ("zoning", 1)]
+
+
+def test_failed_request_keeps_no_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#981: requests quotes the request URL with its api_key. The error drops the key."""
+    import requests  # type: ignore[import-untyped]
+
+    from portolan_cli.extract.carto.discovery import carto_sql_request
+
+    def fake_get(url: str, params: dict[str, str] | None = None, timeout: float = 60.0) -> Any:
+        raise requests.HTTPError(
+            f"401 Client Error: Unauthorized for url: {url}?q=x&api_key=SECRET"
+        )
+
+    monkeypatch.setattr("portolan_cli.extract.carto.discovery.requests.get", fake_get)
+
+    with pytest.raises(CartoDiscoveryError) as caught:
+        carto_sql_request("https://phl.carto.com/api/v2/sql", "x", api_key="SECRET")
+
+    assert str(caught.value) == (
+        "Carto SQL request failed: 401 Client Error: Unauthorized for url: "
+        "https://phl.carto.com/api/v2/sql?q=x"
+    )
+
+
+def test_url_without_scheme_error_keeps_no_api_key() -> None:
+    """#981: the error quotes the URL that the user typed, without its key."""
+    with pytest.raises(CartoDiscoveryError) as caught:
+        normalize_sql_api_url("phl.carto.com/api/v2/sql?api_key=K")
+
+    assert str(caught.value) == (
+        "Invalid Carto URL (missing scheme): phl.carto.com/api/v2/sql?api_key=***"
+    )

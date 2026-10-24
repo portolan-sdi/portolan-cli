@@ -240,3 +240,32 @@ def test_publish_geohash_values_queryable(iceberg_backend, iceberg_catalog, tmp_
     assert all(isinstance(v, str) and len(v) > 0 for v in geohash_values)
     # Different locations should (likely) have different geohashes
     assert len(set(geohash_values)) > 1
+
+
+@pytest.mark.integration
+@pytest.mark.realdata
+def test_publish_keeps_rows_without_geometry(iceberg_backend, iceberg_catalog):
+    """Issue #961: 25 of the 501 affordable_housing records have no location."""
+    from pathlib import Path
+
+    source = (
+        Path(__file__).parents[2]
+        / "fixtures"
+        / "realdata"
+        / "philadelphia-housing"
+        / "affordable_housing.parquet"
+    )
+
+    iceberg_backend.publish(
+        collection="housing",
+        assets={"affordable_housing.parquet": str(source)},
+        schema={"columns": [], "types": {}, "hash": "h1"},
+        breaking=False,
+        message="housing",
+    )
+
+    result = iceberg_catalog.load_table("portolake.housing").scan().to_arrow()
+    geohash = next(c for c in result.column_names if c.startswith("geohash_"))
+    assert result.num_rows == 501
+    assert result.column(geohash).null_count == 25
+    assert result.column("bbox_xmin").null_count == 25

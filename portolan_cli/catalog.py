@@ -10,21 +10,32 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import re
 import sys
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from portolan_cli.errors import CatalogAlreadyExistsError
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.input_hardening import validate_catalog_id
 from portolan_cli.json_io import write_json_atomic, write_text_atomic
 from portolan_cli.models.catalog import CatalogModel
-from portolan_cli.stac_links import iter_links, iter_stac_objects, visible_stac_files
+from portolan_cli.stac_links import (
+    in_link_order,
+    iter_links,
+    iter_stac_objects,
+    visible_stac_files,
+)
 from portolan_cli.trace import count
 from portolan_cli.utils import href_root, relative_href
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from portolan_cli.versions import Version
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -500,10 +511,15 @@ def _check_init_preconditions(
         validate_logo_source(logo)
 
     if backend != "file":
+        import tempfile
+
         from portolan_cli.backends import get_backend
 
+        # Build the backend in a scratch directory, so the check writes nothing
+        # in the new catalog or in the current directory (issue #1056).
         try:
-            get_backend(backend)
+            with tempfile.TemporaryDirectory() as probe:
+                get_backend(backend, catalog_root=Path(probe))
         except ValueError as e:
             raise CatalogInitError(str(e)) from e
 
@@ -907,13 +923,15 @@ def update_catalog_links_for_nested(catalog_root: Path, collection_id: str) -> N
 
     # For single-level collections, just ensure root links to collection
     if len(parts) == 1:
-        _ensure_root_links_to_child(catalog_root, f"./{parts[0]}/collection.json")
+        _ensure_catalog_links_to_child(
+            catalog_root / "catalog.json", f"./{parts[0]}/collection.json"
+        )
         return
 
     # For nested collections:
     # 1. Root links to first-level catalog
     first_level = parts[0]
-    _ensure_root_links_to_child(catalog_root, f"./{first_level}/catalog.json")
+    _ensure_catalog_links_to_child(catalog_root / "catalog.json", f"./{first_level}/catalog.json")
 
     # 2. Each intermediate catalog links to next level
     for i in range(len(parts) - 1):
@@ -937,28 +955,8 @@ def update_catalog_links_for_nested(catalog_root: Path, collection_id: str) -> N
         _ensure_catalog_links_to_child(catalog_file, child_href)
 
 
-def _ensure_root_links_to_child(catalog_root: Path, child_href: str) -> None:
-    """Ensure root catalog has a child link."""
-    catalog_file = catalog_root / "catalog.json"
-    if not catalog_file.exists():
-        return
-
-    content = json.loads(catalog_file.read_text(encoding="utf-8"))
-    links = content.get("links", [])
-
-    # Check if link already exists
-    existing_hrefs = {link.get("href") for link in links if link.get("rel") == "child"}
-    if child_href in existing_hrefs:
-        return
-
-    # Add the child link
-    links.append({"rel": "child", "href": child_href, "type": "application/json"})
-    content["links"] = links
-    write_json_atomic(catalog_file, content)
-
-
 def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
-    """Ensure a catalog file has a child link."""
+    """Ensure a catalog file has a child link, in the order the links fixer writes."""
     if not catalog_file.exists():
         return
 
@@ -972,7 +970,7 @@ def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
 
     # Add the child link
     links.append({"rel": "child", "href": child_href, "type": "application/json"})
-    content["links"] = links
+    content["links"] = in_link_order(links)
     write_json_atomic(catalog_file, content)
 
 
@@ -1280,3 +1278,106 @@ def update_catalog_versions(
 
 class CatalogVersionsCorruptedError(Exception):
     """Raised when catalog-level versions.json is corrupted."""
+
+
+def mirror_into_catalog_index(
+    catalog_root: Path,
+    collection_id: str,
+    published: Version,
+) -> None:
+    """Mirror a published collection version into the catalog-level versions.json.
+
+    Kept separate from :func:`_update_versions` so the error branch does not push
+    that function past the rank-C complexity ceiling CI enforces.
+    ``update_catalog_versions`` no-ops when the catalog has no catalog-level
+    versions.json, which is the case for non-file backends.
+
+    A catalog-level failure is logged and swallowed, never raised. The
+    collection-level version is already on disk at this point, so failing the
+    add here would report an error for work that succeeded. This mirrors
+    ``finalization._finalize_with_file_backend``.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection_id: Collection identifier, "climate/hittekaart" for nested.
+        published: The Version just written by ``publish_version``.
+    """
+    try:
+        update_catalog_versions(
+            catalog_root=catalog_root,
+            collection_id=collection_id,
+            current_version=published.version,
+            asset_count=len(published.assets),
+            total_size_bytes=sum(a.size_bytes for a in published.assets.values()),
+        )
+    except Exception:
+        logger.warning(
+            "Failed to update catalog-level versions.json for collection '%s'. "
+            "Collection version was published but catalog-level view may be stale.",
+            collection_id,
+            exc_info=True,
+        )
+
+
+def sync_catalog_index(catalog_root: Path, collection_ids: set[str]) -> None:
+    """Copy the current version of each collection into the catalog-level versions.json.
+
+    ``finalize_items`` writes the index before the side steps of ``add`` run.
+    The item mirror, the PMTiles, and the thumbnails then add assets to the
+    collection's version, so the index lags one run behind without this call.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection_ids: Collections the add touched. One without a
+            versions.json, or with no current version, is left alone. A
+            versions.json that does not parse is logged and left alone, as in
+            :func:`mirror_into_catalog_index`. A collection whose index entry
+            already matches is not written, so a no-op re-add leaves the
+            index bytes and its ``updated`` time alone.
+    """
+    from portolan_cli.versions import read_versions
+
+    index_path = catalog_root / "versions.json"
+    try:
+        indexed = json.loads(index_path.read_text(encoding="utf-8")).get("collections") or {}
+    except (OSError, ValueError, AttributeError):
+        indexed = {}
+    for collection_id in sorted(collection_ids):
+        versions_path = catalog_root / Path(*collection_id.split("/")) / "versions.json"
+        if not versions_path.exists():
+            continue
+        try:
+            versions = read_versions(versions_path)
+        except ValueError as err:
+            logger.warning(
+                "Catalog-level versions.json not updated for '%s': %s", collection_id, err
+            )
+            continue
+        current = next(
+            (v for v in versions.versions if v.version == versions.current_version), None
+        )
+        if current is None:
+            continue
+        entry = indexed.get(collection_id) if isinstance(indexed, dict) else None
+        summary = (
+            current.version,
+            len(current.assets),
+            sum(a.size_bytes for a in current.assets.values()),
+        )
+        if isinstance(entry, dict) and summary == (
+            entry.get("current_version"),
+            entry.get("asset_count"),
+            entry.get("total_size_bytes"),
+        ):
+            continue
+        mirror_into_catalog_index(catalog_root, collection_id, current)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Directory handling
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Note: GEOSPATIAL_EXTENSIONS imported from portolan_cli.constants
+# Note: is_filegdb is imported from portolan_cli.scan.detect (canonical implementation).
+# scan_detect.is_filegdb accepts either .gdbtable files OR a 'gdb' marker file, which
+# matches the full FileGDB spec. Do not reimplement here.

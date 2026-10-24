@@ -21,13 +21,15 @@ from portolan_cli.extract.common import cli_helpers
     "--layers",
     type=str,
     default=None,
-    help="Include layers matching glob patterns (comma-separated). Example: 'buildings*,roads*'",
+    help="Include layers by name or glob (comma-separated). A pattern matches the full "
+    "workspace:layer name or the part after the ':'. Example: 'roads,ws:build*'",
 )
 @click.option(
     "--exclude-layers",
     type=str,
     default=None,
-    help="Exclude layers matching glob patterns (comma-separated). Example: 'test_*'",
+    help="Exclude layers by name or glob (comma-separated), matched as for --layers. "
+    "Example: 'test_*'",
 )
 @click.option(
     "--wfs-version",
@@ -64,7 +66,7 @@ from portolan_cli.extract.common import cli_helpers
     "--retries",
     type=click.IntRange(min=1),
     default=3,
-    help="Retry attempts per failed layer (default: 3).",
+    help="Attempts per layer for a transient failure (default: 3).",
 )
 @click.option(
     "--timeout",

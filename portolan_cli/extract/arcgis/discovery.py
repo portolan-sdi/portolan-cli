@@ -7,16 +7,17 @@ list of available layers that can then be filtered and extracted.
 The discovery client uses httpx for HTTP requests, while actual data
 extraction is delegated to geoparquet-io (gpio).
 
+Every request goes through one ``ArcGISClient``. It carries the token
+(issue #855) and the retry policy (issue #811), so discovery and extraction
+use the same options. A transient failure is retried with ``retry_with_backoff``. A
+permanent failure, such as HTTP 404 or ``499 Token Required``, fails at once.
+``extract/common/retry.py`` holds the one rule for both kinds.
+
 Typical usage:
-    # Discover layers from a FeatureServer
-    service_info = discover_layers("https://services.arcgis.com/.../FeatureServer")
+    client = ArcGISClient(timeout=60.0, token=token, retries=3)
+    service_info = discover_layers("https://services.arcgis.com/.../FeatureServer", client)
     for layer in service_info.layers:
         print(f"Layer {layer.id}: {layer.name}")
-
-    # Discover services from a services root
-    services = discover_services("https://services.arcgis.com/.../rest/services")
-    for service in services:
-        print(f"Service: {service.name} ({service.service_type})")
 """
 
 from __future__ import annotations
@@ -24,9 +25,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlparse
 
 import httpx
+
+from portolan_cli.extract.common.retry import PERMANENT_NOTE, is_transient_status
+from portolan_cli.extract.common.urls import merge_query, redact_credentials
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -36,6 +40,23 @@ logger = logging.getLogger(__name__)
 
 class ArcGISDiscoveryError(Exception):
     """Error during ArcGIS service/layer discovery."""
+
+
+class ArcGISTransientError(ArcGISDiscoveryError):
+    """A discovery failure that a retry can change, such as HTTP 503."""
+
+
+class _EmptyListingError(ArcGISTransientError):
+    """A service answer that lists no layers and no tables.
+
+    ArcGIS Online sometimes answers a healthy service with ``"layers": []``.
+    The live suite saw it for 21 of 40 requests in a row to one service. The
+    client asks again, and keeps the last answer when every answer is empty.
+    """
+
+    def __init__(self, url: str, data: dict[str, Any]) -> None:
+        super().__init__(f"{url} lists no layers and no tables")
+        self.data = data
 
 
 NO_QUERY_SKIP_REASON = "skipped: no Query capability (tiles-only)"
@@ -100,90 +121,105 @@ class ServiceDiscoveryResult:
     access_information: str | None = None
     skipped_layers: list[LayerInfo] = field(default_factory=list)
     skip_reason: str | None = None
+    tables: list[LayerInfo] = field(default_factory=list)
 
 
-def _append_query_param(url: str, key: str, value: str) -> str:
-    """Append a single query parameter to a URL."""
-    parsed = urlparse(url)
-    query_params = parse_qs(parsed.query)
-    query_params[key] = [value]
-    new_query = urlencode(query_params, doseq=True)
-    return urlunparse(parsed._replace(query=new_query))
+def ensure_json_format(url: str) -> str:
+    """Return ``url`` with ``f=json``, unless it already names an ``f`` format."""
+    names = {name.lower() for name, _ in parse_qsl(urlparse(url).query)}
+    return url if "f" in names else merge_query(url, {"f": "json"})
 
 
-def _ensure_json_format(url: str) -> str:
-    """Ensure URL has f=json parameter for ArcGIS REST API.
+@dataclass(frozen=True)
+class ArcGISClient:
+    """The one HTTP client for ArcGIS discovery.
 
-    Args:
-        url: Original URL
-
-    Returns:
-        URL with f=json parameter added if not present
+    Attributes:
+        timeout: Request timeout in seconds.
+        token: ArcGIS token, sent as ``token=<token>`` on every request.
+        retries: Attempts per request. Only a transient failure is retried.
+        retry_delay: Seconds before the first retry. Later retries double it.
+        transport: An httpx transport. Tests pass a mock transport here.
     """
-    parsed = urlparse(url)
-    query_params = parse_qs(parsed.query)
 
-    # Check if f parameter already exists
-    if "f" not in query_params:
-        query_params["f"] = ["json"]
+    timeout: float = 60.0
+    token: str | None = None
+    retries: int = 3
+    retry_delay: float = 1.0
+    transport: httpx.BaseTransport | None = None
 
-    # Rebuild query string
-    new_query = urlencode(query_params, doseq=True)
-    new_parsed = parsed._replace(query=new_query)
+    def get_json(self, url: str, *, listing: bool = False) -> dict[str, Any]:
+        """Fetch ``url`` as JSON, with ``f=json`` and the token, and retry transient failures.
 
-    return urlunparse(new_parsed)
+        Args:
+            url: The REST URL.
+            listing: The URL is a service. An answer with no layers and no
+                tables is asked again, and the last answer is returned.
 
+        Raises:
+            ArcGISDiscoveryError: On a permanent failure, or on a transient
+                failure that every attempt hit.
+        """
+        from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
 
-def _fetch_json(url: str, timeout: float = 60.0, token: str | None = None) -> dict[str, Any]:
-    """Fetch JSON from URL with standard error handling.
+        outcome = retry_with_backoff(
+            self._get_once,
+            RetryConfig(max_attempts=max(self.retries, 1), initial_delay=self.retry_delay),
+            url,
+            listing,
+            retry_on=(ArcGISTransientError,),
+            on_retry=lambda attempt, err: logger.debug(
+                "Retry %d for %s: %s", attempt, redact_credentials(url), err
+            ),
+        )
+        if isinstance(outcome.error, _EmptyListingError):
+            return outcome.error.data
+        if outcome.error is not None:
+            raise outcome.error
+        return cast("dict[str, Any]", outcome.value)
 
-    Appends f=json and, when provided, token=<token>. ArcGIS returns HTTP 200
-    with an embedded {"error": {...}} body for secured or invalid endpoints;
-    that case is raised as ArcGISDiscoveryError.
-
-    Args:
-        url: URL to fetch (will have f=json added if needed)
-        timeout: Request timeout in seconds
-        token: Optional ArcGIS token appended as token=<token> query param
-
-    Returns:
-        Parsed JSON response
-
-    Raises:
-        ArcGISDiscoveryError: On HTTP errors, parsing errors, or embedded ArcGIS errors
-    """
-    request_url = _ensure_json_format(url)
-    if token:
-        request_url = _append_query_param(request_url, "token", token)
-
-    try:
-        with httpx.Client(timeout=timeout) as client:
-            response = client.get(request_url)
-            if response.status_code >= 400:
-                msg = f"Failed to fetch from {url}: HTTP {response.status_code}"
-                raise ArcGISDiscoveryError(msg)
-            raw = response.json()
-            if not isinstance(raw, dict):
-                raise ArcGISDiscoveryError(
-                    f"Expected JSON object from {url}, got {type(raw).__name__}"
+    def _get_once(self, url: str, listing: bool = False) -> dict[str, Any]:
+        """Make one request. ArcGIS reports some errors in an HTTP 200 body."""
+        request_url = ensure_json_format(url)
+        if self.token:
+            request_url = merge_query(request_url, {"token": self.token})
+        shown = redact_credentials(url)  # A message names the service, not its credential.
+        try:
+            with httpx.Client(timeout=self.timeout, transport=self.transport) as client:
+                response = client.get(request_url)
+        except httpx.RequestError as e:
+            raise ArcGISTransientError(
+                redact_credentials(f"Failed to fetch from {shown}: {e}")
+            ) from e
+        if response.status_code >= 400:
+            if is_transient_status(response.status_code):
+                raise ArcGISTransientError(
+                    f"Failed to fetch from {shown}: HTTP {response.status_code}"
                 )
-            data = cast("dict[str, Any]", raw)
-    except ArcGISDiscoveryError:
-        raise
-    except httpx.RequestError as e:
-        msg = f"Failed to fetch from {url}: {e}"
-        raise ArcGISDiscoveryError(msg) from e
-    except ValueError as e:
-        msg = f"Invalid JSON response from {url}: {e}"
-        raise ArcGISDiscoveryError(msg) from e
-
-    error = data.get("error")
-    if isinstance(error, dict):
-        code = error.get("code", "unknown")
-        message = error.get("message", "ArcGIS error")
-        raise ArcGISDiscoveryError(f"ArcGIS error from {url}: {code} {message}")
-
-    return data
+            raise ArcGISDiscoveryError(
+                f"Failed to fetch from {shown}: HTTP {response.status_code}. {PERMANENT_NOTE}"
+            )
+        try:
+            raw = response.json()
+        except ValueError as e:
+            raise ArcGISDiscoveryError(f"Invalid JSON response from {shown}: {e}") from e
+        if not isinstance(raw, dict):
+            raise ArcGISDiscoveryError(
+                f"Expected JSON object from {shown}, got {type(raw).__name__}"
+            )
+        data = cast("dict[str, Any]", raw)
+        embedded = data.get("error")
+        if isinstance(embedded, dict):
+            code = embedded.get("code", "unknown")
+            message = embedded.get("message", "ArcGIS error")
+            if is_transient_status(code):
+                raise ArcGISTransientError(f"ArcGIS error from {shown}: {code} {message}")
+            raise ArcGISDiscoveryError(
+                f"ArcGIS error from {shown}: {code} {message}. {PERMANENT_NOTE}"
+            )
+        if listing and not (data.get("layers") or data.get("tables")):
+            raise _EmptyListingError(url, data)
+        return data
 
 
 def _supports_query(capabilities: Any) -> bool:
@@ -197,52 +233,29 @@ def _supports_query(capabilities: Any) -> bool:
     return "query" in {c.strip().lower() for c in capabilities.split(",")}
 
 
-def discover_layers(
-    url: str,
-    *,
-    include_tables: bool = False,
-    timeout: float = 60.0,
-) -> ServiceDiscoveryResult:
-    """Discover layers and metadata from an ArcGIS FeatureServer or MapServer.
-
-    Fetches the service info from the ArcGIS REST API and extracts the list
-    of available layers along with service-level metadata.
+def discover_layers(url: str, client: ArcGISClient | None = None) -> ServiceDiscoveryResult:
+    """Discover layers, tables, and metadata from an ArcGIS FeatureServer or MapServer.
 
     Args:
-        url: FeatureServer or MapServer URL
-        include_tables: If True, include tables in addition to layers
-        timeout: Request timeout in seconds
+        url: FeatureServer or MapServer URL.
+        client: The client with the token and the retry policy.
 
     Returns:
-        ServiceDiscoveryResult containing layers and metadata
+        The layers, the tables, and the service-level metadata. The caller
+        decides whether to extract the tables (issue #812).
 
     Raises:
         ArcGISDiscoveryError: If the request fails or response is invalid
     """
-    data = _fetch_json(url, timeout=timeout)
+    data = (client or ArcGISClient()).get_json(url, listing=True)
 
-    # Extract layers
+    def infos(key: str, default_type: str) -> list[LayerInfo]:
+        return [
+            LayerInfo(id=item["id"], name=item["name"], layer_type=item.get("type", default_type))
+            for item in data.get(key, [])
+        ]
 
-    layers: list[LayerInfo] = [
-        LayerInfo(
-            id=layer_data["id"],
-            name=layer_data["name"],
-            layer_type=layer_data.get("type", "Feature Layer"),
-        )
-        for layer_data in data.get("layers", [])
-    ]
-
-    # Include tables if requested
-    if include_tables:
-        layers.extend(
-            LayerInfo(
-                id=table_data["id"],
-                name=table_data["name"],
-                layer_type=table_data.get("type", "Table"),
-            )
-            for table_data in data.get("tables", [])
-        )
-
+    layers = infos("layers", "Feature Layer")
     # Tiles-only / cached map services list "Feature Layer" layers but reject /query
     skipped_layers: list[LayerInfo] = []
     skip_reason: str | None = None
@@ -250,11 +263,10 @@ def discover_layers(
         skip_reason = NO_QUERY_SKIP_REASON
         skipped_layers, layers = layers, []
 
-    # Extract service-level metadata
     document_info = data.get("documentInfo", {})
-
     return ServiceDiscoveryResult(
         layers=layers,
+        tables=infos("tables", "Table"),
         skipped_layers=skipped_layers,
         skip_reason=skip_reason,
         service_description=data.get("serviceDescription"),
@@ -271,10 +283,9 @@ def discover_layers(
 def discover_services(
     url: str,
     *,
+    client: ArcGISClient | None = ...,
     service_types: Sequence[str] | None = ...,
     return_folders: Literal[False] = ...,
-    timeout: float = ...,
-    token: str | None = ...,
 ) -> list[ServiceInfo]: ...
 
 
@@ -282,20 +293,18 @@ def discover_services(
 def discover_services(
     url: str,
     *,
+    client: ArcGISClient | None = ...,
     service_types: Sequence[str] | None = ...,
     return_folders: Literal[True],
-    timeout: float = ...,
-    token: str | None = ...,
 ) -> tuple[list[ServiceInfo], list[str]]: ...
 
 
 def discover_services(
     url: str,
     *,
+    client: ArcGISClient | None = None,
     service_types: Sequence[str] | None = None,
     return_folders: bool = False,
-    timeout: float = 60.0,
-    token: str | None = None,
 ) -> list[ServiceInfo] | tuple[list[ServiceInfo], list[str]]:
     """Discover services from an ArcGIS REST services root.
 
@@ -304,11 +313,10 @@ def discover_services(
 
     Args:
         url: Services root URL (e.g., ".../rest/services")
+        client: The client with the token and the retry policy.
         service_types: If provided, only return services of these types
             (e.g., ["FeatureServer", "MapServer"])
         return_folders: If True, also return list of folder names
-        timeout: Request timeout in seconds
-        token: Optional ArcGIS token for authenticated discovery
 
     Returns:
         List of ServiceInfo objects (or tuple with folders if return_folders=True)
@@ -316,7 +324,7 @@ def discover_services(
     Raises:
         ArcGISDiscoveryError: If the request fails or response is invalid
     """
-    data = _fetch_json(url, timeout=timeout, token=token)
+    data = (client or ArcGISClient()).get_json(url)
 
     services = _build_service_list(data, service_types)
 
@@ -358,9 +366,8 @@ def _build_service_list(
 def discover_services_recursive(
     url: str,
     *,
+    client: ArcGISClient | None = None,
     service_types: Sequence[str] | None = None,
-    token: str | None = None,
-    timeout: float = 60.0,
     max_depth: int = 2,
 ) -> tuple[list[ServiceInfo], FolderTraversal]:
     """Discover services from a services root, recursing into folders.
@@ -376,8 +383,9 @@ def discover_services_recursive(
     Returns:
         (services, traversal) where traversal records visited/skipped folders.
     """
+    client = client or ArcGISClient()
     root_base = url.split("?")[0].rstrip("/")
-    root_data = _fetch_json(root_base, timeout=timeout, token=token)
+    root_data = client.get_json(root_base)
 
     services = _build_service_list(root_data, service_types)
     visited: list[str] = []
@@ -391,7 +399,7 @@ def discover_services_recursive(
             continue
         folder_url = f"{root_base}/{folder}"
         try:
-            folder_data = _fetch_json(folder_url, timeout=timeout, token=token)
+            folder_data = client.get_json(folder_url)
         except ArcGISDiscoveryError as e:
             skipped.append((folder, str(e)))
             logger.warning("Skipping folder '%s': %s", folder, e)
@@ -407,8 +415,7 @@ def discover_services_recursive(
 def fetch_layer_details(
     service_url: str,
     layer_id: int,
-    *,
-    timeout: float = 60.0,
+    client: ArcGISClient | None = None,
 ) -> dict[str, Any]:
     """Fetch detailed information for a specific layer.
 
@@ -418,7 +425,7 @@ def fetch_layer_details(
     Args:
         service_url: FeatureServer or MapServer URL
         layer_id: Numeric layer ID
-        timeout: Request timeout in seconds
+        client: The client with the token and the retry policy.
 
     Returns:
         Raw layer info dictionary from ArcGIS API
@@ -427,4 +434,4 @@ def fetch_layer_details(
         ArcGISDiscoveryError: If the request fails or response is invalid
     """
     layer_url = f"{service_url.rstrip('/')}/{layer_id}"
-    return _fetch_json(layer_url, timeout=timeout)
+    return (client or ArcGISClient()).get_json(layer_url)

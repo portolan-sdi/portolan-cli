@@ -28,7 +28,6 @@ import logging
 from collections import Counter
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from portolan_cli.extract.common.report import MetadataExtracted
 from portolan_cli.extract.common.source import (
@@ -43,6 +42,7 @@ from portolan_cli.extract.common.source import (
     slugify,
 )
 from portolan_cli.extract.common.styles import extract_wms_legend, extract_wms_style
+from portolan_cli.extract.common.urls import merge_query, redact_credentials
 from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult, discover_layers
 from portolan_cli.licensing import license_url_from_text
 
@@ -205,6 +205,7 @@ class WFSLayerSource:
             catalog_title=title,
             catalog_description=description,
             root_metadata=(title, description),
+            filtered=True,
         )
 
     def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
@@ -290,7 +291,7 @@ class WFSLayerSource:
 
     @staticmethod
     def _layer_url(source: str, typename: str) -> str:
-        return _build_wfs_url(
+        return merge_query(
             source, {"service": "WFS", "request": "GetFeature", "typename": typename}
         )
 
@@ -355,25 +356,6 @@ def extract_wfs_catalog(
     )
 
 
-def _build_wfs_url(base_url: str, params: dict[str, str]) -> str:
-    """Build a WFS URL by merging params into base_url.
-
-    Properly handles existing query params and URL-encodes values.
-
-    Args:
-        base_url: Base WFS service URL (may already have query params).
-        params: Parameters to add/override (e.g., service, request, typename).
-
-    Returns:
-        Complete URL with merged and encoded parameters.
-    """
-    parsed = urlparse(base_url)
-    existing_params = dict(parse_qsl(parsed.query))
-    existing_params.update(params)
-    new_query = urlencode(existing_params)
-    return urlunparse(parsed._replace(query=new_query))
-
-
 def _build_metadata(url: str, discovery_result: WFSDiscoveryResult | None) -> MetadataExtracted:
     """Build MetadataExtracted from discovery result."""
     if not discovery_result:
@@ -382,7 +364,7 @@ def _build_metadata(url: str, discovery_result: WFSDiscoveryResult | None) -> Me
             description=None,
             attribution=None,
             keywords=None,
-            contact_name=None,
+            producer=None,
             processing_notes=None,
             known_issues=None,
             license_info_raw=None,
@@ -397,7 +379,8 @@ def _build_metadata(url: str, discovery_result: WFSDiscoveryResult | None) -> Me
         description=discovery_result.service_abstract,
         attribution=discovery_result.provider,
         keywords=discovery_result.keywords,
-        contact_name=discovery_result.contact_name,
+        # GetCapabilities names a point of contact, never an author.
+        producer=None,
         processing_notes=processing_notes,
         known_issues=None,
         license_info_raw=discovery_result.access_constraints,
@@ -450,7 +433,7 @@ def _negotiate_version(url: str, wfs_version: str) -> str:
         # Fallback if gpio doesn't have negotiate_wfs_version
         return "1.1.0"
     except Exception as e:
-        logger.warning("Version negotiation failed, using 1.1.0: %s", e)
+        logger.warning("Version negotiation failed, using 1.1.0: %s", redact_credentials(str(e)))
         return "1.1.0"
 
 

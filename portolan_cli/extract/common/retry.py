@@ -20,6 +20,14 @@ Typical usage:
         print(f"Extracted in {result.attempts} attempts")
     else:
         print(f"Failed after {result.attempts} attempts: {result.error}")
+
+Only a transient failure gets a retry: a transport error, a timeout, HTTP
+408, 429, or 5xx, or an ArcGIS JSON body with one of those codes.
+``permanent_status`` finds a failure that a retry cannot fix: any other HTTP
+status, or an ArcGIS JSON error with any other code, such as the
+invalid-token codes 498 and 499. The layer fetch of every source, the ArcGIS
+discovery client, and the ImageServer tile requests use it, so the rule has
+one home. Each of those failures ends at once with ``PERMANENT_NOTE``.
 """
 
 from __future__ import annotations
@@ -32,6 +40,59 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 T = TypeVar("T")
+
+#: The sentence that ends the message of a failure that a retry cannot fix.
+PERMANENT_NOTE = "A retry cannot fix this failure."
+
+# geoparquet-io raises this text, with no status, for the ArcGIS codes 498
+# and 499 in a JSON body (core/arcgis.py ``_handle_arcgis_response``).
+_GPIO_EXPIRED_AUTH = "Invalid or expired token"
+
+
+class PermanentError(Exception):
+    """A failure that a retry cannot fix. The message names the status."""
+
+
+def is_transient_status(code: object) -> bool:
+    """Return True for an HTTP status or ArcGIS JSON code that a retry can change."""
+    try:
+        status = int(str(code))
+    except ValueError:
+        return False
+    return status in (408, 429) or 500 <= status < 600
+
+
+def permanent_status(error: BaseException) -> str | None:
+    """Return the status of a failure that a retry cannot fix, or None.
+
+    The search follows the exception chain, because geoparquet-io wraps the
+    HTTP error. An error tells its status with a ``status_code`` attribute,
+    an HTTP ``response``, or an ``arcgis_code`` attribute. A transport error or a timeout carries no status, so it
+    gets the retries.
+
+    Args:
+        error: The failure.
+
+    Returns:
+        The status, such as ``HTTP 404``, or None for a transient failure.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        status = getattr(current, "status_code", None)
+        response = getattr(current, "response", None)
+        status = status if isinstance(status, int) else getattr(response, "status_code", None)
+        if isinstance(status, int):
+            return None if is_transient_status(status) else f"HTTP {status}"
+        # An ArcGIS JSON error that came with HTTP 200, such as 499 Token Required.
+        code = getattr(current, "arcgis_code", None)
+        if isinstance(code, int):
+            return None if is_transient_status(code) else f"ArcGIS error {code}"
+        if _GPIO_EXPIRED_AUTH in str(current):
+            return "ArcGIS error 498 or 499"
+        current = current.__cause__ or current.__context__
+    return None
 
 
 class RetryError(Exception):
@@ -95,6 +156,7 @@ def retry_with_backoff(
     config: RetryConfig,
     *args: Any,
     retry_on: tuple[type[Exception], ...] | None = None,
+    give_up_on: tuple[type[Exception], ...] = (),
     on_retry: Callable[[int, Exception], None] | None = None,
     **kwargs: Any,
 ) -> RetryResult[T]:
@@ -105,6 +167,8 @@ def retry_with_backoff(
         config: Retry configuration
         *args: Positional arguments to pass to operation
         retry_on: Exception types to retry on (default: all exceptions)
+        give_up_on: Exception types that end the retries at once. The
+            result then fails with that error, as a retry cannot change it.
         on_retry: Callback called before each retry with (attempt, error)
         **kwargs: Keyword arguments to pass to operation
 
@@ -125,6 +189,8 @@ def retry_with_backoff(
                 attempts=attempt,
                 error=None,
             )
+        except give_up_on as e:
+            return RetryResult(success=False, value=None, attempts=attempt, error=e)
         except retry_on as e:
             last_error = e
 

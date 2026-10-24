@@ -33,11 +33,9 @@ LEGACY_BLOCK = "stac_lint"
 
 
 def _load(root: Path) -> dict[str, Any]:
-    from portolan_cli.config import load_config
+    from portolan_cli.config import load_catalog_config
 
-    if not (root / ".portolan" / "config.yaml").exists():
-        return {}
-    return load_config(root)
+    return load_catalog_config(root).data
 
 
 def load_rules_config(root: Path) -> RulesConfig:

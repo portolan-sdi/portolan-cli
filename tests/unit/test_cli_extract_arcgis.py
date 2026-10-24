@@ -417,3 +417,71 @@ def test_extract_arcgis_passes_license_to_imageserver_options(
 
     assert captured[0].license == "other"
     assert captured[0].license_url == "https://example.com/terms.html"
+
+
+KEYED_IMAGESERVER_URL = f"{IMAGESERVER_URL}?token=SECRET"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("args", "answer", "line"),
+    [
+        ((), "n\n", f"Extract from: {IMAGESERVER_URL}"),
+        (("--auto",), None, f"→ Extracting ImageServer: {IMAGESERVER_URL}"),
+    ],
+)
+def test_imageserver_text_names_the_service_without_its_token(
+    monkeypatch: pytest.MonkeyPatch, args: tuple[str, ...], answer: str | None, line: str
+) -> None:
+    """#981: the prompt and the progress line name the service, not the token in its URL."""
+    monkeypatch.setattr(
+        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction_sync",
+        lambda url, output_dir, options: (0, None),
+    )
+
+    result = CliRunner().invoke(
+        cli, ["extract", "arcgis", KEYED_IMAGESERVER_URL, *args], input=answer
+    )
+
+    assert result.exit_code == 0, result.output
+    assert line in result.output.splitlines()
+    assert "SECRET" not in result.output
+
+
+@pytest.mark.unit
+def test_imageserver_json_names_the_service_without_its_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#981: the JSON envelope names the service, not the token in its URL."""
+    import json
+
+    monkeypatch.setattr(
+        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction_sync",
+        lambda url, output_dir, options: (0, None),
+    )
+
+    result = CliRunner().invoke(cli, ["extract", "arcgis", KEYED_IMAGESERVER_URL, "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["data"]["source_url"] == IMAGESERVER_URL
+
+
+@pytest.mark.unit
+def test_list_services_names_the_root_without_its_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#981: the listing header names the services root, not the token in its URL."""
+    from portolan_cli.extract.arcgis.orchestrator import ServicesRootDiscoveryResult
+
+    monkeypatch.setattr(
+        "portolan_cli.extract.arcgis.orchestrator.list_services",
+        lambda url, **kwargs: ServicesRootDiscoveryResult(
+            services=[], folders=[], base_url="https://x/server/rest/services"
+        ),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["extract", "arcgis", "https://x/server/rest/services?token=SECRET", "--list-services"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[0] == "Services at https://x/server/rest/services:"

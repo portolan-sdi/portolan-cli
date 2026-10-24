@@ -6,11 +6,15 @@ This includes style.json, thumbnails, collection.json updates, etc.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import obstore as obs
 import pytest
+
+from tests.memory_remote import memory_remote, stored_keys
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -48,8 +52,13 @@ def catalog_with_metadata(tmp_path: Path) -> Path:
     catalog_root.mkdir()
 
     # Root level files
+    # push uploads a metadata file only when a STAC document names it.
+    root_links = [
+        {"rel": "style", "href": "./root-style.json"},
+        {"rel": "icon", "href": "./_assets/brand.png"},
+    ]
     (catalog_root / "catalog.json").write_text(
-        json.dumps({"type": "Catalog", "id": "test-catalog"})
+        json.dumps({"type": "Catalog", "id": "test-catalog", "links": root_links})
     )
     (catalog_root / "README.md").write_text("# Test Catalog")
     # Root-level metadata file (should be synced)
@@ -71,8 +80,12 @@ def catalog_with_metadata(tmp_path: Path) -> Path:
     # Collection with metadata files
     collection_dir = catalog_root / "collection1"
     collection_dir.mkdir()
+    assets = {
+        "style": {"href": "./style.json", "roles": ["style"]},
+        "thumbnail": {"href": "./collection1.thumb.png", "roles": ["thumbnail"]},
+    }
     (collection_dir / "collection.json").write_text(
-        json.dumps({"type": "Collection", "id": "collection1"})
+        json.dumps({"type": "Collection", "id": "collection1", "assets": assets})
     )
     (collection_dir / "README.md").write_text("# Collection 1")
     (collection_dir / "style.json").write_text(json.dumps({"version": 8, "name": "test-style"}))
@@ -212,8 +225,13 @@ class TestDiscoverCatalogFiles:
         # Create versioned asset file
         (collection_dir / "data.parquet").write_bytes(b"parquet data")
 
-        # Create metadata file (should be discovered)
+        # Create metadata file (should be discovered), which collection.json names
         (collection_dir / "style.json").write_text('{"version": 8}')
+        assets = {
+            "data": {"href": "./data.parquet", "roles": ["data"]},
+            "style": {"href": "./style.json", "roles": ["style"]},
+        }
+        (collection_dir / "collection.json").write_text(json.dumps({"assets": assets}))
 
         # Create versions.json listing the parquet as versioned asset
         (collection_dir / "versions.json").write_text(
@@ -427,32 +445,26 @@ class TestPushMetadataSync:
         """_upload_metadata_files_async should upload style.json files."""
         import asyncio
 
-        from portolan_cli.sync.push import _upload_metadata_files_async
+        from obstore.store import MemoryStore
 
-        uploaded_keys: list[str] = []
+        from portolan_cli.sync.push import _discover_catalog_files, _upload_metadata_files_async
 
-        async def mock_put_async(store, key, content):
-            uploaded_keys.append(key)
-
-        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async):
-            mock_store = MagicMock()
-
-            count, errors = asyncio.run(
-                _upload_metadata_files_async(
-                    mock_store,
-                    catalog_with_metadata,
-                    "prefix",
-                    "collection1",
-                    include_catalog_root=False,
-                    concurrency=10,
-                )
+        store = MemoryStore()
+        count, errors = asyncio.run(
+            _upload_metadata_files_async(
+                store,
+                catalog_with_metadata,
+                "prefix",
+                _discover_catalog_files(catalog_with_metadata, "collection1"),
+                concurrency=10,
             )
+        )
 
-        # Should have uploaded style.json and thumbnail
-        assert count >= 2
-        assert any("style.json" in k for k in uploaded_keys)
+        uploaded_keys = sorted(stored_keys(store))
+        assert count == len(uploaded_keys)
+        assert any(k.endswith("style.json") for k in uploaded_keys)
         assert any(".thumb." in k for k in uploaded_keys)
-        assert len(errors) == 0
+        assert errors == []
 
     @pytest.mark.unit
     def test_push_dry_run_shows_metadata_files(self, catalog_with_metadata: Path, capsys) -> None:
@@ -494,11 +506,11 @@ class TestPushAllMetadataSync:
     """Tests for metadata sync in push_all_collections."""
 
     @pytest.mark.unit
-    def test_discover_root_metadata_files(self, catalog_with_metadata: Path) -> None:
-        """_discover_root_metadata_files should find root-level metadata."""
-        from portolan_cli.sync.push import _discover_root_metadata_files
+    def test_discovers_root_metadata_files(self, catalog_with_metadata: Path) -> None:
+        """_discover_catalog_files without a collection finds root-level metadata."""
+        from portolan_cli.sync.push import _discover_catalog_files
 
-        files = _discover_root_metadata_files(catalog_with_metadata)
+        files = _discover_catalog_files(catalog_with_metadata, include_catalog_root=True)
 
         # Should include root-style.json (added in fixture)
         names = [f.name for f in files]
@@ -523,13 +535,15 @@ class TestPushAllMetadataSync:
             "errors": {},
         }
 
-        result = _push_all_upload_root_files(
-            catalog_root=catalog_with_metadata,
-            destination="s3://test-bucket/catalog",
-            profile=None,
-            region=None,
-            dry_run=True,
-            stats=stats,
+        result = asyncio.run(
+            _push_all_upload_root_files(
+                catalog_root=catalog_with_metadata,
+                destination="s3://test-bucket/catalog",
+                profile=None,
+                region=None,
+                dry_run=True,
+                stats=stats,
+            )
         )
 
         assert result is True
@@ -547,14 +561,14 @@ class TestPushCatalogLogo:
 
     @pytest.mark.unit
     def test_root_discovery_includes_assets_directory(self, catalog_with_metadata: Path) -> None:
-        from portolan_cli.sync.push import _discover_root_metadata_files
+        from portolan_cli.sync.push import _discover_catalog_files
 
         assets = catalog_with_metadata / "_assets"
         assets.mkdir()
         logo = assets / "brand.png"
         logo.write_bytes(b"\x89PNG\r\n\x1a\n")
 
-        files = _discover_root_metadata_files(catalog_with_metadata)
+        files = _discover_catalog_files(catalog_with_metadata, include_catalog_root=True)
 
         assert logo in files
 
@@ -574,23 +588,25 @@ class TestPushCatalogLogo:
             "total_versions": 0,
             "errors": {},
         }
-        store = MagicMock()
-        with (
-            patch("portolan_cli.sync.push.setup_store", return_value=(store, "prefix")),
-            patch("portolan_cli.sync.push.obs.put") as put,
-        ):
-            result = _push_all_upload_root_files(
-                catalog_root=catalog_with_metadata,
-                destination="s3://test-bucket/catalog",
-                profile=None,
-                region=None,
-                dry_run=False,
-                stats=stats,
+        from obstore.store import MemoryStore
+
+        store = MemoryStore()
+        with patch("portolan_cli.sync.push.setup_store", return_value=(store, "prefix")):
+            result = asyncio.run(
+                _push_all_upload_root_files(
+                    catalog_root=catalog_with_metadata,
+                    destination="s3://test-bucket/catalog",
+                    profile=None,
+                    region=None,
+                    dry_run=False,
+                    stats=stats,
+                )
             )
 
         assert result is True
-        keys = [call.args[1] for call in put.call_args_list]
-        assert "prefix/_assets/brand.png" in keys
+        logo = obs.get(store, "prefix/_assets/brand.png")
+        assert bytes(logo.bytes()) == b"\x89PNG\r\n\x1a\n"
+        assert logo.attributes["Content-Type"] == "image/png"
 
 
 # =============================================================================
@@ -691,7 +707,7 @@ class TestUploadOrdering:
         """_upload_metadata_files_async should use POSIX paths for object keys."""
         import asyncio
 
-        from portolan_cli.sync.push import _upload_metadata_files_async
+        from portolan_cli.sync.push import _discover_catalog_files, _upload_metadata_files_async
 
         uploaded_keys: list[str] = []
 
@@ -706,8 +722,7 @@ class TestUploadOrdering:
                     mock_store,
                     catalog_with_metadata,
                     "prefix",
-                    "collection1",
-                    include_catalog_root=False,
+                    _discover_catalog_files(catalog_with_metadata, "collection1"),
                     concurrency=10,
                 )
             )
@@ -785,18 +800,12 @@ class TestPushNoVersionChangeMetadataSync:
         # Remote versions.json is identical to local, so the version diff is empty.
         local_versions = json.loads((collection_dir / "versions.json").read_text())
 
-        uploaded_keys: list[str] = []
-
-        async def mock_put_async(store: Any, key: str, content: Any, **kwargs: Any) -> None:
-            uploaded_keys.append(key)
-
         with (
-            patch("portolan_cli.sync.push.setup_store", return_value=(MagicMock(), "prefix")),
+            memory_remote("prefix") as store,
             patch(
                 "portolan_cli.sync.push._fetch_remote_versions_async",
                 new=AsyncMock(return_value=(local_versions, "etag-1")),
             ),
-            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
         ):
             result = asyncio.run(
                 push_async(
@@ -810,7 +819,7 @@ class TestPushNoVersionChangeMetadataSync:
         assert result.success is True
         assert result.versions_pushed == 0
         # The agent guide reached the bucket even though no version changed.
-        assert "prefix/collection1/AGENTS.md" in uploaded_keys
+        assert "prefix/collection1/AGENTS.md" in stored_keys(store)
         assert result.files_uploaded > 0
 
     @pytest.mark.unit
@@ -850,18 +859,12 @@ class TestPushNoVersionChangeMetadataSync:
         }
         (collection_dir / "versions.json").write_text(json.dumps(versions_data))
 
-        uploaded_keys: list[str] = []
-
-        async def mock_put_async(store: Any, key: str, content: Any, **kwargs: Any) -> None:
-            uploaded_keys.append(key)
-
         with (
-            patch("portolan_cli.sync.push.setup_store", return_value=(MagicMock(), "prefix")),
+            memory_remote("prefix") as store,
             patch(
                 "portolan_cli.sync.push._fetch_remote_versions_async",
                 new=AsyncMock(return_value=(versions_data, "etag-1")),
             ),
-            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
         ):
             result = asyncio.run(
                 push_async(
@@ -877,7 +880,7 @@ class TestPushNoVersionChangeMetadataSync:
         assert result.success is True
         assert result.versions_pushed == 0
         assert result.files_uploaded == 0
-        assert uploaded_keys == []
+        assert stored_keys(store) == set()
 
     @pytest.mark.unit
     def test_metadata_error_reports_summary_without_version_bump(

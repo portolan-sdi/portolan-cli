@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 from typing import TYPE_CHECKING
 
 from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.discovery import get_sidecars
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.versions import (
     Version,
     read_versions,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -124,8 +127,25 @@ def _remove_one_file(
             return _file_is_tracked(file_path, versions_path)
         return True
 
-    # Remove from versions.json.
-    untracked = _remove_from_versions(file_path, versions_path)
+    # The STAC item lives in the file's PARENT directory (issue #602): a Hive
+    # partition dir (`kdtree_cell=…/`) or a nested item dir whose name is the
+    # parent, NOT the file stem, as `add` sets `item_dir = path.parent`. A file
+    # directly in the collection dir has no item dir to remove.
+    item_dir = file_path.parent
+    drops_item_dir = (
+        not keep
+        and not file_missing
+        and item_dir.is_dir()
+        and not (item_dir / "collection.json").exists()
+    )
+    # Deleting the item dir deletes every file in it, so the version that
+    # untracks the file untracks them too.
+    siblings = [f for f in item_dir.rglob("*") if f.is_file()] if drops_item_dir else []
+    untracked = _remove_from_versions(file_path, versions_path, siblings=siblings)
+
+    # A file gone from disk leaves the collection assets with the files.
+    if (file_missing or not keep) and not drops_item_dir:
+        _drop_collection_assets(collection_dir, [file_path, *get_sidecars(file_path)])
 
     # A path that is gone from disk untracks only. There is nothing to delete,
     # so a path that is neither on disk nor tracked is a no-op we report as
@@ -135,18 +155,7 @@ def _remove_one_file(
 
     # Remove STAC item and files (unless --keep)
     if not keep:
-        # The STAC item lives in the file's PARENT directory (issue #602): a Hive
-        # partition dir (`kdtree_cell=…/`) or a nested item dir whose name is the
-        # parent, NOT the file stem — mirroring `add`, which sets
-        # `item_dir = path.parent` in `_derive_item_id_and_asset_level`.
-        # Reconstructing from `file_path.stem` only matched the degenerate case and
-        # orphaned partition/item dirs (and their `item.json`) on disk.
-        #
-        # Guard the collection-level case: a file sitting directly in the
-        # collection dir (the dir holding `collection.json`) has no item subdir to
-        # remove, so only the file and its sidecars are deleted.
-        item_dir = file_path.parent
-        if not (item_dir / "collection.json").exists() and item_dir.is_dir():
+        if drops_item_dir:
             # Item-level asset: drop the whole item/partition dir, which owns
             # item.json and every sibling asset.
             shutil.rmtree(item_dir)
@@ -158,6 +167,31 @@ def _remove_one_file(
                 sidecar.unlink(missing_ok=True)
 
     return True
+
+
+def _drop_collection_assets(collection_dir: Path, files: list[Path]) -> None:
+    """Drop each collection-level asset whose local href names one of ``files``."""
+    path = collection_dir / "collection.json"
+    if not path.is_file():
+        return
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assets = data.get("assets")
+    if not isinstance(assets, dict):
+        return
+    gone = {file.resolve() for file in files}
+    kept = {
+        key: asset
+        for key, asset in assets.items()
+        if not (
+            isinstance(asset, dict)
+            and isinstance(asset.get("href"), str)
+            and "://" not in asset["href"]
+            and (collection_dir / asset["href"]).resolve() in gone
+        )
+    }
+    if kept != assets:
+        data["assets"] = kept
+        write_json_atomic(path, data)
 
 
 def remove_files(
@@ -193,6 +227,16 @@ def remove_files(
                 file_path, catalog_root=catalog_root, keep=keep, dry_run=dry_run
             )
             (removed if was_removed else skipped).append(file_path)
+
+    if removed and not dry_run:
+        # The repair that follows a check --fix item write: the item links, the
+        # extent and summaries, and the items.parquet mirror follow the members
+        # that remain (issue #801), so rm equals a fresh build of the rest.
+        from portolan_cli.validation.fixers import repair_written_items
+
+        for result in repair_written_items(catalog_root, removed, dry_run=False):
+            if not result.success:
+                logger.warning("%s: %s", result.file_path, result.message)
 
     return removed, skipped
 
@@ -260,7 +304,9 @@ def _file_is_tracked(file_path: Path, versions_path: Path) -> bool:
     return bool(_matching_asset_keys(file_path, versions_file.versions[-1], catalog_root))
 
 
-def _remove_from_versions(file_path: Path, versions_path: Path) -> bool:
+def _remove_from_versions(
+    file_path: Path, versions_path: Path, *, siblings: Iterable[Path] = ()
+) -> bool:
     """Remove a file from version tracking via the active backend.
 
     This creates a new version entry without the specified file.
@@ -268,6 +314,8 @@ def _remove_from_versions(file_path: Path, versions_path: Path) -> bool:
     Args:
         file_path: Path to the file to untrack.
         versions_path: Path to the versions.json file.
+        siblings: Other files that leave with ``file_path``, untracked in the
+            same version.
 
     Returns:
         True if the file was tracked and a removal version was published.
@@ -281,7 +329,10 @@ def _remove_from_versions(file_path: Path, versions_path: Path) -> bool:
         return False
 
     catalog_root = _versions_catalog_root(versions_path)
-    removed_keys = _matching_asset_keys(file_path, versions_file.versions[-1], catalog_root)
+    latest = versions_file.versions[-1]
+    removed_keys = set().union(
+        *(_matching_asset_keys(path, latest, catalog_root) for path in (file_path, *siblings))
+    )
     if not removed_keys:
         # File wasn't tracked, nothing to do
         return False

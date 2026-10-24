@@ -645,6 +645,34 @@ class TestExtensionShape:
         assert "iceberg:partition_spec" not in generate_collection_metadata(table)
 
     @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("uri", "published"),
+        [
+            ("sqlite:////tmp/tmp.4EuYh4nkoq/c/.portolan/iceberg.db", None),
+            ("https://rest.example.org/catalog?token=SECRET", "https://rest.example.org/catalog"),
+        ],
+    )
+    def test_catalog_uri_holds_no_local_path_or_credential(
+        self, uri: str, published: str | None
+    ) -> None:
+        """#939: a local SQLite path names the machine that ran the command."""
+        from unittest.mock import MagicMock
+
+        from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata
+
+        table = MagicMock()
+        type(table.catalog).__name__ = "SqlCatalog"
+        table.catalog.properties = {"uri": uri}
+        table.spec.return_value.fields = []
+        table.metadata_location = "file:///tmp/c/.portolan/warehouse/t/metadata/v1.metadata.json"
+        table.current_snapshot.return_value = None
+
+        metadata = generate_collection_metadata(table)
+
+        assert metadata.get("iceberg:catalog_uri") == published
+        assert "iceberg:metadata_location" not in metadata
+
+    @pytest.mark.unit
     def test_an_unrecognized_catalog_class_raises(self) -> None:
         """A catalog type outside the extension enum must fail loudly, not emit 'unknown'."""
         from unittest.mock import MagicMock

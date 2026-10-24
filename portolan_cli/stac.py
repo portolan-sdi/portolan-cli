@@ -11,27 +11,31 @@ Key conventions:
 
 from __future__ import annotations
 
+import logging
 import re
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 import pystac
-from pystac.summaries import Summarizer, SummaryStrategy
 
+from portolan_cli.bbox import compute_bbox_union, to_2d_bbox
 from portolan_cli.constants import PARTITION_EXTENSION_URI, PORTOLAN_SCHEMA_URI, ROLE_VISUAL
-from portolan_cli.errors import AssetKeyCollisionError
+from portolan_cli.errors import AssetKeyCollisionError, InvalidBboxError
+from portolan_cli.extension_registry import EXTENSION_REGISTRY
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.providers import derive_provenance, resolve_providers
-from portolan_cli.utils import href_root
 from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from portolan_cli.metadata.tabular import TabularMetadata
+
+logger = logging.getLogger(__name__)
 
 # Any versioned Portolan profile URI, not just the current one: matching the
 # whole family is what lets a stale claim be rewritten rather than duplicated.
@@ -56,14 +60,17 @@ class MergeStrategy(Enum):
     Issue #446: Controls how `portolan add` handles conflicts between
     human-authored metadata and auto-detected values.
 
+    The strategy decides only the fields a person writes: an asset's title,
+    description and custom fields, and a column's description. Every field
+    Portolan reads from the data (href, media type, roles, ``file:*``,
+    ``proj:*``, column names and types, row counts, extents, summaries) comes
+    from the data under every strategy, so a removed column or a stale extent
+    cannot survive a rebuild (issues #801, #931).
+
     Strategies:
-        SMART: Preserve human-enrichable fields (title, description),
-               update machine-derivable fields (href, type, row_count).
-               This is the default and recommended for most use cases.
-        KEEP: Preserve all existing fields, only add missing ones.
-              Use for legacy catalog imports where existing metadata is trusted.
-        OVERWRITE: Replace everything with auto-detected values.
-                   Use for regenerating metadata from scratch.
+        SMART: Keep a human value, and fill a missing one from the data.
+        KEEP: Keep a human value, and never fill it from the data.
+        OVERWRITE: Drop the human values.
         INTERACTIVE: Prompt per-conflict (not yet implemented).
     """
 
@@ -157,7 +164,7 @@ def create_collection(
         temporal_interval = list(temporal_extent)
 
     extent = pystac.Extent(
-        spatial=pystac.SpatialExtent(bboxes=[bbox]),
+        spatial=build_spatial_extent([bbox]),
         temporal=pystac.TemporalExtent(intervals=[temporal_interval]),
     )
 
@@ -253,11 +260,6 @@ def _bbox_to_polygon(bbox: list[float]) -> dict[str, object]:
     }
 
 
-def _now_utc() -> datetime:
-    """Get current UTC datetime."""
-    return datetime.now(timezone.utc)
-
-
 def load_catalog(catalog_path: Path) -> pystac.Catalog:
     """Load an existing STAC catalog from disk.
 
@@ -276,56 +278,24 @@ def load_catalog(catalog_path: Path) -> pystac.Catalog:
     return pystac.Catalog.from_file(str(catalog_path))
 
 
-def save_catalog(catalog: pystac.Catalog, dest_dir: Path) -> None:
-    """Save a STAC catalog to disk.
-
-    Saves as a self-contained catalog with relative links.
-
-    Args:
-        catalog: The catalog to save.
-        dest_dir: Directory to save the catalog to (will contain catalog.json).
-    """
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
-    catalog.normalize_hrefs(href_root(dest_dir))
-
-    # Save as self-contained (relative links)
-    catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
-
-
-def add_collection_to_catalog(
-    catalog: pystac.Catalog,
-    collection: pystac.Collection,
-) -> None:
-    """Add a collection as a child of a catalog.
-
-    Args:
-        catalog: The parent catalog.
-        collection: The collection to add.
-    """
-    catalog.add_child(collection)
-
-
-def add_item_to_collection(
-    collection: pystac.Collection,
-    item: pystac.Item,
-    *,
-    update_extent: bool = False,
-    merge_strategy: MergeStrategy = MergeStrategy.SMART,
-) -> None:
+def add_item_to_collection(collection: pystac.Collection, item: pystac.Item) -> None:
     """Add an item to a collection.
+
+    The collection extent is not touched here. ``derive_collection_fields``
+    computes it from every member once the collection holds them all.
+
+    The item keeps the file path ``add`` wrote it to. pystac's default layout
+    would move the item of a saved collection to ``<collection>/<id>/``, which
+    for ``--item-id`` is a second copy away from the data (issue #840).
 
     Args:
         collection: The parent collection.
         item: The item to add.
-        update_extent: If True, update collection's spatial extent to
-                      encompass the item's bbox.
-        merge_strategy: How to handle conflicts with existing extent.
     """
-    collection.add_item(item)
+    from pystac.layout import AsIsLayoutStrategy
 
-    if update_extent:
-        _update_collection_extent(collection, item, merge_strategy)
+    strategy = AsIsLayoutStrategy() if item.get_self_href() is not None else None
+    collection.add_item(item, strategy=strategy)
 
 
 def _is_machine_derivable_extra_field(field_name: str) -> bool:
@@ -357,33 +327,27 @@ def _merge_asset(
     if strategy == MergeStrategy.OVERWRITE:
         return new
 
-    if strategy == MergeStrategy.KEEP:
-        return existing
-
-    # SMART strategy: preserve human-enrichable, update machine-derivable
+    # The strategy decides the human fields only. Machine fields always come
+    # from the new asset, so KEEP no longer pins a stale href or checksum.
+    fill = strategy != MergeStrategy.KEEP
     merged = pystac.Asset(
-        href=new.href,  # Machine-derivable: always update
-        media_type=new.media_type,  # Machine-derivable: always update
-        roles=new.roles,  # Machine-derivable: always update
-        title=existing.title or new.title,
-        description=existing.description or new.description,
+        href=new.href,
+        media_type=new.media_type,
+        roles=new.roles,
+        title=existing.title or (new.title if fill else None),
+        description=existing.description or (new.description if fill else None),
     )
 
-    # Merge extra_fields
-    merged_extra: dict[str, object] = {}
-
-    # Start with existing extra_fields (preserve custom fields)
-    if existing.extra_fields:
-        merged_extra.update(existing.extra_fields)
-
-    # Update machine-derivable extra_fields from new asset
-    if new.extra_fields:
-        for key, value in new.extra_fields.items():
-            if _is_machine_derivable_extra_field(key):
-                merged_extra[key] = value
-            elif key not in merged_extra:
-                # Add new fields that don't exist
-                merged_extra[key] = value
+    # A human custom field survives. A machine field the new asset no longer
+    # reports is dropped, because the data no longer carries it.
+    merged_extra: dict[str, object] = {
+        key: value
+        for key, value in (existing.extra_fields or {}).items()
+        if not _is_machine_derivable_extra_field(key)
+    }
+    for key, value in (new.extra_fields or {}).items():
+        if _is_machine_derivable_extra_field(key) or (fill and key not in merged_extra):
+            merged_extra[key] = value
 
     if merged_extra:
         merged.extra_fields = merged_extra
@@ -396,7 +360,6 @@ def add_asset_to_collection(
     asset_key: str,
     asset: pystac.Asset,
     *,
-    update_extent_from_bbox: list[float] | None = None,
     merge_strategy: MergeStrategy = MergeStrategy.SMART,
 ) -> None:
     """Add an asset directly to a collection (collection-level asset).
@@ -408,17 +371,13 @@ def add_asset_to_collection(
     href. If so, use that key (preserving human-authored keys) instead of creating
     a duplicate entry.
 
-    When an asset with the same key already exists, the merge_strategy controls
-    how fields are combined (Issue #446):
-    - SMART (default): Preserve human-enrichable fields (title, description),
-                       update machine-derivable fields (href, media_type, roles).
-    - KEEP: Preserve all existing fields, only add the asset if missing.
-    - OVERWRITE: Replace the existing asset entirely.
-    - INTERACTIVE: Not yet implemented.
+    When an asset with the same key already exists, the merge_strategy decides
+    its human fields (Issue #446, see :class:`MergeStrategy`). The machine
+    fields always come from ``asset``.
 
     Issue #933: when the key holds another data file, the two files are never
     merged. A same-stem file that ranks below the incoming file moves to the key
-    a fresh add gives it (see ``preparation._stem_group_keys``). Another data
+    a fresh add gives it (see ``preparation._resolve_assets``). Another data
     file of a different media type raises ``AssetKeyCollisionError`` under every
     strategy, because every strategy loses one of the two files. The rule
     covers assets with the ``data`` or ``visual`` role. Assets under a role key,
@@ -428,8 +387,6 @@ def add_asset_to_collection(
         collection: The collection to add the asset to.
         asset_key: Key for the asset (e.g., "data", "boundaries").
         asset: The pystac.Asset to add.
-        update_extent_from_bbox: If provided, update collection's spatial extent
-            to encompass this bbox [min_x, min_y, max_x, max_y].
         merge_strategy: How to handle conflicts with existing assets.
 
     Raises:
@@ -465,9 +422,6 @@ def add_asset_to_collection(
 
     collection.add_asset(final_key, asset)
 
-    if update_extent_from_bbox:
-        _update_collection_extent_from_bbox(collection, update_extent_from_bbox, merge_strategy)
-
 
 _PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
 
@@ -477,6 +431,42 @@ _LEGACY_MEDIA_TYPES: dict[str, str] = {
     "application/geo+parquet": _PARQUET_MEDIA_TYPE,
     "application/x-geoparquet": _PARQUET_MEDIA_TYPE,
 }
+
+# Rank of a file when same-stem files compete for the stem key (Issues #933,
+# #960). The lowest rank owns the stem. ``preparation`` ranks the scanned files
+# and ``add_asset_to_collection`` the stored assets, both with :func:`stem_rank`.
+STEM_RANK_GEOPARQUET = 0
+STEM_RANK_CLOUD_NATIVE = 1
+STEM_RANK_PMTILES = 2
+STEM_RANK_TABLE = 3
+STEM_RANK_SOURCE = 4
+
+# Extensions whose files can be the catalog's own cloud-native data.
+_CLOUD_NATIVE_EXTENSIONS: tuple[str, ...] = tuple(
+    spec.ext for spec in EXTENSION_REGISTRY if spec.cloud_native != "no"
+)
+
+
+def stem_rank(media_type: str | None, name: str, is_plain_table: Callable[[], bool]) -> int:
+    """Rank one data file for the stem key.
+
+    GeoParquet, then COG, FlatGeobuf and other cloud-native data, then PMTiles,
+    then a Parquet table without GeoParquet metadata, then any other file, such
+    as a CSV or GeoJSON source.
+
+    Args:
+        media_type: The media type of the file. A legacy Parquet type counts.
+        name: The file name or href.
+        is_plain_table: Reads the Parquet footer. Called for Parquet only.
+    """
+    canonical = _canonical_media_type(media_type or "")
+    if canonical == PMTILES_MEDIA_TYPE:
+        return STEM_RANK_PMTILES
+    if canonical == _PARQUET_MEDIA_TYPE:
+        return STEM_RANK_TABLE if is_plain_table() else STEM_RANK_GEOPARQUET
+    if name.lower().endswith(_CLOUD_NATIVE_EXTENSIONS):
+        return STEM_RANK_CLOUD_NATIVE
+    return STEM_RANK_SOURCE
 
 
 def _canonical_media_type(media_type: str) -> str:
@@ -510,18 +500,12 @@ def _media_types_differ(existing: str | None, new: str | None) -> bool:
 
 
 def _stem_rank(collection: pystac.Collection, asset: pystac.Asset) -> int:
-    """Rank a data file for the stem key, as ``preparation._stem_rank`` does.
+    """Rank a stored asset with :func:`stem_rank`.
 
-    A Parquet file without GeoParquet metadata ranks below PMTiles. The tabular
-    add path keys such a table by its stem, so the footer decides. Only a
-    same-stem collision reaches this read.
+    The tabular add path keys a plain table by its stem, so the footer decides.
+    Only a same-stem collision reaches this read.
     """
-    canonical = _canonical_media_type(asset.media_type or "")
-    if canonical == PMTILES_MEDIA_TYPE:
-        return 2
-    if canonical != _PARQUET_MEDIA_TYPE:
-        return 1
-    return 3 if _is_plain_table(collection, asset.href) else 0
+    return stem_rank(asset.media_type, asset.href, lambda: _is_plain_table(collection, asset.href))
 
 
 def _is_plain_table(collection: pystac.Collection, href: str) -> bool:
@@ -568,8 +552,9 @@ def _move_displaced_aside(
 ) -> pystac.Asset:
     """Move a displaced same-stem asset from ``key`` to the key it gets today.
 
-    The key follows ``preparation._stem_group_keys``. A PMTiles beside a
-    GeoParquet moves to its ``-tiles`` key with the ``visual`` role. Any other
+    The key follows ``preparation._resolve_assets``. A PMTiles beside a
+    GeoParquet, COG or FlatGeobuf moves to its ``-tiles`` key with the
+    ``visual`` role. Any other
     file moves to its filename. When that key already holds the same file, the copy under ``key``
     is dropped. The human title and description under ``key`` described the
     data, so they go back to the data asset.
@@ -587,7 +572,7 @@ def _move_displaced_aside(
         AssetKeyCollisionError: The target key holds a different file.
     """
     roles: list[str] | None
-    if displaced.media_type == PMTILES_MEDIA_TYPE and _stem_rank(collection, data) == 0:
+    if displaced.media_type == PMTILES_MEDIA_TYPE and _stem_rank(collection, data) <= 1:
         target_key = pmtiles_asset_key(key)
         roles = [ROLE_VISUAL]
     else:
@@ -679,8 +664,6 @@ def add_collection_properties_from_metadata(
 
     if wrote_proj_code:
         proj_ext_url = EXTENSION_URLS["projection"]
-        if collection.stac_extensions is None:
-            collection.stac_extensions = []
         if proj_ext_url not in collection.stac_extensions:
             collection.stac_extensions.append(proj_ext_url)
 
@@ -900,186 +883,8 @@ def add_partition_metadata_to_collection(
 
     # Register partition extension
     ext_url = EXTENSION_URLS["partition"]
-    if collection.stac_extensions is None:
-        collection.stac_extensions = []
     if ext_url not in collection.stac_extensions:
         collection.stac_extensions.append(ext_url)
-
-
-def _is_placeholder_extent(bbox: list[float]) -> bool:
-    """Check if a bbox is the whole-world placeholder extent.
-
-    Issue #447: Placeholder extents like [-180, -90, 180, 90] should be
-    replaced with actual data extent, not expanded.
-    """
-    from portolan_cli.bbox import to_2d_bbox
-
-    # Reduce to 2D so a 6-element placeholder ([−180,−90,z,180,90,z]) is still
-    # recognized; east/north live at indices 3/4 there, not 2/3 (issue #592).
-    west, south, east, north = to_2d_bbox(bbox)
-
-    # Allow small tolerance for floating point comparison
-    return (
-        abs(west - (-180)) < 0.001
-        and abs(south - (-90)) < 0.001
-        and abs(east - 180) < 0.001
-        and abs(north - 90) < 0.001
-    )
-
-
-def _update_collection_extent_from_bbox(
-    collection: pystac.Collection,
-    bbox: list[float],
-    merge_strategy: MergeStrategy = MergeStrategy.SMART,
-) -> None:
-    """Update a collection's spatial extent to include a bounding box.
-
-    Issue #447 FIX: Respects merge strategy and handles placeholder extents:
-    - KEEP: Don't modify extent at all (preserve manual settings)
-    - SMART/OVERWRITE: Replace placeholder extent, expand otherwise
-
-    Args:
-        collection: The collection to update.
-        bbox: Bounding box [min_x, min_y, max_x, max_y] to include.
-        merge_strategy: How to handle conflicts with existing extent.
-    """
-    # KEEP strategy: preserve existing extent entirely
-    if merge_strategy == MergeStrategy.KEEP:
-        return
-
-    # Never let an invalid bbox (inf/nan/effectively-infinite sentinel) poison the
-    # collection extent. Use finiteness + sane-magnitude only, since this bbox may
-    # be in a projected source CRS (issue #516).
-    import logging
-
-    from portolan_cli.bbox import get_bbox_validation_reason
-
-    reason = get_bbox_validation_reason(list(bbox), wgs84_only=False)
-    if reason is not None:
-        logging.getLogger(__name__).warning(
-            "Skipping invalid bbox for collection '%s' extent: %s", collection.id, reason
-        )
-        return
-
-    from portolan_cli.bbox import to_2d_bbox
-
-    current_bbox = to_2d_bbox(collection.extent.spatial.bboxes[0])
-    incoming = to_2d_bbox(list(bbox))
-
-    # If current extent is placeholder, replace entirely with actual data
-    if _is_placeholder_extent(current_bbox):
-        collection.extent.spatial = pystac.SpatialExtent(bboxes=[incoming])
-        return
-
-    # Otherwise expand to include new bbox. Reduce both to 2D first so a
-    # 6-element bbox's min_z can't be mistaken for the easting (issue #592).
-    new_bbox = [
-        min(current_bbox[0], incoming[0]),  # min_x
-        min(current_bbox[1], incoming[1]),  # min_y
-        max(current_bbox[2], incoming[2]),  # max_x
-        max(current_bbox[3], incoming[3]),  # max_y
-    ]
-
-    collection.extent.spatial = pystac.SpatialExtent(bboxes=[new_bbox])
-
-
-def _update_collection_extent(
-    collection: pystac.Collection,
-    item: pystac.Item,
-    merge_strategy: MergeStrategy = MergeStrategy.SMART,
-) -> None:
-    """Update a collection's spatial extent to include an item's bbox.
-
-    Issue #447 FIX: Respects merge strategy and handles placeholder extents
-    (consistent with _update_collection_extent_from_bbox for collection-level assets).
-
-    Args:
-        collection: The collection to update.
-        item: The item whose bbox should be included.
-        merge_strategy: How to handle conflicts with existing extent.
-    """
-    if item.bbox is None:
-        return
-
-    # KEEP strategy: preserve existing extent entirely
-    if merge_strategy == MergeStrategy.KEEP:
-        return
-
-    # Never let an invalid item bbox (inf/nan/effectively-infinite sentinel)
-    # poison the collection extent (issue #516).
-    import logging
-
-    from portolan_cli.bbox import get_bbox_validation_reason
-
-    reason = get_bbox_validation_reason(list(item.bbox), wgs84_only=False)
-    if reason is not None:
-        logging.getLogger(__name__).warning(
-            "Skipping invalid bbox for collection '%s' extent: %s", collection.id, reason
-        )
-        return
-
-    from portolan_cli.bbox import to_2d_bbox
-
-    current_bbox = to_2d_bbox(collection.extent.spatial.bboxes[0])
-    item_bbox = to_2d_bbox(list(item.bbox))
-
-    # If current extent is placeholder, replace entirely with actual data
-    if _is_placeholder_extent(current_bbox):
-        collection.extent.spatial = pystac.SpatialExtent(bboxes=[item_bbox])
-        return
-
-    # Otherwise expand to include item bbox. Reduce both to 2D first so a
-    # 6-element bbox's min_z can't be mistaken for the easting (issue #592).
-    new_bbox = [
-        min(current_bbox[0], item_bbox[0]),  # min_x
-        min(current_bbox[1], item_bbox[1]),  # min_y
-        max(current_bbox[2], item_bbox[2]),  # max_x
-        max(current_bbox[3], item_bbox[3]),  # max_y
-    ]
-
-    collection.extent.spatial = pystac.SpatialExtent(bboxes=[new_bbox])
-
-
-def update_collection_temporal_extent(
-    collection: pystac.Collection,
-    item_datetime: datetime | None,
-) -> None:
-    """Update a collection's temporal extent to include an item's datetime.
-
-    Widens the collection's temporal interval to encompass the item's datetime.
-    Items without datetime have null interval and are not included.
-
-    Args:
-        collection: The collection to update.
-        item_datetime: The item's datetime, or None for provisional items.
-    """
-    from portolan_cli.temporal import ensure_utc_aware
-
-    if item_datetime is None:
-        return  # Provisional items don't affect temporal extent
-
-    # Normalize to UTC-aware to avoid naive/aware comparison errors.
-    # ensure_utc_aware returns None only for a None input, and the guard above
-    # already returned for that case. The check narrows the type for mypy.
-    item_dt = ensure_utc_aware(item_datetime)
-    if item_dt is None:
-        return
-
-    # Get current interval
-    current_interval = collection.extent.temporal.intervals[0]
-    current_start = ensure_utc_aware(current_interval[0])
-    current_end = ensure_utc_aware(current_interval[1])
-
-    # Widen interval to include item datetime
-    new_start = current_start
-    new_end = current_end
-
-    if current_start is None or item_dt < current_start:
-        new_start = item_dt
-    if current_end is None or item_dt > current_end:
-        new_end = item_dt
-
-    collection.extent.temporal = pystac.TemporalExtent(intervals=[[new_start, new_end]])
 
 
 # STAC Extension schema URLs (v1.1.0 compatible)
@@ -1118,7 +923,8 @@ def ensure_portolan_schema_uri(document: dict[str, Any]) -> bool:
         True when ``stac_extensions`` changed, False when it already conformed.
     """
     existing = document.get("stac_extensions")
-    declared: list[str] = list(existing) if isinstance(existing, list) else []
+    # JSON may hold anything, so each entry is checked before it is read.
+    declared: list[Any] = list(existing) if isinstance(existing, list) else []
 
     # Keep the highest version between what is declared and what this CLI stamps,
     # so a re-add upgrades an older claim but never downgrades a newer one.
@@ -1200,7 +1006,12 @@ def _merge_table_columns(
     new_schema: dict[str, str],
     strategy: MergeStrategy,
 ) -> list[dict[str, object]]:
-    """Merge existing table:columns with new schema based on strategy.
+    """Build table:columns from the schema, keeping the human fields of each column.
+
+    The columns, their order, and their types come from ``new_schema`` under
+    every strategy, so a column the data no longer has is gone (issue #931).
+    The strategy decides only the fields a person wrote on a surviving column,
+    such as its description: SMART and KEEP keep them, OVERWRITE drops them.
 
     Args:
         existing_columns: Existing table:columns array from collection.
@@ -1213,12 +1024,7 @@ def _merge_table_columns(
     if strategy == MergeStrategy.OVERWRITE:
         return [{"name": name, "type": dtype} for name, dtype in new_schema.items()]
 
-    if strategy == MergeStrategy.KEEP:
-        return existing_columns
-
-    # SMART strategy: preserve descriptions, update types, handle adds/removes
-    # Build lookup of existing columns by name
-    existing_by_name = {col["name"]: col for col in existing_columns}
+    existing_by_name = {col["name"]: col for col in existing_columns if "name" in col}
 
     merged_columns = []
     for name, dtype in new_schema.items():
@@ -1251,11 +1057,8 @@ def add_table_extension(
     Sets table:row_count, table:primary_geometry, and table:columns based on
     the provided GeoParquet metadata object.
 
-    When the collection already has table:columns, the merge_strategy controls
-    how column metadata is combined (Issue #446):
-    - SMART (default): Preserve column descriptions, update types.
-    - KEEP: Preserve all existing table extension fields.
-    - OVERWRITE: Replace everything with auto-detected values.
+    The fields come from ``metadata`` under every strategy. The merge strategy
+    decides only the column descriptions (Issue #446, #931).
 
     Args:
         collection: The collection to add extension fields to.
@@ -1263,11 +1066,6 @@ def add_table_extension(
                  geometry_column, and schema attributes.
         merge_strategy: How to handle conflicts with existing metadata.
     """
-    # KEEP strategy: don't modify existing table extension fields
-    if merge_strategy == MergeStrategy.KEEP and "table:row_count" in collection.extra_fields:
-        # Already has table extension, don't overwrite
-        return
-
     # Set row count (machine-derivable: always update in SMART/OVERWRITE)
     if hasattr(metadata, "feature_count") and metadata.feature_count is not None:
         collection.extra_fields["table:row_count"] = metadata.feature_count
@@ -1279,17 +1077,15 @@ def add_table_extension(
     # Set columns from schema with merge logic
     if hasattr(metadata, "schema") and metadata.schema:
         existing_columns = collection.extra_fields.get("table:columns", [])
-        if existing_columns and merge_strategy != MergeStrategy.OVERWRITE:
-            columns = _merge_table_columns(existing_columns, metadata.schema, merge_strategy)
-        else:
-            columns = [{"name": name, "type": dtype} for name, dtype in metadata.schema.items()]
-        collection.extra_fields["table:columns"] = columns
+        collection.extra_fields["table:columns"] = _merge_table_columns(
+            existing_columns if isinstance(existing_columns, list) else [],
+            metadata.schema,
+            merge_strategy,
+        )
 
     # Update stac_extensions if not already present
     ext_url = EXTENSION_URLS["table"]
-    if ext_url not in (collection.stac_extensions or []):
-        if collection.stac_extensions is None:
-            collection.stac_extensions = []
+    if ext_url not in collection.stac_extensions:
         collection.stac_extensions.append(ext_url)
 
 
@@ -1297,6 +1093,7 @@ def document_tabular_table(
     collection_data: dict[str, Any],
     asset_key: str,
     metadata: TabularMetadata,
+    merge_strategy: MergeStrategy,
 ) -> None:
     """Document a plain-Parquet asset's columns with the table extension (issue #749).
 
@@ -1314,13 +1111,14 @@ def document_tabular_table(
     overwriting it. The table extension permits both placements and rashid
     (PTL-DAT-015) accepts either.
 
-    Descriptions a human wrote on existing columns survive, matching
-    :data:`MergeStrategy.SMART`; only names and types are refreshed.
+    The columns come from ``metadata``. ``merge_strategy`` decides only whether
+    a human description on a surviving column stays (issue #931).
 
     Args:
         collection_data: Parsed ``collection.json``, mutated in place.
         asset_key: Key of the Parquet asset under ``assets``.
         metadata: Schema and row count read from that asset.
+        merge_strategy: The strategy of the ``add`` run.
     """
     assets = collection_data.get("assets", {})
     others_hold_the_collection = any(
@@ -1335,7 +1133,7 @@ def document_tabular_table(
     target["table:columns"] = _merge_table_columns(
         existing if isinstance(existing, list) else [],
         metadata.schema,
-        MergeStrategy.SMART,
+        merge_strategy,
     )
     target["table:row_count"] = metadata.row_count
 
@@ -1372,39 +1170,6 @@ def set_temporal_extent(
 def _rfc3339(moment: datetime) -> str:
     """Serialize a UTC datetime the way STAC spells it, with a trailing ``Z``."""
     return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def get_existing_table_metadata(collection: pystac.Collection) -> object | None:
-    """Extract existing table extension metadata from a collection.
-
-    Returns a GeoParquetMetadata-like object if the collection has table extension
-    fields, or None if not present. Used to include existing metadata when
-    incrementally adding items to a collection.
-
-    Args:
-        collection: The collection to extract metadata from.
-
-    Returns:
-        A GeoParquetMetadata object if table extension fields exist, None otherwise.
-    """
-    from portolan_cli.metadata.geoparquet import GeoParquetMetadata
-
-    row_count = collection.extra_fields.get("table:row_count")
-    if row_count is None:
-        return None
-
-    # Reconstruct schema from table:columns
-    columns = collection.extra_fields.get("table:columns", [])
-    schema = {col["name"]: col["type"] for col in columns if "name" in col and "type" in col}
-
-    return GeoParquetMetadata(
-        bbox=None,  # Not stored in table extension
-        crs=None,  # Not stored in table extension
-        geometry_type=None,  # Not stored in table extension
-        geometry_column=collection.extra_fields.get("table:primary_geometry", "geometry"),
-        feature_count=row_count,
-        schema=schema,
-    )
 
 
 def _merge_schemas(metadata_list: Sequence[object]) -> tuple[dict[str, str], list[str]]:
@@ -1498,10 +1263,15 @@ def _warn_on_mismatches(metadata_list: Sequence[object]) -> None:
             stacklevel=3,
         )
 
-    geometry_types = {getattr(m, "geometry_type", None) for m in metadata_list} - {None}
+    # GeoParquet metadata lists every declared type (#1010). A set needs tuples.
+    geometry_types = {
+        tuple(declared) if isinstance(declared, list) else declared
+        for declared in (getattr(m, "geometry_type", None) for m in metadata_list)
+    } - {None}
     if len(geometry_types) > 1:
+        shown = sorted(list(t) if isinstance(t, tuple) else [t] for t in geometry_types)
         warnings.warn(
-            f"Mixed geometry types detected: {geometry_types}. Using first item's type.",
+            f"Mixed geometry types detected: {shown}. The collection lists every type.",
             UserWarning,
             stacklevel=3,
         )
@@ -1550,7 +1320,14 @@ def aggregate_table_metadata(metadata_list: Sequence[object]) -> object:
     return GeoParquetMetadata(
         bbox=union_bbox,
         crs=getattr(first, "crs", None) or "EPSG:4326",
-        geometry_type=getattr(first, "geometry_type", None),
+        geometry_type=list(
+            dict.fromkeys(
+                name
+                for m in metadata_list
+                for name in geometry_type_list(getattr(m, "geometry_type", None))
+            )
+        )
+        or None,
         geometry_column=getattr(first, "geometry_column", None) or "geometry",
         feature_count=total_row_count,
         schema=merged_schema,
@@ -1618,10 +1395,17 @@ def add_projection_extension(
 
     # Update stac_extensions if not already present
     ext_url = EXTENSION_URLS["projection"]
-    if ext_url not in (item.stac_extensions or []):
-        if item.stac_extensions is None:
-            item.stac_extensions = []
+    if ext_url not in item.stac_extensions:
         item.stac_extensions.append(ext_url)
+
+
+def geometry_type_list(value: object) -> list[str]:
+    """Every geometry type a metadata value names, deduplicated in order.
+
+    GeoParquet declares a list. An older reader returned one string.
+    """
+    names = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+    return list(dict.fromkeys(str(name) for name in names if name))
 
 
 def add_vector_extension(
@@ -1637,21 +1421,16 @@ def add_vector_extension(
         item: The STAC item to add extension fields to.
         metadata: A metadata object with geometry_type attribute (str or list).
     """
-    if not hasattr(metadata, "geometry_type") or metadata.geometry_type is None:
+    geometry_types = geometry_type_list(getattr(metadata, "geometry_type", None))
+    if not geometry_types:
         return
 
-    # geometry_types is an array per spec
-    geometry_types = metadata.geometry_type
-    if isinstance(geometry_types, str):
-        geometry_types = [geometry_types]
-
+    # Every type the file declares, in order (issue #1010).
     item.properties["vector:geometry_types"] = geometry_types
 
     # Update stac_extensions if not already present
     ext_url = EXTENSION_URLS["vector"]
-    if ext_url not in (item.stac_extensions or []):
-        if item.stac_extensions is None:
-            item.stac_extensions = []
+    if ext_url not in item.stac_extensions:
         item.stac_extensions.append(ext_url)
 
 
@@ -1775,77 +1554,281 @@ def add_raster_extension(
     has_raster_field = any(key.startswith("raster:") for key in item.properties)
     if has_raster_field:
         ext_url = EXTENSION_URLS["raster"]
-        if ext_url not in (item.stac_extensions or []):
-            if item.stac_extensions is None:
-                item.stac_extensions = []
+        if ext_url not in item.stac_extensions:
             item.stac_extensions.append(ext_url)
 
 
-def add_collection_extensions_from_summaries(
-    collection: pystac.Collection,
-    summaries: dict[str, object],
-) -> None:
-    """Add extension URLs to collection based on fields in summaries.
+# Fields that describe the grid of one item. A collection summary would merge
+# unrelated grids into one meaningless value, so they are not summarized (#1023).
+_PER_ITEM_GRID_FIELDS = frozenset(
+    {"proj:bbox", "proj:centroid", "proj:geometry", "proj:shape", "proj:transform"}
+)
 
-    Scans summary keys for extension-prefixed fields and adds the corresponding
-    extension schema URLs to the collection's stac_extensions array.
+# Numeric fields summarized as a range rather than a set of values.
+_RANGE_FIELDS = frozenset({"gsd"})
 
-    This ensures collections declare extensions used by their items (Issue #336).
+
+def _is_summarized(key: str) -> bool:
+    """Whether derivation owns the summary of ``key``.
+
+    Derivation owns every extension-prefixed key, plus ``gsd``. It writes no
+    summary for a per-item grid field, so a stored one is dropped. A summary
+    under any other key came from elsewhere and is kept.
+    """
+    return key in _RANGE_FIELDS or ":" in key
+
+
+def _summary_values(value: object) -> list[object]:
+    """The values one item contributes to a set-of-values summary.
+
+    A list of strings is a set already, such as ``vector:geometry_types``, so
+    each string counts. Any other list is one value: a list of numbers keeps
+    its shape, and repeated numbers in it are not merged away (issue #1023).
+    """
+    if isinstance(value, list) and all(isinstance(entry, str) for entry in value):
+        return list(value)
+    return [value]
+
+
+def summarize_properties(properties: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Summarize item properties the way STAC 1.1.0 describes a collection.
 
     Args:
-        collection: The collection to add extension URLs to.
-        summaries: Summary dict to scan for extension fields.
+        properties: The properties of each item.
+
+    Returns:
+        A set of distinct values per field, in first-seen order, or a
+        ``minimum``/``maximum`` range for :data:`_RANGE_FIELDS`.
     """
-    # Use build_stac_extensions to detect which extensions are needed
-    extensions_needed = build_stac_extensions(summaries)
+    import json
 
-    # Ensure collection has stac_extensions list
-    if collection.stac_extensions is None:
-        collection.stac_extensions = []
+    distinct: dict[str, dict[str, object]] = {}
+    ranges: dict[str, list[float]] = {}
+    for props in properties:
+        for key, value in props.items():
+            if value is None or not _is_summarized(key) or key in _PER_ITEM_GRID_FIELDS:
+                continue
+            if key in _RANGE_FIELDS:
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    ranges.setdefault(key, []).append(value)
+                continue
+            seen = distinct.setdefault(key, {})
+            for entry in _summary_values(value):
+                seen.setdefault(json.dumps(entry, sort_keys=True, default=str), entry)
+    summaries: dict[str, Any] = {key: list(seen.values()) for key, seen in distinct.items()}
+    for key, values in ranges.items():
+        summaries[key] = {"minimum": min(values), "maximum": max(values)}
+    return summaries
 
-    # Add any missing extensions
-    for ext_url in extensions_needed:
-        if ext_url not in collection.stac_extensions:
-            collection.stac_extensions.append(ext_url)
+
+@dataclass(frozen=True)
+class CollectionMember:
+    """One member of a collection: an item, or a collection-level data asset.
+
+    Attributes:
+        bbox: WGS84 bbox of the member, or None when it has no footprint.
+        start: Earliest observation time, or None when unknown.
+        end: Latest observation time, or None when unknown.
+        properties: Item properties for the summaries. Empty for an asset.
+    """
+
+    bbox: list[float] | None = None
+    start: datetime | None = None
+    end: datetime | None = None
+    properties: Mapping[str, Any] = field(default_factory=dict)
 
 
-# Hybrid field detection for collection summaries
-# Explicit fields with known strategies; auto-detect extension-prefixed fields
-SUMMARIZED_FIELDS: dict[str, SummaryStrategy] = {
-    "proj:code": SummaryStrategy.ARRAY,  # Distinct CRS codes
-    "vector:geometry_types": SummaryStrategy.ARRAY,  # Distinct geometry types
-    "gsd": SummaryStrategy.RANGE,  # Ground sample distance range
-}
+@dataclass(frozen=True)
+class CollectionFields:
+    """The collection fields Portolan computes from the members.
+
+    Attributes:
+        spatial: The spatial extent, or None when no member has a footprint and
+            metadata.yaml declares none.
+        temporal: The temporal extent, or None when no member has a time.
+        summaries: The summaries of the item properties.
+    """
+
+    spatial: pystac.SpatialExtent | None
+    temporal: pystac.TemporalExtent | None
+    summaries: dict[str, Any]
 
 
-def update_collection_summaries(collection: pystac.Collection) -> None:
-    """Update collection summaries from item properties.
+def build_spatial_extent(
+    bboxes: Sequence[Sequence[float]], *, wgs84_only: bool = True
+) -> pystac.SpatialExtent:
+    """Build the STAC 1.1.0 spatial extent that covers ``bboxes``.
 
-    Uses PySTAC's Summarizer with hybrid field detection:
-    - Explicit strategies for core fields (proj:code, vector:geometry_types, gsd)
-    - Auto-detect extension-prefixed fields (custom:*, etc.)
-
-    Categorical fields only, no numeric aggregation across items.
+    This is the one constructor of a collection spatial extent. The extent is
+    one bbox, or three or more with the envelope first: a union that crosses
+    the antimeridian is the envelope, then its two parts (issue #852).
 
     Args:
-        collection: The collection to update summaries for.
+        bboxes: WGS84 bboxes, 2D or 3D. Invalid ones are skipped with a warning.
+        wgs84_only: Also reject a bbox outside the WGS84 ranges. False accepts
+            any finite bbox, for a format sample in its own CRS.
+
+    Returns:
+        The spatial extent.
+
+    Raises:
+        InvalidBboxError: No bbox is valid.
     """
-    items = list(collection.get_items(recursive=True))
-    if not items:
-        return
+    result = compute_bbox_union([list(bbox) for bbox in bboxes], wgs84_only=wgs84_only)
+    if result.bboxes is None:
+        raise InvalidBboxError(f"no valid bbox among {len(bboxes)} to build an extent from")
+    return pystac.SpatialExtent(bboxes=result.bboxes)
 
-    # Build field strategies: explicit + auto-detected extension prefixes
-    field_strategies = dict(SUMMARIZED_FIELDS)
 
-    # Auto-detect extension-prefixed fields from items (not in explicit list)
-    for item in items:
-        for key in item.properties:
-            if ":" in key and key not in field_strategies:
-                # Extension-prefixed field, default to ARRAY (distinct values)
-                field_strategies[key] = SummaryStrategy.ARRAY
+def declared_extent_bbox(metadata: Mapping[str, Any]) -> list[float] | None:
+    """The bbox a human declares in metadata.yaml.
 
-    summarizer = Summarizer(field_strategies)
-    collection.summaries = summarizer.summarize(items)
+    The STAC form ``extent.spatial.bbox`` holds one bbox or a list of them, and
+    the first one counts. ``extent.bbox`` and a top-level ``bbox`` also work.
+    It is the only override of the derived extent, and it can only widen it:
+    the derived extent is the union of this bbox and the members.
+    """
+    bbox = metadata.get("bbox")
+    extent = metadata.get("extent")
+    if bbox is None and isinstance(extent, dict):
+        spatial = extent.get("spatial")
+        bbox = spatial.get("bbox") if isinstance(spatial, dict) else extent.get("bbox")
+    if isinstance(bbox, list) and bbox and isinstance(bbox[0], list):
+        bbox = bbox[0]
+    if (
+        isinstance(bbox, list)
+        and len(bbox) in (4, 6)
+        and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in bbox)
+    ):
+        return to_2d_bbox(bbox)
+    return None
+
+
+def _temporal_extent(members: Sequence[CollectionMember]) -> pystac.TemporalExtent | None:
+    """The interval from the earliest start to the latest end of the members."""
+    from portolan_cli.temporal import ensure_utc_aware
+
+    starts = [start for m in members if (start := ensure_utc_aware(m.start)) is not None]
+    ends = [end for m in members if (end := ensure_utc_aware(m.end)) is not None]
+    if not starts and not ends:
+        return None
+    return pystac.TemporalExtent(
+        intervals=[[min(starts) if starts else None, max(ends) if ends else None]]
+    )
+
+
+def derive_collection_fields(
+    members: Sequence[CollectionMember],
+    metadata: Mapping[str, Any],
+) -> CollectionFields:
+    """Compute the collection fields from the members and metadata.yaml.
+
+    Pure: the result depends on the arguments only, never on the values the
+    collection stores. A wrong extent or a stale summary therefore cannot
+    survive a rebuild (issues #801, #1023). Every writer of ``collection.json``
+    calls this and replaces the stored values with the result.
+
+    Args:
+        members: The items and collection-level data assets of the collection.
+        metadata: The collection's own metadata.yaml. Its ``bbox`` (or
+            ``extent.bbox``) widens the spatial extent.
+
+    Returns:
+        The derived fields.
+    """
+    bboxes = [m.bbox for m in members if m.bbox is not None]
+    declared = declared_extent_bbox(metadata)
+    if declared is not None:
+        bboxes.append(declared)
+    spatial: pystac.SpatialExtent | None = None
+    if bboxes:
+        try:
+            spatial = build_spatial_extent(bboxes)
+        except InvalidBboxError:
+            logger.warning("No member reports a valid bbox; the extent is not derived")
+    return CollectionFields(
+        spatial=spatial,
+        temporal=_temporal_extent(members),
+        summaries=summarize_properties(m.properties for m in members if m.properties),
+    )
+
+
+def _merged_summaries(stored: Mapping[str, Any], derived: Mapping[str, Any]) -> dict[str, Any]:
+    """Replace every summary derivation owns, and keep the others."""
+    kept = {key: value for key, value in stored.items() if not _is_summarized(key)}
+    return {**kept, **derived}
+
+
+def _declared_extensions(
+    declared: Sequence[str],
+    stored: Mapping[str, Any],
+    derived: Mapping[str, Any],
+    other_keys: Iterable[str],
+) -> list[str]:
+    """The extension URLs a collection declares once its summaries are derived.
+
+    The derived summaries add the extensions they use. An extension only a
+    summary that is gone needed is withdrawn, unless another field of the
+    collection or of an asset still uses it. A stale declaration otherwise
+    makes the schema check fail on a field nobody writes any more.
+    """
+    needed = build_stac_extensions(dict(derived))
+    in_use = set(needed) | set(build_stac_extensions(dict.fromkeys(other_keys)))
+    stale = set(build_stac_extensions(dict(stored))) - in_use
+    result = [url for url in declared if url not in stale]
+    result.extend(url for url in needed if url not in result)
+    return result
+
+
+def apply_collection_fields(collection: pystac.Collection, fields: CollectionFields) -> None:
+    """Replace the derived fields of a pystac collection.
+
+    A field the members cannot derive (no footprint, no time) keeps its stored
+    value, which came from metadata.yaml, the AOI of a tabular collection, or
+    the column statistics of a table.
+    """
+    if fields.spatial is not None:
+        collection.extent.spatial = fields.spatial
+    if fields.temporal is not None:
+        collection.extent.temporal = fields.temporal
+    stored = collection.summaries.to_dict() if collection.summaries is not None else {}
+    collection.summaries = pystac.Summaries(_merged_summaries(stored, fields.summaries))
+    other_keys = [
+        *collection.extra_fields,
+        *(key for asset in collection.assets.values() for key in asset.extra_fields),
+    ]
+    collection.stac_extensions = _declared_extensions(
+        collection.stac_extensions, stored, fields.summaries, other_keys
+    )
+
+
+def apply_collection_fields_to_dict(data: dict[str, Any], fields: CollectionFields) -> None:
+    """Replace the derived fields of a parsed ``collection.json`` in place.
+
+    The dict counterpart of :func:`apply_collection_fields`, for writers that
+    keep the file as JSON so the enrichment hook fields survive.
+    """
+    extent = data.setdefault("extent", {})
+    if fields.spatial is not None:
+        extent["spatial"] = fields.spatial.to_dict()
+    if fields.temporal is not None:
+        extent["temporal"] = fields.temporal.to_dict()
+    stored = data.get("summaries") or {}
+    summaries = _merged_summaries(stored, fields.summaries)
+    if summaries:
+        data["summaries"] = summaries
+    else:
+        data.pop("summaries", None)
+    assets = data.get("assets") or {}
+    other_keys = [
+        *(key for key in data if key != "summaries"),
+        *(key for asset in assets.values() if isinstance(asset, dict) for key in asset),
+    ]
+    declared = _declared_extensions(
+        data.get("stac_extensions") or [], stored, fields.summaries, other_keys
+    )
+    if declared or "stac_extensions" in data:
+        data["stac_extensions"] = declared
 
 
 def declare_file_extension(collection: pystac.Collection) -> None:
@@ -1868,8 +1851,6 @@ def declare_file_extension(collection: pystac.Collection) -> None:
         return
 
     file_ext_url = EXTENSION_URLS["file"]
-    if collection.stac_extensions is None:
-        collection.stac_extensions = []
     if file_ext_url not in collection.stac_extensions:
         collection.stac_extensions.append(file_ext_url)
 
@@ -2056,10 +2037,6 @@ def is_technical_name(text: str | None) -> bool:
     return False
 
 
-# Alias for internal use (maintains backward compatibility)
-_is_technical_name = is_technical_name
-
-
 def update_stac_metadata(
     path: Path,
     title: str | None = None,
@@ -2095,9 +2072,9 @@ def update_stac_metadata(
         return False
 
     # Filter out technical names
-    effective_title = title if title and not _is_technical_name(title) else None
+    effective_title = title if title and not is_technical_name(title) else None
     effective_description = (
-        description if description and not _is_technical_name(description) else None
+        description if description and not is_technical_name(description) else None
     )
 
     # Nothing to update

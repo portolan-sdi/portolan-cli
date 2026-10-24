@@ -161,3 +161,37 @@ def test_compute_bbox_columns_preserves_existing():
 
     assert "id" in result.column_names
     assert "geometry" in result.column_names
+
+
+def _table_with_gaps() -> pa.Table:
+    """Three rows: a point, a null geometry, and an empty point (issue #961)."""
+    empty_point = struct.pack("<BIdd", 1, 1, float("nan"), float("nan"))
+    return pa.table(
+        {
+            "id": pa.array([0, 1, 2], type=pa.int64()),
+            "geometry": pa.array(
+                [_make_wkb_point(10.0, 20.0), None, empty_point], type=pa.binary()
+            ),
+        }
+    )
+
+
+@pytest.mark.unit
+def test_geohash_is_null_for_a_row_without_geometry():
+    """shapely.get_coordinates skipped the missing rows, so the column came up short."""
+    result = compute_geohash_column(_table_with_gaps(), precision=4)
+
+    geohashes = result.column("geohash_4").to_pylist()
+    # The point (lon 10, lat 20) is geohash s5x1 at precision 4.
+    assert geohashes == ["s5x1", None, None]
+    assert result.num_rows == 3
+
+
+@pytest.mark.unit
+def test_bbox_is_null_not_nan_for_a_row_without_geometry():
+    result = compute_bbox_columns(_table_with_gaps())
+
+    for name in ("bbox_xmin", "bbox_ymin", "bbox_xmax", "bbox_ymax"):
+        column = result.column(name)
+        assert column.null_count == 2, name
+        assert column.to_pylist()[0] is not None, name

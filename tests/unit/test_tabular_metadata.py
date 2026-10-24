@@ -16,7 +16,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from portolan_cli.metadata.tabular import extract_tabular_metadata
-from portolan_cli.stac import document_tabular_table, set_temporal_extent
+from portolan_cli.stac import MergeStrategy, document_tabular_table, set_temporal_extent
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -189,17 +189,21 @@ def _collection(assets: dict[str, Any]) -> dict[str, Any]:
     return {"assets": assets, "stac_extensions": []}
 
 
+def _census(tmp_path: Path, table: pa.Table) -> tuple[Any, dict[str, Any]]:
+    """Write census.parquet, read its metadata, and build the collection that holds it."""
+    metadata = extract_tabular_metadata(_write(tmp_path / "census.parquet", table))
+    assert metadata is not None
+    return metadata, _collection({"census": {"href": "./census.parquet", "roles": ["data"]}})
+
+
 class TestDocumentTabularTable:
     """Where the columns land, and what survives a re-add."""
 
     @pytest.mark.unit
     def test_writes_to_the_collection_when_the_parquet_stands_alone(self, tmp_path: Path) -> None:
-        source = _write(tmp_path / "census.parquet", pa.table({"tract_id": ["001"]}))
-        metadata = extract_tabular_metadata(source)
-        assert metadata is not None
-        collection = _collection({"census": {"href": "./census.parquet", "roles": ["data"]}})
+        metadata, collection = _census(tmp_path, pa.table({"tract_id": ["001"]}))
 
-        document_tabular_table(collection, "census", metadata)
+        document_tabular_table(collection, "census", metadata, MergeStrategy.SMART)
 
         assert collection["table:columns"] == [{"name": "tract_id", "type": "string"}]
         assert collection["table:row_count"] == 1
@@ -222,7 +226,7 @@ class TestDocumentTabularTable:
         )
         collection["table:columns"] = [{"name": "geometry", "type": "binary"}]
 
-        document_tabular_table(collection, "lanes", metadata)
+        document_tabular_table(collection, "lanes", metadata, MergeStrategy.SMART)
 
         assert collection["table:columns"] == [{"name": "geometry", "type": "binary"}]
         assert collection["assets"]["lanes"]["table:columns"] == [
@@ -247,7 +251,7 @@ class TestDocumentTabularTable:
             }
         )
 
-        document_tabular_table(collection, "census", metadata)
+        document_tabular_table(collection, "census", metadata, MergeStrategy.SMART)
 
         assert collection["table:columns"] == [{"name": "tract_id", "type": "string"}]
         assert "table:columns" not in collection["assets"]["census"]
@@ -264,7 +268,7 @@ class TestDocumentTabularTable:
             }
         )
 
-        document_tabular_table(collection, "census", metadata)
+        document_tabular_table(collection, "census", metadata, MergeStrategy.SMART)
 
         assert collection["table:columns"] == [{"name": "tract_id", "type": "string"}]
 
@@ -282,7 +286,7 @@ class TestDocumentTabularTable:
             {"name": "tract_id", "type": "string", "description": "Census tract identifier"}
         ]
 
-        document_tabular_table(collection, "census", metadata)
+        document_tabular_table(collection, "census", metadata, MergeStrategy.SMART)
 
         assert collection["table:columns"] == [
             {"name": "tract_id", "type": "string", "description": "Census tract identifier"},
@@ -290,14 +294,38 @@ class TestDocumentTabularTable:
         ]
 
     @pytest.mark.unit
-    def test_declares_the_table_extension_once(self, tmp_path: Path) -> None:
-        source = _write(tmp_path / "census.parquet", pa.table({"tract_id": ["001"]}))
-        metadata = extract_tabular_metadata(source)
-        assert metadata is not None
-        collection = _collection({"census": {"href": "./census.parquet", "roles": ["data"]}})
+    @pytest.mark.parametrize("strategy", [MergeStrategy.SMART, MergeStrategy.KEEP])
+    def test_a_removed_column_is_dropped(self, tmp_path: Path, strategy: MergeStrategy) -> None:
+        """Issue #931: a column the data lost leaves table:columns, description and all."""
+        metadata, collection = _census(tmp_path, pa.table({"population": [5000]}))
+        collection["table:columns"] = [
+            {"name": "id", "type": "string", "description": "Dropped upstream"},
+            {"name": "population", "type": "int64", "description": "Head count"},
+        ]
 
-        document_tabular_table(collection, "census", metadata)
-        document_tabular_table(collection, "census", metadata)
+        document_tabular_table(collection, "census", metadata, strategy)
+
+        assert collection["table:columns"] == [
+            {"name": "population", "type": "int64", "description": "Head count"}
+        ]
+
+    @pytest.mark.unit
+    def test_overwrite_drops_the_human_descriptions(self, tmp_path: Path) -> None:
+        metadata, collection = _census(tmp_path, pa.table({"population": [5000]}))
+        collection["table:columns"] = [
+            {"name": "population", "type": "int64", "description": "Head count"}
+        ]
+
+        document_tabular_table(collection, "census", metadata, MergeStrategy.OVERWRITE)
+
+        assert collection["table:columns"] == [{"name": "population", "type": "int64"}]
+
+    @pytest.mark.unit
+    def test_declares_the_table_extension_once(self, tmp_path: Path) -> None:
+        metadata, collection = _census(tmp_path, pa.table({"tract_id": ["001"]}))
+
+        document_tabular_table(collection, "census", metadata, MergeStrategy.SMART)
+        document_tabular_table(collection, "census", metadata, MergeStrategy.SMART)
 
         assert collection["stac_extensions"].count(TABLE_EXTENSION) == 1
 

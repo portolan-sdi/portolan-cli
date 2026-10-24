@@ -9,8 +9,8 @@ SQL over the Carto SQL API:
   ``type`` is ``"geometry"`` marks the table as spatial.
 
 Terminology is normalized to Portolan's layer-centric model: a Carto *table*
-is exposed as a ``CartoTableInfo`` with ``name``/``id`` (so it flows through
-the shared ``filter_layers``/resume/report machinery unchanged).
+is exposed as a ``CartoTableInfo`` with ``name``/``id``, so it flows through
+the shared filter, resume, and report steps of ``run_layer_extraction``.
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse, urlunparse
 
 import requests  # type: ignore[import-untyped]
+
+from portolan_cli.extract.common.urls import redact_credentials
 
 
 class CartoDiscoveryError(Exception):
@@ -39,10 +41,6 @@ class CartoTableInfo:
     name: str
     id: int = 0
     has_geometry: bool = True
-
-    def to_filter_dict(self) -> dict[str, int | str]:
-        """Convert to the dict shape expected by ``filter_layers``."""
-        return {"id": self.id, "name": self.name}
 
 
 @dataclass
@@ -87,7 +85,7 @@ def normalize_sql_api_url(url: str) -> str:
     """
     parsed = urlparse(url)
     if not parsed.scheme:
-        raise CartoDiscoveryError(f"Invalid Carto URL (missing scheme): {url}")
+        raise CartoDiscoveryError(redact_credentials(f"Invalid Carto URL (missing scheme): {url}"))
 
     # Drop query/fragment, normalize trailing slash.
     path = parsed.path.rstrip("/")
@@ -144,7 +142,8 @@ def carto_sql_request(
         response.raise_for_status()
         data: dict[str, object] = response.json()
     except _NETWORK_ERRORS as e:
-        raise CartoDiscoveryError(f"Carto SQL request failed: {e}") from e
+        # A requests error quotes the request URL with its api_key (#981).
+        raise CartoDiscoveryError(redact_credentials(f"Carto SQL request failed: {e}")) from e
 
     if "error" in data:
         raise CartoDiscoveryError(f"Carto SQL error: {data['error']}")

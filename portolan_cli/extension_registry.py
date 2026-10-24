@@ -27,7 +27,7 @@ be a valid COG), so those extensions are deliberately excluded from the static
 
 ConvertTarget = Literal["GeoParquet", "COG"]
 Routes = Literal["vector", "raster"]
-Role = Literal["data", "thumbnail", "metadata", "documentation"]
+Role = Literal["data", "visual", "thumbnail", "metadata", "documentation"]
 
 
 @dataclass(frozen=True)
@@ -53,6 +53,10 @@ class ExtensionSpec:
 
     cloud_native: CloudNative = "no"
     convert_target: ConvertTarget | None = None
+    convert_on_request: ConvertTarget | None = None
+    """A cloud-native format that a converter still reads, so that
+    ``conversion.extensions.convert`` can send it to this target. ``None`` for
+    a format with no conversion, such as PMTiles."""
     routes_as: Routes | None = None
 
     scan_category: str | None = None
@@ -151,6 +155,7 @@ EXTENSION_REGISTRY: tuple[ExtensionSpec, ...] = (
         media_type="application/vnd.flatgeobuf",
         role="data",
         cloud_native="yes",
+        convert_on_request="GeoParquet",
         routes_as="vector",
         scan_category="geo_asset",
         is_geospatial=True,
@@ -166,7 +171,7 @@ EXTENSION_REGISTRY: tuple[ExtensionSpec, ...] = (
         ".pmtiles",
         display_name="PMTiles",
         media_type="application/vnd.pmtiles",
-        role="data",
+        role="visual",
         cloud_native="yes",
         routes_as="vector",
         scan_category="geo_asset",
@@ -402,18 +407,13 @@ def convertible_extensions(target: ConvertTarget) -> frozenset[str]:
     return frozenset(spec.ext for spec in EXTENSION_REGISTRY if spec.convert_target == target)
 
 
+def convert_on_request_extensions(target: ConvertTarget) -> frozenset[str]:
+    """Cloud-native extensions that convert to ``target`` only when the config lists them."""
+    return frozenset(spec.ext for spec in EXTENSION_REGISTRY if spec.convert_on_request == target)
+
+
 def unsupported_extensions() -> frozenset[str]:
     """Extensions explicitly rejected with a helpful message."""
     return frozenset(
         spec.ext for spec in EXTENSION_REGISTRY if spec.unsupported_message is not None
     )
-
-
-def all_known_sidecar_extensions() -> frozenset[str]:
-    """Return every sidecar suffix the system knows.
-
-    The set holds the flat scanner suffixes plus every per-primary pattern in
-    :data:`SIDECAR_OF`.
-    """
-    from_patterns = {ext for patterns in SIDECAR_OF.values() for ext in patterns}
-    return extensions_where(scan_category="known_sidecar") | frozenset(from_patterns)

@@ -8,11 +8,15 @@ own suites; here we verify the shared skeleton in isolation.
 
 from __future__ import annotations
 
+import json
+import logging
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from portolan_cli.extract.common.orchestrator_base import (
+    add_extracted_files,
     add_source_links,
     collect_successful_parquet_files,
     init_extracted_catalog,
@@ -32,7 +36,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def stub_add_files(monkeypatch: pytest.MonkeyPatch) -> None:
     """Replace ``add_files`` with a no-op, for tests about the init step alone."""
-    monkeypatch.setattr("portolan_cli.add.add_files", lambda *a, **k: None)
+    monkeypatch.setattr("portolan_cli.add.add_files", lambda *a, **k: ([], [], []))
 
 
 def _layer(
@@ -98,6 +102,46 @@ class TestCollectSuccessfulParquetFiles:
         assert collect_successful_parquet_files(Path("/out"), report) == []
 
 
+def _recording_add(events: list[str]) -> Any:
+    """An ``add_files`` fake that records the call and adds nothing."""
+
+    def add(**_: Any) -> tuple[list[Any], ...]:
+        events.append("add")
+        return [], [], []
+
+    return add
+
+
+def _init_with_recorded_add(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    report: ExtractionReport,
+    events: list[str],
+    post_init: Any,
+) -> list[Path] | None:
+    """Run ``init_extracted_catalog`` with an ``add_files`` that records its call."""
+    monkeypatch.setattr("portolan_cli.add.add_files", _recording_add(events))
+    return init_extracted_catalog(tmp_path, report, title="t", description="d", post_init=post_init)
+
+
+def test_add_extracted_files_logs_what_stays_out(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A skip that keeps a file out and a failure log a warning. An unchanged file does not."""
+    from portolan_cli.add import SKIP_UNCHANGED, AddFailure
+
+    def add(*, skip_reasons: dict[Path, str], **_: Any) -> tuple[list[Any], ...]:
+        skip_reasons.update({Path("a/a.parquet"): SKIP_UNCHANGED, Path("b/b.parquet"): "no id"})
+        return [], [], [AddFailure(path=Path("c/c.parquet"), error="bad geometry")]
+
+    monkeypatch.setattr("portolan_cli.add.add_files", add)
+    with caplog.at_level(logging.WARNING, logger="portolan_cli.extract.common.orchestrator_base"):
+        added = add_extracted_files([Path("a/a.parquet")], Path("/out"))
+
+    assert added == []
+    assert caplog.messages == ["Skipping b.parquet: no id", "Could not add c.parquet: bad geometry"]
+
+
 class TestInitExtractedCatalog:
     def test_returns_none_and_skips_hooks_when_no_assets(self, tmp_path: Path) -> None:
         report = _report([_layer(0, "a", status="failed")])
@@ -137,9 +181,6 @@ class TestInitExtractedCatalog:
             assert license_id is None
             return output_dir / "catalog.json", []
 
-        def _fake_add(*, paths: list[Path], catalog_root: Path) -> None:
-            events.append("add")
-
         def _post_init(_out: Path, files: list[Path], fresh: bool) -> None:
             events.append("post_init")
             assert files == [tmp_path / "a/a.parquet"]
@@ -148,13 +189,9 @@ class TestInitExtractedCatalog:
             assert fresh is True
 
         monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
-        monkeypatch.setattr("portolan_cli.add.add_files", _fake_add)
+        result = _init_with_recorded_add(monkeypatch, tmp_path, report, events, _post_init)
 
-        result = init_extracted_catalog(
-            tmp_path, report, title="t", description="d", post_init=_post_init
-        )
-
-        assert result == [tmp_path / "a/a.parquet"]
+        assert result == ([tmp_path / "a/a.parquet"], set())
         assert events == ["init", "post_init", "add"]
 
     @pytest.mark.usefixtures("stub_add_files")
@@ -165,7 +202,7 @@ class TestInitExtractedCatalog:
         monkeypatch.setattr(catalog_mod, "init_catalog", lambda *a, **k: (Path("catalog.json"), []))
 
         result = init_extracted_catalog(tmp_path, report, title=None, description=None)
-        assert result == [tmp_path / "a/a.parquet"]
+        assert result == ([tmp_path / "a/a.parquet"], set())
 
     @pytest.mark.usefixtures("stub_add_files")
     @pytest.mark.parametrize(
@@ -221,9 +258,6 @@ class TestInitExtractedCatalog:
         def _fake_init(*_a: object, **_k: object) -> None:
             events.append("init")
 
-        def _fake_add(*, paths: list[Path], catalog_root: Path) -> None:
-            events.append("add")
-
         def _post_init(_out: Path, files: list[Path], fresh: bool) -> None:
             events.append("post_init")
             assert files == [tmp_path / "a/a.parquet"]
@@ -232,13 +266,9 @@ class TestInitExtractedCatalog:
             assert fresh is False
 
         monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
-        monkeypatch.setattr("portolan_cli.add.add_files", _fake_add)
+        result = _init_with_recorded_add(monkeypatch, tmp_path, report, events, _post_init)
 
-        result = init_extracted_catalog(
-            tmp_path, report, title="t", description="d", post_init=_post_init
-        )
-
-        assert result == [tmp_path / "a/a.parquet"]
+        assert result == ([tmp_path / "a/a.parquet"], set())
         # init_catalog is skipped for an existing catalog; the new collection is
         # added instead of the run aborting.
         assert events == ["post_init", "add"]
@@ -385,3 +415,68 @@ class TestSeedCatalogMetadata:
         )
         seed_catalog_metadata(tmp_path, extracted)
         assert (tmp_path / ".portolan" / "metadata.yaml").exists()
+
+    def test_attribution_names_the_producer_and_unset_host_warns(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """#1039: the source's attribution is the producer, and no placeholder host is made."""
+        from portolan_cli.config import load_merged_metadata
+        from portolan_cli.providers import resolve_providers
+
+        extracted = ExtractedMetadata(
+            source_type="arcgis_featureserver",
+            source_url="https://example.com/svc?token=SECRET",
+            attribution="City of Philadelphia",
+        )
+
+        seed_catalog_metadata(tmp_path, extracted)
+
+        metadata = load_merged_metadata(tmp_path, tmp_path)
+        assert resolve_providers(metadata) == [
+            {"name": "City of Philadelphia", "roles": ["producer"]}
+        ]
+        assert metadata["source_url"] == "https://example.com/svc"
+        warning = (
+            "No host provider: set contact.name and contact.email in "
+            f"{tmp_path / '<collection>' / '.portolan' / 'metadata.yaml'}, then run "
+            "'portolan add --force <collection>'."
+        )
+        err = capsys.readouterr().err
+        assert err.count(warning) == 1
+        assert "No producer provider" not in err
+
+    def test_source_without_attribution_warns_of_the_missing_producer(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        seed_catalog_metadata(tmp_path, ExtractedMetadata(source_type="arcgis_featureserver"))
+
+        metadata_path = tmp_path / ".portolan" / "metadata.yaml"
+        assert (
+            capsys.readouterr().err.count(
+                "No producer provider: the source publishes no author and no attribution. "
+                f"Add a provider with the producer role to {metadata_path}."
+            )
+            == 1
+        )
+
+
+class TestLegendFileFields:
+    def test_legend_assets_carry_size_and_checksum(self, tmp_path: Path) -> None:
+        """#1039: legends/source states file:size and file:checksum (PTL-AST-003)."""
+        from portolan_cli.sync.checksums import file_fields
+
+        collection = tmp_path / "a"
+        (collection / "legends").mkdir(parents=True)
+        png = collection / "legends" / "source.png"
+        png.write_bytes(b"\x89PNG\r\n\x1a\nlegend")
+        (collection / "collection.json").write_text(
+            json.dumps({"type": "Collection", "id": "a", "assets": {}}), encoding="utf-8"
+        )
+
+        register_collection_styles(
+            tmp_path, _report([_layer(0, "a", output_path="a/a.parquet")]), include_legends=True
+        )
+
+        data = json.loads((collection / "collection.json").read_text(encoding="utf-8"))
+        asset = data["assets"]["legends/source"]
+        assert {k: asset[k] for k in ("file:size", "file:checksum")} == file_fields(png)

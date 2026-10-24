@@ -244,3 +244,85 @@ class TestGetEffectiveStatusWithRealFixtures:
 
         assert result.status == CloudNativeStatus.CLOUD_NATIVE
         assert result.display_name == "GeoParquet"
+
+
+def _catalog_converting(root: Path, fixture: str, target: str) -> Path:
+    """A catalog that lists the fixture extension under conversion.extensions.convert."""
+    from click.testing import CliRunner
+
+    from portolan_cli.cli import cli
+
+    assert (
+        CliRunner().invoke(cli, ["init", str(root), "--auto", "--license", "CC0-1.0"]).exit_code
+        == 0
+    )
+    source = Path(__file__).parents[1] / "fixtures" / fixture
+    config = root / ".portolan" / "config.yaml"
+    config.write_text(
+        config.read_text() + f"conversion:\n  extensions:\n    convert: [{source.suffix[1:]}]\n",
+        encoding="utf-8",
+    )
+    path = root / target
+    path.parent.mkdir(parents=True)
+    path.write_bytes(source.read_bytes())
+    return path
+
+
+def _catalog_converting_fgb(root: Path) -> Path:
+    """A catalog whose config lists .fgb under conversion.extensions.convert."""
+    return _catalog_converting(root, "cloud_native/sample.fgb", "roads/roads.fgb")
+
+
+class TestTheCatalogConvertListWins:
+    """Issue #1020: conversion.extensions.convert never reached the converter."""
+
+    @pytest.mark.unit
+    def test_the_status_reads_the_catalog_list(self, tmp_path: Path) -> None:
+        from portolan_cli.formats import get_cloud_native_status
+
+        fgb = _catalog_converting_fgb(tmp_path)
+
+        assert get_cloud_native_status(fgb).status == CloudNativeStatus.CLOUD_NATIVE
+        assert get_cloud_native_status(fgb, tmp_path).status == CloudNativeStatus.CONVERTIBLE
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("fixture", "target", "handler"),
+        [
+            ("cloud_native/sample.fgb", "roads/roads.fgb", "geoparquet"),
+            ("raster/valid/rgb.tif", "imagery/scene/scene.tif", "cog"),
+            ("cloud_native/sample.pmtiles", "roads/roads.pmtiles", "pmtiles"),
+        ],
+    )
+    def test_the_list_sends_only_a_convertible_vector_to_geoparquet(
+        self, tmp_path: Path, fixture: str, target: str, handler: str
+    ) -> None:
+        """A listed raster keeps the COG handler, which converts it again.
+
+        The GeoParquet handler failed on it with "No CRS found in input file".
+        A listed PMTiles keeps its own handler. Tiles have no GeoParquet
+        conversion, and the GeoParquet handler fails on the archive.
+        """
+        from portolan_cli.plugins.formats import handler_for
+
+        path = _catalog_converting(tmp_path, fixture, target)
+
+        selected = handler_for(path, tmp_path)
+
+        assert selected is not None
+        assert selected.name == handler
+
+    @pytest.mark.integration
+    def test_check_fix_converts_a_listed_flatgeobuf(self, tmp_path: Path) -> None:
+        """check --fix --geo-assets skipped the file as already cloud-native."""
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+
+        fgb = _catalog_converting_fgb(tmp_path)
+
+        result = CliRunner().invoke(cli, ["check", str(tmp_path), "--fix", "--geo-assets"])
+
+        assert result.exit_code == 0, result.output
+        assert "roads.fgb -> roads.parquet" in result.output
+        assert fgb.with_suffix(".parquet").is_file()

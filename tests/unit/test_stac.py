@@ -14,12 +14,10 @@ import pystac
 import pytest
 
 from portolan_cli.stac import (
-    add_collection_to_catalog,
     add_item_to_collection,
     create_collection,
     create_item,
     load_catalog,
-    save_catalog,
 )
 
 
@@ -216,95 +214,6 @@ class TestCatalogOperations:
         with pytest.raises(FileNotFoundError):
             load_catalog(tmp_path / "nonexistent" / "catalog.json")
 
-    @pytest.mark.unit
-    def test_save_catalog(self, tmp_path: Path) -> None:
-        """save_catalog writes catalog to disk."""
-        catalog = pystac.Catalog(
-            id="save-test",
-            description="Catalog to save",
-        )
-        catalog_path = tmp_path / ".portolan"
-
-        save_catalog(catalog, catalog_path)
-
-        # Should create catalog.json
-        catalog_file = catalog_path / "catalog.json"
-        assert catalog_file.exists()
-
-        # Should be valid JSON with correct structure
-        data = json.loads(catalog_file.read_text())
-        assert data["id"] == "save-test"
-        assert data["type"] == "Catalog"
-
-    @pytest.mark.unit
-    def test_save_catalog_creates_directories(self, tmp_path: Path) -> None:
-        """save_catalog creates parent directories if needed."""
-        catalog = pystac.Catalog(id="nested", description="test")
-        catalog_path = tmp_path / "nested" / "path" / ".portolan"
-
-        save_catalog(catalog, catalog_path)
-
-        assert (catalog_path / "catalog.json").exists()
-
-    @pytest.mark.unit
-    def test_save_catalog_with_relative_dotted_dest_dir(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A relative dest_dir must not send catalog.json to the parent.
-
-        Same defect as issue #731, reached through this helper instead of init.
-        pystac discards the trailing slash while absolutizing a relative root,
-        so a dotted directory name trips the file-versus-directory heuristic of
-        issue #401. Before the fix this wrote catalog.json to tmp_path.
-        """
-        catalog = pystac.Catalog(id="relative-dest", description="test")
-        dest_dir = tmp_path / "my.catalog"
-        dest_dir.mkdir()
-        monkeypatch.chdir(tmp_path)
-
-        save_catalog(catalog, Path("my.catalog"))
-
-        assert (dest_dir / "catalog.json").exists(), "catalog.json belongs in dest_dir"
-        assert not (tmp_path / "catalog.json").exists(), (
-            "catalog.json must NOT leak to the parent directory"
-        )
-        assert json.loads((dest_dir / "catalog.json").read_text())["id"] == "relative-dest"
-
-
-class TestCollectionManagement:
-    """Tests for adding collections to catalogs."""
-
-    @pytest.mark.unit
-    def test_add_collection_to_catalog(self, tmp_path: Path) -> None:
-        """add_collection_to_catalog links collection to catalog."""
-        catalog = pystac.Catalog(id="parent", description="Parent catalog")
-        collection = create_collection(
-            collection_id="child-collection",
-            description="Child collection",
-        )
-
-        add_collection_to_catalog(catalog, collection)
-
-        # Collection should be a child
-        children = list(catalog.get_children())
-        assert len(children) == 1
-        assert children[0].id == "child-collection"
-
-    @pytest.mark.unit
-    def test_add_multiple_collections(self, tmp_path: Path) -> None:
-        """add_collection_to_catalog can add multiple collections."""
-        catalog = pystac.Catalog(id="parent", description="Parent")
-        col1 = create_collection(collection_id="col1", description="First")
-        col2 = create_collection(collection_id="col2", description="Second")
-
-        add_collection_to_catalog(catalog, col1)
-        add_collection_to_catalog(catalog, col2)
-
-        children = list(catalog.get_children())
-        assert len(children) == 2
-        child_ids = {c.id for c in children}
-        assert child_ids == {"col1", "col2"}
-
 
 class TestItemManagement:
     """Tests for adding items to collections."""
@@ -328,27 +237,22 @@ class TestItemManagement:
         assert items[0].id == "child-item"
 
     @pytest.mark.unit
-    def test_add_item_updates_collection_extent(self) -> None:
-        """add_item_to_collection updates collection's spatial extent."""
-        collection = create_collection(
-            collection_id="extent-test",
-            description="Test extent update",
-            bbox=[0, 0, 1, 1],  # Initial small extent
-        )
+    def test_add_item_keeps_the_item_file_where_add_wrote_it(self, tmp_path: Path) -> None:
+        """#840: an --item-id item stays beside its data, not at <collection>/<id>/.
 
-        # Add item with larger bbox
-        item = create_item(
-            item_id="large-item",
-            bbox=[-10, -10, 10, 10],
-        )
-        add_item_to_collection(collection, item, update_extent=True)
+        On main a saved collection placed the item at the best-practice path,
+        so the item landed twice: once beside the data, once in a new
+        directory named after the id.
+        """
+        collection = create_collection(collection_id="imagery", description="d")
+        collection.set_self_href(str(tmp_path / "imagery" / "collection.json"))
+        item = create_item(item_id="custom-scene", bbox=[0, 0, 1, 1])
+        written = tmp_path / "imagery" / "scene-a" / "custom-scene.json"
+        item.set_self_href(str(written))
 
-        # Collection extent should now encompass the item
-        spatial = collection.extent.spatial.bboxes[0]
-        assert spatial[0] <= -10  # min_x
-        assert spatial[1] <= -10  # min_y
-        assert spatial[2] >= 10  # max_x
-        assert spatial[3] >= 10  # max_y
+        add_item_to_collection(collection, item)
+
+        assert Path(item.get_self_href()) == written
 
     @pytest.mark.unit
     def test_add_multiple_items(self) -> None:

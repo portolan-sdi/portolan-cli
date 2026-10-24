@@ -156,7 +156,7 @@ portolan add [OPTIONS] PATHS...
 | `--force-thumbnails` | boolean | Redraw the thumbnail even if one is registered. Use after a collection grows, since the extent it draws is otherwise fixed at first render. A thumbnail.png or preview.png you supplied still wins. | `False` |
 | `--force` | boolean | Re-process all files, ignoring change detection. | `False` |
 | `--reconvert` | boolean | Re-convert from source files (requires --force). | `False` |
-| `--merge-strategy` | choice (`smart` &#x7C; `keep` &#x7C; `overwrite`) | How to merge auto-detected metadata with existing values. 'smart' (default): preserve human-authored fields (title, description), update machine-derivable fields (href, type, row_count). 'keep': preserve all existing fields. 'overwrite': replace everything with auto-detected values. | `smart` |
+| `--merge-strategy` | choice (`smart` &#x7C; `keep` &#x7C; `overwrite`) | How to merge the human-authored fields with the detected values. Human fields are the asset title and description, custom asset fields, and column descriptions. Fields read from the data always follow the data. 'smart' (default): keep a human value and fill a missing one from the data. 'keep': keep a human value and never fill it from the data. 'overwrite': drop the human values. | `smart` |
 | `--json` | boolean | Output as JSON. | `False` |
 | `--help` | boolean | Show this message and exit. | `False` |
 
@@ -287,7 +287,7 @@ portolan check [OPTIONS] [PATH]
 | `--remove-legacy` | boolean | Remove source files after successful conversion (use with --fix) | `False` |
 | `--force` | boolean | Re-optimize already-valid COGs by re-applying current COG settings, e.g. to add missing overviews (use with --fix; rasters only) | `False` |
 | `--workers`, `-w` | integer range (`1` and above) | Parallel worker processes for conversion (default: auto-detect from CPU count; use 1 for sequential). Applies to --fix. | None |
-| `--metadata` | boolean | Only check/fix STAC metadata (links, schema, staleness) | `False` |
+| `--metadata` | boolean | Only check/fix STAC metadata (links, schema, staleness). With --fix this is the metadata refresh. It exits 1 while an error remains, and the JSON success field is false only when a fix fails, an auto-fixable error remains, or a file does not parse or breaks the STAC schema. --strict also exits 1 on a warning. | `False` |
 | `--geo-assets` | boolean | Only check/fix geospatial assets (cloud-native status, convertibility) | `False` |
 | `--strict` | boolean | Fail on warnings as well as errors | `False` |
 | `--live` | boolean | Probe the published host over HTTP for Range support, CORS headers, and link targets | `False` |
@@ -482,8 +482,11 @@ portolan config list [OPTIONS]
 
 Set a configuration value.
 
-KEY is the setting name (e.g., backend, statistics.enabled).
-VALUE is the value to set.
+KEY is the setting name (e.g., backend, statistics.enabled). A dotted KEY
+names a nested value: conversion.vector.sort writes sort under the
+conversion and vector blocks. An unknown KEY fails and lists the known keys.
+VALUE is the value to set. It takes the type of the setting, so "false" is
+stored as a boolean.
 
 Note: Sensitive settings (remote, profile, region) cannot be stored in
 config.yaml. Use environment variables or .env files instead.
@@ -492,6 +495,7 @@ config.yaml. Use environment variables or .env files instead.
 Examples:
     portolan config set backend iceberg
     portolan config set statistics.enabled true
+    portolan config set conversion.vector.sort none
     portolan config set pmtiles.enabled false --collection demographics
 ```
 
@@ -650,8 +654,8 @@ portolan extract arcgis [OPTIONS] URL [OUTPUT_DIR]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--layers` | text | Include layers matching glob patterns (comma-separated). Example: 'Census*,Transport*' | None |
-| `--exclude-layers` | text | Exclude layers matching glob patterns (comma-separated). Example: 'Legacy*,Test*' | None |
+| `--layers` | text | Include layers by layer id or name glob (comma-separated). Example: 'Census*,3' | None |
+| `--exclude-layers` | text | Exclude layers by layer id or name glob (comma-separated). Example: 'Legacy*,7' | None |
 | `--filter` | text | Apply glob filter to both services and layers. Example: 'sdn_*', '*_2024*' | None |
 | `--services` | text | Include services matching glob patterns (comma-separated). For services root URLs only. | None |
 | `--exclude-services` | text | Exclude services matching glob patterns (comma-separated). For services root URLs only. | None |
@@ -660,9 +664,10 @@ portolan extract arcgis [OPTIONS] URL [OUTPUT_DIR]
 | `--username` | text | ArcGIS username (mints a token via generateToken). | None |
 | `--password` | text | ArcGIS password (used with --username, or set ARCGIS_PASSWORD). Prompted interactively when omitted. | None |
 | `--no-recurse` | boolean | Do not traverse folders for services-root URLs (default: recurse). | `False` |
+| `--include-tables` | boolean | Also extract the tables of a service, as Parquet with no geometry. | `False` |
 | `--output-crs` | text | CRS for extracted GeoParquet. 'native' keeps the service's source CRS (default). Pass an EPSG code (e.g. EPSG:4326) to reproject. | `native` |
 | `--workers` | integer range (`1` and above) | Parallel page requests per layer (default: 3). | `3` |
-| `--retries` | integer range (`1` and above) | Retry attempts per failed layer or tile (default: 3). | `3` |
+| `--retries` | integer range (`1` and above) | Attempts per layer or tile for a transient failure (default: 3). | `3` |
 | `--timeout` | float range (`0.0` and above) | Per-request timeout in seconds for discovery, feature, and tile requests (default: 60). | `60.0` |
 | `--resume` | boolean | Resume from existing extraction-report.json (skip succeeded layers). | `False` |
 | `--dry-run` | boolean | List layers without extracting. | `False` |
@@ -738,7 +743,7 @@ portolan extract carto [OPTIONS] URL [OUTPUT_DIR]
 | `--exclude-cols` | text | Comma-separated columns to exclude. | None |
 | `--api-key` | text | Carto API key for private accounts (or set the CARTO_API_KEY env var). | None |
 | `--workers` | integer range (`1` and above) | Parallel workers for table extraction (default: 1). | `1` |
-| `--retries` | integer range (`1` and above) | Retry attempts per failed table (default: 3). | `3` |
+| `--retries` | integer range (`1` and above) | Attempts per table for a transient failure (default: 3). | `3` |
 | `--timeout` | float range (`0.0` and above) | Per-table request timeout in seconds (default: 120). | `120.0` |
 | `--resume` | boolean | Resume from existing extraction-report.json (skip succeeded tables). | `False` |
 | `--dry-run` | boolean | List tables without extracting. | `False` |
@@ -809,14 +814,14 @@ portolan extract wfs [OPTIONS] URL [OUTPUT_DIR]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--layers` | text | Include layers matching glob patterns (comma-separated). Example: 'buildings*,roads*' | None |
-| `--exclude-layers` | text | Exclude layers matching glob patterns (comma-separated). Example: 'test_*' | None |
+| `--layers` | text | Include layers by name or glob (comma-separated). A pattern matches the full workspace:layer name or the part after the ':'. Example: 'roads,ws:build*' | None |
+| `--exclude-layers` | text | Exclude layers by name or glob (comma-separated), matched as for --layers. Example: 'test_*' | None |
 | `--wfs-version` | choice (`1.0.0` &#x7C; `1.1.0` &#x7C; `2.0.0` &#x7C; `auto`) | WFS version (default: auto-detect). | `auto` |
 | `--output-crs` | text | Target CRS for output (e.g., 'EPSG:4326'). Default keeps source CRS. | None |
 | `--bbox` | text | Bounding box filter: minx,miny,maxx,maxy in output CRS. | None |
 | `--limit` | integer range (`1` and above) | Maximum features per layer. | None |
 | `--workers` | integer range (`1` and above) | Parallel workers for layer extraction (default: 1). Each layer is extracted independently. | `1` |
-| `--retries` | integer range (`1` and above) | Retry attempts per failed layer (default: 3). | `3` |
+| `--retries` | integer range (`1` and above) | Attempts per layer for a transient failure (default: 3). | `3` |
 | `--timeout` | float range (`0.0` and above) | Per-layer timeout in seconds (default: 300). Note: large layers use gpio's internal 10-minute HTTP timeout. | `300.0` |
 | `--page-size` | integer range (`100` and above) | Features per page for large layer pagination (default: 100000). | `100000` |
 | `--auto-tile` / `--no-auto-tile` | boolean | Subdivide the bbox and retry when a server caps maxFeatures, so capped layers extract completely (default: enabled). | `True` |

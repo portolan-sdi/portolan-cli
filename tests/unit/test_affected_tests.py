@@ -168,15 +168,22 @@ def test_test_imports_follow_patch_targets_and_string_modules(tmp_path: Path) ->
 
 
 @pytest.mark.integration
-def test_the_real_graph_selects_importers_and_skips_the_rest() -> None:
+def test_the_real_graph_selects_importers_and_skips_the_rest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """On this repository, a json_output change reaches its test, not the push tests.
 
     push.py does not import json_output, directly or through another module.
 
     The base ref does not exist. CI checks out a single commit with no
     ``origin/main``, and only a deleted module needs the merge base.
+
+    The graph build writes no cache. grimp puts its cache in the working
+    directory by default, and on a fresh CI checkout that left ``.grimp_cache/``
+    in the repository root, where the session guard fails the run.
     """
     repo = Path(__file__).resolve().parents[2]
+    monkeypatch.chdir(tmp_path)
 
     selection = at.select_for_repo(
         repo, [("M", "portolan_cli/json_output.py")], base="refs/heads/no-such-base"
@@ -185,6 +192,7 @@ def test_the_real_graph_selects_importers_and_skips_the_rest() -> None:
     assert selection.full is False
     assert "tests/unit/test_json_output.py" in selection.targets
     assert "tests/unit/test_push_async.py" not in selection.targets
+    assert sorted(path.name for path in tmp_path.iterdir()) == []
 
 
 def test_referenced_names_resolve_parent_package_and_relative_imports() -> None:
@@ -244,3 +252,115 @@ def test_deleted_importers_find_every_import_form(tmp_path: Path) -> None:
         "portolan_cli.relative",
         "tests/unit/test_legacy.py",
     }
+
+
+FOUNDATION_TESTS = {
+    "tests/integration/test_generated_catalog_conformance.py",
+    "tests/integration/test_catalog_invariants.py",
+    "tests/properties",
+}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "portolan_cli/config.py",
+        "portolan_cli/output.py",
+        "portolan_cli/stac.py",
+        "portolan_cli/finalization.py",
+        "portolan_cli/preparation.py",
+        "portolan_cli/sync/push.py",
+        "portolan_cli/extract/common/source.py",
+    ],
+)
+def test_a_foundation_file_also_selects_the_catalog_conformance_tests(path: str) -> None:
+    """A foundation change reaches the conformance tests through the CLI, not an import."""
+    selection = _select([("M", path)])
+
+    assert selection.full is False
+    assert set(selection.targets) == FOUNDATION_TESTS
+
+
+def test_a_foundation_file_keeps_its_import_graph_selection() -> None:
+    """The path rule adds targets. The import graph still selects the importers."""
+    importers = {"portolan_cli.output": {"portolan_cli.cli"}}
+
+    selection = at.select(
+        [("M", "portolan_cli/output.py")],
+        importers=lambda module: importers.get(module, set()),
+        test_imports={**TESTS, "tests/unit/test_output.py": {"portolan_cli.output"}},
+        test_texts={**TEXTS, "tests/unit/test_output.py": ""},
+        deleted_importers=lambda module: set(),
+    )
+
+    assert selection.targets == sorted(
+        FOUNDATION_TESTS | {"tests/integration/test_cli.py", "tests/unit/test_output.py"}
+    )
+
+
+def test_a_module_outside_the_foundation_does_not_select_the_conformance_tests() -> None:
+    selection = _select([("M", "portolan_cli/bbox.py")])
+
+    assert not set(selection.targets) & FOUNDATION_TESTS
+
+
+def test_missing_targets_are_dropped_with_a_note(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A target that is not in the tree yet must not make pytest exit with an error."""
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / "tests" / "unit" / "test_here.py").write_text("", encoding="utf-8")
+
+    kept = at.existing_targets(
+        tmp_path, ["tests/properties", "tests/unit/test_here.py", "tests/unit/test_gone.py"]
+    )
+
+    assert kept == ["tests/unit/test_here.py"]
+    assert capsys.readouterr().err == (
+        "Skipped 2 missing target(s): tests/properties tests/unit/test_gone.py\n"
+    )
+
+
+def test_a_test_file_deleted_with_its_module_is_not_selected() -> None:
+    """The old importer of a deleted module is gone too, so pytest must not get its path."""
+    selection = _select(
+        [("D", "portolan_cli/legacy.py"), ("D", "tests/unit/test_legacy.py")],
+        deleted_importers={"portolan_cli.add", "tests/unit/test_legacy.py"},
+    )
+
+    assert selection.targets == ["tests/integration/test_cli.py", "tests/unit/test_add.py"]
+
+
+def _main_with(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, targets: list[str], argv: list[str]
+) -> int:
+    monkeypatch.setattr(at, "_git", lambda *args: f"{repo}\n")
+    monkeypatch.setattr(at, "changed_files", lambda repo, base: [])
+    monkeypatch.setattr(
+        at, "select_for_repo", lambda repo, changes, base: at.Selection(targets=targets)
+    )
+    result: int = at.main(argv)
+    return result
+
+
+def test_a_selection_whose_targets_are_all_missing_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An empty run that exits 0 checks nothing, so it must not pass as a green run."""
+    status = _main_with(monkeypatch, tmp_path, ["tests/unit/test_gone.py"], ["--run"])
+
+    assert status == 1
+    assert capsys.readouterr().err == (
+        "Skipped 1 missing target(s): tests/unit/test_gone.py\n"
+        "Every selected target is missing from the tree. Run the full suite.\n"
+    )
+
+
+def test_a_change_that_selects_no_tests_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A docs-only change has no affected tests. That is a valid result, not a failure."""
+    status = _main_with(monkeypatch, tmp_path, [], ["--run"])
+
+    assert status == 0
+    assert capsys.readouterr().err == "No affected tests.\n"

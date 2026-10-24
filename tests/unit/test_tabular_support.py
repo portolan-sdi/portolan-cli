@@ -966,6 +966,10 @@ class TestTabularConversionIntegration:
         assert any("records.parquet" in href for href in asset_hrefs), (
             f"Collection should reference Parquet file, got {asset_hrefs}"
         )
+        # Issue #960: the converted CSV is the source of the Parquet, not data.
+        roles = {a["href"]: a["roles"] for a in collection_data["assets"].values()}
+        assert roles["./records.csv"] == ["source"]
+        assert roles["./records.parquet"] == ["data"]
 
     def test_csv_not_converted_when_convert_false(self, tmp_path: Path) -> None:
         """CSV file should NOT be converted when tabular.convert=false."""

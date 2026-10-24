@@ -24,7 +24,12 @@ from __future__ import annotations
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
-from portolan_cli.backends.protocol import DriftReport, SchemaFingerprint
+from portolan_cli.backends.protocol import (
+    DriftReport,
+    PostAddContext,
+    PullOutcome,
+    SchemaFingerprint,
+)
 from portolan_cli.versions import (
     Asset,
     SchemaInfo,
@@ -315,3 +320,25 @@ class JsonFileBackend:
             remote_version=current,  # Stub: would query remote
             message="Drift detection pending sync implementation",
         )
+
+    def on_post_add(self, context: PostAddContext) -> None:  # noqa: ARG002 - the protocol fixes it
+        """Do nothing: versions.json is already written when add finishes."""
+
+    def pull(
+        self,
+        remote_url: str,  # noqa: ARG002 - the protocol fixes it
+        local_root: Path,  # noqa: ARG002 - the protocol fixes it
+        collection: str,  # noqa: ARG002 - the protocol fixes it
+        *,
+        dry_run: bool = False,  # noqa: ARG002 - the protocol fixes it
+    ) -> PullOutcome | None:
+        """Return None, so the file-based pull of ``sync.pull`` runs."""
+        return None
+
+    def supports_push(self) -> bool:
+        """Allow push: the file backend publishes by uploading the catalog."""
+        return True
+
+    def push_blocked_message(self, remote: str | None) -> str:  # noqa: ARG002 - the protocol fixes it
+        """Name the backend. ``push`` never shows it, as push is allowed."""
+        return "Push is not supported with the 'file' backend."

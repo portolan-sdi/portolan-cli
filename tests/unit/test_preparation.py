@@ -11,16 +11,16 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pystac
 import pytest
 
+from portolan_cli.errors import AssetKeyCollisionError
 from portolan_cli.plugins.builtin.formats import COG, FLATGEOBUF, GEOPARQUET, PMTILES
 from portolan_cli.preparation import (
     _add_statistics_to_properties,
     _convert_and_extract_metadata,
     _extract_bbox_wgs84,
     _extract_statistics_best_effort,
-    _fix_collection_level_asset_hrefs,
+    _get_asset_role,
     _scan_item_assets,
     _validate_collection_id,
 )
@@ -164,193 +164,280 @@ class TestStatisticsShaping:
         assert "statistics" not in props["bands"][0]
 
 
-class TestFixCollectionLevelAssetHrefs:
-    """/ RULE-0010: collection-level hrefs are ./file and keys are stems."""
-
-    def test_primary_data_key_becomes_stem_and_href_normalized(self) -> None:
-        assets = {
-            "data": pystac.Asset(href="../census.parquet", media_type="x", roles=["data"]),
-        }
-
-        fixed = _fix_collection_level_asset_hrefs(assets)
-
-        assert "data" not in fixed
-        assert "census" in fixed  # key derived from stem, not literal "data"
-        assert fixed["census"].href == "./census.parquet"
-
-    def test_non_data_key_preserved_href_prefixed(self) -> None:
-        assets = {
-            "thumbnail": pystac.Asset(
-                href="thumb.png", media_type="image/png", roles=["thumbnail"]
-            ),
-        }
-
-        fixed = _fix_collection_level_asset_hrefs(assets)
-
-        assert set(fixed) == {"thumbnail"}
-        assert fixed["thumbnail"].href == "./thumb.png"
+_GEOPARQUET_FIXTURE = Path(__file__).parents[1] / "fixtures" / "vector" / "valid" / "points.parquet"
 
 
-def _scanned(href: str, media_type: str) -> pystac.Asset:
-    """Build an asset in the shape ``_scan_item_assets`` returns it."""
-    return pystac.Asset(href=href, media_type=media_type, roles=["data"])
+def _write(directory: Path, *names: str) -> None:
+    """Write each named file. ``table*.parquet`` is plain Parquet, any other
+    ``.parquet`` is GeoParquet, and every other name holds a few bytes."""
+    import shutil
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        path = directory / name
+        if path.suffix.lower() != ".parquet":
+            path.write_bytes(name.encode())
+        elif name.startswith("table"):
+            pq.write_table(pa.table({"a": [1]}), path)
+        else:
+            shutil.copy(_GEOPARQUET_FIXTURE, path)
 
 
-_PARQUET = "application/vnd.apache.parquet"
-_PMTILES = "application/vnd.pmtiles"
+def _scan(directory: Path, primary: str, *, collection_level: bool = True) -> dict[str, Any]:
+    """Scan ``directory`` and return ``{key: (href, roles)}``."""
+    assets, _, _ = _scan_item_assets(
+        item_dir=directory,
+        item_id=Path(primary).stem,
+        primary_file=directory / primary,
+        collection_dir=directory if collection_level else directory.parent,
+        collection_id="land",
+        collection_level=collection_level,
+    )
+    return {key: (asset.href, asset.roles) for key, asset in assets.items()}
 
 
-class TestSameStemCollectionLevelKeys:
-    """Issue #933: a same-stem sibling never takes the primary's stem key.
+class TestStemGroupResolver:
+    """One resolver gives every scanned file its key and role (#933, #960, #929).
 
-    ``_scan_item_assets`` keys the primary ``data`` and a same-stem sibling by
-    its stem. The rename of ``data`` to the stem collided with the sibling, and
-    ``iterdir`` order chose which file survived.
+    The answer depends on the files only. It must not depend on the ``iterdir``
+    order or on which file of the group is the primary, because every item of a
+    flat collection scans the same files.
     """
 
-    @pytest.mark.parametrize("parquet_first", [True, False])
-    @pytest.mark.parametrize("primary", ["parquet", "pmtiles"])
-    def test_parquet_keeps_stem_and_pmtiles_becomes_tiles(
-        self, primary: str, parquet_first: bool
+    @pytest.mark.parametrize("primary", ["points.parquet", "points.geojson"])
+    def test_converted_geoparquet_is_data_and_its_source_is_source(
+        self, tmp_path: Path, primary: str
     ) -> None:
-        """The parquet's prepared item and the PMTiles item agree on both keys."""
-        parquet_key, pmtiles_key = (
-            ("data", "zoning") if primary == "parquet" else ("zoning", "data")
-        )
-        parquet = (parquet_key, _scanned("../zoning.parquet", _PARQUET))
-        pmtiles = (pmtiles_key, _scanned("../zoning.pmtiles", _PMTILES))
-        entries = [parquet, pmtiles] if parquet_first else [pmtiles, parquet]
+        """Issue #960: the source GeoJSON was registered with the data role."""
+        _write(tmp_path, "points.parquet", "points.geojson")
 
-        fixed = _fix_collection_level_asset_hrefs(dict(entries))
+        assert _scan(tmp_path, primary) == {
+            "points": ("./points.parquet", ["data"]),
+            "points.geojson": ("./points.geojson", ["source"]),
+        }
 
-        assert set(fixed) == {"zoning", "zoning-tiles"}
-        assert fixed["zoning"].href == "./zoning.parquet"
-        assert fixed["zoning"].media_type == _PARQUET
-        assert fixed["zoning"].roles == ["data"]
-        assert fixed["zoning-tiles"].href == "./zoning.pmtiles"
-        assert fixed["zoning-tiles"].media_type == _PMTILES
-        assert fixed["zoning-tiles"].roles == ["visual"]
+    def test_shapefile_and_its_sidecars_are_sources(self, tmp_path: Path) -> None:
+        _write(tmp_path, "roads.parquet", "roads.shp", "roads.dbf", "roads.shx", "roads.prj")
 
-    @pytest.mark.parametrize("parquet_first", [True, False])
-    def test_converted_source_takes_its_filename(self, parquet_first: bool) -> None:
-        """A shapefile source beside its GeoParquet output never takes the stem."""
-        parquet = ("data", _scanned("../roads.parquet", _PARQUET))
-        source = ("roads", _scanned("../roads.shp", "application/x-shapefile"))
-        entries = [parquet, source] if parquet_first else [source, parquet]
+        assert _scan(tmp_path, "roads.parquet") == {
+            "roads": ("./roads.parquet", ["data"]),
+            "roads.dbf": ("./roads.dbf", ["source"]),
+            "roads.prj": ("./roads.prj", ["source"]),
+            "roads.shp": ("./roads.shp", ["source"]),
+            "roads.shx": ("./roads.shx", ["source"]),
+        }
 
-        fixed = _fix_collection_level_asset_hrefs(dict(entries))
+    def test_csv_beside_its_plain_parquet_is_the_source(self, tmp_path: Path) -> None:
+        """The spec keeps a converted CSV as the source of the Parquet table."""
+        _write(tmp_path, "table-prices.parquet", "table-prices.csv")
 
-        assert set(fixed) == {"roads", "roads.shp"}
-        assert fixed["roads"].href == "./roads.parquet"
-        assert fixed["roads.shp"].href == "./roads.shp"
+        assert _scan(tmp_path, "table-prices.parquet") == {
+            "table-prices": ("./table-prices.parquet", ["data"]),
+            "table-prices.csv": ("./table-prices.csv", ["source"]),
+        }
 
-    @pytest.mark.parametrize("parquet_first", [True, False])
-    def test_other_stem_companions_get_the_same_keys(self, parquet_first: bool) -> None:
-        """A single-file add also scans the companions of another stem.
+    @pytest.mark.parametrize("primary", ["zoning.parquet", "zoning.pmtiles"])
+    def test_pmtiles_beside_geoparquet_is_the_visual_derivative(
+        self, tmp_path: Path, primary: str
+    ) -> None:
+        """Issues #929 and #933: the PMTiles never takes the data key or role."""
+        _write(tmp_path, "zoning.parquet", "zoning.pmtiles")
 
-        Their keys must match the keys their own items give them.
-        """
-        parquet = ("a", _scanned("../a.parquet", _PARQUET))
-        pmtiles = ("a.pmtiles", _scanned("../a.pmtiles", _PMTILES))
-        if not parquet_first:
-            parquet = ("a.parquet", parquet[1])
-            pmtiles = ("a", pmtiles[1])
-        primary = ("data", _scanned("../b.parquet", _PARQUET))
-        entries = [primary, parquet, pmtiles] if parquet_first else [primary, pmtiles, parquet]
+        assert _scan(tmp_path, primary) == {
+            "zoning": ("./zoning.parquet", ["data"]),
+            "zoning-tiles": ("./zoning.pmtiles", ["visual"]),
+        }
 
-        fixed = _fix_collection_level_asset_hrefs(dict(entries))
+    def test_other_stem_companions_get_the_keys_of_their_own_item(self, tmp_path: Path) -> None:
+        _write(tmp_path, "a.parquet", "a.pmtiles", "b.parquet")
 
-        assert {k: (a.href, a.roles) for k, a in fixed.items()} == {
-            "b": ("./b.parquet", ["data"]),
+        assert _scan(tmp_path, "b.parquet") == {
             "a": ("./a.parquet", ["data"]),
             "a-tiles": ("./a.pmtiles", ["visual"]),
+            "b": ("./b.parquet", ["data"]),
         }
 
-    def test_plain_table_never_demotes_a_primary_pmtiles(self) -> None:
-        """A same-stem Parquet without GeoParquet metadata is no tile source."""
-        fixed = _fix_collection_level_asset_hrefs(
-            {
-                "data": _scanned("../roads.pmtiles", _PMTILES),
-                "roads": _scanned("../roads.parquet", _PARQUET),
-            },
-            tabular_names=frozenset({"roads.parquet"}),
-        )
+    def test_a_pmtiles_beside_a_plain_table_is_still_the_visual(self, tmp_path: Path) -> None:
+        """core.md "Roles": the PMTiles is ``visual``, never ``data``."""
+        _write(tmp_path, "table.pmtiles", "table.parquet")
 
-        assert {k: (a.href, a.roles) for k, a in fixed.items()} == {
-            "roads": ("./roads.pmtiles", ["data"]),
-            "roads.parquet": ("./roads.parquet", ["data"]),
+        assert _scan(tmp_path, "table.pmtiles") == {
+            "table": ("./table.parquet", ["data"]),
+            "table-tiles": ("./table.pmtiles", ["visual"]),
         }
 
-    @pytest.mark.parametrize("source_first", [True, False])
+    @pytest.mark.parametrize("primary", ["roads.fgb", "roads.pmtiles"])
+    def test_flatgeobuf_owns_the_stem_over_pmtiles(self, tmp_path: Path, primary: str) -> None:
+        _write(tmp_path, "roads.fgb", "roads.pmtiles")
+
+        assert _scan(tmp_path, primary) == {
+            "roads": ("./roads.fgb", ["data"]),
+            "roads-tiles": ("./roads.pmtiles", ["visual"]),
+        }
+
     def test_two_parquet_files_of_one_stem_give_the_stem_to_the_primary(
-        self, source_first: bool
+        self, tmp_path: Path
     ) -> None:
         """An uppercase ``.PARQUET`` source converts to a same-stem output."""
-        output = ("data", _scanned("../a1.parquet", _PARQUET))
-        source = ("a1", _scanned("../a1.PARQUET", _PARQUET))
-        entries = [source, output] if source_first else [output, source]
+        probe = tmp_path / "probe"
+        probe.write_bytes(b"")
+        case_insensitive = (tmp_path / "PROBE").exists()
+        probe.unlink()
+        if case_insensitive:
+            pytest.skip("a case-insensitive filesystem holds one file for both names")
+        _write(tmp_path, "a1.parquet", "a1.PARQUET")
 
-        fixed = _fix_collection_level_asset_hrefs(dict(entries))
-
-        assert {k: a.href for k, a in fixed.items()} == {
-            "a1": "./a1.parquet",
-            "a1.PARQUET": "./a1.PARQUET",
+        assert _scan(tmp_path, "a1.parquet") == {
+            "a1": ("./a1.parquet", ["data"]),
+            "a1.PARQUET": ("./a1.PARQUET", ["data"]),
         }
 
-    @pytest.mark.parametrize("primary", ["fgb", "pmtiles"])
-    def test_flatgeobuf_owns_the_stem_over_pmtiles(self, primary: str) -> None:
-        """Without a GeoParquet, the keys still do not depend on the primary."""
-        fgb_key, pmtiles_key = ("data", "roads") if primary == "fgb" else ("roads", "data")
-        fixed = _fix_collection_level_asset_hrefs(
-            {
-                fgb_key: _scanned("../roads.fgb", "application/vnd.flatgeobuf"),
-                pmtiles_key: _scanned("../roads.pmtiles", _PMTILES),
-            }
-        )
+    def test_a_same_rank_tie_without_the_primary_goes_to_the_parquet_name(
+        self, tmp_path: Path
+    ) -> None:
+        """The name order alone would give the stem to ``a1.PARQUET``."""
+        probe = tmp_path / "probe"
+        probe.write_bytes(b"")
+        case_insensitive = (tmp_path / "PROBE").exists()
+        probe.unlink()
+        if case_insensitive:
+            pytest.skip("a case-insensitive filesystem holds one file for both names")
+        _write(tmp_path, "a1.parquet", "a1.PARQUET", "b.parquet")
 
-        assert {k: (a.href, a.roles) for k, a in fixed.items()} == {
-            "roads": ("./roads.fgb", ["data"]),
-            "roads.pmtiles": ("./roads.pmtiles", ["data"]),
+        assert _scan(tmp_path, "b.parquet") == {
+            "a1": ("./a1.parquet", ["data"]),
+            "a1.PARQUET": ("./a1.PARQUET", ["data"]),
+            "b": ("./b.parquet", ["data"]),
         }
 
-    def test_role_files_never_own_the_stem(self) -> None:
-        """A second documentation file falls back to the stem key in the scan."""
-        fixed = _fix_collection_level_asset_hrefs(
-            {
-                "data": _scanned("../roads.pmtiles", _PMTILES),
-                "documentation": pystac.Asset(
-                    href="../roads.md", media_type="text/markdown", roles=["documentation"]
-                ),
-                "roads": pystac.Asset(
-                    href="../roads.txt", media_type="text/plain", roles=["documentation"]
-                ),
-            }
-        )
+    def test_a_file_beside_an_owner_that_is_not_cloud_native_keeps_its_role(
+        self, tmp_path: Path
+    ) -> None:
+        """A GeoPackage kept as it is converts nothing, so its CSV is no source."""
+        _write(tmp_path, "roads.gpkg", "roads.csv")
 
-        assert {k: a.href for k, a in fixed.items()} == {
-            "roads": "./roads.pmtiles",
-            "documentation": "./roads.md",
-            "roads.txt": "./roads.txt",
+        assert _scan(tmp_path, "roads.gpkg") == {
+            "roads": ("./roads.gpkg", ["data"]),
+            "roads.csv": ("./roads.csv", ["data"]),
         }
 
-    def test_standalone_pmtiles_stays_primary_data(self) -> None:
-        """PMTiles without a same-stem GeoParquet is the data, not a derivative."""
-        fixed = _fix_collection_level_asset_hrefs(
-            {"data": _scanned("../basemap.pmtiles", _PMTILES)}
-        )
+    def test_the_item_primary_keeps_data_over_a_file_whose_stem_is_data(
+        self, tmp_path: Path
+    ) -> None:
+        """The primary group goes first, though ``data`` sorts before ``scene``."""
+        item_dir = tmp_path / "scene"
+        _write(item_dir, "scene.tif", "data.csv")
 
-        assert set(fixed) == {"basemap"}
-        assert fixed["basemap"].roles == ["data"]
+        assert _scan(item_dir, "scene.tif", collection_level=False) == {
+            "data": ("scene.tif", ["data"]),
+            "data.csv": ("data.csv", ["data"]),
+        }
 
-    def test_other_stem_companion_keeps_its_key(self) -> None:
-        fixed = _fix_collection_level_asset_hrefs(
-            {
-                "data": _scanned("../zoning.parquet", _PARQUET),
-                "readme": _scanned("../readme.txt", "text/plain"),
-            }
-        )
+    def test_role_files_never_own_the_stem(self, tmp_path: Path) -> None:
+        _write(tmp_path, "roads.parquet", "roads.md", "roads.txt")
 
-        assert set(fixed) == {"zoning", "readme"}
+        assert _scan(tmp_path, "roads.parquet") == {
+            "roads": ("./roads.parquet", ["data"]),
+            "documentation": ("./roads.md", ["documentation"]),
+            "roads.txt": ("./roads.txt", ["documentation"]),
+        }
+
+    def test_a_lone_pmtiles_is_the_visual(self, tmp_path: Path) -> None:
+        """The scan of another stem sees tiles that render no GeoParquet yet."""
+        _write(tmp_path, "basemap.pmtiles", "roads.parquet")
+
+        assert _scan(tmp_path, "roads.parquet") == {
+            "basemap-tiles": ("./basemap.pmtiles", ["visual"]),
+            "roads": ("./roads.parquet", ["data"]),
+        }
+
+    def test_extension_role_of_a_lone_file_is_the_role_the_scan_gives(self, tmp_path: Path) -> None:
+        """``check --fix`` backfills a missing role from the extension alone.
+
+        It must give a PMTiles the role a fresh ``add`` gives it.
+        """
+        _write(tmp_path, "basemap.pmtiles")
+
+        _href, roles = _scan(tmp_path, "basemap.pmtiles")["basemap-tiles"]
+        assert [_get_asset_role(tmp_path / "basemap.pmtiles")] == roles
+
+    def test_the_item_mirror_is_never_a_scanned_asset(self, tmp_path: Path) -> None:
+        """``items.parquet`` is GeoParquet, so the scan gave the mirror the data role.
+
+        ``register_mirror_asset`` is its one writer, with the role
+        ``collection-mirror``. The PMTiles and thumbnail side-steps read data
+        assets, so a mirror with the data role became a tile source.
+        """
+        _write(tmp_path, "roads.parquet", "items.parquet")
+
+        assert _scan(tmp_path, "roads.parquet") == {"roads": ("./roads.parquet", ["data"])}
+
+    def test_a_gdal_statistics_sidecar_is_never_an_asset(self, tmp_path: Path) -> None:
+        """GDAL writes ``.aux.xml`` after the first scan, so a rebuild differed."""
+        item_dir = tmp_path / "scene"
+        _write(item_dir, "scene.tif", "scene.tif.aux.xml")
+
+        assert _scan(item_dir, "scene.tif", collection_level=False) == {
+            "data": ("scene.tif", ["data"]),
+        }
+
+    def test_item_level_primary_is_data_and_its_source_is_source(self, tmp_path: Path) -> None:
+        item_dir = tmp_path / "scene"
+        _write(item_dir, "scene.tif", "scene.jp2", "scene.thumb.jpg")
+
+        assert _scan(item_dir, "scene.tif", collection_level=False) == {
+            "data": ("scene.tif", ["data"]),
+            "scene.jp2": ("scene.jp2", ["source"]),
+            "thumbnail": ("scene.thumb.jpg", ["thumbnail"]),
+        }
+
+    @pytest.mark.parametrize(
+        ("level", "names", "primary", "key", "holder", "loser"),
+        [
+            # The item primary takes ``data``. The file ``data`` then wants the
+            # stem key and its filename, and both are ``data``.
+            ("item", ("scene.tif", "data"), "scene.tif", "data", "scene.tif", "data"),
+            # The PMTiles takes ``zoning-tiles``. The file ``zoning-tiles`` then
+            # wants the stem key and its filename, and both are ``zoning-tiles``.
+            (
+                "collection",
+                ("zoning.parquet", "zoning.pmtiles", "zoning-tiles"),
+                "zoning.parquet",
+                "zoning-tiles",
+                "zoning.pmtiles",
+                "zoning-tiles",
+            ),
+        ],
+    )
+    def test_two_files_under_one_key_raise_the_collision(
+        self,
+        tmp_path: Path,
+        level: str,
+        names: tuple[str, ...],
+        primary: str,
+        key: str,
+        holder: str,
+        loser: str,
+    ) -> None:
+        """The second file replaced the first in the asset dict, with no error.
+
+        versions.json then tracked both files and the STAC document held one.
+        """
+        directory = tmp_path / "scene" if level == "item" else tmp_path
+        _write(directory, *names)
+
+        with pytest.raises(AssetKeyCollisionError) as excinfo:
+            _scan(directory, primary, collection_level=level == "collection")
+
+        assert excinfo.value.context == {
+            "collection_id": "land",
+            "asset_key": key,
+            "existing_href": holder,
+            "new_href": loser,
+        }
 
 
 class TestValidateCollectionId:
@@ -391,6 +478,7 @@ class TestScanItemAssetsSymlinks:
             item_id="roads",
             primary_file=primary,
             collection_dir=collection_dir,
+            collection_id="land",
         )
 
         assert "linked.gdb" not in asset_files

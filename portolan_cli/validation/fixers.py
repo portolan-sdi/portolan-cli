@@ -244,7 +244,10 @@ def _rebuild_links(node: Node, graph: CatalogGraph) -> list[dict[str, Any]]:
         link["href"] = href
         link["type"] = _GEOJSON_TYPE if rel == "item" else _JSON_TYPE
         if rel in ("child", "item") and not link.get("title"):
-            title = target.data.get("title") or target.id
+            # An item holds its title under properties, a catalog at the top.
+            properties = target.data.get("properties")
+            own = properties if rel == "item" and isinstance(properties, dict) else target.data
+            title = own.get("title") or target.id
             if isinstance(title, str) and title:
                 link["title"] = title
         rebuilt.append(link)
@@ -364,12 +367,6 @@ def _asset_bboxes(node: Node) -> list[list[float]]:
     return found
 
 
-def _union_of(boxes: list[list[float]]) -> list[float] | None:
-    from portolan_cli.bbox import compute_bbox_union
-
-    return compute_bbox_union(boxes, wgs84_only=True).bbox if boxes else None
-
-
 _BBOX_SKIP_MESSAGE = (
     "Cannot recompute the bbox: nothing readable to derive it from; "
     "re-run `portolan add` so the bbox comes from the data"
@@ -378,12 +375,13 @@ _BBOX_SKIP_MESSAGE = (
 
 def _fix_item_bbox(node: Node, *, dry_run: bool) -> FixResult | None:
     """Recompute one item's bbox (and, if absent, its geometry) from its assets."""
+    from portolan_cli.bbox import compute_bbox_union
     from portolan_cli.item import _bbox_to_polygon
 
     declared = "bbox" in node.data
     if declared and _looks_valid(node.data["bbox"]):
         return None
-    union = _union_of(_asset_bboxes(node))
+    union = compute_bbox_union(_asset_bboxes(node), wgs84_only=True).bbox
     if union is None:
         # An item with no bbox key at all is another rule's finding; only a
         # declared-but-broken bbox is this fixer's to report.
@@ -400,12 +398,17 @@ def _fix_container_bbox(node: Node, graph: CatalogGraph, *, dry_run: bool) -> Fi
     boxes = _extent_bboxes(node)
     if boxes is None or all(_looks_valid(box) for box in boxes):
         return None
+    from portolan_cli.errors import InvalidBboxError
+    from portolan_cli.stac import build_spatial_extent
+
     # Items were repaired first and graph nodes are shared objects, so a bbox
-    # written above is already visible here without reloading the tree.
-    union = _union_of(_child_bboxes(node, graph) or _asset_bboxes(node))
-    if union is None:
+    # written above is already visible here without reloading the tree. The
+    # extent constructor of ``add`` builds it, so a repair equals a rebuild.
+    try:
+        extent = build_spatial_extent(_child_bboxes(node, graph) or _asset_bboxes(node))
+    except InvalidBboxError:
         return _skipped(node.abs_path, _BBOX_SKIP_MESSAGE)
-    node.data["extent"]["spatial"]["bbox"] = [union]
+    node.data["extent"]["spatial"]["bbox"] = extent.bboxes
     _write_node(node, dry_run=dry_run)
     return _updated(node, "Recomputed the spatial extent from contained bboxes")
 
@@ -665,10 +668,26 @@ def _has_cog_items(node: Node, graph: CatalogGraph) -> bool:
     return any(has_cog(item) for item in _owned_items(node, graph))
 
 
-def _generate_mirror(node: Node, *, dry_run: bool) -> FixResult:
-    """Write items.parquet for a scene collection and register it."""
-    from portolan_cli.stac_parquet import generate_items_parquet, register_mirror_asset
+def _write_mirror(collection_dir: Path, root: Path) -> None:
+    """Write items.parquet, register it, and record its bytes in versions.json.
 
+    The snapshot records the new bytes through the writer ``add`` uses, so
+    ``push`` sees the change (issue #1046).
+    """
+    from portolan_cli.stac_parquet import (
+        generate_items_parquet,
+        register_mirror_asset,
+        track_parquet_in_versions,
+    )
+
+    generate_items_parquet(collection_dir)
+    register_mirror_asset(collection_dir)
+    if (collection_dir / "versions.json").exists():
+        track_parquet_in_versions(collection_dir, root)
+
+
+def _generate_mirror(node: Node, root: Path, *, dry_run: bool) -> FixResult:
+    """Write items.parquet for a scene collection and register it."""
     collection_dir = node.abs_path.parent
     if dry_run:
         # Same action as the real run: a dry run must predict what will happen,
@@ -680,8 +699,7 @@ def _generate_mirror(node: Node, *, dry_run: bool) -> FixResult:
             "Would generate items.parquet and register the mirror",
         )
     try:
-        generate_items_parquet(collection_dir)
-        register_mirror_asset(collection_dir)
+        _write_mirror(collection_dir, root)
     except (ImportError, ValueError, OSError) as exc:
         return FixResult(
             node.abs_path, FixAction.SKIPPED, True, f"Cannot generate the mirror: {exc}"
@@ -700,7 +718,7 @@ def _fix_item_mirror(root: Path, dry_run: bool) -> list[FixResult]:
                 results.append(_updated(node, "Registered items.parquet as the collection mirror"))
             continue
         if _has_cog_items(node, graph):
-            results.append(_generate_mirror(node, dry_run=dry_run))
+            results.append(_generate_mirror(node, root, dry_run=dry_run))
     return results
 
 
@@ -957,8 +975,6 @@ def _refresh_mirrors(root: Path, changed: Iterable[Path], *, dry_run: bool) -> l
     collections that already publish a mirror are touched, because creating one
     where the operator never asked for it is ``add``'s decision, not a repair.
     """
-    from portolan_cli.stac_parquet import generate_items_parquet, register_mirror_asset
-
     collections = {
         collection
         for path in changed
@@ -974,8 +990,7 @@ def _refresh_mirrors(root: Path, changed: Iterable[Path], *, dry_run: bool) -> l
             )
             continue
         try:
-            generate_items_parquet(collection)
-            register_mirror_asset(collection)
+            _write_mirror(collection, root)
         except (ImportError, ValueError, OSError) as exc:
             results.append(
                 FixResult(target, FixAction.SKIPPED, True, f"Cannot refresh the mirror: {exc}")
@@ -1006,6 +1021,7 @@ def repair_written_items(
         fixer that raises becomes one failed result, so a broken repair cannot
         strand the others.
     """
+    changed = list(changed)
     results: list[FixResult] = []
     for key in POST_ITEM_WRITE_FIXERS:
         try:
@@ -1014,7 +1030,40 @@ def repair_written_items(
             results.append(
                 FixResult(root, FixAction.SKIPPED, False, f"Fixer '{key}' failed: {exc}")
             )
+    results.extend(_refresh_collection_fields(root, changed, dry_run=dry_run))
     results.extend(_refresh_mirrors(root, changed, dry_run=dry_run))
+    return results
+
+
+def _refresh_collection_fields(
+    root: Path, changed: Iterable[Path], *, dry_run: bool
+) -> list[FixResult]:
+    """Derive the extent and summaries again for each collection whose items changed.
+
+    The items the freshness pass rewrote carry new bboxes, so the collection
+    extent follows them, as it does after ``add`` (issue #801).
+    """
+    from portolan_cli.finalization import refresh_collection_fields
+
+    collections = {
+        collection for path in changed if (collection := _collection_dir_of(path, root)) is not None
+    }
+    results: list[FixResult] = []
+    for collection in sorted(collections):
+        target = collection / "collection.json"
+        if dry_run:
+            continue
+        try:
+            changed_file = refresh_collection_fields(root, collection)
+        except (ValueError, OSError) as exc:
+            results.append(
+                FixResult(target, FixAction.SKIPPED, True, f"Cannot derive the extent: {exc}")
+            )
+            continue
+        if changed_file:
+            results.append(
+                FixResult(target, FixAction.UPDATED, True, "Derived the extent from the items")
+            )
     return results
 
 

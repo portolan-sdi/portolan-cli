@@ -10,11 +10,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, cast
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
 
 from portolan_cli.errors import ArcGISAuthError
+from portolan_cli.extract.arcgis.discovery import ensure_json_format
+from portolan_cli.extract.common.urls import redact_credentials
 
 
 @dataclass
@@ -31,26 +32,6 @@ class ArcGISCredentials:
         return not self.token and not (self.username and self.password)
 
 
-def apply_token(url: str, token: str) -> str:
-    """Append token=<token> to a URL.
-
-    Note: discovery._append_query_param does the same thing generically;
-    consolidate both into a shared url util when #311 reworks auth.
-    """
-    parsed = urlparse(url)
-    params = parse_qs(parsed.query)
-    params["token"] = [token]
-    return urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
-
-
-def _with_json(url: str) -> str:
-    """Add f=json to url if not already set (setdefault semantics)."""
-    parsed = urlparse(url)
-    params = parse_qs(parsed.query)
-    params.setdefault("f", ["json"])
-    return urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
-
-
 def _server_root(base_url: str) -> str:
     """Return the ArcGIS server root (everything before /rest/), case-insensitively.
 
@@ -65,10 +46,12 @@ def _server_root(base_url: str) -> str:
 
 def _token_services_url(base_url: str, timeout: float) -> str:
     """Discover the generateToken endpoint from <server>/rest/info."""
-    root = _server_root(base_url) + "/rest/info"
+    info_url = _server_root(base_url) + "/rest/info"
+    # Each message names the server without the credential of its URL (#981).
+    root = redact_credentials(info_url)
     try:
         with httpx.Client(timeout=timeout) as client:
-            resp = client.get(_with_json(root))
+            resp = client.get(ensure_json_format(info_url))
     except (httpx.HTTPError, ValueError) as exc:
         raise ArcGISAuthError(
             f"Failed to read token services URL from {root}: {exc}", url=root

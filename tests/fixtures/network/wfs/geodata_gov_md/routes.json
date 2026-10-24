@@ -1,0 +1,121 @@
+[
+  {
+    "method": "GET",
+    "path": "/geoserver/wfs",
+    "query_subset": {
+      "service": "WFS",
+      "request": "GetCapabilities",
+      "version": "2.0.0"
+    },
+    "content_type": "application/xml",
+    "body_file": "GetCapabilities.xml",
+    "requires_query": [
+      "api_key"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/geoserver/wfs",
+    "query_subset": {
+      "service": "WFS",
+      "request": "DescribeFeatureType",
+      "version": "2.0.0",
+      "typeNames": "topp:tasmania_roads",
+      "typeName": "topp:tasmania_roads"
+    },
+    "content_type": "application/gml+xml; version=3.2",
+    "body_file": "DescribeFeatureType_topp_tasmania_roads.xml",
+    "requires_query": [
+      "api_key"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/geoserver/wfs",
+    "query_subset": {
+      "service": "WFS",
+      "version": "2.0.0",
+      "request": "GetFeature",
+      "typeNames": "topp:tasmania_roads",
+      "resultType": "hits"
+    },
+    "content_type": "text/xml",
+    "body_file": "GetFeature_hits_topp_tasmania_roads.xml",
+    "requires_query": [
+      "api_key"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/geoserver/wfs",
+    "query_subset": {
+      "service": "WFS",
+      "version": "2.0.0",
+      "request": "GetFeature",
+      "typeNames": "topp:tasmania_roads",
+      "outputFormat": "application/json",
+      "count": "1",
+      "startIndex": "50001",
+      "srsName": "urn:ogc:def:crs:EPSG::4326"
+    },
+    "content_type": "application/json;charset=UTF-8",
+    "body_file": "GetFeature_start50001_topp_tasmania_roads.json",
+    "requires_query": [
+      "api_key"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/geoserver/wfs",
+    "query_subset": {
+      "service": "WFS",
+      "version": "2.0.0",
+      "request": "GetFeature",
+      "typeNames": "topp:tasmania_roads",
+      "outputFormat": "application/json",
+      "srsName": "urn:ogc:def:crs:EPSG::4326"
+    },
+    "content_type": "application/json;charset=UTF-8",
+    "body_file": "GetFeature_topp_tasmania_roads.json",
+    "requires_query": [
+      "api_key"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/geoserver/wms",
+    "query_subset": {
+      "service": "WMS",
+      "version": "1.1.1",
+      "request": "GetStyles",
+      "layers": "topp:tasmania_roads"
+    },
+    "content_type": "application/vnd.ogc.se_xml;charset=UTF-8",
+    "body_file": "GetStyles_topp_tasmania_roads.xml",
+    "requires_query": [
+      "api_key"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/geoserver/wms",
+    "query_subset": {
+      "service": "WMS",
+      "version": "1.1.1",
+      "request": "GetLegendGraphic",
+      "layer": "topp:tasmania_roads",
+      "format": "image/png"
+    },
+    "content_type": "application/vnd.ogc.se_xml;charset=UTF-8",
+    "body_file": "GetLegendGraphic_topp_tasmania_roads.xml",
+    "requires_query": [
+      "api_key"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/geoserver/*",
+    "status": 401,
+    "body_file": "unauthorized.json"
+  }
+]

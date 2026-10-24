@@ -616,13 +616,16 @@ class TestTheGuardsCoverEveryRewritePath:
         assert pq.ParquetFile(target).schema_arrow.metadata[b"pandas"] == b"{}"
         assert pq.ParquetFile(target).metadata.num_rows == 3
 
-    def test_a_misspelled_setting_warns_once_per_catalog(self, tmp_path: Path) -> None:
-        """`add` reads the settings per file, so the console must not repeat."""
+    def test_a_misspelled_setting_warns_once_per_catalog(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """`add` reads the settings per file, so the warning must not repeat."""
+        import logging
+
         from portolan_cli.conversion_config import (
             get_vector_settings,
             reset_config_warning_cache,
         )
-        from portolan_cli.output import warn
 
         root = tmp_path / "catalog"
         (root / ".portolan").mkdir(parents=True)
@@ -631,19 +634,12 @@ class TestTheGuardsCoverEveryRewritePath:
         )
 
         reset_config_warning_cache()
-        shown: list[str] = []
-        original = warn
-
-        import portolan_cli.output as output_module
-
-        output_module.warn = lambda message: shown.append(message)  # type: ignore[assignment]
-        try:
+        with caplog.at_level(logging.DEBUG, logger="portolan_cli.conversion_config"):
             for _ in range(5):
                 get_vector_settings(root)
-        finally:
-            output_module.warn = original  # type: ignore[assignment]
 
-        assert len(shown) == 1, shown
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert warnings == ["Vector config: unknown sort 'hilbrt', using 'hilbert'"]
 
 
 class TestAProjjsonCrsSurvivesAdd:

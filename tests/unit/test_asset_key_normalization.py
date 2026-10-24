@@ -52,6 +52,7 @@ class TestAssetKeyNormalization:
             item_id="item-id",
             primary_file=data_file,
             collection_dir=item_dir.parent,
+            collection_id="land",
         )
 
         assert "thumbnail" in assets
@@ -69,6 +70,7 @@ class TestAssetKeyNormalization:
             item_id="item-id",
             primary_file=data_file,
             collection_dir=item_dir.parent,
+            collection_id="land",
         )
 
         assert "metadata" in assets
@@ -87,6 +89,7 @@ class TestAssetKeyNormalization:
             item_id="item-id",
             primary_file=data_file,
             collection_dir=item_dir.parent,
+            collection_id="land",
         )
 
         assert "documentation" in assets
@@ -104,6 +107,7 @@ class TestAssetKeyNormalization:
             item_id="item-id",
             primary_file=data_file,
             collection_dir=item_dir.parent,
+            collection_id="land",
         )
 
         # Exactly one of them claims the role key, the other falls back.
@@ -125,6 +129,7 @@ class TestAssetKeyNormalization:
             item_id="item-id",
             primary_file=data_file,
             collection_dir=item_dir.parent,
+            collection_id="land",
         )
 
         assert "data" in assets
@@ -149,6 +154,7 @@ class TestAssetTitles:
             item_id="item-id",
             primary_file=data_file,
             collection_dir=item_dir.parent,
+            collection_id="land",
         )
 
         assert assets["thumbnail"].title is None
@@ -164,6 +170,7 @@ class TestAssetTitles:
             item_id="item-id",
             primary_file=data_file,
             collection_dir=item_dir.parent,
+            collection_id="land",
         )
 
         assert assets["metadata"].title is None
@@ -179,6 +186,7 @@ class TestAssetTitles:
             item_id="item-id",
             primary_file=data_file,
             collection_dir=item_dir.parent,
+            collection_id="land",
         )
 
         assert assets["documentation"].title is None
@@ -193,6 +201,7 @@ class TestAssetTitles:
             item_id="item-id",
             primary_file=data_file,
             collection_dir=item_dir.parent,
+            collection_id="land",
         )
 
         assert assets["data"].title is None
