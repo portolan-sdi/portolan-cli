@@ -322,7 +322,9 @@ def _data_bbox(path: Path) -> tuple[Bbox, bool] | None:
     if suffix == ".parquet":
         import pyarrow.parquet as pq
 
-        metadata = pq.read_schema(path).metadata or {}
+        # The file metadata, not the Arrow schema: a writer that appends the
+        # geo key after it opened hides it from pq.read_schema (#864).
+        metadata = pq.read_metadata(path).metadata or {}
         if b"geo" not in metadata:
             return None
         geo = json.loads(metadata[b"geo"])

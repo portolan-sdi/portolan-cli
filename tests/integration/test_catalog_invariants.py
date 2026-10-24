@@ -64,14 +64,25 @@ def _parse(path: Path) -> dict[str, Any]:
     return data
 
 
-def _write_geoparquet(path: Path, bbox: list[float]) -> None:
-    """Write a two-column Parquet whose ``geo`` metadata declares ``bbox``."""
+def _write_geoparquet(path: Path, bbox: list[float], *, appended: bool = False) -> None:
+    """Write a two-column Parquet whose ``geo`` metadata declares ``bbox``.
+
+    With ``appended``, the ``geo`` key lands after the writer opened, as
+    geoparquet-io writes it. ``pq.read_schema`` then hides the key, and only
+    the file metadata shows it (#864).
+    """
     geo = {
         "version": "1.1.0",
         "primary_column": "geometry",
         "columns": {"geometry": {"encoding": "WKB", "geometry_types": [], "bbox": bbox}},
     }
     table = pa.table({"id": [1, 2], "geometry": [b"\x00", b"\x00"]})
+    if appended:
+        writer = pq.ParquetWriter(str(path), table.schema)
+        writer.write_table(table)
+        writer.add_key_value_metadata({"geo": json.dumps(geo)})
+        writer.close()
+        return
     table = table.replace_schema_metadata({b"geo": json.dumps(geo).encode()})
     pq.write_table(table, path)
 
@@ -80,11 +91,12 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def build_clean_catalog(root: Path) -> Path:
+def build_clean_catalog(root: Path, *, appended_footer: bool = False) -> Path:
     """Build a catalog that breaks no invariant: one collection, one item.
 
     The collection holds one collection-level GeoParquet asset with the bbox
     [0, 0, 2, 2]. The item holds a text asset and the bbox [0, 0, 1, 1].
+    ``appended_footer`` writes the GeoParquet with its ``geo`` key appended.
     """
     (root / ".portolan").mkdir(parents=True)
     _dump(
@@ -99,7 +111,7 @@ def build_clean_catalog(root: Path) -> Path:
     )
     data = root / "roads" / "roads.parquet"
     data.parent.mkdir()
-    _write_geoparquet(data, [0.0, 0.0, 2.0, 2.0])
+    _write_geoparquet(data, [0.0, 0.0, 2.0, 2.0], appended=appended_footer)
     notes = root / "roads" / "scene" / "notes.txt"
     notes.parent.mkdir()
     notes.write_text("notes", encoding="utf-8")
@@ -294,6 +306,18 @@ class TestEachCodeFires:
         TAMPERS[code](root)
 
         assert codes(check_catalog_invariants(root)) == {code}
+
+    def test_the_extent_check_reads_an_appended_geo_footer(self, tmp_path: Path) -> None:
+        """A GeoParquet with an appended ``geo`` key gets the same extent check.
+
+        ``pq.read_schema`` hides an appended key. A checker that read the
+        schema skipped the file and passed a stale extent.
+        """
+        root = build_clean_catalog(tmp_path / "clean", appended_footer=True)
+        assert check_catalog_invariants(root) == []
+        TAMPERS["S-EXTENT-NOT-STALE"](root)
+
+        assert codes(check_catalog_invariants(root)) == {"S-EXTENT-NOT-STALE"}
 
     @pytest.mark.parametrize(
         ("stem", "codes_fired"), [("roads", {"P-DATA-ROLE-TYPE"}), ("census", set())]
