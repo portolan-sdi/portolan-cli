@@ -47,6 +47,36 @@ class TestAddMultilayerIntegration:
     """Integration tests for adding multi-layer files."""
 
     @pytest.mark.integration
+    def test_a_layer_whose_asset_key_collides_is_a_skip(
+        self, runner: CliRunner, initialized_catalog: Path
+    ) -> None:
+        """A layer that two files claim one key for failed with a generic error.
+
+        A single-file add reports the same collision as a skip.
+        """
+        collection_dir = initialized_catalog / "geodata"
+        collection_dir.mkdir()
+        gpkg_file = collection_dir / "multilayer.gpkg"
+        shutil.copy(FIXTURES_DIR / "multilayer.gpkg", gpkg_file)
+        (collection_dir / "multilayer_points.pmtiles").write_bytes(b"tiles")
+        (collection_dir / "multilayer_points-tiles").write_bytes(b"notes")
+
+        result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(initialized_catalog), str(gpkg_file)],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (
+            "Skipping multilayer_points.parquet: Collection 'geodata': asset key "
+            "'multilayer_points-tiles' already holds 'multilayer_points.pmtiles'. Adding "
+            "'multilayer_points-tiles' under the same key would remove that asset. Remove "
+            "one of the two files from the collection, or rename it."
+        ) in " ".join(result.output.split())
+        assert not (collection_dir / "multilayer_points.parquet").exists()
+
+    @pytest.mark.integration
     def test_add_geopackage_converts_all_layers(
         self, runner: CliRunner, initialized_catalog: Path
     ) -> None:
