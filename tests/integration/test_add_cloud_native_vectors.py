@@ -593,10 +593,8 @@ class TestSameStemGeoParquetAndPMTiles:
 
         assert result.exit_code == 0, result.output
         assert (
-            f"Skipping roads.pmtiles: {
-                'PMTiles is a visualization derivative. '
-                'Add the GeoParquet it renders, and keep the tiles beside it.'
-            }"
+            "Skipping roads.pmtiles: PMTiles is a visualization derivative. "
+            "Add the GeoParquet it renders, and keep the tiles beside it."
             in " ".join(result.output.split())
         )
         assets = json.loads((collection_dir / "collection.json").read_text())["assets"]
