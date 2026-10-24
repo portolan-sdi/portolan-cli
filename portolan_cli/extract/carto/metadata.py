@@ -38,7 +38,6 @@ class CartoMetadata:
             description=None,
             attribution=attribution,
             keywords=None,
-            contact_name=None,
             processing_notes=None,
             known_issues=None,
             license_raw=None,

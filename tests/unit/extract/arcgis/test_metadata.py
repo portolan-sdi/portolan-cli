@@ -24,7 +24,7 @@ class TestArcGISMetadataDataclass:
             attribution="Test Attribution",
             description="Test Description",
             processing_notes="Test Notes",
-            contact_name="Test Author",
+            producer="Test Author",
             keywords=["test", "keywords"],
             known_issues="Test Issues",
             license_info_raw="Test License",
@@ -34,7 +34,7 @@ class TestArcGISMetadataDataclass:
         assert metadata.attribution == "Test Attribution"
         assert metadata.description == "Test Description"
         assert metadata.processing_notes == "Test Notes"
-        assert metadata.contact_name == "Test Author"
+        assert metadata.producer == "Test Author"
         assert metadata.keywords == ["test", "keywords"]
         assert metadata.known_issues == "Test Issues"
         assert metadata.license_info_raw == "Test License"
@@ -47,7 +47,7 @@ class TestArcGISMetadataDataclass:
             attribution=None,
             description=None,
             processing_notes=None,
-            contact_name=None,
+            producer=None,
             keywords=None,
             known_issues=None,
             license_info_raw=None,
@@ -57,7 +57,7 @@ class TestArcGISMetadataDataclass:
         assert metadata.attribution is None
         assert metadata.description is None
         assert metadata.processing_notes is None
-        assert metadata.contact_name is None
+        assert metadata.producer is None
         assert metadata.keywords is None
         assert metadata.known_issues is None
         assert metadata.license_info_raw is None
@@ -135,18 +135,35 @@ class TestExtractArcGISMetadata:
     # =========================================================================
 
     @pytest.mark.unit
-    def test_document_info_author_maps_to_contact_name(self) -> None:
-        """documentInfo.Author maps to contact_name."""
-        service_info = {
-            "documentInfo": {
-                "Author": "GIS Department",
-            }
-        }
-        metadata = extract_arcgis_metadata(
-            service_info, source_url="https://example.com/FeatureServer"
-        )
+    def test_document_info_author_is_a_producer_and_not_the_contact(self) -> None:
+        """documentInfo.Author seeds a producer provider and no contact."""
+        from portolan_cli.metadata_seeding import _build_metadata_dict
 
-        assert metadata.contact_name == "GIS Department"
+        metadata = extract_arcgis_metadata(
+            {"documentInfo": {"Author": "City GIS"}},
+            source_url="https://example.com/FeatureServer",
+        )
+        seeded = _build_metadata_dict(metadata.to_extracted(), placeholders=False)
+
+        assert seeded["providers"] == [{"name": "City GIS", "roles": ["producer"]}]
+        assert "contact" not in seeded
+
+    @pytest.mark.unit
+    def test_source_license_makes_the_source_a_licensor(self) -> None:
+        """A license the source publishes adds the licensor role, once per organization."""
+        from portolan_cli.metadata_seeding import _build_metadata_dict
+
+        metadata = extract_arcgis_metadata(
+            {
+                "copyrightText": "city gis",
+                "documentInfo": {"Author": "City GIS"},
+                "licenseInfo": "https://example.com/license",
+            },
+            source_url="https://example.com/FeatureServer",
+        )
+        seeded = _build_metadata_dict(metadata.to_extracted(), placeholders=False)
+
+        assert seeded["providers"] == [{"name": "City GIS", "roles": ["producer", "licensor"]}]
 
     @pytest.mark.unit
     def test_document_info_keywords_split_to_list(self) -> None:
@@ -219,7 +236,7 @@ class TestExtractArcGISMetadata:
         assert metadata.attribution is None
         assert metadata.description is None
         assert metadata.processing_notes is None
-        assert metadata.contact_name is None
+        assert metadata.producer is None
         assert metadata.keywords is None
         assert metadata.known_issues is None
         assert metadata.license_info_raw is None
@@ -232,7 +249,7 @@ class TestExtractArcGISMetadata:
             service_info, source_url="https://example.com/FeatureServer"
         )
 
-        assert metadata.contact_name is None
+        assert metadata.producer is None
         assert metadata.keywords is None
 
     @pytest.mark.unit
@@ -243,7 +260,7 @@ class TestExtractArcGISMetadata:
             service_info, source_url="https://example.com/FeatureServer"
         )
 
-        assert metadata.contact_name is None
+        assert metadata.producer is None
         assert metadata.keywords is None
 
     # =========================================================================
@@ -341,7 +358,7 @@ class TestExtractArcGISMetadata:
         assert metadata.processing_notes == "Updated quarterly. Source: US Census Bureau."
         assert metadata.known_issues == "Data may be incomplete for recent additions"
         assert metadata.license_info_raw == "Public domain - freely redistributable"
-        assert metadata.contact_name == "Philadelphia GIS Team"
+        assert metadata.producer == "Philadelphia GIS Team"
         assert metadata.keywords == ["census", "demographics", "boundaries", "philly"]
 
     # =========================================================================
@@ -384,7 +401,7 @@ class TestExtractArcGISMetadata:
             service_info, source_url="https://example.com/FeatureServer"
         )
 
-        assert metadata.contact_name is None
+        assert metadata.producer is None
         assert metadata.keywords is None
 
     @pytest.mark.unit

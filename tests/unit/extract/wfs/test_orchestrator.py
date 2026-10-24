@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from portolan_cli.extract.common import source as source_module
 from portolan_cli.extract.common.report import ExtractionReport, LayerResult
@@ -416,6 +417,10 @@ class TestWFSMetadataSeeding:
         content = (collection_dir / ".portolan" / "metadata.yaml").read_text()
         assert "Rich ISO description from CSW" in content
         assert "WFS Abstract" not in content
+        # The ISO point of contact made the data. It does not maintain this copy.
+        seeded = yaml.safe_load(content)
+        assert seeded["providers"] == [{"name": "ISO Contact Org", "roles": ["producer"]}]
+        assert "contact" not in seeded
 
     def test_seed_collection_metadata_wfs_nested_output_path(self, tmp_path: Path) -> None:
         """Collection seeding handles nested output paths correctly."""

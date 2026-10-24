@@ -158,8 +158,6 @@ class ISOMetadata:
             description=self.abstract or self.title,
             attribution=self.contact_organization,
             keywords=self.keywords,
-            contact_name=self.contact_organization,
-            contact_email=self.contact_email,
             processing_notes=processing_notes,
             known_issues=None,
             license_raw=license_raw,

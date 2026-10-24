@@ -133,7 +133,6 @@ class WFSMetadata:
             description=description,
             attribution=self.provider_name,
             keywords=self.keywords,
-            contact_name=None,  # WFS doesn't typically expose contact
             processing_notes=None,
             known_issues=None,
             license_raw=self.license_info_raw,

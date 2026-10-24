@@ -11,7 +11,7 @@ Mapping (per extract-arcgis-design.md):
     | copyrightText        | attribution          |
     | description          | (STAC description)   |
     | serviceDescription   | processing_notes     |
-    | documentInfo.Author  | contact.name         |
+    | documentInfo.Author  | providers (producer) |
     | documentInfo.Keywords| keywords (list)      |
     | accessInformation    | known_issues         |
     | licenseInfo          | license_info_raw     |
@@ -58,8 +58,8 @@ class ArcGISMetadata:
     processing_notes: str | None
     """Additional context from serviceDescription."""
 
-    contact_name: str | None
-    """Author name from documentInfo.Author."""
+    producer: str | None
+    """Author name from documentInfo.Author. A producer, never the contact."""
 
     keywords: list[str] | None
     """Keywords from documentInfo.Keywords (comma-separated -> list)."""
@@ -88,8 +88,7 @@ class ArcGISMetadata:
             attribution=self.attribution,
             description=self.description,
             keywords=self.keywords,
-            contact_name=self.contact_name,
-            contact_email=None,  # ArcGIS doesn't provide email
+            producer=self.producer,
             license_raw=self.license_info_raw,
             license_url=license_url_from_text(self.license_info_raw),
             processing_notes=self.processing_notes,
@@ -124,7 +123,7 @@ def extract_arcgis_metadata(
         attribution=_extract_string(service_info, "copyrightText"),
         description=_extract_string(service_info, "description"),
         processing_notes=_extract_string(service_info, "serviceDescription"),
-        contact_name=_extract_string(document_info, "Author") if document_info else None,
+        producer=_extract_string(document_info, "Author") if document_info else None,
         keywords=_extract_keywords(document_info) if document_info else None,
         known_issues=_extract_string(service_info, "accessInformation"),
         license_info_raw=_extract_string(service_info, "licenseInfo"),

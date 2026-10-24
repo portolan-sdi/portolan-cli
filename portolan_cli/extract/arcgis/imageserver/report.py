@@ -153,7 +153,7 @@ class ImageServerMetadataExtracted:
 
         # FeatureServer-parity fields (for metadata.yaml population):
         service_description: Extended service description (maps to processing_notes).
-        author: Author from documentInfo (maps to contact.name).
+        author: Author from documentInfo (maps to a producer provider).
         keywords: Keywords from documentInfo (list of strings).
         license_info: License text from licenseInfo field.
         access_information: Access restrictions from accessInformation (maps to known_issues).
@@ -307,7 +307,7 @@ class ImageServerMetadataExtracted:
             description=self.description,
             attribution=self.copyright_text,
             keywords=self.keywords,
-            contact_name=self.author,
+            producer=self.author,
             processing_notes="\n".join(processing_notes_parts),
             known_issues=self.access_information,
             license_raw=self.license_info,
