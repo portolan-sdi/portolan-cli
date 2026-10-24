@@ -272,7 +272,9 @@ def _scan_item_assets(
             continue
         if file_path.name in IGNORED_FILES or file_path.name == f"{item_id}.json":
             continue
-        if ignored_by(file_path, ignored_patterns or []) is not None:
+        # The primary is the file this add publishes. The input filter already
+        # accepted its source, so a pattern never drops it here.
+        if file_path != primary_file and ignored_by(file_path, ignored_patterns or []):
             continue
         # The collection README is a rel="describedby" link that `readme`
         # rewrites, never an asset. The first add runs before the README exists,

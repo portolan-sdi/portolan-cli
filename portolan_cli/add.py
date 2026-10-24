@@ -93,7 +93,7 @@ from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.licensing import LICENSE_REL, license_gap, resolve_license
 from portolan_cli.metadata.tabular import extract_tabular_metadata
-from portolan_cli.plugins.formats import plugin_extensions
+from portolan_cli.plugins.formats import handler_for, plugin_extensions
 from portolan_cli.preparation import (
     _MEDIA_TYPE_MAP as _MEDIA_TYPE_MAP,  # noqa: PLC0414
 )
@@ -835,6 +835,25 @@ SKIP_REWRITE_TEMP = "it is a scratch file of an interrupted rewrite"
 SKIPS_THAT_TRACK = frozenset({SKIP_UNCHANGED, SKIP_COMPANION, SKIP_ITEM_MIRROR})
 
 
+def _ignore_reason(file_path: Path, catalog_root: Path, patterns: list[str]) -> str | None:
+    """Return why ``ignored_files`` excludes ``file_path`` from the add, or None.
+
+    A pattern that matches the converted output would leave the source as the
+    data asset, so the add stops before conversion and names the output.
+    """
+    pattern = ignored_by(file_path, patterns)
+    if pattern is not None:
+        return f"it matches ignored_files pattern {pattern!r}"
+    handler = handler_for(file_path, catalog_root)
+    if handler is None:
+        return None
+    output = handler.output_path(file_path, file_path.parent)
+    pattern = ignored_by(output, patterns)
+    if pattern is None:
+        return None
+    return f"its output {output.name} matches ignored_files pattern {pattern!r}"
+
+
 def _collect_files_for_add(
     paths: list[Path],
     catalog_root: Path,
@@ -892,9 +911,9 @@ def _collect_files_for_add(
 
             # `ignored_files` in config.yaml excludes a file from the catalog,
             # with the basename match rule of `portolan list` (#1044).
-            pattern = ignored_by(file_path, ignored_patterns)
-            if pattern is not None:
-                skip(file_path, f"it matches ignored_files pattern {pattern!r}")
+            ignore_reason = _ignore_reason(file_path, catalog_root, ignored_patterns)
+            if ignore_reason is not None:
+                skip(file_path, ignore_reason)
                 continue
 
             # Never re-ingest the item mirror the add flow itself publishes.

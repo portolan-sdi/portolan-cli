@@ -1095,6 +1095,34 @@ class TestAddIgnoredFiles:
         assert sorted(versions["versions"][-1]["assets"]) == ["roads.parquet", "roads.thumb.jpg"]
 
     @pytest.mark.integration
+    def test_a_source_whose_output_is_ignored_is_skipped_before_conversion(
+        self, run_cli: RunCli, conformant_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """A pattern that excludes the converted file rejects the add of its source.
+
+        Without this, the GeoJSON passes the input filter, its GeoParquet is
+        written and then dropped by the asset scan, and the catalog publishes
+        the source with the data role.
+        """
+        root = conformant_catalog
+        config = root / ".portolan" / "config.yaml"
+        config.write_text(config.read_text() + 'ignored_files:\n  - "*.parquet"\n')
+        (root / "places").mkdir()
+        places = root / "places" / "places.geojson"
+        places.write_bytes(valid_points_geojson.read_bytes())
+
+        result = run_cli("--format", "json", "add", "--portolan-dir", str(root), str(root))
+
+        assert json.loads(result.stdout)["data"]["skipped"] == [
+            {
+                "path": str(places),
+                "reason": "its output places.parquet matches ignored_files pattern '*.parquet'",
+            }
+        ]
+        assert not (root / "places" / "collection.json").exists()
+        assert not (root / "places" / "places.parquet").exists()
+
+    @pytest.mark.integration
     def test_a_run_that_only_skips_names_the_reason(
         self, run_cli: RunCli, conformant_catalog: Path, valid_points_geojson: Path
     ) -> None:
