@@ -1854,6 +1854,19 @@ class TestEnvironmentValuesTakeTheSchemaType:
 
         assert (value, type(value)) == (expected, type(expected))
 
+    @pytest.mark.unit
+    def test_config_set_keeps_the_environment_out_of_the_file(self, tmp_path: Path) -> None:
+        """The readers see PORTOLAN_<KEY>, but a save writes the file content only."""
+        from portolan_cli.config import get_config_path, load_catalog_config, set_setting
+
+        with cleared_environ(PORTOLAN_THUMBNAILS_QUALITY="20"):
+            set_setting(tmp_path, "thumbnails.enabled", "false")
+            seen = load_catalog_config(tmp_path).section("thumbnails")
+
+        assert seen == {"enabled": False, "quality": 20}
+        saved = get_config_path(tmp_path).read_text(encoding="utf-8")
+        assert saved == "thumbnails:\n  enabled: false\n"
+
 
 class TestSchemaEdges:
     """``set_setting`` rejects the values that no reader can use."""
