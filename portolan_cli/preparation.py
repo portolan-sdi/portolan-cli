@@ -15,6 +15,7 @@ dependency edge is one-directional (add -> preparation).
 from __future__ import annotations
 
 import fnmatch
+import glob
 import logging
 import shutil
 from dataclasses import dataclass
@@ -544,8 +545,13 @@ def _cleanup_orphaned_output(output_path: Path, item_dir: Path, source_path: Pat
     """Clean up orphaned conversion output when geometry extraction fails.
 
     Called when conversion succeeds but produces no geometry (empty bbox).
-    Removes the output file and any associated sidecars to avoid leaving
+    Removes the output file and the sidecars of the output to avoid leaving
     orphaned files in the item directory.
+
+    A sidecar of the output carries the full output name, such as
+    ``scene.tif.aux.xml``. A file that only shares the stem belongs to the
+    user: a pre-built ``zoning.pmtiles`` or the ``.dbf`` of a shapefile
+    source. The cleanup deleted those too.
 
     Args:
         output_path: Path to the converted output file.
@@ -561,15 +567,8 @@ def _cleanup_orphaned_output(output_path: Path, item_dir: Path, source_path: Pat
     try:
         output_path.unlink()
         logger.debug("Cleaned up orphaned conversion output: %s", output_path)
-        # Also clean up any sidecars that might have been created
-        for sidecar in item_dir.glob(f"{output_path.stem}.*"):
-            # Don't delete the output (already deleted), JSON metadata, or the SOURCE file
-            # Issue #432: source file (e.g., records.csv) matches glob (records.*)
-            if (
-                sidecar != output_path
-                and sidecar.suffix.lower() != ".json"
-                and sidecar.resolve() != resolved_source
-            ):
+        for sidecar in item_dir.glob(f"{glob.escape(output_path.name)}.*"):
+            if sidecar.resolve() != resolved_source:
                 sidecar.unlink()
                 logger.debug("Cleaned up orphaned sidecar: %s", sidecar)
     except OSError as cleanup_err:

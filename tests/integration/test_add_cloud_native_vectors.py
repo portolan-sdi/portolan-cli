@@ -689,6 +689,40 @@ class TestAssetLineage:
     """The converted file is data, its source is source, its tiles are visual."""
 
     @pytest.mark.integration
+    def test_a_failed_add_keeps_the_tiles_beside_its_source(
+        self, runner: CliRunner, initialized_catalog: Path, sample_pmtiles: Path
+    ) -> None:
+        """The cleanup of an output with no geometry removed every same-stem file.
+
+        The GeoJSON passes the pre-check, because its one geometry is not null.
+        The conversion gives no bbox, and the cleanup deleted ``zoning.pmtiles``.
+        """
+        collection_dir = initialized_catalog / "land"
+        collection_dir.mkdir()
+        empty = {"type": "GeometryCollection", "geometries": []}
+        feature = {"type": "Feature", "properties": {"a": 1}, "geometry": empty}
+        source = {"type": "FeatureCollection", "features": [feature]}
+        (collection_dir / "zoning.geojson").write_text(json.dumps(source))
+        shutil.copy(sample_pmtiles, collection_dir / "zoning.pmtiles")
+
+        result = runner.invoke(
+            cli,
+            [
+                "add",
+                "--portolan-dir",
+                str(initialized_catalog),
+                str(collection_dir / "zoning.geojson"),
+            ],
+        )
+
+        assert "missing bounding box" in result.output
+        assert sorted(p.name for p in collection_dir.iterdir()) == [
+            "zoning.geojson",
+            "zoning.pmtiles",
+        ]
+        assert (collection_dir / "zoning.pmtiles").read_bytes() == sample_pmtiles.read_bytes()
+
+    @pytest.mark.integration
     def test_converted_geojson_is_the_source_of_the_geoparquet(
         self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
     ) -> None:
