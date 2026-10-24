@@ -27,7 +27,7 @@ from pyproj import CRS
 from portolan_cli import extension_registry as _reg
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
 from portolan_cli.config import get_ignored_files, get_setting, load_merged_metadata
-from portolan_cli.constants import ROLE_VISUAL
+from portolan_cli.constants import GDAL_PAM_SUFFIX, ROLE_VISUAL
 from portolan_cli.conversion_config import VectorSettings, get_vector_settings
 from portolan_cli.convert import apply_vector_settings, run_with_transient_convert_retry
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
@@ -147,10 +147,6 @@ def _get_asset_role(path: Path) -> str:
         :func:`_resolve_assets` then gives each scanned file its final role.
     """
     return _ROLE_MAP.get(path.suffix.lower(), "data")
-
-
-# The GDAL persistent auxiliary metadata (PAM) sidecar, such as x.tif.aux.xml.
-GDAL_PAM_SUFFIX = ".aux.xml"
 
 
 def _is_never_an_asset(file_path: Path) -> bool:

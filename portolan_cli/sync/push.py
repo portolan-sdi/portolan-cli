@@ -21,6 +21,7 @@ import asyncio
 import contextvars
 import fnmatch  # Module-level import for performance (used in hot path)
 import json
+import posixpath
 import threading
 import time
 import uuid
@@ -43,11 +44,17 @@ from portolan_cli.constants import LEGACY_GLOB_FIELD
 from portolan_cli.derived_assets import is_optional_derivative
 from portolan_cli.logo import LOGO_ASSETS_DIRNAME
 from portolan_cli.output import detail, error, info, output_section, success, warn
-from portolan_cli.sync.upload import ObjectStore, put_object, put_object_async, setup_store
+from portolan_cli.sync.upload import (
+    ObjectStore,
+    multipart_chunk_size,
+    put_object,
+    put_object_async,
+    setup_store,
+)
 from portolan_cli.trace import count, span, submit
 
 if TYPE_CHECKING:
-    from obstore import PutMode
+    from obstore import PutMode, PutResult
 
 __all__ = [
     "get_default_workers",
@@ -586,55 +593,88 @@ def _target_key(catalog_root: Path, prefix: str, path: Path) -> str:
     return f"{prefix}/{path.relative_to(catalog_root).as_posix()}".lstrip("/")
 
 
-async def _absent_keys(
+async def _existing_keys(
     store: ObjectStore, keys: list[str], list_prefix: str, concurrency: int
-) -> set[str]:
-    """Return the keys that do not exist in the store before the upload.
+) -> dict[str, int | None]:
+    """Return the size of each key that exists in the store before the upload.
 
-    Rollback deletes only these keys (#965). A key that exists can hold live
-    data of the remote current version, so a failed push must not delete it.
-    One LIST of ``list_prefix`` answers for the keys below it. A HEAD answers
-    for each other key. A key that neither request can answer for counts as
-    "exists", so rollback keeps it. That happens to a credential without
-    s3:ListBucket: S3 refuses the LIST and answers 403, not 404, for a HEAD of
-    a missing key. The push then warns once for the run (#972).
+    Rollback deletes only the keys that are absent here (#965). A key that
+    exists can hold live data of the remote current version, so a failed push
+    must not delete it. One LIST of ``list_prefix`` answers for the keys below
+    it. A HEAD answers for each other key. A key that neither request can
+    answer for counts as existing, with the size None, so rollback keeps it.
+    That happens to a credential without s3:ListBucket: S3 refuses the LIST
+    and answers 403, not 404, for a HEAD of a missing key. The push then warns
+    once for the run (#972).
     """
     below = f"{list_prefix}/"
+    existing: dict[str, int | None] = {}
     try:
         listed = {
-            str(m["path"]) async for page in obs.list(store, prefix=list_prefix) for m in page
+            str(m["path"]): int(m["size"])
+            async for page in obs.list(store, prefix=list_prefix)
+            for m in page
         }
-        absent = {k for k in keys if k.startswith(below) and k not in listed}
+        existing.update((k, listed[k]) for k in keys if k in listed)
         probe = [k for k in keys if not k.startswith(below)]
     except Exception:
         _warn_once(_KEYS_UNREADABLE_NOTICE)
-        absent, probe = set(), keys
+        probe = keys
     semaphore = asyncio.Semaphore(concurrency)
+    unreadable: list[str] = []
 
-    async def is_absent(key: str) -> bool | None:
+    async def size_of(key: str) -> None:
         async with semaphore:
             try:
-                await obs.head_async(store, key)
-                return False
+                existing[key] = int((await obs.head_async(store, key))["size"])
             except Exception as e:
-                return True if isinstance(e, FileNotFoundError) or _is_not_found(e) else None
+                if not (isinstance(e, FileNotFoundError) or _is_not_found(e)):
+                    unreadable.append(key)
+                    existing[key] = None
 
-    results = await asyncio.gather(*(is_absent(k) for k in probe))
-    if None in results:
+    await asyncio.gather(*(size_of(k) for k in probe))
+    if unreadable:
         _warn_once(_KEYS_UNREADABLE_NOTICE)
-    return absent | {key for key, gone in zip(probe, results, strict=True) if gone}
+    return existing
+
+
+# S3 CopyObject refuses a source above 5 GiB. A larger object streams through
+# the client, in the multipart part size of an upload of the same size.
+COPY_SOURCE_LIMIT = 5 * 2**30
+
+
+async def _copy_object(store: ObjectStore, src: str, dst: str, size: int | None) -> None:
+    """Copy ``src`` to ``dst``. A source of unknown size tries the server copy."""
+    if size is None or size <= COPY_SOURCE_LIMIT:
+        await obs.copy_async(store, src, dst)
+        return
+    source = await obs.get_async(store, src)
+    chunk = multipart_chunk_size(size)
+    await obs.put_async(
+        store,
+        dst,
+        source.stream(min_chunk_size=chunk),
+        attributes=source.attributes,
+        chunk_size=chunk,
+    )
 
 
 async def _back_up(
-    store: ObjectStore, keys: list[str], prefix: str, concurrency: int
+    store: ObjectStore, sizes: dict[str, int | None], prefix: str, concurrency: int
 ) -> dict[str, str]:
-    """Copy each key that the push will overwrite to a backup key on the server.
+    """Copy each key that the push will overwrite to a backup key.
 
     Asset hrefs carry no version segment, so a push overwrites the objects of
     the remote current version. After a failed push, each such key must hold
     the bytes that the remote versions.json describes again (#965). PR #968 by
     Youssef Harby designed this backup. Each push uses its own token. A key
     that the copy cannot read keeps the new bytes after a failed push.
+
+    Args:
+        store: Object store instance.
+        sizes: The size of each key to back up, from ``_existing_keys``.
+        prefix: Prefix in object storage. The backups go below it.
+        concurrency: Maximum concurrent copies.
 
     Returns:
         The backup key of each key that the copy reached.
@@ -648,13 +688,14 @@ async def _back_up(
             if stopped:
                 return None
             try:
-                await obs.copy_async(store, key, f"{base}/{key}")
+                await _copy_object(store, key, f"{base}/{key}", sizes[key])
                 return f"{base}/{key}"
             except Exception as e:
                 if not (isinstance(e, FileNotFoundError) or _is_not_found(e)):
                     warn(f"Cannot back up {key}, a failed push leaves its new bytes: {e}")
                 return None
 
+    keys = list(sizes)
     tasks = [asyncio.ensure_future(copy(k)) for k in keys]
     try:
         copies = await asyncio.gather(*tasks)
@@ -679,15 +720,17 @@ async def _back_up(
 async def _drop_backups(
     store: ObjectStore,
     backups: dict[str, str],
+    sizes: dict[str, int | None],
     *,
     restore_over: dict[str, str | None] | None = None,
 ) -> None:
     """Delete each backup key.
 
-    ``restore_over`` maps each key that this push wrote to the ETag of that
-    write. With it, a backup first goes back over its key if the key still
+    ``restore_over`` maps each key to restore to the ETag of the write of this
+    push. With it, a backup first goes back over its key if the key still
     holds that ETag. Another key keeps its bytes: this push did not write it,
-    or another writer wrote it after this push (#971).
+    or another writer wrote it after this push (#971). ``sizes`` holds the
+    size of each backed-up key, for the copy above ``COPY_SOURCE_LIMIT``.
     """
     if restore_over is not None and backups:
         warn(f"Restoring {len(backups)} overwritten key(s) from the backups...")
@@ -698,26 +741,37 @@ async def _drop_backups(
                 and key in restore_over
                 and await _remote_etag(store, key) == restore_over[key]
             ):
-                await obs.copy_async(store, backup, key)
+                await _copy_object(store, backup, key, sizes.get(key))
             await obs.delete_async(store, backup)
         except Exception as e:
             warn(f"Failed to restore or delete the backup of {key} at {backup}: {e}")
 
 
-async def _remote_names_snapshot(
-    store: ObjectStore, prefix: str, collection: str, local_data: dict[str, Any]
-) -> bool:
-    """Return True if the remote versions.json names the local current snapshot.
+async def _keys_to_restore(
+    store: ObjectStore,
+    prefix: str,
+    collection: str,
+    local_data: dict[str, Any],
+    written: dict[str, str | None],
+) -> dict[str, str | None]:
+    """Return the keys that a push restores after it lost the versions.json race.
 
-    A second run of the same push writes the same bytes to each key. When it
-    wins the race, a restore from the backups breaks its manifest.
+    The winning remote manifest names a sha256 for each of its Assets. This
+    push wrote the bytes that the local current snapshot names. A key that
+    the winning manifest names is restored only when the two sha256 values
+    differ. Another key, such as collection.json, is restored only when the
+    winning snapshot is not the local snapshot. A second run of the same push
+    that wins the race writes the same bytes, and a restore breaks its
+    manifest.
     """
     try:
         remote, _ = await _fetch_remote_versions_async(store, prefix, collection)
     except Exception:
-        return False
-    local = _snapshot_hashes(_current_snapshot(local_data))
-    return _snapshot_hashes(_current_snapshot(remote)) == local
+        return written
+    ours = _snapshot_hashes(_current_snapshot(local_data))
+    theirs = _snapshot_hashes(_current_snapshot(remote))
+    named = {f"{prefix}/{href}".lstrip("/"): ours.get(href) != sha for href, sha in theirs.items()}
+    return {key: etag for key, etag in written.items() if named.get(key, ours != theirs)}
 
 
 def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> None:
@@ -1016,7 +1070,7 @@ _HANDLED_SEPARATELY = frozenset(
         "versions.json",  # Uploaded last (manifest-last)
         "collection.json",  # Uploaded by _upload_stac_files
         "catalog.json",  # Uploaded by _push_all_upload_root_files
-        "README.md",  # Uploaded by _upload_readmes_async
+        "README.md",  # Uploaded after versions.json
     }
 )
 
@@ -1592,6 +1646,7 @@ async def _upload_stac_files_async(
     json_mode: bool = False,
     verbose: bool = False,
     written: dict[str, str | None] | None = None,
+    root_etags: dict[str, str | None] | None = None,
 ) -> tuple[int, list[str], list[str]]:
     """Upload STAC metadata files asynchronously.
 
@@ -1610,6 +1665,8 @@ async def _upload_stac_files_async(
         json_mode: If True, suppress progress bar.
         verbose: If True, print per-file upload details.
         written: A dict that receives the ETag of each put, by key.
+        root_etags: The ETag of each root document that the push read before
+            its first upload. None writes the root documents without a condition.
 
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys).
@@ -1660,8 +1717,9 @@ async def _upload_stac_files_async(
                         content, destination, collection_path
                     )
 
-                put = await put_object_async(store, target_key, content)
-                written[target_key] = put.get("e_tag")
+                put = await _put_file(store, target_key, content, root_etags)
+                if put is not None:
+                    written[target_key] = put.get("e_tag")
                 return target_key, file_size
             except Exception as e:
                 error_msg = f"Failed to upload {file_path}: {e}"
@@ -1766,73 +1824,98 @@ async def _put_manifest(
         raise PushConflictError("Remote changed during push, re-run push to try again") from e
 
 
-async def _upload_readmes_async(
-    store: ObjectStore,
-    catalog_root: Path,
-    prefix: str,
-    stac_files: dict[str, list[Path]],
-    *,
-    concurrency: int = 50,
-) -> tuple[int, list[str]]:
-    """Upload README.md files asynchronously in parallel.
+# The documents at the catalog root that a push of any collection rewrites.
+# Two writers of different collections race on them (#971).
+_ROOT_DOCUMENTS = ("catalog.json", "README.md", "AGENTS.md", "versions.json")
+# The number of root catalog.json writes before the push gives up.
+_ROOT_CATALOG_ATTEMPTS = 3
 
-    Args:
-        store: Object store instance.
-        catalog_root: Path to catalog root.
-        prefix: Prefix in object storage.
-        stac_files: Dict from _discover_stac_files() containing 'readmes' key.
-        concurrency: Maximum concurrent uploads.
+
+async def _root_etags(store: ObjectStore, prefix: str, keys: list[str]) -> dict[str, str | None]:
+    """Read the ETag of each root document in ``keys``, before the first upload.
+
+    A key that does not exist maps to None. Its write then takes the "create"
+    mode. A key that the credential cannot read is left out, and its write
+    takes no condition. The root versions.json is the exception: push --all
+    stops before its first upload.
+    """
+    root = {f"{prefix}/{name}".lstrip("/") for name in _ROOT_DOCUMENTS}
+    wanted = sorted(root.intersection(keys))
+    read = await asyncio.gather(
+        *(_remote_etag(store, key) for key in wanted), return_exceptions=True
+    )
+    etags: dict[str, str | None] = {}
+    for key, etag in zip(wanted, read, strict=True):
+        if not isinstance(etag, BaseException):
+            etags[key] = etag
+        elif posixpath.basename(key) == "versions.json":
+            raise etag
+        else:
+            _warn_once(f"Cannot read the ETag of {key}. The push writes it without a condition.")
+    return etags
+
+
+def _merge_child_links(local: bytes, remote: bytes) -> bytes:
+    """Add each child link of the remote catalog.json that the local one lacks."""
+    document = json.loads(local)
+    links: list[dict[str, Any]] = document.setdefault("links", [])
+    hrefs = {
+        posixpath.normpath(str(link.get("href"))) for link in links if link.get("rel") == "child"
+    }
+    for link in json.loads(remote).get("links", []):
+        href = posixpath.normpath(str(link.get("href")))
+        if link.get("rel") == "child" and href not in hrefs:
+            hrefs.add(href)
+            links.append(link)
+    return json.dumps(document, indent=2).encode("utf-8")
+
+
+async def _put_file(
+    store: ObjectStore,
+    key: str,
+    content: bytes,
+    root_etags: dict[str, str | None] | None = None,
+) -> PutResult | None:
+    """Write one catalog file. A root document takes the ETag that the push read.
+
+    Another writer can change a root document during the push. On a mismatch
+    the root catalog.json merges the child links of the remote copy and
+    writes again. README.md and AGENTS.md keep the remote bytes.
 
     Returns:
-        Tuple of (files_uploaded, errors).
+        The put result. None when the key holds bytes of another writer, so a
+        rollback must not touch the key.
+
+    Raises:
+        PushConflictError: If the root catalog.json write loses every attempt.
     """
-    readmes = stac_files.get("readmes", [])
-    if not readmes:
-        return 0, []
-
-    errors: list[str] = []
-    uploaded_count = 0
-
-    info(f"Uploading {len(readmes)} README file(s)...")
-
-    # Semaphore for bounded concurrency
-    semaphore = asyncio.Semaphore(concurrency)
-
-    async def upload_one(readme_path: Path) -> bool:
-        """Upload a single README file with semaphore control."""
-        async with semaphore:
-            try:
-                rel_path = readme_path.relative_to(catalog_root)
-                detail(f"Uploading README: {rel_path}")
-                content = readme_path.read_bytes()
-                await put_object_async(
-                    store, _target_key(catalog_root, prefix, readme_path), content
-                )
-                return True
-            except Exception as e:
-                error_msg = f"Failed to upload {readme_path}: {e}"
-                errors.append(error_msg)
-                error(error_msg)
-                return False
-
-    # Upload all READMEs in parallel (no ordering constraint)
-    tasks = [upload_one(readme) for readme in readmes]
-    results = await asyncio.gather(*tasks)
-    uploaded_count = sum(1 for r in results if r)
-
-    return uploaded_count, errors
+    if root_etags is None or key not in root_etags:
+        return await put_object_async(store, key, content)
+    etag, merged = root_etags[key], False
+    for _ in range(_ROOT_CATALOG_ATTEMPTS):
+        try:
+            put = await put_object_async(
+                store, key, content, mode=_manifest_mode(etag, force=False)
+            )
+            return None if merged else put
+        except (PreconditionError, AlreadyExistsError):
+            if posixpath.basename(key) != "catalog.json":
+                warn(f"Another writer changed {key} during the push. The remote copy stays.")
+                return None
+            remote = await obs.get_async(store, key)
+            etag, merged = remote.meta.get("e_tag"), True
+            content = _merge_child_links(content, bytes(await remote.bytes_async()))
+    raise PushConflictError("Remote changed during push, re-run push to try again")
 
 
 async def _upload_metadata_files_async(
     store: ObjectStore,
     catalog_root: Path,
     prefix: str,
-    collection: str,
+    files: list[Path],
     *,
-    include_catalog_root: bool = False,
-    extra_files: list[Path] | None = None,
-    files: list[Path] | None = None,
     written: dict[str, str | None] | None = None,
+    root_etags: dict[str, str | None] | None = None,
     concurrency: int = 50,
     verbose: bool = False,
 ) -> tuple[int, list[str]]:
@@ -1848,13 +1931,10 @@ async def _upload_metadata_files_async(
         store: Object store instance.
         catalog_root: Path to catalog root.
         prefix: Prefix in object storage.
-        collection: Collection identifier.
-        include_catalog_root: If True, include root-level metadata files.
-        extra_files: Files to upload in the same batch, such as the files of
-            the intermediate catalogs.
-        files: The files to upload. None discovers them. The upload phase of
-            a push passes the files that its rollback plan already names.
+        files: The files to upload, from ``_discover_catalog_files``.
         written: A dict that receives the ETag of each put, by key.
+        root_etags: The ETag of each root document that the push read before
+            its first upload. None writes the root documents without a condition.
         concurrency: Maximum concurrent uploads.
         verbose: If True, print per-file upload details.
 
@@ -1862,14 +1942,7 @@ async def _upload_metadata_files_async(
         Tuple of (files_uploaded, errors). Errors are returned, not swallowed,
         so callers can decide how to handle partial failures.
     """
-    metadata_files = files
-    if metadata_files is None:
-        metadata_files = _discover_catalog_files(
-            catalog_root, collection, include_catalog_root=include_catalog_root
-        )
-        metadata_files.extend(extra_files or [])
-
-    if not metadata_files:
+    if not files:
         return 0, []
 
     written = {} if written is None else written
@@ -1883,8 +1956,9 @@ async def _upload_metadata_files_async(
                 rel_path = file_path.relative_to(catalog_root)
                 content = file_path.read_bytes()
                 key = _target_key(catalog_root, prefix, file_path)
-                put = await put_object_async(store, key, content)
-                written[key] = put.get("e_tag")
+                put = await _put_file(store, key, content, root_etags)
+                if put is not None:
+                    written[key] = put.get("e_tag")
                 if verbose:
                     detail(f" Uploaded {rel_path} ({len(content)} bytes)")
                 return True
@@ -1895,7 +1969,7 @@ async def _upload_metadata_files_async(
                 return False
 
     # Upload all metadata files in parallel
-    tasks = [upload_one(f) for f in metadata_files]
+    tasks = [upload_one(f) for f in files]
     results = await asyncio.gather(*tasks)
     uploaded_count = sum(1 for r in results if r)
 
@@ -1977,14 +2051,16 @@ async def _execute_push_uploads_async(
     plan_paths = [*assets, *stac_paths, *metadata_files]
     planned = [_target_key(catalog_root, prefix, p) for p in plan_paths]
     list_prefix = f"{prefix}/{collection}".lstrip("/")
-    created = await _absent_keys(store, planned, list_prefix, concurrency)
-    backups = await _back_up(store, [k for k in planned if k not in created], prefix, concurrency)
+    readmes = [_target_key(catalog_root, prefix, p) for p in stac_files["readmes"]]
+    root_etags = await _root_etags(store, prefix, [*planned, *readmes])
+    sizes = await _existing_keys(store, planned, list_prefix, concurrency)
+    backups = await _back_up(store, sizes, prefix, concurrency)
     written: dict[str, str | None] = {}
     files_uploaded, metrics = 0, UploadMetrics()
 
     async def failed(errors: list[str], metadata_errors: list[str] | None = None) -> PushResult:
-        await _drop_backups(store, backups, restore_over=written)
-        _cleanup_uploaded_assets(store, [k for k in written if k in created])
+        await _drop_backups(store, backups, sizes, restore_over=written)
+        _cleanup_uploaded_assets(store, [k for k in written if k not in sizes])
         return PushResult(
             success=False,
             files_uploaded=files_uploaded,
@@ -2030,6 +2106,7 @@ async def _execute_push_uploads_async(
                 json_mode=json_mode,
                 verbose=verbose,
                 written=written,
+                root_etags=root_etags,
             )
             files_uploaded += stac_uploaded
 
@@ -2044,9 +2121,9 @@ async def _execute_push_uploads_async(
                 store,
                 catalog_root,
                 prefix,
-                collection,
-                files=metadata_files,
+                metadata_files,
                 written=written,
+                root_etags=root_etags,
                 concurrency=concurrency,
                 verbose=verbose,
             )
@@ -2067,9 +2144,9 @@ async def _execute_push_uploads_async(
                 # Another writer won the race. Rollback deletes no key, because
                 # that writer can own a key that this push created (#971). A key
                 # that still holds the bytes of this push gets its backup back,
-                # unless the winning manifest names the local snapshot.
-                same = await _remote_names_snapshot(store, prefix, collection, local_data)
-                await _drop_backups(store, backups, restore_over=None if same else written)
+                # unless the winning manifest names those bytes.
+                restore = await _keys_to_restore(store, prefix, collection, local_data, written)
+                await _drop_backups(store, backups, sizes, restore_over=restore)
                 raise
             except Exception as e:
                 error(f"Failed to upload versions.json: {e}")
@@ -2081,7 +2158,7 @@ async def _execute_push_uploads_async(
         # versions.json names the new bytes, so the push rolls back.
         await failed([])
         raise
-    await _drop_backups(store, backups)
+    await _drop_backups(store, backups, sizes)
     if diff.local_only:
         msg = f"Pushed {len(diff.local_only)} version(s): {diff.local_only}"
     else:
@@ -2093,8 +2170,14 @@ async def _execute_push_uploads_async(
 
     # Upload READMEs last (async, parallel)
     with span("push.readmes", collection=collection):
-        readme_uploaded, readme_errors = await _upload_readmes_async(
-            store, catalog_root, prefix, stac_files, concurrency=concurrency
+        readme_uploaded, readme_errors = await _upload_metadata_files_async(
+            store,
+            catalog_root,
+            prefix,
+            stac_files["readmes"],
+            root_etags=root_etags,
+            concurrency=concurrency,
+            verbose=verbose,
         )
         files_uploaded += readme_uploaded
     # README errors are also non-fatal metadata issues
@@ -2143,18 +2226,18 @@ async def _sync_collection_metadata_only(
 
     A push with no new version and no metadata change uploads nothing.
     """
-    intermediate_files = (
-        _discover_intermediate_catalog_files(catalog_root, [collection])
-        if include_catalog_root
-        else []
+    files = _discover_catalog_files(
+        catalog_root, collection, include_catalog_root=include_catalog_root
     )
+    if include_catalog_root:
+        files += _discover_intermediate_catalog_files(catalog_root, [collection])
+    keys = [_target_key(catalog_root, prefix, path) for path in files]
     metadata_uploaded, metadata_errors = await _upload_metadata_files_async(
         store,
         catalog_root,
         prefix,
-        collection,
-        include_catalog_root=include_catalog_root,
-        extra_files=intermediate_files,
+        files,
+        root_etags=await _root_etags(store, prefix, keys),
         concurrency=concurrency,
         verbose=verbose,
     )
@@ -2601,15 +2684,15 @@ async def _upload_root_files(
     root_metadata: list[Path],
     intermediate_files: list[Path],
     stats: dict[str, Any],
-    root_etag: str | None = None,
+    root_etags: dict[str, str | None] | None = None,
     *,
     force: bool = False,
 ) -> None:
     """Upload the root files in manifest-last order.
 
     versions.json goes last, so a reader never sees a manifest that names a file
-    the store does not hold yet. The write is conditional on ``root_etag``, the
-    ETag that push --all read before the first collection (#971).
+    the store does not hold yet. Each root document is written under the ETag
+    that push --all read before the first collection (#971).
 
     Args:
         store: Object store instance.
@@ -2618,17 +2701,20 @@ async def _upload_root_files(
         root_metadata: Root metadata files to sync (Issue #426).
         intermediate_files: Intermediate catalog files (Issue #547, #552).
         stats: Running push counters. The function adds the file count to it.
-        root_etag: ETag of the remote root versions.json, or None if absent.
+        root_etags: The ETag of each root document, from ``_root_etags``.
+            None writes them without a condition, and versions.json only if absent.
         force: If True, overwrite the root versions.json without a condition.
 
     Raises:
         PushConflictError: If another writer changed the root versions.json.
     """
+    root_etags = root_etags or {}
 
     async def put(path: Path) -> None:
         # The key is the catalog-relative path, not the basename. `_assets/brand.png`
         # must land under `_assets/` for the catalog's rel="icon" href to resolve.
-        await put_object_async(store, _target_key(catalog_root, prefix, path), path.read_bytes())
+        key = _target_key(catalog_root, prefix, path)
+        await _put_file(store, key, path.read_bytes(), root_etags)
         stats["total_files"] += 1
 
     root_readme = catalog_root / "README.md"
@@ -2654,7 +2740,9 @@ async def _upload_root_files(
     root_versions = catalog_root / "versions.json"
     if root_versions.exists():
         key = _target_key(catalog_root, prefix, root_versions)
-        await _put_manifest(store, key, root_versions.read_bytes(), root_etag, force=force)
+        await _put_manifest(
+            store, key, root_versions.read_bytes(), root_etags.get(key), force=force
+        )
         success("Uploaded versions.json")
         stats["total_files"] += 1
 
@@ -2678,7 +2766,7 @@ async def _push_all_upload_root_files(
     dry_run: bool,
     stats: dict[str, Any],
     collections: list[str] | None = None,
-    root_etag: str | None = None,
+    root_etags: dict[str, str | None] | None = None,
     *,
     force: bool = False,
 ) -> bool:
@@ -2703,7 +2791,7 @@ async def _push_all_upload_root_files(
             outcome from it and adds the root-file counts to it.
         collections: Leaf collection ids (from ``discover_collections``), used to
             discover intermediate catalogs. None/empty means no intermediates.
-        root_etag: ETag of the remote root versions.json before the push.
+        root_etags: The ETag of each root document before the push.
         force: If True, overwrite the root versions.json without a condition.
 
     Returns True if uploads succeeded or were skipped, False if any failed.
@@ -2735,7 +2823,7 @@ async def _push_all_upload_root_files(
             root_metadata,
             intermediate_files,
             stats,
-            root_etag,
+            root_etags,
             force=force,
         )
         return True
@@ -2806,12 +2894,14 @@ async def push_all_collections_async(
     info(f"Found {total} collection(s) to push")
     _run_notices.set(set())
 
-    # The root versions.json write is conditional on the ETag read here, before
+    # The root document writes are conditional on the ETags read here, before
     # any collection writes (#971).
-    root_etag = None
-    if not dry_run and (catalog_root / "versions.json").exists():
+    root_etags = None
+    if not dry_run and (catalog_root / "catalog.json").exists():
         store, prefix = setup_store(destination, profile=profile, region=region)
-        root_etag = await _remote_etag(store, f"{prefix}/versions.json".lstrip("/"))
+        local = [catalog_root / name for name in _ROOT_DOCUMENTS]
+        keys = [_target_key(catalog_root, prefix, p) for p in local if p.exists()]
+        root_etags = await _root_etags(store, prefix, keys)
 
     # Track aggregate stats in a dict for helper function access
     stats: dict[str, Any] = {
@@ -2882,7 +2972,7 @@ async def push_all_collections_async(
         dry_run,
         stats,
         collections,
-        root_etag,
+        root_etags,
         force=force,
     )
 

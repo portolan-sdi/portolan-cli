@@ -433,7 +433,7 @@ class TestPushMetadataSync:
 
         from obstore.store import MemoryStore
 
-        from portolan_cli.sync.push import _upload_metadata_files_async
+        from portolan_cli.sync.push import _discover_catalog_files, _upload_metadata_files_async
 
         store = MemoryStore()
         count, errors = asyncio.run(
@@ -441,8 +441,7 @@ class TestPushMetadataSync:
                 store,
                 catalog_with_metadata,
                 "prefix",
-                "collection1",
-                include_catalog_root=False,
+                _discover_catalog_files(catalog_with_metadata, "collection1"),
                 concurrency=10,
             )
         )
@@ -694,7 +693,7 @@ class TestUploadOrdering:
         """_upload_metadata_files_async should use POSIX paths for object keys."""
         import asyncio
 
-        from portolan_cli.sync.push import _upload_metadata_files_async
+        from portolan_cli.sync.push import _discover_catalog_files, _upload_metadata_files_async
 
         uploaded_keys: list[str] = []
 
@@ -709,8 +708,7 @@ class TestUploadOrdering:
                     mock_store,
                     catalog_with_metadata,
                     "prefix",
-                    "collection1",
-                    include_catalog_root=False,
+                    _discover_catalog_files(catalog_with_metadata, "collection1"),
                     concurrency=10,
                 )
             )

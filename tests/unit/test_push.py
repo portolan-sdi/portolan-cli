@@ -752,7 +752,7 @@ class TestRollbackRestoresOverwrittenKeys:
         store = MemoryStore()
         obs.put(store, "catalog/test/a.parquet", b"old")
 
-        backups = await _back_up(store, ["catalog/test/a.parquet"], "catalog", 4)
+        backups = await _back_up(store, {"catalog/test/a.parquet": 3}, "catalog", 4)
 
         backup = backups["catalog/test/a.parquet"]
         pattern = r"catalog/\.portolan/push-backup/[0-9a-f]{32}/catalog/test/a\.parquet"
@@ -768,14 +768,14 @@ class TestRollbackRestoresOverwrittenKeys:
         from portolan_cli.sync.push import _back_up
 
         store = MemoryStore()
-        assert await _back_up(store, ["catalog/test/gone.parquet"], "catalog", 4) == {}
+        assert await _back_up(store, {"catalog/test/gone.parquet": None}, "catalog", 4) == {}
         assert capsys.readouterr().err == ""
 
         async def denied(*_args: Any, **_kwargs: Any) -> None:
             raise PermissionDeniedError("403 Forbidden")
 
         monkeypatch.setattr(obs, "copy_async", denied)
-        assert await _back_up(store, ["catalog/test/a.parquet"], "catalog", 4) == {}
+        assert await _back_up(store, {"catalog/test/a.parquet": 3}, "catalog", 4) == {}
         err = capsys.readouterr().err
         assert "Cannot back up catalog/test/a.parquet, a failed push leaves its new bytes" in err
 
