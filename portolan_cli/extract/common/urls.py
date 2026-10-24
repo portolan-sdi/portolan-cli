@@ -6,6 +6,11 @@ the WFS GetFeature link and the WMS GetStyles and GetLegendGraphic URLs
 are one parameter. A request keeps the parameters it needs, such as an API
 key.
 
+``redact_credentials`` is the one sanitizer. It removes the credential of
+each URL in a text. Every message that extract raises, logs, or prints with a
+URL in it goes through it, because a terminal log and a CI log keep the
+message (#981).
+
 ``sanitize_published_string`` runs before a value goes into a published file:
 ``collection.json``, ``metadata.yaml``, or the extraction report. A catalog is
 static files on public storage. A credential in a query string, or a local
@@ -66,8 +71,12 @@ WFS_REQUEST_PARAMS = frozenset(
 # A local path: POSIX absolute, Windows drive, or UNC share.
 _LOCAL_PATH = re.compile(r"^(/|[A-Za-z]:[\\/]|\\\\)")
 _LOCAL_SCHEMES = ("file:", "sqlite:")
-# A URL inside a text, such as an error message that quotes a request.
-_URL_IN_TEXT = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s<>\"'`]+")
+# A URL inside a text, such as an error message that quotes a request. The
+# second form is a path with a query and no host. A requests error quotes the
+# request in that form: "Max retries exceeded with url: /wfs?api_key=...".
+_URL_IN_TEXT = re.compile(
+    r"[A-Za-z][A-Za-z0-9+.-]*://[^\s<>\"'`]+|(?<![^\s(:=])/[^\s<>\"'`?]*\?[^\s<>\"'`]+"
+)
 
 
 def merge_query(
@@ -108,7 +117,23 @@ def sanitize_published_string(value: str) -> str | None:
     """
     if value.lower().startswith(_LOCAL_SCHEMES) or _LOCAL_PATH.match(value):
         return None
-    return _URL_IN_TEXT.sub(lambda match: _sanitize_url(match.group()), value)
+    return redact_credentials(value)
+
+
+def redact_credentials(text: str) -> str:
+    """Return ``text`` with no credential in any URL that it quotes.
+
+    Each URL loses its userinfo and every credential query parameter. The
+    host and the path stay, so the message still names the service. A local
+    path stays too, because a message is not a published value.
+
+    Args:
+        text: A message, a log line, or a URL.
+
+    Returns:
+        The text with each URL sanitized.
+    """
+    return _URL_IN_TEXT.sub(lambda match: _sanitize_url(match.group()), text)
 
 
 def _sanitize_url(text: str) -> str:
@@ -118,8 +143,6 @@ def _sanitize_url(text: str) -> str:
     """
     url = text.rstrip(".,:;!?)")
     parsed = urlparse(url)
-    if not parsed.netloc:
-        return text
     changed = parsed.username is not None or parsed.password is not None
     if changed:
         parsed = parsed._replace(netloc=parsed.netloc.rsplit("@", 1)[1])

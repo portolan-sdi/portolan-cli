@@ -20,6 +20,7 @@ from enum import Enum
 from urllib.parse import urlparse
 
 from portolan_cli.errors import PortolanError
+from portolan_cli.extract.common.urls import redact_credentials
 
 
 class ArcGISURLType(Enum):
@@ -41,9 +42,10 @@ class InvalidArcGISURLError(PortolanError):
     code = "PRTLN-EXT001"
 
     def __init__(self, url: str, reason: str) -> None:
+        shown = redact_credentials(url)  # The message names the URL, not its credential.
         super().__init__(
-            f"Invalid ArcGIS URL '{url}': {reason}",
-            url=url,
+            f"Invalid ArcGIS URL '{shown}': {reason}",
+            url=shown,
             reason=reason,
         )
 

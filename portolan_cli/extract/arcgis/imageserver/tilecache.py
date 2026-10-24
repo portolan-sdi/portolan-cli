@@ -34,6 +34,7 @@ import httpx
 import numpy as np
 
 from portolan_cli.extract.arcgis.imageserver.tiling import TileSpec
+from portolan_cli.extract.common.urls import redact_credentials
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
@@ -792,19 +793,20 @@ async def _download_cache_tile(
         TileCacheError: On any other failure.
     """
     url = ref.url(service_url)
+    shown = redact_credentials(url)  # A message names the tile, not the credential.
     try:
         response = await client.get(url)
     except httpx.TimeoutException as exc:
-        raise TileCacheError(f"Timeout while reading {url}.") from exc
+        raise TileCacheError(f"Timeout while reading {shown}.") from exc
     except httpx.RequestError as exc:
-        raise TileCacheError(f"Failed to read {url}: {exc}") from exc
+        raise TileCacheError(redact_credentials(f"Failed to read {url}: {exc}")) from exc
 
     if response.status_code == 404:
         return None
     if response.status_code == 429:
         raise TileCacheRateLimitError(url, _retry_after_seconds(response))
     if response.status_code != 200:
-        raise TileCacheError(f"Cache read failed: HTTP {response.status_code} for {url}.")
+        raise TileCacheError(f"Cache read failed: HTTP {response.status_code} for {shown}.")
     return response.content
 
 

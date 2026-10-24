@@ -9,12 +9,12 @@ import json
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 from portolan_cli.extract.common.styles import (
     StyleExtractionError,
     _build_wms_getstyles_url,
-    _redact_url_for_logging,
     extract_esri_style,
     extract_wms_style,
 )
@@ -25,24 +25,54 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-class TestRedactURLForLogging:
-    """Tests for query-string redaction before logging (security review)."""
+class TestWMSErrorsKeepNoKey:
+    """#981: an error or a warning about a WMS request names the service, not its key."""
 
-    def test_strips_api_key_from_query_string(self) -> None:
-        """An apikey query parameter is not present in the redacted URL."""
-        url = "https://example.com/geoserver/wms?service=WMS&apikey=SECRET123"
-        result = _redact_url_for_logging(url)
+    URL = "https://h.example/geoserver/wms?apikey=SECRET&service=WMS"
+    CLEAN = "https://h.example/geoserver/wms?service=WMS"
 
-        assert "SECRET123" not in result
-        assert "apikey" not in result
-        assert "?" not in result
+    @staticmethod
+    def _refuse(url: str, timeout: float) -> Any:
+        raise httpx.ConnectError(f"refused: {url}")
 
-    def test_keeps_scheme_host_and_path(self) -> None:
-        """Scheme, host and path survive redaction."""
-        url = "https://example.com/geoserver/wms?apikey=SECRET123"
-        result = _redact_url_for_logging(url)
+    def test_getstyles_transport_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from portolan_cli.extract.common.styles import _fetch_wms_style
 
-        assert result == "https://example.com/geoserver/wms"
+        monkeypatch.setattr("portolan_cli.extract.common.styles._guarded_get", self._refuse)
+
+        with pytest.raises(StyleExtractionError) as caught:
+            _fetch_wms_style(self.URL)
+
+        assert str(caught.value) == f"WMS GetStyles request failed: refused: {self.CLEAN}"
+
+    def test_getstyles_error_page(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from portolan_cli.extract.common.styles import _fetch_wms_style
+
+        page = f"<ServiceException>Bad request {self.URL}</ServiceException>"
+        monkeypatch.setattr(
+            "portolan_cli.extract.common.styles._guarded_get",
+            lambda url, timeout: httpx.Response(
+                200, text=page, headers={"content-type": "text/plain"}
+            ),
+        )
+
+        with pytest.raises(StyleExtractionError) as caught:
+            _fetch_wms_style(self.URL)
+
+        assert str(caught.value) == (
+            f"WMS GetStyles returned error: <ServiceException>Bad request {self.CLEAN}"
+            "</ServiceException>"
+        )
+
+    def test_legend_warning(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from portolan_cli.extract.common.styles import _fetch_wms_legend
+
+        monkeypatch.setattr("portolan_cli.extract.common.styles._guarded_get", self._refuse)
+
+        assert _fetch_wms_legend(self.URL) is None
+        assert caplog.messages == [f"WMS GetLegendGraphic request failed: refused: {self.CLEAN}"]
 
 
 class TestRejectCredentialBearingHTTPURL:

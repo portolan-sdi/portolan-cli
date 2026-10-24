@@ -28,6 +28,7 @@ from portolan_cli.extract.arcgis.imageserver.tilecache import (
     export_image_supported,
     parse_tile_info,
 )
+from portolan_cli.extract.common.urls import redact_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -221,19 +222,19 @@ async def _fetch_json(url: str, timeout: float) -> dict[str, Any]:
             return cast("dict[str, Any]", response.json())
     except httpx.HTTPStatusError as e:
         msg = f"Failed to fetch from {url}: HTTP {e.response.status_code}"
-        raise ImageServerDiscoveryError(msg) from e
+        raise ImageServerDiscoveryError(redact_credentials(msg)) from e
     except httpx.ConnectError as e:
         msg = f"Failed to connect to {url}: {e}"
-        raise ImageServerDiscoveryError(msg) from e
+        raise ImageServerDiscoveryError(redact_credentials(msg)) from e
     except httpx.TimeoutException as e:
         msg = f"Request timed out for {url}: {e}"
-        raise ImageServerDiscoveryError(msg) from e
+        raise ImageServerDiscoveryError(redact_credentials(msg)) from e
     except httpx.RequestError as e:
         msg = f"Failed to fetch from {url}: {e}"
-        raise ImageServerDiscoveryError(msg) from e
+        raise ImageServerDiscoveryError(redact_credentials(msg)) from e
     except ValueError as e:
         msg = f"Invalid JSON response from {url}: {e}"
-        raise ImageServerDiscoveryError(msg) from e
+        raise ImageServerDiscoveryError(redact_credentials(msg)) from e
 
 
 def _check_arcgis_error(data: dict[str, Any]) -> None:

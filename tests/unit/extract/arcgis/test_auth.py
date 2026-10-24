@@ -124,3 +124,22 @@ def test_resolve_token_raises_on_non_object_token_body(monkeypatch: pytest.Monke
     creds = ArcGISCredentials(username="u", password="p")
     with pytest.raises(ArcGISAuthError):
         resolve_token(creds, "https://x/server/rest/services")
+
+
+@pytest.mark.unit
+def test_info_error_names_the_server_without_its_userinfo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#981: the error names the server, not the password in its URL."""
+
+    def fake_get(self: object, url: str) -> httpx.Response:
+        return httpx.Response(503)
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    creds = ArcGISCredentials(username="u", password="p")
+
+    with pytest.raises(ArcGISAuthError) as caught:
+        resolve_token(creds, "https://u:SECRET@x.example/server/rest/services")
+
+    assert caught.value.message == (
+        "Failed to read token services URL from https://x.example/server/rest/info: HTTP 503"
+    )
+    assert caught.value.context == {"url": "https://x.example/server/rest/info"}

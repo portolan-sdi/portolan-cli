@@ -214,3 +214,41 @@ class TestWFSDiscoveryError:
         """Error includes message."""
         error = WFSDiscoveryError("Connection failed")
         assert str(error) == "Connection failed"
+
+
+class TestDiscoveryErrorKeepsNoCredential:
+    """#981: a failed discovery names the service and drops its key."""
+
+    URL = "https://h.example/geoserver/wfs?api_key=SECRET"
+    QUOTED = (
+        f"Could not connect to WFS service: {URL}\nError: Max retries exceeded with url: "
+        "/geoserver/wfs?api_key=SECRET&service=WFS"
+    )
+    CLEAN = (
+        "Could not connect to WFS service: https://h.example/geoserver/wfs\nError: "
+        "Max retries exceeded with url: /geoserver/wfs?service=WFS"
+    )
+
+    def test_discover_layers(self) -> None:
+        from geoparquet_io.core.wfs import WFSError  # type: ignore[import-untyped]
+
+        with (
+            patch("geoparquet_io.core.wfs.get_wfs_capabilities", side_effect=WFSError(self.QUOTED)),
+            pytest.raises(WFSDiscoveryError) as caught,
+        ):
+            discover_layers(self.URL)
+
+        assert str(caught.value) == f"Failed to discover WFS layers: {self.CLEAN}"
+
+    def test_list_layers(self) -> None:
+        from geoparquet_io.core.wfs import WFSError
+
+        with (
+            patch(
+                "geoparquet_io.core.wfs.list_available_layers", side_effect=WFSError(self.QUOTED)
+            ),
+            pytest.raises(WFSDiscoveryError) as caught,
+        ):
+            list_layers(self.URL)
+
+        assert str(caught.value) == f"Failed to list WFS layers: {self.CLEAN}"

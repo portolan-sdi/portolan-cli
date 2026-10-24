@@ -37,6 +37,7 @@ from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from portolan_cli.errors import PortolanError
+from portolan_cli.extract.common.urls import redact_credentials
 from portolan_cli.trace import span, submit
 
 if TYPE_CHECKING:
@@ -349,7 +350,7 @@ def _select_layers(discovery: Discovery, options: LayerSourceOptions) -> list[La
         layers = filter_refs(layers, options.layer_filter, options.layer_exclude)
     if layers:
         return layers
-    source = discovery.source_url
+    source = redact_credentials(discovery.source_url)
     if filters and (discovery.layers or discovery.filtered):
         count = len(discovery.layers)
         noun = "layer" if count == 1 else "layers"
@@ -389,18 +390,10 @@ def build_report(
         ExtractionSummary,
         MetadataExtracted,
     )
-    from portolan_cli.extract.common.urls import sanitize_published_string
 
-    def scrub(text: str) -> str:
-        # The report keeps a local path, because push never publishes .portolan.
-        # A credential goes, also from a URL that an error quotes (issue #981).
-        return sanitize_published_string(text) or text
-
-    source_url = scrub(discovery.source_url)
-    results = [
-        replace(r, error=r.error and scrub(r.error), warnings=[scrub(w) for w in r.warnings])
-        for r in results
-    ]
+    # The report keeps a local path, because push never publishes .portolan.
+    # ``_result`` already removed the credential of each error (issue #981).
+    source_url = redact_credentials(discovery.source_url)
 
     summary = ExtractionSummary(
         total_layers=len(results),
@@ -449,6 +442,9 @@ def _result(layer: LayerRef, status: str, **fields: Any) -> LayerResult:
         "attempts": 0,
     }
     values.update(fields)
+    # The terminal, the JSON envelope, and the report show these messages (#981).
+    values["error"] = values["error"] and redact_credentials(values["error"])
+    values["warnings"] = [redact_credentials(warning) for warning in values["warnings"]]
     return LayerResult(id=layer.id, name=layer.name, status=status, **values)
 
 
@@ -550,7 +546,7 @@ class _Run:
             ),
             give_up_on=(EmptyLayerError,),
             on_retry=lambda count, err: logger.debug(
-                "Retry %d for layer %s: %s", count, layer.name, err
+                "Retry %d for layer %s: %s", count, layer.name, redact_credentials(str(err))
             ),
         )
         if outcome.success and outcome.value is not None and relative not in self.abandoned:
@@ -764,7 +760,7 @@ def _fetch_parallel(
                 try:
                     result = run.promote(future.result())
                 except Exception as err:  # noqa: BLE001 - one layer must not stop the run
-                    logger.error("Layer %s failed: %s", layer.name, err)
+                    logger.error("Layer %s failed: %s", layer.name, redact_credentials(str(err)))
                     result = _result(layer, "failed", error=str(err), attempts=1)
                 run.emit(
                     index,

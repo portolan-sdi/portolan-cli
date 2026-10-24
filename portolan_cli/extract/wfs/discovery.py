@@ -17,6 +17,8 @@ from typing import Any
 
 import requests  # type: ignore[import-untyped]
 
+from portolan_cli.extract.common.urls import redact_credentials
+
 
 class WFSDiscoveryError(Exception):
     """Raised when WFS discovery fails."""
@@ -93,7 +95,10 @@ def gpio_list_layers(service_url: str, version: str = "1.1.0") -> list[dict[str,
     This function exists to make mocking easier in tests.
     """
     try:
-        from geoparquet_io.core.wfs import list_available_layers  # type: ignore[import-untyped]
+        from geoparquet_io.core.wfs import (  # type: ignore[import-untyped]
+            WFSError,
+            list_available_layers,
+        )
 
         result: list[dict[str, Any]] = list_available_layers(service_url, version=version)
         return result
@@ -101,8 +106,8 @@ def gpio_list_layers(service_url: str, version: str = "1.1.0") -> list[dict[str,
         raise WFSDiscoveryError(
             "geoparquet-io is required for WFS extraction. Install with: pip install geoparquet-io"
         ) from e
-    except _NETWORK_ERRORS as e:
-        raise WFSDiscoveryError(f"Failed to list WFS layers: {e}") from e
+    except (WFSError, *_NETWORK_ERRORS) as e:
+        raise WFSDiscoveryError(redact_credentials(f"Failed to list WFS layers: {e}")) from e
 
 
 def list_layers(
@@ -230,7 +235,7 @@ def discover_layers(
         WFSDiscoveryError: If connection or parsing fails.
     """
     try:
-        from geoparquet_io.core.wfs import get_wfs_capabilities
+        from geoparquet_io.core.wfs import WFSError, get_wfs_capabilities
 
         wfs = get_wfs_capabilities(service_url, version)
         svc = _extract_service_metadata(wfs)
@@ -256,5 +261,6 @@ def discover_layers(
         raise WFSDiscoveryError(
             "geoparquet-io is required for WFS extraction. Install with: pip install geoparquet-io"
         ) from e
-    except _NETWORK_ERRORS as e:
-        raise WFSDiscoveryError(f"Failed to discover WFS layers: {e}") from e
+    except (WFSError, *_NETWORK_ERRORS) as e:
+        # geoparquet-io and requests quote the service URL with its key (#981).
+        raise WFSDiscoveryError(redact_credentials(f"Failed to discover WFS layers: {e}")) from e

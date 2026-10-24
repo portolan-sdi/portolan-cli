@@ -42,6 +42,7 @@ from portolan_cli.extract.common.urls import (
     CREDENTIAL_QUERY_PARAMS,
     WFS_REQUEST_PARAMS,
     merge_query,
+    redact_credentials,
 )
 from portolan_cli.json_io import write_json_atomic
 
@@ -117,27 +118,6 @@ def _wfs_url_to_wms_path(wfs_url: str) -> tuple[str, str]:
     return f"{parsed.scheme}://{parsed.netloc}", path
 
 
-def _redact_url_for_logging(url: str) -> str:
-    """Strip userinfo and query parameters from a URL before logging it.
-
-    URLs built from a WFS endpoint can carry sensitive values (e.g. an
-    ``apikey``) in the query string. Logging only scheme, host and path
-    keeps debug output useful without leaking credentials.
-
-    Args:
-        url: Full URL, possibly with a query string.
-
-    Returns:
-        URL with userinfo and query string removed.
-    """
-    parsed = urlparse(url)
-    host = parsed.hostname or ""
-    if ":" in host:
-        host = f"[{host}]"
-    netloc = f"{host}:{parsed.port}" if parsed.port else host
-    return urlunparse(parsed._replace(netloc=netloc, query=""))
-
-
 def _reject_credential_bearing_http_url(url: str) -> None:
     """Refuse to fetch a non-HTTPS URL that carries a credential.
 
@@ -158,7 +138,7 @@ def _reject_credential_bearing_http_url(url: str) -> None:
         raise StyleExtractionError(
             f"Refusing to send credential-bearing query parameter(s) "
             f"{sorted(leaked)} over a non-HTTPS URL "
-            f"({_redact_url_for_logging(url)}). Use an https:// endpoint."
+            f"({redact_credentials(url)}). Use an https:// endpoint."
         )
 
 
@@ -178,7 +158,7 @@ def _credential_redirect_guard(url: str) -> Callable[[httpx.Request], None]:
         if carries_credential and request.url.scheme != "https":
             raise StyleExtractionError(
                 "Refusing to send a credential-bearing request to a non-HTTPS URL "
-                f"({_redact_url_for_logging(str(request.url))})."
+                f"({redact_credentials(str(request.url))})."
             )
 
     return hook
@@ -285,7 +265,10 @@ def _fetch_wms_style(url: str, timeout: float = 30.0) -> str:
 
         # Check for error response
         if "ServiceException" in response.text:
-            raise StyleExtractionError(f"WMS GetStyles returned error: {response.text[:200]}")
+            # An error page can quote the request URL with its key (#981).
+            raise StyleExtractionError(
+                redact_credentials(f"WMS GetStyles returned error: {response.text[:200]}")
+            )
 
         raise StyleExtractionError(f"Unexpected content type from WMS GetStyles: {content_type}")
 
@@ -294,7 +277,7 @@ def _fetch_wms_style(url: str, timeout: float = 30.0) -> str:
             f"WMS GetStyles request failed: HTTP {e.response.status_code}"
         ) from e
     except httpx.RequestError as e:
-        raise StyleExtractionError(f"WMS GetStyles request failed: {e}") from e
+        raise StyleExtractionError(redact_credentials(f"WMS GetStyles request failed: {e}")) from e
 
 
 def _write_style_file(
@@ -353,7 +336,7 @@ def extract_wms_style(
 
     # Build WMS URL
     wms_url = _build_wms_getstyles_url(wfs_url, layer_name)
-    logger.debug("Fetching WMS style from: %s", _redact_url_for_logging(wms_url))
+    logger.debug("Fetching WMS style from: %s", redact_credentials(wms_url))
 
     try:
         sld_xml = _fetch_wms_style(wms_url, timeout=timeout)
@@ -476,7 +459,7 @@ def _fetch_wms_legend(url: str, timeout: float = 30.0) -> bytes | None:
         logger.warning("WMS GetLegendGraphic request failed: HTTP %s", e.response.status_code)
         return None
     except httpx.RequestError as e:
-        logger.warning("WMS GetLegendGraphic request failed: %s", e)
+        logger.warning("WMS GetLegendGraphic request failed: %s", redact_credentials(str(e)))
         return None
     except StyleExtractionError as e:
         logger.warning("%s", e)
@@ -532,7 +515,7 @@ def extract_wms_legend(
     """
     # Build WMS GetLegendGraphic URL
     legend_url = _build_wms_getlegendgraphic_url(wfs_url, layer_name)
-    logger.debug("Fetching WMS legend from: %s", _redact_url_for_logging(legend_url))
+    logger.debug("Fetching WMS legend from: %s", redact_credentials(legend_url))
 
     # Fetch legend image
     legend_bytes = _fetch_wms_legend(legend_url, timeout=timeout)

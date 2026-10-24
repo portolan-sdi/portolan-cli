@@ -980,3 +980,22 @@ class TestFloatMosaicNodata:
             else:
                 assert src.nodatavals[0] is None
                 assert int(src.read(1)[src.dataset_mask() == 0].max()) == 0
+
+
+@pytest.mark.asyncio
+async def test_cache_read_error_names_the_tile_without_its_userinfo() -> None:
+    """#981: the error names the tile URL, not the password of the service URL."""
+    from portolan_cli.extract.arcgis.imageserver.tilecache import (
+        TileCacheError,
+        _download_cache_tile,
+    )
+
+    ref = CacheTileRef(level=9, row=3, col=4, dst_row=0, dst_col=0)
+    transport = httpx.MockTransport(lambda request: httpx.Response(500))
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(TileCacheError) as caught:
+            await _download_cache_tile(ref, "https://u:SECRET@h.example/X/ImageServer", client)
+
+    assert str(caught.value) == (
+        "Cache read failed: HTTP 500 for https://h.example/X/ImageServer/tile/9/3/4."
+    )
