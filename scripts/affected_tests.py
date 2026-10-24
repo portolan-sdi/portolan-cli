@@ -324,7 +324,9 @@ def select_for_repo(
     import grimp  # import-linter installs it
 
     sys.path.insert(0, str(repo))
-    graph = grimp.build_graph(PACKAGE, exclude_type_checking_imports=True)
+    # cache_dir=None: grimp writes its cache into the working directory by
+    # default, which leaves .grimp_cache/ in the repository root.
+    graph = grimp.build_graph(PACKAGE, exclude_type_checking_imports=True, cache_dir=None)
     known = set(graph.modules)
     test_imports, test_texts = _test_index(repo, known)
     return select(

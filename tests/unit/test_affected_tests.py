@@ -168,15 +168,22 @@ def test_test_imports_follow_patch_targets_and_string_modules(tmp_path: Path) ->
 
 
 @pytest.mark.integration
-def test_the_real_graph_selects_importers_and_skips_the_rest() -> None:
+def test_the_real_graph_selects_importers_and_skips_the_rest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """On this repository, a json_output change reaches its test, not the push tests.
 
     push.py does not import json_output, directly or through another module.
 
     The base ref does not exist. CI checks out a single commit with no
     ``origin/main``, and only a deleted module needs the merge base.
+
+    The graph build writes no cache. grimp puts its cache in the working
+    directory by default, and on a fresh CI checkout that left ``.grimp_cache/``
+    in the repository root, where the session guard fails the run.
     """
     repo = Path(__file__).resolve().parents[2]
+    monkeypatch.chdir(tmp_path)
 
     selection = at.select_for_repo(
         repo, [("M", "portolan_cli/json_output.py")], base="refs/heads/no-such-base"
@@ -185,6 +192,7 @@ def test_the_real_graph_selects_importers_and_skips_the_rest() -> None:
     assert selection.full is False
     assert "tests/unit/test_json_output.py" in selection.targets
     assert "tests/unit/test_push_async.py" not in selection.targets
+    assert sorted(path.name for path in tmp_path.iterdir()) == []
 
 
 def test_referenced_names_resolve_parent_package_and_relative_imports() -> None:
