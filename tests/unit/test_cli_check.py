@@ -1041,10 +1041,46 @@ class TestExitCodePerMode:
         assert envelope["success"] is False
         assert _errors(envelope) == [("PTL-GEN-000", "instruct")]
 
+    @pytest.mark.integration
+    def test_refresh_fails_when_a_collection_breaks_the_stac_schema(
+        self, runner: CliRunner, valid_catalog: Path
+    ) -> None:
+        """A collection.json that parses but breaks the STAC schema fails the refresh.
+
+        The envelope names the schema rule, which a syntax error (PTL-GEN-000)
+        does not share.
+        """
+        (valid_catalog / "roads").mkdir()
+        shutil.copy2(VECTOR_FIXTURES / "points.geojson", valid_catalog / "roads" / "roads.geojson")
+        add = runner.invoke(
+            cli, ["add", "--portolan-dir", str(valid_catalog), str(valid_catalog / "roads")]
+        )
+        assert add.exit_code == 0, add.output
+        collection_file = valid_catalog / "roads" / "collection.json"
+        collection = json.loads(collection_file.read_text())
+        collection["extent"] = "everywhere"
+        collection_file.write_text(json.dumps(collection, indent=2))
+
+        result = runner.invoke(cli, ["check", str(valid_catalog), "--json", "--fix", "--metadata"])
+
+        envelope = json.loads(result.stdout)
+        assert result.exit_code == 1, result.output
+        assert envelope["success"] is False
+        assert {
+            "type": "PTL-STR-001",
+            "message": "STAC 1.1.0 structural validation failed: "
+            "'everywhere' is not of type 'object'",
+        } in envelope["errors"]
+
     @pytest.mark.unit
     @pytest.mark.parametrize(
         ("rule_id", "failed"),
-        [("PTL-GEN-000", True), ("PTL-GEN-001", True), ("PTL-PRO-001", False)],
+        [
+            ("PTL-GEN-000", True),
+            ("PTL-GEN-001", True),
+            ("PTL-STR-001", True),
+            ("PTL-PRO-001", False),
+        ],
     )
     def test_refresh_fails_on_a_document_it_cannot_read(self, rule_id: str, failed: bool) -> None:
         """An unreadable document fails the refresh. Other INSTRUCT errors do not."""

@@ -900,15 +900,16 @@ class TestCheckMetadataFixFlag:
         )
 
         # One envelope carries both halves: what --fix did, and the re-check
-        # over the result. The catalog is hand-built, so the re-check still
-        # reports INSTRUCT errors (passed: false). The refresh repaired every
-        # AUTO error, so it succeeds. The errors block the catalog, so it exits 1.
+        # over the result. The catalog is hand-built with stac_version 1.0.0,
+        # so it breaks the STAC 1.1.0 schema (PTL-STR-001). The refresh cannot
+        # use a schema-invalid document, so it fails and exits 1.
         try:
             output = json.loads(result.output)
         except json.JSONDecodeError:
             pytest.fail(f"Invalid JSON output: {result.output[:200]}")
 
-        assert output["success"] is True
+        assert output["success"] is False
         assert result.exit_code == 1
         assert "metadata_fix" in output["data"]["fix"]
         assert output["data"]["passed"] is False
+        assert [error["type"] for error in output["errors"]] == ["PTL-STR-001"]
