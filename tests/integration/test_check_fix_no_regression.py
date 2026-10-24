@@ -386,6 +386,47 @@ class TestRecreatedItemEqualsAddedItem:
             added_links = json.loads((added / container).read_text())["links"]
             assert json.dumps(repaired_links, indent=2) == json.dumps(added_links, indent=2)
 
+    def test_the_repair_keeps_the_root_index_in_step(
+        self, run_cli: RunCli, tmp_path: Path, valid_rgb_cog: Path
+    ) -> None:
+        """The root versions.json counts the mirror the repair writes after finalize.
+
+        ``finalize_items`` writes the root counts, then the items.parquet mirror
+        changes the collection snapshot. Without a sync the root index records
+        the counts from before the mirror.
+        """
+        repaired = _added_raster_catalog(run_cli, tmp_path / "repaired", valid_rgb_cog)
+        (repaired / "imagery" / "rapidai4eo" / "rapidai4eo.json").unlink()
+        # A catalog from before the mirror: no items.parquet and no record of one.
+        (repaired / "imagery" / "items.parquet").unlink()
+        for relative, section in (
+            ("imagery/versions.json", None),
+            ("imagery/collection.json", "assets"),
+        ):
+            path = repaired / relative
+            data = json.loads(path.read_text())
+            if section is None:
+                for version in data["versions"]:
+                    version["assets"].pop("items.parquet", None)
+            else:
+                data[section] = {
+                    k: v for k, v in data[section].items() if "items.parquet" not in v["href"]
+                }
+            path.write_text(json.dumps(data, indent=2))
+
+        run_cli("check", str(repaired), "--fix", "--metadata", expect=None)
+
+        versions = json.loads((repaired / "imagery" / "versions.json").read_text())
+        current = next(
+            v for v in versions["versions"] if v["version"] == versions["current_version"]
+        )
+        entry = json.loads((repaired / "versions.json").read_text())["collections"]["imagery"]
+        assert (entry["current_version"], entry["asset_count"], entry["total_size_bytes"]) == (
+            versions["current_version"],
+            len(current["assets"]),
+            sum(a["size_bytes"] for a in current["assets"].values()),
+        )
+
     def test_the_links_fixer_changes_nothing_that_add_wrote(
         self, run_cli: RunCli, tmp_path: Path, valid_rgb_cog: Path
     ) -> None:

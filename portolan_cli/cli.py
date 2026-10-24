@@ -30,10 +30,9 @@ from portolan_cli.add import (
     SKIPS_THAT_TRACK,
     AddFailure,
     add_files,
-    sync_catalog_index,
 )
 from portolan_cli.add_progress import AddProgressReporter, count_files
-from portolan_cli.catalog import find_catalog_root
+from portolan_cli.catalog import find_catalog_root, sync_catalog_index
 from portolan_cli.catalog_list import (
     AssetInfo,
     AssetStatus,

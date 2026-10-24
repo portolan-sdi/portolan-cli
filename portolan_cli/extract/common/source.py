@@ -990,7 +990,7 @@ def build_catalog(
     ensure_collection_thumbnails(output_dir, collection_ids, versioned_collections=versioned)
     # The styles and the thumbnails add assets after add_files wrote the root
     # index, so the root counts lag without this call, as in `add`.
-    from portolan_cli.add import sync_catalog_index
+    from portolan_cli.catalog import sync_catalog_index
 
     sync_catalog_index(output_dir, collection_ids)
 

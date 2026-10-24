@@ -196,6 +196,7 @@ def _finalize_created_items(
     Returns:
         One SKIPPED result for each collection whose mirror could not be written.
     """
+    from portolan_cli.catalog import sync_catalog_index
     from portolan_cli.finalization import finalize_items
     from portolan_cli.stac_parquet import generate_parquet_mirrors
 
@@ -211,6 +212,9 @@ def _finalize_created_items(
     mirrors = generate_parquet_mirrors(
         catalog_root, collections, generate_parquet=False, versioned_collections=collections
     )
+    # The mirror changes the collection snapshot after finalize_items wrote the
+    # root counts, so the root index is brought in step, as add does.
+    sync_catalog_index(catalog_root, collections)
     return [
         FixResult(
             file_path=catalog_root / collection_id / "collection.json",

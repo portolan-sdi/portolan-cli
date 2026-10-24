@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import re
 import sys
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from portolan_cli.errors import CatalogAlreadyExistsError
 from portolan_cli.humanize import humanize_slug
@@ -30,6 +31,11 @@ from portolan_cli.stac_links import (
 )
 from portolan_cli.trace import count
 from portolan_cli.utils import href_root, relative_href
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from portolan_cli.versions import Version
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -1272,3 +1278,106 @@ def update_catalog_versions(
 
 class CatalogVersionsCorruptedError(Exception):
     """Raised when catalog-level versions.json is corrupted."""
+
+
+def mirror_into_catalog_index(
+    catalog_root: Path,
+    collection_id: str,
+    published: Version,
+) -> None:
+    """Mirror a published collection version into the catalog-level versions.json.
+
+    Kept separate from :func:`_update_versions` so the error branch does not push
+    that function past the rank-C complexity ceiling CI enforces.
+    ``update_catalog_versions`` no-ops when the catalog has no catalog-level
+    versions.json, which is the case for non-file backends.
+
+    A catalog-level failure is logged and swallowed, never raised. The
+    collection-level version is already on disk at this point, so failing the
+    add here would report an error for work that succeeded. This mirrors
+    ``finalization._finalize_with_file_backend``.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection_id: Collection identifier, "climate/hittekaart" for nested.
+        published: The Version just written by ``publish_version``.
+    """
+    try:
+        update_catalog_versions(
+            catalog_root=catalog_root,
+            collection_id=collection_id,
+            current_version=published.version,
+            asset_count=len(published.assets),
+            total_size_bytes=sum(a.size_bytes for a in published.assets.values()),
+        )
+    except Exception:
+        logger.warning(
+            "Failed to update catalog-level versions.json for collection '%s'. "
+            "Collection version was published but catalog-level view may be stale.",
+            collection_id,
+            exc_info=True,
+        )
+
+
+def sync_catalog_index(catalog_root: Path, collection_ids: set[str]) -> None:
+    """Copy the current version of each collection into the catalog-level versions.json.
+
+    ``finalize_items`` writes the index before the side steps of ``add`` run.
+    The item mirror, the PMTiles, and the thumbnails then add assets to the
+    collection's version, so the index lags one run behind without this call.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection_ids: Collections the add touched. One without a
+            versions.json, or with no current version, is left alone. A
+            versions.json that does not parse is logged and left alone, as in
+            :func:`mirror_into_catalog_index`. A collection whose index entry
+            already matches is not written, so a no-op re-add leaves the
+            index bytes and its ``updated`` time alone.
+    """
+    from portolan_cli.versions import read_versions
+
+    index_path = catalog_root / "versions.json"
+    try:
+        indexed = json.loads(index_path.read_text(encoding="utf-8")).get("collections") or {}
+    except (OSError, ValueError, AttributeError):
+        indexed = {}
+    for collection_id in sorted(collection_ids):
+        versions_path = catalog_root / Path(*collection_id.split("/")) / "versions.json"
+        if not versions_path.exists():
+            continue
+        try:
+            versions = read_versions(versions_path)
+        except ValueError as err:
+            logger.warning(
+                "Catalog-level versions.json not updated for '%s': %s", collection_id, err
+            )
+            continue
+        current = next(
+            (v for v in versions.versions if v.version == versions.current_version), None
+        )
+        if current is None:
+            continue
+        entry = indexed.get(collection_id) if isinstance(indexed, dict) else None
+        summary = (
+            current.version,
+            len(current.assets),
+            sum(a.size_bytes for a in current.assets.values()),
+        )
+        if isinstance(entry, dict) and summary == (
+            entry.get("current_version"),
+            entry.get("asset_count"),
+            entry.get("total_size_bytes"),
+        ):
+            continue
+        mirror_into_catalog_index(catalog_root, collection_id, current)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Directory handling
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Note: GEOSPATIAL_EXTENSIONS imported from portolan_cli.constants
+# Note: is_filegdb is imported from portolan_cli.scan.detect (canonical implementation).
+# scan_detect.is_filegdb accepts either .gdbtable files OR a 'gdb' marker file, which
+# matches the full FileGDB spec. Do not reimplement here.
