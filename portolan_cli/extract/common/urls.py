@@ -68,6 +68,14 @@ WFS_REQUEST_PARAMS = frozenset(
     }
 )
 
+# A credential parameter anywhere in a text, also in a URL with no scheme,
+# such as "phl.carto.com/api/v2/sql?api_key=K". Its value goes.
+_CREDENTIAL_VALUE = re.compile(
+    r"([?&](?:"
+    + "|".join(re.escape(name) for name in sorted(CREDENTIAL_QUERY_PARAMS, key=len, reverse=True))
+    + r")=)[^&\s<>\"'`]+",
+    re.IGNORECASE,
+)
 # A local path: POSIX absolute, Windows drive, or UNC share.
 _LOCAL_PATH = re.compile(r"^(/|[A-Za-z]:[\\/]|\\\\)")
 _LOCAL_SCHEMES = ("file:", "sqlite:")
@@ -125,7 +133,9 @@ def redact_credentials(text: str) -> str:
 
     Each URL loses its userinfo and every credential query parameter. The
     host and the path stay, so the message still names the service. A local
-    path stays too, because a message is not a published value.
+    path stays too, because a message is not a published value. A credential
+    parameter that no URL holds, as in a URL with no scheme, keeps its name
+    and loses its value.
 
     Args:
         text: A message, a log line, or a URL.
@@ -133,7 +143,8 @@ def redact_credentials(text: str) -> str:
     Returns:
         The text with each URL sanitized.
     """
-    return _URL_IN_TEXT.sub(lambda match: _sanitize_url(match.group()), text)
+    text = _URL_IN_TEXT.sub(lambda match: _sanitize_url(match.group()), text)
+    return _CREDENTIAL_VALUE.sub(r"\1***", text)
 
 
 def _sanitize_url(text: str) -> str:

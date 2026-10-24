@@ -122,5 +122,22 @@ class TestRedactCredentials:
             "/tmp/out/roads.parquet: fetch from https://h.example/wfs failed"
         )
 
+    @pytest.mark.parametrize(
+        ("text", "clean"),
+        [
+            (
+                "Invalid Carto URL (missing scheme): phl.carto.com/api/v2/sql?api_key=K",
+                "Invalid Carto URL (missing scheme): phl.carto.com/api/v2/sql?api_key=***",
+            ),
+            ("host/x?a=1&TOKEN=abc&b=2", "host/x?a=1&TOKEN=***&b=2"),
+            ("see 'h/x?X-Amz-Signature=f00'", "see 'h/x?X-Amz-Signature=***'"),
+        ],
+    )
+    def test_credential_without_scheme_or_slash_loses_its_value(
+        self, text: str, clean: str
+    ) -> None:
+        """A credential parameter goes wherever it stands, also in a URL with no scheme."""
+        assert redact_credentials(text) == clean
+
     def test_local_path_without_query_is_unchanged(self) -> None:
         assert redact_credentials("/home/user/catalog/.portolan") == "/home/user/catalog/.portolan"
