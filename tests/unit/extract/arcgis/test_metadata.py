@@ -149,13 +149,38 @@ class TestExtractArcGISMetadata:
         assert "contact" not in seeded
 
     @pytest.mark.unit
-    def test_source_license_makes_the_source_a_licensor(self) -> None:
-        """A license the source publishes adds the licensor role, once per organization."""
+    @pytest.mark.parametrize(
+        ("copyright_text", "providers"),
+        [
+            pytest.param(
+                "City of Boston",
+                [
+                    {"name": "City GIS", "roles": ["producer"]},
+                    {"name": "City of Boston", "roles": ["producer", "licensor"]},
+                ],
+                id="attribution-holds-the-rights",
+            ),
+            pytest.param(
+                "city gis",
+                [{"name": "City GIS", "roles": ["producer", "licensor"]}],
+                id="one-organization-one-entry",
+            ),
+            pytest.param(
+                "",
+                [{"name": "City GIS", "roles": ["producer", "licensor"]}],
+                id="no-attribution-author-holds-the-rights",
+            ),
+        ],
+    )
+    def test_source_license_makes_the_rights_holder_a_licensor(
+        self, copyright_text: str, providers: list[dict[str, object]]
+    ) -> None:
+        """A source license makes the attribution the licensor, or the author without one."""
         from portolan_cli.metadata_seeding import _build_metadata_dict
 
         metadata = extract_arcgis_metadata(
             {
-                "copyrightText": "city gis",
+                "copyrightText": copyright_text,
                 "documentInfo": {"Author": "City GIS"},
                 "licenseInfo": "https://example.com/license",
             },
@@ -163,7 +188,7 @@ class TestExtractArcGISMetadata:
         )
         seeded = _build_metadata_dict(metadata.to_extracted(), placeholders=False)
 
-        assert seeded["providers"] == [{"name": "City GIS", "roles": ["producer", "licensor"]}]
+        assert seeded["providers"] == providers
 
     @pytest.mark.unit
     def test_document_info_keywords_split_to_list(self) -> None:
