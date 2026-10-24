@@ -262,7 +262,7 @@ def select_handler(
         # listed PMTiles keeps its handler: tiles have no GeoParquet conversion.
         if (
             pinned is None
-            and extension in _reg.extensions_where(convert_on_request="GeoParquet")
+            and extension in _reg.convert_on_request_extensions("GeoParquet")
             and extension in get_conversion_overrides(catalog_root).extensions_convert
         ):
             pinned = "geoparquet"

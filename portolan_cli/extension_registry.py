@@ -409,6 +409,11 @@ def convertible_extensions(target: ConvertTarget) -> frozenset[str]:
     return frozenset(spec.ext for spec in EXTENSION_REGISTRY if spec.convert_target == target)
 
 
+def convert_on_request_extensions(target: ConvertTarget) -> frozenset[str]:
+    """Cloud-native extensions that convert to ``target`` only when the config lists them."""
+    return frozenset(spec.ext for spec in EXTENSION_REGISTRY if spec.convert_on_request == target)
+
+
 def unsupported_extensions() -> frozenset[str]:
     """Extensions explicitly rejected with a helpful message."""
     return frozenset(

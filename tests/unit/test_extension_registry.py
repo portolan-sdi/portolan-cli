@@ -35,7 +35,8 @@ class TestDerivedSets:
 
     def test_convert_on_request_names_the_cloud_native_vectors_a_reader_converts(self) -> None:
         """FlatGeobuf converts when conversion.extensions.convert lists it. PMTiles never does."""
-        assert reg.extensions_where(convert_on_request="GeoParquet") == {".fgb"}
+        assert reg.convert_on_request_extensions("GeoParquet") == {".fgb"}
+        assert reg.convert_on_request_extensions("COG") == set()
 
     def test_convertible_raster_extensions(self) -> None:
         assert reg.convertible_extensions("COG") == {".jp2"}
