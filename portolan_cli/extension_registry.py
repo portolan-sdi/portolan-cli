@@ -53,6 +53,10 @@ class ExtensionSpec:
 
     cloud_native: CloudNative = "no"
     convert_target: ConvertTarget | None = None
+    convert_on_request: ConvertTarget | None = None
+    """A cloud-native format that a converter still reads, so that
+    ``conversion.extensions.convert`` can send it to this target. ``None`` for
+    a format with no conversion, such as PMTiles."""
     routes_as: Routes | None = None
 
     scan_category: str | None = None
@@ -151,6 +155,7 @@ EXTENSION_REGISTRY: tuple[ExtensionSpec, ...] = (
         media_type="application/vnd.flatgeobuf",
         role="data",
         cloud_native="yes",
+        convert_on_request="GeoParquet",
         routes_as="vector",
         scan_category="geo_asset",
         is_geospatial=True,

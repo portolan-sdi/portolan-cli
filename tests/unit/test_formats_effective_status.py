@@ -291,14 +291,17 @@ class TestTheCatalogConvertListWins:
         [
             ("cloud_native/sample.fgb", "roads/roads.fgb", "geoparquet"),
             ("raster/valid/rgb.tif", "imagery/scene/scene.tif", "cog"),
+            ("cloud_native/sample.pmtiles", "roads/roads.pmtiles", "pmtiles"),
         ],
     )
-    def test_the_list_sends_only_a_vector_to_geoparquet(
+    def test_the_list_sends_only_a_convertible_vector_to_geoparquet(
         self, tmp_path: Path, fixture: str, target: str, handler: str
     ) -> None:
         """A listed raster keeps the COG handler, which converts it again.
 
         The GeoParquet handler failed on it with "No CRS found in input file".
+        A listed PMTiles keeps its own handler. Tiles have no GeoParquet
+        conversion, and the GeoParquet handler fails on the archive.
         """
         from portolan_cli.plugins.formats import handler_for
 
