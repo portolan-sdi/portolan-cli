@@ -16,6 +16,7 @@ mutmut sandbox does not copy (#997).
 
 from __future__ import annotations
 
+import fnmatch
 import importlib.util
 import json
 import re
@@ -106,24 +107,101 @@ def test_pytest_rejects_unknown_markers(pytestconfig: pytest.Config) -> None:
     assert pytestconfig.getini("strict_markers") is True
 
 
-def test_the_coverage_cells_upload_their_reports() -> None:
-    jobs = _jobs("ci.yml")
-    cell = "matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'"
+COVERAGE_PATTERN = "coverage-*"
 
-    for job, artifact in (("test", "coverage-main"), ("iceberg-test", "coverage-iceberg")):
-        uploads = [
-            step
-            for step in jobs[job]["steps"]
-            if str(step.get("uses", "")).startswith("actions/upload-artifact@")
-        ]
-        assert len(uploads) == 1, job
-        assert uploads[0]["if"] == cell
-        assert uploads[0]["with"]["name"] == artifact
-        assert uploads[0]["with"]["path"] == "coverage.xml"
-    iceberg_upload = next(
-        step for step in jobs["iceberg-test"]["steps"] if step.get("name") == "Upload coverage XML"
+
+def _cells(job: dict[str, Any]) -> list[dict[str, str]]:
+    """Return the matrix cells of ``job`` as ``os`` and ``python-version`` pairs."""
+    matrix = job["strategy"]["matrix"]
+    if "include" in matrix:
+        return [{"os": c["os"], "python-version": c["python-version"]} for c in matrix["include"]]
+    return [
+        {"os": os_name, "python-version": python}
+        for os_name in matrix["os"]
+        for python in matrix["python-version"]
+    ]
+
+
+def coverage_artifacts(job: dict[str, Any]) -> list[str]:
+    """Return the coverage artifact name that each matrix cell of ``job`` uploads.
+
+    A conditional upload step returns no names, so the list is shorter than
+    the matrix.
+    """
+    uploads = [
+        step
+        for step in job["steps"]
+        if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+    assert len(uploads) == 1
+    (upload,) = uploads
+    assert upload["with"]["path"] == "coverage.xml"
+    assert upload["with"]["if-no-files-found"] == "error"
+    if "if" in upload:
+        return []
+    template = str(upload["with"]["name"])
+    return [
+        template.replace("${{ matrix.os }}", cell["os"]).replace(
+            "${{ matrix.python-version }}", cell["python-version"]
+        )
+        for cell in _cells(job)
+    ]
+
+
+def test_every_test_cell_measures_coverage() -> None:
+    """A line that only Windows or macOS runs is covered when that cell runs it."""
+    step = next(
+        step
+        for step in _jobs("ci.yml")["test"]["steps"]
+        if str(step.get("name", "")).startswith("Run tests")
     )
-    assert iceberg_upload["with"]["if-no-files-found"] == "ignore"
+    command = re.search(r"uv run pytest .*", step["run"], re.DOTALL)
+
+    assert command is not None
+    assert "--cov=portolan_cli --cov-report=xml" in command.group(0)
+    assert "cov_args" not in step["run"]
+
+
+@pytest.mark.parametrize("job", ["test", "iceberg-test"])
+def test_every_cell_uploads_its_coverage_report(job: str) -> None:
+    jobs = _jobs("ci.yml")
+    prefix = {"test": "coverage-", "iceberg-test": "coverage-iceberg-"}[job]
+    expected = [f"{prefix}{c['os']}-{c['python-version']}" for c in _cells(jobs[job])]
+
+    assert coverage_artifacts(jobs[job]) == expected
+
+
+def test_diff_cover_reads_the_report_of_every_cell() -> None:
+    jobs = _jobs("ci.yml")
+    names = coverage_artifacts(jobs["test"]) + coverage_artifacts(jobs["iceberg-test"])
+    downloads = [
+        step
+        for step in jobs["diff-cover"]["steps"]
+        if str(step.get("uses", "")).startswith("actions/download-artifact@")
+    ]
+    run = _run_text(jobs["diff-cover"])
+
+    assert len(names) == 16
+    assert len(set(names)) == len(names)
+    assert [step["with"] for step in downloads] == [
+        {"pattern": COVERAGE_PATTERN, "path": "coverage"}
+    ]
+    assert [name for name in names if not fnmatch.fnmatchcase(name, COVERAGE_PATTERN)] == []
+    assert "reports=(coverage/*/coverage.xml)" in run
+    assert '"${reports[@]}"' in run
+
+
+def test_coverage_reports_name_files_relative_to_the_checkout() -> None:
+    """diff-cover on Linux cannot match an absolute Windows or macOS source path.
+
+    Without the key, the Windows report names the source
+    ``D:\\a\\portolan-cli\\portolan-cli\\portolan_cli`` and the macOS report names
+    ``/Users/runner/work/...``. diff-cover joins that source with each file name
+    and finds no file of the Linux checkout.
+    """
+    config = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert config["tool"]["coverage"]["run"]["relative_files"] is True
 
 
 def test_diff_cover_gates_the_changed_lines() -> None:
