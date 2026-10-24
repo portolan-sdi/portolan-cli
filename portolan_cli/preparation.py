@@ -14,6 +14,7 @@ dependency edge is one-directional (add -> preparation).
 
 from __future__ import annotations
 
+import fnmatch
 import logging
 import shutil
 from dataclasses import dataclass
@@ -25,7 +26,7 @@ from pyproj import CRS
 
 from portolan_cli import extension_registry as _reg
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
-from portolan_cli.config import get_setting, load_merged_metadata
+from portolan_cli.config import get_ignored_files, get_setting, load_merged_metadata
 from portolan_cli.constants import ROLE_VISUAL
 from portolan_cli.conversion_config import VectorSettings, get_vector_settings
 from portolan_cli.convert import apply_vector_settings, run_with_transient_convert_retry
@@ -197,6 +198,16 @@ class _ScannedFile:
     role: str
 
 
+def ignored_by(file_path: Path, patterns: list[str]) -> str | None:
+    """Return the first ``ignored_files`` pattern the file name matches, or None.
+
+    ``add`` applies it to the files it prepares, and the asset scan applies it
+    to their companions, so an ignored file never enters the catalog by
+    sitting beside an accepted one.
+    """
+    return next((p for p in patterns if fnmatch.fnmatch(file_path.name, p)), None)
+
+
 def _scan_item_assets(
     item_dir: Path,
     item_id: str,
@@ -205,6 +216,7 @@ def _scan_item_assets(
     *,
     exclude_names: frozenset[str] = frozenset(),
     collection_level: bool = False,
+    ignored_patterns: list[str] | None = None,
 ) -> tuple[dict[str, pystac.Asset], dict[str, tuple[Path, str, int]], list[str]]:
     """Scan an item directory for all trackable assets.
 
@@ -230,6 +242,8 @@ def _scan_item_assets(
             ``./<name>`` and keys follow the stem groups. For an item, the
             primary is keyed ``data`` and hrefs are ``<name>``, relative to the
             item JSON in ``item_dir``.
+        ignored_patterns: The ``ignored_files`` patterns of the catalog. A
+            companion that matches one is not an asset (#1044).
 
     Returns:
         Tuple of (stac_assets, asset_files, asset_paths):
@@ -257,6 +271,8 @@ def _scan_item_assets(
         if is_flat and file_path.stem != primary_file.stem and file_path.name in exclude_names:
             continue
         if file_path.name in IGNORED_FILES or file_path.name == f"{item_id}.json":
+            continue
+        if ignored_by(file_path, ignored_patterns or []) is not None:
             continue
         # The collection README is a rel="describedby" link that `readme`
         # rewrites, never an asset. The first add runs before the README exists,
@@ -1125,6 +1141,7 @@ def prepare_item(
         collection_dir=collection_dir,
         exclude_names=exclude_sibling_names,
         collection_level=collection_level,
+        ignored_patterns=get_ignored_files(catalog_root),
     )
 
     # Step 6: Build STAC properties. The handler adds its format fields when it

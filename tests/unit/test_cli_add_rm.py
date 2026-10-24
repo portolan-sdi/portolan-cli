@@ -1074,6 +1074,27 @@ class TestAddIgnoredFiles:
             assert envelope["data"]["skipped"] == [{"path": str(places), "reason": self.IGNORED}]
 
     @pytest.mark.integration
+    def test_an_ignored_sibling_stays_out_of_the_assets(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_points_geojson: Path,
+        valid_points_parquet: Path,
+    ) -> None:
+        """An ignored file beside an added file is not scanned in as its companion."""
+        root = conformant_catalog
+        self._catalog(root, valid_points_geojson, valid_points_parquet)
+        (root / "roads" / "notes.geojson").write_bytes(valid_points_geojson.read_bytes())
+
+        run_cli("add", "--portolan-dir", str(root), str(root / "roads" / "roads.parquet"))
+
+        collection = json.loads((root / "roads" / "collection.json").read_text())
+        hrefs = sorted(asset["href"] for asset in collection["assets"].values())
+        assert hrefs == ["./roads.parquet", "./roads.thumb.jpg"]
+        versions = json.loads((root / "roads" / "versions.json").read_text())
+        assert sorted(versions["versions"][-1]["assets"]) == ["roads.parquet", "roads.thumb.jpg"]
+
+    @pytest.mark.integration
     def test_a_run_that_only_skips_names_the_reason(
         self, run_cli: RunCli, conformant_catalog: Path, valid_points_geojson: Path
     ) -> None:

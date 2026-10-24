@@ -14,7 +14,6 @@ All logic lives here; the CLI is a thin wrapper.
 
 from __future__ import annotations
 
-import fnmatch
 import json
 import logging
 import shutil
@@ -113,6 +112,7 @@ from portolan_cli.preparation import (  # noqa: F401
 )
 from portolan_cli.preparation import (
     ROLE_SOURCE,
+    ignored_by,
     is_rewrite_temp,
 )
 from portolan_cli.preparation import (
@@ -835,11 +835,6 @@ SKIP_REWRITE_TEMP = "it is a scratch file of an interrupted rewrite"
 SKIPS_THAT_TRACK = frozenset({SKIP_UNCHANGED, SKIP_COMPANION, SKIP_ITEM_MIRROR})
 
 
-def _ignored_by(file_path: Path, patterns: list[str]) -> str | None:
-    """Return the first ``ignored_files`` pattern the file name matches, or None."""
-    return next((p for p in patterns if fnmatch.fnmatch(file_path.name, p)), None)
-
-
 def _collect_files_for_add(
     paths: list[Path],
     catalog_root: Path,
@@ -897,7 +892,7 @@ def _collect_files_for_add(
 
             # `ignored_files` in config.yaml excludes a file from the catalog,
             # with the basename match rule of `portolan list` (#1044).
-            pattern = _ignored_by(file_path, ignored_patterns)
+            pattern = ignored_by(file_path, ignored_patterns)
             if pattern is not None:
                 skip(file_path, f"it matches ignored_files pattern {pattern!r}")
                 continue
@@ -1794,6 +1789,7 @@ def _update_item_with_asset(
         item_id=item_id,
         primary_file=primary_file,
         collection_dir=collection_dir,
+        ignored_patterns=get_ignored_files(catalog_root),
     )
 
     # Enrich COG assets with render extension properties (Issue #13)
