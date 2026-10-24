@@ -4002,19 +4002,29 @@ def _report_push_all_result(all_result: Any, *, use_json: bool) -> None:
         SystemExit: If any collection failed.
     """
     if use_json:
-        envelope = success_envelope(
-            "push",
-            {
-                "total_collections": all_result.total_collections,
-                "successful_collections": all_result.successful_collections,
-                "failed_collections": all_result.failed_collections,
-                "total_files_uploaded": all_result.total_files_uploaded,
-                "total_versions_pushed": all_result.total_versions_pushed,
-                "dry_run": all_result.dry_run,
-                "total_would_push_files": all_result.total_would_push_files,
-                "total_would_push_versions": all_result.total_would_push_versions,
-                "collection_errors": all_result.collection_errors,
-            },
+        data = {
+            "total_collections": all_result.total_collections,
+            "successful_collections": all_result.successful_collections,
+            "failed_collections": all_result.failed_collections,
+            "total_files_uploaded": all_result.total_files_uploaded,
+            "total_versions_pushed": all_result.total_versions_pushed,
+            "dry_run": all_result.dry_run,
+            "total_would_push_files": all_result.total_would_push_files,
+            "total_would_push_versions": all_result.total_would_push_versions,
+            "collection_errors": all_result.collection_errors,
+        }
+        # A failed push returns success=false, with one error per message.
+        errors = [
+            ErrorDetail(type="PushError", message=f"{name}: {message}")
+            for name, messages in all_result.collection_errors.items()
+            for message in messages
+        ]
+        envelope = (
+            success_envelope("push", data)
+            if all_result.success
+            else error_envelope(
+                "push", errors or [ErrorDetail("PushError", "Push failed")], data=data
+            )
         )
         output_json_envelope(envelope)
 

@@ -44,9 +44,9 @@ from portolan_cli.async_utils import (
 from portolan_cli.catalog import intermediate_catalog_ids
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import detail, error, info, output_section, success, warn
+from portolan_cli.stac_links import SIDE_FILES, published_files
 from portolan_cli.sync.checksums import compute_checksum
 from portolan_cli.sync.download import (
-    download_directory,
     download_file,
     get_remote_file_size_async,
 )
@@ -1233,7 +1233,7 @@ def pull(
     concurrency: int = DEFAULT_CONCURRENCY,
     verbose: bool = False,
     json_mode: bool = False,
-    every_object: bool = False,
+    stac_tree: bool = False,
 ) -> PullResult:
     """Pull updates from a remote catalog (sync wrapper).
 
@@ -1260,10 +1260,9 @@ def pull(
         concurrency: Maximum concurrent downloads (default: 50).
         verbose: If True, show per-file download messages.
         json_mode: If True, suppress progress output (for agent/batch usage).
-        every_object: If True, also download each object under the collection
-            prefix that the local catalog lacks. clone sets it: push writes
-            collection.json, the items, README.md, AGENTS.md, and the metadata
-            files there, and versions.json names only the assets (#1042).
+        stac_tree: If True, also download the STAC documents of the collection
+            and the catalogs above it, and the objects that they name. clone
+            sets it, because versions.json names only the assets (#1042).
 
     Returns:
         PullResult with operation results.
@@ -1285,68 +1284,84 @@ def pull(
             json_mode=json_mode,
         )
     )
-    if not every_object or not result.success:
+    if not stac_tree or not result.success:
         return result
-    rest = download_directory(
-        f"{remote_url.rstrip('/')}/{collection}/",
-        local_root / collection,
-        profile=profile,
-        overwrite=False,
-        verbose=verbose,
+    written, failed = asyncio.run(
+        _download_stac_tree(remote_url, local_root, collection, profile, concurrency)
     )
-    result.files_downloaded += rest.files_downloaded + _download_catalog_documents(
-        remote_url, local_root, collection, profile
-    )
-    if not rest.success:
+    result.files_downloaded += written
+    if failed:
         result.success = False
-        error(f"Failed to download {rest.files_failed} file(s) of '{collection}'")
+        error(f"Failed to download {failed} file(s) of '{collection}'")
     return result
 
 
-# The links that walk the catalog tree. Every other relative link of a catalog
-# names a file that push wrote beside it, such as README.md, AGENTS.md, a logo.
-_TREE_RELS = frozenset({"child", "item", "self", "root", "parent"})
-
-
-def _download_catalog_documents(
-    remote_url: str, local_root: Path, collection: str, profile: str | None
-) -> int:
-    """Download the catalog documents above ``collection`` as push wrote them (#1042).
+async def _download_stac_tree(
+    remote_url: str, local_root: Path, collection: str, profile: str | None, concurrency: int
+) -> tuple[int, int]:
+    """Download the STAC tree of ``collection`` and the objects it names (#1042).
 
     clone starts from a fresh local catalog.json with no child links. The remote
-    root and intermediate catalog.json files hold those links. With each catalog
-    come the files that its other relative links name, and the root versions.json.
-    A missing optional file is skipped.
+    root and intermediate catalog.json files hold those links. collection.json
+    names the items. Each document brings the files that ``published_files``
+    names, the same set that push uploads. The root and the collection
+    versions.json come as push wrote them. An object that no document names,
+    such as a stale object of a removed asset, stays remote.
 
     Returns:
-        The number of files written.
+        The number of files written and the number of files that failed.
     """
     bucket_url, prefix = parse_object_store_url(remote_url)
     store, _ = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=4)
+    semaphore = asyncio.Semaphore(concurrency)
+    counts = {"written": 0, "failed": 0}
+    walked: set[str] = set()
 
-    def fetch(rel: str) -> bool:
-        try:
-            data = bytes(obs.get(store, f"{prefix}/{rel}".lstrip("/")).bytes())
-        except (NotFoundError, FileNotFoundError):
-            return False
-        target = _validate_safe_path(local_root, rel)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
+    async def fetch(rel: str) -> bool:
+        """Download one object. A missing object is skipped."""
+        async with semaphore:
+            try:
+                target = _validate_safe_path(local_root, rel)
+                await _download_file_async(store, f"{prefix}/{rel}".lstrip("/"), target)
+            except (NotFoundError, FileNotFoundError):
+                return False
+            except Exception as e:
+                error(f"Failed to download {rel}: {e}")
+                counts["failed"] += 1
+                return False
+        counts["written"] += 1
         return True
 
-    written = int(fetch("versions.json"))
-    for catalog_id in ["", *intermediate_catalog_ids(collection)]:
-        catalog_rel = posixpath.join(catalog_id, "catalog.json")
-        if not fetch(catalog_rel):
-            continue
-        written += 1
-        links = json.loads((local_root / catalog_rel).read_text(encoding="utf-8")).get("links", [])
-        for link in links:
-            href = str(link.get("href", ""))
-            if link.get("rel") in _TREE_RELS or "://" in href or href.startswith("/"):
-                continue
-            written += fetch(posixpath.normpath(posixpath.join(catalog_id, href)))
-    return written
+    async def walk(document_rel: str) -> None:
+        """Download one STAC document, the files it names, and its items."""
+        if document_rel in walked:
+            return
+        walked.add(document_rel)
+        if not await fetch(document_rel):
+            return
+        document = json.loads((local_root / document_rel).read_text(encoding="utf-8"))
+        files, items = published_files(document, document_rel)
+        # pull already wrote the assets that versions.json names. clone wrote
+        # its own README.md and AGENTS.md, which the remote ones replace.
+        files = {
+            rel
+            for rel in files
+            if posixpath.basename(rel) in SIDE_FILES or not (local_root / rel).exists()
+        }
+        await asyncio.gather(
+            *(fetch(rel) for rel in sorted(files)),
+            *(walk(rel) for rel in sorted(items)),
+        )
+
+    documents = [
+        posixpath.join(c, "catalog.json") for c in ["", *intermediate_catalog_ids(collection)]
+    ]
+    await asyncio.gather(
+        fetch("versions.json"),
+        fetch(f"{collection}/versions.json"),
+        *(walk(rel) for rel in [*documents, f"{collection}/collection.json"]),
+    )
+    return counts["written"], counts["failed"]
 
 
 # =============================================================================

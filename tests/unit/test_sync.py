@@ -892,7 +892,7 @@ class TestCloneFunction:
             force=False,
             dry_run=False,
             profile="my-profile",
-            every_object=True,
+            stac_tree=True,
         )
 
     @pytest.mark.unit

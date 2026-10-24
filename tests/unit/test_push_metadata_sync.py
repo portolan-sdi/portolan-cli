@@ -52,8 +52,13 @@ def catalog_with_metadata(tmp_path: Path) -> Path:
     catalog_root.mkdir()
 
     # Root level files
+    # push uploads a metadata file only when a STAC document names it.
+    root_links = [
+        {"rel": "style", "href": "./root-style.json"},
+        {"rel": "icon", "href": "./_assets/brand.png"},
+    ]
     (catalog_root / "catalog.json").write_text(
-        json.dumps({"type": "Catalog", "id": "test-catalog"})
+        json.dumps({"type": "Catalog", "id": "test-catalog", "links": root_links})
     )
     (catalog_root / "README.md").write_text("# Test Catalog")
     # Root-level metadata file (should be synced)
@@ -75,8 +80,12 @@ def catalog_with_metadata(tmp_path: Path) -> Path:
     # Collection with metadata files
     collection_dir = catalog_root / "collection1"
     collection_dir.mkdir()
+    assets = {
+        "style": {"href": "./style.json", "roles": ["style"]},
+        "thumbnail": {"href": "./collection1.thumb.png", "roles": ["thumbnail"]},
+    }
     (collection_dir / "collection.json").write_text(
-        json.dumps({"type": "Collection", "id": "collection1"})
+        json.dumps({"type": "Collection", "id": "collection1", "assets": assets})
     )
     (collection_dir / "README.md").write_text("# Collection 1")
     (collection_dir / "style.json").write_text(json.dumps({"version": 8, "name": "test-style"}))
@@ -216,8 +225,13 @@ class TestDiscoverCatalogFiles:
         # Create versioned asset file
         (collection_dir / "data.parquet").write_bytes(b"parquet data")
 
-        # Create metadata file (should be discovered)
+        # Create metadata file (should be discovered), which collection.json names
         (collection_dir / "style.json").write_text('{"version": 8}')
+        assets = {
+            "data": {"href": "./data.parquet", "roles": ["data"]},
+            "style": {"href": "./style.json", "roles": ["style"]},
+        }
+        (collection_dir / "collection.json").write_text(json.dumps({"assets": assets}))
 
         # Create versions.json listing the parquet as versioned asset
         (collection_dir / "versions.json").write_text(
@@ -433,7 +447,7 @@ class TestPushMetadataSync:
 
         from obstore.store import MemoryStore
 
-        from portolan_cli.sync.push import _upload_metadata_files_async
+        from portolan_cli.sync.push import _discover_catalog_files, _upload_metadata_files_async
 
         store = MemoryStore()
         count, errors = asyncio.run(
@@ -441,8 +455,7 @@ class TestPushMetadataSync:
                 store,
                 catalog_with_metadata,
                 "prefix",
-                "collection1",
-                include_catalog_root=False,
+                _discover_catalog_files(catalog_with_metadata, "collection1"),
                 concurrency=10,
             )
         )
@@ -493,11 +506,11 @@ class TestPushAllMetadataSync:
     """Tests for metadata sync in push_all_collections."""
 
     @pytest.mark.unit
-    def test_discover_root_metadata_files(self, catalog_with_metadata: Path) -> None:
-        """_discover_root_metadata_files should find root-level metadata."""
-        from portolan_cli.sync.push import _discover_root_metadata_files
+    def test_discovers_root_metadata_files(self, catalog_with_metadata: Path) -> None:
+        """_discover_catalog_files without a collection finds root-level metadata."""
+        from portolan_cli.sync.push import _discover_catalog_files
 
-        files = _discover_root_metadata_files(catalog_with_metadata)
+        files = _discover_catalog_files(catalog_with_metadata, include_catalog_root=True)
 
         # Should include root-style.json (added in fixture)
         names = [f.name for f in files]
@@ -548,14 +561,14 @@ class TestPushCatalogLogo:
 
     @pytest.mark.unit
     def test_root_discovery_includes_assets_directory(self, catalog_with_metadata: Path) -> None:
-        from portolan_cli.sync.push import _discover_root_metadata_files
+        from portolan_cli.sync.push import _discover_catalog_files
 
         assets = catalog_with_metadata / "_assets"
         assets.mkdir()
         logo = assets / "brand.png"
         logo.write_bytes(b"\x89PNG\r\n\x1a\n")
 
-        files = _discover_root_metadata_files(catalog_with_metadata)
+        files = _discover_catalog_files(catalog_with_metadata, include_catalog_root=True)
 
         assert logo in files
 
@@ -694,7 +707,7 @@ class TestUploadOrdering:
         """_upload_metadata_files_async should use POSIX paths for object keys."""
         import asyncio
 
-        from portolan_cli.sync.push import _upload_metadata_files_async
+        from portolan_cli.sync.push import _discover_catalog_files, _upload_metadata_files_async
 
         uploaded_keys: list[str] = []
 
@@ -709,8 +722,7 @@ class TestUploadOrdering:
                     mock_store,
                     catalog_with_metadata,
                     "prefix",
-                    "collection1",
-                    include_catalog_root=False,
+                    _discover_catalog_files(catalog_with_metadata, "collection1"),
                     concurrency=10,
                 )
             )

@@ -68,6 +68,15 @@ def _other_writer_manifest(bucket: Bucket, key: str) -> bytes:
     return json.dumps(manifest).encode()
 
 
+def _other_writer_manifest_naming(bucket: Bucket, key: str, asset_key: str, sha256: str) -> bytes:
+    """Return the manifest of version 9.0.0, which names ``sha256`` for ``asset_key``."""
+    manifest = json.loads(_other_writer_manifest(bucket, key))
+    for asset in manifest["versions"][-1]["assets"].values():
+        if bucket.key(asset["href"]) == asset_key:
+            asset["sha256"] = sha256
+    return json.dumps(manifest).encode()
+
+
 def _bytes_that_disagree_with_the_manifest(
     bucket: Bucket, collection: str, written: set[str]
 ) -> dict[str, str]:
@@ -99,6 +108,19 @@ def _bytes_that_disagree_with_the_manifest(
         if actual != expected[key]:
             disagree[key] = actual
     return disagree
+
+
+def _lose_the_manifest_race(
+    run_cli: RunCli, root: Path, bucket: Bucket, fault_store: PutFaults, other: Callable[[], None]
+) -> None:
+    """Run ``other`` before the imagery versions.json write, and assert the push conflict."""
+    manifest_key = bucket.key("imagery/versions.json")
+    fault_store.arm(1, when=lambda key: key == manifest_key, action=other)
+
+    second = _push(run_cli, root, bucket)
+
+    assert second.exit_code == 1, second.output
+    assert CONFLICT_MESSAGE in second.output
 
 
 @pytest.fixture
@@ -138,6 +160,56 @@ def test_failed_second_push_keeps_first_push_objects(
     assert _bytes_that_disagree_with_the_manifest(bucket, "imagery", written) == {}
     assert sorted(after_first - bucket.keys()) == []
     assert bucket.keys() == after_first
+
+
+@pytest.mark.parametrize("mode", [(), ("--json",)], ids=["text", "json"])
+def test_failed_rollback_reports_the_key_it_could_not_restore(
+    pushed: Path,
+    bucket: Bucket,
+    run_cli: RunCli,
+    fault_store: PutFaults,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: tuple[str, ...],
+) -> None:
+    """The restore of one scene fails during the rollback of a failed push.
+
+    The push exits 1 and names that scene, its backup key, and the reason in
+    its errors. The other written keys hold the bytes of push 1 again. The
+    backup of the scene stays, so the old bytes are not lost.
+    """
+    from portolan_cli.sync import push as push_module
+
+    after_first = bucket.keys()
+    calls_before = len(fault_store.calls)
+    fault_store.fail_on(2, when=_is_scene)
+    real_copy = push_module.obs.copy_async
+    refused: list[tuple[str, str]] = []
+
+    async def copy_async(store: Any, src: str, dst: str, **kwargs: Any) -> Any:
+        if _is_scene(dst) and "/.portolan/" in src:
+            refused.append((dst, src))
+            raise PermissionError("injected restore fault")
+        return await real_copy(store, src, dst, **kwargs)
+
+    monkeypatch.setattr(push_module.obs, "copy_async", copy_async)
+
+    second = _push(run_cli, pushed, bucket, *mode)
+
+    assert second.exit_code == 1, second.output
+    assert len(refused) == 1, refused
+    scene, backup = refused[0]
+    message = f"Could not restore {scene} from {backup}: injected restore fault"
+    if mode:
+        envelope = json.loads(second.stdout)
+        assert envelope["success"] is False
+        assert f"imagery: {message}" in [entry["message"] for entry in envelope["errors"]]
+    else:
+        # The failure line and the closing summary each list the errors.
+        lines = [line for line in second.output.splitlines() if "imagery: Failed" in line]
+        assert [message in line for line in lines] == [True, True], second.output
+    written = set(fault_store.keys()[calls_before:]) & after_first
+    assert _bytes_that_disagree_with_the_manifest(bucket, "imagery", written - {scene}) == {}
+    assert bucket.keys() == after_first | {backup}
 
 
 def test_conflict_deletes_nothing_of_the_other_writer(
@@ -344,19 +416,12 @@ def test_conflict_keeps_the_bytes_that_the_other_writer_wrote_later(
     winner_bytes = b"bytes of the other writer"
 
     def other_push() -> None:
-        manifest = json.loads(_other_writer_manifest(bucket, manifest_key))
-        for asset in manifest["versions"][-1]["assets"].values():
-            if bucket.key(asset["href"]) == scene_key:
-                asset["sha256"] = hashlib.sha256(winner_bytes).hexdigest()
+        winner_sha = hashlib.sha256(winner_bytes).hexdigest()
+        manifest = _other_writer_manifest_naming(bucket, manifest_key, scene_key, winner_sha)
         bucket.second_writer(scene_key, winner_bytes)
-        bucket.second_writer(manifest_key, json.dumps(manifest).encode())
+        bucket.second_writer(manifest_key, manifest)
 
-    fault_store.arm(1, when=lambda key: key == manifest_key, action=other_push)
-
-    second = _push(run_cli, pushed, bucket)
-
-    assert second.exit_code == 1, second.output
-    assert CONFLICT_MESSAGE in second.output
+    _lose_the_manifest_race(run_cli, pushed, bucket, fault_store, other_push)
     assert _bytes_that_disagree_with_the_manifest(bucket, "imagery", {scene_key}) == {}
     present = bucket.keys()
     assert sorted(key for key in present if "/.portolan/" in key) == []
@@ -447,11 +512,230 @@ def test_conflict_with_a_push_of_the_same_version_restores_nothing(
     def same_push() -> None:
         bucket.second_writer(manifest_key, local_manifest)
 
-    fault_store.arm(1, when=lambda key: key == manifest_key, action=same_push)
+    _lose_the_manifest_race(run_cli, pushed, bucket, fault_store, same_push)
+    written = set(fault_store.keys()[calls_before:]) & before
+    assert _bytes_that_disagree_with_the_manifest(bucket, "imagery", written) == {}
+
+
+def _remote_json(bucket: Bucket, key: str) -> dict[str, Any]:
+    document: dict[str, Any] = json.loads(
+        bucket.client.get_object(Bucket=bucket.name, Key=key)["Body"].read()
+    )
+    return document
+
+
+def _child_hrefs(document: dict[str, Any]) -> list[str]:
+    return sorted(link["href"] for link in document["links"] if link["rel"] == "child")
+
+
+@pytest.mark.parametrize("scope", [(), ("--collection", "imagery")], ids=["all", "collection"])
+def test_root_catalog_keeps_the_child_link_of_another_writer(
+    pushed: Path,
+    bucket: Bucket,
+    run_cli: RunCli,
+    fault_store: PutFaults,
+    scope: tuple[str, ...],
+) -> None:
+    """Another writer adds a child link to the root catalog.json during the push.
+
+    The push writes the root catalog.json under the ETag that it read before
+    its first upload. On a mismatch it merges the child links of the remote
+    copy, so both child links are in the bucket after the push.
+    """
+    catalog_key = bucket.key("catalog.json")
+    other_link = {"rel": "child", "href": "./roads/collection.json", "type": "application/json"}
+
+    def other_push() -> None:
+        document = _remote_json(bucket, catalog_key)
+        document["links"].append(other_link)
+        bucket.second_writer(catalog_key, json.dumps(document).encode())
+
+    fault_store.arm(1, when=_is_scene, action=other_push)
+
+    second = _push(run_cli, pushed, bucket, *scope)
+
+    assert second.exit_code == 0, second.output
+    local = json.loads((pushed / "catalog.json").read_text(encoding="utf-8"))
+    expected = sorted([*_child_hrefs(local), "./roads/collection.json"])
+    assert _child_hrefs(_remote_json(bucket, catalog_key)) == expected
+
+
+def test_root_catalog_keeps_a_collection_that_the_local_catalog_lacks(
+    fault_catalog: Path, bucket: Bucket, run_cli: RunCli, tmp_path: Path
+) -> None:
+    """A second checkout that lacks a pushed collection keeps its child link.
+
+    The first checkout pushes buildings. The second checkout has no buildings
+    collection and pushes imagery. The remote root catalog.json then links
+    both collections.
+    """
+    import shutil
+
+    first = _push(run_cli, fault_catalog, bucket, "--collection", "buildings")
+    assert first.exit_code == 0, first.output
+    other = tmp_path / "other"
+    shutil.copytree(fault_catalog, other)
+    shutil.rmtree(other / "buildings")
+    catalog = json.loads((other / "catalog.json").read_text(encoding="utf-8"))
+    catalog["links"] = [link for link in catalog["links"] if "buildings" not in link["href"]]
+    (other / "catalog.json").write_text(json.dumps(catalog, indent=2), encoding="utf-8")
+
+    second = _push(run_cli, other, bucket, "--collection", "imagery")
+
+    assert second.exit_code == 0, second.output
+    remote = _remote_json(bucket, bucket.key("catalog.json"))
+    assert _child_hrefs(remote) == ["./buildings/collection.json", "./imagery/collection.json"]
+
+
+def test_push_skips_a_stray_file_and_names_it(
+    fault_catalog: Path, bucket: Bucket, run_cli: RunCli
+) -> None:
+    """A file that no STAC document names stays local, and the push names it once."""
+    stray = "imagery/scene-a/notes.txt"
+    (fault_catalog / stray).write_text("notes beside a tracked asset\n", encoding="utf-8")
+
+    result = _push(run_cli, fault_catalog, bucket)
+
+    assert result.exit_code == 0, result.output
+    present = bucket.keys()
+    assert bucket.key(stray) not in present
+    assert bucket.key("imagery/scene-a/rgb.tif") in present
+    named = [line for line in result.output.splitlines() if stray in line]
+    assert named == [f"⚠ Not pushed, because no STAC document names it: {stray}"]
+
+
+def test_root_readme_keeps_the_bytes_of_another_writer(
+    pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
+) -> None:
+    """Another writer changes the root README.md during the push.
+
+    The README write is conditional on the ETag that the push read before its
+    first upload. On a mismatch the remote bytes stay and the push warns.
+    """
+    readme_key = bucket.key("README.md")
+    (pushed / "README.md").write_text("# Local edit\n", encoding="utf-8")
+    other_bytes = b"# Other writer\n"
+
+    def other_push() -> None:
+        bucket.second_writer(readme_key, other_bytes)
+
+    fault_store.arm(1, when=_is_scene, action=other_push)
+
+    second = _push(run_cli, pushed, bucket)
+
+    assert second.exit_code == 0, second.output
+    remote = bucket.client.get_object(Bucket=bucket.name, Key=readme_key)["Body"].read()
+    assert remote == other_bytes
+    assert f"Another writer changed {readme_key} during the push" in second.output
+
+
+# A copy source limit that the small test scenes exceed. S3 refuses a
+# CopyObject source above 5 GB. moto does not, so ``refuse_large_copies``
+# makes the copy refuse a source above this size.
+SMALL_COPY_LIMIT = 16
+
+
+@pytest.fixture
+def refuse_large_copies(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Make CopyObject refuse a source above ``SMALL_COPY_LIMIT``, as S3 does above 5 GB."""
+    from portolan_cli.sync import push as push_module
+
+    monkeypatch.setattr(push_module, "COPY_SOURCE_LIMIT", SMALL_COPY_LIMIT)
+    real_copy = push_module.obs.copy_async
+    refused: list[str] = []
+
+    async def copy_async(store: Any, src: str, dst: str, **kwargs: Any) -> Any:
+        meta = await push_module.obs.head_async(store, src)
+        if int(meta["size"]) > SMALL_COPY_LIMIT:
+            refused.append(src)
+            raise ValueError("InvalidRequest: The specified copy source is larger than the limit")
+        return await real_copy(store, src, dst, **kwargs)
+
+    monkeypatch.setattr(push_module.obs, "copy_async", copy_async)
+    return refused
+
+
+def test_failed_push_restores_a_key_above_the_copy_limit(
+    pushed: Path,
+    bucket: Bucket,
+    run_cli: RunCli,
+    fault_store: PutFaults,
+    refuse_large_copies: list[str],
+) -> None:
+    """A failed push restores a scene that is too large for CopyObject.
+
+    The backup streams such a key through the client. The restore streams it
+    back. The bucket then holds the bytes that the remote manifest names.
+    """
+    after_first = bucket.keys()
+    calls_before = len(fault_store.calls)
+    # The streamed backups are puts of .tif keys too. The fault hits the
+    # second scene upload.
+    fault_store.fail_on(2, when=lambda key: _is_scene(key) and "/.portolan/" not in key)
 
     second = _push(run_cli, pushed, bucket)
 
     assert second.exit_code == 1, second.output
-    assert CONFLICT_MESSAGE in second.output
-    written = set(fault_store.keys()[calls_before:]) & before
+    assert "injected fault" in second.output
+    assert "Cannot back up" not in second.output
+    assert refuse_large_copies == []
+    written = set(fault_store.keys()[calls_before:]) & after_first
     assert _bytes_that_disagree_with_the_manifest(bucket, "imagery", written) == {}
+    assert bucket.keys() == after_first
+    scenes = sorted(key for key in written if _is_scene(key))
+    assert [bucket.head(key)["ContentType"] for key in scenes] == [CONTENT_TYPES[".tif"]] * 2
+
+
+def test_conflict_loser_keeps_an_asset_with_the_bytes_the_winner_names(
+    pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
+) -> None:
+    """Two pushes of different snapshots share one asset. The loser keeps that asset.
+
+    The winning manifest names the new bytes of scene-a, as this push does,
+    and the old bytes of scene-b. The loser restores scene-b only. A restore
+    of scene-a puts bytes back that the winning manifest does not name.
+    """
+    manifest_key = bucket.key("imagery/versions.json")
+    shared_key = bucket.key("imagery/scene-a/rgb.tif")
+    shared_sha = hashlib.sha256((pushed / bucket.relative(shared_key)).read_bytes()).hexdigest()
+
+    def other_push() -> None:
+        manifest = _other_writer_manifest_naming(bucket, manifest_key, shared_key, shared_sha)
+        bucket.second_writer(manifest_key, manifest)
+
+    _lose_the_manifest_race(run_cli, pushed, bucket, fault_store, other_push)
+    scenes = {shared_key, bucket.key("imagery/scene-b/singleband.tif")}
+    assert _bytes_that_disagree_with_the_manifest(bucket, "imagery", scenes) == {}
+
+
+def test_clone_skips_an_object_that_no_document_names(
+    fault_catalog: Path, bucket: Bucket, run_cli: RunCli, tmp_path: Path
+) -> None:
+    """clone downloads the STAC tree and the objects it names, not every object.
+
+    A stale object of a removed asset stays under the collection prefix. The
+    clone does not hold it. It holds every other pushed object, byte for byte.
+    """
+    first = _push(run_cli, fault_catalog, bucket)
+    assert first.exit_code == 0, first.output
+    stray = bucket.key("imagery/scene-a/removed.tif")
+    bucket.second_writer(stray, b"bytes of a removed asset")
+    named = bucket.keys() - {stray}
+    target = tmp_path / "clone"
+
+    result = run_cli("clone", bucket.url, str(target), expect=None)
+
+    assert result.exit_code == 0, result.output
+    cloned = {
+        path.relative_to(target).as_posix()
+        for path in target.rglob("*")
+        if path.is_file() and ".portolan" not in path.relative_to(target).parts
+    }
+    assert cloned == {bucket.relative(key) for key in named}
+    differ = [
+        key
+        for key in sorted(named)
+        if (target / bucket.relative(key)).read_bytes()
+        != bucket.client.get_object(Bucket=bucket.name, Key=key)["Body"].read()
+    ]
+    assert differ == []

@@ -63,6 +63,7 @@ from portolan_cli.stac import (
     create_item,
     stem_rank,
 )
+from portolan_cli.stac_links import GDAL_PAM_SUFFIX
 from portolan_cli.stac_parquet import (
     PARQUET_FILENAME,
     declare_extensions_in_use,
@@ -148,10 +149,6 @@ def _get_asset_role(path: Path) -> str:
         :func:`_resolve_assets` then gives each scanned file its final role.
     """
     return _ROLE_MAP.get(path.suffix.lower(), "data")
-
-
-# The GDAL persistent auxiliary metadata (PAM) sidecar, such as x.tif.aux.xml.
-GDAL_PAM_SUFFIX = ".aux.xml"
 
 
 def _is_never_an_asset(file_path: Path) -> bool:

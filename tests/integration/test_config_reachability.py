@@ -356,8 +356,9 @@ def _push_and_list(run_cli: RunCli, catalog: Path, s3_bucket: tuple[str, str]) -
 def _catalog_with_notes(run_cli: RunCli, catalog: Path) -> None:
     """Add one collection, then put two untracked notes beside it.
 
-    ``push`` uploads README.md in its own phase, whatever the patterns say,
-    so the pattern is measured on AGENTS.md and notes.md.
+    ``push`` uploads README.md in its own phase, whatever the patterns say.
+    No STAC document names the notes, so they stay local. The pattern is
+    measured on AGENTS.md.
     """
     source = _copy(POINTS_PARQUET, catalog / "places" / "places.parquet")
     _add(run_cli, catalog, source)
@@ -372,8 +373,6 @@ PUSHED = [
     "catalog/places/AGENTS.md",
     "catalog/places/README.md",
     "catalog/places/collection.json",
-    "catalog/places/notes.md",
-    "catalog/places/notes.txt",
     "catalog/places/places.parquet",
     "catalog/places/places.thumb.jpg",
     "catalog/places/versions.json",
@@ -395,14 +394,14 @@ def test_push_exclude_keeps_matching_files_out_of_the_bucket(
 
     keys = _push_and_list(run_cli, catalog, s3_bucket)
 
-    # README.md goes up in its own phase. AGENTS.md and notes.md match the pattern.
+    # README.md goes up in its own phase. AGENTS.md matches the pattern.
     assert keys == [key for key in PUSHED if not key.endswith(".md") or key.endswith("/README.md")]
 
 
-def test_push_uploads_untracked_notes_by_default(
+def test_push_uploads_agents_md_and_no_untracked_notes_by_default(
     catalog: Path, run_cli: RunCli, s3_bucket: tuple[str, str], _aws_env: None
 ) -> None:
-    """The default patterns let notes.md through, so the test above measures the key."""
+    """The default patterns let AGENTS.md through, so the test above measures the key."""
     _catalog_with_notes(run_cli, catalog)
 
     assert _push_and_list(run_cli, catalog, s3_bucket) == PUSHED

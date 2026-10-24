@@ -924,7 +924,7 @@ def clone(
                 force=False,  # No local changes to force-overwrite
                 dry_run=False,
                 profile=profile,
-                every_object=True,
+                stac_tree=True,
             )
 
             if not pull_result.success:
