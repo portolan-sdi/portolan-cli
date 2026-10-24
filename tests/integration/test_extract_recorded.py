@@ -201,6 +201,25 @@ def test_arcgis_layer_url_extracts_that_layer(tmp_path: Path, run_cli: RunCli) -
     assert _layers(out) == [(0, "PRK.open_space", "success", 2)]
 
 
+def test_arcgis_author_is_a_producer_and_never_the_contact(tmp_path: Path, run_cli: RunCli) -> None:
+    """The service author names a producer. The contact and the host stay with the mirror."""
+    import yaml
+
+    from portolan_cli.constants import TODO_MARKER
+
+    result, server, out = _run("layer_url", tmp_path, run_cli)
+
+    assert server.unmatched == []
+    assert result.exit_code == 0, result.output
+    seeded = yaml.safe_load((out / ".portolan" / "metadata.yaml").read_text(encoding="utf-8"))
+    assert seeded["providers"] == [{"name": "Boston GIS", "roles": ["producer"]}]
+    assert seeded["contact"] == {"name": TODO_MARKER, "email": TODO_MARKER}
+    [collection_path] = sorted(out.rglob("collection.json"))
+    collection = json.loads(collection_path.read_text(encoding="utf-8"))
+    assert collection["providers"] == [{"name": "Boston GIS", "roles": ["producer"]}]
+    assert "contacts" not in collection
+
+
 def test_arcgis_tables_only_service_fails_and_names_the_tables(
     tmp_path: Path, run_cli: RunCli
 ) -> None:

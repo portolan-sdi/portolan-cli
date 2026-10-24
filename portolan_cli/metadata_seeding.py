@@ -36,6 +36,7 @@ import yaml
 from portolan_cli.constants import TODO_MARKER
 from portolan_cli.extract.common.urls import sanitize_published_string
 from portolan_cli.licensing import OTHER_LICENSE, ResolvedLicense
+from portolan_cli.providers import PRODUCER_ROLE
 
 if TYPE_CHECKING:
     from portolan_cli.metadata_extraction import ExtractedMetadata
@@ -63,13 +64,13 @@ def seed_metadata_yaml(
         extracted: Extracted metadata from a data source.
         metadata_path: Path to write metadata.yaml (usually .portolan/metadata.yaml).
         overwrite: If False (default), skip if file already exists.
-        placeholders: Whether a TODO placeholder may stand in for a license or a
-            contact the harvest did not find. False for a collection-level file,
-            which inherits the catalog's license and contact through the
+        placeholders: Whether a TODO placeholder may stand in for a license the
+            harvest did not find and for the contact. False for a collection-level
+            file, which inherits the catalog's license and contact through the
             hierarchical merge: the child wins, so a placeholder there would
             override the real value the catalog carries (issues #686, #1039). A
-            value the harvest did find is written either way, since a layer's own
-            value beats an inherited one.
+            license the harvest did find is written either way, since a layer's
+            own value beats an inherited one.
         license_override: License to write instead of anything harvested, from a
             command-line flag. An identifier a human named beats a guess.
 
@@ -141,19 +142,18 @@ def _build_metadata_dict(
 
     Args:
         extracted: Extracted metadata from a data source.
-        placeholders: Whether a TODO placeholder may stand in for a license or a
-            contact the harvest did not find. See ``seed_metadata_yaml``.
+        placeholders: Whether a TODO placeholder may stand in for a license the
+            harvest did not find and for the contact. See ``seed_metadata_yaml``.
         license_override: License to write instead of anything harvested.
 
     Returns:
         Dictionary ready for YAML serialization.
     """
     metadata: dict[str, Any] = {}
-    contact = {"name": extracted.contact_name, "email": extracted.contact_email}
+    # The contact names whoever maintains this copy. The source cannot know it,
+    # so the seed only asks for it (issue #1039).
     if placeholders:
-        metadata["contact"] = {key: value or TODO_MARKER for key, value in contact.items()}
-    elif any(contact.values()):
-        metadata["contact"] = {key: value for key, value in contact.items() if value}
+        metadata["contact"] = {"name": TODO_MARKER, "email": TODO_MARKER}
 
     # A harvested licence is never an SPDX identifier, but when the source published
     # a licence URL, "other" plus a rel="license" link to it is the second shape the
@@ -169,6 +169,12 @@ def _build_metadata_dict(
         metadata["license_url"] = extracted.license_url
     elif placeholders:
         metadata["license"] = TODO_MARKER
+
+    providers = _source_providers(
+        extracted, licensor=license_override is None and bool(extracted.license_url)
+    )
+    if providers:
+        metadata["providers"] = providers
 
     # Optional fields - only include if we have data. The source URL is
     # published, so it carries no credential and no local path (issue #981).
@@ -199,6 +205,29 @@ def _build_metadata_dict(
     return metadata
 
 
+def _source_providers(extracted: ExtractedMetadata, *, licensor: bool) -> list[dict[str, Any]]:
+    """Name the organizations that the source credits for the data.
+
+    The source names who made the data in its author and in its attribution.
+    Each one is a producer, and a licensor when the license comes from the
+    source. None of them is the contact or the host. The agency does not
+    maintain a mirror of its service.
+
+    Args:
+        extracted: Extracted metadata from a data source.
+        licensor: Whether the license comes from the source.
+
+    Returns:
+        One provider per organization, in the order author, attribution.
+    """
+    roles = [PRODUCER_ROLE, "licensor"] if licensor else [PRODUCER_ROLE]
+    names: dict[str, str] = {}
+    for name in (extracted.producer, extracted.attribution):
+        if name:
+            names.setdefault(name.casefold(), name)
+    return [{"name": name, "roles": list(roles)} for name in names.values()]
+
+
 def _format_metadata_yaml(metadata: dict[str, Any], source_type: str) -> str:
     """Format metadata dictionary as YAML with header comments.
 
@@ -217,8 +246,8 @@ def _format_metadata_yaml(metadata: dict[str, Any], source_type: str) -> str:
 # Review and complete fields marked with "TODO".
 #
 # Required fields:
-#   - contact.name: Person or team responsible
-#   - contact.email: Contact email address
+#   - contact.name: Person or team that maintains this copy, not the source
+#   - contact.email: Email address of that person or team
 #   - license: SPDX identifier (e.g., "CC-BY-4.0", "MIT", "CC0-1.0")
 #
 # See: https://portolan.dev/docs/metadata for field descriptions

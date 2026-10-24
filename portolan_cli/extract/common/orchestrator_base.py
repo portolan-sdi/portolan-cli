@@ -306,41 +306,20 @@ def seed_catalog_metadata(
 
     metadata_path = output_dir / ".portolan" / "metadata.yaml"
     if seed_metadata_yaml(extracted, metadata_path, license_override=license_override):
-        if extracted.attribution:
-            _append_producer(metadata_path, extracted.attribution)
         info(f"Seeded metadata.yaml from {extracted.source_type}")
-        if not extracted.attribution:
+        if not (extracted.producer or extracted.attribution):
             # A producer is a fact of the source. Portolan does not invent one.
             warn(
-                "No producer provider: the source publishes no attribution. Add a provider "
-                f"with the producer role to {metadata_path}. Until then, check reports "
-                "PTL-PRV-001."
+                "No producer provider: the source publishes no author and no attribution. "
+                f"Add a provider with the producer role to {metadata_path}. Until then, "
+                "check reports PTL-PRV-001."
             )
-        if not (extracted.contact_name or extracted.contact_email):
-            # The host serves the catalog. Only the person who runs extract knows it,
-            # and a placeholder is never published as one (issue #1039).
-            # A collection takes an inherited contact only on its first add, so the
-            # warning names the collection file, which a re-add applies (#755).
-            warn(
-                "No host provider: set contact.name and contact.email in "
-                f"{output_dir / '<collection>' / '.portolan' / 'metadata.yaml'}, then run "
-                "'portolan add --force <collection>'. Until then, check reports PTL-PRV-002."
-            )
-
-
-def _append_producer(metadata_path: Path, attribution: str) -> None:
-    """Name the source's attribution as the producer in a seeded metadata.yaml.
-
-    A collection names a producer (PTL-PRV-001). The source states who made
-    the data in its attribution, so the seed takes it from there. The host
-    comes from ``contact``, as ``providers.resolve_providers`` does it.
-    """
-    import yaml
-
-    block = yaml.safe_dump(
-        {"providers": [{"name": attribution, "roles": ["producer"]}]},
-        sort_keys=False,
-        allow_unicode=True,
-    )
-    with metadata_path.open("a", encoding="utf-8") as stream:
-        stream.write("# The producer is the attribution that the source publishes.\n" + block)
+        # The host serves the catalog. Only the person who runs extract knows it,
+        # and a placeholder is never published as one (issue #1039).
+        # A collection takes an inherited contact only on its first add, so the
+        # warning names the collection file, which a re-add applies (#755).
+        warn(
+            "No host provider: set contact.name and contact.email in "
+            f"{output_dir / '<collection>' / '.portolan' / 'metadata.yaml'}, then run "
+            "'portolan add --force <collection>'. Until then, check reports PTL-PRV-002."
+        )
