@@ -411,7 +411,15 @@ def test_cancelled_backup_leaves_no_backup_key(
         copies.append(src)
         if len(copies) > 1:
             raise asyncio.CancelledError
-        return await real_copy(store, src, dst, **kwargs)
+        # The first copy lands on the server even when the client cancels the
+        # call, as a request in flight does on a real store. A cleanup that
+        # deletes only the copies it saw finish misses it.
+        landed = asyncio.ensure_future(real_copy(store, src, dst, **kwargs))
+        try:
+            await asyncio.sleep(0.05)
+        finally:
+            await asyncio.shield(landed)
+        return landed.result()
 
     monkeypatch.setattr(push_module.obs, "copy_async", copy_once_then_cancel)
 

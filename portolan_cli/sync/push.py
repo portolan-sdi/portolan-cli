@@ -641,18 +641,19 @@ async def _back_up(
     """
     base = f"{prefix}/.portolan/push-backup/{uuid.uuid4().hex}".lstrip("/")
     semaphore = asyncio.Semaphore(concurrency)
-    completed: list[str] = []
+    stopped = False
 
     async def copy(key: str) -> str | None:
         async with semaphore:
+            if stopped:
+                return None
             try:
                 await obs.copy_async(store, key, f"{base}/{key}")
+                return f"{base}/{key}"
             except Exception as e:
                 if not (isinstance(e, FileNotFoundError) or _is_not_found(e)):
                     warn(f"Cannot back up {key}, a failed push leaves its new bytes: {e}")
                 return None
-            completed.append(f"{base}/{key}")
-            return f"{base}/{key}"
 
     tasks = [asyncio.ensure_future(copy(k)) for k in keys]
     try:
@@ -660,15 +661,17 @@ async def _back_up(
     except BaseException:
         # A cancellation or an interrupt here runs before the rollback of the
         # push. Each push uses its own backup directory, so a copy that stays
-        # behind is never reclaimed. Delete what finished.
-        for task in tasks:
-            task.cancel()
+        # behind is never reclaimed. A copy in flight lands on the server even
+        # when the client stops waiting, so every started copy runs to its end,
+        # no queued copy starts, and then every planned backup key is deleted.
+        stopped = True
         await asyncio.gather(*tasks, return_exceptions=True)
-        for backup in completed:
+        for key in keys:
             try:
-                await obs.delete_async(store, backup)
+                await obs.delete_async(store, f"{base}/{key}")
             except Exception as e:
-                warn(f"Failed to delete the backup {backup}: {e}")
+                if not (isinstance(e, FileNotFoundError) or _is_not_found(e)):
+                    warn(f"Failed to delete the backup of {key}: {e}")
         raise
     return {key: backup for key, backup in zip(keys, copies, strict=True) if backup}
 
