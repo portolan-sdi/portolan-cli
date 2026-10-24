@@ -1110,6 +1110,33 @@ def test_check_live_needs_no_url_without_the_setting(catalog: Path, run_cli: Run
 
 
 # ---------------------------------------------------------------------------
+# A collection config.yaml
+# ---------------------------------------------------------------------------
+
+
+def test_a_catalog_only_key_in_a_collection_config_warns(
+    catalog: Path, run_cli: RunCli, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No reader sees thumbnails.enabled in a collection file, so add warns once and goes on."""
+    scene = _copy(SINGLEBAND_COG, catalog / "imagery" / "scene" / "scene.tif")
+    config_file = catalog / "imagery" / ".portolan" / "config.yaml"
+    config_file.parent.mkdir()
+    config_file.write_text("thumbnails:\n  enabled: false\n", encoding="utf-8")
+
+    with caplog.at_level("WARNING", logger="portolan_cli.config"):
+        _add(run_cli, catalog, scene)
+
+    assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+        (
+            "WARNING",
+            f"{config_file.resolve()}: 'thumbnails.enabled' applies to the whole catalog, "
+            "so no reader sees it here. Move it to the catalog config.yaml.",
+        )
+    ]
+    assert (catalog / "imagery" / "scene" / "scene.json").is_file()
+
+
+# ---------------------------------------------------------------------------
 # Coverage of KNOWN_SETTINGS
 # ---------------------------------------------------------------------------
 

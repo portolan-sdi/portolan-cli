@@ -460,6 +460,32 @@ class TestLoadMergedConfig:
 
         assert result == {"statistics": {"enabled": False}, "pmtiles": {"min_zoom": 5}}
 
+    @pytest.mark.unit
+    def test_legacy_section_warns_about_a_catalog_only_key(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A catalog-only key in a ``collections:`` entry has no reader, so the load warns."""
+        from portolan_cli.config import load_merged_config
+
+        catalog_root = tmp_path / "catalog"
+        (catalog_root / ".portolan").mkdir(parents=True)
+        config_file = catalog_root / ".portolan" / "config.yaml"
+        config_file.write_text(
+            "collections:\n  roads:\n    thumbnails:\n      enabled: false\n"
+            "    statistics:\n      enabled: false\n"
+        )
+        (catalog_root / "roads").mkdir()
+
+        with caplog.at_level("WARNING", logger="portolan_cli.config"):
+            load_merged_config(path=catalog_root / "roads", catalog_root=catalog_root)
+            load_merged_config(path=catalog_root / "roads", catalog_root=catalog_root)
+
+        assert [r.getMessage() for r in caplog.records] == [
+            f"{config_file.resolve()}: 'collections.roads.thumbnails.enabled' applies to "
+            "the whole catalog, so no reader sees it here. Move it to the catalog "
+            "config.yaml."
+        ]
+
 
 class TestLoadMergedMetadata:
     """Tests for load_merged_metadata (metadata.yaml specific)."""
