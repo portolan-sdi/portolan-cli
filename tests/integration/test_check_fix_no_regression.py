@@ -292,11 +292,7 @@ class TestCreatedItemConforms:
         tmp_path: Path,
         valid_rgb_cog: Path,
     ) -> Path:
-        """A raster catalog that run_cli does not check at teardown.
-
-        ``--fix`` rewrites items.parquet and leaves its versions.json digest
-        stale (#1046), and each test below runs ``--fix``.
-        """
+        """A raster catalog. Each test below deletes the item JSON and runs ``--fix``."""
         root = tmp_path / "cat"
         return _added_raster_catalog(run_cli, root, valid_rgb_cog)
 
