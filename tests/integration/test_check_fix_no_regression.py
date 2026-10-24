@@ -20,6 +20,7 @@ would not carry the versions.json key that causes the bug.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from typing import TYPE_CHECKING
 
@@ -74,6 +75,14 @@ def _tree_bytes(root: Path) -> dict[str, bytes]:
         for path in sorted(root.rglob("*.json"))
         if ".portolan" not in path.parts
     }
+
+
+#: An RFC 3339 date-time, the only text two runs of the same build may differ in.
+_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})")
+
+
+def _without_timestamps(text: str) -> str:
+    return _TIMESTAMP.sub("<timestamp>", text)
 
 
 def _item_json(root: Path) -> dict:
@@ -345,3 +354,52 @@ class TestCreatedItemConforms:
         data_asset = _item_json(root)["assets"]["data"]
         assert "file:size" in data_asset
         assert "file:checksum" in data_asset
+
+
+class TestRecreatedItemEqualsAddedItem:
+    """`check --fix` recreates an item through the code `add` uses, finalization included."""
+
+    def test_recreated_item_is_byte_identical_to_an_added_item(
+        self, run_cli: RunCli, tmp_path: Path, valid_rgb_cog: Path
+    ) -> None:
+        """The item JSON and the container links match `add --force` byte for byte.
+
+        Before the fix the recreated item skipped ``finalize_items``. It kept the
+        hrefs ``rapidai4eo.tif`` for ``./rapidai4eo.tif``, its links had no
+        titles, and the collection and the catalog listed their links in the
+        order of the links fixer, not the order of add.
+        """
+        repaired = _added_raster_catalog(run_cli, tmp_path / "repaired", valid_rgb_cog)
+        (repaired / "imagery" / "rapidai4eo" / "rapidai4eo.json").unlink()
+        run_cli("check", str(repaired), "--fix", "--metadata", expect=None)
+
+        added = tmp_path / "added"
+        added.mkdir()
+        run_cli("init", "--auto", str(added), "--license", "CC-BY-4.0", "--id", "regress")
+        item_dir = added / "imagery" / "rapidai4eo"
+        item_dir.mkdir(parents=True)
+        shutil.copy(valid_rgb_cog, item_dir / "rapidai4eo.tif")
+        run_cli("add", str(item_dir / "rapidai4eo.tif"), "--portolan-dir", str(added), "--force")
+
+        item = "imagery/rapidai4eo/rapidai4eo.json"
+        assert _without_timestamps((repaired / item).read_text()) == _without_timestamps(
+            (added / item).read_text()
+        )
+        for container in ("imagery/collection.json", "catalog.json"):
+            repaired_links = json.loads((repaired / container).read_text())["links"]
+            added_links = json.loads((added / container).read_text())["links"]
+            assert json.dumps(repaired_links, indent=2) == json.dumps(added_links, indent=2)
+
+    def test_the_links_fixer_changes_nothing_that_add_wrote(
+        self, run_cli: RunCli, tmp_path: Path, valid_rgb_cog: Path
+    ) -> None:
+        """add and the links fixer write one link order.
+
+        Before the fix the fixer rebuilt catalog.json, collection.json, and the
+        item, so any repair that ran the fixer moved the links of every object.
+        """
+        from portolan_cli.validation.fixers import FIXERS
+
+        root = _added_raster_catalog(run_cli, tmp_path / "cat", valid_rgb_cog)
+
+        assert FIXERS["links"](root, True) == []

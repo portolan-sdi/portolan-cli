@@ -27,7 +27,7 @@ from portolan_cli.metadata.models import (
     MetadataStatus,
 )
 from portolan_cli.metadata.update import (
-    create_missing_item,
+    prepare_missing_item,
     update_item_metadata,
     update_versions_tracking,
 )
@@ -35,6 +35,8 @@ from portolan_cli.stac_links import visible_stac_files
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from portolan_cli.preparation import PreparedItem
 
 
 class FixAction(Enum):
@@ -144,6 +146,11 @@ def fix_metadata(
     - STALE: Update the existing STAC item
     - BREAKING: Update the item (same as STALE, but logged differently)
 
+    A MISSING item is prepared in the loop and finalized after it, in one
+    ``finalize_items`` call for the batch, as ``add`` does. The catalog-wide
+    sweeps of ``finalize_items`` then run once per call, and a recreated item
+    is byte-identical to an added one.
+
     Args:
         directory: Root directory of the catalog/collection.
         report: MetadataReport with check results.
@@ -154,16 +161,65 @@ def fix_metadata(
     """
     fix_results: list[FixResult] = []
     fresh_skipped = 0
+    to_finalize: dict[Path, list[tuple[FixResult, PreparedItem]]] = {}
 
     for check_result in report.results:
         if check_result.status == MetadataStatus.FRESH:
             fresh_skipped += 1
             continue
 
-        result = _fix_single_file(check_result, directory, dry_run=dry_run)
+        if check_result.status == MetadataStatus.MISSING and not dry_run:
+            result, prepared = _prepare_missing(check_result, directory)
+            if prepared is not None:
+                catalog_root, item = prepared
+                to_finalize.setdefault(catalog_root, []).append((result, item))
+        else:
+            result = _fix_single_file(check_result, directory, dry_run=dry_run)
         fix_results.append(result)
 
+    for catalog_root, batch in to_finalize.items():
+        fix_results.extend(_finalize_created_items(catalog_root, batch))
+
     return FixReport(results=fix_results, fresh_skipped=fresh_skipped)
+
+
+def _finalize_created_items(
+    catalog_root: Path, batch: list[tuple[FixResult, PreparedItem]]
+) -> list[FixResult]:
+    """Finalize the prepared MISSING items of one catalog, then write their mirrors.
+
+    One ``finalize_items`` call writes the batch, and the items.parquet mirror
+    folds into the version it publishes, as after ``add``. A failure fails
+    every result of the batch, because ``finalize_items`` writes the batch as
+    one unit.
+
+    Returns:
+        One SKIPPED result for each collection whose mirror could not be written.
+    """
+    from portolan_cli.finalization import finalize_items
+    from portolan_cli.stac_parquet import generate_parquet_mirrors
+
+    try:
+        finalize_items(catalog_root, [item for _result, item in batch])
+    except Exception as e:
+        for result, _item in batch:
+            result.success = False
+            result.message = f"Failed to fix: {e}"
+        return []
+
+    collections = {item.collection_id for _result, item in batch}
+    mirrors = generate_parquet_mirrors(
+        catalog_root, collections, generate_parquet=False, versioned_collections=collections
+    )
+    return [
+        FixResult(
+            file_path=catalog_root / collection_id / "collection.json",
+            action=FixAction.SKIPPED,
+            success=True,
+            message=f"Cannot generate the mirror: {exc}",
+        )
+        for collection_id, exc in mirrors.failed.items()
+    ]
 
 
 def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
@@ -559,6 +615,9 @@ def _fix_single_file(
 ) -> FixResult:
     """Fix metadata for a single file based on its check result.
 
+    A MISSING file goes through :func:`_prepare_missing` instead, except in a
+    dry run.
+
     Args:
         check_result: The check result indicating what needs fixing.
         directory: Root directory for context.
@@ -595,15 +654,6 @@ def _fix_single_file(
     collection_dir = _resolve_collection_dir(file_path, directory)
 
     try:
-        if status == MetadataStatus.MISSING:
-            create_missing_item(file_path, collection_dir)
-            return FixResult(
-                file_path=file_path,
-                action=FixAction.CREATED,
-                success=True,
-                message="Created STAC item",
-            )
-
         if status in (MetadataStatus.STALE, MetadataStatus.BREAKING):
             # Item.json sits next to the data file in the hierarchical layout
             # produced by `add` ({item_dir}/{item_id}.json). Per
@@ -662,13 +712,30 @@ def _fix_single_file(
         )
 
     except Exception as e:
-        action = FixAction.CREATED if status == MetadataStatus.MISSING else FixAction.UPDATED
         return FixResult(
             file_path=file_path,
-            action=action,
+            action=FixAction.UPDATED,
             success=False,
             message=f"Failed to fix: {e}",
         )
+
+
+def _prepare_missing(
+    check_result: MetadataCheckResult, directory: Path
+) -> tuple[FixResult, tuple[Path, PreparedItem] | None]:
+    """Prepare the item of a MISSING file, for one ``finalize_items`` call later.
+
+    Returns:
+        The result, and the catalog root with the prepared item. A failed
+        preparation returns a failed result and no item.
+    """
+    file_path = check_result.file_path
+    collection_dir = _resolve_collection_dir(file_path, directory)
+    try:
+        prepared = prepare_missing_item(file_path, collection_dir)
+    except Exception as e:
+        return FixResult(file_path, FixAction.CREATED, False, f"Failed to fix: {e}"), None
+    return FixResult(file_path, FixAction.CREATED, True, "Created STAC item"), prepared
 
 
 def _resolve_collection_dir(file_path: Path, fallback: Path) -> Path:

@@ -21,8 +21,9 @@ from click.testing import CliRunner
 
 from portolan_cli.cli import cli
 from portolan_cli.metadata.detection import check_file_metadata, get_current_metadata
+from portolan_cli.metadata.fix import fix_metadata
 from portolan_cli.metadata.models import MetadataStatus
-from portolan_cli.metadata.update import create_missing_item
+from portolan_cli.metadata.scan import scan_catalog_metadata
 
 pytestmark = pytest.mark.integration
 
@@ -313,11 +314,8 @@ class TestCheckFixRecordsTheMirror:
     def test_snapshot_matches_the_regenerated_mirror(self, tmp_path: Path) -> None:
         """The issue's repro: delete the item, run check --fix, compare sizes.
 
-        The recreated item is compared field by field, not by the mirror size.
-        It differs from the item add wrote only in the spelling of its hrefs
-        (``x.tif`` against ``./x.tif``), in the float digits of the band
-        statistics read back from the PAM sidecar, and in link titles. Each of
-        those changes the bytes of items.parquet and none changes the content.
+        The recreated item is compared field by field here. The byte
+        comparison with an added item is in test_check_fix_no_regression.py.
         """
         root = _catalog(tmp_path / "cat")
         item_dir = _added_raster(root, "imagery").parent
@@ -363,7 +361,7 @@ class TestCheckFixRecordsTheMirror:
         tif = _added_raster(root, "env/imagery", "--no-thumbnails")
         (tif.parent / "rapidai4eo.json").unlink()
 
-        create_missing_item(tif, collection_dir)
+        fix_metadata(root, scan_catalog_metadata(root))
 
         snapshot = _load(collection_dir / "versions.json")["versions"][-1]["assets"]
         assert snapshot["rapidai4eo/rapidai4eo.tif"]["href"] == (

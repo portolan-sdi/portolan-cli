@@ -61,7 +61,7 @@ from portolan_cli.stac import (
     update_catalog_provenance,
 )
 from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
-from portolan_cli.stac_links import iter_links
+from portolan_cli.stac_links import in_link_order, iter_links
 from portolan_cli.utils import href_root, relative_href
 from portolan_cli.versions import (
     Asset,
@@ -133,16 +133,15 @@ def _set_structural_link(
     Repointing matters as much as adding. PySTAC writes a ``parent`` link of its
     own, so a generator that only fills in missing links leaves PySTAC's answer
     standing, which is how the wrong parent survived to disk (issue #711).
+
+    The link carries no title. PySTAC stamps the title of the object it resolves
+    as the target, and on a first save it resolves the root to the collection
+    itself. The same add then wrote a title on a second run and none on the
+    first. ensure_link_titles backfills titles on child and item links only.
     """
     for link in links:
         if link.get("rel") == rel:
-            # PySTAC stamps the owning object's title on the links it writes, so
-            # a title that survived a repoint would now name the old target.
-            # Titles on child/item links are backfilled from the target by
-            # ensure_link_titles; these structural rels are not, so dropping is
-            # the honest option.
-            if link.get("href") != href:
-                link.pop("title", None)
+            link.pop("title", None)
             link["href"] = href
             link["type"] = media_type
             return
@@ -187,7 +186,7 @@ def _fix_collection_links(
                 continue
             seen_item_hrefs.add(href)
         deduped_links.append(link)
-    collection_data["links"] = deduped_links
+    collection_data["links"] = in_link_order(deduped_links)
 
     write_json_atomic(collection_json_path, collection_data)
 
@@ -234,6 +233,7 @@ def _fix_item_links(
         )
         _set_structural_link(item_links, "parent", collection_href)
         _set_structural_link(item_links, "collection", collection_href)
+        item_data["links"] = in_link_order(item_links)
         write_json_atomic(item_path, item_data)
 
 
@@ -1129,25 +1129,6 @@ def _publish_collection_version(
             collection_dir=collection_dir,
             items=items,
         )
-
-
-def record_prepared_items(
-    catalog_root: Path, collection_dir: Path, items: list[PreparedItem]
-) -> None:
-    """Record the asset files of prepared items in a new version, as ``add`` does.
-
-    ``check --fix`` recreates an item outside ``finalize_items``. It calls this,
-    so the version snapshot holds every file the recreated item declares
-    (issue #1046).
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        collection_dir: Directory holding collection.json.
-        items: The prepared items whose asset files the snapshot records.
-    """
-    collection_id = collection_dir.resolve().relative_to(catalog_root.resolve()).as_posix()
-    collection = pystac.Collection.from_file(str(collection_dir / "collection.json"))
-    _publish_collection_version(catalog_root, collection_id, collection_dir, collection, items)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -2,15 +2,13 @@
 
 ``refresh_collection_fields`` reports whether it changed collection.json,
 because ``check --fix`` turns that answer into an UPDATED result.
-``record_prepared_items`` and ``_batch_update_versions`` write the version
-snapshot that ``push`` trusts.
+``_batch_update_versions`` writes the version snapshot that ``push`` trusts.
 """
 
 from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
 import pystac
@@ -19,7 +17,6 @@ import shapely
 
 from portolan_cli.finalization import (
     _batch_update_versions,
-    record_prepared_items,
     refresh_collection_fields,
 )
 from portolan_cli.metadata.detection import get_current_metadata
@@ -160,33 +157,3 @@ class TestBatchUpdateVersions:
         )
 
         assert _batch_update_versions(collection_dir, "coll", [empty]) == ("1.0.0", 0, 0)
-
-
-class TestRecordPreparedItems:
-    def test_the_file_backend_writes_catalog_relative_hrefs(self, tmp_path: Path) -> None:
-        collection_dir = _collection_with_asset(tmp_path, [1.0, 1.0, 2.0, 2.0])
-
-        record_prepared_items(tmp_path, collection_dir, [_prepared(collection_dir)])
-
-        entry = _load(collection_dir / "versions.json")["versions"][-1]["assets"]["data.parquet"]
-        assert entry["href"] == "coll/data.parquet"
-
-    def test_a_plugin_backend_gets_the_collection(self, tmp_path: Path) -> None:
-        collection_dir = _collection_with_asset(tmp_path, [1.0, 1.0, 2.0, 2.0])
-        backend = MagicMock()
-
-        def setting(key: str, **kwargs: Any) -> str | None:
-            assert kwargs["catalog_path"] == tmp_path
-            return "plugin" if key == "backend" else None
-
-        with (
-            patch("portolan_cli.config.get_setting", side_effect=setting),
-            patch("portolan_cli.backends.get_backend", return_value=backend),
-            patch("portolan_cli.version_ops.publish_version") as publish,
-        ):
-            record_prepared_items(tmp_path, collection_dir, [_prepared(collection_dir)])
-
-        assert publish.call_args.args == ("coll",)
-        assert publish.call_args.kwargs["catalog_root"] == tmp_path
-        context = backend.on_post_add.call_args.args[0]
-        assert (context["collection_id"], context["collection"].id) == ("coll", "coll")

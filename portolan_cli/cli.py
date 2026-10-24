@@ -2092,7 +2092,7 @@ def _run_legacy_fix_workflow(
 
     Returns:
         The fix reports as JSON data, whether a fix failed, and the data files
-        whose items the freshness pass wrote. The caller repairs those items,
+        whose items the freshness pass updated. The caller repairs those items,
         which the finding-driven registry ran too early to see (#709).
     """
     from portolan_cli.scan.check import run_fix_workflow
@@ -2136,10 +2136,12 @@ def _run_legacy_fix_workflow(
             dry_run=dry_run,
         )
 
+    # A created item went through finalize_items and the mirror writer, as after
+    # add, so it needs no repair. A repair would run the catalog-wide sweeps again.
     written_items = [
         result.file_path
         for result in (metadata_fix_report.results if metadata_fix_report else [])
-        if result.success and result.action in (FixAction.CREATED, FixAction.UPDATED)
+        if result.success and result.action is FixAction.UPDATED
     ]
 
     return (
