@@ -453,8 +453,8 @@ class TestSeedCatalogMetadata:
         metadata_path = tmp_path / ".portolan" / "metadata.yaml"
         assert (
             capsys.readouterr().err.count(
-                "No producer provider: the source publishes no attribution. Add a provider with "
-                f"the producer role to {metadata_path}."
+                "No producer provider: the source publishes no author and no attribution. "
+                f"Add a provider with the producer role to {metadata_path}."
             )
             == 1
         )

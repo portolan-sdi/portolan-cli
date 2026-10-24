@@ -136,11 +136,14 @@ class TestImageServerMetadataExtractedToExtracted:
         assert "band_count: 4" in extracted.processing_notes
         assert "pixel_size" in extracted.processing_notes
 
-    def test_to_extracted_includes_contact_name(self) -> None:
-        """to_extracted() maps author to contact_name."""
-        metadata = make_imageserver_metadata_extracted(author="Test Author")
-        extracted = metadata.to_extracted()
-        assert extracted.contact_name == "Test Author"
+    def test_author_is_a_producer_and_not_the_contact(self) -> None:
+        """The author seeds a producer provider. The contact stays for the human."""
+        from portolan_cli.metadata_seeding import _build_metadata_dict
+
+        metadata = make_imageserver_metadata_extracted(author="Test Author", copyright_text=None)
+        seeded = _build_metadata_dict(metadata.to_extracted(), placeholders=False)
+        assert seeded["providers"] == [{"name": "Test Author", "roles": ["producer"]}]
+        assert "contact" not in seeded
 
     def test_to_extracted_includes_keywords(self) -> None:
         """to_extracted() maps keywords correctly."""
@@ -163,7 +166,7 @@ class TestImageServerMetadataExtractedToExtracted:
         assert extracted.source_url is not None
         # Optional fields should be None or have minimal processing_notes
         assert extracted.attribution is None
-        assert extracted.contact_name is None
+        assert extracted.producer is None
         assert extracted.keywords is None
 
     def test_to_extracted_source_type_is_arcgis_imageserver(self) -> None:

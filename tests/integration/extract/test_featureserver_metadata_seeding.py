@@ -166,7 +166,12 @@ class TestFeatureServerMetadataSeeding:
 
         # Verify extracted fields are preserved
         assert metadata.get("attribution") == "City of Philadelphia"
-        assert metadata.get("contact", {}).get("name") == "Philadelphia GIS Team"
+        # The source names its makers. The contact of this copy stays for the human.
+        assert metadata["providers"] == [
+            {"name": "Philadelphia GIS Team", "roles": ["producer"]},
+            {"name": "City of Philadelphia", "roles": ["producer"]},
+        ]
+        assert metadata["contact"] == {"name": TODO_MARKER, "email": TODO_MARKER}
         assert metadata.get("keywords") == ["census", "demographics", "boundaries"]
         assert "quarterly" in (metadata.get("processing_notes") or "").lower()
 
