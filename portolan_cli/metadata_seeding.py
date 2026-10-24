@@ -209,9 +209,11 @@ def _source_providers(extracted: ExtractedMetadata, *, licensor: bool) -> list[d
     """Name the organizations that the source credits for the data.
 
     The source names who made the data in its author and in its attribution.
-    Each one is a producer, and a licensor when the license comes from the
-    source. None of them is the contact or the host. The agency does not
-    maintain a mirror of its service.
+    Each one is a producer. When the license comes from the source, the rights
+    holder is also the licensor. The attribution names the rights holder. A
+    source without an attribution leaves the author as the rights holder. None
+    of them is the contact or the host. The agency does not maintain a mirror
+    of its service.
 
     Args:
         extracted: Extracted metadata from a data source.
@@ -220,12 +222,18 @@ def _source_providers(extracted: ExtractedMetadata, *, licensor: bool) -> list[d
     Returns:
         One provider per organization, in the order author, attribution.
     """
-    roles = [PRODUCER_ROLE, "licensor"] if licensor else [PRODUCER_ROLE]
     names: dict[str, str] = {}
     for name in (extracted.producer, extracted.attribution):
         if name:
             names.setdefault(name.casefold(), name)
-    return [{"name": name, "roles": list(roles)} for name in names.values()]
+    holder = (extracted.attribution or extracted.producer or "").casefold()
+    return [
+        {
+            "name": name,
+            "roles": [PRODUCER_ROLE, "licensor"] if licensor and key == holder else [PRODUCER_ROLE],
+        }
+        for key, name in names.items()
+    ]
 
 
 def _format_metadata_yaml(metadata: dict[str, Any], source_type: str) -> str:
