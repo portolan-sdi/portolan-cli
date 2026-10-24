@@ -402,6 +402,49 @@ class TestSameStemGeoParquetAndPMTiles:
 
         assert self._shape(damaged) == self._expected("zone0")
 
+    @pytest.mark.integration
+    def test_a_file_named_like_the_tiles_key_skips_the_add(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        fixtures_dir: Path,
+        sample_pmtiles: Path,
+    ) -> None:
+        """The file ``zoning-tiles`` replaced the PMTiles asset with no error.
+
+        The skip comes before any write, and the converted output goes too.
+        """
+        collection_dir = initialized_catalog / "land"
+        collection_dir.mkdir()
+        shutil.copy(
+            fixtures_dir / "vector" / "valid" / "points.geojson", collection_dir / "zoning.geojson"
+        )
+        shutil.copy(sample_pmtiles, collection_dir / "zoning.pmtiles")
+        (collection_dir / "zoning-tiles").write_bytes(b"notes")
+
+        result = runner.invoke(
+            cli,
+            [
+                "add",
+                "--portolan-dir",
+                str(initialized_catalog),
+                str(collection_dir / "zoning.geojson"),
+            ],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (
+            "Skipping zoning.geojson: Collection 'land': asset key 'zoning-tiles' already holds "
+            "'zoning.pmtiles'. Adding 'zoning-tiles' under the same key would remove that "
+            "asset. Remove one of the two files from the collection, or rename it."
+        ) in " ".join(result.output.split())
+        assert sorted(p.name for p in collection_dir.iterdir()) == [
+            "zoning-tiles",
+            "zoning.geojson",
+            "zoning.pmtiles",
+        ]
+
     @staticmethod
     def _track_under_key(
         runner: CliRunner, catalog: Path, collection_dir: Path, sample_fgb: Path, key: str

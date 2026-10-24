@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from portolan_cli.errors import AssetKeyCollisionError
 from portolan_cli.plugins.builtin.formats import COG, FLATGEOBUF, GEOPARQUET, PMTILES
 from portolan_cli.preparation import (
     _add_statistics_to_properties,
@@ -192,6 +193,7 @@ def _scan(directory: Path, primary: str, *, collection_level: bool = True) -> di
         item_id=Path(primary).stem,
         primary_file=directory / primary,
         collection_dir=directory if collection_level else directory.parent,
+        collection_id="land",
         collection_level=collection_level,
     )
     return {key: (asset.href, asset.roles) for key, asset in assets.items()}
@@ -389,6 +391,51 @@ class TestStemGroupResolver:
             "thumbnail": ("scene.thumb.jpg", ["thumbnail"]),
         }
 
+    @pytest.mark.parametrize(
+        ("level", "names", "primary", "key", "holder", "loser"),
+        [
+            # The item primary takes ``data``. The file ``data`` then wants the
+            # stem key and its filename, and both are ``data``.
+            ("item", ("scene.tif", "data"), "scene.tif", "data", "scene.tif", "data"),
+            # The PMTiles takes ``zoning-tiles``. The file ``zoning-tiles`` then
+            # wants the stem key and its filename, and both are ``zoning-tiles``.
+            (
+                "collection",
+                ("zoning.parquet", "zoning.pmtiles", "zoning-tiles"),
+                "zoning.parquet",
+                "zoning-tiles",
+                "zoning.pmtiles",
+                "zoning-tiles",
+            ),
+        ],
+    )
+    def test_two_files_under_one_key_raise_the_collision(
+        self,
+        tmp_path: Path,
+        level: str,
+        names: tuple[str, ...],
+        primary: str,
+        key: str,
+        holder: str,
+        loser: str,
+    ) -> None:
+        """The second file replaced the first in the asset dict, with no error.
+
+        versions.json then tracked both files and the STAC document held one.
+        """
+        directory = tmp_path / "scene" if level == "item" else tmp_path
+        _write(directory, *names)
+
+        with pytest.raises(AssetKeyCollisionError) as excinfo:
+            _scan(directory, primary, collection_level=level == "collection")
+
+        assert excinfo.value.context == {
+            "collection_id": "land",
+            "asset_key": key,
+            "existing_href": holder,
+            "new_href": loser,
+        }
+
 
 class TestValidateCollectionId:
     """_validate_collection_id security + STAC-compliance checks."""
@@ -428,6 +475,7 @@ class TestScanItemAssetsSymlinks:
             item_id="roads",
             primary_file=primary,
             collection_dir=collection_dir,
+            collection_id="land",
         )
 
         assert "linked.gdb" not in asset_files

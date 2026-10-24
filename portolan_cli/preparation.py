@@ -31,7 +31,7 @@ from portolan_cli.constants import ROLE_VISUAL
 from portolan_cli.conversion_config import VectorSettings, get_vector_settings
 from portolan_cli.convert import apply_vector_settings, run_with_transient_convert_retry
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
-from portolan_cli.errors import NoGeometryError, RewriteFidelityError
+from portolan_cli.errors import AssetKeyCollisionError, NoGeometryError, RewriteFidelityError
 from portolan_cli.format_families import RASTER, VECTOR
 from portolan_cli.formats import is_cloud_optimized_geotiff, is_geoparquet
 from portolan_cli.metadata import (
@@ -214,6 +214,7 @@ def _scan_item_assets(
     primary_file: Path,
     collection_dir: Path,
     *,
+    collection_id: str,
     exclude_names: frozenset[str] = frozenset(),
     collection_level: bool = False,
     ignored_patterns: list[str] | None = None,
@@ -230,6 +231,7 @@ def _scan_item_assets(
         item_id: Item identifier (for skipping item.json).
         primary_file: Path to the primary data file.
         collection_dir: Path to the collection directory.
+        collection_id: The collection id, for the collision error.
         exclude_names: Base filenames of OTHER items being added in the same
             batch (their sources and converted outputs). For a collection-level
             asset (``item_dir == collection_dir``) the flat collection directory
@@ -250,6 +252,9 @@ def _scan_item_assets(
         - stac_assets: Dict mapping asset key to pystac.Asset
         - asset_files: Dict mapping filename to (path, checksum, size) tuples
         - asset_paths: List of absolute path strings
+
+    Raises:
+        AssetKeyCollisionError: Two files claim one asset key.
     """
     in_collection_dir = item_dir.resolve() == collection_dir.resolve()
     # Issue #465: only prune cross-item siblings for collection-level (flat)
@@ -289,7 +294,7 @@ def _scan_item_assets(
 
     stac_assets: dict[str, pystac.Asset] = {}
     for key, (scanned_file, role) in _resolve_assets(
-        scanned, primary_file, collection_level=collection_level
+        scanned, primary_file, collection_id=collection_id, collection_level=collection_level
     ).items():
         stac_assets[key] = pystac.Asset(
             href=f"{href_prefix}{scanned_file.path.name}",
@@ -343,7 +348,7 @@ def _stem_rank(scanned_file: _ScannedFile, *, read_footer: bool) -> int:
 
 
 def _resolve_assets(
-    scanned: list[_ScannedFile], primary_file: Path, *, collection_level: bool
+    scanned: list[_ScannedFile], primary_file: Path, *, collection_id: str, collection_level: bool
 ) -> dict[str, tuple[_ScannedFile, str]]:
     """Give every scanned file one asset key and one role.
 
@@ -364,17 +369,24 @@ def _resolve_assets(
     - Any other file keeps its role and takes its filename as key.
 
     A file with a well-known role takes the role name as key, then its stem,
-    then its filename. The answer reads the files, never the listing order or,
+    then its filename. A file whose key is taken takes its filename. When a
+    file has the filename of a key that is taken, two files claim one key.
+    The resolver then raises, because a dict holds one of them and
+    versions.json tracks both. The answer reads the files, never the listing order or,
     for a collection, the choice of primary, because every item of a flat
     collection scans the same files (Issue #933).
 
     Args:
         scanned: The files of the directory, sorted by name.
         primary_file: The file this scan registers.
+        collection_id: The collection id, for the collision error.
         collection_level: Key the owner by its stem, not ``data``.
 
     Returns:
         ``(file, role)`` by asset key.
+
+    Raises:
+        AssetKeyCollisionError: Two files claim one asset key.
     """
     groups: dict[str, list[_ScannedFile]] = {}
     role_files: list[_ScannedFile] = []
@@ -387,7 +399,12 @@ def _resolve_assets(
     resolved: dict[str, tuple[_ScannedFile, str]] = {}
 
     def claim(key: str, scanned_file: _ScannedFile, role: str) -> None:
-        resolved[key if key not in resolved else scanned_file.path.name] = (scanned_file, role)
+        if key in resolved:
+            key = scanned_file.path.name
+        if key in resolved:
+            holder = resolved[key][0].path.name
+            raise AssetKeyCollisionError(collection_id, key, holder, scanned_file.path.name)
+        resolved[key] = (scanned_file, role)
 
     # The primary's group goes first, so an item's primary gets ``data``.
     for stem in sorted(groups, key=lambda stem: stem != primary_file.stem):
@@ -1136,15 +1153,23 @@ def prepare_item(
 
     # Step 5: Scan assets and compute statistics
     collection_level = is_collection_level_asset and handler.asset_level == "collection"
-    stac_assets, asset_files, _asset_paths = _scan_item_assets(
-        item_dir=item_dir,
-        item_id=item_id_resolved,
-        primary_file=output_path,
-        collection_dir=collection_dir,
-        exclude_names=exclude_sibling_names,
-        collection_level=collection_level,
-        ignored_patterns=get_ignored_files(catalog_root),
-    )
+    try:
+        stac_assets, asset_files, _asset_paths = _scan_item_assets(
+            item_dir=item_dir,
+            item_id=item_id_resolved,
+            primary_file=output_path,
+            collection_dir=collection_dir,
+            collection_id=collection_id,
+            exclude_names=exclude_sibling_names,
+            collection_level=collection_level,
+            ignored_patterns=get_ignored_files(catalog_root),
+        )
+    except AssetKeyCollisionError:
+        # The add stops before any STAC or versions.json write. A file this
+        # run converted goes too, so the add leaves the directory as it was.
+        if created_output and output_path != path:
+            output_path.unlink(missing_ok=True)
+        raise
 
     # Step 6: Build STAC properties. The handler adds its format fields when it
     # describes the item (#947).

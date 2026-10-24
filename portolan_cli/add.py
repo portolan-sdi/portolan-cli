@@ -18,6 +18,7 @@ import json
 import logging
 import shutil
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -40,7 +41,12 @@ from portolan_cli.constants import (
 from portolan_cli.conversion_config import get_vector_settings
 from portolan_cli.convert import convert_multilayer_file
 from portolan_cli.discovery import get_sidecars, iter_files_with_sidecars, iter_geospatial_files
-from portolan_cli.errors import MissingLicenseError, NoGeometryError, PartitionCollisionError
+from portolan_cli.errors import (
+    AssetKeyCollisionError,
+    MissingLicenseError,
+    NoGeometryError,
+    PartitionCollisionError,
+)
 
 # Batch finalization (STAC-write + backend coordination) was extracted to
 # finalization.py (issue #624). add.py orchestrates on top of it: add_files /
@@ -981,11 +987,13 @@ class _ProcessResult:
 
     ``prepared_items`` feed ``finalize_items``; ``deferred_non_geo`` plus the
     ``source_to_*`` maps drive phase 3 (deferred non-geo companion assets);
-    ``failures`` are surfaced to the caller (Issue #175).
+    ``failures`` are surfaced to the caller (Issue #175). ``skips`` holds the
+    reason for each file that stays out because two files claim one asset key.
     """
 
     prepared_items: list[PreparedItem] = field(default_factory=list)
     failures: list[AddFailure] = field(default_factory=list)
+    skips: dict[Path, str] = field(default_factory=dict)
     deferred_non_geo: list[tuple[Path, Path, str]] = field(default_factory=list)
     source_to_item_dir: dict[Path, tuple[Path, str, str]] = field(default_factory=dict)
     source_to_collection_dir: dict[Path, tuple[Path, str]] = field(default_factory=dict)
@@ -1102,6 +1110,10 @@ def _prepare_file(
         )
         return (partitioned, [], None)
 
+    except AssetKeyCollisionError:
+        # The scan refuses the file before any write. _fold_prepared reports a skip.
+        raise
+
     except NoGeometryError as err:
         if file_path.suffix.lower() in TABULAR_EXTENSIONS:
             return ([], [], (file_path, file_path.parent, coll_id))
@@ -1114,6 +1126,31 @@ def _prepare_file(
 
     except Exception as err:
         return ([], [AddFailure(path=file_path, error=str(err))], None)
+
+
+def _fold_prepared(
+    result: _ProcessResult,
+    outcome: Callable[
+        [], tuple[list[PreparedItem], list[AddFailure], tuple[Path, Path, str] | None]
+    ],
+    file_path: Path,
+    coll_id: str,
+    catalog_root: Path,
+) -> None:
+    """Fold the outcome of one file's preparation into the phase-2 accumulator.
+
+    Two files that claim one asset key make the file a skip, not a failure.
+    The scan raises before any write, so the catalog stays as it was.
+    """
+    try:
+        prepared_list, failure_list, deferred = outcome()
+    except AssetKeyCollisionError as err:
+        result.skips[file_path] = err.message
+        return
+    _record_prepared(result, prepared_list, file_path, coll_id, catalog_root)
+    result.failures.extend(failure_list)
+    if deferred is not None:
+        result.deferred_non_geo.append(deferred)
 
 
 def _record_prepared(
@@ -1163,11 +1200,13 @@ def _phase_process(
         for file_path, coll_id in files_to_process:
             if on_progress is not None:
                 on_progress(file_path)
-            prepared_list, failure_list, deferred = _prepare_single_file(file_path, coll_id, opts)
-            _record_prepared(result, prepared_list, file_path, coll_id, opts.catalog_root)
-            result.failures.extend(failure_list)
-            if deferred is not None:
-                result.deferred_non_geo.append(deferred)
+            _fold_prepared(
+                result,
+                partial(_prepare_single_file, file_path, coll_id, opts),
+                file_path,
+                coll_id,
+                opts.catalog_root,
+            )
         return result
 
     # Parallel execution with ThreadPoolExecutor
@@ -1183,15 +1222,11 @@ def _phase_process(
         # Process results as they complete (main thread)
         for future in as_completed(future_to_file):
             file_path, coll_id = future_to_file[future]
-            prepared_list, failure_list, deferred = future.result()
             # Call progress callback from the main thread (thread-safe) so the
             # CLI's AddProgressReporter works in parallel mode.
             if on_progress is not None:
                 on_progress(file_path)
-            _record_prepared(result, prepared_list, file_path, coll_id, opts.catalog_root)
-            result.failures.extend(failure_list)
-            if deferred is not None:
-                result.deferred_non_geo.append(deferred)
+            _fold_prepared(result, future.result, file_path, coll_id, opts.catalog_root)
 
     return result
 
@@ -1394,6 +1429,9 @@ def add_files(
         )
         stage.set(prepared=len(proc.prepared_items), failures=len(proc.failures))
     failures = proc.failures
+    for path, reason in proc.skips.items():
+        skipped.append(path)
+        reasons[path] = reason
 
     # Phase 2.5: Batch finalize — ONE write per collection instead of O(n) (Issue #281).
     with span("add.finalize", items=len(proc.prepared_items)):
@@ -1808,6 +1846,7 @@ def _update_item_with_asset(
         item_id=item_id,
         primary_file=primary_file,
         collection_dir=collection_dir,
+        collection_id=collection_id,
         ignored_patterns=get_ignored_files(catalog_root),
     )
 
