@@ -108,6 +108,7 @@ if _MUTMUT_ENV_KEY not in os.environ and os.environ.get("HYPOTHESIS_PROFILE") ==
         max_examples=25,
         derandomize=True,
         print_blob=True,
+        deadline=None,
     )
     _ci_hypothesis_settings.load_profile("ci")
 
@@ -120,6 +121,19 @@ if _MUTMUT_ENV_KEY not in os.environ and os.environ.get("HYPOTHESIS_PROFILE") ==
         "nightly", max_examples=500, derandomize=False, print_blob=True, deadline=None
     )
     _nightly_hypothesis_settings.load_profile("nightly")
+
+# A Hypothesis deadline measures wall-clock time per example. Under xdist on a
+# loaded machine an I/O-bound example takes longer than the 200 ms default, and
+# Hypothesis then reports a flaky failure that no property caused. No profile
+# keeps a deadline, and this one covers a run that names no profile.
+if _MUTMUT_ENV_KEY not in os.environ and os.environ.get("HYPOTHESIS_PROFILE") not in {
+    "ci",
+    "nightly",
+}:
+    from hypothesis import settings as _local_hypothesis_settings
+
+    _local_hypothesis_settings.register_profile("local", deadline=None)
+    _local_hypothesis_settings.load_profile("local")
 
 
 @contextmanager

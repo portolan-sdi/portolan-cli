@@ -211,6 +211,26 @@ def test_the_property_selector_picks_decorated_tests_only() -> None:
     assert "tests/unit/test_add_rm_hypothesis.py" in selected
 
 
+def test_no_hypothesis_profile_keeps_a_deadline() -> None:
+    """A deadline measures machine load under xdist, not a property.
+
+    Five property tests failed in one of four full runs on a loaded machine
+    with DeadlineExceeded, and passed alone.
+    """
+    from hypothesis import settings
+    from hypothesis.errors import InvalidArgument
+
+    import tests.conftest  # noqa: F401  (registers the profiles)
+
+    assert settings.default.deadline is None
+    for name in ("ci", "nightly", "local"):
+        try:
+            profile = settings.get_profile(name)
+        except InvalidArgument:
+            continue
+        assert profile.deadline is None, name
+
+
 def test_nightly_runs_the_gate_selftest() -> None:
     job = _jobs("nightly.yml")["gate-selftest"]
 
