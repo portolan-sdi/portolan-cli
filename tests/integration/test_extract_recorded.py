@@ -254,6 +254,36 @@ def test_wfs_layers_matches_the_qualified_name(tmp_path: Path, run_cli: RunCli) 
     assert _wfs_layers(out) == [("topp:states", "success", 2)]
 
 
+def _index_mismatches(out: Path) -> dict[str, tuple[Any, Any]]:
+    """Return each collection whose root index entry disagrees with its versions.json."""
+    index = json.loads((out / "versions.json").read_text())["collections"]
+    mismatches: dict[str, tuple[Any, Any]] = {}
+    for versions_path in sorted(out.rglob("*/versions.json")):
+        versions = json.loads(versions_path.read_text())
+        current = next(
+            v for v in versions["versions"] if v["version"] == versions["current_version"]
+        )
+        collection_id = versions_path.parent.relative_to(out).as_posix()
+        entry = index[collection_id]
+        actual = (entry["asset_count"], entry["total_size_bytes"])
+        expected = (
+            len(current["assets"]),
+            sum(a["size_bytes"] for a in current["assets"].values()),
+        )
+        if actual != expected:
+            mismatches[collection_id] = (actual, expected)
+    return mismatches
+
+
+def test_wfs_extraction_keeps_the_root_index_in_step(tmp_path: Path, run_cli: RunCli) -> None:
+    """The root versions.json counts the assets the side steps add after ``add_files``."""
+    result, server, out = _run("workspace_layer-layers", tmp_path, run_cli)
+
+    assert server.unmatched == []
+    assert result.exit_code == 0, result.output
+    assert _index_mismatches(out) == {}
+
+
 def test_wfs_named_layer_with_no_features_fails(tmp_path: Path, run_cli: RunCli) -> None:
     """A layer named with ``--layers`` that returns 0 features fails the run (#1034)."""
     result, server, out = _run("empty_collection", tmp_path, run_cli)

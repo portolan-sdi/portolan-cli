@@ -975,11 +975,13 @@ def build_catalog(
     # meet the metadata thread pool above. A Tk object that a worker thread
     # frees aborts the process on Windows.
     files, versioned = added
-    ensure_collection_thumbnails(
-        output_dir,
-        {path.parent.relative_to(output_dir).as_posix() for path in files},
-        versioned_collections=versioned,
-    )
+    collection_ids = {path.parent.relative_to(output_dir).as_posix() for path in files}
+    ensure_collection_thumbnails(output_dir, collection_ids, versioned_collections=versioned)
+    # The styles and the thumbnails add assets after add_files wrote the root
+    # index, so the root counts lag without this call, as in `add`.
+    from portolan_cli.add import sync_catalog_index
+
+    sync_catalog_index(output_dir, collection_ids)
 
 
 def run_layer_extraction(
