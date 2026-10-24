@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 import click
 
 from portolan_cli.cli import output_json_envelope
+from portolan_cli.extract.common.urls import redact_credentials
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.licensing import CLI_LICENSE_REMEDIATION
 from portolan_cli.output import info as info_output
@@ -117,12 +118,15 @@ def output_extract_error(
     url: str,
     command: str = "extract-arcgis",
 ) -> None:
-    """Output extraction error in JSON or text format."""
+    """Output extraction error in JSON or text format.
+
+    The envelope names the service URL without its credential (#981).
+    """
     from portolan_cli.output import error
 
     if use_json:
         err = ErrorDetail(type=error_type, message=message)
-        envelope = error_envelope(command, [err], data={"url": url})
+        envelope = error_envelope(command, [err], data={"url": redact_credentials(url)})
         output_json_envelope(envelope)
     else:
         error(message)
@@ -197,7 +201,7 @@ def confirm_extraction(
     """
     if auto or dry_run or use_json:
         return
-    line(f"Extract from: {url}")
+    line(f"Extract from: {redact_credentials(url)}")
     line(f"Output to: {output_dir}")
     if include:
         sub_line(f"{filter_label}: {', '.join(include)}")

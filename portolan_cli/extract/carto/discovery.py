@@ -21,6 +21,8 @@ from urllib.parse import urlparse, urlunparse
 
 import requests  # type: ignore[import-untyped]
 
+from portolan_cli.extract.common.urls import redact_credentials
+
 
 class CartoDiscoveryError(Exception):
     """Raised when Carto discovery fails."""
@@ -140,7 +142,8 @@ def carto_sql_request(
         response.raise_for_status()
         data: dict[str, object] = response.json()
     except _NETWORK_ERRORS as e:
-        raise CartoDiscoveryError(f"Carto SQL request failed: {e}") from e
+        # A requests error quotes the request URL with its api_key (#981).
+        raise CartoDiscoveryError(redact_credentials(f"Carto SQL request failed: {e}")) from e
 
     if "error" in data:
         raise CartoDiscoveryError(f"Carto SQL error: {data['error']}")

@@ -60,6 +60,9 @@ EXTRACTIONS = {
     "sparse_ids-exclude": Extraction(
         "arcgis/sparse_ids", "arcgis", EAST_HAMPTON, ("--exclude-layers", "2")
     ),
+    "sparse_ids-no_match": Extraction(
+        "arcgis/sparse_ids", "arcgis", f"{EAST_HAMPTON}?token=SECRET", ("--layers", "99")
+    ),
     "layer_url": Extraction("arcgis/layer_url", "arcgis", f"{BOSTON}/0"),
     "tables_only": Extraction(
         "arcgis/tables_only", "arcgis", "/arcgis/rest/services/zoning_descriptions/FeatureServer"
@@ -84,6 +87,9 @@ EXTRACTIONS = {
         ("--layers", "N2000_WFS:N2000", "--wfs-version", "2.0.0"),
     ),
     "geodata_gov_md": Extraction("wfs/geodata_gov_md", "wfs", "/geoserver/wfs?api_key=SECRET"),
+    "geodata_gov_md-no_match": Extraction(
+        "wfs/geodata_gov_md", "wfs", "/geoserver/wfs?api_key=SECRET", ("--layers", "nomatch")
+    ),
     "phl_zoning": Extraction(
         "carto/phl_zoning",
         "carto",
@@ -96,10 +102,12 @@ EXTRACTIONS = {
 CHECKED_ELSEWHERE = {"arcgis/philadelphia"}
 
 
-def _run(case: str, tmp_path: Path, run_cli: RunCli) -> tuple[Result, ReplayServer, Path]:
+def _run(
+    case: str, tmp_path: Path, run_cli: RunCli, *extra: str, out_name: str = "out"
+) -> tuple[Result, ReplayServer, Path]:
     """Run one extraction against its scenario and return the result, server, and output."""
     extraction = EXTRACTIONS[case]
-    out = tmp_path / "out"
+    out = tmp_path / out_name
     server = ReplayServer(NETWORK / extraction.scenario)
     with server as base_url:
         result = run_cli(
@@ -113,6 +121,7 @@ def _run(case: str, tmp_path: Path, run_cli: RunCli) -> tuple[Result, ReplayServ
             "--retries",
             "1",
             *extraction.args,
+            *extra,
             expect=None,
         )
     return result, server, out
@@ -306,6 +315,42 @@ def test_wfs_api_key_stays_out_of_the_catalog(tmp_path: Path, run_cli: RunCli) -
         if path.is_file() and b"SECRET" in path.read_bytes()
     )
     assert leaks == []
+
+
+@pytest.mark.parametrize(
+    ("case", "service_path"),
+    [("geodata_gov_md-no_match", "/geoserver/wfs"), ("sparse_ids-no_match", EAST_HAMPTON)],
+)
+def test_discovery_failure_names_the_host_and_not_the_credential(
+    case: str, service_path: str, tmp_path: Path, run_cli: RunCli
+) -> None:
+    """A run that selects no layer names the service in text and JSON, with no credential.
+
+    The source URL carries ``SECRET`` as its key or token. A terminal log and
+    a CI log keep the message, so the message drops the key, as the catalog
+    does (#981).
+    """
+    text, text_server, _out = _run(case, tmp_path, run_cli)
+    as_json, json_server, _out = _run(case, tmp_path, run_cli, "--json", out_name="json")
+
+    assert (text_server.unmatched, json_server.unmatched) == ([], [])
+    assert (text.exit_code, as_json.exit_code) == (1, 1)
+    streams = {
+        "text stdout": text.stdout,
+        "text stderr": text.stderr,
+        "json stdout": as_json.stdout,
+        "json stderr": as_json.stderr,
+    }
+    assert sorted(name for name, stream in streams.items() if "SECRET" in stream) == []
+    service = rf"http://127\.0\.0\.1:\d+{re.escape(service_path)}"
+    failure = (
+        rf"Extraction failed: \[PRTLN-EXT003\] No layer at {service} matches the layer filters\."
+    )
+    assert re.search(rf"^✗ {failure}", text.stderr, re.MULTILINE), text.stderr
+    envelope = json.loads(as_json.stdout)
+    assert re.fullmatch(service, envelope["data"]["url"]), envelope
+    assert [error["type"] for error in envelope["errors"]] == ["NoLayersSelectedError"]
+    assert re.match(failure, envelope["errors"][0]["message"]), envelope
 
 
 def test_wfs_layer_that_add_skips_is_named(tmp_path: Path, run_cli: RunCli) -> None:

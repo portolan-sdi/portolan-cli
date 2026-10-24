@@ -1913,3 +1913,24 @@ async def test_cog_quality_reaches_the_codec_option(
     with rasterio.open(out) as src:
         assert src.compression.name.upper() == compression
         assert src.tags(ns="IMAGE_STRUCTURE")[tag] == "40"
+
+
+@pytest.mark.asyncio
+async def test_tile_download_error_names_the_request_without_its_userinfo(
+    sample_tile: TileSpec, tmp_path: Path
+) -> None:
+    """#981: the error quotes the exportImage request, not the password of the service URL."""
+    from portolan_cli.extract.arcgis.imageserver.extractor import ImageServerExtractionError
+
+    mock_client = AsyncMock()
+    mock_client.get.side_effect = httpx.ConnectError("refused")
+
+    with pytest.raises(ImageServerExtractionError) as caught:
+        await download_tile(
+            "https://u:SECRET@h.example/X/ImageServer", sample_tile, tmp_path / "t.tif", mock_client
+        )
+
+    assert str(caught.value) == (
+        "Tile download failed (tile_0_0): refused. Request: https://h.example/X/ImageServer/"
+        "exportImage?bbox=0.0%2C0.0%2C4096.0%2C4096.0&size=4096%2C4096&format=tiff&f=image"
+    )

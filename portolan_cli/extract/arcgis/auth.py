@@ -15,6 +15,7 @@ import httpx
 
 from portolan_cli.errors import ArcGISAuthError
 from portolan_cli.extract.arcgis.discovery import ensure_json_format
+from portolan_cli.extract.common.urls import redact_credentials
 
 
 @dataclass
@@ -45,10 +46,12 @@ def _server_root(base_url: str) -> str:
 
 def _token_services_url(base_url: str, timeout: float) -> str:
     """Discover the generateToken endpoint from <server>/rest/info."""
-    root = _server_root(base_url) + "/rest/info"
+    info_url = _server_root(base_url) + "/rest/info"
+    # Each message names the server without the credential of its URL (#981).
+    root = redact_credentials(info_url)
     try:
         with httpx.Client(timeout=timeout) as client:
-            resp = client.get(ensure_json_format(root))
+            resp = client.get(ensure_json_format(info_url))
     except (httpx.HTTPError, ValueError) as exc:
         raise ArcGISAuthError(
             f"Failed to read token services URL from {root}: {exc}", url=root

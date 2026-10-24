@@ -161,3 +161,15 @@ def test_extract_wfs_warns_that_raw_ignores_id(monkeypatch: pytest.MonkeyPatch) 
 
     assert result.exit_code == 0
     assert "Ignored --id 'phl-housing'" in result.output
+
+
+@pytest.mark.unit
+def test_prompt_names_the_service_without_its_key() -> None:
+    """#981: the confirmation prompt names the service, not the key in its URL."""
+    result = CliRunner().invoke(
+        cli, ["extract", "wfs", "https://h.example/geoserver/wfs?api_key=SECRET"], input="n\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "→ Extract from: https://h.example/geoserver/wfs" in result.output.splitlines()
+    assert "SECRET" not in result.output

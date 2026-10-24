@@ -29,7 +29,7 @@ from urllib.parse import parse_qsl, urlparse
 
 import httpx
 
-from portolan_cli.extract.common.urls import merge_query
+from portolan_cli.extract.common.urls import merge_query, redact_credentials
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -176,7 +176,9 @@ class ArcGISClient:
             url,
             listing,
             retry_on=(ArcGISTransientError,),
-            on_retry=lambda attempt, err: logger.debug("Retry %d for %s: %s", attempt, url, err),
+            on_retry=lambda attempt, err: logger.debug(
+                "Retry %d for %s: %s", attempt, redact_credentials(url), err
+            ),
         )
         if isinstance(outcome.error, _EmptyListingError):
             return outcome.error.data
@@ -189,28 +191,33 @@ class ArcGISClient:
         request_url = ensure_json_format(url)
         if self.token:
             request_url = merge_query(request_url, {"token": self.token})
+        shown = redact_credentials(url)  # A message names the service, not its credential.
         try:
             with httpx.Client(timeout=self.timeout, transport=self.transport) as client:
                 response = client.get(request_url)
         except httpx.RequestError as e:
-            raise ArcGISTransientError(f"Failed to fetch from {url}: {e}") from e
+            raise ArcGISTransientError(
+                redact_credentials(f"Failed to fetch from {shown}: {e}")
+            ) from e
         if response.status_code >= 400:
             transient = _is_transient_status(response.status_code)
             error = ArcGISTransientError if transient else ArcGISDiscoveryError
-            raise error(f"Failed to fetch from {url}: HTTP {response.status_code}")
+            raise error(f"Failed to fetch from {shown}: HTTP {response.status_code}")
         try:
             raw = response.json()
         except ValueError as e:
-            raise ArcGISDiscoveryError(f"Invalid JSON response from {url}: {e}") from e
+            raise ArcGISDiscoveryError(f"Invalid JSON response from {shown}: {e}") from e
         if not isinstance(raw, dict):
-            raise ArcGISDiscoveryError(f"Expected JSON object from {url}, got {type(raw).__name__}")
+            raise ArcGISDiscoveryError(
+                f"Expected JSON object from {shown}, got {type(raw).__name__}"
+            )
         data = cast("dict[str, Any]", raw)
         embedded = data.get("error")
         if isinstance(embedded, dict):
             code = embedded.get("code", "unknown")
             message = embedded.get("message", "ArcGIS error")
             error = ArcGISTransientError if _is_transient_status(code) else ArcGISDiscoveryError
-            raise error(f"ArcGIS error from {url}: {code} {message}")
+            raise error(f"ArcGIS error from {shown}: {code} {message}")
         if listing and not (data.get("layers") or data.get("tables")):
             raise _EmptyListingError(url, data)
         return data

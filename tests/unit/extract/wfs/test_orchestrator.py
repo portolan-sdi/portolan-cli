@@ -718,3 +718,22 @@ class TestTimeoutEnforcement:
         assert [r.duration_seconds for r in report.layers] == [1.0] * 48
         # The run lasted 24 virtual seconds, more than twice the timeout.
         assert clock.monotonic() == 24.0
+
+
+def test_failed_version_negotiation_logs_no_key(caplog: pytest.LogCaptureFixture) -> None:
+    """#981: geoparquet-io quotes the keyed URL. The warning names the service without the key."""
+    from geoparquet_io.core.wfs import WFSError  # type: ignore[import-untyped]
+
+    from portolan_cli.extract.wfs.orchestrator import _negotiate_version
+
+    url = "https://h.example/geoserver/wfs?api_key=SECRET"
+    failure = WFSError(f"Could not connect to WFS service: {url}")
+
+    with patch("geoparquet_io.core.wfs.negotiate_wfs_version", side_effect=failure):
+        version = _negotiate_version(url, "auto")
+
+    assert version == "1.1.0"
+    assert caplog.messages == [
+        "Version negotiation failed, using 1.1.0: "
+        "Could not connect to WFS service: https://h.example/geoserver/wfs"
+    ]

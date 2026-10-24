@@ -332,3 +332,12 @@ def test_bare_services_root_still_parses() -> None:
     r = parse_arcgis_url("https://x/server/rest/services")
     assert r.url_type == ArcGISURLType.SERVICES_ROOT
     assert r.folder is None
+
+
+def test_invalid_url_error_keeps_no_credential() -> None:
+    """#981: the error quotes the URL that the user typed, without its token."""
+    with pytest.raises(InvalidArcGISURLError) as caught:
+        parse_arcgis_url("https://h.example/not/arcgis?token=SECRET")
+
+    assert caught.value.context["url"] == "https://h.example/not/arcgis"
+    assert caught.value.message.startswith("Invalid ArcGIS URL 'https://h.example/not/arcgis': ")

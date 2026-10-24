@@ -17,6 +17,7 @@ import click
 from portolan_cli.cli import output_json_envelope, should_output_json
 from portolan_cli.errors import MissingLicenseError
 from portolan_cli.extract.common import cli_helpers
+from portolan_cli.extract.common.urls import redact_credentials
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.output import warn
 
@@ -48,7 +49,7 @@ def _handle_list_services_mode(
         click.echo(json.dumps(result.to_dict(), indent=2))
         return
 
-    click.echo(f"Services at {url}:")
+    click.echo(f"Services at {redact_credentials(url)}:")
     click.echo()
     for svc in result.services:
         click.echo(f"  • {svc.name} ({svc.service_type})")
@@ -130,7 +131,7 @@ def _handle_imageserver_extraction(
 
     # Confirmation prompt
     if not auto and not dry_run and not json_output:
-        click.echo(f"Extract from: {url}")
+        click.echo(f"Extract from: {redact_credentials(url)}")
         click.echo(f"Output to: {output_dir}")
         click.echo(f"Tile size: {tile_size}px")
         click.echo(f"Compression: {cog_settings.compression}")
@@ -161,7 +162,7 @@ def _handle_imageserver_extraction(
 
     # Run extraction
     if not json_output:
-        info(f"Extracting ImageServer: {url}")
+        info(f"Extracting ImageServer: {redact_credentials(url)}")
         if dry_run:
             info("[DRY RUN MODE]")
 
@@ -170,7 +171,7 @@ def _handle_imageserver_extraction(
     # Output result
     if json_output:
         data: dict[str, Any] = {
-            "source_url": url,
+            "source_url": redact_credentials(url),
             "output_dir": str(output_dir),
             "service_type": "ImageServer",
             "dry_run": dry_run,

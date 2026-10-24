@@ -703,3 +703,25 @@ def test_service_that_stays_empty_returns_no_layers() -> None:
     found = discover_layers("https://x/S/FeatureServer", client)
 
     assert (found.layers, found.tables, len(seen)) == ([], [], 3)
+
+
+def test_fetch_error_names_the_service_without_its_userinfo(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#981: the error and the retry log name the service, not the password in its URL."""
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    client = ArcGISClient(retries=2, retry_delay=0.0, transport=httpx.MockTransport(refuse))
+    url = "https://user:SECRET@h.example/arcgis/rest/services/X/MapServer"
+
+    with (
+        caplog.at_level("DEBUG", logger="portolan_cli.extract"),
+        pytest.raises(ArcGISDiscoveryError) as caught,
+    ):
+        client.get_json(url)
+
+    clean = "https://h.example/arcgis/rest/services/X/MapServer"
+    assert str(caught.value) == f"Failed to fetch from {clean}: refused"
+    assert caplog.messages == [f"Retry 1 for {clean}: Failed to fetch from {clean}: refused"]

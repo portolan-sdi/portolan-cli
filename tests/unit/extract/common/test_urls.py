@@ -7,6 +7,7 @@ import pytest
 from portolan_cli.extract.common.urls import (
     WFS_REQUEST_PARAMS,
     merge_query,
+    redact_credentials,
     sanitize_published_string,
 )
 
@@ -98,3 +99,28 @@ class TestSanitizePublishedString:
         text = "Layer roads at https://h.example/MapServer/0?f=json&a=b%2Fc: HTTP 500"
 
         assert sanitize_published_string(text) == text
+
+
+class TestRedactCredentials:
+    def test_relative_request_url_loses_its_credential(self) -> None:
+        """A requests error quotes the path and query of the request, with no host."""
+        text = (
+            "HTTPConnectionPool(host='h.example', port=80): Max retries exceeded with url: "
+            "/geoserver/wfs?api_key=SECRET&service=WFS (Caused by NewConnectionError())"
+        )
+
+        assert redact_credentials(text) == (
+            "HTTPConnectionPool(host='h.example', port=80): Max retries exceeded with url: "
+            "/geoserver/wfs?service=WFS (Caused by NewConnectionError())"
+        )
+
+    def test_text_that_starts_with_a_local_path_keeps_the_path(self) -> None:
+        """A message is not a published value. Its local path stays, and the credential goes."""
+        text = "/tmp/out/roads.parquet: fetch from https://h.example/wfs?token=SECRET failed"
+
+        assert redact_credentials(text) == (
+            "/tmp/out/roads.parquet: fetch from https://h.example/wfs failed"
+        )
+
+    def test_local_path_without_query_is_unchanged(self) -> None:
+        assert redact_credentials("/home/user/catalog/.portolan") == "/home/user/catalog/.portolan"

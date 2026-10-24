@@ -870,3 +870,18 @@ class TestTilesOnlyServices:
 
         assert metadata.export_image_supported is False
         assert metadata.tile_cache is not None
+
+
+@pytest.mark.asyncio
+async def test_fetch_error_names_the_service_without_its_userinfo() -> None:
+    """#981: the error names the service, not the password in its URL."""
+    with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient") as cls:
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = httpx.ConnectError("refused")
+        cls.return_value.__aenter__.return_value = mock_client
+        with pytest.raises(ImageServerDiscoveryError) as caught:
+            await discover_imageserver("https://u:SECRET@h.example/rest/services/X/ImageServer")
+
+    assert str(caught.value) == (
+        "Failed to connect to https://h.example/rest/services/X/ImageServer: refused"
+    )

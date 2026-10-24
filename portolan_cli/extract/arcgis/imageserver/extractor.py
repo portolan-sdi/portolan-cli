@@ -73,6 +73,7 @@ from portolan_cli.extract.arcgis.imageserver.tilecache import (
     select_probe_lod,
 )
 from portolan_cli.extract.arcgis.imageserver.tiling import TileSpec, compute_tile_grid
+from portolan_cli.extract.common.urls import redact_credentials
 from portolan_cli.licensing import (
     ResolvedLicense,
     license_url_from_text,
@@ -490,13 +491,13 @@ async def download_tile(
 
     except httpx.HTTPStatusError as e:
         msg = _describe_http_error(tile, e.response.status_code, e.response.content, export_url)
-        raise ImageServerExtractionError(msg) from e
+        raise ImageServerExtractionError(redact_credentials(msg)) from e
     except httpx.TimeoutException as e:
         msg = f"Tile download timeout ({tile.get_id()}). Request: {export_url}"
-        raise ImageServerExtractionError(msg) from e
+        raise ImageServerExtractionError(redact_credentials(msg)) from e
     except httpx.RequestError as e:
         msg = f"Tile download failed ({tile.get_id()}): {e}. Request: {export_url}"
-        raise ImageServerExtractionError(msg) from e
+        raise ImageServerExtractionError(redact_credentials(msg)) from e
     except OSError as e:
         msg = f"Failed to write tile ({tile.get_id()}): {e}"
         raise ImageServerExtractionError(msg) from e
@@ -1737,7 +1738,7 @@ async def extract_imageserver(
     config = _load_effective_config(config, output_dir)
 
     # Discover service
-    info(f"Discovering ImageServer: {url}")
+    info(f"Discovering ImageServer: {redact_credentials(url)}")
     metadata = await discover_imageserver(url, timeout=config.timeout)
     info(f"Service: {metadata.name} ({metadata.pixel_type}, {metadata.band_count} bands)")
 
