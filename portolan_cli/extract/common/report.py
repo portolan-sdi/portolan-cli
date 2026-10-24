@@ -167,7 +167,8 @@ class MetadataExtracted:
         description: Service description.
         attribution: Copyright/attribution text from service.
         keywords: Keywords from service metadata.
-        contact_name: Contact name or author.
+        producer: Organization the source names as the author of the data.
+            The report never records a contact from the source.
         processing_notes: Additional processing notes.
         known_issues: Access information or caveats.
         license_info_raw: Raw license text (not SPDX, for human review).
@@ -177,7 +178,7 @@ class MetadataExtracted:
     description: str | None
     attribution: str | None
     keywords: list[str] | None
-    contact_name: str | None
+    producer: str | None
     processing_notes: str | None
     known_issues: str | None
     license_info_raw: str | None
@@ -189,7 +190,7 @@ class MetadataExtracted:
             "description": self.description,
             "attribution": self.attribution,
             "keywords": self.keywords,
-            "contact_name": self.contact_name,
+            "producer": self.producer,
             "processing_notes": self.processing_notes,
             "known_issues": self.known_issues,
             "license_info_raw": self.license_info_raw,
@@ -203,7 +204,7 @@ class MetadataExtracted:
             description=data.get("description"),
             attribution=data.get("attribution"),
             keywords=data.get("keywords"),
-            contact_name=data.get("contact_name"),
+            producer=data.get("producer"),
             processing_notes=data.get("processing_notes"),
             known_issues=data.get("known_issues"),
             license_info_raw=data.get("license_info_raw"),

@@ -81,7 +81,7 @@ class ImageServerMetadata:
 
         # FeatureServer-parity fields (for metadata.yaml population):
         service_description: Extended service description (processing_notes)
-        author: Author from documentInfo (contact_name)
+        author: Author from documentInfo (a producer provider, never the contact)
         keywords: Keywords from documentInfo (comma-separated list)
         license_info: License text from licenseInfo
         access_information: Access restrictions from accessInformation (known_issues)

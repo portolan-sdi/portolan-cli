@@ -412,7 +412,7 @@ def build_report(
         description=None,
         attribution=None,
         keywords=None,
-        contact_name=None,
+        producer=None,
         processing_notes=None,
         known_issues=None,
         license_info_raw=None,
