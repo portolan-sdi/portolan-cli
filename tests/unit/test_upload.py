@@ -739,8 +739,7 @@ class TestUploadFile:
 
             # Verify endpoint was passed to S3Store
             call_kwargs = mock_s3_store.call_args[1]
-            assert "endpoint" in call_kwargs
-            assert "minio.example.com:9000" in call_kwargs["endpoint"]
+            assert call_kwargs["endpoint"] == "https://minio.example.com:9000"
 
     @pytest.mark.unit
     def test_upload_file_strips_existing_scheme_from_endpoint(self, temp_file: Path) -> None:
@@ -1401,9 +1400,9 @@ class TestProfileEndpointRegion:
         with cleared_environ(), patch("portolan_cli.sync.upload.S3Store"):
             _create_s3_store("s3://mybucket", None, None, None, None)
 
-        output = capsys.readouterr().out
-        assert "https://data.source.coop" in output
-        assert "default" in output
+        assert capsys.readouterr().out.splitlines() == [
+            "  Endpoint https://data.source.coop from AWS profile 'default'"
+        ]
 
     @pytest.mark.unit
     def test_explicit_region_wins(self, default_profile_endpoint: Path) -> None:
