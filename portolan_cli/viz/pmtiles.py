@@ -754,10 +754,12 @@ def generate_pmtiles_for_collection(
     A sibling PMTiles that this run does not build is registered as it is: the
     asset, the ``rel: pmtiles`` link, and the default style (rashid PTL-VIZ-002
     and PTL-VIZ-003). tippecanoe is checked only when a tile is built, so
-    pre-built tiles need no tippecanoe (Issue #934). A sibling PMTiles older
-    than its GeoParquet is built again, also with ``generate`` False. Without
-    tippecanoe and with ``generate`` False, it is registered as it is and
-    ``older`` names it.
+    pre-built tiles need no tippecanoe (Issue #934). With ``generate`` True,
+    a sibling PMTiles older than its GeoParquet is built again. With
+    ``generate`` False, it is registered as it is and ``older`` names it.
+    ``add`` rewrites a GeoParquet in place for the bbox column (#805), so
+    user tiles (#929) look older although the data is the same. A rebuild
+    with the default settings would replace them.
 
     Args:
         collection_path: Path to collection directory.
@@ -800,16 +802,10 @@ def generate_pmtiles_for_collection(
     builds = {
         pmtiles_path
         for _, parquet_path, pmtiles_path in plan
-        if _should_generate(parquet_path, pmtiles_path, force)
+        if generate and _should_generate(parquet_path, pmtiles_path, force)
     }
     if builds:
-        try:
-            check_pmtiles_available()
-        except (PMTilesNotAvailableError, TippecanoeNotFoundError):
-            if generate:
-                raise
-            # Nobody asked for tiles, so the old ones stay registered as they are.
-            builds = set()
+        check_pmtiles_available()
 
     for asset_key, parquet_path, pmtiles_path in plan:
         # Compute href relative to collection (preserves subdirectory structure)
@@ -1050,7 +1046,7 @@ def _report_pmtiles_result(
             if p in result.older:
                 warn(
                     f"Kept PMTiles: {p.name} is older than {result.sources[p].name}. "
-                    "Install tippecanoe to rebuild it."
+                    "Pass --pmtiles to rebuild it."
                 )
             elif verbose:
                 info(f"Skipped PMTiles: {p.name} is not older than {result.sources[p].name}")

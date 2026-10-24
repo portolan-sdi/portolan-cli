@@ -1058,12 +1058,19 @@ class TestGeneratePMTilesForCollection:
         ]
 
     @pytest.mark.unit
-    def test_rebuild_of_older_tiles_writes_to_a_free_path(self, tmp_path: Path) -> None:
-        """tippecanoe refuses to overwrite a tileset, so the old file moves aside.
-
-        The rebuild of tiles older than the GeoParquet then failed with exit
-        code 104 unless the user passed --force-pmtiles.
-        """
+    @pytest.mark.parametrize(
+        ("generate", "seen", "content", "built"),
+        [
+            # tippecanoe refuses to overwrite a tileset (exit code 104), so the
+            # rebuild failed unless the user passed --force-pmtiles.
+            (True, [False], b"new tileset", True),
+            # Without a request, pre-built tiles stay as they are (#929).
+            (False, [], b"old tileset", False),
+        ],
+    )
+    def test_older_tiles_rebuild_only_on_request_and_to_a_free_path(
+        self, tmp_path: Path, generate: bool, seen: list[bool], content: bytes, built: bool
+    ) -> None:
         import os
 
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
@@ -1072,22 +1079,24 @@ class TestGeneratePMTilesForCollection:
         pmtiles_path = collection_dir / "data.pmtiles"
         pmtiles_path.write_bytes(b"old tileset")
         os.utime(pmtiles_path, (1, 1))
-        seen: list[bool] = []
+        exists_at_build: list[bool] = []
 
         def mock_generate(parquet: Path, output: Path, **kwargs: object) -> None:
-            seen.append(output.exists())
+            exists_at_build.append(output.exists())
             output.write_bytes(b"new tileset")
 
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
             patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate),
         ):
-            result = generate_pmtiles_for_collection(collection_dir, tmp_path, generate=False)
+            result = generate_pmtiles_for_collection(collection_dir, tmp_path, generate=generate)
 
-        assert seen == [False]
-        assert result.generated == [pmtiles_path]
+        assert exists_at_build == seen
+        assert (result.generated, result.skipped) == (
+            ([pmtiles_path], []) if built else ([], [pmtiles_path])
+        )
         assert result.older == [pmtiles_path]
-        assert pmtiles_path.read_bytes() == b"new tileset"
+        assert pmtiles_path.read_bytes() == content
         assert not (collection_dir / ".data.pmtiles.previous").exists()
 
     @pytest.mark.unit
