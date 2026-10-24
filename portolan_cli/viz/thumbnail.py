@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.config import load_config
+from portolan_cli.config import load_catalog_config
 from portolan_cli.trace import count
 from portolan_cli.utils import get_dict
 
@@ -166,7 +166,7 @@ def get_thumbnail_config(catalog_path: Path) -> ThumbnailConfig:
     Returns:
         ThumbnailConfig instance. Returns defaults if no config exists.
     """
-    config = load_config(catalog_path)
+    config = load_catalog_config(catalog_path).data
     thumbnails = get_dict(config, "thumbnails")
     if not thumbnails:
         return ThumbnailConfig()

@@ -44,6 +44,7 @@ from portolan_cli.errors import ConfigError, ConfigInvalidStructureError, Config
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 # Sensitive settings that must NOT be stored in config.yaml (Issue #356)
@@ -143,6 +144,7 @@ _COLLECTION_SETTINGS: tuple[str, ...] = (
     "statistics.",
     "tabular.",
 )
+
 
 #: How an error message names each type in ``KNOWN_SETTINGS``.
 _TYPE_LABELS: dict[str, str] = {
@@ -485,6 +487,28 @@ class CatalogConfig:
 def load_catalog_config(catalog_path: Path) -> CatalogConfig:
     """Load the catalog-level config that every reader in one run shares.
 
+    Each ``PORTOLAN_<KEY>`` variable that names a key in ``KNOWN_SETTINGS``
+    overrides the file value. So every reader resolves one order: an explicit
+    argument, then the environment, then the file, then the default.
+
+    Args:
+        catalog_path: Root path of the catalog.
+
+    Returns:
+        The parsed config with the environment on top. Empty when the file is
+        absent or empty and no variable names a setting.
+
+    Raises:
+        ConfigParseError: If the file is not valid YAML.
+        ConfigInvalidStructureError: If the file is not a mapping, or if its
+            ``collections`` section is not a mapping.
+    """
+    return _with_env(_load_catalog_file(catalog_path))
+
+
+def _load_catalog_file(catalog_path: Path) -> CatalogConfig:
+    """Load ``.portolan/config.yaml`` without the environment.
+
     Args:
         catalog_path: Root path of the catalog.
 
@@ -519,10 +543,10 @@ def load_config(catalog_path: Path) -> dict[str, Any]:
         catalog_path: Root path of the catalog.
 
     Returns:
-        A copy of the config that the caller may edit. Empty if the file does
-        not exist.
+        A copy of the file content that the caller may edit and save. Empty if
+        the file does not exist. The environment is not in it.
     """
-    return copy.deepcopy(load_catalog_config(catalog_path).data)
+    return copy.deepcopy(_load_catalog_file(catalog_path).data)
 
 
 def get_ignored_files(catalog_path: Path | None) -> list[str]:
@@ -634,6 +658,67 @@ def _env_setting(key: str) -> str | None:
         if alias_value:
             return alias_value
     return None
+
+
+#: Environment variable name to the dotted key that it sets, for each fixed key.
+_ENV_KEYS: dict[str, str] = {
+    _get_env_var_name(key): key for key in KNOWN_SETTINGS if not key.endswith(".*")
+}
+
+#: How each ``.*`` pattern turns the rest of a variable name back into a name.
+#: A variable name holds no case and no punctuation, so each pattern restores
+#: the form of its names. An extension is lower case with dots, and a rule id
+#: keeps upper case with hyphens. The table must hold every pattern in
+#: ``KNOWN_SETTINGS``, or the import fails.
+_ENV_PATTERN_NAMES: dict[str, Callable[[str], str]] = {
+    "conversion.handlers.*": lambda rest: rest.lower().replace("_", "."),
+    "check.severity.*": lambda rest: rest.replace("_", "-"),
+}
+
+#: Variable name prefix to its pattern and name rule, such as
+#: "PORTOLAN_CHECK_SEVERITY_" for "check.severity.*".
+_ENV_PATTERNS: dict[str, tuple[str, Callable[[str], str]]] = {
+    _get_env_var_name(pattern[:-1]): (pattern[:-1], _ENV_PATTERN_NAMES[pattern])
+    for pattern in KNOWN_SETTINGS
+    if pattern.endswith(".*")
+}
+
+
+def _env_key(name: str) -> str | None:
+    """Return the dotted key that an environment variable sets, or None."""
+    key = _ENV_KEYS.get(name)
+    if key is not None:
+        return key
+    for prefix, (key_prefix, restore) in _ENV_PATTERNS.items():
+        if name.startswith(prefix) and len(name) > len(prefix):
+            return key_prefix + restore(name[len(prefix) :])
+    return None
+
+
+def _env_overrides() -> dict[str, Any]:
+    """Collect the ``PORTOLAN_<KEY>`` variables of known settings as a nested config.
+
+    Each value takes the schema type, as in ``get_setting``. A value that does
+    not fit the type stays as text, and the reader warns about it. An empty
+    variable counts as unset.
+    """
+    overrides: dict[str, Any] = {}
+    for name, text in os.environ.items():
+        key = _env_key(name) if text and name.startswith("PORTOLAN_") else None
+        entry = _schema_entry(key) if key is not None else None
+        if key is None or entry is None:
+            continue
+        value: Any = text
+        with contextlib.suppress(ConfigError):
+            value = _coerce_value(key, entry[1], text)
+        _set_path(overrides, entry[0], value)
+    return overrides
+
+
+def _with_env(config: CatalogConfig) -> CatalogConfig:
+    """Put the environment overrides on top of a parsed catalog config."""
+    overrides = _env_overrides()
+    return CatalogConfig(_deep_merge(config.data, overrides)) if overrides else config
 
 
 def _key_path(key: str) -> tuple[str, ...]:
@@ -756,7 +841,7 @@ def get_setting(
             return value
 
     else:
-        config = load_catalog_config(catalog_path)
+        config = _load_catalog_file(catalog_path)
 
         # 4. Legacy collection-level config (if collection specified)
         if collection is not None:
@@ -894,7 +979,7 @@ def list_settings(
     """
     result: dict[str, dict[str, Any]] = {}
 
-    config = load_catalog_config(catalog_path) if catalog_path else CatalogConfig({})
+    config = _load_catalog_file(catalog_path) if catalog_path else CatalogConfig({})
     file_config = {key: value for key, value in config.data.items() if key != "collections"}
     all_keys = set(_leaf_keys(file_config))
 
@@ -948,7 +1033,7 @@ def get_setting_source(
     if catalog_path is None:
         return "default"
 
-    config = load_catalog_config(catalog_path)
+    config = _load_catalog_file(catalog_path)
 
     # Check collection config
     if (
@@ -1120,6 +1205,7 @@ def load_merged_config(
     2. Legacy: collections: section in root config.yaml
 
     Collection .portolan/config.yaml takes precedence over root collections:.
+    The ``PORTOLAN_<KEY>`` variables take precedence over every file.
 
     Args:
         path: Path to collection or subcatalog directory.
@@ -1133,7 +1219,7 @@ def load_merged_config(
 
     # Legacy collections: section in the root config. The hierarchy files
     # below the root override it, and it overrides the root settings.
-    root_config = load_catalog_config(catalog_root)
+    root_config = _load_catalog_file(catalog_root)
     try:
         parts = path.resolve().relative_to(catalog_root.resolve()).parts
     except ValueError:
@@ -1150,7 +1236,7 @@ def load_merged_config(
             _deep_merge(root_settings, legacy), _merge_files(files, skip=root_file)
         )
 
-    return copy.deepcopy(merged)
+    return copy.deepcopy(_deep_merge(merged, _env_overrides()))
 
 
 #: metadata.yaml keys that name one object and therefore never inherit (#815).

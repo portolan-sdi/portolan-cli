@@ -438,6 +438,28 @@ class TestLoadMergedConfig:
         # But inherit from collections: for unset keys
         assert result["aws_profile"] == "legacy-profile"
 
+    @pytest.mark.unit
+    def test_environment_overrides_every_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PORTOLAN_<KEY> wins over the collection file and the legacy section."""
+        from portolan_cli.config import load_merged_config
+
+        catalog_root = tmp_path / "catalog"
+        (catalog_root / ".portolan").mkdir(parents=True)
+        (catalog_root / ".portolan" / "config.yaml").write_text(
+            "collections:\n  roads:\n    pmtiles:\n      min_zoom: 2\n"
+        )
+        collection = catalog_root / "roads"
+        (collection / ".portolan").mkdir(parents=True)
+        (collection / ".portolan" / "config.yaml").write_text("statistics:\n  enabled: true\n")
+        monkeypatch.setenv("PORTOLAN_STATISTICS_ENABLED", "false")
+        monkeypatch.setenv("PORTOLAN_PMTILES_MIN_ZOOM", "5")
+
+        result = load_merged_config(path=collection, catalog_root=catalog_root)
+
+        assert result == {"statistics": {"enabled": False}, "pmtiles": {"min_zoom": 5}}
+
 
 class TestLoadMergedMetadata:
     """Tests for load_merged_metadata (metadata.yaml specific)."""

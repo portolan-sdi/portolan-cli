@@ -28,7 +28,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.config import load_config
+from portolan_cli.config import load_catalog_config
 from portolan_cli.constants import (
     LEGACY_LEGEND_MANIFEST_FIELD,
     LEGACY_STYLE_MANIFEST_FIELD,
@@ -827,7 +827,7 @@ def get_vector_style_config(catalog_path: Path) -> VectorStyleConfig:
     Returns:
         VectorStyleConfig instance. Returns defaults if no config exists.
     """
-    config = load_config(catalog_path)
+    config = load_catalog_config(catalog_path).data
     styles = get_dict(config, "styles")
     if not styles:
         return VectorStyleConfig()
@@ -885,7 +885,7 @@ def get_raster_style_config(catalog_path: Path) -> RasterStyleConfig:
     Returns:
         RasterStyleConfig instance. Returns defaults if no config exists.
     """
-    config = load_config(catalog_path)
+    config = load_catalog_config(catalog_path).data
 
     styles = get_dict(config, "styles")
     if not styles:

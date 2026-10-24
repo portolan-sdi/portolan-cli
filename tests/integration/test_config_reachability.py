@@ -1,14 +1,16 @@
 """Each documented setting reaches the code that it controls (#1020, #834).
 
 A test sets one key, runs the command that reads it, and reads the effect
-from the output files. It sets the key in two forms:
+from the output files. It sets the key in three forms:
 
 - ``config-set``: ``portolan config set <key> <value>``, the documented command.
 - ``yaml``: the nested block in ``.portolan/config.yaml``, the documented file form.
+- ``env``: the ``PORTOLAN_<KEY>`` environment variable, which overrides the file.
 
-The two forms separate two defects. A setting that works in the ``yaml``
+The forms separate three defects. A setting that works in the ``yaml``
 form and fails in the ``config-set`` form has a broken ``config set``. A
-setting that fails in both forms has a reader that ignores it.
+setting that fails in the ``env`` form has a reader that skips the
+environment. A setting that fails in every form has a reader that ignores it.
 
 Every key in ``KNOWN_SETTINGS`` is tested here or listed as a
 ``config-key`` line in ``tests/guardrail_exemptions.txt`` with the reason
@@ -18,10 +20,13 @@ that no output shows it. ``test_every_known_setting_is_covered`` enforces it.
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from unittest import mock
 
 import pyarrow.parquet as pq
 import pytest
@@ -31,7 +36,7 @@ from portolan_cli.config import KNOWN_SETTINGS
 from tests.catalog_invariants import load_exemptions
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from tests.catalog_invariants import RunCli
 
@@ -46,7 +51,7 @@ NON_COG = FIXTURES / "raster" / "natural-earth-non-cog.tif"
 OPEN_BUILDINGS = FIXTURES / "realdata" / "open-buildings.parquet"
 PHILADELPHIA = FIXTURES / "realdata" / "philadelphia-housing"
 
-FORMS = ("config-set", "yaml")
+FORMS = ("config-set", "yaml", "env")
 
 # Key -> the test that observes it.
 TESTED_KEYS: dict[str, str] = {}
@@ -77,12 +82,13 @@ def _forms(**xfail: str) -> pytest.MarkDecorator:
 
 
 @pytest.fixture
-def catalog(tmp_path: Path, run_cli: RunCli) -> Path:
-    """A catalog from ``init --auto``."""
+def catalog(tmp_path: Path, run_cli: RunCli) -> Iterator[Path]:
+    """A catalog from ``init --auto``. The ``env`` form variables go at teardown."""
     root = tmp_path / "catalog"
     root.mkdir()
     run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
-    return root
+    with mock.patch.dict(os.environ):
+        yield root
 
 
 def _nest(config: dict[str, Any], key: str, value: Any) -> None:
@@ -95,6 +101,10 @@ def _nest(config: dict[str, Any], key: str, value: Any) -> None:
 
 def configure(run_cli: RunCli, root: Path, form: str, settings: dict[str, tuple[str, Any]]) -> None:
     """Apply ``settings`` (key -> (command-line text, YAML value)) in ``form``."""
+    if form == "env":
+        for key, (text, _) in settings.items():
+            os.environ["PORTOLAN_" + re.sub(r"[^A-Za-z0-9]", "_", key).upper()] = text
+        return
     if form == "config-set":
         for key, (text, _) in settings.items():
             run_cli("config", "set", key, text, cwd=root)
