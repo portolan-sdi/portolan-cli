@@ -27,7 +27,7 @@ from pyproj import CRS
 from portolan_cli import extension_registry as _reg
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
 from portolan_cli.config import get_ignored_files, get_setting, load_merged_metadata
-from portolan_cli.constants import GDAL_PAM_SUFFIX, ROLE_VISUAL
+from portolan_cli.constants import ROLE_VISUAL
 from portolan_cli.conversion_config import VectorSettings, get_vector_settings
 from portolan_cli.convert import apply_vector_settings, run_with_transient_convert_retry
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
@@ -62,6 +62,7 @@ from portolan_cli.stac import (
     create_item,
     stem_rank,
 )
+from portolan_cli.stac_links import GDAL_PAM_SUFFIX
 from portolan_cli.stac_parquet import (
     PARQUET_FILENAME,
     declare_extensions_in_use,

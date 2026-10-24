@@ -44,6 +44,7 @@ from portolan_cli.constants import LEGACY_GLOB_FIELD
 from portolan_cli.derived_assets import is_optional_derivative
 from portolan_cli.logo import LOGO_ASSETS_DIRNAME
 from portolan_cli.output import detail, error, info, output_section, success, warn
+from portolan_cli.stac_links import published_tree
 from portolan_cli.sync.upload import (
     ObjectStore,
     multipart_chunk_size,
@@ -1091,14 +1092,14 @@ class _ExcludeContext:
     Attributes:
         exclude_patterns: Effective exclusion patterns, security ones included.
         versioned_asset_paths: Asset paths versions.json already names.
-        stac_item_paths: Known STAC item JSON paths, or None to use the heuristic.
+        item_level: False at a catalog level, which holds no items.
         collection: Collection identifier, or None for a root-only discovery.
     """
 
     exclude_patterns: list[str]
     versioned_asset_paths: set[str]
-    stac_item_paths: set[Path] | None
     collection: str | None
+    item_level: bool = True
 
 
 def _is_versioned_asset(path: Path, base_dir: Path, ctx: _ExcludeContext) -> bool:
@@ -1138,11 +1139,9 @@ def _is_stac_item_file(path: Path, ctx: _ExcludeContext) -> bool:
     Returns:
         True when the file is a STAC item JSON.
     """
-    if ctx.stac_item_paths is not None:
-        return path in ctx.stac_item_paths
-    # Heuristic fallback: a STAC item lives at collection/item_dir/item_dir.json,
-    # so the JSON filename matches its parent directory name.
-    return path.suffix == ".json" and path.parent.name == path.stem
+    # A STAC item lives at collection/item_dir/item_dir.json, so the JSON
+    # filename matches its parent directory name.
+    return ctx.item_level and path.suffix == ".json" and path.parent.name == path.stem
 
 
 def _should_exclude_from_push(path: Path, base_dir: Path, ctx: _ExcludeContext) -> bool:
@@ -1236,11 +1235,12 @@ def _discover_catalog_files(
     *,
     include_catalog_root: bool = False,
     additional_exclude_patterns: list[str] | None = None,
-    stac_item_paths: set[Path] | None = None,
 ) -> list[Path]:
-    """Discover all catalog files that should be synced to remote (Issue #426).
+    """Discover the catalog files that should be synced to remote (Issue #426).
 
-    This discovers ALL files in the catalog/collection except:
+    A file uploads only when a STAC document names it (``published_files``),
+    the same rule that clone applies. A stray file stays local, and the push
+    names it once in a warning. The walk also skips:
     - Files matching exclusion patterns (ALWAYS includes security patterns)
     - Versioned assets (loaded from versions.json, handled by asset upload)
     - versions.json (uploaded last for atomicity)
@@ -1258,8 +1258,6 @@ def _discover_catalog_files(
         include_catalog_root: If True, include root-level files (not in collection).
         additional_exclude_patterns: Extra patterns to add (merged with defaults,
             never replaces security patterns).
-        stac_item_paths: Optional set of known STAC item JSON paths to exclude.
-            If provided, used instead of heuristic detection.
 
     Returns:
         List of absolute paths to files that should be synced.
@@ -1273,16 +1271,28 @@ def _discover_catalog_files(
         # Always use the effective patterns. They include the security ones.
         exclude_patterns=_get_effective_exclude_patterns(catalog_root, additional_exclude_patterns),
         versioned_asset_paths=versioned_asset_paths,
-        stac_item_paths=stac_item_paths,
         collection=collection,
     )
 
     discovered: list[Path] = []
+    documents: list[str] = []
     if collection is not None:
         discovered.extend(_discover_collection_dir_files(catalog_root, collection, ctx))
+        documents.append(f"{collection}/collection.json")
     if include_catalog_root:
         discovered.extend(_discover_root_dir_files(catalog_root, ctx))
-    return discovered
+        documents.append("catalog.json")
+    return _named_only(catalog_root, discovered, documents)
+
+
+def _named_only(catalog_root: Path, files: list[Path], documents: list[str]) -> list[Path]:
+    """Keep the files that ``documents`` or their items name, and warn about the rest."""
+    named = published_tree(catalog_root, documents)
+    kept = [f for f in files if f.relative_to(catalog_root).as_posix() in named]
+    strays = sorted(f.relative_to(catalog_root).as_posix() for f in files if f not in kept)
+    if strays:
+        _warn_once(f"Not pushed, because no STAC document names it: {', '.join(strays)}")
+    return kept
 
 
 def _stat_files_safely(files: list[Path], errors: list[str]) -> tuple[dict[Path, int], list[Path]]:
@@ -1865,18 +1875,24 @@ async def _root_etags(store: ObjectStore, prefix: str, keys: list[str]) -> dict[
 
 
 def _merge_child_links(local: bytes, remote: bytes) -> bytes:
-    """Add each child link of the remote catalog.json that the local one lacks."""
+    """Add each child link of the remote catalog.json that the local one lacks.
+
+    Returns:
+        ``local`` unchanged when it holds every remote child link.
+    """
     document = json.loads(local)
     links: list[dict[str, Any]] = document.setdefault("links", [])
     hrefs = {
         posixpath.normpath(str(link.get("href"))) for link in links if link.get("rel") == "child"
     }
+    added = 0
     for link in json.loads(remote).get("links", []):
         href = posixpath.normpath(str(link.get("href")))
         if link.get("rel") == "child" and href not in hrefs:
             hrefs.add(href)
             links.append(link)
-    return json.dumps(document, indent=2).encode("utf-8")
+            added += 1
+    return json.dumps(document, indent=2).encode("utf-8") if added else local
 
 
 async def _put_file(
@@ -1885,11 +1901,14 @@ async def _put_file(
     content: bytes,
     root_etags: dict[str, str | None] | None = None,
 ) -> PutResult | None:
-    """Write one catalog file. A root document takes the ETag that the push read.
+    """Write one catalog file. A root document takes an ETag condition.
 
-    Another writer can change a root document during the push. On a mismatch
-    the root catalog.json merges the child links of the remote copy and
-    writes again. README.md and AGENTS.md keep the remote bytes.
+    README.md and AGENTS.md take the ETag that the push read before its first
+    upload. On a mismatch the remote bytes stay. The root catalog.json keeps
+    the child links of every writer. Each write reads the remote copy, adds
+    its child links to the local ones, and writes under the ETag of that
+    read. A local catalog that lacks the collection of another writer then
+    keeps its link. A mismatch repeats the read and the write.
 
     Returns:
         The put result. None when the key holds bytes of another writer, so a
@@ -1900,20 +1919,27 @@ async def _put_file(
     """
     if root_etags is None or key not in root_etags:
         return await put_object_async(store, key, content)
-    etag, merged = root_etags[key], False
-    for _ in range(_ROOT_CATALOG_ATTEMPTS):
+    if posixpath.basename(key) != "catalog.json":
         try:
-            put = await put_object_async(
-                store, key, content, mode=_manifest_mode(etag, force=False)
-            )
-            return None if merged else put
+            mode = _manifest_mode(root_etags[key], force=False)
+            return await put_object_async(store, key, content, mode=mode)
         except (PreconditionError, AlreadyExistsError):
-            if posixpath.basename(key) != "catalog.json":
-                warn(f"Another writer changed {key} during the push. The remote copy stays.")
-                return None
+            warn(f"Another writer changed {key} during the push. The remote copy stays.")
+            return None
+    for _ in range(_ROOT_CATALOG_ATTEMPTS):
+        body, etag = content, None
+        try:
             remote = await obs.get_async(store, key)
-            etag, merged = remote.meta.get("e_tag"), True
-            content = _merge_child_links(content, bytes(await remote.bytes_async()))
+            etag = remote.meta.get("e_tag")
+            body = _merge_child_links(content, bytes(await remote.bytes_async()))
+        except Exception as e:
+            if not (isinstance(e, FileNotFoundError) or _is_not_found(e)):
+                raise
+        try:
+            put = await put_object_async(store, key, body, mode=_manifest_mode(etag, force=False))
+            return put if body is content else None
+        except (PreconditionError, AlreadyExistsError):
+            continue
     raise PushConflictError("Remote changed during push, re-run push to try again")
 
 
@@ -2557,25 +2583,6 @@ def _push_all_process_result(
             stats["errors"][coll] = ["Unknown error"]
 
 
-def _discover_root_metadata_files(catalog_root: Path) -> list[Path]:
-    """Discover root-level metadata files that should be synced (Issue #426).
-
-    This is a convenience wrapper around _discover_catalog_files for root-only
-    discovery. Delegates to the unified discovery function for consistency.
-
-    Args:
-        catalog_root: Path to catalog root.
-
-    Returns:
-        List of absolute paths to root metadata files.
-    """
-    return _discover_catalog_files(
-        catalog_root,
-        collection=None,  # No collection, root only
-        include_catalog_root=True,
-    )
-
-
 def _discover_intermediate_catalog_files(catalog_root: Path, collections: list[str]) -> list[Path]:
     """Discover the files of each intermediate catalog for nested collections.
 
@@ -2605,13 +2612,12 @@ def _discover_intermediate_catalog_files(catalog_root: Path, collections: list[s
     for collection in collections:
         seen.update(intermediate_catalog_ids(collection))
 
-    # An empty stac_item_paths turns off the item-name heuristic. A catalog
-    # level holds no items, so a file such as a/a.json is a sidecar.
+    # A catalog level holds no items, so a file such as a/a.json is a sidecar.
     ctx = _ExcludeContext(
         exclude_patterns=_get_effective_exclude_patterns(catalog_root, None),
         versioned_asset_paths=set(),
-        stac_item_paths=set(),
         collection=None,
+        item_level=False,
     )
 
     files: list[Path] = []
@@ -2625,13 +2631,14 @@ def _discover_intermediate_catalog_files(catalog_root: Path, collections: list[s
                 files.append(path)
         if not sub_dir.is_dir() or sub_dir.is_symlink():
             continue
-        files.extend(
+        listed = [
             item
             for item in sorted(sub_dir.iterdir(), key=lambda p: p.name)
             if not item.is_symlink()
             and item.is_file()
             and not _should_exclude_from_push(item, catalog_root, ctx)
-        )
+        ]
+        files.extend(_named_only(catalog_root, listed, [f"{sub}/catalog.json"]))
     return files
 
 
@@ -2814,7 +2821,7 @@ async def _push_all_upload_root_files(
         return True
 
     # Discover root metadata files (Issue #426)
-    root_metadata = _discover_root_metadata_files(catalog_root)
+    root_metadata = _discover_catalog_files(catalog_root, include_catalog_root=True)
 
     # Discover intermediate catalog files for nested collections (Issue #905)
     # (Issue #547, #552). Uploaded after root catalog.json, before versions.json.

@@ -78,6 +78,13 @@ def _write_leaf_collection(catalog_root: Path, collection_id: str) -> None:
     )
 
 
+def _link(catalog_json: Path, *hrefs: str) -> None:
+    """Add a ``describedby`` link to each href, because push uploads only named files."""
+    document = json.loads(catalog_json.read_text(encoding="utf-8"))
+    document.setdefault("links", []).extend({"rel": "describedby", "href": h} for h in hrefs)
+    catalog_json.write_text(json.dumps(document), encoding="utf-8")
+
+
 @pytest.fixture
 def nested_catalog(tmp_path: Path) -> Path:
     """Two sibling leaf collections under a two-level nesting (structure from #552).
@@ -244,7 +251,7 @@ class TestSingleCollectionIntermediateCatalogs:
 
 
 class TestIntermediateSidecarFiles:
-    """Every file beside an intermediate catalog.json reaches the remote (#905, #935).
+    """Every file that an intermediate catalog names reaches the remote (#905, #935).
 
     The fixed name list held only catalog.json and README.md. The scaffolded
     AGENTS.md, which the catalog's rel="agents" link names, was never uploaded.
@@ -266,9 +273,10 @@ class TestIntermediateSidecarFiles:
         ]
 
     def test_discovers_other_sidecar_files(self, nested_catalog: Path) -> None:
-        """A thumbnail or style beside the catalog is published like the root's."""
+        """A thumbnail or style that the catalog links is published like the root's."""
         (nested_catalog / "tst" / "thumbnail.png").write_bytes(b"\x89PNG")
         (nested_catalog / "tst" / "style.json").write_text("{}")
+        _link(nested_catalog / "tst" / "catalog.json", "./thumbnail.png", "./style.json")
 
         files = _discover_intermediate_catalog_files(nested_catalog, ["tst/latest/adm0"])
         rel = {f.relative_to(nested_catalog).as_posix() for f in files}
@@ -293,6 +301,7 @@ class TestIntermediateSidecarFiles:
     def test_keeps_file_named_after_its_directory(self, nested_catalog: Path) -> None:
         """The STAC item heuristic must not drop tst/tst.json at a catalog level."""
         (nested_catalog / "tst" / "tst.json").write_text("{}")
+        _link(nested_catalog / "tst" / "catalog.json", "./tst.json")
 
         files = _discover_intermediate_catalog_files(nested_catalog, ["tst/latest/adm0"])
         rel = {f.relative_to(nested_catalog).as_posix() for f in files}

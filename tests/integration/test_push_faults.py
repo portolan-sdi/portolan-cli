@@ -560,6 +560,50 @@ def test_root_catalog_keeps_the_child_link_of_another_writer(
     assert _child_hrefs(_remote_json(bucket, catalog_key)) == expected
 
 
+def test_root_catalog_keeps_a_collection_that_the_local_catalog_lacks(
+    fault_catalog: Path, bucket: Bucket, run_cli: RunCli, tmp_path: Path
+) -> None:
+    """A second checkout that lacks a pushed collection keeps its child link.
+
+    The first checkout pushes buildings. The second checkout has no buildings
+    collection and pushes imagery. The remote root catalog.json then links
+    both collections.
+    """
+    import shutil
+
+    first = _push(run_cli, fault_catalog, bucket, "--collection", "buildings")
+    assert first.exit_code == 0, first.output
+    other = tmp_path / "other"
+    shutil.copytree(fault_catalog, other)
+    shutil.rmtree(other / "buildings")
+    catalog = json.loads((other / "catalog.json").read_text(encoding="utf-8"))
+    catalog["links"] = [link for link in catalog["links"] if "buildings" not in link["href"]]
+    (other / "catalog.json").write_text(json.dumps(catalog, indent=2), encoding="utf-8")
+
+    second = _push(run_cli, other, bucket, "--collection", "imagery")
+
+    assert second.exit_code == 0, second.output
+    remote = _remote_json(bucket, bucket.key("catalog.json"))
+    assert _child_hrefs(remote) == ["./buildings/collection.json", "./imagery/collection.json"]
+
+
+def test_push_skips_a_stray_file_and_names_it(
+    fault_catalog: Path, bucket: Bucket, run_cli: RunCli
+) -> None:
+    """A file that no STAC document names stays local, and the push names it once."""
+    stray = "imagery/scene-a/notes.txt"
+    (fault_catalog / stray).write_text("notes beside a tracked asset\n", encoding="utf-8")
+
+    result = _push(run_cli, fault_catalog, bucket)
+
+    assert result.exit_code == 0, result.output
+    present = bucket.keys()
+    assert bucket.key(stray) not in present
+    assert bucket.key("imagery/scene-a/rgb.tif") in present
+    named = [line for line in result.output.splitlines() if stray in line]
+    assert named == [f"⚠ Not pushed, because no STAC document names it: {stray}"]
+
+
 def test_root_readme_keeps_the_bytes_of_another_writer(
     pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:

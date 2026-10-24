@@ -104,6 +104,11 @@ def local_catalog(tmp_path: Path) -> Path:
         },
         "links": [],
     }
+    # push uploads a metadata file only when a STAC document names it.
+    collection_data["assets"] = {
+        "style": {"href": "./style.json", "roles": ["style"]},
+        "legend": {"href": "./legend.png", "roles": ["overview"]},
+    }
     (versions_dir / "collection.json").write_text(json.dumps(collection_data, indent=2))
 
     # Create actual data file at catalog_root/collection/item/filename

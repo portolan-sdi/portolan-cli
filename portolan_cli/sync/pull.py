@@ -42,9 +42,9 @@ from portolan_cli.async_utils import (
     get_default_concurrency,
 )
 from portolan_cli.catalog import intermediate_catalog_ids
-from portolan_cli.constants import GDAL_PAM_SUFFIX
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import detail, error, info, output_section, success, warn
+from portolan_cli.stac_links import SIDE_FILES, published_files
 from portolan_cli.sync.checksums import compute_checksum
 from portolan_cli.sync.download import (
     download_file,
@@ -1296,13 +1296,6 @@ def pull(
     return result
 
 
-# The links that walk the catalog tree. Every other relative link of a STAC
-# document names a file that push wrote, such as README.md, AGENTS.md, a logo.
-_TREE_RELS = frozenset({"child", "item", "self", "root", "parent"})
-# push writes these files beside a catalog or a collection, with or without a link.
-_SIDE_FILES = ("README.md", "AGENTS.md")
-
-
 async def _download_stac_tree(
     remote_url: str, local_root: Path, collection: str, profile: str | None, concurrency: int
 ) -> tuple[int, int]:
@@ -1310,12 +1303,10 @@ async def _download_stac_tree(
 
     clone starts from a fresh local catalog.json with no child links. The remote
     root and intermediate catalog.json files hold those links. collection.json
-    names the items, and each document names its assets. With each document
-    come the files that its other relative links name, the README.md and
-    AGENTS.md beside it, and the GDAL PAM sidecar of each raster it names.
-    The root and the collection versions.json come as push wrote them. An
-    object that no document names, such as a stale object of a removed
-    asset, stays remote. An asset that pull already wrote stays as it is.
+    names the items. Each document brings the files that ``published_files``
+    names, the same set that push uploads. The root and the collection
+    versions.json come as push wrote them. An object that no document names,
+    such as a stale object of a removed asset, stays remote.
 
     Returns:
         The number of files written and the number of files that failed.
@@ -1348,25 +1339,18 @@ async def _download_stac_tree(
         walked.add(document_rel)
         if not await fetch(document_rel):
             return
-        base = posixpath.dirname(document_rel)
         document = json.loads((local_root / document_rel).read_text(encoding="utf-8"))
-        links = document.get("links", [])
-        named = [asset.get("href") for asset in document.get("assets", {}).values()]
-        named += [link.get("href") for link in links if link.get("rel") not in _TREE_RELS]
-        items = [link.get("href") for link in links if link.get("rel") == "item"]
-
-        def resolve(hrefs: list[Any]) -> set[str]:
-            relative = [str(h) for h in hrefs if h and "://" not in str(h)]
-            relative = [h for h in relative if not h.startswith("/")]
-            return {posixpath.normpath(posixpath.join(base, h)) for h in relative}
-
-        side = {posixpath.join(base, name) for name in _SIDE_FILES}
-        assets = resolve(named) - side
-        side |= {rel + GDAL_PAM_SUFFIX for rel in assets if rel.endswith((".tif", ".tiff"))}
-        assets = {rel for rel in assets if not (local_root / rel).exists()}
+        files, items = published_files(document, document_rel)
+        # pull already wrote the assets that versions.json names. clone wrote
+        # its own README.md and AGENTS.md, which the remote ones replace.
+        files = {
+            rel
+            for rel in files
+            if posixpath.basename(rel) in SIDE_FILES or not (local_root / rel).exists()
+        }
         await asyncio.gather(
-            *(fetch(rel) for rel in sorted(side | assets)),
-            *(walk(rel) for rel in sorted(resolve(items))),
+            *(fetch(rel) for rel in sorted(files)),
+            *(walk(rel) for rel in sorted(items)),
         )
 
     documents = [

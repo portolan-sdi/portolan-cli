@@ -122,10 +122,6 @@ TABULAR_EXTENSIONS: frozenset[str] = _reg.extensions_where(is_tabular=True)
 # Cloud-native parquet extension
 PARQUET_EXTENSION: str = ".parquet"
 
-# The GDAL persistent auxiliary metadata (PAM) sidecar, such as x.tif.aux.xml.
-# GDAL writes it beside a raster when it computes statistics.
-GDAL_PAM_SUFFIX = ".aux.xml"
-
 # Sidecar file patterns by primary file extension. Matched by appending each
 # pattern to the primary's stem, so compound forms (.shp.xml, .aux.xml) resolve.
 SIDECAR_PATTERNS: dict[str, list[str]] = {
