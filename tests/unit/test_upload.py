@@ -1825,6 +1825,7 @@ class TestPutObject:
             ("col/thumbnail.png", "image/png"),
             ("README.md", "text/markdown"),
             ("col/photo.jpg", "image/jpeg"),
+            ("col/scene/rgb.tif.aux.xml", "application/xml"),
             ("col/blob.unknownext", "application/octet-stream"),
             ("col/noextension", "application/octet-stream"),
         ],
@@ -1839,6 +1840,23 @@ class TestPutObject:
         put_object(store, key, b"{}")
 
         assert _stored_content_type(store, key) == expected
+
+    @pytest.mark.unit
+    def test_xml_type_does_not_come_from_the_platform_registry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A .aux.xml sidecar is application/xml on Windows too.
+
+        The stdlib reads the Windows registry, which maps .xml to text/xml.
+        The table decides, not the registry.
+        """
+        import mimetypes
+
+        from portolan_cli.sync.upload import content_type_for
+
+        monkeypatch.setattr(mimetypes, "guess_type", lambda key: ("text/xml", None))
+
+        assert content_type_for("col/scene/rgb.tif.aux.xml") == "application/xml"
 
     @pytest.mark.unit
     @pytest.mark.parametrize(

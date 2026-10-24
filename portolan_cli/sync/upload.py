@@ -940,6 +940,8 @@ _CONTENT_TYPES: dict[str, str] = {
     ".pmtiles": "application/vnd.pmtiles",
     ".png": "image/png",
     ".md": "text/markdown",
+    # The stdlib reads the Windows registry, which maps .xml to text/xml.
+    ".xml": "application/xml",
 }
 
 # S3 and GCS accept at most 10000 parts in one multipart upload. obstore sends
