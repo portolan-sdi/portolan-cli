@@ -2,7 +2,7 @@
 
 This module provides functions to update existing metadata when files change:
 - update_item_metadata(): Re-extract metadata and update existing STAC item
-- create_missing_item(): Create new STAC item for file without metadata
+- prepare_missing_item(): Prepare a new STAC item for a file without metadata
 - update_versions_tracking(): Update source_mtime in versions.json
 
 Part of Phase 2c: Update Functions (check-metadata-handling feature).
@@ -14,7 +14,7 @@ import json
 import logging
 import re
 from pathlib import Path, PurePath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import rasterio
 
@@ -31,6 +31,9 @@ from portolan_cli.versions import (
     versions_asset_key,
     write_versions,
 )
+
+if TYPE_CHECKING:
+    from portolan_cli.preparation import PreparedItem
 
 logger = logging.getLogger(__name__)
 
@@ -310,13 +313,14 @@ def _find_data_asset_key(assets: dict[str, Any]) -> str:
     return "data"
 
 
-def create_missing_item(file_path: Path, collection_path: Path) -> Path:
-    """Create new STAC item for a file without metadata.
+def prepare_missing_item(file_path: Path, collection_path: Path) -> tuple[Path, PreparedItem]:
+    """Prepare a new STAC item for a file without metadata, as ``add`` does.
 
-    The item comes from ``preparation.prepare_item``, the code ``add`` uses, so
-    a recreated item equals the one ``add`` wrote: the same id, assets, bands,
-    ``proj:*`` and ``raster:*`` fields, and datetime (issue #1046). A file
-    directly in the collection directory keeps its stem as the item id, so
+    The item comes from ``preparation.prepare_item``, the code ``add`` uses. The
+    caller passes every prepared item of the run to ``finalize_items`` once, so
+    a recreated item is byte-identical to the one ``add`` wrote: the same id,
+    assets, hrefs, links, link titles, and version snapshot (issue #1046). A
+    file directly in the collection directory keeps its stem as the item id, so
     ``check --fix`` still writes ``{item_dir}/{stem}.json`` for it.
 
     Args:
@@ -324,16 +328,14 @@ def create_missing_item(file_path: Path, collection_path: Path) -> Path:
         collection_path: Path to the parent collection directory.
 
     Returns:
-        Path to the created item JSON file.
+        The catalog root and the prepared item, ready for ``finalize_items``.
 
     Raises:
-        FileNotFoundError: If file_path doesn't exist or collection.json not found.
+        FileNotFoundError: If file_path doesn't exist, collection.json is not
+            found, or ``add`` writes no item for the file.
     """
     from portolan_cli.catalog import find_catalog_root
-    from portolan_cli.finalization import record_prepared_items
-    from portolan_cli.hookspecs import EnrichContext
     from portolan_cli.preparation import prepare_item
-    from portolan_cli.stac_enrich import enrich_item_file
 
     if not file_path.exists():
         raise FileNotFoundError(f"Data file not found: {file_path}")
@@ -342,8 +344,6 @@ def create_missing_item(file_path: Path, collection_path: Path) -> Path:
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found: {collection_json_path}")
 
-    # A nested collection id holds a slash, which the model rejects, so read the raw id.
-    collection_id = json.loads(collection_json_path.read_text(encoding="utf-8"))["id"]
     catalog_root = find_catalog_root(collection_path) or collection_path.parent
     collection_path_id = collection_path.resolve().relative_to(catalog_root.resolve()).as_posix()
     in_collection_dir = file_path.parent.resolve() == collection_path.resolve()
@@ -353,27 +353,9 @@ def create_missing_item(file_path: Path, collection_path: Path) -> Path:
         collection_id=collection_path_id,
         item_id=file_path.stem if in_collection_dir else None,
     )
-    item_path = prepared.item_json_path
-    if item_path is None:
+    if prepared.item_json_path is None:
         raise FileNotFoundError(f"add writes no item for {file_path}; run portolan add")
-
-    # finalize_items sets the collection field when it saves the collection.
-    item_data = json.loads(item_path.read_text(encoding="utf-8"))
-    item_data["collection"] = collection_id
-    write_json_atomic(item_path, item_data)
-    # The item enrichment hook runs on the created item, as on an added one (#947).
-    enrich_item_file(
-        item_path,
-        EnrichContext(
-            catalog_root=catalog_root,
-            collection_id=collection_path_id,
-            document_path=item_path,
-            item_id=prepared.item_id,
-        ),
-    )
-    # The snapshot records every file the item declares, as add does (#1046).
-    record_prepared_items(catalog_root, collection_path, [prepared])
-    return item_path
+    return catalog_root, prepared
 
 
 def update_versions_tracking(file_path: Path, versions_path: Path) -> None:

@@ -29,6 +29,18 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+#: Link order for a written catalog, collection, or item: the order the links
+#: fixer rebuilds (``validation.fixers._rebuild_links``). Other rels follow in
+#: their own order. One order for every writer makes the links fixer a no-op on
+#: a tree that add wrote, and a repaired item byte-identical to an added one.
+_LINK_RANK = {"root": 0, "parent": 1, "collection": 2, "child": 3, "item": 3}
+
+
+def in_link_order(links: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``links`` in the order the links fixer writes. The sort is stable."""
+    return sorted(links, key=lambda link: _LINK_RANK.get(str(link.get("rel")), len(_LINK_RANK)))
+
+
 def resolve_href(base_dir: Path, href: str) -> Path:
     """Resolve a STAC link href against the directory holding the linking object."""
     if href.startswith("./"):

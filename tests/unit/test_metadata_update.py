@@ -2,7 +2,7 @@
 
 Tests for Phase 2c: Update Functions
 - update_item_metadata(item_path, file_path)
-- create_missing_item(file_path, collection_path)
+- prepare_missing_item(file_path, collection_path)
 - update_versions_tracking(file_path, versions_path)
 """
 
@@ -25,7 +25,7 @@ from portolan_cli.collection import (
 from portolan_cli.item import create_item, read_item_json, write_item_json
 from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.update import (
-    create_missing_item,
+    prepare_missing_item,
     update_item_metadata,
     update_versions_tracking,
 )
@@ -620,12 +620,17 @@ class TestUpdateItemMetadata:
         assert _read_bands(item_path) == bands
 
 
-class TestCreateMissingItem:
-    """Tests for create_missing_item function."""
+class TestPrepareMissingItem:
+    """Tests for prepare_missing_item function.
+
+    The caller passes the prepared item to ``finalize_items``, which sets the
+    collection field and the links. tests/integration/test_check_fix_no_regression.py
+    checks the finalized item byte for byte.
+    """
 
     @pytest.mark.unit
-    def test_create_missing_item_creates_item(self, tmp_path: Path) -> None:
-        """Test that create_missing_item creates a new STAC item for a file."""
+    def test_prepare_missing_item_writes_the_item(self, tmp_path: Path) -> None:
+        """prepare_missing_item writes the item JSON and names the catalog root."""
         collection_dir = tmp_path / "my-collection"
         collection_dir.mkdir()
 
@@ -644,18 +649,16 @@ class TestCreateMissingItem:
         )
         write_collection_json(collection, collection_dir)
 
-        # Create item for the file
-        item_path = create_missing_item(data_file, collection_dir)
+        catalog_root, prepared = prepare_missing_item(data_file, collection_dir)
 
-        # Verify item was created
-        assert item_path.exists()
-        item = read_item_json(item_path)
-        assert item.id == "data"
-        assert item.collection == "my-collection"
+        assert catalog_root == tmp_path
+        assert prepared.collection_id == "my-collection"
+        assert prepared.item_json_path is not None
+        assert json.loads(prepared.item_json_path.read_text())["id"] == "data"
 
     @pytest.mark.unit
-    def test_create_missing_item_links_to_collection(self, tmp_path: Path) -> None:
-        """Test that create_missing_item properly links to parent collection."""
+    def test_prepare_missing_item_extracts_metadata(self, tmp_path: Path) -> None:
+        """Test that prepare_missing_item extracts metadata from file."""
         collection_dir = tmp_path / "my-collection"
         collection_dir.mkdir()
 
@@ -673,56 +676,30 @@ class TestCreateMissingItem:
         )
         write_collection_json(collection, collection_dir)
 
-        item_path = create_missing_item(data_file, collection_dir)
-        item = read_item_json(item_path)
-
-        # Verify collection reference
-        assert item.collection == "my-collection"
-
-    @pytest.mark.unit
-    def test_create_missing_item_extracts_metadata(self, tmp_path: Path) -> None:
-        """Test that create_missing_item extracts metadata from file."""
-        collection_dir = tmp_path / "my-collection"
-        collection_dir.mkdir()
-
-        source_file = REALDATA_FIXTURES / "open-buildings.parquet"
-        if not source_file.exists():
-            pytest.skip("Test fixture not available")
-
-        data_file = collection_dir / "data.parquet"
-        shutil.copy(source_file, data_file)
-
-        collection = create_collection(
-            collection_id="my-collection",
-            data_path=data_file,
-            description="Test collection",
-        )
-        write_collection_json(collection, collection_dir)
-
-        item_path = create_missing_item(data_file, collection_dir)
-        item = read_item_json(item_path)
+        _root, prepared = prepare_missing_item(data_file, collection_dir)
+        assert prepared.item_json_path is not None
+        item = json.loads(prepared.item_json_path.read_text())
 
         # Verify metadata was extracted
-        assert item.bbox is not None
-        assert len(item.bbox) == 4
-        assert item.geometry is not None
+        assert len(item["bbox"]) == 4
+        assert item["geometry"] is not None
         # The datetime is unknown, as in the item add writes (issue #1046).
-        assert item.properties.get("datetime") is None
-        assert item.properties["start_datetime"] == "1900-01-01T00:00:00Z"
+        assert item["properties"]["datetime"] is None
+        assert item["properties"]["start_datetime"] == "1900-01-01T00:00:00Z"
 
     @pytest.mark.unit
-    def test_create_missing_item_file_not_found(self, tmp_path: Path) -> None:
-        """Test that create_missing_item raises FileNotFoundError for missing file."""
+    def test_prepare_missing_item_file_not_found(self, tmp_path: Path) -> None:
+        """Test that prepare_missing_item raises FileNotFoundError for missing file."""
         collection_dir = tmp_path / "my-collection"
         collection_dir.mkdir()
         file_path = collection_dir / "nonexistent.parquet"
 
         with pytest.raises(FileNotFoundError):
-            create_missing_item(file_path, collection_dir)
+            prepare_missing_item(file_path, collection_dir)
 
     @pytest.mark.unit
-    def test_create_missing_item_uses_filename_as_id(self, tmp_path: Path) -> None:
-        """Test that create_missing_item uses filename stem as item ID."""
+    def test_prepare_missing_item_uses_filename_as_id(self, tmp_path: Path) -> None:
+        """Test that prepare_missing_item uses filename stem as item ID."""
         collection_dir = tmp_path / "my-collection"
         collection_dir.mkdir()
 
@@ -740,10 +717,9 @@ class TestCreateMissingItem:
         )
         write_collection_json(collection, collection_dir)
 
-        item_path = create_missing_item(data_file, collection_dir)
-        item = read_item_json(item_path)
+        _root, prepared = prepare_missing_item(data_file, collection_dir)
 
-        assert item.id == "my_custom_name"
+        assert prepared.item_id == "my_custom_name"
 
 
 class TestUpdateVersionsTracking:
@@ -931,8 +907,8 @@ class TestEdgeCases:
         assert updated_item.bbox is not None
 
     @pytest.mark.unit
-    def test_create_missing_item_collection_json_missing(self, tmp_path: Path) -> None:
-        """Test create_missing_item when collection.json doesn't exist."""
+    def test_prepare_missing_item_collection_json_missing(self, tmp_path: Path) -> None:
+        """Test prepare_missing_item when collection.json doesn't exist."""
         collection_dir = tmp_path / "my-collection"
         collection_dir.mkdir()
 
@@ -946,7 +922,7 @@ class TestEdgeCases:
         # Don't create collection.json
         # Should raise FileNotFoundError
         with pytest.raises(FileNotFoundError):
-            create_missing_item(data_file, collection_dir)
+            prepare_missing_item(data_file, collection_dir)
 
 
 @pytest.mark.integration

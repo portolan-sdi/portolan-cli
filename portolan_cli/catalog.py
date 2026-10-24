@@ -22,7 +22,12 @@ from portolan_cli.humanize import humanize_slug
 from portolan_cli.input_hardening import validate_catalog_id
 from portolan_cli.json_io import write_json_atomic, write_text_atomic
 from portolan_cli.models.catalog import CatalogModel
-from portolan_cli.stac_links import iter_links, iter_stac_objects, visible_stac_files
+from portolan_cli.stac_links import (
+    in_link_order,
+    iter_links,
+    iter_stac_objects,
+    visible_stac_files,
+)
 from portolan_cli.trace import count
 from portolan_cli.utils import href_root, relative_href
 
@@ -912,13 +917,15 @@ def update_catalog_links_for_nested(catalog_root: Path, collection_id: str) -> N
 
     # For single-level collections, just ensure root links to collection
     if len(parts) == 1:
-        _ensure_root_links_to_child(catalog_root, f"./{parts[0]}/collection.json")
+        _ensure_catalog_links_to_child(
+            catalog_root / "catalog.json", f"./{parts[0]}/collection.json"
+        )
         return
 
     # For nested collections:
     # 1. Root links to first-level catalog
     first_level = parts[0]
-    _ensure_root_links_to_child(catalog_root, f"./{first_level}/catalog.json")
+    _ensure_catalog_links_to_child(catalog_root / "catalog.json", f"./{first_level}/catalog.json")
 
     # 2. Each intermediate catalog links to next level
     for i in range(len(parts) - 1):
@@ -942,28 +949,8 @@ def update_catalog_links_for_nested(catalog_root: Path, collection_id: str) -> N
         _ensure_catalog_links_to_child(catalog_file, child_href)
 
 
-def _ensure_root_links_to_child(catalog_root: Path, child_href: str) -> None:
-    """Ensure root catalog has a child link."""
-    catalog_file = catalog_root / "catalog.json"
-    if not catalog_file.exists():
-        return
-
-    content = json.loads(catalog_file.read_text(encoding="utf-8"))
-    links = content.get("links", [])
-
-    # Check if link already exists
-    existing_hrefs = {link.get("href") for link in links if link.get("rel") == "child"}
-    if child_href in existing_hrefs:
-        return
-
-    # Add the child link
-    links.append({"rel": "child", "href": child_href, "type": "application/json"})
-    content["links"] = links
-    write_json_atomic(catalog_file, content)
-
-
 def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
-    """Ensure a catalog file has a child link."""
+    """Ensure a catalog file has a child link, in the order the links fixer writes."""
     if not catalog_file.exists():
         return
 
@@ -977,7 +964,7 @@ def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
 
     # Add the child link
     links.append({"rel": "child", "href": child_href, "type": "application/json"})
-    content["links"] = links
+    content["links"] = in_link_order(links)
     write_json_atomic(catalog_file, content)
 
 

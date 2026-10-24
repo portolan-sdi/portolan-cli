@@ -287,7 +287,7 @@ portolan check [OPTIONS] [PATH]
 | `--remove-legacy` | boolean | Remove source files after successful conversion (use with --fix) | `False` |
 | `--force` | boolean | Re-optimize already-valid COGs by re-applying current COG settings, e.g. to add missing overviews (use with --fix; rasters only) | `False` |
 | `--workers`, `-w` | integer range (`1` and above) | Parallel worker processes for conversion (default: auto-detect from CPU count; use 1 for sequential). Applies to --fix. | None |
-| `--metadata` | boolean | Only check/fix STAC metadata (links, schema, staleness). With --fix this is the metadata refresh: it exits 1 only when a fix fails, an auto-fixable error remains, or a file does not parse. --strict restores the exit on every error and warning. | `False` |
+| `--metadata` | boolean | Only check/fix STAC metadata (links, schema, staleness). With --fix this is the metadata refresh. It exits 1 while an error remains, and the JSON success field is false only when a fix fails, an auto-fixable error remains, or a file does not parse or breaks the STAC schema. --strict also exits 1 on a warning. | `False` |
 | `--geo-assets` | boolean | Only check/fix geospatial assets (cloud-native status, convertibility) | `False` |
 | `--strict` | boolean | Fail on warnings as well as errors | `False` |
 | `--live` | boolean | Probe the published host over HTTP for Range support, CORS headers, and link targets | `False` |

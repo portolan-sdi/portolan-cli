@@ -76,10 +76,11 @@ def build_check_payload(
 
     ``passed`` is fed by exactly two inputs: rashid's verdict (absent when
     ``--metadata`` was not run, in which case there is nothing to fail) and
-    whether the ``--fix`` pass itself failed. Those are the same inputs the exit
-    code uses, so ``passed: true`` never accompanies a non-zero exit. The one
-    documented exception is ``--strict``, which escalates warnings and the
-    workflow notice to exit 1 without calling the catalog non-conformant.
+    whether the ``--fix`` pass itself failed. The exit code follows ``passed``,
+    so ``passed: false`` always exits 1, also after ``--fix`` repaired
+    something. The one documented exception is ``--strict``, which escalates
+    warnings and the workflow notice to exit 1 without calling the catalog
+    non-conformant.
 
     Args:
         outcome: What :func:`~portolan_cli.validation.runner.run_check` produced.
