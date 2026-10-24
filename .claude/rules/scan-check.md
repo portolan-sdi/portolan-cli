@@ -150,12 +150,16 @@ of them was permanently STALE and `--fix` rewrote every item on every run
 
 The fixer registry is finding-driven, and the findings come from the check that
 ran *before* the freshness pass, so an item that pass writes never meets the
-registry. `cli._run_fix_and_repairs` therefore runs
-`fixers.repair_written_items` afterwards: the `links` and `checksum` sweeps plus
-an `items.parquet` refresh for the collections it touched. Without it, `--fix`
-published items with no structural links and no checksums, and a stale mirror,
-so the finding count went **up** (#709). Any new pass that writes an item JSON
-belongs behind the same call.
+registry. Two paths cover the items a pass writes. A missing item is prepared
+with `prepare_missing_item`, then one `finalize_items` call writes the batch,
+the mirror writer folds `items.parquet` into that version, and
+`sync_catalog_index` brings the root index in step. The result matches an item
+that `add` wrote, byte for byte. An item the freshness pass updated goes
+through `fixers.repair_written_items` afterwards: the `links` and `checksum`
+sweeps plus an `items.parquet` refresh for the collections it touched. Without
+them, `--fix` published items with no structural links and no checksums, and a
+stale mirror, so the finding count went **up** (#709). Any new pass that writes
+an item JSON takes one of these two paths.
 
 `update_item_metadata` owns bbox, geometry and the raster `bands` array. It does
 **not** own `properties.datetime`, which records when the observation happened
