@@ -1270,25 +1270,46 @@ def pull(
     Raises:
         ValueError: If remote_url is invalid.
     """
-    result = asyncio.run(
-        pull_async(
-            remote_url=remote_url,
-            local_root=local_root,
-            collection=collection,
-            force=force,
-            dry_run=dry_run,
-            restore=restore,
-            profile=profile,
-            concurrency=concurrency,
-            verbose=verbose,
-            json_mode=json_mode,
+    # A push can land between the asset download and the tree download. The
+    # tree download then checks the remote version against the one the assets
+    # came from, and a changed remote starts the clone of the collection again.
+    for attempt in range(1, _CLONE_ATTEMPTS + 1):
+        result = asyncio.run(
+            pull_async(
+                remote_url=remote_url,
+                local_root=local_root,
+                collection=collection,
+                force=force,
+                dry_run=dry_run,
+                restore=restore,
+                profile=profile,
+                concurrency=concurrency,
+                verbose=verbose,
+                json_mode=json_mode,
+            )
         )
-    )
-    if not stac_tree or not result.success:
+        if not stac_tree or not result.success:
+            return result
+        written, failed, changed = asyncio.run(
+            _download_stac_tree(
+                remote_url,
+                local_root,
+                collection,
+                profile,
+                concurrency,
+                expected_version=result.remote_version,
+            )
+        )
+        if not changed:
+            break
+        warn(
+            f"The remote published a new version of '{collection}' during the clone. "
+            f"Downloading it ({attempt}/{_CLONE_ATTEMPTS})."
+        )
+    else:
+        result.success = False
+        error(f"The remote of '{collection}' changed during each of {_CLONE_ATTEMPTS} attempts")
         return result
-    written, failed = asyncio.run(
-        _download_stac_tree(remote_url, local_root, collection, profile, concurrency)
-    )
     result.files_downloaded += written
     if failed:
         result.success = False
@@ -1296,9 +1317,19 @@ def pull(
     return result
 
 
+# How many times clone starts a collection again when the remote changes under it.
+_CLONE_ATTEMPTS = 3
+
+
 async def _download_stac_tree(
-    remote_url: str, local_root: Path, collection: str, profile: str | None, concurrency: int
-) -> tuple[int, int]:
+    remote_url: str,
+    local_root: Path,
+    collection: str,
+    profile: str | None,
+    concurrency: int,
+    *,
+    expected_version: str | None = None,
+) -> tuple[int, int, bool]:
     """Download the STAC tree of ``collection`` and the objects it names (#1042).
 
     clone starts from a fresh local catalog.json with no child links. The remote
@@ -1308,9 +1339,18 @@ async def _download_stac_tree(
     versions.json come as push wrote them. An object that no document names,
     such as a stale object of a removed asset, stays remote.
 
+    ``expected_version`` is the version the assets came from. When the remote
+    manifest names another version, nothing is written and the third value is
+    True, so the caller pulls again before the tree is read.
+
     Returns:
-        The number of files written and the number of files that failed.
+        The number of files written, the number of files that failed, and
+        whether the remote changed.
     """
+    if expected_version is not None:
+        remote = await _fetch_remote_versions_async(remote_url, collection, profile)
+        if remote.current_version != expected_version:
+            return 0, 0, True
     bucket_url, prefix = parse_object_store_url(remote_url)
     store, _ = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=4)
     semaphore = asyncio.Semaphore(concurrency)
@@ -1361,7 +1401,7 @@ async def _download_stac_tree(
         fetch(f"{collection}/versions.json"),
         *(walk(rel) for rel in [*documents, f"{collection}/collection.json"]),
     )
-    return counts["written"], counts["failed"]
+    return counts["written"], counts["failed"], False
 
 
 # =============================================================================

@@ -708,6 +708,63 @@ def test_conflict_loser_keeps_an_asset_with_the_bytes_the_winner_names(
     assert _bytes_that_disagree_with_the_manifest(bucket, "imagery", scenes) == {}
 
 
+def _local_assets_that_disagree_with_their_manifest(root: Path, collection: str) -> dict[str, str]:
+    """Return each asset of the local current snapshot whose file bytes differ from it."""
+    manifest = json.loads((root / collection / "versions.json").read_text())
+    current = next(v for v in manifest["versions"] if v["version"] == manifest["current_version"])
+    disagree: dict[str, str] = {}
+    for asset in current["assets"].values():
+        path = root / asset["href"]
+        actual = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else "<missing>"
+        if actual != asset["sha256"]:
+            disagree[asset["href"]] = actual
+    return disagree
+
+
+def test_clone_keeps_the_snapshot_it_downloaded(
+    fault_catalog: Path,
+    bucket: Bucket,
+    run_cli: RunCli,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    change_scenes: Callable[[Path], None],
+) -> None:
+    """A push that lands during a clone does not leave the clone with a newer manifest.
+
+    clone downloads the assets of one snapshot, then the STAC tree. Another
+    writer publishes a new version in between. The clone's versions.json must
+    describe the bytes the clone holds.
+    """
+    import asyncio
+
+    from portolan_cli.sync import pull as pull_module
+
+    first = _push(run_cli, fault_catalog, bucket)
+    assert first.exit_code == 0, first.output
+    real_tree = pull_module._download_stac_tree
+    landed: list[str] = []
+
+    async def push_lands_then_tree(
+        remote_url: str, local_root: Path, collection: str, *rest: Any, **kwargs: Any
+    ) -> Any:
+        if collection == "imagery" and not landed:
+            change_scenes(fault_catalog)
+            # The clone runs inside asyncio.run, so the other writer pushes in a thread.
+            second = await asyncio.to_thread(_push, run_cli, fault_catalog, bucket)
+            assert second.exit_code == 0, second.output
+            landed.append(collection)
+        return await real_tree(remote_url, local_root, collection, *rest, **kwargs)
+
+    monkeypatch.setattr(pull_module, "_download_stac_tree", push_lands_then_tree)
+    target = tmp_path / "clone"
+
+    result = run_cli("clone", bucket.url, str(target), expect=None)
+
+    assert result.exit_code == 0, result.output
+    assert landed == ["imagery"]
+    assert _local_assets_that_disagree_with_their_manifest(target, "imagery") == {}
+
+
 def test_clone_skips_an_object_that_no_document_names(
     fault_catalog: Path, bucket: Bucket, run_cli: RunCli, tmp_path: Path
 ) -> None:
