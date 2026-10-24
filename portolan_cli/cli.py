@@ -1389,9 +1389,9 @@ def _output_check_json(payload: dict[str, Any], *, failed: bool) -> None:
     is_flag=True,
     help=(
         "Only check/fix STAC metadata (links, schema, staleness). With --fix this is "
-        "the metadata refresh: it exits 1 only when a fix fails, an auto-fixable "
-        "error remains, or a file does not parse. --strict restores the exit on every "
-        "error and warning."
+        "the metadata refresh. It exits 1 while an error remains, and the JSON success "
+        "field is false only when a fix fails, an auto-fixable error remains, or a file "
+        "does not parse. --strict also exits 1 on a warning."
     ),
 )
 @click.option(
@@ -1787,7 +1787,9 @@ def _execute_check_workflow(
         if fix_data is not None:
             _print_fix_split(payload, dry_run=dry_run)
 
-    if failed:
+    # The exit code follows ``passed``: a blocking finding fails the command,
+    # whatever ``--fix`` repaired. ``failed`` sets the envelope's ``success``.
+    if failed or not payload["passed"]:
         raise SystemExit(1)
 
 
@@ -1877,7 +1879,7 @@ def _should_validate(path: Path, *, run_metadata: bool, fix: bool) -> bool:
 
 
 def _check_failed(payload: dict[str, Any], *, strict: bool, refresh: bool = False) -> bool:
-    """Decide the exit code from the findings the mode owns.
+    """Decide the envelope's ``success`` from the findings the mode owns.
 
     A default run fails on any error. Under ``--strict``, where a catalog is
     asserted to be publishable, it also fails on a warning or on the workflow
@@ -1888,9 +1890,10 @@ def _check_failed(payload: dict[str, Any], *, strict: bool, refresh: bool = Fals
     refresh (#853). It fails on an AUTO error that is still in the findings,
     which is a repair the refresh did not make. It also fails on a document
     that does not parse, because the refresh could not read it. Any other
-    INSTRUCT or EXTERNAL error is work for a person or a host, so it stays in
-    the report and leaves the exit code at 0. A fixer that could not write
-    fails the run through ``fix_failed`` in the caller.
+    INSTRUCT or EXTERNAL error is work for a person or a host. The refresh
+    did its job, so ``success`` stays true. The caller still exits 1, because
+    the error leaves ``passed`` false. A fixer that could not write fails the
+    run through ``fix_failed`` in the caller.
     """
     if strict:
         return any(payload.get(key) for key in ("error_count", "warning_count", "workflow"))

@@ -923,11 +923,12 @@ def _errors(envelope: dict[str, Any]) -> list[tuple[str, str]]:
 class TestExitCodePerMode:
     """Each mode exits on the findings it owns (#853).
 
-    ``--fix --metadata`` is the metadata refresh. It fails when the refresh
-    fails: a fixer that could not write, or an AUTO error the re-check still
-    reports. An INSTRUCT error is work for a person, so it stays in the report
-    and does not fail the refresh. Every other mode is a gate on all errors,
-    and ``--strict`` restores the full gate under ``--fix --metadata``.
+    A check command exits 1 while a blocking finding remains, whether or not
+    ``--fix`` repaired something. ``--fix --metadata`` is the metadata refresh.
+    Its ``success`` field says whether the refresh did its job, and ``passed``
+    says whether the catalog conforms. An INSTRUCT error is work for a person:
+    the refresh succeeds, the catalog does not pass, and the exit code follows
+    ``passed``. ``--strict`` adds the warnings and the workflow notice.
     """
 
     @pytest.mark.integration
@@ -941,7 +942,7 @@ class TestExitCodePerMode:
             (["--metadata", "--strict"], 1),
             (["--fix"], 1),
             (["--fix", "--geo-assets"], 0),
-            (["--fix", "--metadata"], 0),
+            (["--fix", "--metadata"], 1),
             (["--fix", "--metadata", "--strict"], 1),
             (["--fix", "--metadata", "--dry-run"], 1),
         ],
@@ -958,16 +959,28 @@ class TestExitCodePerMode:
         assert result.exit_code == exit_code, result.output
 
     @pytest.mark.integration
+    @pytest.mark.parametrize("output_flags", [["--json"], []], ids=["json", "text"])
+    def test_refresh_exits_1_while_an_instruct_error_remains(
+        self, runner: CliRunner, valid_catalog: Path, output_flags: list[str]
+    ) -> None:
+        """The refresh repairs the AUTO error, but a person must still act, so it exits 1."""
+        root = _mirror_catalog_with_a_lost_child_link(valid_catalog)
+
+        result = runner.invoke(cli, ["check", str(root), *output_flags, "--fix", "--metadata"])
+
+        assert result.exit_code == 1, result.output
+
+    @pytest.mark.integration
     def test_refresh_keeps_the_instruct_errors_in_the_report(
         self, runner: CliRunner, valid_catalog: Path
     ) -> None:
-        """The refresh exits 0, and the payload still reports what a person must do."""
+        """The refresh succeeds, the catalog does not pass, and the payload says what to do."""
         root = _mirror_catalog_with_a_lost_child_link(valid_catalog)
 
         result = runner.invoke(cli, ["check", str(root), "--json", "--fix", "--metadata"])
 
         envelope = json.loads(result.stdout)
-        assert result.exit_code == 0, result.output
+        assert envelope["success"] is True
         assert envelope["data"]["passed"] is False
         assert envelope["data"]["error_count"] == 3
         assert _errors(envelope) == [

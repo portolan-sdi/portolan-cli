@@ -902,13 +902,13 @@ class TestCheckMetadataFixFlag:
         # One envelope carries both halves: what --fix did, and the re-check
         # over the result. The catalog is hand-built, so the re-check still
         # reports INSTRUCT errors (passed: false). The refresh repaired every
-        # AUTO error, so the command succeeds and exits 0 (#853).
+        # AUTO error, so it succeeds. The errors block the catalog, so it exits 1.
         try:
             output = json.loads(result.output)
         except json.JSONDecodeError:
             pytest.fail(f"Invalid JSON output: {result.output[:200]}")
 
         assert output["success"] is True
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "metadata_fix" in output["data"]["fix"]
         assert output["data"]["passed"] is False
