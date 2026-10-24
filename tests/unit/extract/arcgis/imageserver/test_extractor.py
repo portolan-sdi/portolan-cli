@@ -1934,3 +1934,80 @@ async def test_tile_download_error_names_the_request_without_its_userinfo(
         "Tile download failed (tile_0_0): refused. Request: https://h.example/X/ImageServer/"
         "exportImage?bbox=0.0%2C0.0%2C4096.0%2C4096.0&size=4096%2C4096&format=tiff&f=image"
     )
+
+
+_NOTE = "A retry cannot fix this failure."
+_EXPORT = (
+    "https://h.example/X/ImageServer/exportImage?"
+    "bbox=0.0%2C0.0%2C4096.0%2C4096.0&size=4096%2C4096&format=tiff&f=image"
+)
+_TOKEN_REQUIRED = b'{"error":{"code":499,"message":"Token Required","details":[]}}'
+_EXPORT_FAILED = b'{"error":{"code":500,"message":"Error exporting image","details":[]}}'
+
+
+def _http(status: int) -> str:
+    return (
+        f"Tile download failed (tile_0_0): HTTP {status} (empty response body). Request: {_EXPORT}"
+    )
+
+
+def _arcgis(code: int, message: str) -> str:
+    return f"ArcGIS error for tile tile_0_0: HTTP 200 [{code}] {message}. Request: {_EXPORT}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "body", "requests", "error"),
+    [
+        (401, b"", 1, f"{_http(401)} The server answered HTTP 401. {_NOTE}"),
+        (403, b"", 1, f"{_http(403)} The server answered HTTP 403. {_NOTE}"),
+        (404, b"", 1, f"{_http(404)} The server answered HTTP 404. {_NOTE}"),
+        (
+            200,
+            _TOKEN_REQUIRED,
+            1,
+            f"{_arcgis(499, 'Token Required')} The server answered ArcGIS error 499. {_NOTE}",
+        ),
+        (408, b"", 3, _http(408)),
+        (503, b"", 3, _http(503)),
+        (200, _EXPORT_FAILED, 3, _arcgis(500, "Error exporting image")),
+    ],
+)
+async def test_tile_retries_only_a_transient_failure(
+    sample_tile: TileSpec,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    body: bytes,
+    requests: int,
+    error: str,
+) -> None:
+    """#1035: a tile request follows the one retry rule of extract/common/retry.py."""
+    import asyncio
+
+    from portolan_cli.extract.arcgis.imageserver.extractor import ExtractionConfig, _process_tile
+
+    async def no_wait(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("portolan_cli.extract.arcgis.imageserver.extractor.asyncio.sleep", no_wait)
+    sent: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(status, content=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+        result = await _process_tile(
+            sample_tile,
+            "https://h.example/X/ImageServer",
+            tmp_path,
+            ExtractionConfig(max_retries=3, rate_limit_delay=0.0),
+            client,
+            asyncio.Semaphore(1),
+            asyncio.Lock(),
+            {},
+        )
+
+    assert (len(sent), result.success, result.attempts) == (requests, False, requests)
+    assert result.error_msg == error

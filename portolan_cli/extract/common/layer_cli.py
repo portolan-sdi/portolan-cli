@@ -51,7 +51,7 @@ def build_command(layer_source: LayerSource) -> click.Command:
         "--retries",
         type=int,
         default=3,
-        help="Attempts per layer (default: 3).",
+        help="Attempts per layer for a transient failure (default: 3).",
     )
     @cli_helpers.run_options("layers")
     @cli_helpers.catalog_options

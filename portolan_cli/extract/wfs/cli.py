@@ -66,7 +66,7 @@ from portolan_cli.extract.common import cli_helpers
     "--retries",
     type=click.IntRange(min=1),
     default=3,
-    help="Retry attempts per failed layer (default: 3).",
+    help="Attempts per layer for a transient failure (default: 3).",
 )
 @click.option(
     "--timeout",

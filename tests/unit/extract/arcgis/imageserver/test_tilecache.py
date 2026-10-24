@@ -999,3 +999,25 @@ async def test_cache_read_error_names_the_tile_without_its_userinfo() -> None:
     assert str(caught.value) == (
         "Cache read failed: HTTP 500 for https://h.example/X/ImageServer/tile/9/3/4."
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("status", "label"), [(403, "HTTP 403"), (503, None)])
+async def test_cache_read_error_carries_its_status_for_the_retry_rule(
+    status: int, label: str | None
+) -> None:
+    """#1035: a cache tile follows the one retry rule. A 403 is permanent, a 503 is not."""
+    from portolan_cli.extract.arcgis.imageserver.tilecache import (
+        TileCacheError,
+        _download_cache_tile,
+    )
+    from portolan_cli.extract.common.retry import permanent_status
+
+    ref = CacheTileRef(level=9, row=3, col=4, dst_row=0, dst_col=0)
+    transport = httpx.MockTransport(lambda request: httpx.Response(status))
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(TileCacheError) as caught:
+            await _download_cache_tile(ref, "https://h.example/X/ImageServer", client)
+
+    assert caught.value.status_code == status
+    assert permanent_status(caught.value) == label
