@@ -90,6 +90,7 @@ from portolan_cli.finalization import (
 )
 from portolan_cli.format_families import VECTOR
 from portolan_cli.formats import (
+    is_geoparquet,
     is_multilayer,
     list_layers,
 )
@@ -173,6 +174,7 @@ from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
 from portolan_cli.stac_parquet import PARQUET_FILENAME
 from portolan_cli.sync.checksums import compute_checksum, file_fields
 from portolan_cli.trace import span, submit
+from portolan_cli.viz.pmtiles_links import PMTILES_SUFFIX
 from portolan_cli.viz.style import enrich_cog_assets
 
 if TYPE_CHECKING:
@@ -837,6 +839,10 @@ SKIP_UNCHANGED = "unchanged since the last add"
 SKIP_COMPANION = "tracked as an asset next to its geospatial file, not converted"
 SKIP_ITEM_MIRROR = "it is the STAC-GeoParquet item mirror"
 SKIP_REWRITE_TEMP = "it is a scratch file of an interrupted rewrite"
+SKIP_LONE_PMTILES = (
+    "PMTiles is a visualization derivative. "
+    "Add the GeoParquet it renders, and keep the tiles beside it."
+)
 SKIPS_THAT_TRACK = frozenset({SKIP_UNCHANGED, SKIP_COMPANION, SKIP_ITEM_MIRROR})
 
 
@@ -958,7 +964,52 @@ def _collect_files_for_add(
 
             files_to_process.append((file_path, coll_id))
 
-    return files_to_process
+    return _without_lone_pmtiles(files_to_process, catalog_root, skip)
+
+
+def _without_lone_pmtiles(
+    files: list[tuple[Path, str]],
+    catalog_root: Path,
+    skip: Callable[[Path, str], None],
+) -> list[tuple[Path, str]]:
+    """Skip each PMTiles that renders no GeoParquet.
+
+    portolan-spec formats.md "PMTiles" makes the tiles the visualization
+    derivative of the GeoParquet data asset. The spec has no PMTiles that is
+    the data of a collection. The GeoParquet is the same-stem file beside the
+    tiles, or a same-stem file of this add that converts to GeoParquet.
+
+    Args:
+        files: The ``(file, collection_id)`` pairs of phase 1.
+        catalog_root: Root directory of the catalog.
+        skip: Records a skipped file and its reason.
+
+    Returns:
+        The pairs without the skipped PMTiles.
+    """
+
+    def gives_geoparquet(path: Path) -> bool:
+        if path.suffix.lower() == ".parquet":
+            return is_geoparquet(path)
+        handler = handler_for(path, catalog_root)
+        return (
+            handler is not None
+            and handler.output_path(path, path.parent).suffix.lower() == ".parquet"
+        )
+
+    def is_tiles(path: Path) -> bool:
+        return path.suffix.lower() == PMTILES_SUFFIX
+
+    rendered = {(p.parent, p.stem) for p, _ in files if not is_tiles(p) and gives_geoparquet(p)}
+    kept: list[tuple[Path, str]] = []
+    for file_path, coll_id in files:
+        if is_tiles(file_path) and (file_path.parent, file_path.stem) not in rendered:
+            parquet = file_path.with_suffix(".parquet")
+            if not (parquet.is_file() and is_geoparquet(parquet)):
+                skip(file_path, SKIP_LONE_PMTILES)
+                continue
+        kept.append((file_path, coll_id))
+    return kept
 
 
 @dataclass(frozen=True)

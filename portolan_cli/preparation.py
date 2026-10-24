@@ -143,8 +143,8 @@ def _get_asset_role(path: Path) -> str:
         path: Path to the file.
 
     Returns:
-        Role string: "data", "thumbnail", "metadata", or "documentation".
-        Defaults to "data" for unknown extensions.
+        Role string: "data", "visual", "thumbnail", "metadata", or
+        "documentation". Defaults to "data" for unknown extensions.
         :func:`_resolve_assets` then gives each scanned file its final role.
     """
     return _ROLE_MAP.get(path.suffix.lower(), "data")
@@ -356,14 +356,14 @@ def _resolve_assets(
     Content files (every role but thumbnail, metadata and documentation) are
     grouped by stem. In each group:
 
-    - The file of the lowest rank owns the stem and gets the ``data`` role:
-      GeoParquet, then other cloud-native data (COG, FlatGeobuf), then PMTiles,
-      then Parquet without GeoParquet metadata, then everything else. The
-      primary wins a tie, then ``<stem>.parquet``, then the first name. An item
-      keys its primary ``data`` and always lets it own its group.
-    - A PMTiles that does not own its group is the owner's visualization
-      derivative. It gets the ``visual`` role and the key the PMTiles writer
-      uses (Issue #929).
+    - A PMTiles never owns the stem. portolan-spec formats.md "PMTiles" makes
+      it the visualization derivative of the GeoParquet. It gets the
+      ``visual`` role and the key the PMTiles writer uses (Issue #929).
+    - Of the other files, the file of the lowest rank owns the stem and gets
+      the ``data`` role: GeoParquet, then other cloud-native data (COG,
+      FlatGeobuf), then Parquet without GeoParquet metadata, then everything
+      else. The primary wins a tie, then ``<stem>.parquet``, then the first
+      name. An item keys its primary ``data`` and always lets it own its group.
     - When the owner is cloud-native, a file that is not is the file the owner
       was converted from, such as a GeoJSON or a shapefile and its sidecars. It
       gets the ``source`` role (Issue #960).
@@ -412,7 +412,8 @@ def _resolve_assets(
         members = groups[stem]
         ranks = {f.path: _stem_rank(f, read_footer=len(members) > 1) for f in members}
         owner = min(
-            members,
+            (f for f in members if f.media_type != PMTILES_MEDIA_TYPE),
+            default=None,
             key=lambda f: (
                 not collection_level and f.path != primary_file,
                 ranks[f.path],
@@ -421,13 +422,13 @@ def _resolve_assets(
                 f.path.name,
             ),
         )
-        converted = ranks[owner.path] < STEM_RANK_SOURCE
+        converted = owner is not None and ranks[owner.path] < STEM_RANK_SOURCE
         for member in members:
-            if member is owner:
+            if member.media_type == PMTILES_MEDIA_TYPE:
+                claim(pmtiles_asset_key(stem), member, ROLE_VISUAL)
+            elif member is owner:
                 is_primary = member.path == primary_file
                 claim("data" if is_primary and not collection_level else stem, member, "data")
-            elif member.media_type == PMTILES_MEDIA_TYPE:
-                claim(pmtiles_asset_key(stem), member, ROLE_VISUAL)
             elif converted and ranks[member.path] == STEM_RANK_SOURCE:
                 claim(member.path.name, member, ROLE_SOURCE)
             else:
