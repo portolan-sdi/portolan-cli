@@ -95,6 +95,7 @@ class TestAssetPathResolution:
             item_id=item_id,
             primary_file=data_file,
             collection_dir=collection_dir,
+            collection_id="land",
         )
 
         assert stac_assets["data"].href == "data.parquet"

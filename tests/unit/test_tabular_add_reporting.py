@@ -83,3 +83,51 @@ def test_genuine_no_op_still_reports_unchanged(tmp_path: Path) -> None:
     result = CliRunner().invoke(cli, ["add", str(parquet), "--portolan-dir", str(root)])
 
     assert "already tracked" in result.output
+
+
+def test_a_companion_that_meets_an_asset_key_collision_is_a_skip(tmp_path: Path) -> None:
+    """The rescan of the item raised the collision, and add reported a failure.
+
+    A single file reports the same collision as a skip. The copy goes again,
+    so the item directory and the item JSON stay as they were.
+    """
+    from portolan_cli.add import _process_deferred_non_geo_files
+    from portolan_cli.stac import MergeStrategy
+
+    item_dir = tmp_path / "land" / "scene"
+    item_dir.mkdir(parents=True)
+    (item_dir / "scene.tif").write_bytes(b"cog")
+    (item_dir / "data").write_bytes(b"notes")
+    item_json = json.dumps({"assets": {"data": {"href": "scene.tif", "roles": ["data"]}}})
+    (item_dir / "scene.json").write_text(item_json)
+    source_dir = tmp_path / "incoming"
+    source_dir.mkdir()
+    companion = source_dir / "prices.csv"
+    companion.write_text("a\n1\n")
+    skipped: list[Path] = []
+    failures: list[object] = []
+    reasons: dict[Path, str] = {}
+
+    _process_deferred_non_geo_files(
+        deferred_non_geo=[(companion, source_dir, "land")],
+        source_to_item_dir={source_dir: (item_dir, "land", "scene")},
+        source_to_collection_dir={},
+        catalog_root=tmp_path,
+        added=[],
+        skipped=skipped,
+        failures=failures,
+        merge_strategy=MergeStrategy.SMART,
+        skip_reasons=reasons,
+    )
+
+    assert failures == []
+    assert skipped == [companion]
+    assert reasons == {
+        companion: (
+            "Collection 'land': asset key 'data' already holds 'scene.tif'. Adding 'data' "
+            "under the same key would remove that asset. Remove one of the two files from "
+            "the collection, or rename it."
+        )
+    }
+    assert sorted(p.name for p in item_dir.iterdir()) == ["data", "scene.json", "scene.tif"]
+    assert (item_dir / "scene.json").read_text() == item_json

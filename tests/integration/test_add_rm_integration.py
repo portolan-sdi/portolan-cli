@@ -775,3 +775,55 @@ class TestOldCommandsRemoved:
         # Should fail because the command group doesn't exist
         assert result.exit_code != 0
         assert "no such command" in result.output.lower()
+
+
+class TestLonePMTilesIsRefused:
+    """The spec has no PMTiles that stands alone as the data of a collection.
+
+    portolan-spec formats.md "PMTiles" makes it the visualization derivative
+    of the GeoParquet data asset. add registered a lone PMTiles as the data.
+    """
+
+    _REASON = (
+        "PMTiles is a visualization derivative. "
+        "Add the GeoParquet it renders, and keep the tiles beside it."
+    )
+
+    @staticmethod
+    def _lone_tiles(run_cli: RunCli, tmp_path: Path, fixtures_dir: Path) -> tuple[Path, Path]:
+        catalog = tmp_path / "catalog"
+        run_cli("init", str(catalog), "--auto", "--license", "CC-BY-4.0")
+        collection_dir = catalog / "basemap"
+        collection_dir.mkdir()
+        tiles = collection_dir / "basemap.pmtiles"
+        shutil.copy(fixtures_dir / "cloud_native" / "sample.pmtiles", tiles)
+        return catalog, tiles
+
+    @pytest.mark.integration
+    def test_text_mode_skips_the_tiles_with_the_reason(
+        self, run_cli: RunCli, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        catalog, tiles = self._lone_tiles(run_cli, tmp_path, fixtures_dir)
+
+        result = run_cli("add", "--portolan-dir", str(catalog), str(tiles))
+
+        assert f"Skipping basemap.pmtiles: {self._REASON}" in " ".join(result.output.split())
+        assert sorted(p.name for p in tiles.parent.iterdir()) == ["basemap.pmtiles"]
+
+    @pytest.mark.integration
+    def test_json_mode_lists_the_skip_with_the_reason(
+        self, run_cli: RunCli, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        import json
+
+        catalog, tiles = self._lone_tiles(run_cli, tmp_path, fixtures_dir)
+
+        result = run_cli("--format=json", "add", "--portolan-dir", str(catalog), str(tiles))
+
+        envelope = json.loads(result.stdout)
+        assert envelope["success"] is True
+        assert envelope["data"]["added"] == []
+        assert [(s["path"], s["reason"]) for s in envelope["data"]["skipped"]] == [
+            (str(tiles), self._REASON)
+        ]
+        assert sorted(p.name for p in tiles.parent.iterdir()) == ["basemap.pmtiles"]

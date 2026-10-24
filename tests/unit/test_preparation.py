@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from portolan_cli.errors import AssetKeyCollisionError
 from portolan_cli.plugins.builtin.formats import COG, FLATGEOBUF, GEOPARQUET, PMTILES
 from portolan_cli.preparation import (
     _add_statistics_to_properties,
@@ -192,6 +193,7 @@ def _scan(directory: Path, primary: str, *, collection_level: bool = True) -> di
         item_id=Path(primary).stem,
         primary_file=directory / primary,
         collection_dir=directory if collection_level else directory.parent,
+        collection_id="land",
         collection_level=collection_level,
     )
     return {key: (asset.href, asset.roles) for key, asset in assets.items()}
@@ -258,13 +260,13 @@ class TestStemGroupResolver:
             "b": ("./b.parquet", ["data"]),
         }
 
-    def test_plain_table_never_demotes_a_pmtiles(self, tmp_path: Path) -> None:
-        """A same-stem Parquet without GeoParquet metadata is no tile source."""
+    def test_a_pmtiles_beside_a_plain_table_is_still_the_visual(self, tmp_path: Path) -> None:
+        """core.md "Roles": the PMTiles is ``visual``, never ``data``."""
         _write(tmp_path, "table.pmtiles", "table.parquet")
 
         assert _scan(tmp_path, "table.pmtiles") == {
-            "table": ("./table.pmtiles", ["data"]),
-            "table.parquet": ("./table.parquet", ["data"]),
+            "table": ("./table.parquet", ["data"]),
+            "table-tiles": ("./table.pmtiles", ["visual"]),
         }
 
     @pytest.mark.parametrize("primary", ["roads.fgb", "roads.pmtiles"])
@@ -335,28 +337,31 @@ class TestStemGroupResolver:
         }
 
     def test_role_files_never_own_the_stem(self, tmp_path: Path) -> None:
-        _write(tmp_path, "roads.pmtiles", "roads.md", "roads.txt")
+        _write(tmp_path, "roads.parquet", "roads.md", "roads.txt")
 
-        assert _scan(tmp_path, "roads.pmtiles") == {
-            "roads": ("./roads.pmtiles", ["data"]),
+        assert _scan(tmp_path, "roads.parquet") == {
+            "roads": ("./roads.parquet", ["data"]),
             "documentation": ("./roads.md", ["documentation"]),
             "roads.txt": ("./roads.txt", ["documentation"]),
         }
 
-    def test_standalone_pmtiles_is_the_data(self, tmp_path: Path) -> None:
-        _write(tmp_path, "basemap.pmtiles")
+    def test_a_lone_pmtiles_is_the_visual(self, tmp_path: Path) -> None:
+        """The scan of another stem sees tiles that render no GeoParquet yet."""
+        _write(tmp_path, "basemap.pmtiles", "roads.parquet")
 
-        assert _scan(tmp_path, "basemap.pmtiles") == {"basemap": ("./basemap.pmtiles", ["data"])}
+        assert _scan(tmp_path, "roads.parquet") == {
+            "basemap-tiles": ("./basemap.pmtiles", ["visual"]),
+            "roads": ("./roads.parquet", ["data"]),
+        }
 
     def test_extension_role_of_a_lone_file_is_the_role_the_scan_gives(self, tmp_path: Path) -> None:
         """``check --fix`` backfills a missing role from the extension alone.
 
-        It must give a lone PMTiles the role a fresh ``add`` gives it, or a
-        repair turns the only data of a collection into a visual.
+        It must give a PMTiles the role a fresh ``add`` gives it.
         """
         _write(tmp_path, "basemap.pmtiles")
 
-        _href, roles = _scan(tmp_path, "basemap.pmtiles")["basemap"]
+        _href, roles = _scan(tmp_path, "basemap.pmtiles")["basemap-tiles"]
         assert [_get_asset_role(tmp_path / "basemap.pmtiles")] == roles
 
     def test_the_item_mirror_is_never_a_scanned_asset(self, tmp_path: Path) -> None:
@@ -387,6 +392,51 @@ class TestStemGroupResolver:
             "data": ("scene.tif", ["data"]),
             "scene.jp2": ("scene.jp2", ["source"]),
             "thumbnail": ("scene.thumb.jpg", ["thumbnail"]),
+        }
+
+    @pytest.mark.parametrize(
+        ("level", "names", "primary", "key", "holder", "loser"),
+        [
+            # The item primary takes ``data``. The file ``data`` then wants the
+            # stem key and its filename, and both are ``data``.
+            ("item", ("scene.tif", "data"), "scene.tif", "data", "scene.tif", "data"),
+            # The PMTiles takes ``zoning-tiles``. The file ``zoning-tiles`` then
+            # wants the stem key and its filename, and both are ``zoning-tiles``.
+            (
+                "collection",
+                ("zoning.parquet", "zoning.pmtiles", "zoning-tiles"),
+                "zoning.parquet",
+                "zoning-tiles",
+                "zoning.pmtiles",
+                "zoning-tiles",
+            ),
+        ],
+    )
+    def test_two_files_under_one_key_raise_the_collision(
+        self,
+        tmp_path: Path,
+        level: str,
+        names: tuple[str, ...],
+        primary: str,
+        key: str,
+        holder: str,
+        loser: str,
+    ) -> None:
+        """The second file replaced the first in the asset dict, with no error.
+
+        versions.json then tracked both files and the STAC document held one.
+        """
+        directory = tmp_path / "scene" if level == "item" else tmp_path
+        _write(directory, *names)
+
+        with pytest.raises(AssetKeyCollisionError) as excinfo:
+            _scan(directory, primary, collection_level=level == "collection")
+
+        assert excinfo.value.context == {
+            "collection_id": "land",
+            "asset_key": key,
+            "existing_href": holder,
+            "new_href": loser,
         }
 
 
@@ -428,6 +478,7 @@ class TestScanItemAssetsSymlinks:
             item_id="roads",
             primary_file=primary,
             collection_dir=collection_dir,
+            collection_id="land",
         )
 
         assert "linked.gdb" not in asset_files

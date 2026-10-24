@@ -127,13 +127,17 @@ class PMTilesResult:
 
     Attributes:
         generated: Paths to successfully generated PMTiles files.
-        skipped: Paths to PMTiles that were skipped (already exist and up-to-date).
+        skipped: Paths to PMTiles that this run did not build.
         failed: List of (source_path, error_message) for failed generations.
+        sources: The GeoParquet of each PMTiles in the plan.
+        older: PMTiles that were older than their GeoParquet at the start.
     """
 
     generated: list[Path] = field(default_factory=list)
     skipped: list[Path] = field(default_factory=list)
     failed: list[tuple[Path, str]] = field(default_factory=list)
+    sources: dict[Path, Path] = field(default_factory=dict)
+    older: list[Path] = field(default_factory=list)
 
     @property
     def total(self) -> int:
@@ -205,6 +209,17 @@ def _find_geoparquet_assets(collection_path: Path) -> list[tuple[str, Path]]:
     return geoparquet_assets
 
 
+def _older_than_data(parquet_path: Path, pmtiles_path: Path) -> bool:
+    """Report whether an existing PMTiles is older than its GeoParquet.
+
+    This is the one up-to-date rule. Tiles that are not older than the
+    GeoParquet are current. No PMTiles writer records the checksum of its
+    source, and geoparquet-io gives no way to write one, so the mtime is the
+    only comparison.
+    """
+    return pmtiles_path.exists() and parquet_path.stat().st_mtime > pmtiles_path.stat().st_mtime
+
+
 def _should_generate(parquet_path: Path, pmtiles_path: Path, force: bool) -> bool:
     """Determine if PMTiles should be generated.
 
@@ -216,14 +231,41 @@ def _should_generate(parquet_path: Path, pmtiles_path: Path, force: bool) -> boo
     Returns:
         True if PMTiles should be generated.
     """
-    if force:
-        return True
+    return force or not pmtiles_path.exists() or _older_than_data(parquet_path, pmtiles_path)
 
+
+def _set_aside(pmtiles_path: Path) -> Path | None:
+    """Move an existing PMTiles to a hidden name for the length of a build.
+
+    tippecanoe refuses to overwrite a tileset (exit code 104). The caller puts
+    the file back when the build fails, so a failed rebuild keeps valid data
+    (Issue #814). A hidden file is never an asset.
+    """
     if not pmtiles_path.exists():
-        return True
+        return None
+    previous = pmtiles_path.with_name(f".{pmtiles_path.name}.previous")
+    pmtiles_path.replace(previous)
+    return previous
 
-    # Regenerate if source is newer than target
-    return parquet_path.stat().st_mtime > pmtiles_path.stat().st_mtime
+
+def _end_build(pmtiles_path: Path, previous: Path | None, *, succeeded: bool) -> None:
+    """Remove the partial output of a failed build and put the old tileset back.
+
+    A partial file is a phantom asset (Issue #385). The tileset of an earlier
+    run is valid data, so a failed rebuild keeps it (Issue #814). After a
+    build that succeeds, the old tileset goes.
+    """
+    if succeeded:
+        if previous is not None:
+            previous.unlink(missing_ok=True)
+        return
+    # missing_ok=True avoids TOCTOU race condition
+    if pmtiles_path.exists():
+        pmtiles_path.unlink(missing_ok=True)
+        warn(f"Cleaned up partial file after failure: {pmtiles_path.name}")
+    if previous is not None:
+        previous.replace(pmtiles_path)
+        warn(f"Kept the previous {pmtiles_path.name}: the rebuild failed.")
 
 
 def _discover_style_for_thumbnail(collection_dir: Path) -> Path | None:
@@ -712,7 +754,12 @@ def generate_pmtiles_for_collection(
     A sibling PMTiles that this run does not build is registered as it is: the
     asset, the ``rel: pmtiles`` link, and the default style (rashid PTL-VIZ-002
     and PTL-VIZ-003). tippecanoe is checked only when a tile is built, so
-    pre-built tiles need no tippecanoe (Issue #934).
+    pre-built tiles need no tippecanoe (Issue #934). With ``generate`` True,
+    a sibling PMTiles older than its GeoParquet is built again. With
+    ``generate`` False, it is registered as it is and ``older`` names it.
+    ``add`` rewrites a GeoParquet in place for the bbox column (#805), so
+    user tiles (#929) look older although the data is the same. A rebuild
+    with the default settings would replace them.
 
     Args:
         collection_path: Path to collection directory.
@@ -740,7 +787,6 @@ def generate_pmtiles_for_collection(
         TippecanoeNotFoundError: If a tile must be built and tippecanoe is not
             in PATH.
     """
-    result = PMTilesResult()
     plan = [
         (asset_key, parquet_path, parquet_path.with_suffix(PMTILES_SUFFIX))
         for asset_key, parquet_path in _find_geoparquet_assets(collection_path)
@@ -748,7 +794,11 @@ def generate_pmtiles_for_collection(
     if not generate:
         plan = [entry for entry in plan if entry[2].exists()]
         if not plan:
-            return result
+            return PMTilesResult()
+    result = PMTilesResult(
+        sources={pmtiles_path: parquet_path for _, parquet_path, pmtiles_path in plan},
+        older=[pm for _, parquet, pm in plan if _older_than_data(parquet, pm)],
+    )
     builds = {
         pmtiles_path
         for _, parquet_path, pmtiles_path in plan
@@ -798,21 +848,8 @@ def generate_pmtiles_for_collection(
         # Track success to clean up partial files on any failure (Issue #385)
         # Using finally ensures cleanup even on KeyboardInterrupt/SystemExit
         generation_succeeded = False
-        # Record whether this invocation owns the output file. tippecanoe
-        # refuses to overwrite an existing tileset and exits without writing
-        # anything (exit code 104). The cleanup below must not delete a valid
-        # pre-existing file it did not create (Issue #814).
-        output_preexisting = False
+        previous = _set_aside(pmtiles_path)
         try:
-            # Delete existing file if forcing regeneration
-            # (tippecanoe requires this since it doesn't have a --force option)
-            if force and pmtiles_path.exists():
-                pmtiles_path.unlink()
-
-            # After an optional force delete, a file that still exists belongs
-            # to an earlier run. This invocation must keep it on failure.
-            output_preexisting = pmtiles_path.exists()
-
             generate_pmtiles(
                 parquet_path,
                 pmtiles_path,
@@ -846,23 +883,10 @@ def generate_pmtiles_for_collection(
 
         except PMTilesGenerationError as e:
             result.failed.append((parquet_path, str(e)))
-            # tippecanoe stops at the start when the tileset already exists.
-            # Nothing was written, so tell the user how to rebuild it (#814).
-            if output_preexisting and not force:
-                warn(
-                    f"{pmtiles_path.name} already exists and was kept. "
-                    "Pass --force-pmtiles to rebuild it."
-                )
         except Exception as e:
             result.failed.append((parquet_path, f"Unexpected error: {e}"))
         finally:
-            # Clean up partial output to prevent phantom assets (Issue #385).
-            # Only remove a file this invocation created. A pre-existing tileset
-            # is valid data, so keep it on failure (Issue #814).
-            # missing_ok=True avoids TOCTOU race condition
-            if not generation_succeeded and not output_preexisting and pmtiles_path.exists():
-                pmtiles_path.unlink(missing_ok=True)
-                warn(f"Cleaned up partial file after failure: {pmtiles_path.name}")
+            _end_build(pmtiles_path, previous, succeeded=generation_succeeded)
 
         # Generate thumbnail separately - failure shouldn't affect PMTiles success
         # (Issue #13) - then track the PMTiles and thumbnail in a SINGLE version
@@ -1014,10 +1038,18 @@ def _report_pmtiles_result(
     """Report PMTiles generation results; exit non-zero on explicit-flag failure."""
     if not use_json:
         for p in result.generated:
-            success(f"Generated PMTiles: {p.name}")
-        if result.skipped and verbose:
-            for p in result.skipped:
-                info(f"Skipped PMTiles (up-to-date): {p.name}")
+            if p in result.older:
+                success(f"Rebuilt PMTiles: {p.name} was older than {result.sources[p].name}")
+            else:
+                success(f"Generated PMTiles: {p.name}")
+        for p in result.skipped:
+            if p in result.older:
+                warn(
+                    f"Kept PMTiles: {p.name} is older than {result.sources[p].name}. "
+                    "Pass --pmtiles to rebuild it."
+                )
+            elif verbose:
+                info(f"Skipped PMTiles: {p.name} is not older than {result.sources[p].name}")
     for path, error_msg in result.failed:
         if explicit_flag:
             if not use_json:

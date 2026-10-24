@@ -2620,10 +2620,11 @@ class TestPartitionedOutputWithGeoparquetIO:
             batch_exclude_names=frozenset(),
         )
 
-        prepared, failures = add._prepare_multilayer_file(gpkg, "coll", opts)
+        prepared, failures, skips = add._prepare_multilayer_file(gpkg, "coll", opts)
 
         assert prepared == []
         assert len(failures) == 1
+        assert skips == {}
         assert layer.exists() is existed
 
     @pytest.mark.integration

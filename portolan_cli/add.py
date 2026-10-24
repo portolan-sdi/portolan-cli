@@ -40,7 +40,12 @@ from portolan_cli.constants import (
 from portolan_cli.conversion_config import get_vector_settings
 from portolan_cli.convert import convert_multilayer_file
 from portolan_cli.discovery import get_sidecars, iter_files_with_sidecars, iter_geospatial_files
-from portolan_cli.errors import MissingLicenseError, NoGeometryError, PartitionCollisionError
+from portolan_cli.errors import (
+    AssetKeyCollisionError,
+    MissingLicenseError,
+    NoGeometryError,
+    PartitionCollisionError,
+)
 
 # Batch finalization (STAC-write + backend coordination) was extracted to
 # finalization.py (issue #624). add.py orchestrates on top of it: add_files /
@@ -85,6 +90,7 @@ from portolan_cli.finalization import (
 )
 from portolan_cli.format_families import VECTOR
 from portolan_cli.formats import (
+    is_geoparquet,
     is_multilayer,
     list_layers,
 )
@@ -168,6 +174,7 @@ from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
 from portolan_cli.stac_parquet import PARQUET_FILENAME
 from portolan_cli.sync.checksums import compute_checksum, file_fields
 from portolan_cli.trace import span, submit
+from portolan_cli.viz.pmtiles_links import PMTILES_SUFFIX
 from portolan_cli.viz.style import enrich_cog_assets
 
 if TYPE_CHECKING:
@@ -832,6 +839,10 @@ SKIP_UNCHANGED = "unchanged since the last add"
 SKIP_COMPANION = "tracked as an asset next to its geospatial file, not converted"
 SKIP_ITEM_MIRROR = "it is the STAC-GeoParquet item mirror"
 SKIP_REWRITE_TEMP = "it is a scratch file of an interrupted rewrite"
+SKIP_LONE_PMTILES = (
+    "PMTiles is a visualization derivative. "
+    "Add the GeoParquet it renders, and keep the tiles beside it."
+)
 SKIPS_THAT_TRACK = frozenset({SKIP_UNCHANGED, SKIP_COMPANION, SKIP_ITEM_MIRROR})
 
 
@@ -953,7 +964,52 @@ def _collect_files_for_add(
 
             files_to_process.append((file_path, coll_id))
 
-    return files_to_process
+    return _without_lone_pmtiles(files_to_process, catalog_root, skip)
+
+
+def _without_lone_pmtiles(
+    files: list[tuple[Path, str]],
+    catalog_root: Path,
+    skip: Callable[[Path, str], None],
+) -> list[tuple[Path, str]]:
+    """Skip each PMTiles that renders no GeoParquet.
+
+    portolan-spec formats.md "PMTiles" makes the tiles the visualization
+    derivative of the GeoParquet data asset. The spec has no PMTiles that is
+    the data of a collection. The GeoParquet is the same-stem file beside the
+    tiles, or a same-stem file of this add that converts to GeoParquet.
+
+    Args:
+        files: The ``(file, collection_id)`` pairs of phase 1.
+        catalog_root: Root directory of the catalog.
+        skip: Records a skipped file and its reason.
+
+    Returns:
+        The pairs without the skipped PMTiles.
+    """
+
+    def gives_geoparquet(path: Path) -> bool:
+        if path.suffix.lower() == ".parquet":
+            return is_geoparquet(path)
+        handler = handler_for(path, catalog_root)
+        return (
+            handler is not None
+            and handler.output_path(path, path.parent).suffix.lower() == ".parquet"
+        )
+
+    def is_tiles(path: Path) -> bool:
+        return path.suffix.lower() == PMTILES_SUFFIX
+
+    rendered = {(p.parent, p.stem) for p, _ in files if not is_tiles(p) and gives_geoparquet(p)}
+    kept: list[tuple[Path, str]] = []
+    for file_path, coll_id in files:
+        if is_tiles(file_path) and (file_path.parent, file_path.stem) not in rendered:
+            parquet = file_path.with_suffix(".parquet")
+            if not (parquet.is_file() and is_geoparquet(parquet)):
+                skip(file_path, SKIP_LONE_PMTILES)
+                continue
+        kept.append((file_path, coll_id))
+    return kept
 
 
 @dataclass(frozen=True)
@@ -981,11 +1037,13 @@ class _ProcessResult:
 
     ``prepared_items`` feed ``finalize_items``; ``deferred_non_geo`` plus the
     ``source_to_*`` maps drive phase 3 (deferred non-geo companion assets);
-    ``failures`` are surfaced to the caller (Issue #175).
+    ``failures`` are surfaced to the caller (Issue #175). ``skips`` holds the
+    reason for each file that stays out because two files claim one asset key.
     """
 
     prepared_items: list[PreparedItem] = field(default_factory=list)
     failures: list[AddFailure] = field(default_factory=list)
+    skips: dict[Path, str] = field(default_factory=dict)
     deferred_non_geo: list[tuple[Path, Path, str]] = field(default_factory=list)
     source_to_item_dir: dict[Path, tuple[Path, str, str]] = field(default_factory=dict)
     source_to_collection_dir: dict[Path, tuple[Path, str]] = field(default_factory=dict)
@@ -995,16 +1053,18 @@ def _prepare_multilayer_file(
     file_path: Path,
     coll_id: str,
     opts: _PrepareOptions,
-) -> tuple[list[PreparedItem], list[AddFailure]]:
+) -> tuple[list[PreparedItem], list[AddFailure], dict[Path, str]]:
     """Convert + prepare every layer of a multi-layer file (Issue #265).
 
     GeoPackage / FileGDB are split into one parquet (and one PreparedItem) per
     layer. A failure preparing a single layer is recorded and the remaining
     layers continue (Issue #175); a failure of the conversion itself fails the
-    whole file with a single AddFailure.
+    whole file with a single AddFailure. A layer output that two files claim
+    one asset key for is a skip, as a single file is.
     """
     prepared_list: list[PreparedItem] = []
     failure_list: list[AddFailure] = []
+    skips: dict[Path, str] = {}
 
     try:
         # Load vector settings from catalog config, then convert all layers.
@@ -1041,22 +1101,35 @@ def _prepare_multilayer_file(
                         skip_partitioning=opts.skip_partitioning,
                     )
                 )
+            except AssetKeyCollisionError as err:
+                # prepare_item keeps a layer file that existed before its scan.
+                # A layer file this run wrote goes, as for a single file.
+                if result.output not in existing:
+                    result.output.unlink(missing_ok=True)
+                skips[result.output] = err.message
             except Exception as err:
                 failure_list.append(
                     AddFailure(path=result.output, error=f"Layer {result.layer}: {err}")
                 )
 
-        return (prepared_list, failure_list)
+        return (prepared_list, failure_list, skips)
 
     except Exception as err:
-        return ([], [AddFailure(path=file_path, error=str(err))])
+        return ([], [AddFailure(path=file_path, error=str(err))], {})
+
+
+#: What phase 2 makes of one source file: the prepared items, the failures,
+#: the deferred non-geo file, and the skips with their reasons.
+_FileOutcome = tuple[
+    list[PreparedItem], list[AddFailure], tuple[Path, Path, str] | None, dict[Path, str]
+]
 
 
 def _prepare_single_file(
     file_path: Path,
     coll_id: str,
     opts: _PrepareOptions,
-) -> tuple[list[PreparedItem], list[AddFailure], tuple[Path, Path, str] | None]:
+) -> _FileOutcome:
     """Prepare one source file inside an ``add.file`` span (issue #991)."""
     with span("add.file", file=file_path.name, collection=coll_id):
         return _prepare_file(file_path, coll_id, opts)
@@ -1066,19 +1139,21 @@ def _prepare_file(
     file_path: Path,
     coll_id: str,
     opts: _PrepareOptions,
-) -> tuple[list[PreparedItem], list[AddFailure], tuple[Path, Path, str] | None]:
+) -> _FileOutcome:
     """Prepare one source file for finalization (phase 2, parallelizable).
 
     Runs ``prepare_item()`` (GDAL work + item.json) but writes no versions.json
     or collection.json — those are batched in ``finalize_items`` (Issue #281).
-    Returns ``(prepared_items, failures, deferred)`` where ``deferred`` is a
-    ``(file, source_dir, collection_id)`` tuple for a non-geo tabular file to be
-    tracked as a companion asset in phase 3, else ``None``.
+    Returns ``(prepared_items, failures, deferred, skips)`` where ``deferred``
+    is a ``(file, source_dir, collection_id)`` tuple for a non-geo tabular file
+    to be tracked as a companion asset in phase 3, else ``None``. Two files
+    that claim one asset key make a skip, not a failure. The scan raises
+    before any write, so the catalog stays as it was.
     """
     # Multi-layer files (GeoPackage, FileGDB) split into one item per layer.
     if is_multilayer(file_path):
-        prepared_list, failure_list = _prepare_multilayer_file(file_path, coll_id, opts)
-        return (prepared_list, failure_list, None)
+        prepared_list, failure_list, skips = _prepare_multilayer_file(file_path, coll_id, opts)
+        return (prepared_list, failure_list, None, skips)
 
     # Single-layer file - original behavior
     try:
@@ -1100,20 +1175,39 @@ def _prepare_file(
             item_datetime=opts.item_datetime,
             skip_partitioning=opts.skip_partitioning,
         )
-        return (partitioned, [], None)
+        return (partitioned, [], None, {})
+
+    except AssetKeyCollisionError as err:
+        return ([], [], None, {file_path: err.message})
 
     except NoGeometryError as err:
         if file_path.suffix.lower() in TABULAR_EXTENSIONS:
-            return ([], [], (file_path, file_path.parent, coll_id))
-        return ([], [AddFailure(path=file_path, error=str(err))], None)
+            return ([], [], (file_path, file_path.parent, coll_id), {})
+        return ([], [AddFailure(path=file_path, error=str(err))], None, {})
 
     except ValueError as err:
         if _is_parquet_no_geometry_error(err) and file_path.suffix.lower() in TABULAR_EXTENSIONS:
-            return ([], [], (file_path, file_path.parent, coll_id))
-        return ([], [AddFailure(path=file_path, error=str(err))], None)
+            return ([], [], (file_path, file_path.parent, coll_id), {})
+        return ([], [AddFailure(path=file_path, error=str(err))], None, {})
 
     except Exception as err:
-        return ([], [AddFailure(path=file_path, error=str(err))], None)
+        return ([], [AddFailure(path=file_path, error=str(err))], None, {})
+
+
+def _fold_prepared(
+    result: _ProcessResult,
+    outcome: _FileOutcome,
+    file_path: Path,
+    coll_id: str,
+    catalog_root: Path,
+) -> None:
+    """Fold the outcome of one file's preparation into the phase-2 accumulator."""
+    prepared_list, failure_list, deferred, skips = outcome
+    _record_prepared(result, prepared_list, file_path, coll_id, catalog_root)
+    result.failures.extend(failure_list)
+    result.skips.update(skips)
+    if deferred is not None:
+        result.deferred_non_geo.append(deferred)
 
 
 def _record_prepared(
@@ -1163,11 +1257,13 @@ def _phase_process(
         for file_path, coll_id in files_to_process:
             if on_progress is not None:
                 on_progress(file_path)
-            prepared_list, failure_list, deferred = _prepare_single_file(file_path, coll_id, opts)
-            _record_prepared(result, prepared_list, file_path, coll_id, opts.catalog_root)
-            result.failures.extend(failure_list)
-            if deferred is not None:
-                result.deferred_non_geo.append(deferred)
+            _fold_prepared(
+                result,
+                _prepare_single_file(file_path, coll_id, opts),
+                file_path,
+                coll_id,
+                opts.catalog_root,
+            )
         return result
 
     # Parallel execution with ThreadPoolExecutor
@@ -1183,15 +1279,11 @@ def _phase_process(
         # Process results as they complete (main thread)
         for future in as_completed(future_to_file):
             file_path, coll_id = future_to_file[future]
-            prepared_list, failure_list, deferred = future.result()
             # Call progress callback from the main thread (thread-safe) so the
             # CLI's AddProgressReporter works in parallel mode.
             if on_progress is not None:
                 on_progress(file_path)
-            _record_prepared(result, prepared_list, file_path, coll_id, opts.catalog_root)
-            result.failures.extend(failure_list)
-            if deferred is not None:
-                result.deferred_non_geo.append(deferred)
+            _fold_prepared(result, future.result(), file_path, coll_id, opts.catalog_root)
 
     return result
 
@@ -1394,6 +1486,9 @@ def add_files(
         )
         stage.set(prepared=len(proc.prepared_items), failures=len(proc.failures))
     failures = proc.failures
+    for path, reason in proc.skips.items():
+        skipped.append(path)
+        reasons[path] = reason
 
     # Phase 2.5: Batch finalize — ONE write per collection instead of O(n) (Issue #281).
     with span("add.finalize", items=len(proc.prepared_items)):
@@ -1416,6 +1511,7 @@ def add_files(
             failures=failures,
             merge_strategy=merge_strategy,
             touched_items=touched_items,
+            skip_reasons=reasons,
         )
 
         # Phase 3.5: re-check the file extension on collections with deferred assets (#501).
@@ -1509,6 +1605,7 @@ def _process_deferred_non_geo_files(
     failures: list[AddFailure],
     merge_strategy: MergeStrategy,
     touched_items: list[tuple[str, str]] | None = None,
+    skip_reasons: dict[Path, str] | None = None,
 ) -> set[Path]:
     """Process deferred non-geospatial files.
 
@@ -1529,41 +1626,26 @@ def _process_deferred_non_geo_files(
         merge_strategy: The strategy of the ``add`` run.
         touched_items: List to append each updated item's
             ``(collection_id, item_id)`` to (modified in place).
+        skip_reasons: Receives the reason for a file that two files claim one
+            asset key for in its item (modified in place).
 
     Returns:
         Set of collection directories that received deferred assets (for statistics recomputation).
     """
     affected_collections: set[Path] = set()
+    reasons = skip_reasons if skip_reasons is not None else {}
     for file_path, source_dir, coll_id in deferred_non_geo:
         try:
             if source_dir in source_to_item_dir:
-                # Item-level: existing behavior
-                resolved_item_dir, _, resolved_item_id = source_to_item_dir[source_dir]
-
-                # Copy non-geo file to item directory as companion asset
-                dest_path = _copy_non_geo_to_item_dir(file_path, resolved_item_dir)
-
-                # Log info message (expected behavior)
-                ext = file_path.suffix.upper().lstrip(".")
-                logger.info(
-                    "Tracking %s as non-geospatial %s asset (no conversion): %s",
-                    file_path,
-                    ext,
-                    dest_path.name,
-                )
-
-                # Update the STAC item to include this new asset
-                _update_item_with_asset(
-                    catalog_root=catalog_root,
-                    collection_id=coll_id,
-                    item_id=resolved_item_id,
-                )
-                if touched_items is not None:
-                    touched_items.append((coll_id, resolved_item_id))
-
-                # Track for statistics recomputation
-                affected_collections.add(catalog_root / coll_id)
-
+                try:
+                    _track_companion_in_item(
+                        file_path, source_to_item_dir[source_dir], catalog_root, touched_items
+                    )
+                except AssetKeyCollisionError as err:
+                    reasons[file_path] = err.message
+                else:
+                    # Track for statistics recomputation
+                    affected_collections.add(catalog_root / coll_id)
                 # Add to skipped (tracked but not converted)
                 skipped.append(file_path)
 
@@ -1739,6 +1821,42 @@ def _process_deferred_non_geo_files(
     return affected_collections
 
 
+def _track_companion_in_item(
+    file_path: Path,
+    item: tuple[Path, str, str],
+    catalog_root: Path,
+    touched_items: list[tuple[str, str]] | None,
+) -> None:
+    """Copy a non-geo file into an item directory and add it to the item.
+
+    Args:
+        file_path: The non-geo file.
+        item: ``(item_dir, collection_id, item_id)`` of the item.
+        catalog_root: Root directory of the catalog.
+        touched_items: List to append ``(collection_id, item_id)`` to.
+
+    Raises:
+        AssetKeyCollisionError: Two files claim one asset key in the item. The
+            copy goes again, so the item stays as it was.
+    """
+    item_dir, coll_id, item_id = item
+    dest_path = _copy_non_geo_to_item_dir(file_path, item_dir)
+    logger.info(
+        "Tracking %s as non-geospatial %s asset (no conversion): %s",
+        file_path,
+        file_path.suffix.upper().lstrip("."),
+        dest_path.name,
+    )
+    try:
+        _update_item_with_asset(catalog_root=catalog_root, collection_id=coll_id, item_id=item_id)
+    except AssetKeyCollisionError:
+        if dest_path.resolve() != file_path.resolve():
+            dest_path.unlink(missing_ok=True)
+        raise
+    if touched_items is not None:
+        touched_items.append((coll_id, item_id))
+
+
 def _update_item_with_asset(
     catalog_root: Path,
     collection_id: str,
@@ -1808,6 +1926,7 @@ def _update_item_with_asset(
         item_id=item_id,
         primary_file=primary_file,
         collection_dir=collection_dir,
+        collection_id=collection_id,
         ignored_patterns=get_ignored_files(catalog_root),
     )
 
