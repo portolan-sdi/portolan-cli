@@ -781,6 +781,104 @@ class TestAssetLineage:
         collection = json.loads((collection_dir / "collection.json").read_text())
         assert collection["assets"]["points-tiles"]["href"] == "./points.pmtiles"
 
+    @staticmethod
+    def _prebuilt_tiles(
+        catalog: Path, fixtures_dir: Path, sample_pmtiles: Path, mtime: int
+    ) -> Path:
+        """Place ``points.parquet`` and pre-built tiles with a pinned mtime."""
+        import os
+
+        collection_dir = catalog / "points"
+        collection_dir.mkdir()
+        shutil.copy(fixtures_dir / "vector" / "valid" / "points.parquet", collection_dir)
+        tiles = collection_dir / "points.pmtiles"
+        shutil.copy(sample_pmtiles, tiles)
+        os.utime(tiles, (mtime, mtime))
+        return collection_dir
+
+    @staticmethod
+    def _verbose_add(runner: CliRunner, catalog: Path, collection_dir: Path) -> list[str]:
+        """Run verbose ``add`` on ``points.parquet`` and return the stripped lines."""
+        result = runner.invoke(
+            cli,
+            [
+                "add",
+                "--verbose",
+                "--portolan-dir",
+                str(catalog),
+                str(collection_dir / "points.parquet"),
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0, result.output
+        return [line.strip() for line in result.output.splitlines()]
+
+    @pytest.mark.integration
+    def test_verbose_add_rebuilds_tiles_older_than_the_geoparquet(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        fixtures_dir: Path,
+        sample_pmtiles: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Verbose add called tiles older than the GeoParquet up to date."""
+        collection_dir = self._prebuilt_tiles(initialized_catalog, fixtures_dir, sample_pmtiles, 1)
+        calls: list[tuple[str, str]] = []
+
+        def record(parquet_path: Path, pmtiles_path: Path, **_kwargs: object) -> None:
+            calls.append((parquet_path.name, pmtiles_path.name))
+            shutil.copy(sample_pmtiles, pmtiles_path)
+
+        monkeypatch.setattr("portolan_cli.viz.pmtiles.check_pmtiles_available", lambda: None)
+        monkeypatch.setattr("portolan_cli.viz.pmtiles.generate_pmtiles", record)
+
+        lines = self._verbose_add(runner, initialized_catalog, collection_dir)
+
+        assert calls == [("points.parquet", "points.pmtiles")]
+        assert "✓ Rebuilt PMTiles: points.pmtiles was older than points.parquet" in lines
+        assert not [line for line in lines if "Skipped PMTiles" in line]
+
+    @pytest.mark.integration
+    def test_add_without_tippecanoe_says_the_tiles_are_older_than_the_data(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        fixtures_dir: Path,
+        sample_pmtiles: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("portolan_cli.viz.pmtiles.shutil.which", lambda _name: None)
+        collection_dir = self._prebuilt_tiles(initialized_catalog, fixtures_dir, sample_pmtiles, 1)
+
+        lines = self._verbose_add(runner, initialized_catalog, collection_dir)
+
+        assert (
+            "⚠ Kept PMTiles: points.pmtiles is older than points.parquet. "
+            "Install tippecanoe to rebuild it."
+        ) in lines
+        collection = json.loads((collection_dir / "collection.json").read_text())
+        assert collection["assets"]["points-tiles"]["href"] == "./points.pmtiles"
+
+    @pytest.mark.integration
+    def test_verbose_add_names_the_comparison_for_current_tiles(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        fixtures_dir: Path,
+        sample_pmtiles: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("portolan_cli.viz.pmtiles.shutil.which", lambda _name: None)
+        future = 4_000_000_000
+        collection_dir = self._prebuilt_tiles(
+            initialized_catalog, fixtures_dir, sample_pmtiles, future
+        )
+
+        lines = self._verbose_add(runner, initialized_catalog, collection_dir)
+
+        assert "→ Skipped PMTiles: points.pmtiles is not older than points.parquet" in lines
+
     @pytest.mark.integration
     def test_force_rebuild_registers_what_the_first_add_registered(
         self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
