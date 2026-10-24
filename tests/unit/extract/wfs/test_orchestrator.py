@@ -284,7 +284,7 @@ class TestWFSMetadataSeeding:
             description="A test WFS service",
             attribution="Test Provider",
             keywords=["test", "wfs"],
-            contact_name="Test Contact",
+            producer="Test Contact",
             processing_notes="WFS service: Test Service",
             known_issues=None,
             license_info_raw="CC-BY-4.0",

@@ -40,5 +40,26 @@
    "resultOffset": "0"
   },
   "body_file": "BaseServices_Open_Space_Public_MapServer_0_page0.json"
+ },
+ {
+  "method": "GET",
+  "path": "/arcgis/rest/services/BaseServices/Closed_Space/MapServer",
+  "query_subset": {
+   "f": "json"
+  },
+  "body_file": "BaseServices_Open_Space_Public_MapServer.json"
+ },
+ {
+  "method": "GET",
+  "path": "/arcgis/rest/services/BaseServices/Closed_Space/MapServer/0",
+  "query_subset": {
+   "f": "json"
+  },
+  "body_file": "BaseServices_Open_Space_Public_MapServer_0.json"
+ },
+ {
+  "method": "GET",
+  "path": "/arcgis/rest/services/BaseServices/Closed_Space/MapServer/0/query",
+  "status": 404
  }
 ]

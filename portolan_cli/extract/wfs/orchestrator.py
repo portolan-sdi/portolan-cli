@@ -364,7 +364,7 @@ def _build_metadata(url: str, discovery_result: WFSDiscoveryResult | None) -> Me
             description=None,
             attribution=None,
             keywords=None,
-            contact_name=None,
+            producer=None,
             processing_notes=None,
             known_issues=None,
             license_info_raw=None,
@@ -379,7 +379,8 @@ def _build_metadata(url: str, discovery_result: WFSDiscoveryResult | None) -> Me
         description=discovery_result.service_abstract,
         attribution=discovery_result.provider,
         keywords=discovery_result.keywords,
-        contact_name=discovery_result.contact_name,
+        # GetCapabilities names a point of contact, never an author.
+        producer=None,
         processing_notes=processing_notes,
         known_issues=None,
         license_info_raw=discovery_result.access_constraints,

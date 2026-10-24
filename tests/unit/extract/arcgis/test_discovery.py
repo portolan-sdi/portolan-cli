@@ -725,3 +725,36 @@ def test_fetch_error_names_the_service_without_its_userinfo(
     clean = "https://h.example/arcgis/rest/services/X/MapServer"
     assert str(caught.value) == f"Failed to fetch from {clean}: refused"
     assert caplog.messages == [f"Retry 1 for {clean}: Failed to fetch from {clean}: refused"]
+
+
+def test_request_timeout_status_is_retried() -> None:
+    """#1035: HTTP 408 is transient, so the client asks again."""
+    answers = iter([httpx.Response(408), httpx.Response(200, json={"layers": [], "name": "X"})])
+    client = ArcGISClient(
+        retries=2, retry_delay=0.0, transport=httpx.MockTransport(lambda request: next(answers))
+    )
+
+    assert client.get_json("https://h.example/arcgis/rest/services/X/MapServer") == {
+        "layers": [],
+        "name": "X",
+    }
+
+
+def test_permanent_status_fails_at_once_and_says_so() -> None:
+    """#1035: HTTP 404 gets one request and a message that names it as permanent."""
+    requests: list[httpx.Request] = []
+
+    def gone(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(404)
+
+    client = ArcGISClient(retries=3, retry_delay=0.0, transport=httpx.MockTransport(gone))
+
+    with pytest.raises(ArcGISDiscoveryError) as caught:
+        client.get_json("https://h.example/arcgis/rest/services/X/MapServer")
+
+    assert len(requests) == 1
+    assert str(caught.value) == (
+        "Failed to fetch from https://h.example/arcgis/rest/services/X/MapServer: HTTP 404. "
+        "A retry cannot fix this failure."
+    )

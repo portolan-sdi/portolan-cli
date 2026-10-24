@@ -159,3 +159,13 @@ def test_failed_request_keeps_no_api_key(monkeypatch: pytest.MonkeyPatch) -> Non
         "Carto SQL request failed: 401 Client Error: Unauthorized for url: "
         "https://phl.carto.com/api/v2/sql?q=x"
     )
+
+
+def test_url_without_scheme_error_keeps_no_api_key() -> None:
+    """#981: the error quotes the URL that the user typed, without its key."""
+    with pytest.raises(CartoDiscoveryError) as caught:
+        normalize_sql_api_url("phl.carto.com/api/v2/sql?api_key=K")
+
+    assert str(caught.value) == (
+        "Invalid Carto URL (missing scheme): phl.carto.com/api/v2/sql?api_key=***"
+    )

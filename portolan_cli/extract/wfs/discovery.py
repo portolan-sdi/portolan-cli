@@ -63,7 +63,6 @@ class WFSDiscoveryResult:
         service_abstract: Service description from GetCapabilities.
         provider: Provider name from GetCapabilities.
         keywords: Keywords from GetCapabilities.
-        contact_name: Contact person/organization name.
         access_constraints: Access constraints or license info.
         fees: Fee information (typically "none" for public services).
     """
@@ -74,7 +73,6 @@ class WFSDiscoveryResult:
     service_abstract: str | None = None
     provider: str | None = None
     keywords: list[str] | None = None
-    contact_name: str | None = None
     access_constraints: str | None = None
     fees: str | None = None
 
@@ -158,7 +156,6 @@ def _extract_service_metadata(wfs: Any) -> dict[str, Any]:
         "service_abstract": None,
         "provider": None,
         "keywords": None,
-        "contact_name": None,
         "access_constraints": None,
         "fees": None,
     }
@@ -175,15 +172,6 @@ def _extract_service_metadata(wfs: Any) -> dict[str, Any]:
     if hasattr(wfs, "provider") and wfs.provider:
         prov = wfs.provider
         result["provider"] = getattr(prov, "name", None)
-        if hasattr(prov, "contact") and prov.contact:
-            contact = prov.contact
-            parts = []
-            if hasattr(contact, "name") and contact.name:
-                parts.append(contact.name)
-            if hasattr(contact, "organization") and contact.organization:
-                parts.append(contact.organization)
-            if parts:
-                result["contact_name"] = ", ".join(parts)
 
     return result
 
@@ -252,7 +240,6 @@ def discover_layers(
             service_abstract=svc["service_abstract"],
             provider=svc["provider"],
             keywords=svc["keywords"],
-            contact_name=svc["contact_name"],
             access_constraints=svc["access_constraints"],
             fees=svc["fees"],
         )

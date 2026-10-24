@@ -510,7 +510,6 @@ class TestWFSMetadataPropagation:
             service_abstract="This service provides building footprints compliant with INSPIRE directive",
             provider="National Mapping Agency",
             keywords=["inspire", "buildings", "cadastre"],
-            contact_name="GIS Support Team",
             access_constraints=None,
             fees=None,
         )
@@ -553,7 +552,6 @@ class TestWFSMetadataPropagation:
             service_abstract="Comprehensive road network data including highways, local roads, and paths",
             provider=None,
             keywords=None,
-            contact_name=None,
             access_constraints=None,
             fees=None,
         )
@@ -602,7 +600,6 @@ class TestWFSMetadataPropagation:
             service_abstract="Cadastral data",
             provider=None,
             keywords=None,
-            contact_name=None,
             access_constraints=None,
             fees=None,
         )
@@ -646,7 +643,6 @@ class TestWFSMetadataPropagation:
             service_abstract="A meaningful service description with proper explanation",
             provider=None,
             keywords=None,
-            contact_name=None,
             access_constraints=None,
             fees=None,
         )

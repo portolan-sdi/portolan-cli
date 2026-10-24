@@ -9,9 +9,9 @@ extraction is delegated to geoparquet-io (gpio).
 
 Every request goes through one ``ArcGISClient``. It carries the token
 (issue #855) and the retry policy (issue #811), so discovery and extraction
-use the same options. A transient failure (a transport error, HTTP 429 or
-5xx, or an embedded 5xx error) is retried with ``retry_with_backoff``. A
+use the same options. A transient failure is retried with ``retry_with_backoff``. A
 permanent failure, such as HTTP 404 or ``499 Token Required``, fails at once.
+``extract/common/retry.py`` holds the one rule for both kinds.
 
 Typical usage:
     client = ArcGISClient(timeout=60.0, token=token, retries=3)
@@ -29,6 +29,7 @@ from urllib.parse import parse_qsl, urlparse
 
 import httpx
 
+from portolan_cli.extract.common.retry import PERMANENT_NOTE, is_transient_status
 from portolan_cli.extract.common.urls import merge_query, redact_credentials
 
 if TYPE_CHECKING:
@@ -129,15 +130,6 @@ def ensure_json_format(url: str) -> str:
     return url if "f" in names else merge_query(url, {"f": "json"})
 
 
-def _is_transient_status(code: object) -> bool:
-    """Return True for an HTTP or embedded ArcGIS status that a retry can change."""
-    try:
-        status = int(str(code))
-    except ValueError:
-        return False
-    return status == 429 or status >= 500
-
-
 @dataclass(frozen=True)
 class ArcGISClient:
     """The one HTTP client for ArcGIS discovery.
@@ -200,9 +192,13 @@ class ArcGISClient:
                 redact_credentials(f"Failed to fetch from {shown}: {e}")
             ) from e
         if response.status_code >= 400:
-            transient = _is_transient_status(response.status_code)
-            error = ArcGISTransientError if transient else ArcGISDiscoveryError
-            raise error(f"Failed to fetch from {shown}: HTTP {response.status_code}")
+            if is_transient_status(response.status_code):
+                raise ArcGISTransientError(
+                    f"Failed to fetch from {shown}: HTTP {response.status_code}"
+                )
+            raise ArcGISDiscoveryError(
+                f"Failed to fetch from {shown}: HTTP {response.status_code}. {PERMANENT_NOTE}"
+            )
         try:
             raw = response.json()
         except ValueError as e:
@@ -216,8 +212,11 @@ class ArcGISClient:
         if isinstance(embedded, dict):
             code = embedded.get("code", "unknown")
             message = embedded.get("message", "ArcGIS error")
-            error = ArcGISTransientError if _is_transient_status(code) else ArcGISDiscoveryError
-            raise error(f"ArcGIS error from {shown}: {code} {message}")
+            if is_transient_status(code):
+                raise ArcGISTransientError(f"ArcGIS error from {shown}: {code} {message}")
+            raise ArcGISDiscoveryError(
+                f"ArcGIS error from {shown}: {code} {message}. {PERMANENT_NOTE}"
+            )
         if listing and not (data.get("layers") or data.get("tables")):
             raise _EmptyListingError(url, data)
         return data

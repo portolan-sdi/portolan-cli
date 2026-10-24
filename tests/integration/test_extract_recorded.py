@@ -40,6 +40,9 @@ pytestmark = [pytest.mark.integration]
 NETWORK = Path(__file__).resolve().parents[1] / "fixtures" / "network"
 EAST_HAMPTON = "/arcgis/rest/services/MapServiceForOpenGov/MapServer"
 BOSTON = "/arcgis/rest/services/BaseServices/Open_Space_Public/MapServer"
+SECURED = "/arcgis/rest/services/Secured/Open_Space_Public/MapServer"
+PUBLIC = "/arcgis/rest/services/Public/Open_Space_Public/MapServer"
+CLOSED = "/arcgis/rest/services/BaseServices/Closed_Space/MapServer"
 
 LayerRow = tuple[Any, str, str, int]
 SCENARIOS = sorted(path.parent for path in NETWORK.glob("*/*/routes.json"))
@@ -67,13 +70,11 @@ EXTRACTIONS = {
     "tables_only": Extraction(
         "arcgis/tables_only", "arcgis", "/arcgis/rest/services/zoning_descriptions/FeatureServer"
     ),
-    "token_gated": Extraction(
-        "arcgis/token_gated",
-        "arcgis",
-        "/arcgis/rest/services/Secured/Open_Space_Public/MapServer",
-        ("--token", "REPLAY-TOKEN"),
-    ),
+    "token_gated": Extraction("arcgis/token_gated", "arcgis", SECURED, ("--token", "REPLAY-TOKEN")),
     "transient_error": Extraction("arcgis/transient_error", "arcgis", BOSTON, ("--retries", "2")),
+    "token_gated-no_token": Extraction("arcgis/token_gated", "arcgis", SECURED, ("--retries", "3")),
+    "token_gated-data": Extraction("arcgis/token_gated", "arcgis", PUBLIC, ("--retries", "3")),
+    "layer_gone": Extraction("arcgis/transient_error", "arcgis", CLOSED, ("--retries", "3")),
     "workspace_layer-exclude": Extraction(
         "wfs/workspace_layer", "wfs", "/geoserver/wfs", ("--exclude-layers", "states")
     ),
@@ -262,6 +263,34 @@ def test_arcgis_discovery_retries_a_transient_error(tmp_path: Path, run_cli: Run
     assert [r.status for r in server.requests if r.path == BOSTON] == [503, 200]
     assert result.exit_code == 0, result.output
     assert _layers(out) == [(0, "PRK.open_space", "success", 2)]
+
+
+@pytest.mark.parametrize(
+    ("case", "failing", "status"),
+    [
+        ("token_gated-no_token", SECURED, "499 Token Required."),
+        ("token_gated-data", f"{PUBLIC}/0/query", "The server answered ArcGIS error 498 or 499."),
+        ("layer_gone", f"{CLOSED}/0/query", "The server answered HTTP 404."),
+    ],
+)
+def test_permanent_error_is_not_retried(
+    case: str, failing: str, status: str, tmp_path: Path, run_cli: RunCli
+) -> None:
+    """A 404 or an ArcGIS token error fails at once, also with ``--retries 3``.
+
+    The token gate answers HTTP 200 with the ArcGIS code 499, in discovery
+    and in the feature query. The closed service answers its feature query
+    with HTTP 404. A retry cannot change either answer, so the run sends one
+    request to the route, names the status, and exits 1.
+    """
+    result, server, _out = _run(case, tmp_path, run_cli)
+
+    assert server.unmatched == []
+    assert [r.path for r in server.requests if r.method == "GET" and r.path == failing] == [failing]
+    assert result.exit_code == 1, result.output
+    failures = [line for line in result.stderr.splitlines() if line.startswith("✗")]
+    assert len(failures) == 1, result.stderr
+    assert failures[0].endswith(f"{status} A retry cannot fix this failure."), failures
 
 
 def test_wfs_exclude_layers_matches_the_leaf_name(tmp_path: Path, run_cli: RunCli) -> None:

@@ -355,7 +355,7 @@ class TestMetadataExtracted:
             description="Census data for Philadelphia region",
             attribution="City of Philadelphia",
             keywords=["census", "demographics"],
-            contact_name="GIS Department",
+            producer="GIS Department",
             processing_notes="Exported from ArcGIS Server",
             known_issues="Some features may be outdated",
             license_info_raw="Public domain - no restrictions",
@@ -365,7 +365,7 @@ class TestMetadataExtracted:
         assert metadata.description == "Census data for Philadelphia region"
         assert metadata.attribution == "City of Philadelphia"
         assert metadata.keywords == ["census", "demographics"]
-        assert metadata.contact_name == "GIS Department"
+        assert metadata.producer == "GIS Department"
         assert metadata.processing_notes == "Exported from ArcGIS Server"
         assert metadata.known_issues == "Some features may be outdated"
         assert metadata.license_info_raw == "Public domain - no restrictions"
@@ -377,7 +377,7 @@ class TestMetadataExtracted:
             description=None,
             attribution=None,
             keywords=None,
-            contact_name=None,
+            producer=None,
             processing_notes=None,
             known_issues=None,
             license_info_raw=None,
@@ -395,7 +395,7 @@ class TestMetadataExtracted:
             description="Test description",
             attribution="Test Org",
             keywords=["test", "data"],
-            contact_name="Test User",
+            producer="Test User",
             processing_notes="Notes",
             known_issues="Issues",
             license_info_raw="MIT",
@@ -407,7 +407,7 @@ class TestMetadataExtracted:
         assert result["description"] == "Test description"
         assert result["attribution"] == "Test Org"
         assert result["keywords"] == ["test", "data"]
-        assert result["contact_name"] == "Test User"
+        assert result["producer"] == "Test User"
         assert result["processing_notes"] == "Notes"
         assert result["known_issues"] == "Issues"
         assert result["license_info_raw"] == "MIT"
@@ -419,7 +419,7 @@ class TestMetadataExtracted:
             description=None,
             attribution=None,
             keywords=None,
-            contact_name=None,
+            producer=None,
             processing_notes=None,
             known_issues=None,
             license_info_raw=None,
@@ -440,7 +440,7 @@ class TestMetadataExtracted:
             "description": "Example description",
             "attribution": "Example Org",
             "keywords": ["key1", "key2"],
-            "contact_name": None,
+            "producer": None,
             "processing_notes": None,
             "known_issues": None,
             "license_info_raw": "CC-BY-4.0",
@@ -452,7 +452,7 @@ class TestMetadataExtracted:
         assert metadata.description == "Example description"
         assert metadata.attribution == "Example Org"
         assert metadata.keywords == ["key1", "key2"]
-        assert metadata.contact_name is None
+        assert metadata.producer is None
         assert metadata.license_info_raw == "CC-BY-4.0"
 
     def test_roundtrip_serialization(self) -> None:
@@ -462,7 +462,7 @@ class TestMetadataExtracted:
             description="Roundtrip description",
             attribution="Roundtrip Org",
             keywords=["round", "trip"],
-            contact_name="Tester",
+            producer="Tester",
             processing_notes="Test notes",
             known_issues=None,
             license_info_raw="Public domain",
@@ -475,7 +475,7 @@ class TestMetadataExtracted:
         assert restored.description == original.description
         assert restored.attribution == original.attribution
         assert restored.keywords == original.keywords
-        assert restored.contact_name == original.contact_name
+        assert restored.producer == original.producer
 
 
 class TestExtractionReport:
@@ -488,7 +488,7 @@ class TestExtractionReport:
             description="Census data service",
             attribution="City of Philadelphia",
             keywords=["census"],
-            contact_name=None,
+            producer=None,
             processing_notes=None,
             known_issues=None,
             license_info_raw="Public domain",
@@ -577,7 +577,7 @@ class TestExtractionReport:
                 "description": None,
                 "attribution": "Test",
                 "keywords": None,
-                "contact_name": None,
+                "producer": None,
                 "processing_notes": None,
                 "known_issues": None,
                 "license_info_raw": None,
@@ -657,7 +657,7 @@ class TestReportIO:
                 "description": None,
                 "attribution": None,
                 "keywords": None,
-                "contact_name": None,
+                "producer": None,
                 "processing_notes": None,
                 "known_issues": None,
                 "license_info_raw": None,
@@ -717,7 +717,7 @@ def _create_sample_report() -> ExtractionReport:
         description="Test service description",
         attribution="Test Org",
         keywords=["test"],
-        contact_name=None,
+        producer=None,
         processing_notes=None,
         known_issues=None,
         license_info_raw=None,

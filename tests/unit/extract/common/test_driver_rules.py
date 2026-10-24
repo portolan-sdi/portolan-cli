@@ -381,6 +381,41 @@ class TestExitCode:
         assert "matches the layer filters" in result.output
 
 
+_NOTE = "A retry cannot fix this failure."
+
+
+@pytest.mark.parametrize(
+    ("status", "fetches", "error"),
+    [
+        (401, 1, f"401 Client Error The server answered HTTP 401. {_NOTE}"),
+        (403, 1, f"403 Client Error The server answered HTTP 403. {_NOTE}"),
+        (404, 1, f"404 Client Error The server answered HTTP 404. {_NOTE}"),
+        (503, 3, "503 Client Error"),
+    ],
+)
+def test_layer_fetch_retries_only_a_transient_status(
+    tmp_path: Path, status: int, fetches: int, error: str
+) -> None:
+    """#1035: the shared driver gives up at once on 401, 403, and 404, for every source."""
+    import requests  # type: ignore[import-untyped]
+
+    response = requests.Response()
+    response.status_code = status
+
+    class _RefusedSource(_FakeSource):
+        def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
+            self.fetched.append(layer.name)
+            raise requests.HTTPError(f"{status} Client Error", response=response)
+
+    layer_source = _RefusedSource(_refs(["roads"]))
+    report = run_layer_extraction(
+        layer_source, "https://h.example/wfs", tmp_path, _options(retries=3)
+    )
+
+    assert layer_source.fetched == ["roads"] * fetches
+    assert [(r.status, r.attempts, r.error) for r in report.layers] == [("failed", fetches, error)]
+
+
 @pytest.mark.integration
 def test_credentials_never_reach_the_catalog(fixtures_dir: Path, tmp_path: Path) -> None:
     """#981: an API key in the source URL is in no file the extraction writes."""

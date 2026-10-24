@@ -147,7 +147,7 @@ def _build_metadata(source_url: str, account_name: str | None) -> MetadataExtrac
         description=None,
         attribution=attribution,
         keywords=None,
-        contact_name=None,
+        producer=None,
         processing_notes=None,
         known_issues=None,
         license_info_raw=None,

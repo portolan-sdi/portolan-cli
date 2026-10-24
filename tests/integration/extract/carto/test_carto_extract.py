@@ -52,7 +52,7 @@ def _report(output_path: str, name: str) -> ExtractionReport:
         description=None,
         attribution="Carto account: phl",
         keywords=None,
-        contact_name=None,
+        producer=None,
         processing_notes=None,
         known_issues=None,
         license_info_raw=None,

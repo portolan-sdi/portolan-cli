@@ -85,7 +85,7 @@ def normalize_sql_api_url(url: str) -> str:
     """
     parsed = urlparse(url)
     if not parsed.scheme:
-        raise CartoDiscoveryError(f"Invalid Carto URL (missing scheme): {url}")
+        raise CartoDiscoveryError(redact_credentials(f"Invalid Carto URL (missing scheme): {url}"))
 
     # Drop query/fragment, normalize trailing slash.
     path = parsed.path.rstrip("/")

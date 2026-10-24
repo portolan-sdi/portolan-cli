@@ -91,9 +91,6 @@ class TestDiscoverLayers:
         # Mock provider
         mock_wfs.provider = MagicMock()
         mock_wfs.provider.name = "Test Provider"
-        mock_wfs.provider.contact = MagicMock()
-        mock_wfs.provider.contact.name = "Test Contact"
-        mock_wfs.provider.contact.organization = "Test Org"
 
         # Mock layer contents
         mock_layer = MagicMock()
@@ -115,7 +112,6 @@ class TestDiscoverLayers:
         assert result.service_title == "Test WFS Service"
         assert result.service_abstract == "A test WFS service"
         assert result.provider == "Test Provider"
-        assert result.contact_name == "Test Contact, Test Org"
         assert result.keywords == ["test", "wfs"]
 
     def test_discover_layers_handles_missing_metadata(self) -> None:
