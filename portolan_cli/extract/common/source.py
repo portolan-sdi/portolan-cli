@@ -521,7 +521,13 @@ class _Run:
         catalog changes only in ``promote``, so a timed-out fetch cannot
         change it.
         """
-        from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
+        from portolan_cli.extract.common.retry import (
+            PERMANENT_NOTE,
+            PermanentError,
+            RetryConfig,
+            permanent_status,
+            retry_with_backoff,
+        )
 
         relative = layer_path(layer)
         root = self.output_dir / ".portolan" / "staging" / uuid.uuid4().hex
@@ -533,7 +539,16 @@ class _Run:
                 raise TimeoutError(f"Layer {layer.name} timed out")
             staged.parent.mkdir(parents=True, exist_ok=True)
             start = time.monotonic()
-            rows = self.source.fetch(source_url, layer, staged)
+            try:
+                rows = self.source.fetch(source_url, layer, staged)
+            except Exception as err:
+                status = permanent_status(err)
+                if status is None:
+                    raise
+                # HTTP 401, 403, 404, or a token error: a retry cannot change it.
+                raise PermanentError(
+                    f"{err} The server answered {status}. {PERMANENT_NOTE}"
+                ) from err
             if rows == 0:
                 # A source that writes 0 rows has no features, as one that raises.
                 raise EmptyLayerError(f"Layer {layer.name} has no features")
@@ -544,7 +559,7 @@ class _Run:
             RetryConfig(
                 max_attempts=max(self.options.retries, 1), initial_delay=self.options.retry_delay
             ),
-            give_up_on=(EmptyLayerError,),
+            give_up_on=(EmptyLayerError, PermanentError),
             on_retry=lambda count, err: logger.debug(
                 "Retry %d for layer %s: %s", count, layer.name, redact_credentials(str(err))
             ),
