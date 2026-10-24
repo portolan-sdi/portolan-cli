@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pystac
 import pytest
@@ -19,9 +19,6 @@ from portolan_cli.stac import (
     create_item,
     load_catalog,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class TestCreateCollection:
@@ -255,7 +252,7 @@ class TestItemManagement:
 
         add_item_to_collection(collection, item)
 
-        assert item.get_self_href() == str(written)
+        assert Path(item.get_self_href()) == written
 
     @pytest.mark.unit
     def test_add_multiple_items(self) -> None:
