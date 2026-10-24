@@ -387,6 +387,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
+      # diff-cover compares against the base branch of the pull request, so
+      # a stacked pull request into an integration or release branch is
+      # measured on its own diff. Passed through env, not spliced into the
+      # script (zizmor).
+      BASE_REF: ${{ github.base_ref }}
       # renovate: datasource=pypi depName=diff-cover
       DIFF_COVER_VERSION: "10.6.0"
       FLOOR: "90"
@@ -412,12 +417,12 @@ jobs:
 
       - name: Check coverage of the changed lines
         run: |
-          git fetch --no-tags origin main
+          git fetch --no-tags origin "$BASE_REF"
           reports=(coverage/*/coverage.xml)
           echo "diff-cover reads ${#reports[@]} reports"
           status=0
           uvx "diff-cover==${DIFF_COVER_VERSION}" "${reports[@]}" \
-            --compare-branch=origin/main \
+            --compare-branch="origin/$BASE_REF" \
             --fail-under="$FLOOR" \
             --format "markdown:diff-cover.md" || status=$?
           cat diff-cover.md >> "$GITHUB_STEP_SUMMARY"

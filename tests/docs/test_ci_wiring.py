@@ -205,6 +205,11 @@ def test_coverage_reports_name_files_relative_to_the_checkout() -> None:
 
 
 def test_diff_cover_gates_the_changed_lines() -> None:
+    """diff-cover measures the diff of the pull request against its own base branch.
+
+    A stacked pull request into an integration or release branch is measured
+    on its own lines, not on every line its base branch adds to main.
+    """
     jobs = _jobs("ci.yml")
     job = jobs["diff-cover"]
     run = _run_text(job)
@@ -215,12 +220,14 @@ def test_diff_cover_gates_the_changed_lines() -> None:
     )
     checkout = job["steps"][0]
     assert checkout["with"] == {"fetch-depth": 0, "persist-credentials": False}
-    assert "git fetch --no-tags origin main" in run
+    assert 'git fetch --no-tags origin "$BASE_REF"' in run
     assert re.search(r'uvx "diff-cover==\$\{DIFF_COVER_VERSION\}"', run)
-    assert "--compare-branch=origin/main" in run
+    assert '--compare-branch="origin/$BASE_REF"' in run
+    assert "origin/main" not in run
     assert '--fail-under="$FLOOR"' in run
     assert 'cat diff-cover.md >> "$GITHUB_STEP_SUMMARY"' in run
     env = job["env"]
+    assert env["BASE_REF"] == "${{ github.base_ref }}"
     assert re.fullmatch(r"\d+\.\d+\.\d+", env["DIFF_COVER_VERSION"])
     assert int(env["FLOOR"]) == 90
 
