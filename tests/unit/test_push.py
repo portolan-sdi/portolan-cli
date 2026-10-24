@@ -1249,9 +1249,10 @@ class TestOrphanCleanup:
             uploaded_keys = ["key1", "key2"]
 
             # Should not raise
-            _cleanup_uploaded_assets(mock_store, uploaded_keys)
+            problems = _cleanup_uploaded_assets(mock_store, uploaded_keys)
 
         assert mock_delete.call_count == 2
+        assert problems == ["Could not delete key1: Network error"]
 
 
 # =============================================================================

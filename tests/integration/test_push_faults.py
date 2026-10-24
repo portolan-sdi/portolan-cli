@@ -162,6 +162,56 @@ def test_failed_second_push_keeps_first_push_objects(
     assert bucket.keys() == after_first
 
 
+@pytest.mark.parametrize("mode", [(), ("--json",)], ids=["text", "json"])
+def test_failed_rollback_reports_the_key_it_could_not_restore(
+    pushed: Path,
+    bucket: Bucket,
+    run_cli: RunCli,
+    fault_store: PutFaults,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: tuple[str, ...],
+) -> None:
+    """The restore of one scene fails during the rollback of a failed push.
+
+    The push exits 1 and names that scene, its backup key, and the reason in
+    its errors. The other written keys hold the bytes of push 1 again. The
+    backup of the scene stays, so the old bytes are not lost.
+    """
+    from portolan_cli.sync import push as push_module
+
+    after_first = bucket.keys()
+    calls_before = len(fault_store.calls)
+    fault_store.fail_on(2, when=_is_scene)
+    real_copy = push_module.obs.copy_async
+    refused: list[tuple[str, str]] = []
+
+    async def copy_async(store: Any, src: str, dst: str, **kwargs: Any) -> Any:
+        if _is_scene(dst) and "/.portolan/" in src:
+            refused.append((dst, src))
+            raise PermissionError("injected restore fault")
+        return await real_copy(store, src, dst, **kwargs)
+
+    monkeypatch.setattr(push_module.obs, "copy_async", copy_async)
+
+    second = _push(run_cli, pushed, bucket, *mode)
+
+    assert second.exit_code == 1, second.output
+    assert len(refused) == 1, refused
+    scene, backup = refused[0]
+    message = f"Could not restore {scene} from {backup}: injected restore fault"
+    if mode:
+        envelope = json.loads(second.stdout)
+        assert envelope["success"] is False
+        assert f"imagery: {message}" in [entry["message"] for entry in envelope["errors"]]
+    else:
+        # The failure line and the closing summary each list the errors.
+        lines = [line for line in second.output.splitlines() if "imagery: Failed" in line]
+        assert [message in line for line in lines] == [True, True], second.output
+    written = set(fault_store.keys()[calls_before:]) & after_first
+    assert _bytes_that_disagree_with_the_manifest(bucket, "imagery", written - {scene}) == {}
+    assert bucket.keys() == after_first | {backup}
+
+
 def test_conflict_deletes_nothing_of_the_other_writer(
     pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:

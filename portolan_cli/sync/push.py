@@ -723,18 +723,21 @@ async def _drop_backups(
     sizes: dict[str, int | None],
     *,
     restore_over: dict[str, str | None] | None = None,
-) -> None:
-    """Delete each backup key.
+) -> list[str]:
+    """Delete each backup key, and return a message for each key that failed.
 
     ``restore_over`` maps each key to restore to the ETag of the write of this
     push. With it, a backup first goes back over its key if the key still
     holds that ETag. Another key keeps its bytes: this push did not write it,
     or another writer wrote it after this push (#971). ``sizes`` holds the
     size of each backed-up key, for the copy above ``COPY_SOURCE_LIMIT``.
+    A key that the restore cannot reach keeps its backup, so its old bytes stay.
     """
     if restore_over is not None and backups:
         warn(f"Restoring {len(backups)} overwritten key(s) from the backups...")
+    problems: list[str] = []
     for key, backup in backups.items():
+        step = f"restore {key} from {backup}"
         try:
             if (
                 restore_over is not None
@@ -742,9 +745,12 @@ async def _drop_backups(
                 and await _remote_etag(store, key) == restore_over[key]
             ):
                 await _copy_object(store, backup, key, sizes.get(key))
+            step = f"delete the backup {backup} of {key}"
             await obs.delete_async(store, backup)
         except Exception as e:
-            warn(f"Failed to restore or delete the backup of {key} at {backup}: {e}")
+            problems.append(f"Could not {step}: {e}")
+            warn(problems[-1])
+    return problems
 
 
 async def _keys_to_restore(
@@ -774,8 +780,8 @@ async def _keys_to_restore(
     return {key: etag for key, etag in written.items() if named.get(key, ours != theirs)}
 
 
-def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> None:
-    """Delete the keys that a failed push created.
+def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> list[str]:
+    """Delete the keys that a failed push created, and report each key that stays.
 
     The caller passes only keys that did not exist before the push (#965).
     The PushConflictError path calls nothing, because another writer can own
@@ -784,18 +790,21 @@ def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> No
     Args:
         store: Object store instance.
         uploaded_keys: Object keys to delete.
-    """
-    if not uploaded_keys:
-        return
 
-    warn(f"Rolling back {len(uploaded_keys)} uploaded asset(s)...")
+    Returns:
+        A message for each key that the delete did not reach.
+    """
+    if uploaded_keys:
+        warn(f"Rolling back {len(uploaded_keys)} uploaded asset(s)...")
+    problems: list[str] = []
     for key in uploaded_keys:
         try:
             obs.delete(store, key)
             detail(f"Deleted: {key}")
         except Exception as e:
-            # Log but don't fail - best effort cleanup
-            warn(f"Failed to delete {key} during rollback: {e}")
+            problems.append(f"Could not delete {key}: {e}")
+            warn(problems[-1])
+    return problems
 
 
 # =============================================================================
@@ -2059,8 +2068,9 @@ async def _execute_push_uploads_async(
     files_uploaded, metrics = 0, UploadMetrics()
 
     async def failed(errors: list[str], metadata_errors: list[str] | None = None) -> PushResult:
-        await _drop_backups(store, backups, sizes, restore_over=written)
-        _cleanup_uploaded_assets(store, [k for k in written if k not in sizes])
+        # The rollback reports each key that it could not put back.
+        errors = errors + await _drop_backups(store, backups, sizes, restore_over=written)
+        errors += _cleanup_uploaded_assets(store, [k for k in written if k not in sizes])
         return PushResult(
             success=False,
             files_uploaded=files_uploaded,
@@ -2898,10 +2908,15 @@ async def push_all_collections_async(
     # any collection writes (#971).
     root_etags = None
     if not dry_run and (catalog_root / "catalog.json").exists():
-        store, prefix = setup_store(destination, profile=profile, region=region)
-        local = [catalog_root / name for name in _ROOT_DOCUMENTS]
-        keys = [_target_key(catalog_root, prefix, p) for p in local if p.exists()]
-        root_etags = await _root_etags(store, prefix, keys)
+        try:
+            store, prefix = setup_store(destination, profile=profile, region=region)
+        except Exception:
+            # The root upload sets up the store again and reports the error.
+            root_etags = None
+        else:
+            local = [catalog_root / name for name in _ROOT_DOCUMENTS]
+            keys = [_target_key(catalog_root, prefix, p) for p in local if p.exists()]
+            root_etags = await _root_etags(store, prefix, keys)
 
     # Track aggregate stats in a dict for helper function access
     stats: dict[str, Any] = {
