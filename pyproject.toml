@@ -185,6 +185,11 @@ markers = [
 [tool.coverage.run]
 source = ["portolan_cli"]
 branch = true
+# Write file paths relative to the checkout. The diff-cover job in ci.yml runs
+# on Linux and reads the reports of the Windows and macOS cells. An absolute
+# source such as D:\a\portolan-cli\portolan-cli\portolan_cli matches no file
+# of the Linux checkout.
+relative_files = true
 omit = [
     "portolan_cli/__init__.py",
 ]
