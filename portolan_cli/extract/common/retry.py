@@ -24,9 +24,10 @@ Typical usage:
 Only a transient failure gets a retry: a transport error, a timeout, HTTP
 408, 429, or 5xx, or an ArcGIS JSON body with one of those codes.
 ``permanent_status`` finds a failure that a retry cannot fix: any other HTTP
-status, or an ArcGIS invalid-token error (codes 498 and 499). The layer fetch
-of every source and the ArcGIS discovery client use it, so the rule has one
-home. Each of those failures ends at once with ``PERMANENT_NOTE``.
+status, or an ArcGIS JSON error with any other code, such as the
+invalid-token codes 498 and 499. The layer fetch of every source, the ArcGIS
+discovery client, and the ImageServer tile requests use it, so the rule has
+one home. Each of those failures ends at once with ``PERMANENT_NOTE``.
 """
 
 from __future__ import annotations
@@ -65,7 +66,8 @@ def permanent_status(error: BaseException) -> str | None:
     """Return the status of a failure that a retry cannot fix, or None.
 
     The search follows the exception chain, because geoparquet-io wraps the
-    HTTP error. A transport error or a timeout carries no status, so it
+    HTTP error. An error tells its status with a ``status_code`` attribute,
+    an HTTP ``response``, or an ``arcgis_code`` attribute. A transport error or a timeout carries no status, so it
     gets the retries.
 
     Args:
@@ -83,6 +85,10 @@ def permanent_status(error: BaseException) -> str | None:
         status = status if isinstance(status, int) else getattr(response, "status_code", None)
         if isinstance(status, int):
             return None if is_transient_status(status) else f"HTTP {status}"
+        # An ArcGIS JSON error that came with HTTP 200, such as 499 Token Required.
+        code = getattr(current, "arcgis_code", None)
+        if isinstance(code, int):
+            return None if is_transient_status(code) else f"ArcGIS error {code}"
         if _GPIO_EXPIRED_AUTH in str(current):
             return "ArcGIS error 498 or 499"
         current = current.__cause__ or current.__context__

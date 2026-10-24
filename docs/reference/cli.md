@@ -667,7 +667,7 @@ portolan extract arcgis [OPTIONS] URL [OUTPUT_DIR]
 | `--include-tables` | boolean | Also extract the tables of a service, as Parquet with no geometry. | `False` |
 | `--output-crs` | text | CRS for extracted GeoParquet. 'native' keeps the service's source CRS (default). Pass an EPSG code (e.g. EPSG:4326) to reproject. | `native` |
 | `--workers` | integer range (`1` and above) | Parallel page requests per layer (default: 3). | `3` |
-| `--retries` | integer range (`1` and above) | Attempts per layer, tile, or discovery request that fails (default: 3). | `3` |
+| `--retries` | integer range (`1` and above) | Attempts per layer or tile for a transient failure (default: 3). | `3` |
 | `--timeout` | float range (`0.0` and above) | Per-request timeout in seconds for discovery, feature, and tile requests (default: 60). | `60.0` |
 | `--resume` | boolean | Resume from existing extraction-report.json (skip succeeded layers). | `False` |
 | `--dry-run` | boolean | List layers without extracting. | `False` |
@@ -743,7 +743,7 @@ portolan extract carto [OPTIONS] URL [OUTPUT_DIR]
 | `--exclude-cols` | text | Comma-separated columns to exclude. | None |
 | `--api-key` | text | Carto API key for private accounts (or set the CARTO_API_KEY env var). | None |
 | `--workers` | integer range (`1` and above) | Parallel workers for table extraction (default: 1). | `1` |
-| `--retries` | integer range (`1` and above) | Retry attempts per failed table (default: 3). | `3` |
+| `--retries` | integer range (`1` and above) | Attempts per table for a transient failure (default: 3). | `3` |
 | `--timeout` | float range (`0.0` and above) | Per-table request timeout in seconds (default: 120). | `120.0` |
 | `--resume` | boolean | Resume from existing extraction-report.json (skip succeeded tables). | `False` |
 | `--dry-run` | boolean | List tables without extracting. | `False` |
@@ -821,7 +821,7 @@ portolan extract wfs [OPTIONS] URL [OUTPUT_DIR]
 | `--bbox` | text | Bounding box filter: minx,miny,maxx,maxy in output CRS. | None |
 | `--limit` | integer range (`1` and above) | Maximum features per layer. | None |
 | `--workers` | integer range (`1` and above) | Parallel workers for layer extraction (default: 1). Each layer is extracted independently. | `1` |
-| `--retries` | integer range (`1` and above) | Retry attempts per failed layer (default: 3). | `3` |
+| `--retries` | integer range (`1` and above) | Attempts per layer for a transient failure (default: 3). | `3` |
 | `--timeout` | float range (`0.0` and above) | Per-layer timeout in seconds (default: 300). Note: large layers use gpio's internal 10-minute HTTP timeout. | `300.0` |
 | `--page-size` | integer range (`100` and above) | Features per page for large layer pagination (default: 100000). | `100000` |
 | `--auto-tile` / `--no-auto-tile` | boolean | Subdivide the bbox and retry when a server caps maxFeatures, so capped layers extract completely (default: enabled). | `True` |

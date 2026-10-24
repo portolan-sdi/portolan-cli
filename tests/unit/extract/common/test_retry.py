@@ -225,3 +225,12 @@ class TestRetryClassification:
     )
     def test_failure_without_a_permanent_status_is_retried(self, error: Exception) -> None:
         assert permanent_status(error) is None
+
+    @pytest.mark.parametrize(("code", "label"), [(499, "ArcGIS error 499"), (500, None)])
+    def test_arcgis_code_of_a_200_body(self, code: int, label: str | None) -> None:
+        """An ArcGIS JSON error that came with HTTP 200 carries its code as ``arcgis_code``."""
+
+        class _BodyError(Exception):
+            arcgis_code = code
+
+        assert permanent_status(_BodyError("ArcGIS error")) == label

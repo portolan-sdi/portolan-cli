@@ -38,7 +38,7 @@ import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlencode
 
 import httpx
@@ -73,6 +73,7 @@ from portolan_cli.extract.arcgis.imageserver.tilecache import (
     select_probe_lod,
 )
 from portolan_cli.extract.arcgis.imageserver.tiling import TileSpec, compute_tile_grid
+from portolan_cli.extract.common.retry import PERMANENT_NOTE, permanent_status
 from portolan_cli.extract.common.urls import redact_credentials
 from portolan_cli.licensing import (
     ResolvedLicense,
@@ -129,7 +130,14 @@ CACHE_REQUEST_WARNING_THRESHOLD = 10_000
 
 
 class ImageServerExtractionError(Exception):
-    """Error during ImageServer extraction."""
+    """Error during ImageServer extraction.
+
+    Attributes:
+        arcgis_code: Code of an ArcGIS JSON error that came with HTTP 200, or
+            None. The retry rule in ``extract/common/retry.py`` reads it.
+    """
+
+    arcgis_code: int | None = None
 
 
 def _pool_limits(in_flight: int) -> httpx.Limits:
@@ -291,6 +299,22 @@ _ERROR_BODY_SCAN_CHARS = 4000
 _HTML_TITLE_PATTERN = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
+def _arcgis_error(content: bytes) -> dict[str, Any] | None:
+    """Return the ``error`` object of an ArcGIS JSON error body, or None."""
+    if not content.lstrip().startswith(b"{"):
+        return None
+    try:
+        error_data = json.loads(content.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(error_data, dict) or "error" not in error_data:
+        return None
+    arcgis_error = error_data["error"]
+    if not isinstance(arcgis_error, dict):
+        return {"message": str(arcgis_error)}
+    return cast("dict[str, Any]", arcgis_error)
+
+
 def _describe_arcgis_error(
     tile: TileSpec,
     status_code: int,
@@ -313,18 +337,9 @@ def _describe_arcgis_error(
     Returns:
         Error message, or None when the body is not an ArcGIS error.
     """
-    if not content.lstrip().startswith(b"{"):
+    arcgis_error = _arcgis_error(content)
+    if arcgis_error is None:
         return None
-    try:
-        error_data = json.loads(content.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return None
-    if not isinstance(error_data, dict) or "error" not in error_data:
-        return None
-
-    arcgis_error = error_data["error"]
-    if not isinstance(arcgis_error, dict):
-        arcgis_error = {"message": str(arcgis_error)}
     code = arcgis_error.get("code", status_code)
     message = str(arcgis_error.get("message", "Unknown error")).rstrip(".")
     details_raw = arcgis_error.get("details") or []
@@ -478,9 +493,12 @@ async def download_tile(
         # Validate that response is actually a TIFF
         content = response.content
         if not _validate_tiff(content):
-            raise ImageServerExtractionError(
+            error = ImageServerExtractionError(
                 _describe_non_tiff_body(tile, response.status_code, content, export_url)
             )
+            code = (_arcgis_error(content) or {}).get("code")
+            error.arcgis_code = code if isinstance(code, int) else None
+            raise error
 
         # Ensure parent directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1098,6 +1116,19 @@ async def _process_tile(
 
                 except ImageServerExtractionError as e:
                     error_msg = str(e)
+                    status = permanent_status(e)
+                    if status is not None:
+                        # HTTP 401, 403, 404, or a token error: the same rule as a layer.
+                        error_msg = f"{e} The server answered {status}. {PERMANENT_NOTE}"
+                        logger.error("Tile %s failed: %s", tile.get_id(), error_msg)
+                        return _TileProcessResult(
+                            tile=tile,
+                            success=False,
+                            bytes_downloaded=0,
+                            duration_seconds=time.monotonic() - start_time,
+                            error_msg=error_msg,
+                            attempts=attempts_made,
+                        )
                     if attempt < config.max_retries:
                         logger.warning(
                             "Tile %s failed (attempt %d/%d): %s",

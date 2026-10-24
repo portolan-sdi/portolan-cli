@@ -339,7 +339,7 @@ def _default_arcgis_output_dir(parsed: ParsedArcGISURL) -> Path:
     "--retries",
     type=click.IntRange(min=1),
     default=3,
-    help="Attempts per layer, tile, or discovery request that fails (default: 3).",
+    help="Attempts per layer or tile for a transient failure (default: 3).",
 )
 @click.option(
     "--timeout",
