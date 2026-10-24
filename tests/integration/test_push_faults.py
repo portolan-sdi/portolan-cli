@@ -389,6 +389,39 @@ def test_interrupted_push_restores_the_keys_and_drops_the_backups(
     assert _bytes_that_disagree_with_the_manifest(bucket, "imagery", before) == {}
 
 
+def test_cancelled_backup_leaves_no_backup_key(
+    pushed: Path, bucket: Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A push cancelled while it copies the backups deletes the copies it made.
+
+    The backup runs before the upload and its rollback. Python's asyncio.run
+    cancels the main task on SIGINT, so the cancellation reaches the backup
+    through its gather. Each later push uses a fresh backup directory, so a
+    copy that stays behind is never reclaimed.
+    """
+    import asyncio
+
+    from portolan_cli.sync import push as push_module
+
+    before = bucket.keys()
+    real_copy = push_module.obs.copy_async
+    copies: list[str] = []
+
+    async def copy_once_then_cancel(store: Any, src: str, dst: str, **kwargs: Any) -> Any:
+        copies.append(src)
+        if len(copies) > 1:
+            raise asyncio.CancelledError
+        return await real_copy(store, src, dst, **kwargs)
+
+    monkeypatch.setattr(push_module.obs, "copy_async", copy_once_then_cancel)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(push_module.push_async(pushed, "imagery", bucket.url))
+
+    assert len(copies) > 1
+    assert bucket.keys() == before
+
+
 def test_conflict_with_a_push_of_the_same_version_restores_nothing(
     pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:

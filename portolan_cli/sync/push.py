@@ -641,18 +641,35 @@ async def _back_up(
     """
     base = f"{prefix}/.portolan/push-backup/{uuid.uuid4().hex}".lstrip("/")
     semaphore = asyncio.Semaphore(concurrency)
+    completed: list[str] = []
 
     async def copy(key: str) -> str | None:
         async with semaphore:
             try:
                 await obs.copy_async(store, key, f"{base}/{key}")
-                return f"{base}/{key}"
             except Exception as e:
                 if not (isinstance(e, FileNotFoundError) or _is_not_found(e)):
                     warn(f"Cannot back up {key}, a failed push leaves its new bytes: {e}")
                 return None
+            completed.append(f"{base}/{key}")
+            return f"{base}/{key}"
 
-    copies = await asyncio.gather(*(copy(k) for k in keys))
+    tasks = [asyncio.ensure_future(copy(k)) for k in keys]
+    try:
+        copies = await asyncio.gather(*tasks)
+    except BaseException:
+        # A cancellation or an interrupt here runs before the rollback of the
+        # push. Each push uses its own backup directory, so a copy that stays
+        # behind is never reclaimed. Delete what finished.
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for backup in completed:
+            try:
+                await obs.delete_async(store, backup)
+            except Exception as e:
+                warn(f"Failed to delete the backup {backup}: {e}")
+        raise
     return {key: backup for key, backup in zip(keys, copies, strict=True) if backup}
 
 
