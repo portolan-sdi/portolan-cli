@@ -287,6 +287,72 @@ def _apply_unreachable_branch(root: Path, faulty: bool) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Perf faults: each adds work that the scale gates in tests/perf must catch
+# ---------------------------------------------------------------------------
+
+
+def _apply_versions_read_per_file(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/query.py",
+            "    versions_file = read_versions(versions_path)\n    if not versions_file.versions:",
+            "    read_versions(versions_path)\n"
+            "    versions_file = read_versions(versions_path)\n    if not versions_file.versions:",
+        )
+
+
+def _apply_yaml_parse_per_call(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(root / "portolan_cli/config.py", "cached = _PARSED.get(key)", "cached = None")
+
+
+def _apply_extra_thumbnail_draw(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/viz/thumbnail.py",
+            "        # thumbnails.quality reaches both render paths",
+            "        fig.canvas.draw()\n        # thumbnails.quality reaches both render paths",
+        )
+
+
+def _apply_extra_duckdb_connect(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/convert.py",
+            "    if not has_geometry(table):\n        return table\n\n    # Add bbox column",
+            "    if not has_geometry(table):\n        return table\n\n"
+            "    import duckdb\n\n    duckdb.connect().close()\n\n    # Add bbox column",
+        )
+
+
+def _apply_publish_per_companion(root: Path, faulty: bool) -> None:
+    # _update_versions publishes each deferred companion. A second publish
+    # with a message is never a no-op, so each companion adds a version.
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/add.py",
+            "    published = publish_version(\n",
+            '    publish_version(collection_id, assets=assets, catalog_root=catalog_root, message="x")\n'
+            "    published = publish_version(\n",
+        )
+
+
+def _apply_heavy_cli_import(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/cli.py",
+            "import click\n",
+            "import click\nimport duckdb  # noqa: F401\n",
+        )
+
+
+def _perf_gate(test_id: str) -> Gate:
+    return Gate(("uv", "run", "pytest", test_id, "-q", "-p", "no:cacheprovider"))
+
+
+SCALE = "tests/perf/test_scale_invariance.py::test_counters_scale_as_recorded"
+
 FAULTS = (
     Fault(
         "mutant",
@@ -361,6 +427,36 @@ FAULTS = (
         "unreachable-branch",
         _apply_unreachable_branch,
         (Gate(("uv", "run", "mypy", UNREACHABLE_MODULE, "--warn-unreachable")),),
+    ),
+    Fault(
+        "versions-read-per-file",
+        _apply_versions_read_per_file,
+        (_perf_gate(f"{SCALE}[readd-unchanged]"),),
+    ),
+    Fault(
+        "yaml-parse-per-call",
+        _apply_yaml_parse_per_call,
+        (_perf_gate(f"{SCALE}[add-many-collections]"),),
+    ),
+    Fault(
+        "extra-thumbnail-draw",
+        _apply_extra_thumbnail_draw,
+        (_perf_gate(f"{SCALE}[add-many-collections-thumbs]"),),
+    ),
+    Fault(
+        "extra-duckdb-connect",
+        _apply_extra_duckdb_connect,
+        (_perf_gate(f"{SCALE}[add-one-collection]"),),
+    ),
+    Fault(
+        "publish-per-companion",
+        _apply_publish_per_companion,
+        (_perf_gate(f"{SCALE}[add-with-companions]"),),
+    ),
+    Fault(
+        "heavy-cli-import",
+        _apply_heavy_cli_import,
+        (_perf_gate("tests/perf/test_cold_imports.py"),),
     ),
 )
 FAULTS_BY_NAME = {fault.name: fault for fault in FAULTS}
