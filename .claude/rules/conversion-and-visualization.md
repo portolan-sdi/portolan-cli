@@ -79,10 +79,11 @@ early return there, keep that call.
 
 When the source is its own destination, `_rewrite_parquet_in_place` writes a
 sibling and swaps it in with `Path.replace`, so a failed write cannot destroy
-the operator's data. Two consequences to preserve: geoparquet-io writes a fresh
-`geo` key and **drops every other schema metadata key**, so the helper restores
-them (geopandas writes `pandas`, publishers write provenance keys); and the
-scratch file carries `REWRITE_TEMP_INFIX`, because `add` reads the collection
+the operator's data. Two consequences to preserve: geoparquet-io 1.7.0 writes a
+fresh `geo` key, keeps every other publisher key (gpio#1280), and drops `pandas`,
+`ARROW:schema` and `geo:overviews` on purpose (gpio#1268). The rewrite writes
+once. `_assert_rewrite_kept_everything` refuses a rewrite that drops a publisher
+key. And the scratch file carries `REWRITE_TEMP_INFIX`, because `add` reads the collection
 directory before conversion starts and a killed run leaves one behind. Both
 `add._collect_files_for_add` and `preparation._scan_item_assets` skip it via
 `is_rewrite_temp` — a leftover that gets tracked as an asset makes every later

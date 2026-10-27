@@ -2735,15 +2735,6 @@ class TestPartitionedOutputWithGeoparquetIO:
         assert kept.created_output is False
 
     @pytest.mark.integration
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "https://github.com/geoparquet/geoparquet-io/issues/1222: "
-            "Table.add_kdtree raises ST_Centroid(BLOB) on a table from "
-            "gpio.convert(). When a release fixes it, raise the pin and "
-            "remove this marker."
-        ),
-    )
     def test_single_file_kdtree_index(self, tmp_path: Path) -> None:
         """A non-partitioned kdtree index adds the `kdtree_cell` column."""
         from portolan_cli.conversion_config import VectorSettings

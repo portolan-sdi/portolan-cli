@@ -19,7 +19,7 @@ import fnmatch
 import glob
 import logging
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -42,6 +42,7 @@ from portolan_cli.convert import (
     convert_with_handler,
     distinct_output_path,
     run_with_transient_convert_retry,
+    settle_output,
     with_provenance,
 )
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
@@ -86,6 +87,7 @@ from portolan_cli.sync.checksums import (
     compute_dir_size,
     file_fields_from,
 )
+from portolan_cli.versions import versions_asset_key
 from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
 from portolan_cli.viz.style import enrich_cog_assets
 
@@ -518,6 +520,11 @@ class PreparedItem:
     # True when this run wrote the output and no file was there before. Only
     # such a file is safe to remove when a later step fails.
     created_output: bool = False
+    # The versions.json source_path of each output, by output path: the key of
+    # the source it was converted from, or its own key for a file added as it
+    # is. convert.claim_output reads the field to tell a 0.8.0 output, which
+    # has none, from a file of the operator.
+    source_paths: dict[Path, str] = field(default_factory=dict)
 
 
 def _pre_validate_geometry(path: Path) -> None:
@@ -836,7 +843,8 @@ def _convert_and_extract_metadata(
         force: If True, bypass change detection (Issue #386).
         reconvert: If True, re-convert from source (requires force=True).
         state: The run state. The handler takes no state, so the conversion
-            settings reach it through ``settings_override``.
+            settings reach it through ``settings_override``. The state also
+            gives one hash and one ``versions.json`` read per run.
 
     Returns:
         Tuple of (output_path, metadata). A plugin's FormatMetadata provides
@@ -865,7 +873,9 @@ def _convert_and_extract_metadata(
         elif reconvert and in_place and reconvert_method is not None:
             output = reconvert_method(path, catalog_root)
         else:
-            output = convert_with_handler(handler, path, item_dir, catalog_root, target=target)
+            output = convert_with_handler(
+                handler, path, item_dir, catalog_root, target=target, state=state
+            )
     return output, cast("AllMetadata", handler.read_metadata(output))
 
 
@@ -1197,6 +1207,9 @@ def prepare_item(
         reconvert=reconvert,
         state=state,
     )
+    # settle_output can move a tabular output over the file 0.8.0 wrote.
+    created_output = created_output and output_path == target
+    source_paths = {output_path: versions_asset_key(path, collection_dir)}
 
     # Step 3b: Load metadata.yaml defaults (for temporal/nodata when source lacks them)
     metadata_yaml = (
@@ -1279,6 +1292,7 @@ def prepare_item(
             metadata=metadata,
             format_name=handler.name,
             created_output=created_output,
+            source_paths=source_paths,
         )
 
     # Item-level: create STAC item and save item.json
@@ -1316,6 +1330,7 @@ def prepare_item(
         metadata=metadata,
         format_name=handler.name,
         created_output=created_output,
+        source_paths=source_paths,
     )
 
 
@@ -1712,7 +1727,8 @@ def convert_tabular(source: Path, dest_dir: Path, *, state: RunState | None = No
     """
     import geoparquet_io as gpio
 
-    output_path = claim_output(source, dest_dir / f"{source.stem}.parquet", state=state)
+    default_path = dest_dir / f"{source.stem}.parquet"
+    output_path = claim_output(source, default_path, state=state)
 
     # If already Parquet, just copy (no conversion needed)
     if source.suffix.lower() == ".parquet":
@@ -1734,7 +1750,7 @@ def convert_tabular(source: Path, dest_dir: Path, *, state: RunState | None = No
 
     run_with_transient_convert_retry(_run, source_name=source.name)
 
-    return output_path
+    return settle_output(source, default_path, output_path, state=state)
 
 
 def convert_raster(

@@ -986,6 +986,7 @@ def _batch_update_versions(
                 href=href,
                 mtime=stat.st_mtime,
                 source_mtime=source_mtime,
+                source_path=p.source_paths.get(file_path),
                 feature_count=feature_count,
                 schema_fingerprint=schema_fingerprint,
             )

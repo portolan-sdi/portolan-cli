@@ -301,11 +301,12 @@ class TestRewriteScratchFileIsNeverIngested:
 
 
 class TestRewritePreservesPublisherMetadata:
-    """geoparquet-io writes a fresh `geo` key and drops every other one.
+    """geoparquet-io writes a fresh `geo` key and keeps a publisher's keys.
 
-    Publishers do set other keys. geopandas writes `pandas`, which carries the
-    index and dtype information `pd.read_parquet` restores. The rewrite mutates
-    the operator's own file, so it must put those keys back.
+    Publishers set other keys, such as provenance. The rewrite mutates the
+    operator's own file, so those keys must survive it. geoparquet-io 1.7.0
+    keeps them (gpio#1280). It drops `pandas` on purpose, because that key
+    names the columns of the input (gpio#1268).
     """
 
     def test_extra_schema_metadata_survives_the_rewrite(self, tmp_path: Path) -> None:

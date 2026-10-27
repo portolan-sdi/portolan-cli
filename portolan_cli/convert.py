@@ -23,7 +23,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
-from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
+from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
 from portolan_cli.conversion_config import (
     LOSSY_COMPRESSIONS,
     QUALITY_COMPRESSIONS,
@@ -44,6 +44,7 @@ from portolan_cli.formats import (
     get_cloud_native_status,
 )
 from portolan_cli.trace import count, current_span, span
+from portolan_cli.versions import read_versions, versions_asset_key
 from portolan_cli.viz.thumbnail import (
     thumbnail_path_for,
 )
@@ -563,7 +564,8 @@ def convert_with_handler(
         target = claim_output(source, expected, state=state)
     if target == expected:
         return handler.convert(source, output_dir, catalog_root)
-    return _convert_to(handler, source, output_dir, catalog_root, target)
+    written = _convert_to(handler, source, output_dir, catalog_root, target)
+    return settle_output(source, expected, written, state=state, geometry_required=True)
 
 
 #: The Parquet footer key that names the source of a converted file. Its value
@@ -630,26 +632,132 @@ def _recorded_source(output: Path) -> str | None:
     return recorded if isinstance(recorded, str) else None
 
 
-def _produced_by(output: Path, source: Path, state: RunState | None) -> bool:
+def _produced_by(output: Path, source: Path, state: RunState | None) -> bool | None:
     """Report whether ``output`` is a file that a conversion of ``source`` wrote.
 
-    The provenance record decides. A file with no record is the source's only
-    when it is a byte copy of it, such as a COG that ``convert_raster`` copied
-    to its ``.tif`` name.
+    The provenance record decides. A file with no record is the source's when
+    it is a byte copy of it, such as a COG that ``convert_raster`` copied to
+    its ``.tif`` name.
+
+    Returns:
+        True or False when the file proves it, None when it carries no record.
     """
     recorded = _recorded_source(output)
     if recorded is not None:
         return recorded == source.name
     try:
         if output.stat().st_size != source.stat().st_size:
-            return False
+            return None
     except OSError:
-        return False
+        return None
     if state is not None:
-        return state.checksum(output) == state.checksum(source)
-    from portolan_cli.sync.checksums import compute_checksum
+        same = state.checksum(output) == state.checksum(source)
+    else:
+        from portolan_cli.sync.checksums import compute_checksum
 
-    return compute_checksum(output) == compute_checksum(source)
+        same = compute_checksum(output) == compute_checksum(source)
+    return True if same else None
+
+
+def _collection_dir_of(path: Path) -> Path | None:
+    """The nearest directory above ``path`` that holds ``versions.json``.
+
+    The search stops at the catalog root, whose ``versions.json`` is the
+    catalog index and names no asset.
+    """
+    for directory in path.resolve().parents:
+        if (directory / ".portolan").is_dir():
+            return None
+        if (directory / "versions.json").is_file():
+            return directory
+    return None
+
+
+def _legacy_output_of(output: Path, source: Path, state: RunState | None) -> bool:
+    """Report whether versions.json shows that an add of ``source`` wrote ``output``.
+
+    Portolan 0.8.0 wrote no provenance record. Its versions.json tracks the
+    output and the source side by side, and the output entry has no
+    ``source_path``. Every output entry that an add writes now has one.
+    """
+    if output.parent != source.parent:
+        return False
+    collection_dir = _collection_dir_of(output)
+    if collection_dir is None:
+        return False
+    try:
+        record = (
+            state.versions(collection_dir)
+            if state is not None
+            else read_versions(collection_dir / "versions.json")
+        )
+    except (ValueError, OSError):
+        return False
+    if not record.versions:
+        return False
+    assets = record.versions[-1].assets
+    tracked = assets.get(versions_asset_key(output, collection_dir))
+    return (
+        tracked is not None
+        and tracked.source_path is None
+        and versions_asset_key(source, collection_dir) in assets
+    )
+
+
+def _footer_shape(path: Path) -> tuple[bool, frozenset[str]] | None:
+    """Whether a Parquet file is GeoParquet, and its column names. None when unreadable."""
+    import pyarrow.parquet as pq
+
+    try:
+        count("parquet.opens")
+        metadata = pq.read_metadata(path)
+    except Exception:  # noqa: BLE001 - an unreadable file has no shape
+        return None
+    has_geo = b"geo" in (metadata.metadata or {})
+    return has_geo, frozenset(metadata.schema.to_arrow_schema().names)
+
+
+def settle_output(
+    source: Path,
+    output: Path,
+    written: Path,
+    *,
+    state: RunState | None = None,
+    geometry_required: bool = False,
+) -> Path:
+    """Move the distinct output of a tabular source over the output 0.8.0 wrote.
+
+    0.8.0 converted a CSV with geometry, and with ``tabular.convert`` any CSV,
+    over the Parquet file of its stem. It tracked a CSV with no geometry
+    beside a GeoParquet as a companion. The two pairs look the same in
+    versions.json, so :func:`claim_output` sends a tabular source to the
+    distinct name. This function then compares the file it wrote with the
+    tracked file of the stem. The written file replaces it only when both are
+    GeoParquet, or both are plain Parquet, and they have the same columns.
+    Any other file stays, so a companion CSV that gains geometry beside a
+    foreign GeoParquet keeps its distinct output.
+
+    Args:
+        source: The tabular source.
+        output: The path the converter names, ``<stem>.parquet``.
+        written: The path the conversion wrote.
+        state: The run state, for one ``versions.json`` read per run.
+        geometry_required: Replace only with a GeoParquet file.
+
+    Returns:
+        The path that holds the output now.
+    """
+    if written == output or source.suffix.lower() not in TABULAR_EXTENSIONS:
+        return written
+    if not output.is_file() or _recorded_source(output) is not None:
+        return written
+    if not _legacy_output_of(output, source, state):
+        return written
+    shape = _footer_shape(written)
+    if shape is None or shape != _footer_shape(output) or (geometry_required and not shape[0]):
+        return written
+    written.replace(output)
+    return output
 
 
 def distinct_output_path(source: Path, output: Path) -> Path:
@@ -663,10 +771,11 @@ def claim_output(source: Path, output: Path, *, state: RunState | None = None) -
 
     A converter names its output after the source stem, so ``b1.csv`` and a
     GeoParquet ``b1.parquet`` claim one name. A file at that name is the
-    source's to replace only when its provenance record names the source. Any
-    other file belongs to the operator. The output then takes the name
-    ``<stem>-<source extension>``, such as ``b1-csv.parquet``, and the asset
-    key follows the new stem.
+    source's to replace when its provenance record names the source, or when
+    it has no record and versions.json shows that an add of the source wrote
+    it (:func:`_legacy_output_of`). Any other file belongs to the operator. The
+    output then takes the name ``<stem>-<source extension>``, such as
+    ``b1-csv.parquet``, and the asset key follows the new stem.
 
     Args:
         source: The file to convert.
@@ -679,14 +788,20 @@ def claim_output(source: Path, output: Path, *, state: RunState | None = None) -
     Raises:
         OutputExistsError: Both names hold a file that ``source`` did not write.
     """
-    if (
-        not output.exists()
-        or output.resolve() == source.resolve()
-        or _produced_by(output, source, state)
-    ):
+    if not output.exists() or output.resolve() == source.resolve():
+        return output
+    owned = _produced_by(output, source, state)
+    if owned:
         return output
     distinct = distinct_output_path(source, output)
-    if not distinct.exists() or _produced_by(distinct, source, state):
+    if distinct.exists() and _produced_by(distinct, source, state):
+        return distinct
+    # A tabular source goes to the distinct name. settle_output decides after
+    # the conversion, because only the output shows whether it has geometry.
+    tabular = source.suffix.lower() in TABULAR_EXTENSIONS
+    if owned is None and not tabular and _legacy_output_of(output, source, state):
+        return output
+    if not distinct.exists():
         return distinct
     raise OutputExistsError(source.name, output.name)
 

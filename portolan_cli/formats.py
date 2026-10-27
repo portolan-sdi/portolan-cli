@@ -148,35 +148,6 @@ def is_valid_parquet(path: Path) -> bool:
         return False
 
 
-def read_kv_metadata(path: Path) -> dict[bytes, bytes]:
-    """Read every key-value pair in a Parquet file's raw footer.
-
-    pyarrow rebuilds the Arrow schema metadata from the ``ARROW:schema`` footer
-    blob and drops every other key. A writer that appends ``geo`` at close, the
-    normal pattern because bbox and geometry_types are known only then, writes
-    a GeoParquet whose ``geo`` key ``schema_arrow.metadata``,
-    ``pq.read_schema()`` and ``to_arrow_schema()`` never show (issue #864).
-    geoparquet-io reads the raw footer, so this and :func:`read_geo_metadata`
-    are the only supported ways to read a footer key in this codebase.
-
-    Args:
-        path: Path to a Parquet file.
-
-    Returns:
-        The footer key-value metadata, ``ARROW:schema`` included when pyarrow
-        wrote the file. Empty for a file that declares none or cannot be read.
-    """
-    from geoparquet_io.core.duckdb_metadata import (  # type: ignore[import-untyped]
-        get_kv_metadata,
-    )
-
-    try:
-        return dict(get_kv_metadata(str(path)) or {})
-    except Exception:  # noqa: BLE001 - an unreadable file carries no metadata
-        logger.debug("Failed to read Parquet footer metadata from %s", path, exc_info=True)
-        return {}
-
-
 def read_geo_metadata(source: Path | pq.ParquetFile) -> dict[str, Any] | None:
     """Read and parse the ``geo`` footer key of a GeoParquet file.
 
@@ -190,7 +161,9 @@ def read_geo_metadata(source: Path | pq.ParquetFile) -> dict[str, Any] | None:
         for a ``geo`` value that is not a JSON object, and for an unreadable
         file.
     """
-    from geoparquet_io.core.duckdb_metadata import get_geo_metadata
+    from geoparquet_io.core.duckdb_metadata import (  # type: ignore[import-untyped]
+        get_geo_metadata,
+    )
 
     try:
         if isinstance(source, Path):

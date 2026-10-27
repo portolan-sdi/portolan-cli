@@ -1141,3 +1141,145 @@ class TestNoConversionReplacesAForeignFile:
         assert self._tracked(collection_dir)["pts.parquet"]["sha256"] == _sha(
             collection_dir / "pts.parquet"
         )
+
+
+def _make_legacy(collection_dir: Path) -> None:
+    """Give a collection the shape that Portolan 0.8.0 wrote.
+
+    0.8.0 wrote no ``portolan:source`` footer key and no ``source_path`` in
+    versions.json. The output entry has ``source_mtime`` and the source entry
+    has only ``mtime``, as in a catalog that 0.8.0 built.
+    """
+    import os
+
+    from portolan_cli.convert import PROVENANCE_KEY
+
+    versions_path = collection_dir / "versions.json"
+    versions = json.loads(versions_path.read_text())
+    assets = versions["versions"][-1]["assets"]
+    for parquet in collection_dir.glob("*.parquet"):
+        table = pq.read_table(parquet)
+        metadata = dict(table.schema.metadata or {})
+        if metadata.pop(PROVENANCE_KEY.encode(), None) is None:
+            continue
+        mtime = parquet.stat().st_mtime
+        pq.write_table(table.replace_schema_metadata(metadata), parquet)
+        os.utime(parquet, (mtime, mtime))
+        entry = assets[parquet.name]
+        entry["sha256"] = _sha(parquet)
+        entry["size_bytes"] = parquet.stat().st_size
+    for entry in assets.values():
+        entry.pop("source_path", None)
+    versions_path.write_text(json.dumps(versions))
+
+
+class TestALegacyOutputIsItsSourceOwn:
+    """An output that 0.8.0 wrote has no record. versions.json tells whose it is."""
+
+    @staticmethod
+    def _add(runner: CliRunner, catalog: Path, target: Path) -> None:
+        result = runner.invoke(
+            cli, ["add", "--portolan-dir", str(catalog), str(target)], catch_exceptions=False
+        )
+        assert result.exit_code == 0, result.output
+
+    @staticmethod
+    def _parquets(collection_dir: Path) -> list[str]:
+        return sorted(p.name for p in collection_dir.glob("*.parquet"))
+
+    @pytest.mark.integration
+    def test_an_edited_geojson_replaces_its_legacy_output(
+        self, runner: CliRunner, initialized_catalog: Path
+    ) -> None:
+        collection_dir = initialized_catalog / "pts"
+        collection_dir.mkdir()
+        source = collection_dir / "pts.geojson"
+        TestNoConversionReplacesAForeignFile._points(source, 1)
+        self._add(runner, initialized_catalog, source)
+        _make_legacy(collection_dir)
+
+        TestNoConversionReplacesAForeignFile._points(source, 2)
+        self._add(runner, initialized_catalog, source)
+
+        assert self._parquets(collection_dir) == ["pts.parquet"]
+        assert pq.read_metadata(collection_dir / "pts.parquet").num_rows == 2
+
+    @pytest.mark.integration
+    def test_an_edited_geo_csv_replaces_its_legacy_output(
+        self, runner: CliRunner, initialized_catalog: Path
+    ) -> None:
+        collection_dir = initialized_catalog / "sites"
+        collection_dir.mkdir()
+        source = collection_dir / "sites.csv"
+        source.write_text("id,lat,lon\n1,10.5,1.5\n")
+        self._add(runner, initialized_catalog, source)
+        _make_legacy(collection_dir)
+
+        source.write_text("id,lat,lon\n1,10.5,1.5\n2,11.5,2.5\n")
+        self._add(runner, initialized_catalog, source)
+
+        assert self._parquets(collection_dir) == ["sites.parquet"]
+        assert pq.read_metadata(collection_dir / "sites.parquet").num_rows == 2
+
+    @pytest.mark.integration
+    def test_an_edited_companion_csv_leaves_the_geoparquet(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        collection_dir = initialized_catalog / "buildings"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "b1.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
+        companion = collection_dir / "b1.csv"
+        companion.write_text("id,name\n1,a\n")
+        self._add(runner, initialized_catalog, collection_dir)
+        _make_legacy(collection_dir)
+        before = _sha(geoparquet)
+
+        companion.write_text("id,name\n1,a\n2,b\n")
+        # The add still fails the CSV here: phase 3 counts only the geo files
+        # of this run as companions of a directory. That is the add.py defect
+        # the PR body names. This test proves only that nothing is lost.
+        runner.invoke(cli, ["add", "--portolan-dir", str(initialized_catalog), str(collection_dir)])
+
+        assert _sha(geoparquet) == before
+        assert self._parquets(collection_dir) == ["b1.parquet"]
+
+    @pytest.mark.integration
+    def test_a_companion_csv_that_gains_geometry_converts_to_a_distinct_name(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        """The one ambiguous case. The add takes the path that destroys nothing."""
+        collection_dir = initialized_catalog / "buildings"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "b1.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
+        companion = collection_dir / "b1.csv"
+        companion.write_text("id,name\n1,a\n")
+        self._add(runner, initialized_catalog, collection_dir)
+        _make_legacy(collection_dir)
+        before = _sha(geoparquet)
+
+        companion.write_text("id,name,lat,lon\n1,a,10.5,1.5\n")
+        self._add(runner, initialized_catalog, collection_dir)
+
+        assert _sha(geoparquet) == before
+        assert self._parquets(collection_dir) == ["b1-csv.parquet", "b1.parquet"]
+
+    @pytest.mark.integration
+    def test_a_new_geojson_leaves_a_legacy_geoparquet_of_its_stem(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        collection_dir = initialized_catalog / "places"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "points.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
+        self._add(runner, initialized_catalog, geoparquet)
+        _make_legacy(collection_dir)
+        before = _sha(geoparquet)
+        source = collection_dir / "points.geojson"
+        TestNoConversionReplacesAForeignFile._points(source, 1)
+
+        self._add(runner, initialized_catalog, source)
+
+        assert _sha(geoparquet) == before
+        assert self._parquets(collection_dir) == ["points-geojson.parquet", "points.parquet"]
