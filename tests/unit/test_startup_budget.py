@@ -93,6 +93,73 @@ def test_api_import_loads_no_heavy_dependency() -> None:
     assert _run(code).strip() == "[]"
 
 
+_HEAVY_MODULES = (
+    "rasterio",
+    "pyogrio",
+    "geopandas",
+    "pandas",
+    "pyarrow.compute",
+    "duckdb",
+    "matplotlib",
+    "contextily",
+    "boto3",
+    "geoparquet_io",
+)
+
+_COMMAND_HELP_PROBE = """
+import importlib, sys
+cli = importlib.import_module("portolan_cli.cli").cli
+try:
+    cli({argv!r}, prog_name="portolan")
+except SystemExit:
+    pass
+print("HEAVY_MODULES", sorted(m for m in {heavy!r} if m in sys.modules))
+"""
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["--help"], ["init", "--help"], ["check", "--help"]],
+    ids=["root", "init", "check"],
+)
+def test_help_loads_no_heavy_dependency(argv: list[str]) -> None:
+    """`portolan --help` and each command help load no geospatial stack (#994).
+
+    The help runs on every typo and every agent probe. A data library loaded
+    at the top of `cli.py`, or eagerly by a package it imports, adds most of
+    a second to each one.
+    """
+    output = _run(_COMMAND_HELP_PROBE.format(argv=argv, heavy=list(_HEAVY_MODULES)))
+
+    assert "Usage: portolan" in output
+    assert output.splitlines()[-1] == "HEAVY_MODULES []"
+
+
+def test_metadata_package_import_loads_no_heavy_dependency() -> None:
+    """`import portolan_cli.metadata` loads no format extractor (#994).
+
+    Python runs the package `__init__` before any submodule, so an eager
+    re-export there loads rasterio and pyogrio for `metadata.models` too.
+    """
+    code = (
+        "import sys, portolan_cli.metadata.models\n"
+        f"print(sorted(m for m in {list(_HEAVY_MODULES)!r} if m in sys.modules))\n"
+    )
+
+    assert _run(code).strip() == "[]"
+
+
+def test_metadata_package_resolves_every_public_name() -> None:
+    """Each name in `portolan_cli.metadata.__all__` resolves to its definition."""
+    import portolan_cli.metadata as metadata
+
+    for name in metadata.__all__:
+        value = getattr(metadata, name)
+        assert value.__module__.startswith("portolan_cli.metadata."), name
+        assert value.__name__ == name
+    assert set(metadata.__all__) <= set(dir(metadata))
+
+
 _EXTRACT_HELP_PROBE = """
 import importlib, sys
 cli = importlib.import_module("portolan_cli.cli").cli
