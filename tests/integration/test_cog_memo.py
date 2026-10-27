@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -63,7 +64,11 @@ def test_cog_replacement_invalidates_destination(
         if writer == "place":
             place_cog(replacement, output)
         else:
-            assert convert_raster(replacement, output.parent) == output
+            # The output belongs to its own source, so a conversion of the
+            # edited source replaces it. Another source would get a new name.
+            source = output.parent / "src" / "scene.tif"
+            shutil.copyfile(replacement.parent / "src" / "scene.tif", source)
+            assert convert_raster(source, output.parent) == output
         expected_checksum = hashlib.sha256(output.read_bytes()).hexdigest()
         assert expected_checksum != old_checksum
         assert state.checksum(output) == expected_checksum, "COG replacement retained old checksum"
