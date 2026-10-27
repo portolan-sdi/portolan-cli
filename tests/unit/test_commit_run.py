@@ -266,14 +266,11 @@ class TestOwnedRun:
             state.stage("c", assets={"a.bin": _asset(catalog, "c/a.bin", b"a")})
         assert (catalog / "c" / "versions.json").exists()
 
-    def test_exception_commits_saved_stages(self, catalog: Path) -> None:
+    def test_exception_commits_nothing(self, catalog: Path) -> None:
         with pytest.raises(RuntimeError), owned_run(catalog) as state:
             state.stage("c", assets={"a.bin": _asset(catalog, "c/a.bin", b"a")})
             raise RuntimeError("boom")
-        record = read_versions(catalog / "c" / "versions.json")
-        assert record.current_version == "1.0.0"
-        assert set(record.versions[-1].assets) == {"a.bin"}
-        assert _index(catalog)["collections"]["c"]["current_version"] == "1.0.0"
+        assert not (catalog / "c" / "versions.json").exists()
 
     def test_caller_state_is_not_committed(self, catalog: Path) -> None:
         mine = RunState.open(catalog)

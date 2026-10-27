@@ -42,6 +42,7 @@ dependencies = [
     "stac-geoparquet>=0.6.0", # Generate items.parquet for efficient STAC queries (optional)
     "pyyaml>=6.0", # YAML config file support
     "rasterio>=1.3.0", # Raster I/O (transitive via rio-cogeo, but we import directly)
+    "shapely>=2.1.0", # Transitive via geopandas, but the thumbnail imports it. 2.1 adds orient_polygons, which draws polygon holes
     "aiohttp>=3.14.4", # CVE-2026-111063..111066, CVE-2026-111748..111750, GHSA-2g87-pp6c-29x5 fix (transitive via geoparquet-io/s3fs, pinned for security)
     "certifi>=2026.10.19", # PYSEC-2026-4320 fix (transitive via requests/httpx, pinned for security)
     "cryptography>=46.0.7", # CVE-2026-39892 fix (transitive via httpx/certifi, pinned for security)
@@ -76,7 +77,7 @@ portolan = "portolan_cli:cli"
 [project.optional-dependencies]
 iceberg = [
     "pyiceberg[sql-sqlite]>=0.8.0",
-    "shapely>=2.1.0", # 2.1 adds orient_polygons, which the thumbnail draws polygon holes with
+    "shapely>=2.0.0",
     "pygeohash>=1.2.0",
 ]
 e2e = [

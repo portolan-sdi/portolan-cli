@@ -3720,6 +3720,7 @@ dependencies = [
     { name = "requests" },
     { name = "rich" },
     { name = "rio-cogeo" },
+    { name = "shapely" },
     { name = "stac-geoparquet" },
 ]
 
@@ -3830,7 +3831,8 @@ requires-dist = [
     { name = "rich", specifier = ">=13.0.0" },
     { name = "rio-cogeo", specifier = ">=5.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.11" },
-    { name = "shapely", marker = "extra == 'iceberg'", specifier = ">=2.1.0" },
+    { name = "shapely", specifier = ">=2.1.0" },
+    { name = "shapely", marker = "extra == 'iceberg'", specifier = ">=2.0.0" },
     { name = "stac-geoparquet", specifier = ">=0.6.0" },
     { name = "types-defusedxml", marker = "extra == 'dev'", specifier = ">=0.7.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
