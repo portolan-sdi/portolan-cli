@@ -1550,6 +1550,67 @@ def _collection_setting(
     return get_setting(key, catalog_path=catalog_root, collection_path=collection_dir)
 
 
+#: Tracked files that make a directory a home for companions. A tabular file
+#: counts only when it is GeoParquet. Tiles render data and own no companion.
+_COMPANION_HOST_EXTENSIONS = GEOSPATIAL_EXTENSIONS - TABULAR_EXTENSIONS - {PMTILES_SUFFIX}
+
+
+def _hosts_companions(path: Path) -> bool:
+    """Report whether a tracked file is geospatial data that companions attach to."""
+    suffix = path.suffix.lower()
+    if suffix in _COMPANION_HOST_EXTENSIONS or suffix in plugin_extensions():
+        return path.exists()
+    return suffix == ".parquet" and path.is_file() and is_geoparquet(path)
+
+
+def _map_recorded_geo_dirs(
+    deferred_non_geo: list[tuple[Path, Path, str]],
+    source_to_item_dir: dict[Path, tuple[Path, str, str]],
+    source_to_collection_dir: dict[Path, tuple[Path, str]],
+    catalog_root: Path,
+    state: RunState | None,
+) -> None:
+    """Map each companion directory that holds an unchanged, tracked geo file.
+
+    Phase 1 skips an unchanged geo file, so phase 2 maps no directory for it.
+    A companion that changed beside it still belongs to it. The geo file is in
+    the latest version of its collection, so that record names the directory.
+    The collection is the directory itself, or its parent for an item. Phase 1
+    infers the collection of a lone CSV in an item directory as the item
+    directory, so the inferred id is not the answer.
+
+    Args:
+        deferred_non_geo: The ``(file, source_dir, collection_id)`` of phase 2.
+        source_to_item_dir: The item map of phase 2 (mutated).
+        source_to_collection_dir: The collection map of phase 2 (mutated).
+        catalog_root: Root directory of the catalog.
+        state: The run state, which reads each ``versions.json`` once.
+    """
+    from portolan_cli.run_state import RunState
+
+    run = state if state is not None else RunState.open(catalog_root)
+    for _file, source_dir, _coll_id in deferred_non_geo:
+        if source_dir in source_to_item_dir or source_dir in source_to_collection_dir:
+            continue
+        for collection_dir in (source_dir, source_dir.parent):
+            if not (collection_dir / "versions.json").exists():
+                continue
+            record = run.versions(collection_dir)
+            hosts = [
+                collection_dir / key
+                for key in (record.versions[-1].assets if record.versions else ())
+                if (collection_dir / key).parent == source_dir
+            ]
+            if not any(_hosts_companions(path) for path in hosts):
+                continue
+            coll_id = collection_dir.relative_to(catalog_root).as_posix()
+            if collection_dir == source_dir:
+                source_to_collection_dir[source_dir] = (collection_dir, coll_id)
+            else:
+                source_to_item_dir[source_dir] = (source_dir, coll_id, source_dir.name)
+            break
+
+
 def _process_deferred_non_geo_files(
     *,
     deferred_non_geo: list[tuple[Path, Path, str]],
@@ -1592,6 +1653,11 @@ def _process_deferred_non_geo_files(
     """
     affected_collections: set[Path] = set()
     reasons = skip_reasons if skip_reasons is not None else {}
+    source_to_item_dir = dict(source_to_item_dir)
+    source_to_collection_dir = dict(source_to_collection_dir)
+    _map_recorded_geo_dirs(
+        deferred_non_geo, source_to_item_dir, source_to_collection_dir, catalog_root, state
+    )
     for file_path, source_dir, coll_id in deferred_non_geo:
         try:
             if source_dir in source_to_item_dir:

@@ -399,3 +399,58 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
 
         # Non-geo file should be in skipped (tracked as companion)
         assert nongeo_file in skipped, "Non-geo should be tracked as skipped"
+
+    def test_edited_companion_beside_unchanged_geo_file(
+        self, fresh_catalog_no_versions: Path, fixtures_dir: Path
+    ) -> None:
+        """A re-add tracks an edited CSV whose GeoParquet did not change.
+
+        Phase 1 skips the unchanged GeoParquet, so no prepared item names the
+        directory. Phase 3 must still find the geo file that versions.json
+        tracks there, and track the CSV as its companion.
+        """
+        from portolan_cli.add import add_files
+        from portolan_cli.versions import read_versions
+
+        catalog = fresh_catalog_no_versions
+        collection_dir = catalog / "buildings"
+        collection_dir.mkdir()
+        (collection_dir / "b1.parquet").write_bytes((fixtures_dir / "simple.parquet").read_bytes())
+        csv = collection_dir / "a1.csv"
+        csv.write_text("id,name\n1,a\n")
+        _, _, failures = add_files(paths=[collection_dir], catalog_root=catalog)
+        assert failures == []
+
+        csv.write_text("id,name\n1,a\n2,b\n")
+        _, skipped, failures = add_files(paths=[collection_dir], catalog_root=catalog)
+
+        assert failures == []
+        assert csv in skipped
+        tracked = read_versions(collection_dir / "versions.json").versions[-1].assets
+        assert tracked["a1.csv"].size_bytes == csv.stat().st_size
+
+    def test_edited_companion_beside_unchanged_raster_item(
+        self, fresh_catalog_no_versions: Path, fixtures_dir: Path
+    ) -> None:
+        """The same holds for an item directory: the raster item keeps its CSV."""
+        from portolan_cli.add import add_files
+        from portolan_cli.versions import read_versions
+
+        catalog = fresh_catalog_no_versions
+        item_dir = catalog / "imagery" / "scene"
+        item_dir.mkdir(parents=True)
+        (item_dir / "scene.tif").write_bytes(
+            (fixtures_dir / "raster" / "valid" / "rgb.tif").read_bytes()
+        )
+        csv = item_dir / "bands.csv"
+        csv.write_text("band,name\n1,red\n")
+        _, _, failures = add_files(paths=[catalog / "imagery"], catalog_root=catalog)
+        assert failures == []
+
+        csv.write_text("band,name\n1,red\n2,green\n")
+        _, skipped, failures = add_files(paths=[catalog / "imagery"], catalog_root=catalog)
+
+        assert failures == []
+        assert csv in skipped
+        tracked = read_versions(catalog / "imagery" / "versions.json").versions[-1].assets
+        assert tracked["scene/bands.csv"].size_bytes == csv.stat().st_size
