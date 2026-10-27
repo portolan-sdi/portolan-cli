@@ -56,6 +56,8 @@ from portolan_cli.viz.thumbnail import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from portolan_cli.config import ConfigSource
+
 logger = logging.getLogger(__name__)
 
 PARQUET_SUFFIX = ".parquet"
@@ -355,6 +357,7 @@ def _write_default_style_for_geoparquet(
     collection_path: Path,
     pmtiles_relative_path: str,
     catalog_path: Path | None = None,
+    state: ConfigSource | None = None,
 ) -> Path | None:
     """Write a default style file for a PMTiles asset.
 
@@ -364,6 +367,7 @@ def _write_default_style_for_geoparquet(
         collection_path: Path to the collection directory.
         pmtiles_relative_path: PMTiles path relative to collection (e.g., "data.pmtiles").
         catalog_path: Optional catalog path for loading style config.
+        state: The run state, which parses the config once per run.
 
     Returns:
         Path to the written style file, or None if skipped.
@@ -391,7 +395,11 @@ def _write_default_style_for_geoparquet(
             return None
         geometry_type = _style_geometry_type(metadata.geometry_type)
 
-        config = get_vector_style_config(catalog_path) if catalog_path else VectorStyleConfig()
+        config = (
+            get_vector_style_config(catalog_path, state=state)
+            if catalog_path
+            else VectorStyleConfig()
+        )
 
         # Thread the archive's zoom range into the style source so MapLibre
         # never requests tiles beyond what tippecanoe produced (issue #756).
@@ -744,6 +752,7 @@ def generate_pmtiles_for_collection(
     precision: int = 6,
     attribution: str | None = None,
     src_crs: str | None = None,
+    state: ConfigSource | None = None,
 ) -> PMTilesResult:
     """Generate PMTiles for all GeoParquet assets in a collection.
 
@@ -777,6 +786,7 @@ def generate_pmtiles_for_collection(
         precision: Coordinate decimal precision (default: 6).
         attribution: Attribution HTML for tiles.
         src_crs: Override source CRS if metadata is incorrect.
+        state: The run state, which parses the config once per run.
 
     Returns:
         PMTilesResult with generated, skipped, and failed counts.
@@ -836,6 +846,7 @@ def generate_pmtiles_for_collection(
                 collection_path=collection_path,
                 pmtiles_relative_path=pmtiles_col_rel,
                 catalog_path=catalog_root,
+                state=state,
             )
             # Backfill versions.json for artifacts generated before this tracking
             # existed (the original #519 bug state), idempotently.
@@ -879,6 +890,7 @@ def generate_pmtiles_for_collection(
                 collection_path=collection_path,
                 pmtiles_relative_path=pmtiles_col_rel,
                 catalog_path=catalog_root,
+                state=state,
             )
 
         except PMTilesGenerationError as e:
@@ -939,11 +951,22 @@ class PMTilesSettings:
     src_crs: str | None = None
 
 
-def get_pmtiles_settings(catalog_root: Path, coll_id: str, coll_path: Path) -> PMTilesSettings:
-    """Resolve PMTiles settings for a collection via hierarchical config."""
+def get_pmtiles_settings(
+    catalog_root: Path,
+    coll_id: str,
+    coll_path: Path,
+    *,
+    state: ConfigSource | None = None,
+) -> PMTilesSettings:
+    """Resolve PMTiles settings for a collection via hierarchical config.
+
+    With a run state, the ten keys share one merge of the collection config.
+    """
     from portolan_cli.config import coerce_bool, coerce_int, get_setting
 
     def get(key: str) -> Any:
+        if state is not None:
+            return state.setting(f"pmtiles.{key}", collection_dir=coll_path)
         return get_setting(
             f"pmtiles.{key}",
             catalog_path=catalog_root,
@@ -973,6 +996,7 @@ def generate_or_suggest_pmtiles(
     force: bool,
     verbose: bool,
     use_json: bool = False,
+    state: ConfigSource | None = None,
 ) -> None:
     """Generate PMTiles for affected collections when requested or configured.
 
@@ -989,6 +1013,7 @@ def generate_or_suggest_pmtiles(
         force: Whether to regenerate up-to-date PMTiles.
         verbose: Whether to emit per-file detail.
         use_json: Whether the command runs in JSON output mode.
+        state: The run state, which parses the config once per run.
     """
     if not affected_collections:
         return
@@ -1004,7 +1029,7 @@ def generate_or_suggest_pmtiles(
         if not (coll_path / "collection.json").exists():
             continue
 
-        settings = get_pmtiles_settings(catalog_root, coll_id, coll_path)
+        settings = get_pmtiles_settings(catalog_root, coll_id, coll_path, state=state)
         # Without a request, register the tiles a user built and build none.
         generate = requested or settings.enabled
         try:
@@ -1022,6 +1047,7 @@ def generate_or_suggest_pmtiles(
                 precision=settings.precision,
                 attribution=settings.attribution,
                 src_crs=settings.src_crs,
+                state=state,
             )
             _report_pmtiles_result(result, verbose, requested, use_json=use_json)
         except PMTilesNotAvailableError as e:

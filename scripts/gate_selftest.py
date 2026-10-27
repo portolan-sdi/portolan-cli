@@ -304,7 +304,13 @@ def _apply_versions_read_per_file(root: Path, faulty: bool) -> None:
 
 def _apply_yaml_parse_per_call(root: Path, faulty: bool) -> None:
     if faulty:
-        _replace_once(root / "portolan_cli/config.py", "cached = _PARSED.get(key)", "cached = None")
+        # The fault parses the file again on each read, beside the RunState memo.
+        _replace_once(
+            root / "portolan_cli/run_state.py",
+            '        return self.memo("config.yaml", path, _config.parse_yaml)',
+            "        _config.parse_yaml(path)\n"
+            '        return self.memo("config.yaml", path, _config.parse_yaml)',
+        )
 
 
 def _apply_extra_thumbnail_draw(root: Path, faulty: bool) -> None:

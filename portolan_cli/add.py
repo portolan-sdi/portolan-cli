@@ -14,6 +14,7 @@ All logic lives here; the CLI is a thin wrapper.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import shutil
@@ -37,7 +38,11 @@ from portolan_cli.constants import (
     GEOSPATIAL_EXTENSIONS,
     TABULAR_EXTENSIONS,
 )
-from portolan_cli.conversion_config import get_vector_settings
+from portolan_cli.conversion_config import (
+    get_vector_settings,
+    resolve_partition_settings,
+    settings_override,
+)
 from portolan_cli.convert import convert_multilayer_file
 from portolan_cli.discovery import get_sidecars, iter_files_with_sidecars, iter_geospatial_files
 from portolan_cli.errors import (
@@ -181,6 +186,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
 
+    from portolan_cli.run_state import RunState
+
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +275,7 @@ def _maybe_partition_large_file(
     catalog_root: Path,
     item_datetime: datetime | None,
     skip_partitioning: bool = False,
+    state: RunState | None = None,
 ) -> list[PreparedItem]:
     """Partition a large GeoParquet file if it exceeds the size threshold.
 
@@ -280,6 +288,7 @@ def _maybe_partition_large_file(
         item_datetime: Optional datetime for created items.
         skip_partitioning: If True, skip partitioning even if file exceeds threshold.
             Used when user declines interactive prompt.
+        state: The run state, which parses the config once per run.
 
     Raises:
         PartitionCollisionError: The collection already holds partitions.
@@ -317,8 +326,15 @@ def _maybe_partition_large_file(
 
     primary_parquet = parquet_files[0]
     partition_output_dir = primary_parquet.parent
+    # The handler takes no state, so the settings reach it through the override.
+    override = (
+        settings_override(partition=resolve_partition_settings(partition_output_dir, state))
+        if state is not None
+        else contextlib.nullcontext()
+    )
     try:
-        partition_files: list[Path] = partition(primary_parquet, catalog_root)
+        with override:
+            partition_files: list[Path] = partition(primary_parquet, catalog_root)
     except PartitionCollisionError:
         if prepared.created_output:
             primary_parquet.unlink(missing_ok=True)
@@ -346,6 +362,7 @@ def _maybe_partition_large_file(
             catalog_root=catalog_root,
             collection_id=prepared.collection_id,
             item_datetime=item_datetime,
+            state=state,
         )
         partitioned_items.append(partition_prepared)
 
@@ -455,6 +472,7 @@ def _ensure_tabular_collection(
     catalog_root: Path,
     collection_id: str,
     collection_dir: Path,
+    state: RunState | None = None,
 ) -> None:
     """Ensure a collection exists for standalone tabular data (Issue #432).
 
@@ -471,6 +489,7 @@ def _ensure_tabular_collection(
         catalog_root: Root directory of the catalog.
         collection_id: Collection identifier.
         collection_dir: Path to the collection directory.
+        state: The run state, which parses the config once per run.
     """
     collection_json_path = collection_dir / "collection.json"
 
@@ -526,7 +545,7 @@ def _ensure_tabular_collection(
 
     # Issue #815: the root catalog takes its own title and description from the
     # root metadata.yaml.
-    apply_catalog_human_titles(catalog_root)
+    apply_catalog_human_titles(catalog_root, state=state)
 
     # Issue #502: backfill the human-readable title onto the new child link.
     ensure_link_titles(catalog_root)
@@ -541,7 +560,7 @@ def _ensure_tabular_collection(
     # same catalog came out different depending on which path added to it.
     ensure_agents_md_tree(catalog_root)
     ensure_schema_uris(catalog_root)
-    ensure_readmes(catalog_root)
+    ensure_readmes(catalog_root, state=state)
 
     # Issue #684: and the root-catalog sync stamp, for an all-mirror tree.
     update_catalog_provenance(catalog_root)
@@ -575,6 +594,7 @@ def _update_versions(
     asset_files: dict[str, tuple[Path, str, int]] | None = None,
     is_collection_level_asset: bool = False,
     catalog_root: Path | None = None,
+    state: RunState | None = None,
 ) -> None:
     """Update versions via the active backend.
 
@@ -593,6 +613,7 @@ def _update_versions(
         is_collection_level_asset: If True, asset is at collection level.
             Affects href construction (no item_id in path).
         catalog_root: Root directory of the catalog. If None, derived from collection_dir.
+        state: The run state, which reads the backend setting once per run.
     """
     from portolan_cli.version_ops import publish_version
 
@@ -620,6 +641,7 @@ def _update_versions(
         collection_id,
         assets=assets,
         catalog_root=catalog_root,
+        state=state,
     )
 
     # Mirror the collection's new state into the catalog-level versions.json
@@ -743,7 +765,9 @@ SKIP_LONE_PMTILES = (
 SKIPS_THAT_TRACK = frozenset({SKIP_UNCHANGED, SKIP_COMPANION, SKIP_ITEM_MIRROR})
 
 
-def _ignore_reason(file_path: Path, catalog_root: Path, patterns: list[str]) -> str | None:
+def _ignore_reason(
+    file_path: Path, catalog_root: Path, patterns: list[str], state: RunState | None = None
+) -> str | None:
     """Return why ``ignored_files`` excludes ``file_path`` from the add, or None.
 
     A pattern that matches the converted output would leave the source as the
@@ -752,7 +776,7 @@ def _ignore_reason(file_path: Path, catalog_root: Path, patterns: list[str]) -> 
     pattern = ignored_by(file_path, patterns)
     if pattern is not None:
         return f"it matches ignored_files pattern {pattern!r}"
-    handler = handler_for(file_path, catalog_root)
+    handler = handler_for(file_path, catalog_root, state=state)
     if handler is None:
         return None
     output = handler.output_path(file_path, file_path.parent)
@@ -771,6 +795,7 @@ def _collect_files_for_add(
     *,
     force: bool = False,
     skip_reasons: dict[Path, str] | None = None,
+    state: RunState | None = None,
 ) -> list[tuple[Path, str]]:
     """Collect and filter files for add operation (Phase 1).
 
@@ -785,6 +810,7 @@ def _collect_files_for_add(
         setup_collections: Set to track which collections have been set up (mutated).
         force: If True, bypass change detection (Issue #386).
         skip_reasons: Receives the reason for each file this phase skips (mutated).
+        state: The run state, which parses the config once per run.
 
     Returns:
         List of (file_path, collection_id) tuples to process.
@@ -798,7 +824,7 @@ def _collect_files_for_add(
         reasons[file_path] = reason
 
     geo_extensions = GEOSPATIAL_EXTENSIONS | plugin_extensions()
-    ignored_patterns = get_ignored_files(catalog_root)
+    ignored_patterns = get_ignored_files(catalog_root, state=state)
 
     for path in paths:
         files = iter_files_with_sidecars(path) if path.is_dir() else [path] + get_sidecars(path)
@@ -819,7 +845,7 @@ def _collect_files_for_add(
 
             # `ignored_files` in config.yaml excludes a file from the catalog,
             # with the basename match rule of `portolan list` (#1044).
-            ignore_reason = _ignore_reason(file_path, catalog_root, ignored_patterns)
+            ignore_reason = _ignore_reason(file_path, catalog_root, ignored_patterns, state)
             if ignore_reason is not None:
                 skip(file_path, ignore_reason)
                 continue
@@ -844,7 +870,7 @@ def _collect_files_for_add(
             coll_id = collection_id
             if coll_id is None:
                 try:
-                    coll_id = infer_nested_collection_id(file_path, catalog_root)
+                    coll_id = infer_nested_collection_id(file_path, catalog_root, state=state)
                 except ValueError as err:
                     skip(file_path, str(err))
                     continue
@@ -861,13 +887,14 @@ def _collect_files_for_add(
 
             files_to_process.append((file_path, coll_id))
 
-    return _without_lone_pmtiles(files_to_process, catalog_root, skip)
+    return _without_lone_pmtiles(files_to_process, catalog_root, skip, state)
 
 
 def _without_lone_pmtiles(
     files: list[tuple[Path, str]],
     catalog_root: Path,
     skip: Callable[[Path, str], None],
+    state: RunState | None = None,
 ) -> list[tuple[Path, str]]:
     """Skip each PMTiles that renders no GeoParquet.
 
@@ -880,6 +907,7 @@ def _without_lone_pmtiles(
         files: The ``(file, collection_id)`` pairs of phase 1.
         catalog_root: Root directory of the catalog.
         skip: Records a skipped file and its reason.
+        state: The run state, which parses the config once per run.
 
     Returns:
         The pairs without the skipped PMTiles.
@@ -888,7 +916,7 @@ def _without_lone_pmtiles(
     def gives_geoparquet(path: Path) -> bool:
         if path.suffix.lower() == ".parquet":
             return is_geoparquet(path)
-        handler = handler_for(path, catalog_root)
+        handler = handler_for(path, catalog_root, state=state)
         return (
             handler is not None
             and handler.output_path(path, path.parent).suffix.lower() == ".parquet"
@@ -926,6 +954,7 @@ class _PrepareOptions:
     reconvert: bool
     skip_partitioning: bool
     batch_exclude_names: frozenset[str]
+    state: RunState | None = None
 
 
 @dataclass
@@ -965,7 +994,7 @@ def _prepare_multilayer_file(
 
     try:
         # Load vector settings from catalog config, then convert all layers.
-        vector_settings = get_vector_settings(opts.catalog_root)
+        vector_settings = get_vector_settings(opts.catalog_root, state=opts.state)
         # prepare_item sees each layer file after it exists, so it cannot tell
         # a new layer file from an old one. Record the old ones here.
         existing = set(file_path.parent.glob("*.parquet"))
@@ -987,6 +1016,7 @@ def _prepare_multilayer_file(
                     force=opts.force,
                     reconvert=opts.reconvert,
                     exclude_sibling_names=opts.batch_exclude_names,
+                    state=opts.state,
                 )
                 prepared.created_output = result.output not in existing
                 # Apply partitioning to each layer (Issue #352)
@@ -996,6 +1026,7 @@ def _prepare_multilayer_file(
                         catalog_root=opts.catalog_root,
                         item_datetime=opts.item_datetime,
                         skip_partitioning=opts.skip_partitioning,
+                        state=opts.state,
                     )
                 )
             except AssetKeyCollisionError as err:
@@ -1063,6 +1094,7 @@ def _prepare_file(
             force=opts.force,
             reconvert=opts.reconvert,
             exclude_sibling_names=opts.batch_exclude_names,
+            state=opts.state,
         )
         # Check if file should be partitioned (Issue #352)
         # Returns multiple PreparedItems if partitioned, else [prepared]
@@ -1071,6 +1103,7 @@ def _prepare_file(
             catalog_root=opts.catalog_root,
             item_datetime=opts.item_datetime,
             skip_partitioning=opts.skip_partitioning,
+            state=opts.state,
         )
         return (partitioned, [], None, {})
 
@@ -1230,7 +1263,9 @@ def _collection_license_on_disk(collection_json_path: Path) -> tuple[str | None,
     return (license_id if isinstance(license_id, str) else None), has_link
 
 
-def _require_licenses(catalog_root: Path, collection_ids: set[str]) -> None:
+def _require_licenses(
+    catalog_root: Path, collection_ids: set[str], state: RunState | None = None
+) -> None:
     """Stop the add when a target collection would end up with no usable license.
 
     Runs after phase 1, so it costs one metadata read per collection and fires
@@ -1246,6 +1281,7 @@ def _require_licenses(catalog_root: Path, collection_ids: set[str]) -> None:
     Args:
         catalog_root: Root directory of the catalog.
         collection_ids: Collections this add will write.
+        state: The run state, which parses each metadata.yaml once per run.
 
     Raises:
         MissingLicenseError: When a collection would fail PTL-LIC-001, PTL-LIC-002,
@@ -1256,7 +1292,12 @@ def _require_licenses(catalog_root: Path, collection_ids: set[str]) -> None:
         on_disk_license, on_disk_link = _collection_license_on_disk(
             collection_dir / "collection.json"
         )
-        declared = resolve_license(load_merged_metadata(collection_dir, catalog_root))
+        metadata = (
+            state.metadata(collection_dir)
+            if state is not None
+            else load_merged_metadata(collection_dir, catalog_root)
+        )
+        declared = resolve_license(metadata)
 
         license_id = declared.license_id if declared is not None else on_disk_license
         has_license_link = on_disk_link or (
@@ -1282,6 +1323,7 @@ def add_files(
     skip_partitioning: bool = False,
     merge_strategy: MergeStrategy = MergeStrategy.SMART,
     skip_reasons: dict[Path, str] | None = None,
+    state: RunState | None = None,
 ) -> tuple[list[ItemInfo], list[Path], list[AddFailure]]:
     r"""Add files to a Portolan catalog.
 
@@ -1328,6 +1370,7 @@ def add_files(
         skip_reasons: Receives the reason for each skipped path (mutated). A
             path in ``SKIPS_THAT_TRACK`` is in the catalog. Any other reason
             means the file stayed out of it.
+        state: The run state. Without one, this opens a state and commits it.
 
     Returns:
         Tuple of (added_items, skipped_paths, failures).
@@ -1335,100 +1378,106 @@ def add_files(
         skipped_paths: List of paths that were skipped (unchanged or non-geospatial).
         failures: List of AddFailure for files that could not be processed.
     """
-    skipped: list[Path] = []
+    from portolan_cli.version_ops import owned_run
 
-    # Track which nested collections have had their catalogs set up
-    setup_collections: set[str] = set()
+    with owned_run(catalog_root, state) as state:
+        skipped: list[Path] = []
 
-    # Phase 1: Collect + filter the files to process (fast, no GDAL).
-    with span("add.collect") as stage:
-        reasons = skip_reasons if skip_reasons is not None else {}
-        files_to_process = _collect_files_for_add(
-            paths,
-            catalog_root,
-            collection_id,
-            skipped,
-            setup_collections,
-            force=force,
-            skip_reasons=reasons,
-        )
-        stage.set(files=len(files_to_process), skipped=len(skipped))
-    if not files_to_process:
-        return [], skipped, []
+        # Track which nested collections have had their catalogs set up
+        setup_collections: set[str] = set()
 
-    # Phase 1.5: refuse the add before any GDAL work when a target collection would
-    # end up with no usable license (issue #686).
-    with span("add.licenses"):
-        _require_licenses(catalog_root, {coll_id for _, coll_id in files_to_process})
+        # Phase 1: Collect + filter the files to process (fast, no GDAL).
+        with span("add.collect") as stage:
+            reasons = skip_reasons if skip_reasons is not None else {}
+            files_to_process = _collect_files_for_add(
+                paths,
+                catalog_root,
+                collection_id,
+                skipped,
+                setup_collections,
+                force=force,
+                skip_reasons=reasons,
+                state=state,
+            )
+            stage.set(files=len(files_to_process), skipped=len(skipped))
+        if not files_to_process:
+            return [], skipped, []
 
-    # Issue #465: filenames of every batch item (sources + converted outputs) so a
-    # collection-level asset scan can skip siblings that are tracked as their own
-    # items instead of re-scanning the whole flat collection dir (O(n²) → O(n)).
-    opts = _PrepareOptions(
-        catalog_root=catalog_root,
-        item_id=item_id,
-        item_datetime=item_datetime,
-        force=force,
-        reconvert=reconvert,
-        skip_partitioning=skip_partitioning,
-        batch_exclude_names=_batch_sibling_names([fp for fp, _ in files_to_process]),
-    )
+        # Phase 1.5: refuse the add before any GDAL work when a target collection would
+        # end up with no usable license (issue #686).
+        with span("add.licenses"):
+            _require_licenses(catalog_root, {coll_id for _, coll_id in files_to_process}, state)
 
-    # Phase 2: Prepare each file (GDAL work), accumulating prepared items (Issue #281).
-    with span("add.process", files=len(files_to_process), workers=workers) as stage:
-        proc = _phase_process(
-            files_to_process,
-            opts,
-            workers=workers,
-            on_progress=on_progress,
-        )
-        stage.set(prepared=len(proc.prepared_items), failures=len(proc.failures))
-    failures = proc.failures
-    for path, reason in proc.skips.items():
-        skipped.append(path)
-        reasons[path] = reason
-
-    # Phase 2.5: Batch finalize — ONE write per collection instead of O(n) (Issue #281).
-    with span("add.finalize", items=len(proc.prepared_items)):
-        added: list[ItemInfo] = (
-            finalize_items(catalog_root, proc.prepared_items, merge_strategy)
-            if proc.prepared_items
-            else []
-        )
-
-    # Phase 3: Track deferred non-geo files as companion assets.
-    touched_items: list[tuple[str, str]] = []
-    with span("add.deferred_non_geo", files=len(proc.deferred_non_geo)):
-        affected_collections = _process_deferred_non_geo_files(
-            deferred_non_geo=proc.deferred_non_geo,
-            source_to_item_dir=proc.source_to_item_dir,
-            source_to_collection_dir=proc.source_to_collection_dir,
+        # Issue #465: filenames of every batch item (sources + converted outputs) so a
+        # collection-level asset scan can skip siblings that are tracked as their own
+        # items instead of re-scanning the whole flat collection dir (O(n²) → O(n)).
+        opts = _PrepareOptions(
             catalog_root=catalog_root,
-            added=added,
-            skipped=skipped,
-            failures=failures,
-            merge_strategy=merge_strategy,
-            touched_items=touched_items,
-            skip_reasons=reasons,
+            item_id=item_id,
+            item_datetime=item_datetime,
+            force=force,
+            reconvert=reconvert,
+            skip_partitioning=skip_partitioning,
+            batch_exclude_names=_batch_sibling_names([fp for fp, _ in files_to_process]),
+            state=state,
         )
 
-        # Phase 3.5: re-check the file extension on collections with deferred assets (#501).
-        _declare_file_extension_for_collections(affected_collections)
-        # A tabular collection takes its providers from metadata.yaml in phase 3
-        # (#813), so it can turn the whole catalog into a mirror after finalize.
-        # The root then needs its sync time (rashid PTL-PRO-003).
-        if affected_collections:
-            update_catalog_provenance(catalog_root)
+        # Phase 2: Prepare each file (GDAL work), accumulating prepared items (Issue #281).
+        with span("add.process", files=len(files_to_process), workers=workers) as stage:
+            proc = _phase_process(
+                files_to_process,
+                opts,
+                workers=workers,
+                on_progress=on_progress,
+            )
+            stage.set(prepared=len(proc.prepared_items), failures=len(proc.failures))
+        failures = proc.failures
+        for path, reason in proc.skips.items():
+            skipped.append(path)
+            reasons[path] = reason
 
-    # Phase 4: run the enrichment hooks on the documents phase 3 changed (#947).
-    with span("add.enrich", items=len(touched_items)):
-        _enrich_deferred_documents(catalog_root, affected_collections, touched_items)
+        # Phase 2.5: Batch finalize — ONE write per collection instead of O(n) (Issue #281).
+        with span("add.finalize", items=len(proc.prepared_items)):
+            added: list[ItemInfo] = (
+                finalize_items(catalog_root, proc.prepared_items, merge_strategy, state=state)
+                if proc.prepared_items
+                else []
+            )
 
-    # Phase 3 tracks a non-geospatial file next to a geo file as an asset and
-    # lists it as skipped, because it is not converted.
-    for path in skipped:
-        reasons.setdefault(path, SKIP_COMPANION)
-    return added, skipped, failures
+        # Phase 3: Track deferred non-geo files as companion assets.
+        touched_items: list[tuple[str, str]] = []
+        with span("add.deferred_non_geo", files=len(proc.deferred_non_geo)):
+            affected_collections = _process_deferred_non_geo_files(
+                deferred_non_geo=proc.deferred_non_geo,
+                source_to_item_dir=proc.source_to_item_dir,
+                source_to_collection_dir=proc.source_to_collection_dir,
+                catalog_root=catalog_root,
+                added=added,
+                skipped=skipped,
+                failures=failures,
+                merge_strategy=merge_strategy,
+                touched_items=touched_items,
+                skip_reasons=reasons,
+                state=state,
+            )
+
+            # Phase 3.5: re-check the file extension on collections with deferred assets (#501).
+            _declare_file_extension_for_collections(affected_collections)
+            # A tabular collection takes its providers from metadata.yaml in phase 3
+            # (#813), so it can turn the whole catalog into a mirror after finalize.
+            # The root then needs its sync time (rashid PTL-PRO-003).
+            if affected_collections:
+                update_catalog_provenance(catalog_root)
+
+        # Phase 4: run the enrichment hooks on the documents phase 3 changed (#947).
+        with span("add.enrich", items=len(touched_items)):
+            _enrich_deferred_documents(catalog_root, affected_collections, touched_items)
+
+        # Phase 3 tracks a non-geospatial file next to a geo file as an asset and
+        # lists it as skipped, because it is not converted.
+        for path in skipped:
+            reasons.setdefault(path, SKIP_COMPANION)
+        return added, skipped, failures
 
 
 def _enrich_deferred_documents(
@@ -1492,6 +1541,15 @@ def _collection_aoi_bbox(collection_dir: Path) -> list[float]:
     return [-180.0, -90.0, 180.0, 90.0]
 
 
+def _collection_setting(
+    key: str, catalog_root: Path, collection_dir: Path, state: RunState | None
+) -> Any:
+    """Resolve a setting for a collection, through the run state when there is one."""
+    if state is not None:
+        return state.setting(key, collection_dir=collection_dir)
+    return get_setting(key, catalog_path=catalog_root, collection_path=collection_dir)
+
+
 def _process_deferred_non_geo_files(
     *,
     deferred_non_geo: list[tuple[Path, Path, str]],
@@ -1504,6 +1562,7 @@ def _process_deferred_non_geo_files(
     merge_strategy: MergeStrategy,
     touched_items: list[tuple[str, str]] | None = None,
     skip_reasons: dict[Path, str] | None = None,
+    state: RunState | None = None,
 ) -> set[Path]:
     """Process deferred non-geospatial files.
 
@@ -1526,6 +1585,7 @@ def _process_deferred_non_geo_files(
             ``(collection_id, item_id)`` to (modified in place).
         skip_reasons: Receives the reason for a file that two files claim one
             asset key for in its item (modified in place).
+        state: The run state, which parses the config once per run.
 
     Returns:
         Set of collection directories that received deferred assets (for statistics recomputation).
@@ -1537,7 +1597,11 @@ def _process_deferred_non_geo_files(
             if source_dir in source_to_item_dir:
                 try:
                     _track_companion_in_item(
-                        file_path, source_to_item_dir[source_dir], catalog_root, touched_items
+                        file_path,
+                        source_to_item_dir[source_dir],
+                        catalog_root,
+                        touched_items,
+                        state,
                     )
                 except AssetKeyCollisionError as err:
                     reasons[file_path] = err.message
@@ -1566,6 +1630,7 @@ def _process_deferred_non_geo_files(
                     collection_dir=resolved_collection_dir,
                     asset_path=file_path,
                     merge_strategy=merge_strategy,
+                    state=state,
                 )
 
                 # Update versions.json so is_current() finds the asset
@@ -1579,6 +1644,7 @@ def _process_deferred_non_geo_files(
                     asset_files=asset_files,
                     is_collection_level_asset=True,
                     catalog_root=catalog_root,
+                    state=state,
                 )
 
                 # Track for statistics recomputation
@@ -1593,10 +1659,8 @@ def _process_deferred_non_geo_files(
                 collection_dir = catalog_root / Path(*coll_id.split("/"))
 
                 # Check tabular.enabled config (Issue #432)
-                tabular_enabled = get_setting(
-                    "tabular.enabled",
-                    catalog_path=catalog_root,
-                    collection_path=collection_dir,
+                tabular_enabled = _collection_setting(
+                    "tabular.enabled", catalog_root, collection_dir, state
                 )
 
                 if not tabular_enabled:
@@ -1616,10 +1680,8 @@ def _process_deferred_non_geo_files(
                 else:
                     # tabular.enabled=true: track as standalone collection-level asset
                     # Check if conversion is enabled (Issue #432)
-                    tabular_convert = get_setting(
-                        "tabular.convert",
-                        catalog_path=catalog_root,
-                        collection_path=collection_dir,
+                    tabular_convert = _collection_setting(
+                        "tabular.convert", catalog_root, collection_dir, state
                     )
 
                     # Ensure collection exists first (AOI inheritance from siblings)
@@ -1627,6 +1689,7 @@ def _process_deferred_non_geo_files(
                         catalog_root=catalog_root,
                         collection_id=coll_id,
                         collection_dir=collection_dir,
+                        state=state,
                     )
 
                     # Determine the final asset path (convert if needed)
@@ -1663,6 +1726,7 @@ def _process_deferred_non_geo_files(
                         collection_dir=collection_dir,
                         asset_path=asset_path,
                         merge_strategy=merge_strategy,
+                        state=state,
                     )
 
                     # If converted, also track source file as companion asset
@@ -1674,6 +1738,7 @@ def _process_deferred_non_geo_files(
                             asset_path=file_path,
                             merge_strategy=merge_strategy,
                             role=ROLE_SOURCE,
+                            state=state,
                         )
 
                     # Update versions.json so is_current() finds the asset(s)
@@ -1691,6 +1756,7 @@ def _process_deferred_non_geo_files(
                         asset_files=asset_files,
                         is_collection_level_asset=True,
                         catalog_root=catalog_root,
+                        state=state,
                     )
 
                     # Track for statistics recomputation
@@ -1724,6 +1790,7 @@ def _track_companion_in_item(
     item: tuple[Path, str, str],
     catalog_root: Path,
     touched_items: list[tuple[str, str]] | None,
+    state: RunState | None = None,
 ) -> None:
     """Copy a non-geo file into an item directory and add it to the item.
 
@@ -1732,6 +1799,7 @@ def _track_companion_in_item(
         item: ``(item_dir, collection_id, item_id)`` of the item.
         catalog_root: Root directory of the catalog.
         touched_items: List to append ``(collection_id, item_id)`` to.
+        state: The run state, which parses the config once per run.
 
     Raises:
         AssetKeyCollisionError: Two files claim one asset key in the item. The
@@ -1746,7 +1814,9 @@ def _track_companion_in_item(
         dest_path.name,
     )
     try:
-        _update_item_with_asset(catalog_root=catalog_root, collection_id=coll_id, item_id=item_id)
+        _update_item_with_asset(
+            catalog_root=catalog_root, collection_id=coll_id, item_id=item_id, state=state
+        )
     except AssetKeyCollisionError:
         if dest_path.resolve() != file_path.resolve():
             dest_path.unlink(missing_ok=True)
@@ -1759,6 +1829,7 @@ def _update_item_with_asset(
     catalog_root: Path,
     collection_id: str,
     item_id: str,
+    state: RunState | None = None,
 ) -> None:
     """Update a STAC item to include a new asset file.
 
@@ -1769,6 +1840,7 @@ def _update_item_with_asset(
         catalog_root: Root directory of the catalog.
         collection_id: Collection identifier.
         item_id: Item identifier.
+        state: The run state, which parses the config once per run.
     """
     collection_dir = catalog_root / collection_id
     item_dir = collection_dir / item_id
@@ -1825,11 +1897,11 @@ def _update_item_with_asset(
         primary_file=primary_file,
         collection_dir=collection_dir,
         collection_id=collection_id,
-        ignored_patterns=get_ignored_files(catalog_root),
+        ignored_patterns=get_ignored_files(catalog_root, state=state),
     )
 
     # Enrich COG assets with render extension properties (Issue #13)
-    enrich_cog_assets(stac_assets, catalog_root)
+    enrich_cog_assets(stac_assets, catalog_root, state=state)
 
     # Update item assets - include extra_fields for style properties
     # Merge with existing asset metadata to preserve title/description
@@ -1859,6 +1931,7 @@ def _update_item_with_asset(
         asset_files=asset_files,
         is_collection_level_asset=is_collection_level,
         catalog_root=catalog_root,
+        state=state,
     )
 
 
@@ -1868,6 +1941,7 @@ def _update_collection_with_asset(
     *,
     merge_strategy: MergeStrategy,
     role: str | None = None,
+    state: RunState | None = None,
 ) -> None:
     """Update a collection.json to include a new non-geo asset file (Issue #383).
 
@@ -1879,6 +1953,7 @@ def _update_collection_with_asset(
         asset_path: Path to the non-geo asset file.
         merge_strategy: The strategy of the ``add`` run.
         role: The asset role. None takes the role of the file extension.
+        state: The run state, which parses each metadata.yaml once per run.
     """
     collection_json_path = collection_dir / "collection.json"
 
@@ -1912,7 +1987,7 @@ def _update_collection_with_asset(
         **file_fields(asset_path),
     }
 
-    _document_tabular_asset(collection_data, asset_key, asset_path, merge_strategy)
+    _document_tabular_asset(collection_data, asset_key, asset_path, merge_strategy, state)
 
     # Write updated collection
     write_json_atomic(collection_json_path, collection_data)
@@ -1923,6 +1998,7 @@ def _document_tabular_asset(
     asset_key: str,
     asset_path: Path,
     merge_strategy: MergeStrategy,
+    state: RunState | None = None,
 ) -> None:
     """Answer the Tabular Data SHOULDs for a plain-Parquet asset (issue #749).
 
@@ -1945,13 +2021,14 @@ def _document_tabular_asset(
         asset_key: Key the asset was just written under.
         asset_path: Path to the asset file on disk.
         merge_strategy: Decides only the column descriptions (issue #931).
+        state: The run state, which parses each metadata.yaml once per run.
     """
     from portolan_cli.catalog import find_catalog_root
 
     collection_dir = asset_path.parent
     catalog_root = find_catalog_root(collection_dir)
     if catalog_root is not None:
-        apply_human_metadata_to_dict(collection_data, collection_dir, catalog_root)
+        apply_human_metadata_to_dict(collection_data, collection_dir, catalog_root, state)
     metadata = extract_tabular_metadata(asset_path)
     if metadata is None:
         return

@@ -30,6 +30,8 @@ from portolan_cli.utils import get_dict
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
 
+    from portolan_cli.config import ConfigSource
+
 logger = logging.getLogger(__name__)
 
 # Thread-safe lazy import for optional contextily dependency
@@ -155,18 +157,21 @@ class ThumbnailConfig:
     max_features: int = 100_000
 
 
-def get_thumbnail_config(catalog_path: Path) -> ThumbnailConfig:
+def get_thumbnail_config(
+    catalog_path: Path, *, state: ConfigSource | None = None
+) -> ThumbnailConfig:
     """Load thumbnail config from catalog's config.yaml.
 
     Reads the 'thumbnails' section and returns a ThumbnailConfig instance.
 
     Args:
         catalog_path: Root path of the catalog.
+        state: The run state, which parses the config once per run.
 
     Returns:
         ThumbnailConfig instance. Returns defaults if no config exists.
     """
-    config = load_catalog_config(catalog_path).data
+    config = load_catalog_config(catalog_path, state=state).data
     thumbnails = get_dict(config, "thumbnails")
     if not thumbnails:
         return ThumbnailConfig()

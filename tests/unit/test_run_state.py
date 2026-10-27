@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import os
 import threading
-from typing import TYPE_CHECKING
+import time
+from typing import TYPE_CHECKING, TypeVar
 
 import pytest
 
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
     Snapshot = Callable[[Path, dict[str, Asset]], None]
 
 pytestmark = pytest.mark.unit
+
+T = TypeVar("T")
 
 _BASE_NS = 1_700_000_000 * 1_000_000_000
 
@@ -110,6 +113,26 @@ class TestStatMatches:
 
 class TestChecksumMemo:
     """A file is hashed once per run while its stat stays the same."""
+
+    def test_threads_that_hash_one_file_together_hash_it_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli import run_state
+
+        f = tmp_path / "a.bin"
+        f.write_bytes(b"a")
+        calls: list[Path] = []
+
+        def slow_checksum(path: Path) -> str:
+            calls.append(path)
+            time.sleep(0.05)
+            return _sha(path.read_bytes())
+
+        monkeypatch.setattr(run_state, "compute_checksum", slow_checksum)
+        state = RunState.open(tmp_path)
+
+        assert _together(4, lambda: state.checksum(f)) == [_sha(b"a")] * 4
+        assert len(calls) == 1
 
     def test_second_call_does_not_hash(
         self, tmp_path: Path, counters: Callable[[str], int]
@@ -372,6 +395,79 @@ class TestMemo:
     def test_missing_file_raises(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
             RunState.open(tmp_path).memo("k", tmp_path / "none", lambda p: p)
+
+    def test_threads_that_miss_one_key_together_load_it_once(self, tmp_path: Path) -> None:
+        f = tmp_path / "a.bin"
+        f.write_bytes(b"a")
+        calls: list[int] = []
+        state = RunState.open(tmp_path)
+
+        def loader(_p: Path) -> int:
+            calls.append(1)
+            time.sleep(0.05)  # Keeps the other threads inside the miss.
+            return len(calls)
+
+        assert _together(4, lambda: state.memo("k", f, loader)) == [1, 1, 1, 1]
+        assert len(calls) == 1
+
+    def test_threads_on_different_keys_load_at_the_same_time(self, tmp_path: Path) -> None:
+        files = [tmp_path / f"{i}.bin" for i in range(4)]
+        for f in files:
+            f.write_bytes(b"a")
+        inside = threading.Barrier(4, timeout=5)
+        state = RunState.open(tmp_path)
+
+        def loader(path: Path) -> str:
+            inside.wait()  # Breaks if one loader waits for another.
+            return path.name
+
+        names = iter(files)
+        lock = threading.Lock()
+
+        def read() -> str:
+            with lock:
+                path = next(names)
+            return state.memo("k", path, loader)
+
+        assert sorted(_together(4, read)) == ["0.bin", "1.bin", "2.bin", "3.bin"]
+
+    def test_a_loader_error_reaches_each_waiting_thread(self, tmp_path: Path) -> None:
+        f = tmp_path / "a.bin"
+        f.write_bytes(b"a")
+        state = RunState.open(tmp_path)
+
+        def loader(_p: Path) -> int:
+            time.sleep(0.05)
+            raise ValueError("bad file")
+
+        def read() -> str:
+            try:
+                state.memo("k", f, loader)
+            except ValueError as err:
+                return str(err)
+            return "no error"
+
+        assert _together(3, read) == ["bad file"] * 3
+
+
+def _together(count: int, call: Callable[[], T]) -> list[T]:
+    """Start ``count`` threads at one barrier and return each result of ``call``."""
+    start = threading.Barrier(count)
+    results: list[T] = []
+    lock = threading.Lock()
+
+    def run() -> None:
+        start.wait()
+        value = call()
+        with lock:
+            results.append(value)
+
+    threads = [threading.Thread(target=run) for _ in range(count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return results
 
 
 class TestConfigSeam:

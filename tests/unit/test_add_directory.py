@@ -222,7 +222,9 @@ class TestAddDirectory:
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
 
-            def detect_side_effect(path: Path, catalog_root: Path | None = None) -> object:
+            def detect_side_effect(
+                path: Path, catalog_root: Path | None = None, state: object = None
+            ) -> object:
                 if path.suffix == ".geojson":
                     return GEOPARQUET
                 return COG

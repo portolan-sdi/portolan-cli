@@ -12,10 +12,12 @@ Config is stored in `.portolan/config.yaml`. A dotted key such as
 ``conversion.vector.sort`` names a nested path in that file, and
 ``set_setting`` accepts only the keys in ``KNOWN_SETTINGS`` (issue #1020).
 
-Every reader shares one parse of each YAML file per distinct content
-(``_parse_yaml``, issue #1006). The cache compares the file text, not the
-mtime, because two writes inside one mtime tick are common in ``add`` and in
-tests. A parse costs far more than the read that the comparison needs.
+This module holds no cache. Each call without a run state reads and parses
+the files again. A command that reads config per file opens one
+``run_state.RunState`` and asks it. The state parses each file once per run,
+merges each directory once, and keys both on the stat of the source files
+(issues #1006, #994). The functions here take a ``read`` parameter so that the
+state can pass its memoized parse.
 
 Usage:
     from portolan_cli.config import get_setting, set_setting, load_config
@@ -37,7 +39,7 @@ import copy
 import logging
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import yaml
 
@@ -45,10 +47,40 @@ from portolan_cli.errors import ConfigError, ConfigInvalidStructureError, Config
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
     from pathlib import Path
+    from typing import TypeAlias
+
+    #: Reads and parses one YAML file. ``parse_yaml``, or the memo of a run state.
+    YamlReader: TypeAlias = Callable[[Path], Any]
 
 logger = logging.getLogger(__name__)
+
+
+class ConfigSource(Protocol):
+    """The config methods of ``run_state.RunState``, as a reader types them.
+
+    A config reader takes ``state: ConfigSource | None`` and does not import
+    ``run_state``, not even for types. import-linter follows type-only
+    imports, and ``run_state`` reaches ``sync``, which ``viz`` must not reach.
+    """
+
+    catalog_root: Path
+
+    def config(self, directory: Path) -> dict[str, Any]:
+        """The merged config.yaml hierarchy that applies to ``directory``."""
+        ...
+
+    def metadata(self, directory: Path, *, inherit: bool = True) -> dict[str, Any]:
+        """The merged metadata.yaml hierarchy that applies to ``directory``."""
+        ...
+
+    def setting(
+        self, key: str, *, collection_dir: Path | None = None, cli_value: Any | None = None
+    ) -> Any | None:
+        """A setting with the precedence of ``get_setting``."""
+        ...
+
 
 # Sensitive settings that must NOT be stored in config.yaml (Issue #356)
 # These get pushed to remote storage and would expose credentials/infra details.
@@ -292,15 +324,22 @@ def get_config_path(catalog_path: Path) -> Path:
     return catalog_path / ".portolan" / CONFIG_FILENAME
 
 
-#: Parsed YAML per resolved file path, with the text it came from (#1006).
-_PARSED: dict[Path, tuple[str, Any]] = {}
+def safe_load(text: str) -> Any:
+    """Parse YAML text with the safe loader, through libyaml when PyYAML has it.
+
+    ``CSafeLoader`` parses several times faster than the pure-Python
+    ``SafeLoader`` and builds the same objects. Both refuse Python tags. The
+    lookup runs on each call, so a test can remove the C loader.
+
+    Raises:
+        yaml.YAMLError: If the text is not valid YAML.
+    """
+    loader: Any = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    return yaml.load(text, Loader=loader)  # noqa: S506 (a safe loader, chosen above)
 
 
-def _parse_yaml(file_path: Path) -> Any:
-    """Parse a config.yaml or metadata.yaml file once per distinct content.
-
-    Every caller shares the returned object. Read it, never mutate it. The
-    public loaders hand out deep copies.
+def parse_yaml(file_path: Path) -> Any:
+    """Read and parse a config.yaml or metadata.yaml file.
 
     Args:
         file_path: The YAML file to read.
@@ -313,17 +352,12 @@ def _parse_yaml(file_path: Path) -> Any:
         yaml.YAMLError: If the file is not valid YAML.
     """
     content = file_path.read_text(encoding="utf-8")
-    key = file_path.resolve()
-    cached = _PARSED.get(key)
-    if cached is not None and cached[0] == content:
-        return cached[1]
     data: Any = None
     if content.strip():
         count("config.yaml_parses")
-        data = yaml.safe_load(content)
+        data = safe_load(content)
     if isinstance(data, dict) and file_path.name == CONFIG_FILENAME:
         data = _fold_config(data)
-    _PARSED[key] = (content, data)
     return data
 
 
@@ -377,7 +411,7 @@ def _parse_text(kind: str, text: str) -> Any:
     if kind == "list" and not text.lstrip().startswith("["):
         return [item.strip() for item in text.split(",") if item.strip()]
     try:
-        return yaml.safe_load(text)
+        return safe_load(text)
     except yaml.YAMLError:
         return text
 
@@ -469,10 +503,10 @@ def _fold_config(data: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class CatalogConfig:
-    """The ``.portolan/config.yaml`` of one catalog, parsed once per content.
+    """The ``.portolan/config.yaml`` of one catalog.
 
-    ``data`` is the parse that every reader in the process shares. Read it,
-    never mutate it. ``load_config`` returns a copy for a caller that edits.
+    ``data`` can be the parse that a run state shares between readers. Read
+    it, never mutate it. ``load_config`` returns a copy for a caller that edits.
     """
 
     data: dict[str, Any]
@@ -492,7 +526,7 @@ class CatalogConfig:
         return node if isinstance(node, dict) else {}
 
 
-def load_catalog_config(catalog_path: Path) -> CatalogConfig:
+def load_catalog_config(catalog_path: Path, *, state: ConfigSource | None = None) -> CatalogConfig:
     """Load the catalog-level config that every reader in one run shares.
 
     Each ``PORTOLAN_<KEY>`` variable that names a key in ``KNOWN_SETTINGS``
@@ -501,6 +535,7 @@ def load_catalog_config(catalog_path: Path) -> CatalogConfig:
 
     Args:
         catalog_path: Root path of the catalog.
+        state: The run state, which parses the file once per run.
 
     Returns:
         The parsed config with the environment on top. Empty when the file is
@@ -511,14 +546,17 @@ def load_catalog_config(catalog_path: Path) -> CatalogConfig:
         ConfigInvalidStructureError: If the file is not a mapping, or if its
             ``collections`` section is not a mapping.
     """
-    return _with_env(_load_catalog_file(catalog_path))
+    if state is not None:
+        return CatalogConfig(state.config(catalog_path))
+    return CatalogConfig(with_env(catalog_file_config(catalog_path).data))
 
 
-def _load_catalog_file(catalog_path: Path) -> CatalogConfig:
+def catalog_file_config(catalog_path: Path, read: YamlReader = parse_yaml) -> CatalogConfig:
     """Load ``.portolan/config.yaml`` without the environment.
 
     Args:
         catalog_path: Root path of the catalog.
+        read: Parses the file. A run state passes its memo.
 
     Returns:
         The parsed config. Empty when the file is absent or empty.
@@ -532,7 +570,7 @@ def _load_catalog_file(catalog_path: Path) -> CatalogConfig:
     if not config_file.is_file():
         return CatalogConfig({})
     try:
-        data = _parse_yaml(config_file)
+        data = read(config_file)
     except yaml.YAMLError as e:
         raise ConfigParseError(str(config_file), str(e)) from e
     if data is None:
@@ -554,10 +592,10 @@ def load_config(catalog_path: Path) -> dict[str, Any]:
         A copy of the file content that the caller may edit and save. Empty if
         the file does not exist. The environment is not in it.
     """
-    return copy.deepcopy(_load_catalog_file(catalog_path).data)
+    return copy.deepcopy(catalog_file_config(catalog_path).data)
 
 
-def get_ignored_files(catalog_path: Path | None) -> list[str]:
+def get_ignored_files(catalog_path: Path | None, *, state: ConfigSource | None = None) -> list[str]:
     """Return the list of glob patterns for files to exclude from asset tracking.
 
     Reads the ``ignored_files`` key from .portolan/config.yaml. If the key is
@@ -573,6 +611,7 @@ def get_ignored_files(catalog_path: Path | None) -> list[str]:
 
     Args:
         catalog_path: Root path of the catalog, or None to get defaults.
+        state: The run state, which parses the file once per run.
 
     Returns:
         List of glob patterns (strings). Never returns None.
@@ -584,7 +623,7 @@ def get_ignored_files(catalog_path: Path | None) -> list[str]:
     if catalog_path is None:
         return list(DEFAULT_IGNORED_FILES)
 
-    config = load_catalog_config(catalog_path).data
+    config = load_catalog_config(catalog_path, state=state).data
 
     if "ignored_files" not in config:
         return list(DEFAULT_IGNORED_FILES)
@@ -723,12 +762,6 @@ def _env_overrides() -> dict[str, Any]:
     return overrides
 
 
-def _with_env(config: CatalogConfig) -> CatalogConfig:
-    """Put the environment overrides on top of a parsed catalog config."""
-    overrides = _env_overrides()
-    return CatalogConfig(_deep_merge(config.data, overrides)) if overrides else config
-
-
 def _key_path(key: str) -> tuple[str, ...]:
     """Split a dotted key into its nested path, as ``KNOWN_SETTINGS`` defines it."""
     entry = _schema_entry(key)
@@ -823,6 +856,48 @@ def get_setting(
         Resolved value, or None if not found at any level. A list or mapping
         is a copy, so the caller may edit it.
     """
+    if catalog_path is None:
+        return resolve_setting(key, cli_value, None)
+    root = catalog_path
+
+    def layers() -> Iterable[dict[str, Any]]:
+        # 3. The hierarchical .portolan/ config of the collection directory.
+        if collection_path is not None:
+            return (with_env(merge_config_files(collection_path, root)),)
+        config = catalog_file_config(root)
+        # 4. The legacy collections: section, then 5. the catalog level.
+        if collection is not None:
+            return (config.section("collections", collection), config.data)
+        return (config.data,)
+
+    return resolve_setting(key, cli_value, layers)
+
+
+def resolve_setting(
+    key: str,
+    cli_value: Any | None,
+    layers: Callable[[], Iterable[dict[str, Any]]] | None,
+) -> Any | None:
+    """Resolve a setting in the order of ``get_setting``.
+
+    ``get_setting`` and ``RunState.setting`` share this order and differ only
+    in where the config files come from.
+
+    Args:
+        key: Setting key.
+        cli_value: The value of a CLI argument, or None.
+        layers: Returns the config mappings to read, the first one wins. It
+            runs only when neither the CLI nor the environment sets the key.
+            None when no catalog exists. The built-in default then does not
+            apply.
+
+    Returns:
+        The value, or None. A list or mapping from a file or a default is a
+        copy, because the layers can be the shared parse of a run state.
+
+    Raises:
+        ValueError: If a layer holds a sensitive setting.
+    """
     # 1. CLI argument takes highest precedence
     if cli_value is not None:
         return cli_value
@@ -836,32 +911,11 @@ def get_setting(
             return _coerce_value(key, entry[1], env_value) if entry else env_value
         return env_value
 
-    # If no catalog path, can't check file-based config
-    if catalog_path is None:
+    if layers is None:
         return None
-
-    # 3. Hierarchical .portolan/ config
-    if collection_path is not None:
-        merged_config = load_merged_config(collection_path, catalog_path)
-        _check_sensitive_in_config(merged_config, key)
-        value = _get_with_aliases(merged_config, key)
-        if value is not None:
-            return value
-
-    else:
-        config = _load_catalog_file(catalog_path)
-
-        # 4. Legacy collection-level config (if collection specified)
-        if collection is not None:
-            collection_config = config.section("collections", collection)
-            _check_sensitive_in_config(collection_config, key)
-            value = _get_with_aliases(collection_config, key)
-            if value is not None:
-                return copy.deepcopy(value)
-
-        # 5. Catalog-level config
-        _check_sensitive_in_config(config.data, key)
-        value = _get_with_aliases(config.data, key)
+    for layer in layers():
+        _check_sensitive_in_config(layer, key)
+        value = _get_with_aliases(layer, key)
         if value is not None:
             return copy.deepcopy(value)
 
@@ -987,7 +1041,7 @@ def list_settings(
     """
     result: dict[str, dict[str, Any]] = {}
 
-    config = _load_catalog_file(catalog_path) if catalog_path else CatalogConfig({})
+    config = catalog_file_config(catalog_path) if catalog_path else CatalogConfig({})
     file_config = {key: value for key, value in config.data.items() if key != "collections"}
     all_keys = set(_leaf_keys(file_config))
 
@@ -1041,7 +1095,7 @@ def get_setting_source(
     if catalog_path is None:
         return "default"
 
-    config = _load_catalog_file(catalog_path)
+    config = catalog_file_config(catalog_path)
 
     # Check collection config
     if (
@@ -1120,37 +1174,38 @@ def find_portolan_files(
     return result
 
 
-def _load_validated_mapping(file_path: Path) -> dict[str, Any] | None:
+def _load_validated_mapping(file_path: Path, read: YamlReader) -> dict[str, Any] | None:
     """Load a YAML file as a mapping.
 
     Args:
         file_path: Path to the YAML file.
+        read: Parses the file.
 
     Returns:
-        The shared parse from ``_parse_yaml``. Do not mutate it. None for an
-        empty file, or for a document that is not a mapping.
+        The result of ``read``, which a run state shares. Do not mutate it.
+        None for an empty file, or for a document that is not a mapping.
 
     Raises:
         ConfigInvalidStructureError: If YAML is malformed.
     """
     try:
-        data = _parse_yaml(file_path)
+        data = read(file_path)
     except yaml.YAMLError as e:
         raise ConfigInvalidStructureError(str(file_path), f"Invalid YAML syntax: {e}") from e
     return data if isinstance(data, dict) else None
 
 
-def _merge_files(files: list[Path], skip: Path | None = None) -> dict[str, Any]:
+def _merge_files(files: list[Path], read: YamlReader, skip: Path | None = None) -> dict[str, Any]:
     """Deep-merge the mappings in ``files``, later files over earlier ones.
 
-    The result shares nested values with the parse cache. Copy it before it
-    leaves this module.
+    The result is a new mapping, but it shares nested values with the parses.
+    Copy it before it leaves this module.
     """
     result: dict[str, Any] = {}
     for file_path in files:
         if file_path == skip:
             continue
-        data = _load_validated_mapping(file_path)
+        data = _load_validated_mapping(file_path, read)
         if data is not None:
             result = _deep_merge(result, data)
     return result
@@ -1200,7 +1255,8 @@ def load_merged_yaml(
         Empty dict if no files exist.
     """
     count("config.merges")
-    return copy.deepcopy(_merge_files(find_portolan_files(start_path, filename, catalog_root)))
+    files = find_portolan_files(start_path, filename, catalog_root)
+    return copy.deepcopy(_merge_files(files, parse_yaml))
 
 
 #: The (file, key) pairs that ``_warn_catalog_only_keys`` reported in this process.
@@ -1252,19 +1308,54 @@ def load_merged_config(
         catalog_root: Catalog root directory.
 
     Returns:
-        Merged configuration dictionary.
+        Merged configuration dictionary. The caller may edit it.
+    """
+    return copy.deepcopy(with_env(merge_config_files(path, catalog_root)))
+
+
+def with_env(mapping: dict[str, Any]) -> dict[str, Any]:
+    """Put the ``PORTOLAN_<KEY>`` variables of known settings on top of a config.
+
+    Returns:
+        ``mapping`` itself when no variable names a setting, else a new merge.
+    """
+    overrides = _env_overrides()
+    return _deep_merge(mapping, overrides) if overrides else mapping
+
+
+def merge_config_files(
+    path: Path, catalog_root: Path, read: YamlReader = parse_yaml
+) -> dict[str, Any]:
+    """Merge the config.yaml files that apply to ``path``, without the environment.
+
+    The catalog file loads first, so a bad catalog file raises the error of
+    ``load_catalog_config``.
+
+    Args:
+        path: Path to collection or subcatalog directory.
+        catalog_root: Catalog root directory.
+        read: Parses one file. A run state passes its memo.
+
+    Returns:
+        A new mapping that shares nested values with the parses. Do not mutate
+        it. ``load_merged_config`` returns a copy.
+
+    Raises:
+        ConfigParseError: If the catalog config.yaml is not valid YAML.
+        ConfigInvalidStructureError: If a file below the catalog is not valid
+            YAML, or the catalog file is not a mapping.
     """
     count("config.merges")
+    root_config = catalog_file_config(catalog_root, read)
     files = find_portolan_files(path, CONFIG_FILENAME, catalog_root)
     root_file = get_config_path(catalog_root).resolve()
     for file_path in files:
         if file_path != root_file:
-            _warn_catalog_only_keys(file_path, _load_validated_mapping(file_path) or {})
-    merged = _merge_files(files)
+            _warn_catalog_only_keys(file_path, _load_validated_mapping(file_path, read) or {})
+    merged = _merge_files(files, read)
 
     # Legacy collections: section in the root config. The hierarchy files
     # below the root override it, and it overrides the root settings.
-    root_config = _load_catalog_file(catalog_root)
     try:
         parts = path.resolve().relative_to(catalog_root.resolve()).parts
     except ValueError:
@@ -1279,10 +1370,9 @@ def load_merged_config(
         _warn_catalog_only_keys(root_file, legacy, f"collections.{name}.")
         root_settings = {k: v for k, v in root_config.data.items() if k != "collections"}
         merged = _deep_merge(
-            _deep_merge(root_settings, legacy), _merge_files(files, skip=root_file)
+            _deep_merge(root_settings, legacy), _merge_files(files, read, skip=root_file)
         )
-
-    return copy.deepcopy(_deep_merge(merged, _env_overrides()))
+    return merged
 
 
 #: metadata.yaml keys that name one object and therefore never inherit (#815).
@@ -1299,27 +1389,51 @@ def load_merged_metadata(
 ) -> dict[str, Any]:
     """Load merged metadata.yaml from hierarchy.
 
-    Delegates to load_merged_yaml, then drops the keys in
-    :data:`NON_INHERITED_METADATA_KEYS` that came from an ancestor rather than
-    from ``path`` itself (#815).
-
     Args:
         path: Path to collection or subcatalog directory.
         catalog_root: Catalog root directory.
 
     Returns:
-        Merged metadata dictionary.
+        Merged metadata dictionary. The caller may edit it.
     """
-    merged = load_merged_yaml(path, METADATA_FILENAME, catalog_root)
+    return copy.deepcopy(merge_metadata_files(path, catalog_root))
+
+
+def merge_metadata_files(
+    path: Path, catalog_root: Path, read: YamlReader = parse_yaml
+) -> dict[str, Any]:
+    """Merge the metadata.yaml files from ``catalog_root`` down to ``path``.
+
+    A child value overrides its parent. The keys in
+    :data:`NON_INHERITED_METADATA_KEYS` that came from an ancestor rather than
+    from ``path`` itself drop out (#815).
+
+    Args:
+        path: Path to collection or subcatalog directory.
+        catalog_root: Catalog root directory.
+        read: Parses one file. A run state passes its memo.
+
+    Returns:
+        A new mapping that shares nested values with the parses. Do not mutate
+        it. ``load_merged_metadata`` returns a copy.
+    """
+    count("config.merges")
+    merged = _merge_files(find_portolan_files(path, METADATA_FILENAME, catalog_root), read)
     if not merged:
         return merged
-
-    own_path = path / ".portolan" / METADATA_FILENAME
-    own = (_load_validated_mapping(own_path) or {}) if own_path.is_file() else {}
+    own = own_metadata(path, read)
     for key in NON_INHERITED_METADATA_KEYS:
         if key in merged and key not in own:
             del merged[key]
     return merged
+
+
+def own_metadata(path: Path, read: YamlReader = parse_yaml) -> dict[str, Any]:
+    """Return the metadata.yaml that ``path`` owns, shared with ``read``. Do not mutate it."""
+    file_path = path / ".portolan" / METADATA_FILENAME
+    if not file_path.is_file():
+        return {}
+    return _load_validated_mapping(file_path, read) or {}
 
 
 def load_own_metadata(path: Path) -> dict[str, Any]:
@@ -1335,12 +1449,9 @@ def load_own_metadata(path: Path) -> dict[str, Any]:
 
     Returns:
         The parsed metadata mapping, or an empty dict when the file is absent,
-        empty, or not a mapping.
+        empty, or not a mapping. The caller may edit it.
     """
-    file_path = path / ".portolan" / "metadata.yaml"
-    if not file_path.is_file():
-        return {}
-    return copy.deepcopy(_load_validated_mapping(file_path) or {})
+    return copy.deepcopy(own_metadata(path))
 
 
 # =============================================================================
@@ -1376,16 +1487,21 @@ def load_dotenv_from_catalog(catalog_path: Path | None = None) -> bool:
     return True
 
 
-def check_sensitive_settings_in_config(catalog_path: Path) -> list[str]:
+def check_sensitive_settings_in_config(
+    catalog_path: Path, *, state: ConfigSource | None = None
+) -> list[str]:
     """Check if config.yaml contains sensitive settings that should be in .env.
 
     Args:
         catalog_path: Path to catalog root.
+        state: The run state, which parses the file once per run. The
+            environment it adds holds no sensitive key, because
+            ``KNOWN_SETTINGS`` names none.
 
     Returns:
         List of sensitive setting names found in config.yaml.
     """
-    config = load_config(catalog_path)
+    config = load_catalog_config(catalog_path, state=state).data
 
     # Check top-level sensitive settings
     found = [key for key in SENSITIVE_SETTINGS if key in config]
