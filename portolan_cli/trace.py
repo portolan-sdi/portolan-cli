@@ -19,6 +19,8 @@ A thread pool worker does not, so submit work through ``submit``.
 ``PORTOLAN_TIMINGS=mem`` also records the ``tracemalloc`` growth of each span: its
 peak traced memory less the traced memory at span entry. Memory that an
 earlier stage holds, such as a module imported before the span, does not count.
+tracemalloc traces the whole process, so the growth of a span also holds the
+memory that other threads allocate while it is open.
 ``PORTOLAN_TRACE_FILE=<path>`` turns tracing on and names the Chrome trace file.
 
 This module imports only the standard library, so any layer may import it.
@@ -78,6 +80,7 @@ KNOWN_COUNTERS: tuple[str, ...] = (
     "tiles.fetched",
     "raster.opens",
     "parquet.opens",
+    "vector.opens",
     "duckdb.connects",
 )
 
@@ -87,6 +90,9 @@ _enabled = False
 _mem = False
 _lock = threading.Lock()
 _roots: list[_Span] = []
+# The spans open now, when mem mode is on. Each reset of the tracemalloc peak
+# first folds the peak into all of them, so no open span loses its peak.
+_open: list[_Span] = []
 _counters: dict[str, int] = {}
 _current: contextvars.ContextVar[_Span | None] = contextvars.ContextVar(
     "portolan_trace_span", default=None
@@ -174,9 +180,11 @@ class _Span:
             else:
                 self._parent.children.append(self)
         if _mem and tracemalloc.is_tracing():
-            _propagate_mem_peak(self._parent)
-            tracemalloc.reset_peak()
-            self.mem_base = tracemalloc.get_traced_memory()[0]
+            with _lock:
+                _fold_mem_peak()
+                tracemalloc.reset_peak()
+                self.mem_base = tracemalloc.get_traced_memory()[0]
+                _open.append(self)
         self._token = _current.set(self)
         self.cpu_start = time.process_time()
         self.start = time.perf_counter()
@@ -193,9 +201,10 @@ class _Span:
         self.cpu_end = time.process_time()
         self.rss_peak_mb = _rss_peak_mb()
         if _mem and tracemalloc.is_tracing():
-            _propagate_mem_peak(self)
-            if self._parent is not None:
-                self._parent.mem_peak = max(self._parent.mem_peak, self.mem_peak)
+            with _lock:
+                _fold_mem_peak()
+                if self in _open:
+                    _open.remove(self)
         if exc_type is not None:
             self.attrs.setdefault("error", exc_type.__name__)
         if self._token is not None:
@@ -225,12 +234,16 @@ class _Span:
         return node
 
 
-def _propagate_mem_peak(target: _Span | None) -> None:
-    """Fold the tracemalloc peak since the last reset into ``target``."""
-    if target is None:
-        return
+def _fold_mem_peak() -> None:
+    """Fold the tracemalloc peak since the last reset into every open span.
+
+    The caller holds ``_lock``. A span that opens in one thread resets the
+    peak of the whole process, so the fold must reach the open spans of every
+    thread, not only the parent of the new span.
+    """
     _, peak = tracemalloc.get_traced_memory()
-    target.mem_peak = max(target.mem_peak, peak)
+    for open_span in _open:
+        open_span.mem_peak = max(open_span.mem_peak, peak)
 
 
 def enable(*, mem: bool = False) -> None:
@@ -262,6 +275,7 @@ def reset() -> None:
         _enabled = False
         _mem = False
         _roots.clear()
+        _open.clear()
         _counters.clear()
         _run_id = uuid.uuid4().hex
     _current.set(None)

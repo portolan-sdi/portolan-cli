@@ -7,7 +7,10 @@ The constants encode the costs of today, the bad ones included. A lane that
 removes work lowers its own constants.
 
 An ``add`` scenario then runs at 2n with ``--workers 4``. The thread pool must
-not add work, so each counter must stay at or below its ``--workers 1`` value.
+not change the work, so each counter must equal its ``--workers 1`` value. A
+race that loads one file twice raises a count. A race that drops a file lowers
+one. The gate sees a race only when the threads meet in it during the run, so
+``tests/unit/test_run_state.py`` holds the deterministic tests of each lock.
 
 The counts come from the code under test, not from machine load, so the gate
 is exact. A failure prints the pairs to change. When the change is a real
@@ -60,9 +63,9 @@ def test_counters_scale_as_recorded(name: str, tmp_path: Path) -> None:
     if scenario.runs_phase_two:
         parallel = measure(scenario, tmp_path, 2 * n, workers=4)
         _ran_clean(parallel, scenario.exit_code)
-        grown = {
-            counter: (parallel["counters"][counter], large["counters"][counter])
+        moved = {
+            counter: {"workers 1": large["counters"][counter], "workers 4": count}
             for counter in COUNTER_OWNER
-            if parallel["counters"][counter] > large["counters"][counter]
+            if (count := parallel["counters"][counter]) != large["counters"][counter]
         }
-        assert grown == {}, f"{name}: --workers 4 does more work than --workers 1"
+        assert moved == {}, f"{name}: --workers 4 does other work than --workers 1"

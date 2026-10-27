@@ -355,11 +355,46 @@ def _apply_heavy_cli_import(root: Path, faulty: bool) -> None:
         )
 
 
+# Each fault below opens a file again with no count() call. The scale gates
+# cannot see an open that nothing counts, so tests/perf/test_open_sites.py
+# reads the source and fails on it.
+
+
+def _apply_thumbnail_parquet_reopen(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/viz/thumbnail.py",
+            "        parquet_file = pq.ParquetFile(str(gpq_path))\n",
+            "        pq.ParquetFile(str(gpq_path)).close()\n"
+            "        parquet_file = pq.ParquetFile(str(gpq_path))\n",
+        )
+
+
+def _apply_cog_defaults_reopen(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/conversion_config.py",
+            "        with rasterio.open(source) as src:\n",
+            "        rasterio.open(source).close()\n        with rasterio.open(source) as src:\n",
+        )
+
+
+def _apply_cog_write_reopen(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/convert.py",
+            '        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:\n',
+            "        rasterio.open(source).close()\n"
+            '        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:\n',
+        )
+
+
 def _perf_gate(test_id: str) -> Gate:
     return Gate(("uv", "run", "pytest", test_id, "-q", "-p", "no:cacheprovider"))
 
 
 SCALE = "tests/perf/test_scale_invariance.py::test_counters_scale_as_recorded"
+OPEN_SITES = "tests/perf/test_open_sites.py::test_every_open_site_counts"
 
 FAULTS = (
     Fault(
@@ -465,6 +500,21 @@ FAULTS = (
         "heavy-cli-import",
         _apply_heavy_cli_import,
         (_perf_gate("tests/perf/test_cold_imports.py"),),
+    ),
+    Fault(
+        "thumbnail-parquet-reopen",
+        _apply_thumbnail_parquet_reopen,
+        (_perf_gate(OPEN_SITES),),
+    ),
+    Fault(
+        "cog-defaults-reopen",
+        _apply_cog_defaults_reopen,
+        (_perf_gate(OPEN_SITES),),
+    ),
+    Fault(
+        "cog-write-reopen",
+        _apply_cog_write_reopen,
+        (_perf_gate(OPEN_SITES),),
     ),
 )
 FAULTS_BY_NAME = {fault.name: fault for fault in FAULTS}

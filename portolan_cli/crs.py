@@ -18,6 +18,7 @@ from pyproj import CRS, Transformer
 from pyproj.exceptions import CRSError
 
 from portolan_cli.errors import CRSMismatchError
+from portolan_cli.trace import count
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -532,6 +533,7 @@ def _stream_wgs84_bounds(
         # between the two CRSs, and that must fall back, not escape.
         transformer = Transformer.from_crs(src, WGS84, always_xy=True)
         for file in files:
+            count("parquet.opens")
             parquet = pq.ParquetFile(file)
             if geometry_column not in parquet.schema_arrow.names:
                 return None

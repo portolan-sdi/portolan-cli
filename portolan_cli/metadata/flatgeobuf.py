@@ -15,6 +15,8 @@ import pyogrio  # type: ignore[import-untyped]
 from pyproj import CRS
 from pyproj.exceptions import CRSError
 
+from portolan_cli.trace import count
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -89,6 +91,7 @@ def extract_flatgeobuf_metadata(path: Path) -> FlatGeobufMetadata:
         raise FileNotFoundError(f"FlatGeobuf file not found: {path}")
 
     try:
+        count("vector.opens")
         info = pyogrio.read_info(str(path))
     except Exception as e:
         raise ValueError(f"Invalid FlatGeobuf file: {path} - {e}") from e

@@ -43,6 +43,7 @@ from portolan_cli.format_families import (
     detect_family,
     is_geojson,
 )
+from portolan_cli.trace import count
 
 if TYPE_CHECKING:
     import pyarrow.parquet as pq
@@ -141,6 +142,7 @@ def is_valid_parquet(path: Path) -> bool:
 
     try:
         # Just read metadata - fast and validates the file structure
+        count("parquet.opens")
         pq.read_metadata(str(path))
         return True
     except Exception:

@@ -1143,6 +1143,7 @@ def _sample_geoparquet(
     """
     import pyarrow.parquet as pq
 
+    count("parquet.opens", 0 if isinstance(source, pq.ParquetFile) else 1)
     parquet_file = source if isinstance(source, pq.ParquetFile) else pq.ParquetFile(str(source))
     geo_meta = json.loads((parquet_file.metadata.metadata or {})[b"geo"].decode("utf-8"))
     primary = geo_meta["primary_column"]
@@ -1215,6 +1216,7 @@ def _read_geoparquet_for_thumbnail(
         from portolan_cli.formats import read_geo_metadata
         from portolan_cli.viz.thumbnail_style import _find_column_case_insensitive
 
+        count("parquet.opens")
         parquet_file = pq.ParquetFile(str(gpq_path))
         geo_meta = read_geo_metadata(parquet_file) or {}
         primary = geo_meta.get("primary_column", "geometry")

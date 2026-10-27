@@ -71,6 +71,27 @@ def collect_successful_parquet_files(
     ]
 
 
+def parquet_row_count(path: Path) -> int:
+    """Return the row count of an extracted Parquet file, or 0 when the file is missing.
+
+    The footer read counts as one ``parquet.opens``.
+
+    Args:
+        path: The Parquet file that a source wrote.
+
+    Returns:
+        The number of rows in the file.
+    """
+    if not path.exists():
+        return 0
+    import pyarrow.parquet as pq
+
+    from portolan_cli.trace import count
+
+    count("parquet.opens")
+    return int(pq.read_metadata(path).num_rows)
+
+
 def init_extracted_catalog(
     output_dir: Path,
     report: ExtractionReport,

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from portolan_cli.models.schema import BandSchema, ColumnSchema, SchemaModel
+from portolan_cli.trace import count
 
 
 def _parse_nodata(nodata_str: str | None) -> float | int | None:
@@ -189,6 +190,7 @@ def import_schema_parquet(
 
     import pyarrow.parquet as pq
 
+    count("parquet.opens")
     table = pq.read_table(path)
     rows = table.to_pylist()
 

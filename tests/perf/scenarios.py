@@ -11,10 +11,12 @@ A scenario that needs a catalog first (``re-add-unchanged``, ``check-metadata``,
 ``status``) builds it with ``portolan`` itself, through ``runner.py``, so the
 catalog is what the code under test writes today.
 
-Every scenario turns thumbnails off, except ``add-many-collections-thumbs``
+Every scenario turns vector thumbnails off, except ``add-many-collections-thumbs``
 and ``thumbnail-large``. Those two draw the default basemap from the stub tile
-source in ``runner.py``. PMTiles stay off, the default, so tippecanoe on the
-machine does not change a count.
+source in ``runner.py``. A raster scenario still writes the COG thumbnail,
+because ``conversion.cog.generate_thumbnail`` controls it and is on by
+default. PMTiles stay off, the default, so tippecanoe on the machine does not
+change a count.
 
 The module docstring of ``test_scale_invariance.py`` explains how the gates
 use the sizes.
