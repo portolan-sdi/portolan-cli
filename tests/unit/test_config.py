@@ -1969,6 +1969,103 @@ def _geo_asset_catalog(root: Path, n: int) -> Path:
     return catalog
 
 
+class _NoPushBackend:
+    """A backend that blocks push and names the remote it was given."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def supports_push(self) -> bool:
+        return False
+
+    def push_blocked_message(self, remote: str | None) -> str:
+        return f"{self.name} blocks push to {remote}"
+
+
+class TestCollectionBackendAndRemote:
+    """``backend`` and ``remote`` resolve through the collection hierarchy.
+
+    On ``main`` the push check read only the legacy ``collections:`` section.
+    A collection's own ``.portolan/config.yaml`` now applies, as for every
+    other setting.
+    """
+
+    @staticmethod
+    def _catalog(root: Path, *, own: str = "", legacy: str = "") -> Path:
+        from tests.conftest import _init_catalog
+
+        catalog = _init_catalog(root)
+        if legacy:
+            with (catalog / ".portolan" / "config.yaml").open("a", encoding="utf-8") as handle:
+                handle.write(f"collections:\n  demo:\n    {legacy}\n")
+        (catalog / "demo").mkdir()
+        if own:
+            _write_config(catalog / "demo", own)
+        return catalog
+
+    @pytest.fixture
+    def no_push(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from portolan_cli import backends
+
+        monkeypatch.setattr(
+            backends, "get_backend", lambda name, catalog_root=None: _NoPushBackend(name)
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("own", "legacy"),
+        [("backend: lakehouse\n", ""), ("", "backend: lakehouse")],
+        ids=["collection-config", "legacy-section"],
+    )
+    @pytest.mark.usefixtures("no_push")
+    def test_the_collection_backend_drives_the_push_block(
+        self, tmp_path: Path, own: str, legacy: str
+    ) -> None:
+        from portolan_cli.run_state import RunState
+        from portolan_cli.version_ops import check_backend_supports_push
+
+        catalog = self._catalog(tmp_path / "catalog", own=own, legacy=legacy)
+
+        with cleared_environ(PORTOLAN_REMOTE="s3://bucket/catalog"):
+            for state in (None, RunState.open(catalog)):
+                blocked = check_backend_supports_push(catalog, "demo", state=state)
+
+                assert blocked is not None
+                assert blocked.message == "lakehouse blocks push to s3://bucket/catalog"
+                assert check_backend_supports_push(catalog, None, state=state) is None
+
+    @pytest.mark.unit
+    @pytest.mark.usefixtures("no_push")
+    def test_a_collection_config_remote_is_rejected_as_sensitive(self, tmp_path: Path) -> None:
+        from portolan_cli.run_state import RunState
+        from portolan_cli.version_ops import check_backend_supports_push
+
+        catalog = self._catalog(
+            tmp_path / "catalog", own="backend: lakehouse\nremote: s3://bucket/demo\n"
+        )
+        state = RunState.open(catalog)
+
+        with cleared_environ():
+            # The iceberg add path reads the remote this way (finalization).
+            with pytest.raises(ValueError, match="'remote' found in config.yaml"):
+                state.setting("remote", collection_dir=catalog / "demo")
+            with pytest.raises(ValueError, match="'remote' found in config.yaml"):
+                check_backend_supports_push(catalog, "demo", state=state)
+
+    @pytest.mark.unit
+    def test_the_environment_remote_reaches_a_collection(self, tmp_path: Path) -> None:
+        from portolan_cli.run_state import RunState
+
+        catalog = self._catalog(tmp_path / "catalog", own="backend: lakehouse\n")
+        state = RunState.open(catalog)
+
+        with cleared_environ(PORTOLAN_REMOTE="s3://bucket/catalog"):
+            assert state.setting("remote", collection_dir=catalog / "demo") == (
+                "s3://bucket/catalog"
+            )
+            assert state.setting("backend", collection_dir=catalog / "demo") == "lakehouse"
+
+
 class TestCheckFixReadsTheState:
     """The geo-asset pass of ``check --fix`` reads config.yaml once per run (#994)."""
 
