@@ -975,29 +975,33 @@ def build_catalog(
     )
     if added is None:
         return
-    register_collection_styles(output_dir, report, include_legends=True)
-    by_path = {layer_path(layer): layer for layer in discovery.layers}
+    # A step after the add may raise. The files that the add finalized keep
+    # their version, so the commit runs in any case.
+    try:
+        register_collection_styles(output_dir, report, include_legends=True)
+        by_path = {layer_path(layer): layer for layer in discovery.layers}
 
-    def link(result: LayerResult) -> SourceLink | None:
-        layer = by_path.get(result.output_path or "")
-        return layer_source.source_link(discovery.source_url, layer) if layer else None
+        def link(result: LayerResult) -> SourceLink | None:
+            layer = by_path.get(result.output_path or "")
+            return layer_source.source_link(discovery.source_url, layer) if layer else None
 
-    add_source_links(
-        output_dir,
-        report,
-        url_builder=lambda source, result: found.href if (found := link(result)) else source,
-        title_builder=lambda result: found.title if (found := link(result)) else result.name,
-    )
-    seed_collections(layer_source, discovery, output_dir, report)
-    # Thumbnails come last, as in `add`. The renderer's GUI objects then never
-    # meet the metadata thread pool above. A Tk object that a worker thread
-    # frees aborts the process on Windows.
-    files, versioned = added
-    collection_ids = {path.parent.relative_to(output_dir).as_posix() for path in files}
-    ensure_collection_thumbnails(
-        output_dir, collection_ids, versioned_collections=versioned, state=state
-    )
-    commit_run(state)
+        add_source_links(
+            output_dir,
+            report,
+            url_builder=lambda source, result: found.href if (found := link(result)) else source,
+            title_builder=lambda result: found.title if (found := link(result)) else result.name,
+        )
+        seed_collections(layer_source, discovery, output_dir, report)
+        # Thumbnails come last, as in `add`. The renderer's GUI objects then never
+        # meet the metadata thread pool above. A Tk object that a worker thread
+        # frees aborts the process on Windows.
+        files, versioned = added
+        collection_ids = {path.parent.relative_to(output_dir).as_posix() for path in files}
+        ensure_collection_thumbnails(
+            output_dir, collection_ids, versioned_collections=versioned, state=state
+        )
+    finally:
+        commit_run(state)
 
 
 def run_layer_extraction(
