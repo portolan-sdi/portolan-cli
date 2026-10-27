@@ -358,7 +358,7 @@ class TestRemoveLegacyEdgeCases:
     )
     # check --fix converts two files in spawned workers. A worker draws the
     # thumbnail, and the no_basemap_tiles patch does not reach it.
-    @pytest.mark.refused_hosts("a.basemaps.cartocdn.com")
+    @pytest.mark.refused_hosts("server.arcgisonline.com")
     def test_mixed_success_failure(
         self,
         runner: CliRunner,
