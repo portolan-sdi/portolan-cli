@@ -241,3 +241,37 @@ def test_companion_recovery_preserves_conversion_provenance(
     )
     output = item_dir / "scene.tif"
     assert claim_output(source, output, state=RunState.open(root)) == output
+
+
+def test_index_recovery_keeps_an_entry_that_another_add_wrote_first(
+    conformant_catalog: Path, valid_points_parquet: Path
+) -> None:
+    """The recovery reads the summaries under the lock, so a newer entry survives."""
+    import portolan_cli.catalog as catalog
+
+    root = conformant_catalog
+    source = root / "roads" / "roads.parquet"
+    source.parent.mkdir()
+    source.write_bytes(valid_points_parquet.read_bytes())
+    assert add_files(paths=[source], catalog_root=root)[2] == []
+    companion = root / "roads" / "notes.csv"
+    companion.write_text("id,note\n1,paved\n")
+    lock = catalog._lock_file
+    fired = False
+
+    def lock_after_another_add(lock_file: object) -> None:
+        nonlocal fired
+        if not fired:
+            fired = True
+            # Another add publishes and updates the index before this run locks.
+            assert add_files(paths=[companion], catalog_root=root)[2] == []
+        lock(lock_file)
+
+    with patch("portolan_cli.catalog._lock_file", side_effect=lock_after_another_add):
+        assert add_files(paths=[source], catalog_root=root) == ([], [source], [])
+
+    assert fired
+    latest = read_versions(root / "roads" / "versions.json").versions[-1]
+    entry = json.loads((root / "versions.json").read_text())["collections"]["roads"]
+    assert entry["current_version"] == latest.version, "recovery wrote an older entry"
+    assert entry["asset_count"] == len(latest.assets)

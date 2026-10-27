@@ -46,6 +46,7 @@ class RecordingBackend(JsonFileBackend):
         self.publishes: list[tuple[str, dict[str, str]]] = []
         self.hooks: list[PostAddContext] = []
         self.pulls: list[tuple[str, bool]] = []
+        self.pulls_on_loop: list[bool] = []
         self.events: list[str] = []
 
     def publish(
@@ -90,6 +91,11 @@ class RecordingBackend(JsonFileBackend):
     ) -> PullResult:
         """Report a plugin download without object-store I/O."""
         self.pulls.append((collection, dry_run))
+        try:
+            asyncio.get_running_loop()
+            self.pulls_on_loop.append(True)
+        except RuntimeError:
+            self.pulls_on_loop.append(False)
         return PullResult(
             success=True,
             files_downloaded=3,
@@ -430,3 +436,16 @@ def test_version_entry_points_use_collection_backend_from_cwd(
     else:
         publish_version("remote", assets={})
         assert len(recording.history["remote"]) == 2
+
+
+def test_catalog_pull_runs_a_plugin_pull_off_the_event_loop(
+    conformant_catalog: Path,
+    recording: RecordingBackend,
+) -> None:
+    """A synchronous plugin pull must not stop the downloads of other collections."""
+    root = conformant_catalog
+    _backend(root, "remote", "recording")
+    (root / "remote/collection.json").write_text('{"type":"Collection"}')
+    with patch("portolan_cli.sync.pull._setup_store_and_kwargs", return_value=(object(), {})):
+        asyncio.run(pull_all_collections_async("s3://example/catalog", root, dry_run=True))
+    assert recording.pulls_on_loop == [False], "the plugin pull blocked the event loop"

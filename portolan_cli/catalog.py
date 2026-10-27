@@ -35,6 +35,8 @@ from portolan_cli.utils import href_root, relative_href
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from portolan_cli.run_state import RunState
     from portolan_cli.versions import Version
 
@@ -1259,7 +1261,7 @@ def collection_summaries(state: RunState) -> dict[str, CollectionSummary]:
 
 def update_catalog_index(
     catalog_root: Path,
-    summaries: dict[str, CollectionSummary],
+    summaries: dict[str, CollectionSummary] | Callable[[], dict[str, CollectionSummary]],
 ) -> bool:
     """Write the entries of several collections into the catalog-level versions.json.
 
@@ -1273,7 +1275,9 @@ def update_catalog_index(
 
     Args:
         catalog_root: Root directory of the catalog.
-        summaries: Collection id to its new entry.
+        summaries: Collection id to its new entry. A callable is called under
+            the lock, so a summary it reads from disk cannot be older than an
+            entry that another command wrote first.
 
     Returns:
         True when the file was written.
@@ -1283,7 +1287,7 @@ def update_catalog_index(
             or has invalid structure.
     """
     versions_path = catalog_root / "versions.json"
-    if not summaries or not versions_path.exists():
+    if (isinstance(summaries, dict) and not summaries) or not versions_path.exists():
         # No catalog-level versions.json: not a file-backend catalog (Iceberg).
         return False
 
@@ -1293,6 +1297,10 @@ def update_catalog_index(
     with lock_path.open("a") as lock_file:
         _lock_file(lock_file)
         try:
+            if callable(summaries):
+                summaries = summaries()
+            if not summaries:
+                return False
             content = _read_catalog_index(versions_path)
             collections = content.get("collections") or {}
             now = datetime.now(UTC).isoformat()

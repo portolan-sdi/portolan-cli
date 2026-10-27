@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.trace import count
@@ -241,9 +242,12 @@ def commit_run(state: RunState) -> dict[str, Version]:
         # its stage retryable, and index the writes that already succeeded.
         state.restore_staged(pending)
         try:
-            if reconcile_index:
-                summaries = collection_summaries(state)
-            update_catalog_index(state.catalog_root, summaries)
+            # The recovery reads under the index lock. A summary read before it
+            # could overwrite the newer entry of another add.
+            update_catalog_index(
+                state.catalog_root,
+                partial(collection_summaries, state) if reconcile_index else summaries,
+            )
         except Exception:
             logger.warning(
                 "Failed to update catalog-level versions.json. "

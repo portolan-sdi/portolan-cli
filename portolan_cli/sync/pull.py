@@ -1562,8 +1562,10 @@ async def pull_all_collections_async(
         nonlocal shared_store
         async with semaphore:
             try:
-                backend_result = try_backend_pull(
-                    local_root, remote_url, collection, dry_run, state=state
+                # A plugin pull is synchronous. A thread keeps the other
+                # collections downloading while it runs.
+                backend_result = await asyncio.to_thread(
+                    try_backend_pull, local_root, remote_url, collection, dry_run, state=state
                 )
                 if backend_result.handled:
                     return (
