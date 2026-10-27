@@ -324,4 +324,5 @@ class TestItemsParquetMirror:
         (coll / "collection.json").write_text(json.dumps(doc))
         generate_parquet_mirrors(catalog, {"c"}, generate_parquet=True)
         ids = pq.read_table(coll / "items.parquet", columns=["id"]).column("id").to_pylist()
-        assert ids == ["i0", "i1", "i9"]
+        # The mirror holds its rows in Hilbert order, not in link order.
+        assert sorted(ids) == ["i0", "i1", "i9"]

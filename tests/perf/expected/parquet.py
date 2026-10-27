@@ -12,6 +12,7 @@ EXPECTED: dict[tuple[str, str], tuple[int, int]] = {
     ("add-many-collections-thumbs", "parquet.opens"): (18, 0),  # preparation:_run x24, formats:_read_footer x8
     ("add-one-collection", "duckdb.connects"): (15, 0),  # preparation:_run x18, convert:apply_vector_settings x12
     ("add-one-collection", "parquet.opens"): (24, 0),  # preparation:_run x36, formats:_read_footer x12
+    ("add-rasters", "duckdb.connects"): (0, 1),  # stac_parquet:_spatially_ordered x1
     ("add-rasters", "raster.opens"): (15, 0),  # preparation:convert_raster x6, convert:copy_to_cog x6
     ("add-with-companions", "duckdb.connects"): (21, 0),  # preparation:_run x30, convert:apply_vector_settings x12
     ("add-with-companions", "parquet.opens"): (27, 0),  # preparation:_run x36, formats:_read_footer x18

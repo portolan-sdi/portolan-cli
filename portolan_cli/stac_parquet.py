@@ -44,6 +44,8 @@ if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
     from pathlib import Path
 
+    import pyarrow as pa
+
     from portolan_cli.run_state import RunState
 
 # Constants
@@ -189,6 +191,19 @@ def _mirror_is_current(run: RunState, collection_path: Path, fingerprint: str) -
     return run.unchanged(output_path, record)
 
 
+def _spatially_ordered(table: pa.Table) -> pa.Table:
+    """Put the item rows in Hilbert order, which PTL-DAT-006 requires.
+
+    The rows otherwise follow the link order of the collection, which is
+    rarely spatial. geoparquet-io sorts the rows and keeps the schema and its
+    metadata, so stac-geoparquet writes the same columns.
+    """
+    from geoparquet_io.api.table import Table  # type: ignore[import-untyped]
+
+    ordered: pa.Table = Table(table, geometry_column="geometry").sort_hilbert().to_arrow()
+    return ordered.replace_schema_metadata(table.schema.metadata)
+
+
 def generate_items_parquet(collection_path: Path, *, state: RunState | None = None) -> Path:
     """Generate items.parquet from STAC items in a collection.
 
@@ -238,7 +253,7 @@ def generate_items_parquet(collection_path: Path, *, state: RunState | None = No
         items = _load_item_dicts(collection_path, owned)
         # parse_stac_items_to_arrow returns a RecordBatchReader
         table = stac_geoparquet.arrow.parse_stac_items_to_arrow(items).read_all()
-        stac_geoparquet.arrow.to_parquet(table, output_path)
+        stac_geoparquet.arrow.to_parquet(_spatially_ordered(table), output_path)
         count("items_parquet.writes")
         run.invalidate(output_path)
     run.memo(_SOURCE_FINGERPRINT, output_path, lambda _path: fingerprint)
