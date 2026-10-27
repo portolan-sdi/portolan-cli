@@ -1301,6 +1301,58 @@ class TestALegacyOutputIsItsSourceOwn:
         assert _sha(geoparquet) == before
         assert self._parquets(collection_dir) == ["points-geojson.parquet", "points.parquet"]
 
+    @pytest.mark.integration
+    def test_an_edited_geojson_leaves_a_legacy_companion_geoparquet(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        """0.8.0 tracked a same-stem GeoJSON beside the operator's GeoParquet.
+
+        versions.json then looks the same as for an output and its source. The
+        conversion must not write over the GeoParquet, whose columns differ.
+        """
+        collection_dir = initialized_catalog / "places"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "points.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
+        source = collection_dir / "points.geojson"
+        TestNoConversionReplacesAForeignFile._points(source, 1)
+        self._add(runner, initialized_catalog, geoparquet)
+        _make_legacy(collection_dir)
+        assert "points.geojson" in TestNoConversionReplacesAForeignFile._tracked(collection_dir)
+        before = _sha(geoparquet)
+
+        TestNoConversionReplacesAForeignFile._points(source, 2)
+        self._add(runner, initialized_catalog, collection_dir)
+
+        assert _sha(geoparquet) == before
+        assert self._parquets(collection_dir) == ["points-geojson.parquet", "points.parquet"]
+        assert pq.read_metadata(collection_dir / "points-geojson.parquet").num_rows == 2
+
+    @pytest.mark.integration
+    def test_an_edited_geojson_leaves_a_geoparquet_another_add_tracked(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        """The add of another file tracks both same-stem files with no source_path."""
+        collection_dir = initialized_catalog / "places"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "points.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
+        source = collection_dir / "points.geojson"
+        TestNoConversionReplacesAForeignFile._points(source, 1)
+        other = collection_dir / "other.geojson"
+        TestNoConversionReplacesAForeignFile._points(other, 1)
+        self._add(runner, initialized_catalog, other)
+        tracked = TestNoConversionReplacesAForeignFile._tracked(collection_dir)
+        assert tracked["points.parquet"].get("source_path") is None
+        assert "points.geojson" in tracked
+        rows = pq.read_metadata(geoparquet).num_rows
+
+        TestNoConversionReplacesAForeignFile._points(source, 2)
+        self._add(runner, initialized_catalog, collection_dir)
+
+        assert pq.read_metadata(geoparquet).num_rows == rows
+        assert "points-geojson.parquet" in self._parquets(collection_dir)
+
 
 class TestAConvertedCogPassesItsOwnCheck:
     """A COG that add converts from a GTiff embeds its statistics (issue #748).
