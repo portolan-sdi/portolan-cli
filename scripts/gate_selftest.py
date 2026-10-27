@@ -296,9 +296,9 @@ def _apply_versions_read_per_file(root: Path, faulty: bool) -> None:
     if faulty:
         _replace_once(
             root / "portolan_cli/query.py",
-            "    versions_file = read_versions(versions_path)\n    if not versions_file.versions:",
-            "    read_versions(versions_path)\n"
-            "    versions_file = read_versions(versions_path)\n    if not versions_file.versions:",
+            "    versions_file = state.versions(collection_dir)\n",
+            "    RunState.open(collection_dir.parent).versions(collection_dir)\n"
+            "    versions_file = state.versions(collection_dir)\n",
         )
 
 

@@ -18,12 +18,9 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def counters() -> Iterator[Callable[[str], int]]:
-    """Turn the trace counters on and return a reader for one counter."""
-    trace.enable()
-    try:
+    """Trace the test with ``trace.tracing()`` and return a reader for one counter."""
+    with trace.tracing():
         yield lambda name: trace.counters().get(name, 0)
-    finally:
-        trace.reset()
 
 
 @pytest.fixture
