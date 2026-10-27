@@ -1064,6 +1064,42 @@ class TestNoConversionReplacesAForeignFile:
         assert sorted(p.name for p in collection_dir.glob("*.parquet")) == ["b1.parquet"]
 
     @pytest.mark.integration
+    def test_a_companion_csv_that_gains_geometry_keeps_its_own_asset(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        """The converted Parquet takes the stem. The CSV keeps an asset as its source.
+
+        The first add keys the companion ``attrs.csv`` by its stem. The re-add
+        converts it to ``attrs.parquet``. The source asset reused the stem key
+        by its href, and the Parquet then wrote over it. collection.json lost
+        the CSV that versions.json still tracked.
+        """
+        collection_dir = initialized_catalog / "roads"
+        collection_dir.mkdir()
+        shutil.copy(
+            fixtures_dir / "realdata" / "road-detections.parquet", collection_dir / "roads.parquet"
+        )
+        csv = collection_dir / "attrs.csv"
+        csv.write_text("id,name\n1,a\n")
+        args = ["add", "--no-thumbnails", "--portolan-dir", str(initialized_catalog)]
+        first = runner.invoke(cli, [*args, str(collection_dir)], catch_exceptions=False)
+        assert first.exit_code == 0, first.output
+
+        csv.write_text("id,name,lon,lat\n1,a,1.0,2.0\n2,b,1.5,2.5\n")
+        second = runner.invoke(cli, [*args, str(collection_dir)], catch_exceptions=False)
+
+        assert second.exit_code == 0, second.output
+        assets = json.loads((collection_dir / "collection.json").read_text())["assets"]
+        assert {key: (a["href"], a["roles"]) for key, a in assets.items()} == {
+            "roads": ("./roads.parquet", ["data"]),
+            "attrs": ("./attrs.parquet", ["data"]),
+            "attrs.csv": ("./attrs.csv", ["source"]),
+        }
+        assert sorted(f"./{key}" for key in self._tracked(collection_dir)) == sorted(
+            a["href"] for a in assets.values()
+        )
+
+    @pytest.mark.integration
     def test_a_geojson_beside_a_foreign_parquet_converts_to_a_distinct_name(
         self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
     ) -> None:
