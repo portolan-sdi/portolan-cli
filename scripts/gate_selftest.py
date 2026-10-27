@@ -9,9 +9,10 @@ the gate to go red.
 For each fault the script:
 
 1. Copies ``HEAD`` to a temporary directory with ``git archive`` and applies
-   the fault. A fault that does not apply is an ERROR.
+   the fault. A fault that does not apply is an ERROR. Changed Python files
+   must compile; a syntax error is BROKEN and no gate runs.
 2. Copies ``HEAD`` again, applies the clean variant of the fault, and runs
-   each gate. The gate must pass. A gate that fails on a clean tree proves
+   each gate after compiling changed Python files. The gate must pass. A gate that fails on a clean tree proves
    nothing, so the row is BROKEN.
 3. Runs each gate on the faulty copy. Each gate must fail. A gate that stays
    green is MISSED.
@@ -156,6 +157,16 @@ def copy_head(repo: Path, dest: Path) -> Path:
         else:  # Python 3.11 before 3.11.4 has no extraction filters
             tar.extractall(dest)  # noqa: S202 - the archive is this repository's own HEAD
     return dest
+
+
+def _apply_compiled(fault: Fault, root: Path, faulty: bool) -> None:
+    """Compile each changed Python file before attributing a failure to a gate."""
+    before = {path: path.read_bytes() for path in root.rglob("*.py")}
+    fault.apply(root, faulty)
+    for path in root.rglob("*.py"):
+        source = path.read_bytes()
+        if source != before.get(path):
+            compile(source, str(path), "exec")
 
 
 # ---------------------------------------------------------------------------
@@ -374,8 +385,9 @@ def _apply_cog_defaults_reopen(root: Path, faulty: bool) -> None:
     if faulty:
         _replace_once(
             root / "portolan_cli/conversion_config.py",
-            "        with rasterio.open(source) as src:\n",
-            "        rasterio.open(source).close()\n        with rasterio.open(source) as src:\n",
+            "            with rasterio.open(source) as src:\n",
+            "            rasterio.open(source).close()\n"
+            "            with rasterio.open(source) as src:\n",
         )
 
 
@@ -529,10 +541,10 @@ def run_fault(fault: Fault, repo: Path, workdir: Path) -> Result:
     """Test one fault against copies of ``repo`` under ``workdir``."""
     try:
         faulty_root = copy_head(repo, workdir / f"{fault.name}-faulty")
-        fault.apply(faulty_root, True)
+        _apply_compiled(fault, faulty_root, True)
         if fault.control:
             clean_root = copy_head(repo, workdir / f"{fault.name}-clean")
-            fault.apply(clean_root, False)
+            _apply_compiled(fault, clean_root, False)
             for gate in fault.gates:
                 proc = run(clean_root, gate.command)
                 if gate.caught(proc):
@@ -547,6 +559,8 @@ def run_fault(fault: Fault, repo: Path, workdir: Path) -> Result:
                 return Result(
                     fault.name, "MISSED", f"{' '.join(gate.command)} stayed green: {_tail(proc)}"
                 )
+    except SyntaxError as error:
+        return Result(fault.name, "BROKEN", f"patch does not compile: {error}")
     except (FaultError, subprocess.SubprocessError, OSError) as error:
         return Result(fault.name, "ERROR", str(error))
     return Result(fault.name, "CAUGHT", "")

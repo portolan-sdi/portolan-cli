@@ -8,6 +8,7 @@ Tests for Phase 2c: Update Functions
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from datetime import UTC, datetime
@@ -873,8 +874,8 @@ class TestUpdateVersionsTracking:
         current_version = updated_versions.versions[-1]
         asset = current_version.assets.get("data.parquet")
         assert asset is not None
-        assert asset.sha256 == "abc123"
-        assert asset.size_bytes == 1000
+        assert asset.sha256 == hashlib.sha256(data_file.read_bytes()).hexdigest()
+        assert asset.size_bytes == data_file.stat().st_size
         assert asset.source_path == "original.geojson"
 
 

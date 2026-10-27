@@ -17,5 +17,6 @@ EXPECTED: dict[tuple[str, str], tuple[int, int]] = {
     ("add-with-companions", "parquet.opens"): (27, 0),  # preparation:_run x36, formats:_read_footer x18
     ("check-fix-geo-assets", "duckdb.connects"): (15, 0),  # preparation:_run x18, convert:apply_vector_settings x12
     ("check-fix-geo-assets", "parquet.opens"): (3, 0),  # formats:_read_footer x6
+    ("check-fix-missing-rasters", "raster.opens"): (3, 0),  # preparation:convert_raster x6
 }
 # fmt: on

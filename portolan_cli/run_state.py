@@ -112,9 +112,18 @@ def stat_matches(st: os.stat_result, mtime: float | None, size: int | None) -> b
     """
     if mtime is None or size is None or st.st_size != size:
         return False
-    if float(mtime).is_integer() and not float(st.st_mtime).is_integer():
+    return file_mtime_matches(st.st_mtime, mtime)
+
+
+def file_mtime_matches(current: float, recorded: float) -> bool:
+    """Compare file mtimes, granting the coarse window only to two whole seconds.
+
+    A fractional current mtime proves the file has a fine clock, even when
+    the recorded write happened to fall on a whole second.
+    """
+    if float(recorded).is_integer() and not float(current).is_integer():
         return False
-    return mtime_matches(st.st_mtime, mtime)
+    return mtime_matches(current, recorded)
 
 
 def _stat_key(st: os.stat_result) -> _StatKey:
@@ -167,6 +176,7 @@ class StagedVersion:
             latest version on disk. One call without it makes a new version.
         minor: True when any stage call asked for a minor bump. The version
             bumps the patch otherwise.
+        on_publish: Optional callback to run after the plugin publishes.
     """
 
     assets: dict[str, Asset] = field(default_factory=dict)
@@ -176,6 +186,7 @@ class StagedVersion:
     schema: SchemaInfo | None = None
     amend: bool = True
     minor: bool = False
+    on_publish: Callable[[], None] | None = None
 
     @property
     def message(self) -> str | None:
@@ -214,6 +225,7 @@ class RunState:
         self.catalog_root = catalog_root
         self._resolved_root = catalog_root.resolve()
         self._lock = threading.Lock()
+        self._output_claims: dict[Path, Path] = {}
         # One event per key that a worker loads now. See _once.
         self._flights: dict[tuple[str, Any, _StatKey, int], tuple[threading.Event, int]] = {}
         self._invalidations: dict[Path, int] = {}
@@ -233,6 +245,17 @@ class RunState:
         return cls(catalog_root)
 
     # ── collections ─────────────────────────────────────────────────────────
+
+    def reserve_output(self, source: Path, output: Path) -> bool:
+        """Reserve an output for one source until this run ends.
+
+        A handler may repeat its caller's claim. Different sources must pick
+        different names even before either worker has written its output.
+        """
+        source, output = source.resolve(), output.resolve()
+        with self._lock:
+            owner = self._output_claims.setdefault(output, source)
+            return owner == source
 
     def collection_dir(self, collection_id: str) -> Path:
         """The directory of a collection id such as ``climate/hittekaart``."""
@@ -388,6 +411,19 @@ class RunState:
         return self.checksum(path) == asset.sha256
 
     # ── generic memo ────────────────────────────────────────────────────────
+
+    def remember(self, kind: str, path: Path, value: Any) -> None:
+        """Replace one memo entry with a writer's read of the current file.
+
+        Other kinds survive so a COG writer can seed both metadata and band
+        statistics. A loader started before this call cannot restore its old
+        value, even when the filesystem reused the stat key.
+        """
+        resolved = path.resolve()
+        key = _stat_key(resolved.stat())
+        with self._lock:
+            self._invalidations[resolved] = self._invalidations.get(resolved, 0) + 1
+            self._memo[kind, resolved] = (key, value)
 
     def memo(self, kind: str, path: Path, loader: Callable[[Path], T]) -> T:
         """Load a value derived from one file once per run.
@@ -588,6 +624,7 @@ class RunState:
         schema: SchemaInfo | None = None,
         amend: bool = False,
         minor: bool = False,
+        on_publish: Callable[[], None] | None = None,
     ) -> None:
         """Stage asset changes for a collection. The commit writes one version.
 
@@ -608,6 +645,8 @@ class RunState:
                 ``add`` does. A collection with no version gets a new one.
             minor: Bump the minor of the version, not the patch. One call
                 with it makes the whole version a minor bump.
+            on_publish: Optional work to run once after the backend publishes.
+                A later callback replaces an earlier one for this collection.
         """
         with self._lock:
             staged = self._staged.setdefault(collection_id, StagedVersion())
@@ -624,6 +663,8 @@ class RunState:
                 staged.schema = schema
             staged.amend = staged.amend and amend
             staged.minor = staged.minor or minor
+            if on_publish is not None:
+                staged.on_publish = on_publish
             self._generation += 1
 
     def staged(self) -> dict[str, StagedVersion]:
@@ -656,6 +697,7 @@ class RunState:
                     older.schema = newer.schema if newer.schema is not None else older.schema
                     older.amend &= newer.amend
                     older.minor |= newer.minor
+                    older.on_publish = newer.on_publish or older.on_publish
                 self._staged[collection_id] = older
             self._projected.clear()
             self._generation += 1

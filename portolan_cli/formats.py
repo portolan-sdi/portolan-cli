@@ -81,6 +81,10 @@ class RunMemo(Protocol):
         """Drop values derived from a file after a writer replaces it."""
         ...
 
+    def remember(self, kind: str, path: Path, value: Any) -> None:
+        """Replace one cached value with a writer's read of the current file."""
+        ...
+
 
 #: The run state of the command that runs. A format handler and a ``viz``
 #: function take no run state, so ``add`` and ``prepare_item`` set this. A
@@ -129,7 +133,7 @@ def remember(kind: str, path: Path, value: Any) -> None:
     """
     state = _RUN.get()
     if state is not None:
-        state.memo(kind, path, lambda _path: value)
+        state.remember(kind, path, value)
 
 
 def parquet_footer(path: Path) -> pq.ParquetFile:

@@ -21,6 +21,37 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
+@pytest.mark.unit
+def test_mirror_refreshes_after_item_edit_with_restored_mtime(collection_with_items: Path) -> None:
+    """A same-length edit must not keep the old mirror when POSIX ctime moves."""
+    import os
+
+    import pyarrow.parquet as pq
+
+    from portolan_cli.run_state import RunState
+    from portolan_cli.stac_parquet import generate_items_parquet, track_parquet_in_versions
+    from portolan_cli.version_ops import commit_run
+
+    if os.name != "posix":
+        pytest.skip("Windows ctime is creation time, not a content-change signal")
+    collection = collection_with_items
+    state = RunState.open(collection.parent)
+    output = generate_items_parquet(collection, state=state)
+    track_parquet_in_versions(collection, collection.parent, state=state)
+    commit_run(state)
+    item = collection / "scene-000/scene-000.json"
+    before = item.stat()
+    item.write_text(item.read_text().replace("Landsat Scene 0", "Changed Scene 0"))
+    os.utime(item, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert item.stat().st_size == before.st_size
+    assert item.stat().st_mtime_ns == before.st_mtime_ns
+    assert item.stat().st_ctime_ns != before.st_ctime_ns
+
+    generate_items_parquet(collection, state=RunState.open(collection.parent))
+
+    assert pq.read_table(output).column("title").to_pylist()[0] == "Changed Scene 0"
+
+
 def _write_version_snapshot(collection_dir: Path, version: str) -> None:
     """Write a versions.json with one snapshot, as the add flow would."""
     from datetime import datetime

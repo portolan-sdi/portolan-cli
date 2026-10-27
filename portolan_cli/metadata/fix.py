@@ -172,7 +172,7 @@ def fix_metadata(
             continue
 
         if check_result.status == MetadataStatus.MISSING and not dry_run:
-            result, prepared = _prepare_missing(check_result, directory)
+            result, prepared = _prepare_missing(check_result, directory, state=state)
             if prepared is not None:
                 catalog_root, item = prepared
                 to_finalize.setdefault(catalog_root, []).append((result, item))
@@ -695,7 +695,7 @@ def _fix_single_file(
             versions_path = collection_dir / "versions.json"
             if versions_path.exists():
                 with contextlib.suppress(KeyError, FileNotFoundError):
-                    update_versions_tracking(file_path, versions_path)
+                    update_versions_tracking(file_path, versions_path, state=state)
 
             action_desc = "Updated STAC item"
             if status == MetadataStatus.BREAKING:
@@ -737,7 +737,7 @@ def _fix_single_file(
 
 
 def _prepare_missing(
-    check_result: MetadataCheckResult, directory: Path
+    check_result: MetadataCheckResult, directory: Path, *, state: RunState | None = None
 ) -> tuple[FixResult, tuple[Path, PreparedItem] | None]:
     """Prepare the item of a MISSING file, for one ``finalize_items`` call later.
 
@@ -748,7 +748,7 @@ def _prepare_missing(
     file_path = check_result.file_path
     collection_dir = _resolve_collection_dir(file_path, directory)
     try:
-        prepared = prepare_missing_item(file_path, collection_dir)
+        prepared = prepare_missing_item(file_path, collection_dir, state=state)
     except Exception as e:
         return FixResult(file_path, FixAction.CREATED, False, f"Failed to fix: {e}"), None
     return FixResult(file_path, FixAction.CREATED, True, "Created STAC item"), prepared

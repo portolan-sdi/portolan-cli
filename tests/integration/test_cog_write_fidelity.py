@@ -13,7 +13,7 @@ from rasterio.transform import from_origin
 
 from portolan_cli import trace
 from portolan_cli.conversion_config import CogSettings
-from portolan_cli.convert import write_cog
+from portolan_cli.convert import validate_cog, write_cog
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -21,19 +21,37 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.integration
 
 
-def test_gdal_reads_are_counted(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+@pytest.mark.parametrize(("compression", "expected_opens"), [("DEFLATE", 4), ("PACKBITS", 7)])
+@pytest.mark.parametrize("tile_size", [128, 512])
+@pytest.mark.parametrize("masked", [False, True])
+def test_gdal_reads_are_counted(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    compression: str,
+    expected_opens: int,
+    tile_size: int,
+    masked: bool,
+) -> None:
     """The VRT and the source it opens must appear in the read counter."""
     source = _source(tmp_path / "src" / "scene.tif")
+    if masked:
+        with rasterio.Env(GDAL_TIFF_INTERNAL_MASK=True), rasterio.open(source, "r+") as src:
+            mask = np.full((512, 512), 255, dtype="uint8")
+            mask[:3] = 0
+            src.write_mask(mask)
     with (
         caplog.at_level(logging.DEBUG, logger="rasterio._env"),
         rasterio.Env(CPL_DEBUG=True),
         trace.tracing(),
     ):
-        write_cog(source, tmp_path)
+        write_cog(source, tmp_path, CogSettings(compression=compression, tile_size=tile_size))
         counted = trace.counters()["raster.opens"]
     opened = sum("GDALOpen(" in r.getMessage() for r in caplog.records)
-    assert opened == 4
     assert counted == opened
+    extra_overview_opens = (
+        (4 if masked else 2) if compression == "DEFLATE" and tile_size == 128 else 0
+    )
+    assert opened == expected_opens + extra_overview_opens
 
 
 def _source(path: Path, *, overviews: bool = False) -> Path:
@@ -50,7 +68,7 @@ def _source(path: Path, *, overviews: bool = False) -> Path:
     return path
 
 
-@pytest.mark.parametrize("compression", ["DEFLATE", "LZW", "ZSTD", "RAW"])
+@pytest.mark.parametrize("compression", ["DEFLATE", "LZW", "ZSTD", "RAW", "PACKBITS"])
 def test_requested_resampling_rebuilds_existing_overviews(tmp_path: Path, compression: str) -> None:
     """A requested average pyramid must not retain a source's nearest pixels."""
     source = _source(tmp_path / "src" / "scene.tif", overviews=True)
@@ -65,6 +83,7 @@ def test_requested_resampling_rebuilds_existing_overviews(tmp_path: Path, compre
         assert cog.tags()["OVERVIEW_RESAMPLING"] == "AVERAGE"
         overview = cog.read(1, out_shape=(256, 256))
         assert np.all(overview == 50), f"overview values: {np.unique(overview)}"
+    assert validate_cog(output) is None
     assert source.read_bytes() == before
 
 
@@ -116,7 +135,7 @@ def test_statistics_rewrite_preserves_absent_overviews(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("dtype", ["int16", "uint16", "float64"])
 @pytest.mark.parametrize("shape", [(1, 1), (7, 17), (271, 600)])
-@pytest.mark.parametrize("compression", ["DEFLATE", "LZW", "ZSTD", "RAW"])
+@pytest.mark.parametrize("compression", ["DEFLATE", "LZW", "ZSTD", "RAW", "PACKBITS"])
 @pytest.mark.parametrize("in_place", [False, True])
 def test_lossless_pixels_and_band_metadata_survive(
     tmp_path: Path, dtype: str, shape: tuple[int, int], compression: str, in_place: bool
@@ -162,13 +181,17 @@ def test_lossless_pixels_and_band_metadata_survive(
                 assert float(cog.tags(band)["STATISTICS_MEAN"]) == pytest.approx(valid.mean())
             else:
                 assert cog.tags(band)["STATISTICS_VALID_PERCENT"] == "0"
+    assert validate_cog(output) is None
     if not in_place:
         assert source.read_bytes() == before
     assert list(tmp_path.rglob("*.aux.xml")) == []
 
 
+@pytest.mark.parametrize("compression", ["DEFLATE", "PACKBITS"])
 @pytest.mark.parametrize("nan_nodata", [False, True])
-def test_float_nan_and_internal_mask_survive(tmp_path: Path, nan_nodata: bool) -> None:
+def test_float_nan_and_internal_mask_survive(
+    tmp_path: Path, nan_nodata: bool, compression: str
+) -> None:
     """Both NaN nodata and an explicit internal mask survive the VRT copy."""
     source = tmp_path / "src" / "scene.tif"
     source.parent.mkdir()
@@ -186,12 +209,13 @@ def test_float_nan_and_internal_mask_survive(tmp_path: Path, nan_nodata: bool) -
             dst.write_mask(mask)
     before = source.read_bytes()
 
-    output = write_cog(source, tmp_path)
+    output = write_cog(source, tmp_path, CogSettings(compression=compression))
 
     with rasterio.open(output) as cog:
         np.testing.assert_array_equal(cog.read(), pixels)
         np.testing.assert_array_equal(cog.read_masks(1), mask)
         assert float(cog.tags(1)["STATISTICS_MEAN"]) == pytest.approx(pixels[0, 2:].mean())
+    assert validate_cog(output) is None
     assert source.read_bytes() == before
 
 
@@ -237,7 +261,8 @@ def test_cog_with_statistics_is_kept_byte_for_byte(tmp_path: Path, separate_outp
     assert output.read_bytes() == before
 
 
-def test_palette_survives_conversion(tmp_path: Path) -> None:
+@pytest.mark.parametrize("compression", ["DEFLATE", "PACKBITS"])
+def test_palette_survives_conversion(tmp_path: Path, compression: str) -> None:
     """A categorical raster retains both its indices and its color table."""
     from rasterio.enums import ColorInterp
 
@@ -254,10 +279,69 @@ def test_palette_survives_conversion(tmp_path: Path) -> None:
         expected_palette = src.colormap(1)
     before = source.read_bytes()
 
-    output = write_cog(source, tmp_path)
+    output = write_cog(source, tmp_path, CogSettings(compression=compression))
 
     with rasterio.open(output) as cog:
         assert cog.colorinterp == (ColorInterp.palette,)
         assert cog.colormap(1) == expected_palette
         np.testing.assert_array_equal(cog.read(1), pixels)
     assert source.read_bytes() == before
+
+
+def test_packbits_tiling_overviews_and_mask(tmp_path: Path) -> None:
+    """The PACKBITS fallback builds a valid COG pyramid without changing masked pixels."""
+    source = tmp_path / "src" / "scene.tif"
+    source.parent.mkdir()
+    pixels = (np.arange(3 * 271 * 600).reshape(3, 271, 600) % 251 + 1).astype("uint16")
+    pixels[0, :3] = 0
+    mask = np.full((271, 600), 255, dtype="uint8")
+    mask[:3] = 0
+    with rasterio.Env(GDAL_TIFF_INTERNAL_MASK=True), rasterio.open(
+        source, "w", driver="GTiff", width=600, height=271, count=3, dtype="uint16",
+        crs="EPSG:32618", transform=from_origin(100, 200, 3, 4), nodata=0,
+    ) as dst:  # fmt: skip
+        dst.write(pixels)
+        dst.write_mask(mask)
+    before = source.read_bytes()
+
+    output = write_cog(source, tmp_path, CogSettings(compression="PACKBITS", tile_size=128))
+
+    with rasterio.open(output) as cog:
+        np.testing.assert_array_equal(cog.read(), pixels)
+        for band in cog.indexes:
+            np.testing.assert_array_equal(cog.read_masks(band), mask)
+            assert cog.overviews(band) == [2, 4]
+        assert cog.block_shapes == [(128, 128)] * 3
+        assert cog.tags(ns="IMAGE_STRUCTURE")["COMPRESSION"] == "PACKBITS"
+    assert validate_cog(output) is None
+    assert source.read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["scene.tif", "src"]
+
+
+@pytest.mark.parametrize("fail_at", ["tiles", "final"])
+def test_packbits_failed_copy_keeps_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_at: str
+) -> None:
+    """A failed intermediate or final copy leaves the in-place source and no scratch files."""
+    from typing import Any
+
+    import rasterio.shutil
+
+    source = _source(tmp_path / "scene.tif")
+    before = source.read_bytes()
+    real_copy = rasterio.shutil.copy
+
+    def fail_copy(src: Any, dst: Any, **kwargs: Any) -> None:
+        real_copy(src, dst, **kwargs)
+        if kwargs.get("driver") == "GTiff" and (
+            bool(kwargs.get("copy_src_overviews")) == (fail_at == "final")
+        ):
+            raise OSError("injected copy failure")
+
+    monkeypatch.setattr(rasterio.shutil, "copy", fail_copy)
+
+    with pytest.raises(OSError, match="injected copy failure"):
+        write_cog(source, tmp_path, CogSettings(compression="PACKBITS"))
+
+    assert source.read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["scene.tif"]

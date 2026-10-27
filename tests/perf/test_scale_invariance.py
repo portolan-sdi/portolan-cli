@@ -6,10 +6,12 @@ constants in ``tests/perf/expected/``. ``gates.py`` explains the arithmetic.
 The constants encode the costs of today, the bad ones included. A lane that
 removes work lowers its own constants.
 
-An ``add`` scenario then runs at 2n with ``--workers 4``. The thread pool must
-not change the work, so each counter must equal its ``--workers 1`` value. A
-race that loads one file twice raises a count. A race that drops a file lowers
-one. The gate sees a race only when the threads meet in it during the run, so
+Each scenario that accepts ``--workers`` then runs at 2n with ``--workers 4``.
+The thread pool must not change the work, so each counter must equal its
+``--workers 1`` value. The process pool for ``check --fix`` additionally allows
+one config load per worker, since each process has its own run state. A race
+that loads one file twice raises a count. A race that drops a file lowers one.
+The gate sees a race only when the threads meet in it during the run, so
 ``tests/unit/test_run_state.py`` holds the deterministic tests of each lock.
 
 The counts come from the code under test, not from machine load, so the gate
@@ -63,9 +65,21 @@ def test_counters_scale_as_recorded(name: str, tmp_path: Path) -> None:
     if scenario.runs_phase_two:
         parallel = measure(scenario, tmp_path, 2 * n, workers=4)
         _ran_clean(parallel, scenario.exit_code)
+        # check --fix spawns processes with separate config memos. Each used
+        # worker may parse and merge the root config once more than the parent.
+        process_config = (
+            {"config.yaml_parses", "config.merges"} if scenario.command[0] == "check" else set()
+        )
+        for counter in process_config:
+            assert (
+                large["counters"][counter]
+                <= parallel["counters"][counter]
+                <= (large["counters"][counter] + 4)
+            ), f"{name}: {counter} exceeded one extra config load per worker"
         moved = {
             counter: {"workers 1": large["counters"][counter], "workers 4": count}
             for counter in COUNTER_OWNER
+            if counter not in process_config
             if (count := parallel["counters"][counter]) != large["counters"][counter]
         }
         assert moved == {}, f"{name}: --workers 4 does other work than --workers 1"

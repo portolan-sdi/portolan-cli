@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from portolan_cli.metadata.cog import extract_cog_metadata
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
-from portolan_cli.run_state import mtime_matches, stat_matches
+from portolan_cli.run_state import stat_matches
 from portolan_cli.versions import (
     VersionsFile,
     read_versions,
@@ -425,8 +425,8 @@ def is_stale(state: FileMetadataState) -> tuple[bool, str]:
         return (True, "new_file")
 
     # Fast path: mtime unchanged means file hasn't been touched. The one mtime
-    # predicate of the code base decides (run_state.mtime_matches).
-    if mtime_matches(state.current_mtime, state.stored_mtime):
+    # predicate of the code base decides (run_state.file_mtime_matches).
+    if not state.mtime_changed:
         return (False, "mtime_unchanged")
 
     # MTIME changed - check if schema changed (breaking change)
@@ -585,7 +585,7 @@ def check_file_metadata(
     if (
         stored.schema_fingerprint is None
         and stored.sha256
-        and _content_matches(file_path, stored.sha256)
+        and _content_matches(file_path, stored.sha256, state=state)
     ):
         return MetadataCheckResult(
             file_path=file_path,
@@ -617,13 +617,14 @@ def check_file_metadata(
     )
 
 
-def _content_matches(file_path: Path, stored_sha256: str) -> bool:
+def _content_matches(file_path: Path, stored_sha256: str, *, state: RunState | None = None) -> bool:
     """True when the file's SHA-256 equals the checksum versions.json recorded."""
     from portolan_cli.sync.checksums import compute_checksum
 
     if not file_path.is_file():
         return False
     try:
-        return compute_checksum(file_path) == stored_sha256
+        checksum = state.checksum(file_path) if state is not None else compute_checksum(file_path)
+        return checksum == stored_sha256
     except (ValueError, OSError):
         return False

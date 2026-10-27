@@ -51,14 +51,24 @@ def test_rewrite_keeps_arrow_extension_metadata(tmp_path: Path) -> None:
     assert pq.read_schema(source).field("measurement").metadata == field.metadata
 
 
-def test_unreadable_extension_declaration_is_kept(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "declaration",
+    [b'{"publisher":"survey"}', b'{"crs_type":"publisher.other"}'],
+    ids=["publisher", "unknown-crs-type"],
+)
+def test_unreadable_extension_declaration_is_kept(tmp_path: Path, declaration: bytes) -> None:
     """A declaration the gate cannot normalize must be compared as raw bytes."""
+    import geoarrow.pyarrow  # noqa: F401 - register the types as geoparquet-io does
+
     from portolan_cli.metadata.geoparquet import read_rewrite_fidelity
 
     source = tmp_path / "points.parquet"
     table = pq.read_table(POINTS)
     index = table.schema.get_field_index("geometry")
-    metadata = {b"ARROW:extension:name": b"geoarrow.wkb", b"ARROW:extension:metadata": b"?"}
+    metadata = {
+        b"ARROW:extension:name": b"geoarrow.wkb",
+        b"ARROW:extension:metadata": declaration,
+    }
     field = table.schema.field(index).with_metadata(metadata)
     pq.write_table(table.set_column(index, field, table.column(index)), source)
 
@@ -110,9 +120,19 @@ def test_copy_invalidates_destination_footer(
     """Copying an existing Parquet must drop reads of the previous output."""
     import portolan_cli.run_state as run_state
     from portolan_cli.conversion_config import VectorSettings
+    from portolan_cli.convert import PROVENANCE_KEY, provenance_record
 
     source = tmp_path / "points.parquet"
     table = pq.read_table(POINTS)
+    pq.write_table(table, source)
+    # This is a previous output of this source, so the ownership guard may
+    # replace it. Give both tables the same metadata to retain equal sizes.
+    table = table.replace_schema_metadata(
+        {
+            **(table.schema.metadata or {}),
+            PROVENANCE_KEY.encode(): provenance_record(source).encode(),
+        }
+    )
     pq.write_table(table, source)
     destination = tmp_path / "destination"
     destination.mkdir()
@@ -220,3 +240,67 @@ def test_pmtiles_style_reuses_the_discovery_footer(tmp_path: Path) -> None:
         opens = counters()["parquet.opens"]
     assert (collection / "styles/default.json").exists()
     assert opens == 1
+
+
+def test_registered_nested_extensions_keep_raw_declarations(tmp_path: Path) -> None:
+    """Registration must not consume publisher declarations at any field depth."""
+    from portolan_cli.metadata.geoparquet import read_rewrite_fidelity
+
+    class PublisherType(pa.ExtensionType):
+        def __init__(self) -> None:
+            super().__init__(pa.binary(), "publisher.fidelity")
+
+        def __arrow_ext_serialize__(self) -> bytes:
+            return b"{}"
+
+        @classmethod
+        def __arrow_ext_deserialize__(
+            cls, _storage_type: pa.DataType, _serialized: bytes
+        ) -> PublisherType:
+            return cls()
+
+    metadata = {
+        b"ARROW:extension:name": b"publisher.fidelity",
+        b"ARROW:extension:metadata": b'{"publisher":"survey"}',
+        b"quoted": b"ARROW:extension:name",
+        b"collision": b"____________________",
+    }
+    field = pa.field("ARROW:extension:name", pa.binary(), metadata=metadata)
+    table = pq.read_table(POINTS)
+    table = table.append_column(field, pa.array([b"value"] * len(table)))
+    nested = pa.array(
+        [{"value": b"value"}] * len(table), type=pa.struct([field.with_name("value")])
+    )
+    source = tmp_path / "points.parquet"
+    pq.write_table(table.append_column("nested", nested), source)
+    extension = PublisherType()
+    pa.register_extension_type(extension)
+    try:
+        fidelity = read_rewrite_fidelity(source)
+        assert fidelity is not None
+        assert fidelity.field_metadata is not None
+        assert fidelity.field_metadata["ARROW:extension:name"] == metadata
+        assert fidelity.field_metadata[("nested", "0")] == metadata
+        # The fidelity reader must leave registered types usable by other readers.
+        assert pq.read_schema(source).field("ARROW:extension:name").type == extension
+    finally:
+        pa.unregister_extension_type("publisher.fidelity")
+
+
+def test_registered_projjson_declaration_allows_a_lossless_rewrite(tmp_path: Path) -> None:
+    """GeoArrow's CRS representation tag does not add semantics beyond ``geo``."""
+    import geoarrow.pyarrow  # noqa: F401 - force extension-aware Arrow serialization
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    source = tmp_path / "points.parquet"
+    frame = gpd.GeoDataFrame(
+        {"a": [1, 2, 3]}, geometry=[Point(0, 0), Point(1, 1), Point(2, 2)], crs=3857
+    )
+    frame.to_parquet(source)
+    # Reserializing a registered type adds crs_type=projjson to its declaration.
+    pq.write_table(pq.read_table(source), source)
+
+    convert_vector(source, tmp_path)
+
+    assert "bbox" in pq.read_schema(source).names

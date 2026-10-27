@@ -109,7 +109,7 @@ def test_a_companion_that_meets_an_asset_key_collision_is_a_skip(tmp_path: Path)
     failures: list[object] = []
     reasons: dict[Path, str] = {}
 
-    plan = _DeferredPlan(item_companions=[(companion, (item_dir, "land", "scene"))])
+    plan = _DeferredPlan(item_companions=[(companion, (item_dir / "scene.json", "land", "scene"))])
 
     _write_deferred(
         plan,

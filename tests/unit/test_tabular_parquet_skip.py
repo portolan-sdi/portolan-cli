@@ -193,6 +193,7 @@ class TestTabularParquetWithGeoAsset:
                 item_id="item",
                 collection_id=collection_id,
                 asset_paths=["boundaries.parquet"],
+                item_json_path=path.parent / "item.json",
                 is_collection_level_asset=False,
             )
 

@@ -73,6 +73,7 @@ from portolan_cli.versions import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
+    from portolan_cli.backends.protocol import PostAddItemContext
     from portolan_cli.plugins.formats import FormatContext
     from portolan_cli.preparation import PreparedItem
     from portolan_cli.run_state import RunState
@@ -1078,46 +1079,22 @@ def _finalize_with_backend(
 ) -> None:
     """Run backend versioning and post-add hooks for a non-file backend.
 
-    The plugin publishes here, not at the commit, because ``on_post_add`` must
-    see the published version. A plugin backend gets the asset paths and
-    computes its own checksums. The companion files go in the same version.
+    Stage the version and its post-add hook together. Deferred companions
+    join this stage before commit, so the plugin ingests each asset once and
+    the hook sees the final, enriched documents after publication.
     """
-    from portolan_cli.backends import get_backend
-    from portolan_cli.backends.protocol import PostAddContext, PostAddItemContext
-    from portolan_cli.version_ops import publish_version
+    from portolan_cli.backends.protocol import PostAddItemContext
 
-    # Publish version snapshot via the plugin backend
-    assets = {
-        versions_asset_key(file_path, collection_dir): str(file_path)
-        for p in items
-        for file_path, _checksum, _size in p.asset_files.values()
-    }
-    assets.update({versions_asset_key(path, collection_dir): str(path) for path in companions})
-    publish_version(
+    _stage_items(state, collection_id, collection_dir, items)
+    if companions:
+        stage_companions(state, collection_id, list(companions))
+
+    _stage_backend_hook(
+        catalog_root,
+        state,
         collection_id,
-        assets=assets,
-        backend_name=active_backend,
-        catalog_root=catalog_root,
-        state=state,
-    )
-
-    # NOTE: Plugin backends (e.g. Iceberg) may override table:* STAC extension
-    # fields in collection.json via on_post_add, since the backend's table state
-    # (actual row counts, schema excluding derived columns) is authoritative.
-    backend = get_backend(active_backend, catalog_root=catalog_root)
-    remote = state.setting("remote", collection_dir=collection_dir)
-    first = items[0]
-    # For collection-level assets, item_json_path is None; use collection_dir
-    first_item_dir = first.item_json_path.parent if first.item_json_path else collection_dir
-    context = PostAddContext(
-        catalog_root=catalog_root,
-        collection_id=collection_id,
-        collection_dir=collection_dir,
-        collection=collection,
-        item_id=first.item_id,
-        item_dir=first_item_dir,
-        asset_files=first.asset_files,
-        items=[
+        collection,
+        [
             PostAddItemContext(
                 item_id=p.item_id,
                 item_dir=p.item_json_path.parent if p.item_json_path else collection_dir,
@@ -1125,20 +1102,89 @@ def _finalize_with_backend(
             )
             for p in items
         ],
-        remote=remote,
+        active_backend,
     )
-    try:
-        backend.on_post_add(context)
-    except Exception:
-        # Version was already published successfully. Log warning but don't fail
-        # the entire add operation. The backend hook is for optional enrichment
-        # (e.g., uploading STAC metadata to remote).
-        logger.warning(
-            "Backend on_post_add hook failed for collection '%s'. "
-            "Version was published but post-add actions may be incomplete.",
-            collection_id,
-            exc_info=True,
-        )
+
+
+def _stage_backend_hook(
+    catalog_root: Path,
+    state: RunState,
+    collection_id: str,
+    collection: object,
+    items: list[PostAddItemContext],
+    active_backend: str,
+) -> None:
+    """Attach the post-add hook to the collection's one pending publish."""
+    from portolan_cli.backends import get_backend
+    from portolan_cli.backends.protocol import PostAddContext
+
+    collection_dir = state.collection_dir(collection_id)
+    backend = get_backend(active_backend, catalog_root=catalog_root)
+    first = items[0]
+    context = PostAddContext(
+        catalog_root=catalog_root,
+        collection_id=collection_id,
+        collection_dir=collection_dir,
+        collection=collection,
+        item_id=first["item_id"],
+        item_dir=first["item_dir"],
+        asset_files=first["asset_files"],
+        items=items,
+        remote=state.setting("remote", collection_dir=collection_dir),
+    )
+
+    def post_add() -> None:
+        try:
+            backend.on_post_add(context)
+        except Exception:
+            # The version is already published. Optional backend enrichment
+            # must not turn a successful publish into retryable staged work.
+            logger.warning(
+                "Backend on_post_add hook failed for collection '%s'. "
+                "Version was published but post-add actions may be incomplete.",
+                collection_id,
+                exc_info=True,
+            )
+
+    state.stage(collection_id, on_publish=post_add)
+
+
+def stage_deferred_post_add(
+    state: RunState,
+    collection_id: str,
+    assets: Mapping[str, Asset],
+    item_ids: Mapping[Path, str],
+) -> None:
+    """Register the plugin hook when an add changed only deferred assets.
+
+    Build the context from the staged records, so item companions and standalone
+    tabular collections both get a hook without another asset scan or hash.
+    """
+    from portolan_cli.backends.protocol import PostAddItemContext
+
+    directory = state.collection_dir(collection_id)
+    backend = state.backend(directory)
+    if backend == "file":
+        return
+    groups: dict[Path, dict[str, tuple[Path, str, int]]] = {}
+    for asset in assets.values():
+        path = state.catalog_root / asset.href
+        groups.setdefault(path.parent, {})[path.name] = (path, asset.sha256, asset.size_bytes)
+    _stage_backend_hook(
+        state.catalog_root,
+        state,
+        collection_id,
+        pystac.Collection.from_file(str(directory / "collection.json")),
+        [
+            PostAddItemContext(
+                item_id=item_ids.get(parent, next(iter(files.values()))[0].stem),
+                item_dir=parent,
+                asset_files=files,
+            )
+            for parent, files in sorted(groups.items())
+        ],
+        backend,
+    )
 
 
 def _publish_collection_version(
@@ -1152,10 +1198,9 @@ def _publish_collection_version(
 ) -> None:
     """Route the collection's version snapshot to the active backend.
 
-    A plugin backend (such as Iceberg) publishes now and runs its post-add
-    hook. The file backend stages the version, and ``version_ops.commit_run``
-    writes it with the catalog-level index at the end of the run. The
-    companion files join that one version on either backend.
+    Both backends stage the version until ``version_ops.commit_run``. A plugin
+    stage also holds its post-add hook. Deferred companions join that one
+    version before the backend publishes.
     """
     active_backend = state.backend(collection_dir)
     if active_backend != "file":

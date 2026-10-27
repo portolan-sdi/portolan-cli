@@ -974,7 +974,7 @@ class TestStatBeforeOpen:
 
 
 class TestOneMtimePredicate:
-    """``is_stale`` uses ``run_state.mtime_matches``, pinned at the tolerance edges."""
+    """Metadata and stat fast paths agree at the file-mtime tolerance edges."""
 
     @staticmethod
     def _state(current: float, stored: float) -> Any:
@@ -996,7 +996,8 @@ class TestOneMtimePredicate:
     @pytest.mark.parametrize(
         ("current", "stored", "stale"),
         [
-            (1700000001.999, 1700000000.0, False),  # whole second: coarse file system
+            (1700000001.0, 1700000000.0, False),  # both whole seconds: coarse clock
+            (1700000001.999, 1700000000.0, True),  # fraction proves a fine clock
             (1700000002.0, 1700000000.0, True),  # the 2.0 s bound is strict
             (1700000000.2500005, 1700000000.25, False),  # fraction: 1 microsecond
             (1700000000.251, 1700000000.25, True),

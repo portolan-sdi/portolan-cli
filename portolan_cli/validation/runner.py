@@ -186,7 +186,7 @@ def _notice_message(unregistered: list[str], missing: list[str]) -> str:
     return f"{'. '.join(parts)}."
 
 
-def _workflow_notice(root: Path) -> WorkflowNotice | None:
+def _workflow_notice(root: Path, *, state: RunState) -> WorkflowNotice | None:
     """Account for data files the manifest and the filesystem disagree about.
 
     Deliberately kept off the findings list — see :class:`WorkflowNotice`. Only
@@ -198,7 +198,7 @@ def _workflow_notice(root: Path) -> WorkflowNotice | None:
     from portolan_cli.metadata.scan import scan_catalog_metadata
 
     try:
-        report = scan_catalog_metadata(root)
+        report = scan_catalog_metadata(root, state=state)
     except FileNotFoundError:
         return None
 
@@ -284,7 +284,7 @@ def run_check(
             validate_live_base_url(root, public_url, state=state)
         # One extra manifest walk per run. `run_fix_workflow` walks separately
         # under --fix; deduping the two is a later refactor, not this change.
-        notice = _workflow_notice(root)
+        notice = _workflow_notice(root, state=state)
         # rashid runs every rule in one call, so the span covers all validators.
         with span("check.validate", structural=structural, schema=schema, data=data, live=live):
             report = validate(

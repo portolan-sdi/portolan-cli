@@ -416,9 +416,19 @@ class TestClaimOutput:
         import pyarrow.parquet as pq
 
         from portolan_cli.convert import PROVENANCE_KEY
+        from portolan_cli.sync.checksums import compute_checksum
 
         table = pa.table({"a": [1]}).replace_schema_metadata(
-            {PROVENANCE_KEY: json.dumps({"path": source_name, "sha256": "x"})}
+            {
+                PROVENANCE_KEY: json.dumps(
+                    {
+                        "path": source_name,
+                        "sha256": compute_checksum(path.parent / source_name)
+                        if (path.parent / source_name).exists()
+                        else "another source",
+                    }
+                )
+            }
         )
         pq.write_table(table, path)
 

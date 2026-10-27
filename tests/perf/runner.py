@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from types import FrameType
 
     import pytest
@@ -107,10 +108,10 @@ def _install_parquet_counter(patch: pytest.MonkeyPatch) -> None:
 
     from portolan_cli import trace
 
-    original = pq.ParquetFile.__init__
+    original: Callable[..., None] = pq.ParquetFile.__init__
 
     def counted_init(self: Any, *args: Any, **kwargs: Any) -> None:
-        caller = sys._getframe(1)
+        caller: FrameType | None = sys._getframe(1)
         # read_metadata/read_schema may reach ParquetFile through PyArrow's
         # Python helpers. Attribute the open to the library that requested it.
         while caller is not None and str(caller.f_globals.get("__name__", "")).startswith(
@@ -124,6 +125,15 @@ def _install_parquet_counter(patch: pytest.MonkeyPatch) -> None:
         original(self, *args, **kwargs)
 
     patch.setattr(pq.ParquetFile, "__init__", counted_init)
+
+
+def install_worker_counters() -> None:
+    """Install delegated-reader counters in a freshly spawned conversion worker."""
+    import pytest
+
+    _install_duckdb_counter()
+    # The worker owns these patches for its entire process lifetime.
+    _install_parquet_counter(pytest.MonkeyPatch())
 
 
 #: The colour of every stub basemap tile. No thumbnail preset uses it, so a
@@ -176,6 +186,9 @@ def run(argv: list[str], *, mem: bool) -> dict[str, Any]:
     from tests.network_guard import NetworkGuard, SentinelProxy
 
     os.environ["PORTOLAN_TIMINGS"] = "mem" if mem else "1"
+    os.environ["PORTOLAN_PERF_WORKER_INIT"] = (
+        f"tests.perf.runner:{install_worker_counters.__name__}"
+    )
     sites: dict[str, Counter[str]] = {}
     _install_site_recorder(sites)
     _install_duckdb_counter()

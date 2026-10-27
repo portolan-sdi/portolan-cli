@@ -157,7 +157,7 @@ class TestMetadataMtimePredicate:
 
         state = FileMetadataState(
             file_path=Path("x.parquet"),
-            current_mtime=1_600_000_001.5,
+            current_mtime=1_600_000_001.0,
             stored_mtime=1_600_000_000.0,
             current_bbox=None,
             stored_bbox=None,

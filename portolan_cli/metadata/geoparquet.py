@@ -6,6 +6,7 @@ Extracts bbox, CRS, schema, and geometry type from file metadata.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from dataclasses import dataclass
@@ -378,18 +379,53 @@ def _rewrite_fidelity(parquet: pq.ParquetFile) -> RewriteFidelity:
         columns=frozenset(parquet.schema_arrow.names),
         extra_keys=frozenset(metadata) - _WRITER_OWNED_KEYS,
         geo_columns=geo_columns,
-        field_metadata=_field_metadata(parquet.schema_arrow, frozenset(geo_columns)),
+        field_metadata=_raw_field_metadata(parquet, frozenset(geo_columns)),
     )
 
 
+def _raw_field_metadata(
+    parquet: pq.ParquetFile, geometry_columns: frozenset[str]
+) -> dict[str | tuple[str, ...], dict[bytes, bytes]]:
+    """Read extension declarations without consulting Arrow's global registry.
+
+    Registered types consume the extension metadata and can normalize away
+    publisher fields. Decode the stored IPC schema with its extension-name key
+    masked by an equal-length, absent token. This preserves the IPC offsets and
+    leaves the registry untouched, including during concurrent footer reads.
+    """
+    import pyarrow as pa
+
+    stored = (parquet.metadata.metadata or {}).get(b"ARROW:schema")
+    if stored is None:
+        return _field_metadata(parquet.schema_arrow, geometry_columns)
+    serialized = base64.b64decode(stored)
+    key = b"ARROW:extension:name"
+    token = b"_" * len(key)
+    nonce = 0
+    while token in serialized:
+        nonce += 1
+        token = f"{nonce:0{len(key)}d}".encode()
+    schema = pa.ipc.read_schema(pa.BufferReader(serialized.replace(key, token)))
+    return _field_metadata(schema, geometry_columns, masked_key=token)
+
+
 def _field_metadata(
-    schema: pa.Schema, geometry_columns: frozenset[str]
+    schema: pa.Schema, geometry_columns: frozenset[str], *, masked_key: bytes | None = None
 ) -> dict[str | tuple[str, ...], dict[bytes, bytes]]:
     """Keep metadata at every depth, including semantic Arrow extension keys."""
     result: dict[str | tuple[str, ...], dict[bytes, bytes]] = {}
 
     def visit(field: pa.Field, path: tuple[str, ...]) -> None:
         metadata = dict(field.metadata or {})
+        if masked_key is not None:
+            # The byte substitution can also touch a publisher key or value
+            # that quotes the extension-name key; restore those verbatim too.
+            metadata = {
+                key.replace(masked_key, b"ARROW:extension:name"): value.replace(
+                    masked_key, b"ARROW:extension:name"
+                )
+                for key, value in metadata.items()
+            }
         # The writer normalizes the GeoArrow WKB declaration. Its CRS and
         # edges also live in `geo`, where the gate compares their meaning.
         # Other extension declarations (and arbitrary ARROW:/PARQUET: keys)
@@ -403,7 +439,14 @@ def _field_metadata(
                 declaration = json.loads(metadata.get(b"ARROW:extension:metadata", b"{}"))
             except ValueError:
                 declaration = None  # An unreadable declaration must survive verbatim.
-            if isinstance(declaration, dict) and declaration.keys() <= {"crs", "edges"}:
+            # Registered GeoArrow types also emit crs_type=projjson. It names
+            # the CRS representation already compared through `geo`, rather
+            # than publisher metadata. Keep unknown representation tags raw.
+            if (
+                isinstance(declaration, dict)
+                and declaration.keys() <= {"crs", "edges", "crs_type"}
+                and declaration.get("crs_type", "projjson") == "projjson"
+            ):
                 metadata.pop(b"ARROW:extension:name", None)
                 metadata.pop(b"ARROW:extension:metadata", None)
         if metadata:
@@ -412,7 +455,10 @@ def _field_metadata(
             visit(field.type.field(index), (*path, str(index)))
 
     for field in schema:
-        visit(field, (field.name,))
+        name = field.name
+        if masked_key is not None:
+            name = name.encode().replace(masked_key, b"ARROW:extension:name").decode()
+        visit(field, (name,))
     return result
 
 

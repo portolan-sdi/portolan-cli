@@ -14,6 +14,7 @@ import pytest
 
 from portolan_cli.add import PreparedItem, _finalize_with_backend
 from portolan_cli.run_state import RunState
+from portolan_cli.version_ops import commit_run
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -21,6 +22,28 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _publish_through_iceberg(tmp_path: Path, item: PreparedItem, state: RunState) -> MagicMock:
+    """Finalize ``item`` in ``boundaries`` on the iceberg backend and commit. Return the publish mock."""
+    with (
+        patch("portolan_cli.version_ops.publish_version") as mock_publish,
+        patch("portolan_cli.backends.get_backend") as mock_get_backend,
+        patch("portolan_cli.config.get_setting", return_value=None),
+    ):
+        mock_get_backend.return_value = MagicMock(spec=[])
+        _finalize_with_backend(
+            catalog_root=tmp_path,
+            collection_id="boundaries",
+            collection_dir=tmp_path / "boundaries",
+            collection=MagicMock(),
+            items=[item],
+            active_backend="iceberg",
+            state=state,
+        )
+        commit_run(state)
+    mock: MagicMock = mock_publish
+    return mock
 
 
 def _make_item(
@@ -59,12 +82,20 @@ def _make_item(
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def state(tmp_path: Path) -> RunState:
+    """Use a plugin-backed run; finalization stages and commit publishes."""
+    (tmp_path / ".portolan").mkdir(exist_ok=True)
+    (tmp_path / ".portolan/config.yaml").write_text("backend: iceberg\n")
+    return RunState.open(tmp_path)
+
+
 class TestFinalizeWithBackend:
     """Tests for _finalize_with_backend helper in add.py."""
 
     @pytest.mark.unit
-    def test_calls_publish_version(self, tmp_path: Path) -> None:
-        """_finalize_with_backend publishes a version snapshot via publish_version."""
+    def test_calls_publish_version(self, tmp_path: Path, state: RunState) -> None:
+        """Finalization stages; commit publishes the snapshot via publish_version."""
         item = _make_item(tmp_path)
         catalog_root = tmp_path
 
@@ -83,8 +114,9 @@ class TestFinalizeWithBackend:
                 collection=MagicMock(),
                 items=[item],
                 active_backend="iceberg",
-                state=RunState.open(tmp_path),
+                state=state,
             )
+            commit_run(state)
 
         mock_publish.assert_called_once()
         call_args = mock_publish.call_args
@@ -93,60 +125,30 @@ class TestFinalizeWithBackend:
         assert call_args.kwargs["catalog_root"] == catalog_root
 
     @pytest.mark.unit
-    def test_asset_key_uses_item_id_prefix(self, tmp_path: Path) -> None:
+    def test_asset_key_uses_item_id_prefix(self, tmp_path: Path, state: RunState) -> None:
         """Non-collection-level assets are keyed as 'item_id/filename'."""
         item = _make_item(tmp_path, item_id="my-item", filename="data.parquet")
 
-        with (
-            patch("portolan_cli.version_ops.publish_version") as mock_publish,
-            patch("portolan_cli.backends.get_backend") as mock_get_backend,
-            patch("portolan_cli.config.get_setting", return_value=None),
-        ):
-            mock_backend = MagicMock(spec=[])
-            mock_get_backend.return_value = mock_backend
-
-            _finalize_with_backend(
-                catalog_root=tmp_path,
-                collection_id="boundaries",
-                collection_dir=tmp_path / "boundaries",
-                collection=MagicMock(),
-                items=[item],
-                active_backend="iceberg",
-                state=RunState.open(tmp_path),
-            )
+        mock_publish = _publish_through_iceberg(tmp_path, item, state)
 
         assets = mock_publish.call_args.kwargs["assets"]
         assert "my-item/data.parquet" in assets
 
     @pytest.mark.unit
-    def test_collection_level_asset_key_has_no_item_prefix(self, tmp_path: Path) -> None:
+    def test_collection_level_asset_key_has_no_item_prefix(
+        self, tmp_path: Path, state: RunState
+    ) -> None:
         """Collection-level assets are keyed by filename only (no item_id prefix)."""
         item = _make_item(tmp_path, filename="metadata.parquet", is_collection_level=True)
 
-        with (
-            patch("portolan_cli.version_ops.publish_version") as mock_publish,
-            patch("portolan_cli.backends.get_backend") as mock_get_backend,
-            patch("portolan_cli.config.get_setting", return_value=None),
-        ):
-            mock_backend = MagicMock(spec=[])
-            mock_get_backend.return_value = mock_backend
-
-            _finalize_with_backend(
-                catalog_root=tmp_path,
-                collection_id="boundaries",
-                collection_dir=tmp_path / "boundaries",
-                collection=MagicMock(),
-                items=[item],
-                active_backend="iceberg",
-                state=RunState.open(tmp_path),
-            )
+        mock_publish = _publish_through_iceberg(tmp_path, item, state)
 
         assets = mock_publish.call_args.kwargs["assets"]
         # Should be "metadata.parquet" not "census/metadata.parquet"
         assert "metadata.parquet" in assets
 
     @pytest.mark.unit
-    def test_calls_on_post_add_when_present(self, tmp_path: Path) -> None:
+    def test_calls_on_post_add_when_present(self, tmp_path: Path, state: RunState) -> None:
         """_finalize_with_backend calls backend.on_post_add when method exists."""
         item = _make_item(tmp_path)
 
@@ -166,8 +168,9 @@ class TestFinalizeWithBackend:
                 collection=collection_mock,
                 items=[item],
                 active_backend="iceberg",
-                state=RunState.open(tmp_path),
+                state=state,
             )
+            commit_run(state)
 
         mock_backend.on_post_add.assert_called_once()
         ctx = mock_backend.on_post_add.call_args.args[0]
@@ -177,7 +180,9 @@ class TestFinalizeWithBackend:
         assert ctx["remote"] == "gs://bucket/catalog"
 
     @pytest.mark.unit
-    def test_a_failing_on_post_add_does_not_fail_the_add(self, tmp_path: Path) -> None:
+    def test_a_failing_on_post_add_does_not_fail_the_add(
+        self, tmp_path: Path, state: RunState
+    ) -> None:
         """The version is already published, so a hook failure is only logged."""
         item = _make_item(tmp_path)
 
@@ -197,13 +202,16 @@ class TestFinalizeWithBackend:
                 collection=MagicMock(),
                 items=[item],
                 active_backend="iceberg",
-                state=RunState.open(tmp_path),
+                state=state,
             )
+            commit_run(state)
 
         mock_backend.on_post_add.assert_called_once()
 
     @pytest.mark.unit
-    def test_item_id_does_not_rename_the_asset_directory(self, tmp_path: Path) -> None:
+    def test_item_id_does_not_rename_the_asset_directory(
+        self, tmp_path: Path, state: RunState
+    ) -> None:
         """Issue #840: --item-id names the item. The key follows the file."""
         item_dir = tmp_path / "imagery" / "rapidai4eo"
         item_dir.mkdir(parents=True)
@@ -230,13 +238,14 @@ class TestFinalizeWithBackend:
                 collection=MagicMock(),
                 items=[item],
                 active_backend="iceberg",
-                state=RunState.open(tmp_path),
+                state=state,
             )
+            commit_run(state)
 
         assert mock_publish.call_args.kwargs["assets"] == {"rapidai4eo/rapidai4eo.tif": str(tif)}
 
     @pytest.mark.unit
-    def test_on_post_add_receives_all_items(self, tmp_path: Path) -> None:
+    def test_on_post_add_receives_all_items(self, tmp_path: Path, state: RunState) -> None:
         """_finalize_with_backend passes all items in context to on_post_add."""
         items = [
             _make_item(tmp_path, item_id="item1", filename="a.parquet"),
@@ -258,8 +267,9 @@ class TestFinalizeWithBackend:
                 collection=MagicMock(),
                 items=items,
                 active_backend="iceberg",
-                state=RunState.open(tmp_path),
+                state=state,
             )
+            commit_run(state)
 
         ctx = mock_backend.on_post_add.call_args.args[0]
         assert len(ctx["items"]) == 2
@@ -267,7 +277,7 @@ class TestFinalizeWithBackend:
         assert item_ids == {"item1", "item2"}
 
     @pytest.mark.unit
-    def test_multiple_assets_per_item_all_published(self, tmp_path: Path) -> None:
+    def test_multiple_assets_per_item_all_published(self, tmp_path: Path, state: RunState) -> None:
         """All asset files in each item are included in the published assets dict."""
         item_dir = tmp_path / "boundaries" / "census"
         item_dir.mkdir(parents=True)
@@ -290,39 +300,22 @@ class TestFinalizeWithBackend:
             item_json_path=item_json,
         )
 
-        with (
-            patch("portolan_cli.version_ops.publish_version") as mock_publish,
-            patch("portolan_cli.backends.get_backend") as mock_get_backend,
-            patch("portolan_cli.config.get_setting", return_value=None),
-        ):
-            mock_backend = MagicMock(spec=[])
-            mock_get_backend.return_value = mock_backend
-
-            _finalize_with_backend(
-                catalog_root=tmp_path,
-                collection_id="boundaries",
-                collection_dir=tmp_path / "boundaries",
-                collection=MagicMock(),
-                items=[item],
-                active_backend="iceberg",
-                state=RunState.open(tmp_path),
-            )
+        mock_publish = _publish_through_iceberg(tmp_path, item, state)
 
         assets = mock_publish.call_args.kwargs["assets"]
         assert "census/data.parquet" in assets
         assert "census/metadata.json" in assets
 
     @pytest.mark.unit
-    def test_companions_join_the_one_published_version(self, tmp_path: Path) -> None:
+    def test_companions_join_the_one_published_version(
+        self, tmp_path: Path, state: RunState
+    ) -> None:
         """A plugin backend gets the companions in the finalize publish, not a second one."""
         from portolan_cli.finalization import _publish_collection_version
 
         item = _make_item(tmp_path, filename="roads.parquet", is_collection_level=True)
         companion = tmp_path / "boundaries" / "roads.csv"
         companion.write_text("id\n1\n")
-        (tmp_path / ".portolan").mkdir()
-        (tmp_path / ".portolan" / "config.yaml").write_text("backend: iceberg\n")
-        state = RunState.open(tmp_path)
 
         with (
             patch("portolan_cli.version_ops.publish_version") as mock_publish,
@@ -338,6 +331,8 @@ class TestFinalizeWithBackend:
                 state,
                 (companion,),
             )
+            mock_publish.assert_not_called()
+            commit_run(state)
 
         mock_publish.assert_called_once()
         assert sorted(mock_publish.call_args.kwargs["assets"]) == ["roads.csv", "roads.parquet"]

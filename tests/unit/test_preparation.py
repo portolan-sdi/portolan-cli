@@ -655,7 +655,8 @@ class TestConvertTabularKeepsAForeignFile:
 
         recorded = pq.read_metadata(out).metadata[PROVENANCE_KEY.encode()]
         assert json.loads(recorded) == {
-            "path": "t.csv",
+            "base": "absolute",
+            "path": (tmp_path / "t.csv").resolve().as_posix(),
             "sha256": compute_checksum(tmp_path / "t.csv"),
         }
 
@@ -754,17 +755,15 @@ class TestForceRule:
             def convert(self, source: Path, output_dir: Path, catalog_root: Path | None) -> Path:
                 raise AssertionError("convert must not run")
 
-        import json
-
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        from portolan_cli.convert import PROVENANCE_KEY
+        from portolan_cli.convert import PROVENANCE_KEY, provenance_record
 
         source = tmp_path / "survey.xyz"
         source.write_text("1 2 3\n", encoding="utf-8")
         # The plugin names its source in the footer, so the file is its output.
-        record = json.dumps({"path": "survey.xyz", "sha256": "x"})
+        record = provenance_record(source)
         pq.write_table(
             pa.table({"a": [1]}).replace_schema_metadata({PROVENANCE_KEY: record}),
             tmp_path / "survey.parquet",
@@ -1077,8 +1076,9 @@ class TestRasterAddCountsGdalReads:
         ) as dst:  # fmt: skip
             dst.write(np.arange(600 * 600, dtype="uint32").reshape(1, 600, 600) % 251)
 
-        # The source, the VRT and its source, the new COG, and the thumbnail read.
-        assert self._opens(tmp_path, source) == 5
+        # The source, the VRT and its source, two overview scratch opens,
+        # the new COG, and the thumbnail read.
+        assert self._opens(tmp_path, source) == 7
 
     @pytest.mark.unit
     def test_a_cog_with_no_statistics_counts_the_vrt_and_its_source(
@@ -1161,6 +1161,46 @@ class TestAnAddedCogCarriesItsStatistics:
 
         monkeypatch.setattr(preparation, "_embed_statistics", spy)
         return calls
+
+    @pytest.mark.parametrize("width", [1, 17, 500])
+    def test_small_striped_cog_gets_statistics_during_preparation(
+        self, tmp_path: Path, width: int, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A valid small striped COG needs a legal tile size for its statistics rewrite."""
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+
+        from portolan_cli.catalog import init_catalog
+        from portolan_cli.convert import validate_cog
+        from portolan_cli.metadata.statistics import embedded_statistics
+        from portolan_cli.preparation import prepare_item
+
+        init_catalog(tmp_path, license_id="CC0-1.0")
+        source = tmp_path / "scenes" / "s1" / "s1.tif"
+        source.parent.mkdir(parents=True)
+        pixels = np.arange(7 * width, dtype="uint16").reshape(1, 7, width)
+        with rasterio.open(
+            source, "w", driver="GTiff", width=width, height=7, count=1, dtype="uint16",
+            crs="EPSG:32618", transform=from_origin(100, 200, 3, 4),
+        ) as dst:  # fmt: skip
+            dst.write(pixels)
+        assert validate_cog(source) is None
+        assert embedded_statistics(source) == "missing"
+
+        prepared = prepare_item(path=source, catalog_root=tmp_path, collection_id="scenes")
+
+        assert prepared.item_json_path is not None
+        assert embedded_statistics(source) == "present"
+        assert validate_cog(source) is None
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as cog:
+            np.testing.assert_array_equal(cog.read(), pixels)
+            assert float(cog.tags(1)["STATISTICS_MEAN"]) == pytest.approx(pixels.mean())
+            assert cog.overviews(1) == []
+            assert cog.block_shapes == [(512, 512)]
+        captured = capsys.readouterr()
+        assert "rewrite that adds them failed" not in captured.out + captured.err
+        assert list(tmp_path.rglob("*.aux.xml")) == []
 
     @pytest.mark.unit
     def test_a_lossless_cog_gets_its_statistics_once(

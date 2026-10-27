@@ -1235,6 +1235,28 @@ def _read_catalog_index(versions_path: Path) -> dict[str, Any]:
     return content
 
 
+def collection_summaries(state: RunState) -> dict[str, CollectionSummary]:
+    """Read file-backed collection summaries for recovery on an unchanged run.
+
+    Collection records may have committed while the root index write failed.
+    The next run must reconcile them even when it stages no new version. The
+    state's memo reuses records the unchanged-file checks already read.
+    """
+    from portolan_cli.stac_links import versioned_collections
+
+    summaries: dict[str, CollectionSummary] = {}
+    if not (state.catalog_root / "versions.json").exists():
+        return summaries
+    for collection_id in versioned_collections(state.catalog_root):
+        directory = state.collection_dir(collection_id)
+        if state.backend(directory) != "file":
+            continue
+        versions = state.versions(directory, include_staged=False)
+        if versions.versions:
+            summaries[collection_id] = CollectionSummary.of(versions.versions[-1])
+    return summaries
+
+
 def update_catalog_index(
     catalog_root: Path,
     summaries: dict[str, CollectionSummary],
@@ -1268,7 +1290,7 @@ def update_catalog_index(
     lock_path = catalog_root / ".portolan" / ".versions.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with lock_path.open("w") as lock_file:
+    with lock_path.open("a") as lock_file:
         _lock_file(lock_file)
         try:
             content = _read_catalog_index(versions_path)

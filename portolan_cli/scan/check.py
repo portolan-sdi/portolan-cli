@@ -664,7 +664,7 @@ def run_fix_workflow(
             # spec does not define is something a requirement can name (issue #654).
             from portolan_cli.metadata.fix import strip_removed_fields
 
-            metadata_check_report = scan_catalog_metadata(catalog_root)
+            metadata_check_report = scan_catalog_metadata(catalog_root, state=state)
             metadata_fix_report = fix_metadata(
                 catalog_root, metadata_check_report, dry_run=dry_run, state=state
             )

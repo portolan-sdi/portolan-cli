@@ -10,5 +10,6 @@ EXPECTED: dict[tuple[str, str], tuple[int, int]] = {
     ("add-one-collection", "collection_json.writes"): (0, 1),  # finalization:_save_collection_with_links x1
     ("add-rasters", "collection_json.writes"): (0, 3),  # finalization:_save_collection_with_links x1, catalog:ensure_link_titles x1
     ("add-with-companions", "collection_json.writes"): (0, 1),  # finalization:_save_collection_with_links x1
+    ("check-fix-missing-rasters", "collection_json.writes"): (0, 3),  # validation.fixers:_write_node x1, finalization:_save_collection_with_links x1
 }
 # fmt: on

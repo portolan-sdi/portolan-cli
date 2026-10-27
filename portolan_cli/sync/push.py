@@ -2892,6 +2892,11 @@ async def push_all_collections_async(
     Raises:
         ValueError: If catalog_root is not a valid catalog.
     """
+    from portolan_cli.version_ops import check_backend_supports_push
+
+    blocked = check_backend_supports_push(catalog_root)
+    if blocked is not None:
+        raise NotImplementedError(blocked.message)
     collections = discover_collections(catalog_root)
     total = len(collections)
 

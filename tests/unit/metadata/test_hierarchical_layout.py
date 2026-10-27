@@ -13,6 +13,7 @@ These tests pin the hierarchical layout on both readers.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -211,7 +212,8 @@ class TestVersionsTrackingUpdate:
         assets = json.loads(versions_path.read_text())["versions"][-1]["assets"]
         entry = assets[f"{ITEM_ID}/{DATA_NAME}"]
         assert entry["source_mtime"] == pytest.approx(data_file.stat().st_mtime)
-        assert entry["sha256"] == STORED_SHA256
+        assert entry["sha256"] == hashlib.sha256(data_file.read_bytes()).hexdigest()
+        assert entry["size_bytes"] == data_file.stat().st_size
 
     def test_creates_no_duplicate_bare_key(
         self, hierarchical_collection: tuple[Path, Path]

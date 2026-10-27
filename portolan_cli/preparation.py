@@ -50,6 +50,7 @@ from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wg
 from portolan_cli.errors import AssetKeyCollisionError, NoGeometryError, RewriteFidelityError
 from portolan_cli.format_families import RASTER, VECTOR
 from portolan_cli.formats import (
+    current_run,
     in_run,
     invalidate,
     is_cloud_optimized_geotiff,
@@ -869,7 +870,7 @@ def _convert_and_extract_metadata(
         the bbox, crs, and to_stac_properties that the add path reads.
     """
     if target is None:
-        target = claim_output(path, handler.output_path(path, item_dir))
+        target = claim_output(path, handler.output_path(path, item_dir), state=state)
     in_place = target.resolve() == path.resolve()
     reconvert_method = getattr(handler, "reconvert", None)
     override = (
@@ -1482,7 +1483,10 @@ def convert_vector(
 
     from portolan_cli.convert import _write_partitioned, repair_shapefile_encoding_sidecar
 
-    output_path = dest_dir / f"{source.stem}.parquet"
+    claim_state = (
+        RunState.open(catalog_root) if catalog_root is not None and current_run() is None else None
+    )
+    output_path = claim_output(source, dest_dir / f"{source.stem}.parquet", state=claim_state)
     if settings is None:
         settings = get_vector_settings(catalog_root)
 
@@ -1914,10 +1918,13 @@ def convert_raster(
     from portolan_cli.convert import place_cog, read_cog, remember_cog, write_cog
     from portolan_cli.output import warn as warn_output
 
-    output_path = dest_dir / f"{source.stem}.tif"
+    claim_state = (
+        RunState.open(catalog_root) if catalog_root is not None and current_run() is None else None
+    )
+    output_path = claim_output(source, dest_dir / f"{source.stem}.tif", state=claim_state)
     is_cog = source.suffix.lower() in (".tif", ".tiff") and is_cloud_optimized_geotiff(source)
     if not is_cog or reoptimize:
-        return write_cog(source, dest_dir, get_cog_settings(catalog_root))
+        return write_cog(source, dest_dir, get_cog_settings(catalog_root), target=output_path)
 
     scratch = None
     count("raster.opens")
@@ -1937,6 +1944,7 @@ def convert_raster(
         )
     if source.resolve() != output_path.resolve():
         shutil.copy2(source, output_path)
+        invalidate(output_path)
     remember_cog(output_path, read)
     return output_path
 
@@ -1980,9 +1988,12 @@ def _embed_statistics(src: Any, source: Path, output: Path) -> Path | None:
 
     structure = src.tags(ns="IMAGE_STRUCTURE")
     codec = structure.get("COMPRESSION", "NONE").upper()
+    block_width = src.block_shapes[0][1]
     options: dict[str, Any] = {
         "compress": "DEFLATE",
-        "blocksize": src.block_shapes[0][1],
+        # Small striped TIFFs pass COG validation, but their strip width need
+        # not be a legal tile size (a multiple of 16).
+        "blocksize": block_width if block_width % 16 == 0 else 512,
         # Adding statistics must retain the source pyramid, including no overviews.
         "overviews": "FORCE_USE_EXISTING",
     }

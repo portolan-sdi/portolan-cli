@@ -18,7 +18,7 @@ import contextlib
 import json
 import logging
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -57,6 +57,7 @@ from portolan_cli.finalization import (
     add_companion_assets,
     apply_human_metadata_to_dict,
     stage_companions,
+    stage_deferred_post_add,
 )
 
 # Batch finalization (STAC-write + backend coordination) was extracted to
@@ -704,15 +705,16 @@ def _unchanged_for_add(
     """
     if is_current(file_path, collection_dir / "versions.json", state=state):
         return True
-    owner = file_path.parent.parent
-    if (
-        state is None
-        or file_path.suffix.lower() not in TABULAR_EXTENSIONS
-        or owner.resolve() == catalog_root.resolve()
-    ):
+    if state is None or file_path.suffix.lower() not in TABULAR_EXTENSIONS:
         return False
-    record = state.tracked_assets(owner).get(versions_asset_key(file_path, owner))
-    return record is not None and state.unchanged(file_path, record)
+    for owner in file_path.parent.parents:
+        if owner.resolve() == catalog_root.resolve():
+            break
+        if not (owner / "versions.json").exists():
+            continue
+        record = state.tracked_assets(owner).get(versions_asset_key(file_path, owner))
+        return record is not None and state.unchanged(file_path, record)
+    return False
 
 
 def _collect_files_for_add(
@@ -907,6 +909,7 @@ class _ProcessResult:
     failures: list[AddFailure] = field(default_factory=list)
     skips: dict[Path, str] = field(default_factory=dict)
     deferred_non_geo: list[tuple[Path, Path, str]] = field(default_factory=list)
+    #: Source directory to (item document, collection id, item id).
     source_to_item_dir: dict[Path, tuple[Path, str, str]] = field(default_factory=dict)
     source_to_collection_dir: dict[Path, tuple[Path, str]] = field(default_factory=dict)
 
@@ -1089,9 +1092,9 @@ def _record_prepared(
 ) -> None:
     """Fold one file's prepared items into the running phase-2 accumulator.
 
-    Maps the file's source dir to its item dir (item-level) or collection dir
-    (collection-level, Issue #383) so phase 3 can place any deferred non-geo
-    companion in the right location.
+    Maps the file's source dir to its item document (item-level) or collection
+    dir (collection-level, Issue #383), so phase 3 places a companion beside
+    the data even when the item id differs from the directory name.
     """
     source_dir = file_path.parent
     collection_dir = catalog_root / Path(*coll_id.split("/"))
@@ -1101,9 +1104,13 @@ def _record_prepared(
             # Collection-level: map source to collection dir (Issue #383)
             result.source_to_collection_dir[source_dir] = (collection_dir, coll_id)
         else:
-            # Item-level: map source to item dir
-            item_dir = collection_dir / prepared.item_id
-            result.source_to_item_dir[source_dir] = (item_dir, coll_id, prepared.item_id)
+            # The document location is independent of --item-id.
+            if prepared.item_json_path is not None:
+                result.source_to_item_dir[source_dir] = (
+                    prepared.item_json_path,
+                    coll_id,
+                    prepared.item_id,
+                )
 
 
 def _phase_process(
@@ -1120,7 +1127,13 @@ def _phase_process(
     ``_ProcessResult`` on the main thread. GDAL preparation dominates, so worker
     threads overlap those reads.
     """
+    from portolan_cli.convert import _batch_has_output_inputs
+
     result = _ProcessResult()
+    if workers > 1 and _batch_has_output_inputs(
+        [path for path, _ in files_to_process], opts.catalog_root, opts.state
+    ):
+        workers = 1
 
     if workers == 1:
         # Sequential execution (original behavior)
@@ -1382,7 +1395,7 @@ def add_files(
             )
 
         # Phase 3: write the deferred files that finalize did not write.
-        touched_items: list[tuple[str, str]] = []
+        touched_items: list[tuple[str, str, Path]] = []
         with span("add.deferred_non_geo", files=len(proc.deferred_non_geo)):
             affected_collections = _write_deferred(
                 plan,
@@ -1410,17 +1423,16 @@ def add_files(
 def _enrich_deferred_documents(
     catalog_root: Path,
     affected_collections: set[Path],
-    touched_items: list[tuple[str, str]],
+    touched_items: list[tuple[str, str, Path]],
 ) -> None:
     """Run the enrichment hooks on the items and collections phase 3 changed.
 
     Args:
         catalog_root: Root directory of the catalog.
         affected_collections: Collection directories that received assets.
-        touched_items: ``(collection_id, item_id)`` of each updated item.
+        touched_items: ``(collection_id, item_id, item_path)`` of each updated item.
     """
-    for coll_id, item_id in dict.fromkeys(touched_items):
-        item_path = catalog_root / coll_id / item_id / f"{item_id}.json"
+    for coll_id, item_id, item_path in dict.fromkeys(touched_items):
         if item_path.exists():
             enrich_item_file(
                 item_path,
@@ -1493,7 +1505,7 @@ def _map_recorded_geo_dirs(
     Phase 1 skips an unchanged geo file, so phase 2 maps no directory for it.
     A companion that changed beside it still belongs to it. The geo file is in
     the latest version of its collection, so that record names the directory.
-    The collection is the directory itself, or its parent for an item. Phase 1
+    The collection is the directory itself, or an ancestor for an item. Phase 1
     infers the collection of a lone CSV in an item directory as the item
     directory, so the inferred id is not the answer. The catalog root is never
     a collection, and its ``versions.json`` is the catalog index.
@@ -1505,11 +1517,14 @@ def _map_recorded_geo_dirs(
         catalog_root: Root directory of the catalog.
         state: The run state, which reads each ``versions.json`` once.
     """
+    from portolan_cli.stac_links import owned_item_hrefs
+
     root = catalog_root.resolve()
+    item_paths: dict[Path, dict[Path, Path]] = {}
     for _file, source_dir, _coll_id in deferred_non_geo:
         if source_dir in source_to_item_dir or source_dir in source_to_collection_dir:
             continue
-        for collection_dir in (source_dir, source_dir.parent):
+        for collection_dir in (source_dir, *source_dir.parents):
             if collection_dir.resolve() == root:
                 break
             if not (collection_dir / "versions.json").exists():
@@ -1525,7 +1540,16 @@ def _map_recorded_geo_dirs(
             if collection_dir == source_dir:
                 source_to_collection_dir[source_dir] = (collection_dir, coll_id)
             else:
-                source_to_item_dir[source_dir] = (source_dir, coll_id, source_dir.name)
+                if collection_dir not in item_paths:
+                    item_paths[collection_dir] = {
+                        path.parent.resolve(): path
+                        for _href, path in owned_item_hrefs(collection_dir / "collection.json")
+                    }
+                item_path = item_paths[collection_dir].get(source_dir.resolve())
+                if item_path is None or not item_path.is_file():
+                    continue
+                item_data = json.loads(item_path.read_text(encoding="utf-8"))
+                source_to_item_dir[source_dir] = (item_path, coll_id, item_data["id"])
             break
 
 
@@ -1534,7 +1558,7 @@ class _DeferredPlan:
     """Where each deferred file without geometry goes (phase 3).
 
     Attributes:
-        item_companions: ``(file, (item_dir, collection_id, item_id))`` of each
+        item_companions: ``(file, (item_path, collection_id, item_id))`` of each
             file that joins an item.
         companions: Collection id to the collection-level files it gains. The
             files of a collection that ``finalize_items`` writes go in that
@@ -1650,7 +1674,7 @@ def _write_deferred(
     added: list[ItemInfo],
     skipped: list[Path],
     merge_strategy: MergeStrategy,
-    touched_items: list[tuple[str, str]],
+    touched_items: list[tuple[str, str, Path]],
     skip_reasons: dict[Path, str],
     state: RunState,
 ) -> set[Path]:
@@ -1667,7 +1691,7 @@ def _write_deferred(
         added: Receives each standalone tabular asset (mutated, #712).
         skipped: Receives each companion file (mutated).
         merge_strategy: The strategy of the ``add`` run.
-        touched_items: Receives the ``(collection_id, item_id)`` of each
+        touched_items: Receives the ``(collection_id, item_id, item_path)`` of each
             updated item (mutated).
         skip_reasons: Receives the reason of a companion that two files claim
             one asset key for in its item (mutated).
@@ -1702,6 +1726,17 @@ def _write_deferred(
         # so it can turn the whole catalog into a mirror. The root then needs
         # its sync time (rashid PTL-PRO-003).
         update_catalog_provenance(catalog_root)
+
+    staged = state.staged()
+    item_ids: dict[str, dict[Path, str]] = {}
+    for owner, item_id, item_path in touched_items:
+        # Key on the directory of the item file, so a --item-id item matches too.
+        item_ids.setdefault(owner, {})[item_path.parent] = item_id
+    for directory in sorted(affected):
+        coll_id = directory.relative_to(catalog_root).as_posix()
+        change = staged.get(coll_id)
+        if coll_id not in finalized and change is not None:
+            stage_deferred_post_add(state, coll_id, change.assets, item_ids.get(coll_id, {}))
 
     skipped.extend(plan.companion_files)
     for coll_id, assets in plan.tabular_added.items():
@@ -1772,23 +1807,24 @@ def _track_companion_in_item(
     file_path: Path,
     item: tuple[Path, str, str],
     catalog_root: Path,
-    touched_items: list[tuple[str, str]] | None,
+    touched_items: list[tuple[str, str, Path]] | None,
     state: RunState,
 ) -> None:
     """Copy a non-geo file into an item directory and add it to the item.
 
     Args:
         file_path: The non-geo file.
-        item: ``(item_dir, collection_id, item_id)`` of the item.
+        item: ``(item_path, collection_id, item_id)`` of the item.
         catalog_root: Root directory of the catalog.
-        touched_items: List to append ``(collection_id, item_id)`` to.
+        touched_items: List to append ``(collection_id, item_id, item_path)`` to.
         state: The run state, which holds the staged version.
 
     Raises:
         AssetKeyCollisionError: Two files claim one asset key in the item. The
             copy goes again, so the item stays as it was.
     """
-    item_dir, coll_id, item_id = item
+    item_path, coll_id, item_id = item
+    item_dir = item_path.parent
     dest_path = _copy_non_geo_to_item_dir(file_path, item_dir)
     logger.info(
         "Tracking %s as non-geospatial %s asset (no conversion): %s",
@@ -1798,14 +1834,18 @@ def _track_companion_in_item(
     )
     try:
         _update_item_with_asset(
-            catalog_root=catalog_root, collection_id=coll_id, item_id=item_id, state=state
+            catalog_root=catalog_root,
+            collection_id=coll_id,
+            item_id=item_id,
+            state=state,
+            item_json_path=item_path,
         )
     except AssetKeyCollisionError:
         if dest_path.resolve() != file_path.resolve():
             dest_path.unlink(missing_ok=True)
         raise
     if touched_items is not None:
-        touched_items.append((coll_id, item_id))
+        touched_items.append((coll_id, item_id, item_path))
 
 
 def _update_item_with_asset(
@@ -1813,6 +1853,8 @@ def _update_item_with_asset(
     collection_id: str,
     item_id: str,
     state: RunState,
+    *,
+    item_json_path: Path | None = None,
 ) -> None:
     """Update a STAC item to include a new asset file.
 
@@ -1825,10 +1867,11 @@ def _update_item_with_asset(
         collection_id: Collection identifier.
         item_id: Item identifier.
         state: The run state, which holds the staged version.
+        item_json_path: The prepared or published item path, independent of its id.
     """
     collection_dir = catalog_root / collection_id
-    item_dir = collection_dir / item_id
-    item_json_path = item_dir / f"{item_id}.json"
+    item_json_path = item_json_path or collection_dir / item_id / f"{item_id}.json"
+    item_dir = item_json_path.parent
 
     if not item_json_path.exists():
         logger.warning("Item JSON not found: %s", item_json_path)
@@ -1882,6 +1925,7 @@ def _update_item_with_asset(
         collection_dir=collection_dir,
         collection_id=collection_id,
         ignored_patterns=get_ignored_files(catalog_root, state=state),
+        state=state,
     )
 
     # Enrich COG assets with render extension properties (Issue #13)
@@ -1906,16 +1950,16 @@ def _update_item_with_asset(
 
     # Stage the files of the item. The scan already hashed them. A companion
     # bumps the minor, as it did when add published it through the backend.
-    state.stage(
-        collection_id,
-        minor=True,
-        assets={
-            versions_asset_key(path, collection_dir): Asset(
-                sha256=checksum,
-                size_bytes=size,
-                href=f"{collection_id}/{versions_asset_key(path, collection_dir)}",
-                mtime=path.stat().st_mtime,
-            )
-            for path, checksum, size in asset_files.values()
-        },
-    )
+    tracked = state.tracked_assets(collection_dir)
+    refreshed: dict[str, Asset] = {}
+    for path, checksum, size in asset_files.values():
+        key = versions_asset_key(path, collection_dir)
+        href = f"{collection_id}/{key}"
+        # A directory rescan refreshes bytes, not conversion ownership or the
+        # freshness baseline. Losing source_path makes claim_output refuse the
+        # original source's next reconversion.
+        previous = tracked.get(key, Asset(sha256=checksum, size_bytes=size, href=href))
+        refreshed[key] = replace(
+            previous, sha256=checksum, size_bytes=size, href=href, mtime=path.stat().st_mtime
+        )
+    state.stage(collection_id, minor=True, assets=refreshed)

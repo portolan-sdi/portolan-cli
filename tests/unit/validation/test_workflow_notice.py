@@ -19,6 +19,8 @@ from portolan_cli.validation.runner import run_check
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from portolan_cli.run_state import RunState
+
 pytestmark = pytest.mark.unit
 
 
@@ -47,7 +49,9 @@ def _with_scan(monkeypatch: pytest.MonkeyPatch, report: MetadataReport | Excepti
     """Route ``scan_catalog_metadata`` to ``report``; return the roots it saw."""
     seen: list[Path] = []
 
-    def _scan(root: Path) -> MetadataReport:
+    def _scan(root: Path, *, state: RunState | None = None) -> MetadataReport:
+        assert state is not None
+        assert state.catalog_root == root
         seen.append(root)
         if isinstance(report, Exception):
             raise report

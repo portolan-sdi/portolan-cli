@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
@@ -153,7 +154,10 @@ _SOURCE_FINGERPRINT = "items.parquet.source_fingerprint"
 
 
 def _items_fingerprint(owned: list[tuple[str, Path]]) -> str | None:
-    """Hash the href, size, and mtime of each owned item file, in link order.
+    """Hash each item's href, size, mtime and POSIX status-change time, in link order.
+
+    POSIX ctime catches same-size edits with restored mtimes. On Windows it
+    is creation time, so that platform retains the size/mtime limitation.
 
     Returns None when an item file is missing, so the build runs and reports it.
     """
@@ -163,7 +167,8 @@ def _items_fingerprint(owned: list[tuple[str, Path]]) -> str | None:
             st = item_path.stat()
         except FileNotFoundError:
             return None
-        digest.update(f"{href}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
+        ctime = f"\0{st.st_ctime_ns}" if os.name == "posix" else ""
+        digest.update(f"{href}\0{st.st_size}\0{st.st_mtime_ns}{ctime}\n".encode())
     return digest.hexdigest()
 
 
@@ -191,7 +196,7 @@ def generate_items_parquet(collection_path: Path, *, state: RunState | None = No
     enabling efficient spatial/temporal queries.
 
     The versions.json record of ``items.parquet`` holds a fingerprint of the
-    owned item files: href, size, and mtime, in link order. When the record
+    owned item files: href, size, mtime, and POSIX ctime, in link order. When the record
     holds the fingerprint of the files now, and the file holds the recorded
     bytes, the mirror is current. Then this returns with no item read and no
     write (issue #995). A collection with no record always builds.

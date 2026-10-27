@@ -256,6 +256,15 @@ def _setup_re_add(root: Path, history: int) -> None:
     pad_versions(root, history)
 
 
+def _setup_missing_raster_items(root: Path, history: int) -> None:
+    """Remove N published item documents, retaining their rasters and collection."""
+    from portolan_cli.stac_links import owned_item_hrefs
+
+    setup_add(root)
+    for _href, item_path in owned_item_hrefs(root / "scenes" / "collection.json"):
+        item_path.unlink()
+
+
 @dataclass(frozen=True)
 class Scenario:
     """One fixed input and the ``portolan`` command that the gates measure.
@@ -281,8 +290,8 @@ class Scenario:
 
     @property
     def runs_phase_two(self) -> bool:
-        """Whether the command is an ``add``, whose phase 2 takes ``--workers``."""
-        return self.command[0] == "add"
+        """Whether the command does conversion work controlled by ``--workers``."""
+        return "--workers" in self.command
 
 
 def _many_collections(root: Path, n: int, seed: int) -> None:
@@ -342,6 +351,17 @@ SCENARIOS: dict[str, Scenario] = {
             ("check", "--metadata"),
             setup=_setup_add,
             config="",
+        ),
+        # Repair N missing raster items with one shared run state.
+        Scenario(
+            "check-fix-missing-rasters",
+            _rasters,
+            ("check", "--metadata", "--fix"),
+            setup=_setup_missing_raster_items,
+            # Recreated item JSON may produce byte-different Parquet metadata,
+            # so a mirror can publish a version in only one of the two runs.
+            # Measure item repair itself; add-rasters covers mirror generation.
+            config="parquet:\n  enabled: false\n",
         ),
         # check --fix converts n GeoJSON files to GeoParquet in one process.
         Scenario(

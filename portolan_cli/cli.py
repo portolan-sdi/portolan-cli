@@ -4588,7 +4588,9 @@ def pull_command(
         raise SystemExit(1) from None
 
     # Route to backend-specific pull if using non-file backend
-    if _try_backend_pull(catalog_path, remote_url, collection, dry_run, use_json):
+    if collection is not None and _try_backend_pull(
+        catalog_path, remote_url, collection, dry_run, use_json
+    ):
         return
 
     # Catalog-wide pull (no --collection specified)
