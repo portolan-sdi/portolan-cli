@@ -594,6 +594,7 @@ def _update_versions(
     asset_files: dict[str, tuple[Path, str, int]] | None = None,
     is_collection_level_asset: bool = False,
     catalog_root: Path | None = None,
+    state: RunState | None = None,
 ) -> None:
     """Update versions via the active backend.
 
@@ -612,6 +613,7 @@ def _update_versions(
         is_collection_level_asset: If True, asset is at collection level.
             Affects href construction (no item_id in path).
         catalog_root: Root directory of the catalog. If None, derived from collection_dir.
+        state: The run state, which reads the backend setting once per run.
     """
     from portolan_cli.version_ops import publish_version
 
@@ -639,6 +641,7 @@ def _update_versions(
         collection_id,
         assets=assets,
         catalog_root=catalog_root,
+        state=state,
     )
 
     # Mirror the collection's new state into the catalog-level versions.json
@@ -1627,6 +1630,7 @@ def _process_deferred_non_geo_files(
                     collection_dir=resolved_collection_dir,
                     asset_path=file_path,
                     merge_strategy=merge_strategy,
+                    state=state,
                 )
 
                 # Update versions.json so is_current() finds the asset
@@ -1640,6 +1644,7 @@ def _process_deferred_non_geo_files(
                     asset_files=asset_files,
                     is_collection_level_asset=True,
                     catalog_root=catalog_root,
+                    state=state,
                 )
 
                 # Track for statistics recomputation
@@ -1721,6 +1726,7 @@ def _process_deferred_non_geo_files(
                         collection_dir=collection_dir,
                         asset_path=asset_path,
                         merge_strategy=merge_strategy,
+                        state=state,
                     )
 
                     # If converted, also track source file as companion asset
@@ -1732,6 +1738,7 @@ def _process_deferred_non_geo_files(
                             asset_path=file_path,
                             merge_strategy=merge_strategy,
                             role=ROLE_SOURCE,
+                            state=state,
                         )
 
                     # Update versions.json so is_current() finds the asset(s)
@@ -1749,6 +1756,7 @@ def _process_deferred_non_geo_files(
                         asset_files=asset_files,
                         is_collection_level_asset=True,
                         catalog_root=catalog_root,
+                        state=state,
                     )
 
                     # Track for statistics recomputation
@@ -1923,6 +1931,7 @@ def _update_item_with_asset(
         asset_files=asset_files,
         is_collection_level_asset=is_collection_level,
         catalog_root=catalog_root,
+        state=state,
     )
 
 
@@ -1932,6 +1941,7 @@ def _update_collection_with_asset(
     *,
     merge_strategy: MergeStrategy,
     role: str | None = None,
+    state: RunState | None = None,
 ) -> None:
     """Update a collection.json to include a new non-geo asset file (Issue #383).
 
@@ -1943,6 +1953,7 @@ def _update_collection_with_asset(
         asset_path: Path to the non-geo asset file.
         merge_strategy: The strategy of the ``add`` run.
         role: The asset role. None takes the role of the file extension.
+        state: The run state, which parses each metadata.yaml once per run.
     """
     collection_json_path = collection_dir / "collection.json"
 
@@ -1976,7 +1987,7 @@ def _update_collection_with_asset(
         **file_fields(asset_path),
     }
 
-    _document_tabular_asset(collection_data, asset_key, asset_path, merge_strategy)
+    _document_tabular_asset(collection_data, asset_key, asset_path, merge_strategy, state)
 
     # Write updated collection
     write_json_atomic(collection_json_path, collection_data)
@@ -1987,6 +1998,7 @@ def _document_tabular_asset(
     asset_key: str,
     asset_path: Path,
     merge_strategy: MergeStrategy,
+    state: RunState | None = None,
 ) -> None:
     """Answer the Tabular Data SHOULDs for a plain-Parquet asset (issue #749).
 
@@ -2009,13 +2021,14 @@ def _document_tabular_asset(
         asset_key: Key the asset was just written under.
         asset_path: Path to the asset file on disk.
         merge_strategy: Decides only the column descriptions (issue #931).
+        state: The run state, which parses each metadata.yaml once per run.
     """
     from portolan_cli.catalog import find_catalog_root
 
     collection_dir = asset_path.parent
     catalog_root = find_catalog_root(collection_dir)
     if catalog_root is not None:
-        apply_human_metadata_to_dict(collection_data, collection_dir, catalog_root)
+        apply_human_metadata_to_dict(collection_data, collection_dir, catalog_root, state)
     metadata = extract_tabular_metadata(asset_path)
     if metadata is None:
         return

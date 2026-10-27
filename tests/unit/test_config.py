@@ -1727,6 +1727,7 @@ def _read_through_state(name: str, root: Path, collection: Path, state: Any) -> 
     from types import SimpleNamespace
 
     from portolan_cli import (
+        add,
         catalog_list,
         config,
         conversion_config,
@@ -1736,6 +1737,8 @@ def _read_through_state(name: str, root: Path, collection: Path, state: Any) -> 
         readme,
     )
     from portolan_cli.plugins.formats import handler_for
+    from portolan_cli.stac import MergeStrategy
+    from portolan_cli.validation import config as validation_config
     from portolan_cli.viz import pmtiles, style
 
     data = collection / "data.parquet"
@@ -1764,6 +1767,20 @@ def _read_through_state(name: str, root: Path, collection: Path, state: Any) -> 
         ),
         "generate_catalog_readme": lambda: readme.generate_catalog_readme(root, state=state),
         "list_catalog_contents": lambda: catalog_list.list_catalog_contents(root, state=state),
+        "update_collection_with_asset": lambda: add._update_collection_with_asset(
+            collection, data, merge_strategy=MergeStrategy.SMART, state=state
+        ),
+        "load_rules_config": lambda: validation_config.load_rules_config(root, state=state),
+        "load_public_url": lambda: validation_config.load_public_url(root, state=state),
+        "update_versions": lambda: add._update_versions(
+            collection,
+            "data",
+            "demo",
+            asset_files={data.name: (data, "0" * 64, 4)},
+            is_collection_level_asset=True,
+            catalog_root=root,
+            state=state,
+        ),
     }
     return calls[name]()
 
@@ -1789,6 +1806,10 @@ class TestReadersTakeTheState:
             "generate_readme_for_collection",
             "generate_catalog_readme",
             "list_catalog_contents",
+            "update_collection_with_asset",
+            "update_versions",
+            "load_rules_config",
+            "load_public_url",
         ],
     )
     def test_a_repeated_call_parses_nothing(self, tmp_path: Path, name: str) -> None:
@@ -1799,7 +1820,21 @@ class TestReadersTakeTheState:
         collection = _hierarchy(tmp_path)
         (tmp_path / "catalog.json").write_text(json.dumps({"id": "root"}), encoding="utf-8")
         (collection / "collection.json").write_text(
-            json.dumps({"id": "demo", "links": []}), encoding="utf-8"
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "stac_version": "1.1.0",
+                    "id": "demo",
+                    "description": "Demo",
+                    "license": "other",
+                    "extent": {
+                        "spatial": {"bbox": [[0, 0, 1, 1]]},
+                        "temporal": {"interval": [[None, None]]},
+                    },
+                    "links": [],
+                }
+            ),
+            encoding="utf-8",
         )
         (collection / "data.parquet").write_bytes(b"PAR1")
         state = RunState.open(tmp_path)
@@ -1812,6 +1847,22 @@ class TestReadersTakeTheState:
 
             assert first > 0, "the reader must read a YAML file"
             assert _parses() == first
+
+
+class TestCheckReadsTheConfigOnce:
+    """check reads the catalog config.yaml through one run state (issue #994)."""
+
+    @pytest.mark.integration
+    def test_run_check_parses_the_catalog_config_once(self, tmp_path: Path) -> None:
+        from portolan_cli.validation.runner import run_check
+
+        _write_config(tmp_path, "publish:\n  public_url: https://data.example.org/\n")
+
+        with trace.tracing():
+            outcome = run_check(tmp_path, data=False, structural=False, geo_assets=False)
+
+            assert outcome.live_hint is not None
+            assert _parses() == 1
 
 
 class TestHandlersReadTheState:
@@ -1850,7 +1901,7 @@ class TestHandlersReadTheState:
 
         monkeypatch.setattr(conversion_config, "partition_override", spy)
 
-        with _tracing():
+        with trace.tracing():
             added, _skipped, failures = add_files(paths=[root], catalog_root=root, workers=workers)
 
         assert failures == []

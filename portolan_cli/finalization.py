@@ -596,7 +596,10 @@ _HUMAN_METADATA_KEYS = ("title", "description", "license", "providers", "links",
 
 
 def apply_human_metadata_to_dict(
-    data: dict[str, Any], collection_dir: Path, catalog_root: Path
+    data: dict[str, Any],
+    collection_dir: Path,
+    catalog_root: Path,
+    state: RunState | None = None,
 ) -> None:
     """Apply :func:`apply_human_metadata` to a parsed ``collection.json`` in place.
 
@@ -608,9 +611,10 @@ def apply_human_metadata_to_dict(
         data: Parsed ``collection.json``, mutated in place.
         collection_dir: The collection's directory under the catalog root.
         catalog_root: Root directory of the catalog.
+        state: The run state, which parses each metadata.yaml once per run.
     """
     collection = pystac.Collection.from_dict(data, migrate=False)
-    apply_human_metadata(collection, collection_dir, catalog_root)
+    apply_human_metadata(collection, collection_dir, catalog_root, state)
     applied = collection.to_dict(include_self_link=False, transform_hrefs=False)
     for key in _HUMAN_METADATA_KEYS:
         if key in applied:

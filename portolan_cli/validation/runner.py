@@ -52,6 +52,8 @@ from portolan_cli.validation.legacy import detect_legacy_notes
 if TYPE_CHECKING:
     from rashid.model import Report
 
+    from portolan_cli.config import ConfigSource
+
 #: A structural/schema validator maps one object's raw JSON to schema errors.
 #: Injected by tests to keep them offline and independent of schema churn.
 Validator = Callable[[dict[str, Any]], list[Any]]
@@ -121,7 +123,9 @@ def _resolve_root(path: Path) -> Path:
     return resolve_catalog_root_for_check(path) or path
 
 
-def validate_live_base_url(path: Path, public_url: str | None) -> None:
+def validate_live_base_url(
+    path: Path, public_url: str | None, *, state: ConfigSource | None = None
+) -> None:
     """Reject invalid live URLs before validation or any requested repair.
 
     Match rashid's HTTPS-only policy. Also require a host and a valid port.
@@ -129,7 +133,7 @@ def validate_live_base_url(path: Path, public_url: str | None) -> None:
     The error names the URL's source and does not expose the URL, which can
     contain credentials.
     """
-    base_url = public_url or load_public_url(_resolve_root(path))
+    base_url = public_url or load_public_url(_resolve_root(path), state=state)
     if base_url is None:
         return
     source = "--url" if public_url else "publish.public_url"
@@ -143,8 +147,10 @@ def validate_live_base_url(path: Path, public_url: str | None) -> None:
         raise InvalidLiveUrlError(source)
 
 
-def _live_hint(root: Path, public_url: str | None, *, live: bool) -> LiveHint | None:
-    base_url = public_url or load_public_url(root)
+def _live_hint(
+    root: Path, public_url: str | None, *, live: bool, state: ConfigSource
+) -> LiveHint | None:
+    base_url = public_url or load_public_url(root, state=state)
     if live or base_url is None:
         return None
     return LiveHint(
@@ -260,13 +266,17 @@ def run_check(
         about which files exist — a workflow channel, never a conformance
         finding.
     """
+    from portolan_cli.run_state import RunState
+
     root = _resolve_root(path)
+    # One run state, so the three config readers below parse config.yaml once.
+    state = RunState.open(root)
 
     report: Report | None = None
     notice: WorkflowNotice | None = None
     if metadata:
         if live:
-            validate_live_base_url(root, public_url)
+            validate_live_base_url(root, public_url, state=state)
         # One extra manifest walk per run. `run_fix_workflow` walks separately
         # under --fix; deduping the two is a later refactor, not this change.
         notice = _workflow_notice(root)
@@ -274,7 +284,7 @@ def run_check(
         with span("check.validate", structural=structural, schema=schema, data=data, live=live):
             report = validate(
                 root,
-                config=load_rules_config(root),
+                config=load_rules_config(root, state=state),
                 structural=structural,
                 structural_validator=structural_validator,
                 schema=schema,
@@ -283,7 +293,7 @@ def run_check(
                 data_reader_factory=LocalOnlyReader if data_scope == "local" else None,
                 live=live,
                 live_prober=live_prober,
-                live_base_url=public_url or load_public_url(root),
+                live_base_url=public_url or load_public_url(root, state=state),
             )
 
     format_report = None
@@ -303,6 +313,6 @@ def run_check(
         report=report,
         format_report=format_report,
         legacy_note=detect_legacy_notes(root),
-        live_hint=_live_hint(root, public_url, live=live),
+        live_hint=_live_hint(root, public_url, live=live, state=state),
         workflow_notice=notice,
     )
