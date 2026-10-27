@@ -113,12 +113,11 @@ def test_vector_thumbnail_render(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, benchmark: Callable[..., Any]
 ) -> None:
     import contextily
-    import contextily.tile
 
     from portolan_cli.viz import thumbnail
 
     tile = np.full((256, 256, 4), 235, dtype=np.uint8)
-    monkeypatch.setattr(contextily.tile, "_fetch_tile", lambda *args, **kwargs: tile.copy())
+    monkeypatch.setattr(thumbnail, "_get_tile", lambda _url: tile.copy())
     monkeypatch.setattr(thumbnail, "_ensure_contextily", lambda: contextily)
     source = tmp_path / "buildings.parquet"
     write_vector(source, THUMBNAIL_POLYGONS, seeded_rng(992, 0))

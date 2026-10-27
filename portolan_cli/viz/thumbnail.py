@@ -19,16 +19,19 @@ import gzip
 import logging
 import math
 import threading
+import time
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
 from portolan_cli.config import load_catalog_config
 from portolan_cli.trace import count
 from portolan_cli.utils import get_dict, redact_credentials
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from matplotlib.axes import Axes
 
     from portolan_cli.config import ConfigSource
@@ -166,6 +169,54 @@ class ThumbnailConfig:
     basemap_zoom_adjust: int = 0
     basemap_api_key: str | None = None
     max_features: int = 100_000
+    basemap_run: BasemapRun | None = field(default=None, compare=False, repr=False)
+
+
+class BasemapRun:
+    """The basemap state of one run: the providers that did not answer.
+
+    One run marks a provider after a tile timeout or the deadline. Its later
+    thumbnails then draw no basemap and do not wait again. A new run asks the
+    provider again. ``get_thumbnail_config`` keeps one per run state.
+    """
+
+    def __init__(self) -> None:
+        """Start a run in which every provider may answer."""
+        self._lock = threading.Lock()
+        self._unreachable: set[str] = set()
+
+    def reachable(self, provider: str) -> bool:
+        """False when ``provider`` did not answer earlier in this run."""
+        with self._lock:
+            return provider not in self._unreachable
+
+    def mark_unreachable(self, provider: str) -> bool:
+        """Mark ``provider`` for the rest of the run. True on the first mark."""
+        with self._lock:
+            first = provider not in self._unreachable
+            self._unreachable.add(provider)
+            return first
+
+
+_T = TypeVar("_T")
+
+
+@runtime_checkable
+class _RunMemo(Protocol):
+    """The memo of ``run_state.RunState``. viz does not import run_state."""
+
+    def memo(self, kind: str, path: Path, loader: Callable[[Path], _T]) -> _T:
+        """Load a value derived from one file once per run."""
+        ...
+
+
+def _basemap_run(catalog_path: Path, state: object) -> BasemapRun | None:
+    """Return the basemap state of the run of ``state``, or None outside a run."""
+    config_file = catalog_path / ".portolan" / "config.yaml"
+    if not isinstance(state, _RunMemo) or not config_file.is_file():
+        return None
+    run: BasemapRun = state.memo("thumbnails.basemap_run", config_file, lambda _p: BasemapRun())
+    return run
 
 
 def get_thumbnail_config(
@@ -184,8 +235,9 @@ def get_thumbnail_config(
     """
     config = load_catalog_config(catalog_path, state=state).data
     thumbnails = get_dict(config, "thumbnails")
+    run = _basemap_run(catalog_path, state)
     if not thumbnails:
-        return ThumbnailConfig()
+        return ThumbnailConfig(basemap_run=run)
 
     basemap = get_dict(thumbnails, "basemap")
 
@@ -207,6 +259,7 @@ def get_thumbnail_config(
         max_features=_parse_positive_int(
             thumbnails.get("max_features"), "thumbnails.max_features", 100_000
         ),
+        basemap_run=run,
     )
 
 
@@ -992,6 +1045,7 @@ def _render(
             config.basemap_opacity,
             config.basemap_zoom_adjust,
             api_key=config.basemap_api_key,
+            run=config.basemap_run,
         )
     # No bbox_inches="tight": the axes fill the figure, and a tight bbox costs
     # a second draw.
@@ -1360,6 +1414,27 @@ def _render_geoparquet(
 #: on one connection and 0.95 s on two.
 _TILE_CONNECTIONS = 2
 
+#: Seconds that one tile request waits to connect, and then for each read.
+#: contextily sends its requests with no timeout, so a server that did not
+#: answer stopped the add.
+_TILE_TIMEOUT_S = 10.0
+
+#: Seconds that all the tiles of one basemap may take. After it the
+#: thumbnail has no basemap, and the run asks that provider no more.
+_BASEMAP_DEADLINE_S = 30.0
+
+#: More requests for a tile after an HTTP error other than 404, as contextily.
+_TILE_RETRIES = 2
+
+
+class _TileServerDownError(Exception):
+    """A tile request passed its timeout or the deadline, or did not connect."""
+
+    def __init__(self, url: str) -> None:
+        super().__init__(url)
+        self.url = url
+
+
 #: Tile hosts that serve a watermark tile to a request without a key.
 _KEYED_TILE_HOSTS = ("basemaps.cartocdn.com",)
 _warned_keyless: set[str] = set()
@@ -1448,6 +1523,7 @@ def _fetch_basemap(
     frame: tuple[float, float, float, float],
     zoom: int,
     size_px: tuple[int, int],
+    deadline: float,
 ) -> tuple[Any, tuple[float, float, float, float]]:
     """Return the basemap of ``frame`` (EPSG:3857) at the output resolution.
 
@@ -1456,10 +1532,21 @@ def _fetch_basemap(
     render, which took half of a 85 ms collection thumbnail. The result is
     memoized for the run.
 
+    Args:
+        ctx_module: The contextily module.
+        provider: The tile provider, with its key.
+        frame: (left, bottom, right, top) in EPSG:3857.
+        zoom: The tile zoom.
+        size_px: The pixel size of the frame in the output.
+        deadline: The ``time.monotonic`` value by which the tiles must be in.
+
     Returns:
         An RGBA array, and its extent (left, right, bottom, top). The extent is
         smaller than the frame when the frame passes the edge of the tile
         world, as a frame around global data does.
+
+    Raises:
+        _TileServerDownError: When a tile passes its timeout or the deadline.
     """
     key = (provider.build_url(), zoom, *frame, *size_px)
     with _tile_memo_lock:
@@ -1471,19 +1558,20 @@ def _fetch_basemap(
     import numpy as np
     from PIL import Image
 
+    # Private parts of contextily, read at version 1.7.0. bounds2img has no
+    # way to time a request out, so this function fetches the tiles itself
+    # and uses contextily for the tile list and the mosaic.
+    # tests/unit/test_thumbnail.py pins their signatures.
+    tile_module = ctx_module.tile
     left, bottom, right, top = frame
-    mosaic, (img_left, img_right, img_bottom, img_top) = ctx_module.bounds2img(
-        left,
-        bottom,
-        right,
-        top,
-        zoom=zoom,
-        source=provider,
-        ll=False,
-        n_connections=_TILE_CONNECTIONS,
-        use_cache=False,
-    )
-    count("tiles.fetched", ctx_module.howmany(left, bottom, right, top, zoom, verbose=False))
+    west, south = tile_module._sm2ll(left, bottom)
+    east, north = tile_module._sm2ll(right, top)
+    tiles = list(tile_module.mt.tiles(west, south, east, north, [zoom]))
+    urls = [provider.build_url(x=t.x, y=t.y, z=t.z) for t in tiles]
+    count("tiles.fetched", len(urls))
+    mosaic, (west, south, east, north) = tile_module._merge_tiles(tiles, _get_tiles(urls, deadline))
+    img_left, img_bottom = tile_module.mt.xy(west, south)
+    img_right, img_top = tile_module.mt.xy(east, north)
     # Tile pixels are linear in EPSG:3857, so the covered part of the frame
     # maps to a pixel box of the mosaic.
     cut_left, cut_right = max(left, img_left), min(right, img_right)
@@ -1509,6 +1597,83 @@ def _fetch_basemap(
         while len(_tile_memo) > _TILE_MEMO_SIZE:
             _tile_memo.popitem(last=False)
     return result
+
+
+def _get_tile(url: str) -> Any:
+    """Fetch one tile with a socket timeout, as an RGBA array.
+
+    The request, the retries, and the decode are those of contextily's
+    ``_retryer`` with its defaults, plus the timeout. An HTTP error other than
+    404 gets ``_TILE_RETRIES`` more requests.
+    """
+    import io
+
+    import numpy as np
+    import requests  # type: ignore[import-untyped]
+    from contextily.tile import USER_AGENT
+    from PIL import Image
+
+    for attempt in range(_TILE_RETRIES + 1):
+        response = requests.get(url, headers={"user-agent": USER_AGENT}, timeout=_TILE_TIMEOUT_S)
+        if response.status_code == 404 or attempt == _TILE_RETRIES:
+            response.raise_for_status()
+        if response.ok:
+            break
+    with Image.open(io.BytesIO(response.content)) as image:
+        return np.asarray(image.convert("RGBA"))
+
+
+def _get_tiles(urls: list[str], deadline: float) -> list[Any]:
+    """Fetch ``urls`` on ``_TILE_CONNECTIONS`` daemon threads by ``deadline``.
+
+    A worker holds the lock only to take the next URL, never during a
+    request. A worker that is still in a request at the deadline is a
+    daemon. It ends at its socket timeout and does not keep the process
+    alive.
+
+    Raises:
+        _TileServerDownError: When a request times out or does not connect, or
+            the deadline passes.
+        Exception: The first other error of a request.
+    """
+    import requests
+
+    tiles: list[Any] = [None] * len(urls)
+    queue = list(reversed(list(enumerate(urls))))
+    errors: list[Exception] = []
+    lock = threading.Lock()
+    stop = threading.Event()
+
+    def work() -> None:
+        while not stop.is_set():
+            with lock:
+                if not queue:
+                    return
+                index, url = queue.pop()
+            try:
+                tiles[index] = _get_tile(url)
+            except (requests.Timeout, requests.ConnectionError):
+                errors.append(_TileServerDownError(url))
+                stop.set()
+            except Exception as error:  # noqa: BLE001 - the caller raises it
+                errors.append(error)
+                stop.set()
+
+    workers = [
+        threading.Thread(target=work, name=f"portolan-tile-{n}", daemon=True)
+        for n in range(min(_TILE_CONNECTIONS, len(urls)))
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(max(0.0, deadline - time.monotonic()))
+    stop.set()
+    if errors:
+        raise errors[0]
+    missing = [url for url, tile in zip(urls, tiles, strict=True) if tile is None]
+    if missing:
+        raise _TileServerDownError(missing[0])
+    return tiles
 
 
 def _world_copies(left: float, right: float) -> list[tuple[float, float, float]]:
@@ -1543,13 +1708,15 @@ def add_basemap(
     opacity: float = 1.0,
     zoom_adjust: int = 0,
     api_key: str | None = None,
+    run: BasemapRun | None = None,
 ) -> None:
     """Draw basemap tiles under the data of an EPSG:3857 axes.
 
-    The tiles are fetched with ``contextily.bounds2img`` on
-    ``_TILE_CONNECTIONS`` connections and drawn with ``imshow``. The
-    attribution is an ``ax.text``. contextily's ``add_attribution`` drew the
-    whole figure once more to wrap the text.
+    The tiles come on ``_TILE_CONNECTIONS`` connections. Each request has
+    ``_TILE_TIMEOUT_S``, and all of them have ``_BASEMAP_DEADLINE_S``. The
+    tiles are drawn with ``imshow``. The attribution is an ``ax.text``.
+    contextily's ``add_attribution`` drew the whole figure once more to wrap
+    the text.
 
     Args:
         ax: Matplotlib Axes in EPSG:3857, with its limits set to the frame.
@@ -1558,8 +1725,12 @@ def add_basemap(
         opacity: Basemap opacity 0.0-1.0.
         zoom_adjust: Zoom level adjustment.
         api_key: Key for the tile provider. CARTO needs one.
+        run: The basemap state of the run. None makes this call its own run.
     """
     if provider == "none":
+        return
+    run = run if run is not None else BasemapRun()
+    if not run.reachable(provider):
         return
 
     ctx_module = _ensure_contextily()
@@ -1586,6 +1757,7 @@ def add_basemap(
         bottom, top = ax.get_ylim()
         zoom = _basemap_zoom(ax, tile_provider, zoom_adjust)
         width_px, height_px = round(ax.bbox.width), round(ax.bbox.height)
+        deadline = time.monotonic() + _BASEMAP_DEADLINE_S
         images = []
         for shift, piece_left, piece_right in _world_copies(left, right):
             piece_px = (
@@ -1594,9 +1766,18 @@ def add_basemap(
             )
             piece = (piece_left - shift, bottom, piece_right - shift, top)
             image, (img_left, img_right, img_bottom, img_top) = _fetch_basemap(
-                ctx_module, tile_provider, piece, zoom, piece_px
+                ctx_module, tile_provider, piece, zoom, piece_px, deadline
             )
             images.append((image, (img_left + shift, img_right + shift, img_bottom, img_top)))
+    except _TileServerDownError as down:
+        if run.mark_unreachable(provider):
+            logger.warning(
+                "Basemap provider %s did not answer in time (%s). The thumbnails "
+                "of this run get no basemap.",
+                provider,
+                redact_credentials(down.url),
+            )
+        return
     except Exception as e:
         # The error of a failed tile quotes the tile URL, which holds the key.
         logger.debug("Failed to add basemap '%s': %s", provider, redact_credentials(str(e)))

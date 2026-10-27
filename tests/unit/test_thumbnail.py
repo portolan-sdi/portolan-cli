@@ -1364,32 +1364,28 @@ class TestCheapBasemap:
         assert _stub_pixels(result) > 0
 
     @pytest.mark.integration
-    def test_tiles_are_fetched_in_parallel_without_the_disk_cache(
+    def test_tiles_are_fetched_on_two_daemon_threads(
         self, tmp_path: Path, stub_tiles: list[str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """bounds2img gets several connections and threads, not processes.
-
-        contextily switches to worker processes when the joblib disk cache is
-        on and n_connections is above 1, so the render turns the cache off.
-        """
-        import contextily
+        """The tiles come on two threads of this process, not on worker processes."""
+        import threading
 
         from portolan_cli.viz import thumbnail
 
-        calls: list[dict[str, Any]] = []
-        original = contextily.bounds2img
+        stub = thumbnail._get_tile
+        threads: set[tuple[str, bool]] = set()
 
-        def spy(*args: Any, **kwargs: Any) -> Any:
-            calls.append(kwargs)
-            return original(*args, **kwargs)
+        def spy(url: str) -> Any:
+            current = threading.current_thread()
+            threads.add((current.name, current.daemon))
+            return stub(url)
 
-        monkeypatch.setattr(contextily, "bounds2img", spy)
+        monkeypatch.setattr(thumbnail, "_get_tile", spy)
         gpq = _copy_fixture("open-buildings.parquet", tmp_path)
         assert thumbnail.generate_thumbnail_from_geoparquet(gpq, thumbnail.ThumbnailConfig())
 
-        (kwargs,) = calls
-        assert kwargs["n_connections"] == 2
-        assert kwargs["use_cache"] is False
+        assert len(stub_tiles) > 2
+        assert threads == {("portolan-tile-0", True), ("portolan-tile-1", True)}
 
     @pytest.mark.integration
     def test_a_second_render_of_the_same_extent_fetches_no_tile(
@@ -1978,7 +1974,6 @@ class TestBasemapKeyStaysPrivate:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """The thumbnail survives a failed tile, and its log record holds no key."""
-        import contextily.tile
         import requests
         from shapely.geometry import box
 
@@ -1989,7 +1984,7 @@ class TestBasemapKeyStaysPrivate:
             # contextily's own error on a 404 quotes the tile URL.
             raise requests.HTTPError(f"Tile URL resulted in a 404 error:\n{tile_url}")
 
-        monkeypatch.setattr(contextily.tile, "_fetch_tile", fail)
+        monkeypatch.setattr(thumbnail, "_get_tile", fail)
         gpq = _write_crs84(tmp_path / "a.parquet", [box(10, 40, 12, 42)])
         config = ThumbnailConfig(basemap_provider="CartoDB.Positron", basemap_api_key=self._KEY)
         with caplog.at_level("DEBUG", logger="portolan_cli.viz.thumbnail"):
@@ -2147,6 +2142,8 @@ class TestHungTileServer:
 
         class Response:
             content = png.getvalue()
+            status_code = 200
+            ok = True
 
             def raise_for_status(self) -> None:
                 return None
@@ -2179,7 +2176,6 @@ class TestHungTileServer:
         import threading
         import time
 
-        import contextily.tile
         from shapely.geometry import box
 
         from portolan_cli.run_state import RunState
@@ -2195,9 +2191,8 @@ class TestHungTileServer:
             release.wait(1.0)
             return np.zeros((256, 256, 4), dtype=np.uint8)
 
-        monkeypatch.setattr(contextily.tile, "_fetch_tile", hang)
-        monkeypatch.setattr(thumbnail, "_get_tile", hang, raising=False)
-        monkeypatch.setattr(thumbnail, "_BASEMAP_DEADLINE_S", 0.3, raising=False)
+        monkeypatch.setattr(thumbnail, "_get_tile", hang)
+        monkeypatch.setattr(thumbnail, "_BASEMAP_DEADLINE_S", 0.3)
         catalog = tmp_path / "catalog"
         (catalog / ".portolan").mkdir(parents=True)
         (catalog / ".portolan" / "config.yaml").write_text(
@@ -2240,3 +2235,40 @@ class TestHungTileServer:
         for worker in workers:
             worker.join(5)
             assert not worker.is_alive()
+
+
+class TestContextilyPrivateParts:
+    """The basemap fetch uses private names of contextily 1.7.0.
+
+    A contextily release that changes one of them fails here, and not in the
+    add of a user.
+    """
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("name", "parameters"),
+        [
+            ("_sm2ll", ["x", "y"]),
+            ("_merge_tiles", ["tiles", "arrays"]),
+        ],
+    )
+    def test_private_function_keeps_its_signature(self, name: str, parameters: list[str]) -> None:
+        import inspect
+
+        tile = pytest.importorskip("contextily.tile")
+
+        function = getattr(tile, name, None)
+        assert function is not None, (
+            f"contextily.tile.{name} is gone. Read thumbnail._fetch_basemap."
+        )
+        assert list(inspect.signature(function).parameters) == parameters, (
+            f"contextily.tile.{name} changed its signature. Read thumbnail._fetch_basemap."
+        )
+
+    @pytest.mark.unit
+    def test_tile_module_keeps_mercantile_and_its_user_agent(self) -> None:
+        tile = pytest.importorskip("contextily.tile")
+
+        assert tile.mt.__name__ == "mercantile"
+        assert isinstance(tile.USER_AGENT, str)
+        assert tile.USER_AGENT.startswith("contextily-")

@@ -125,6 +125,8 @@ pmtiles = []
 # that only the PMTiles render path uses. Both are lazily imported and guarded,
 # so a default install renders without them.
 thumbnails = [
+    # viz/thumbnail.py calls private contextily functions, read at 1.7.0.
+    # tests/unit/test_thumbnail.py::TestContextilyPrivateParts fails when they change.
     "contextily>=1.5.0", # Basemap tiles for vector thumbnails
     "mapbox-vector-tile>=2.0.0", # MVT decoding for PMTiles thumbnail generation
 ]
