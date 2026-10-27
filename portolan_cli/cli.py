@@ -3529,48 +3529,48 @@ def add_cmd(
     # item_datetime is parsed by Click via FLEXIBLE_DATETIME type
     skip_reasons: dict[Path, str] = {}
     try:
-        try:
-            with progress_reporter:
-                all_added, all_skipped, all_failures = add_files(
-                    paths=resolved_paths,
-                    catalog_root=catalog_root,
-                    collection_id=None,
-                    item_id=item_id,
-                    item_datetime=item_datetime,
-                    on_progress=on_file_progress,
-                    workers=workers,
-                    force=force,
-                    reconvert=reconvert,
-                    skip_partitioning=skip_partitioning,
-                    merge_strategy=MergeStrategy(merge_strategy),
-                    skip_reasons=skip_reasons,
-                    state=state,
-                )
-        except MissingLicenseError as err:
-            # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
-            # check reads it, so add refuses the write and names what to supply.
-            _fail_on_missing_license("add", err, use_json=use_json)
-        except (
-            ValueError,
-            FileNotFoundError,
-            AssetKeyCollisionError,
-            ConfigError,
-            UnknownFormatHandlerError,
-        ) as err:
-            # Issue #933: AssetKeyCollisionError is add refusing to replace one
-            # file's asset with another file. A ConfigError is a config.yaml key
-            # that add reads, such as a malformed ignored_files (#1044). An
-            # UnknownFormatHandlerError is a conversion.handlers pin to a handler
-            # that no plugin provides. Its message names the known handlers.
-            _fail_on_add_error(err, resolved_paths, use_json=use_json)
-        trace.current_span().set(elapsed_seconds=progress_reporter.elapsed_seconds)
-        # add_files gives every skip a reason. A path without one reads as unchanged.
-        skips = [(p, skip_reasons.get(p, SKIP_UNCHANGED)) for p in all_skipped]
-        affected, versioned = _report_skips_and_find_collections(all_added, skips, catalog_root)
+        with progress_reporter:
+            all_added, all_skipped, all_failures = add_files(
+                paths=resolved_paths,
+                catalog_root=catalog_root,
+                collection_id=None,
+                item_id=item_id,
+                item_datetime=item_datetime,
+                on_progress=on_file_progress,
+                workers=workers,
+                force=force,
+                reconvert=reconvert,
+                skip_partitioning=skip_partitioning,
+                merge_strategy=MergeStrategy(merge_strategy),
+                skip_reasons=skip_reasons,
+                state=state,
+            )
+    except MissingLicenseError as err:
+        # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
+        # check reads it, so add refuses the write and names what to supply.
+        _fail_on_missing_license("add", err, use_json=use_json)
+    except (
+        ValueError,
+        FileNotFoundError,
+        AssetKeyCollisionError,
+        ConfigError,
+        UnknownFormatHandlerError,
+    ) as err:
+        # Issue #933: AssetKeyCollisionError is add refusing to replace one
+        # file's asset with another file. A ConfigError is a config.yaml key
+        # that add reads, such as a malformed ignored_files (#1044). An
+        # UnknownFormatHandlerError is a conversion.handlers pin to a handler
+        # that no plugin provides. Its message names the known handlers.
+        _fail_on_add_error(err, resolved_paths, use_json=use_json)
+    trace.current_span().set(elapsed_seconds=progress_reporter.elapsed_seconds)
+    # add_files gives every skip a reason. A path without one reads as unchanged.
+    skips = [(p, skip_reasons.get(p, SKIP_UNCHANGED)) for p in all_skipped]
+    affected, versioned = _report_skips_and_find_collections(all_added, skips, catalog_root)
 
-        # The side steps may exit, as --pmtiles does without tippecanoe. The files
-        # that add_files finalized keep their version, so the commit runs in any case.
-        # A side step stages an asset only after it writes the file.
+    # The side steps may exit, as --pmtiles does without tippecanoe. The files
+    # that add_files finalized keep their version, so the commit runs in any case.
+    # A side step stages an asset only after it writes the file.
+    try:
         # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state).
         # Always run it when --stac-geoparquet was passed, in every output mode.
         with trace.span("add.mirrors"):
@@ -5094,6 +5094,23 @@ def config_set(
         raise SystemExit(1) from e
 
 
+def _config_catalog_root(command: str, *, use_json: bool) -> Path:
+    """Return the catalog root of a config read command, or exit 1 outside a catalog."""
+    catalog_path = find_catalog_root()
+    if catalog_path is None:
+        if use_json:
+            envelope = error_envelope(
+                command,
+                [ErrorDetail(type="CatalogNotFoundError", message="Not in a Portolan catalog")],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("Not in a Portolan catalog")
+            info_output("Run 'portolan init' to create one")
+        raise SystemExit(1)
+    return catalog_path
+
+
 @config.command("get")
 @click.argument("key")
 @click.option(
@@ -5122,19 +5139,7 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
 
     use_json = should_output_json(ctx, json_output)
 
-    # Find catalog root
-    catalog_path = find_catalog_root()
-    if catalog_path is None:
-        if use_json:
-            envelope = error_envelope(
-                "config get",
-                [ErrorDetail(type="CatalogNotFoundError", message="Not in a Portolan catalog")],
-            )
-            output_json_envelope(envelope)
-        else:
-            error("Not in a Portolan catalog")
-            info_output("Run 'portolan init' to create one")
-        raise SystemExit(1)
+    catalog_path = _config_catalog_root("config get", use_json=use_json)
 
     try:
         # Load .env for credential precedence
@@ -5192,19 +5197,7 @@ def config_list(ctx: click.Context, json_output: bool, collection: str | None) -
 
     use_json = should_output_json(ctx, json_output)
 
-    # Find catalog root
-    catalog_path = find_catalog_root()
-    if catalog_path is None:
-        if use_json:
-            envelope = error_envelope(
-                "config list",
-                [ErrorDetail(type="CatalogNotFoundError", message="Not in a Portolan catalog")],
-            )
-            output_json_envelope(envelope)
-        else:
-            error("Not in a Portolan catalog")
-            info_output("Run 'portolan init' to create one")
-        raise SystemExit(1)
+    catalog_path = _config_catalog_root("config list", use_json=use_json)
 
     try:
         # Load .env for credential precedence

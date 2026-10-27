@@ -964,20 +964,20 @@ def build_catalog(
     # One run state holds the add and the thumbnails. The commit at the end
     # writes one version per collection and the catalog index once.
     state = RunState.open(output_dir)
+    added = init_extracted_catalog(
+        output_dir,
+        report,
+        catalog_id=catalog_id,
+        title=discovery.catalog_title,
+        description=discovery.catalog_description,
+        post_init=_post_init(layer_source.name, discovery, resolved_license),
+        state=state,
+    )
+    if added is None:
+        return
+    # A step after the add may raise. The files that the add finalized keep
+    # their version, so the commit runs in any case.
     try:
-        added = init_extracted_catalog(
-            output_dir,
-            report,
-            catalog_id=catalog_id,
-            title=discovery.catalog_title,
-            description=discovery.catalog_description,
-            post_init=_post_init(layer_source.name, discovery, resolved_license),
-            state=state,
-        )
-        if added is None:
-            return
-        # A step after the add may raise. The files that the add finalized keep
-        # their version, so the commit runs in any case.
         register_collection_styles(output_dir, report, include_legends=True)
         by_path = {layer_path(layer): layer for layer in discovery.layers}
 

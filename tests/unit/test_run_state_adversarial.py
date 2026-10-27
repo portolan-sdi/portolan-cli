@@ -38,12 +38,13 @@ def _stage(state: RunState, collection: str) -> Asset:
     return asset
 
 
-def test_partial_commit_updates_index(catalog: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A later collection failure must not hide an already committed collection."""
+def _commit_failing_at_b(
+    state: RunState, collections: tuple[str, ...], monkeypatch: pytest.MonkeyPatch
+) -> Callable[[Path, VersionsFile], None]:
+    """Stage ``collections`` and commit with a write that fails for ``b``. Return the real write."""
     from portolan_cli import versions
 
-    state = RunState.open(catalog)
-    for collection in ("a", "b"):
+    for collection in collections:
         _stage(state, collection)
     write = versions.write_versions
 
@@ -55,6 +56,14 @@ def test_partial_commit_updates_index(catalog: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(versions, "write_versions", fail_second)
     with pytest.raises(OSError, match="injected commit failure"):
         commit_run(state)
+    return write
+
+
+def test_partial_commit_updates_index(catalog: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A later collection failure must not hide an already committed collection."""
+
+    state = RunState.open(catalog)
+    _commit_failing_at_b(state, ("a", "b"), monkeypatch)
 
     assert read_versions(catalog / "a/versions.json").current_version == "1.0.0"
     index = json.loads((catalog / "versions.json").read_text())
@@ -68,18 +77,7 @@ def test_failed_commit_keeps_unpublished_stages(
     from portolan_cli import versions
 
     state = RunState.open(catalog)
-    for collection in ("a", "b", "c"):
-        _stage(state, collection)
-    write = versions.write_versions
-
-    def fail_second(path: Path, record: VersionsFile) -> None:
-        if path.parent.name == "b":
-            raise OSError("injected commit failure")
-        write(path, record)
-
-    monkeypatch.setattr(versions, "write_versions", fail_second)
-    with pytest.raises(OSError, match="injected commit failure"):
-        commit_run(state)
+    write = _commit_failing_at_b(state, ("a", "b", "c"), monkeypatch)
     assert set(state.staged()) == {"b", "c"}
 
     monkeypatch.setattr(versions, "write_versions", write)

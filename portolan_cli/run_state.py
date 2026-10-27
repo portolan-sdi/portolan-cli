@@ -96,10 +96,11 @@ def stat_matches(st: os.stat_result, mtime: float | None, size: int | None) -> b
     """Report whether a ``stat`` result matches a recorded mtime and size.
 
     This is the one change predicate for every fast path. The size must match
-    exactly, and the mtime must pass :func:`mtime_matches`. A whole-second
-    record must match exactly: a different timestamp inside the coarse window
-    can be a real edit, so it requires a checksum. A record without an mtime
-    or a size never matches.
+    exactly, and the mtime must pass :func:`mtime_matches`. The coarse window
+    of a whole-second record applies only when the file mtime is also a whole
+    second. A file mtime with a fraction shows a fine clock, so a different
+    timestamp is a real edit and requires a checksum. A record without an
+    mtime or a size never matches.
 
     Args:
         st: The ``stat`` result of the file now.
@@ -111,7 +112,7 @@ def stat_matches(st: os.stat_result, mtime: float | None, size: int | None) -> b
     """
     if mtime is None or size is None or st.st_size != size:
         return False
-    if float(mtime).is_integer() and st.st_mtime != mtime:
+    if float(mtime).is_integer() and not float(st.st_mtime).is_integer():
         return False
     return mtime_matches(st.st_mtime, mtime)
 

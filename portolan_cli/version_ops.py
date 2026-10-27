@@ -242,8 +242,8 @@ def owned_run(catalog_root: Path, state: RunState | None = None) -> Iterator[Run
     """Yield the run state of a public entry point, and commit it if it is new.
 
     A caller that passes its own ``state`` commits it itself, so this yields it
-    and commits nothing. With no ``state``, this opens one and commits even
-    when the block raises: staged versions describe STAC files already saved.
+    and commits nothing. With no ``state``, this opens one and commits it when
+    the block ends without an exception. An exception commits nothing.
 
     Args:
         catalog_root: Root directory of the catalog.
@@ -258,10 +258,8 @@ def owned_run(catalog_root: Path, state: RunState | None = None) -> Iterator[Run
     from portolan_cli.run_state import RunState
 
     own = RunState.open(catalog_root)
-    try:
-        yield own
-    finally:
-        commit_run(own)
+    yield own
+    commit_run(own)
 
 
 # =============================================================================

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -20,93 +20,8 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import IO
 
-    from portolan_cli.query import ItemInfo
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.mark.parametrize("entry_point", ["api", "cli"])
-@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
-@pytest.mark.parametrize("seam", ["_enrich_deferred_documents", "_enrich_saved_documents"])
-def test_add_failure_after_finalize_keeps_version(
-    conformant_catalog: Path,
-    valid_points_parquet: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    entry_point: str,
-    failure: type[BaseException],
-    seam: str,
-) -> None:
-    """A failure inside add_files must retain versions of collections already saved."""
-    import portolan_cli.add as add_module
-    import portolan_cli.finalization as finalization
-
-    root = conformant_catalog
-    collection = root / "roads"
-    collection.mkdir()
-    source = collection / "roads.parquet"
-    source.write_bytes(valid_points_parquet.read_bytes())
-
-    def fail_after_finalize(*_args: object, **_kwargs: object) -> None:
-        raise failure("interrupted after finalize")
-
-    owner = add_module if seam == "_enrich_deferred_documents" else finalization
-    monkeypatch.setattr(owner, seam, fail_after_finalize)
-    if entry_point == "api":
-        with pytest.raises(failure, match="interrupted after finalize"):
-            add_files(paths=[source], catalog_root=root)
-    else:
-        result = CliRunner().invoke(cli, ["add", "--portolan-dir", str(root), str(source)])
-        assert result.exit_code == 1
-
-    assert (collection / "collection.json").exists()
-    assert (collection / "versions.json").exists(), "saved collection has no version"
-    versions = read_versions(collection / "versions.json")
-    assert versions.current_version == "1.0.0"
-    assert set(versions.versions[-1].assets) == {"roads.parquet"}
-    index = json.loads((root / "versions.json").read_text())["collections"]
-    assert index["roads"]["current_version"] == "1.0.0"
-
-
-@pytest.mark.parametrize("entry_point", ["api", "cli"])
-def test_later_collection_failure_keeps_completed_version(
-    conformant_catalog: Path,
-    valid_points_parquet: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    entry_point: str,
-) -> None:
-    """A later finalization error must not discard an earlier collection's stage."""
-    import portolan_cli.finalization as finalization
-
-    root = conformant_catalog
-    sources = []
-    for collection_id in ("roads", "trails"):
-        collection = root / collection_id
-        collection.mkdir()
-        source = collection / f"{collection_id}.parquet"
-        source.write_bytes(valid_points_parquet.read_bytes())
-        sources.append(source)
-    finalize = finalization._finalize_collection
-
-    def fail_second(
-        catalog_root: Path, collection_id: str, *args: Any, **kwargs: Any
-    ) -> list[ItemInfo]:
-        if collection_id == "trails":
-            raise RuntimeError("second collection failed")
-        return finalize(catalog_root, collection_id, *args, **kwargs)
-
-    monkeypatch.setattr(finalization, "_finalize_collection", fail_second)
-    if entry_point == "api":
-        with pytest.raises(RuntimeError, match="second collection failed"):
-            add_files(paths=sources, catalog_root=root)
-    else:
-        result = CliRunner().invoke(
-            cli, ["add", "--portolan-dir", str(root), *(str(source) for source in sources)]
-        )
-        assert result.exit_code == 1
-    assert (root / "roads" / "collection.json").exists()
-    assert (root / "roads" / "versions.json").exists(), "completed stage was discarded"
-    assert read_versions(root / "roads" / "versions.json").current_version == "1.0.0"
-    assert not (root / "trails" / "versions.json").exists()
 
 
 def _extraction_report() -> ExtractionReport:
@@ -119,34 +34,6 @@ def _extraction_report() -> ExtractionReport:
         layers=[LayerResult(0, "roads", "success", 1, 1, 0.0, "roads/roads.parquet", [], None, 1)],
         summary=ExtractionSummary(1, 1, 0, 0, 0, 1, 1, 0.0),
     )
-
-
-def test_extract_failure_while_adding_keeps_version(
-    conformant_catalog: Path,
-    valid_points_parquet: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The extraction commit guard covers the add, which can save then raise."""
-    from portolan_cli.extract.common.source import Discovery, LayerRef, build_catalog
-
-    root = conformant_catalog
-    collection = root / "roads"
-    collection.mkdir()
-    (collection / "roads.parquet").write_bytes(valid_points_parquet.read_bytes())
-
-    def fail_after_finalize(*_args: object, **_kwargs: object) -> None:
-        raise KeyboardInterrupt("extraction add interrupted")
-
-    monkeypatch.setattr("portolan_cli.add._enrich_deferred_documents", fail_after_finalize)
-    source = MagicMock()
-    source.name = "fake"
-    discovery = Discovery(source_url="https://example.com/wfs", layers=[LayerRef(0, "roads")])
-    with pytest.raises(KeyboardInterrupt, match="extraction add interrupted"):
-        build_catalog(source, discovery, root, _extraction_report())
-
-    assert (collection / "collection.json").exists()
-    assert (collection / "versions.json").exists(), "extraction discarded the add's stage"
-    assert read_versions(collection / "versions.json").current_version == "1.0.0"
 
 
 def test_extract_post_init_and_tabular_add_share_footer(conformant_catalog: Path) -> None:
