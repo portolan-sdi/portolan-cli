@@ -87,6 +87,10 @@ versioning.
     options:
       heading_level: 4
 
+::: portolan_cli.api.compute_checksum
+    options:
+      heading_level: 4
+
 ### Catalogs
 
 ::: portolan_cli.api.find_catalog_root

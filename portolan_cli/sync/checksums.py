@@ -14,6 +14,10 @@ from portolan_cli.trace import count
 
 logger = logging.getLogger(__name__)
 
+#: Read size of :func:`compute_checksum`. Every file hash in Portolan goes
+#: through that function, so one chunk size holds for all of them (issue #995).
+CHUNK_SIZE = 1024 * 1024
+
 
 def multihash_sha256(digest_hex: str) -> str:
     """Encode a hex SHA-256 digest as a hex multihash for ``file:checksum``.
@@ -47,6 +51,9 @@ def multihash_sha256(digest_hex: str) -> str:
 def compute_checksum(path: Path) -> str:
     """Compute SHA-256 checksum of a file securely.
 
+    This is the one file hasher. It reads in 1 MiB chunks, so a large asset
+    never sits in memory whole.
+
     Security: Validates the resolved path is a regular file to prevent
     symlink attacks (MAJOR #5 - symlink security vulnerability).
 
@@ -71,7 +78,7 @@ def compute_checksum(path: Path) -> str:
     sha256 = hashlib.sha256()
     size = 0
     with Path(resolved).open("rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
+        for chunk in iter(lambda: f.read(CHUNK_SIZE), b""):
             sha256.update(chunk)
             size += len(chunk)
     count("checksum.files")

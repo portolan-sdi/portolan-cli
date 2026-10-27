@@ -34,16 +34,20 @@ Structure:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.json_io import write_json_atomic
+from portolan_cli.sync.checksums import compute_checksum
 from portolan_cli.trace import count
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from portolan_cli.run_state import RunState
 
 # Spec version constant (MINOR #12)
 SPEC_VERSION = "1.0.0"
@@ -530,22 +534,6 @@ def _compute_changes(versions_file: VersionsFile, new_assets: dict[str, Asset]) 
     return changes
 
 
-def _compute_sha256(path: Path) -> str:
-    """Stream a file in 64KB chunks and return its SHA-256 hex digest.
-
-    Chunked to avoid loading large PMTiles/thumbnail files fully into memory.
-    """
-    hasher = hashlib.sha256()
-    size = 0
-    with Path(path).open("rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
-            hasher.update(chunk)
-            size += len(chunk)
-    count("checksum.files")
-    count("checksum.bytes", size)
-    return hasher.hexdigest()
-
-
 def _asset_href(asset_path: Path, catalog_root: Path, collection_path: Path) -> str:
     """The catalog-root-relative href recorded for a generated asset.
 
@@ -593,6 +581,57 @@ def _is_tracked(
     return existing.href == _asset_href(asset_path, catalog_root, collection_path)
 
 
+def generated_asset_record(
+    asset_path: Path, catalog_root: Path, collection_path: Path, sha256: str
+) -> tuple[str, Asset]:
+    """The versions.json key and record of a generated file with a known digest.
+
+    The key is the path below the collection, and the href is relative to the
+    catalog root. The size and mtime come from the file now.
+    """
+    stat = asset_path.stat()
+    return versions_asset_key(asset_path, collection_path), Asset(
+        sha256=sha256,
+        size_bytes=stat.st_size,
+        href=_asset_href(asset_path, catalog_root, collection_path),
+        mtime=stat.st_mtime,
+    )
+
+
+def amend_version(
+    versions_file: VersionsFile,
+    assets: dict[str, Asset],
+    removed: set[str] | None = None,
+) -> VersionsFile:
+    """Fold asset changes into the latest version instead of adding one.
+
+    A caller amends only a version that the same command wrote, so the history
+    keeps one version per command. The input is not changed. When the changes
+    leave the latest snapshot as it is, the input object comes back, so a caller
+    tests ``result is versions_file`` to skip a write.
+
+    Args:
+        versions_file: A record with at least one version.
+        assets: Asset key to the record to add or replace.
+        removed: Asset keys to drop from the snapshot.
+
+    Returns:
+        The record with the latest version amended.
+    """
+    latest = versions_file.versions[-1]
+    merged = {**latest.assets, **assets}
+    for key in removed or ():
+        merged.pop(key, None)
+    if merged == latest.assets:
+        return versions_file
+    amended = replace(
+        latest,
+        assets=merged,
+        changes=list(dict.fromkeys([*latest.changes, *assets])),
+    )
+    return replace(versions_file, versions=[*versions_file.versions[:-1], amended])
+
+
 def track_generated_assets(
     collection_path: Path,
     asset_paths: list[Path],
@@ -601,6 +640,7 @@ def track_generated_assets(
     message: str,
     only_if_missing: bool = False,
     amend_latest: bool = False,
+    state: RunState | None = None,
 ) -> None:
     """Track generated side-step assets (PMTiles, thumbnail) in versions.json.
 
@@ -631,6 +671,7 @@ def track_generated_assets(
             its own snapshot. One ``add`` then stays one version. A repair pass
             like ``check --fix`` leaves it False, since amending a snapshot that
             may already be published would rewrite history.
+        state: The run state. Its checksum memo hashes each asset once per run.
 
     Raises:
         FileNotFoundError: If any asset path doesn't exist.
@@ -667,28 +708,18 @@ def track_generated_assets(
     if not paths_to_track:
         return
 
-    assets: dict[str, Asset] = {}
-    for asset_path in paths_to_track:
-        stat = asset_path.stat()
-        assets[versions_asset_key(asset_path, collection_path)] = Asset(
-            sha256=_compute_sha256(asset_path),
-            size_bytes=stat.st_size,
-            href=_asset_href(asset_path, catalog_root, collection_path),
-            mtime=stat.st_mtime,
-        )
+    checksum = state.checksum if state is not None else compute_checksum
+    assets = dict(
+        generated_asset_record(p, catalog_root, collection_path, checksum(p))
+        for p in paths_to_track
+    )
 
     if amend_latest and versions_file.versions:
         # Fold into the snapshot the caller just wrote, rather than bumping.
         # One `add` is one version. A thumbnail is derived from assets in that
         # same snapshot, so a second version would record no new user intent and
         # would double every collection's history (Issue #519).
-        latest = versions_file.versions[-1]
-        versions_file.versions[-1] = replace(
-            latest,
-            assets={**latest.assets, **assets},
-            changes=list(dict.fromkeys([*latest.changes, *assets])),
-        )
-        write_versions(versions_path, versions_file)
+        write_versions(versions_path, amend_version(versions_file, assets))
         return
 
     # Determine next version

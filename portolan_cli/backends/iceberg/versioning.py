@@ -6,13 +6,12 @@ Version/Asset/SchemaInfo dataclasses.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.api import Asset, SchemaInfo, Version, parse_version
+from portolan_cli.api import Asset, SchemaInfo, Version, compute_checksum, parse_version
 
 if TYPE_CHECKING:
     from pyiceberg.table.snapshots import Snapshot
@@ -156,7 +155,7 @@ def build_assets(
     for name, path_str in assets_input.items():
         asset_path = Path(path_str)
         if asset_path.exists():
-            sha256 = _compute_sha256(asset_path)
+            sha256 = compute_checksum(asset_path)
             size_bytes = asset_path.stat().st_size
         else:
             sha256 = ""
@@ -168,12 +167,3 @@ def build_assets(
         )
         changes.append(name)
     return asset_objects, changes
-
-
-def _compute_sha256(path: Path) -> str:
-    """Compute SHA-256 hex digest of a file."""
-    h = hashlib.sha256()
-    with Path(path).open("rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return h.hexdigest()

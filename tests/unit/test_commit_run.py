@@ -141,6 +141,54 @@ class TestCommitRunFileBackend:
         )
 
 
+class TestCommitRunAmend:
+    """A side step of the command that wrote the latest version folds into it."""
+
+    def _first(self, catalog: Path) -> None:
+        state = RunState.open(catalog)
+        state.stage("c", assets={"a.bin": _asset(catalog, "c/a.bin", b"a")}, message="add")
+        commit_run(state)
+
+    def test_amend_folds_into_latest(self, catalog: Path) -> None:
+        self._first(catalog)
+        state = RunState.open(catalog)
+        state.stage("c", assets={"m.bin": _asset(catalog, "c/m.bin", b"mm")}, amend=True)
+        commit_run(state)
+
+        vf = read_versions(catalog / "c" / "versions.json")
+        assert [v.version for v in vf.versions] == ["1.0.0"]
+        assert (sorted(vf.versions[0].assets), vf.versions[0].changes) == (
+            ["a.bin", "m.bin"],
+            ["a.bin", "m.bin"],
+        )
+        assert vf.versions[0].message == "add"
+        assert _index(catalog)["collections"]["c"]["asset_count"] == 2
+
+    def test_amend_with_no_version_makes_one(self, catalog: Path) -> None:
+        state = RunState.open(catalog)
+        state.stage("c", assets={"m.bin": _asset(catalog, "c/m.bin", b"mm")}, amend=True)
+        commit_run(state)
+        assert read_versions(catalog / "c" / "versions.json").current_version == "1.0.0"
+
+    def test_one_plain_stage_makes_a_new_version(self, catalog: Path) -> None:
+        self._first(catalog)
+        state = RunState.open(catalog)
+        state.stage("c", assets={"m.bin": _asset(catalog, "c/m.bin", b"mm")}, amend=True)
+        state.stage("c", assets={"n.bin": _asset(catalog, "c/n.bin", b"nnn")})
+        commit_run(state)
+        vf = read_versions(catalog / "c" / "versions.json")
+        assert [v.version for v in vf.versions] == ["1.0.0", "1.0.1"]
+
+    def test_amend_with_same_record_writes_nothing(self, catalog: Path) -> None:
+        self._first(catalog)
+        recorded = read_versions(catalog / "c" / "versions.json").versions[0].assets["a.bin"]
+        before = (catalog / "c" / "versions.json").read_bytes()
+        state = RunState.open(catalog)
+        state.stage("c", assets={"a.bin": recorded}, amend=True)
+        assert commit_run(state) == {}
+        assert (catalog / "c" / "versions.json").read_bytes() == before
+
+
 class TestCommitRunPluginBackend:
     def test_one_publish_per_collection(
         self, catalog: Path, monkeypatch: pytest.MonkeyPatch

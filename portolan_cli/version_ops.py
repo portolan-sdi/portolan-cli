@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -25,18 +25,34 @@ logger = logging.getLogger(__name__)
 def _resolve_backend_name(
     cli_backend: str | None,
     catalog_root: Path | None,
+    state: RunState | None = None,
 ) -> str:
     """Resolve backend name: CLI flag > config > default ('file')."""
     if cli_backend is not None:
         return cli_backend
 
-    from portolan_cli.config import get_setting
+    if state is not None:
+        resolved: str | None = state.setting("backend")
+    else:
+        from portolan_cli.config import get_setting
 
-    resolved: str | None = get_setting("backend", catalog_path=catalog_root)
+        resolved = get_setting("backend", catalog_path=catalog_root)
     if resolved is not None:
         return resolved
 
     return "file"
+
+
+def _collection_setting(
+    key: str, catalog_path: Path, collection: str | None, state: RunState | None
+) -> Any | None:
+    """Read a setting for a collection through the run state."""
+    if state is None:
+        from portolan_cli.run_state import RunState
+
+        state = RunState.open(catalog_path)
+    collection_dir = state.collection_dir(collection) if collection else None
+    return state.setting(key, collection_dir=collection_dir)
 
 
 def get_current_version(
@@ -44,11 +60,12 @@ def get_current_version(
     *,
     backend_name: str | None = None,
     catalog_root: Path | None = None,
+    state: RunState | None = None,
 ) -> Version:
     """Get the current version of a collection."""
     from portolan_cli.backends import get_backend
 
-    name = _resolve_backend_name(backend_name, catalog_root)
+    name = _resolve_backend_name(backend_name, catalog_root, state)
     backend = get_backend(name, catalog_root=catalog_root)
     return backend.get_current_version(collection)
 
@@ -58,11 +75,12 @@ def list_versions(
     *,
     backend_name: str | None = None,
     catalog_root: Path | None = None,
+    state: RunState | None = None,
 ) -> list[Version]:
     """List all versions of a collection."""
     from portolan_cli.backends import get_backend
 
-    name = _resolve_backend_name(backend_name, catalog_root)
+    name = _resolve_backend_name(backend_name, catalog_root, state)
     backend = get_backend(name, catalog_root=catalog_root)
     return backend.list_versions(collection)
 
@@ -78,6 +96,7 @@ def publish_version(
     version: str | None = None,
     backend_name: str | None = None,
     catalog_root: Path | None = None,
+    state: RunState | None = None,
 ) -> Version:
     """Publish a new version of a collection.
 
@@ -91,13 +110,14 @@ def publish_version(
         version: Explicit version string. If None, auto-compute next version.
         backend_name: Backend to use. If None, resolved from config.
         catalog_root: Path to catalog root for config lookup.
+        state: The run state, which reads the backend setting once per run.
 
     Returns:
         The newly created Version object.
     """
     from portolan_cli.backends import get_backend
 
-    name = _resolve_backend_name(backend_name, catalog_root)
+    name = _resolve_backend_name(backend_name, catalog_root, state)
     backend = get_backend(name, catalog_root=catalog_root)
     schema = schema or {"columns": [], "types": {}, "hash": "unknown"}
     return backend.publish(
@@ -134,6 +154,7 @@ def _commit_to_plugin(
             removed=change.removed or None,
             backend_name=backend_name,
             catalog_root=state.catalog_root,
+            state=state,
         )
     return published
 
@@ -164,7 +185,7 @@ def commit_run(state: RunState) -> dict[str, Version]:
     staged = state.take_staged()
     if not staged:
         return {}
-    backend_name = _resolve_backend_name(None, state.catalog_root)
+    backend_name = _resolve_backend_name(None, state.catalog_root, state)
     if backend_name != "file":
         return _commit_to_plugin(state, staged, backend_name)
 
@@ -232,6 +253,8 @@ class PushBlockedResult:
 def check_backend_supports_push(
     catalog_path: Path,
     collection: str | None = None,
+    *,
+    state: RunState | None = None,
 ) -> PushBlockedResult | None:
     """Check if the active backend supports file-based push.
 
@@ -239,9 +262,8 @@ def check_backend_supports_push(
     blocking message if push is not supported.
     """
     from portolan_cli.backends import get_backend
-    from portolan_cli.config import get_setting
 
-    active_backend = get_setting("backend", catalog_path=catalog_path, collection=collection)
+    active_backend = _collection_setting("backend", catalog_path, collection, state)
     if active_backend is None or active_backend == "file":
         return None
 
@@ -249,7 +271,7 @@ def check_backend_supports_push(
     if backend.supports_push():
         return None
 
-    remote = get_setting("remote", catalog_path=catalog_path, collection=collection)
+    remote = _collection_setting("remote", catalog_path, collection, state)
     return PushBlockedResult(backend.push_blocked_message(remote))
 
 
@@ -280,6 +302,8 @@ def try_backend_pull(
     remote_url: str,
     collection: str | None,
     dry_run: bool,
+    *,
+    state: RunState | None = None,
 ) -> BackendPullResult:
     """Attempt a pull via the active non-file backend.
 
@@ -290,10 +314,9 @@ def try_backend_pull(
     turn, and the result sums them (issue #977).
     """
     from portolan_cli.backends import get_backend
-    from portolan_cli.config import get_setting
     from portolan_cli.stac_links import catalog_collections
 
-    active_backend = get_setting("backend", catalog_path=catalog_path, collection=collection)
+    active_backend = _collection_setting("backend", catalog_path, collection, state)
     if active_backend is None or active_backend == "file":
         return BackendPullResult(handled=False)
 

@@ -40,6 +40,7 @@ from portolan_cli.versions import (
     SchemaInfo,
     VersionsFile,
     add_version,
+    amend_version,
     next_version,
     read_versions,
 )
@@ -126,6 +127,8 @@ class StagedVersion:
         messages: The distinct messages of the stage calls, in order.
         breaking: True when any stage call marked the change as breaking.
         schema: The schema of the last stage call that gave one.
+        amend: True when every stage call asked to fold the changes into the
+            latest version on disk. One call without it makes a new version.
     """
 
     assets: dict[str, Asset] = field(default_factory=dict)
@@ -133,6 +136,7 @@ class StagedVersion:
     messages: list[str] = field(default_factory=list)
     breaking: bool = False
     schema: SchemaInfo | None = None
+    amend: bool = True
 
     @property
     def message(self) -> str | None:
@@ -142,9 +146,12 @@ class StagedVersion:
     def apply(self, versions_file: VersionsFile) -> VersionsFile:
         """Return ``versions_file`` with this stage added as one new version.
 
-        ``add_version`` returns the input object when nothing changed, so a
-        caller tests ``result is versions_file`` to skip a write.
+        ``add_version`` and ``amend_version`` return the input object when
+        nothing changed, so a caller tests ``result is versions_file`` to skip
+        a write.
         """
+        if self.amend and versions_file.versions:
+            return amend_version(versions_file, self.assets, self.removed)
         return add_version(
             versions_file,
             version=next_version(versions_file),
@@ -355,6 +362,7 @@ class RunState:
         message: str | None = None,
         breaking: bool = False,
         schema: SchemaInfo | None = None,
+        amend: bool = False,
     ) -> None:
         """Stage asset changes for a collection. The commit writes one version.
 
@@ -370,6 +378,9 @@ class RunState:
             message: A message for the version. Distinct messages join.
             breaking: Mark the version as breaking.
             schema: A schema fingerprint for the version.
+            amend: Fold the changes into the latest version on disk. Pass it
+                only when this command wrote that version, as a side step of
+                ``add`` does. A collection with no version gets a new one.
         """
         with self._lock:
             staged = self._staged.setdefault(collection_id, StagedVersion())
@@ -384,6 +395,7 @@ class RunState:
             staged.breaking = staged.breaking or breaking
             if schema is not None:
                 staged.schema = schema
+            staged.amend = staged.amend and amend
             self._generation += 1
 
     def staged(self) -> dict[str, StagedVersion]:

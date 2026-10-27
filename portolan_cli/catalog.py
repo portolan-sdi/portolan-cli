@@ -35,6 +35,7 @@ from portolan_cli.utils import href_root, relative_href
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from portolan_cli.run_state import RunState
     from portolan_cli.versions import Version
 
 if sys.version_info >= (3, 11):
@@ -1110,7 +1111,9 @@ def _apply_human_fields(
     return changed
 
 
-def apply_catalog_human_titles(catalog_root: Path, *, dry_run: bool = False) -> list[Path]:
+def apply_catalog_human_titles(
+    catalog_root: Path, *, dry_run: bool = False, state: RunState | None = None
+) -> list[Path]:
     """Apply each metadata.yaml title/description to its catalog.json (issue #815).
 
     A collection takes its human-authored title and description from
@@ -1132,17 +1135,19 @@ def apply_catalog_human_titles(catalog_root: Path, *, dry_run: bool = False) -> 
     Args:
         catalog_root: Root directory of the catalog.
         dry_run: If True, report what would change without writing.
+        state: The run state, which parses each ``metadata.yaml`` once per run.
 
     Returns:
         The catalog.json paths that were modified, in sweep order.
     """
-    from portolan_cli.config import load_merged_metadata
+    from portolan_cli.run_state import RunState
 
+    state = state or RunState.open(catalog_root)
     changed: list[Path] = []
     for catalog_path in visible_stac_files(catalog_root):
         if catalog_path.name != "catalog.json":
             continue
-        metadata = load_merged_metadata(catalog_path.parent, catalog_root)
+        metadata = state.metadata(catalog_path.parent)
         if _apply_human_fields(catalog_path, metadata, dry_run=dry_run):
             changed.append(catalog_path)
     return changed
