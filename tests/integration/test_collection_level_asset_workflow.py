@@ -59,6 +59,18 @@ def _assert_collection_assets(collection_dir: Path, expected_assets: dict[str, s
 
 
 @pytest.mark.integration
+def _raster_item_with_csv(catalog: Path, fixtures_dir: Path) -> Path:
+    """Write the item imagery/scene with one raster and one CSV. Return the CSV."""
+    item_dir = catalog / "imagery" / "scene"
+    item_dir.mkdir(parents=True)
+    (item_dir / "scene.tif").write_bytes(
+        (fixtures_dir / "raster" / "valid" / "rgb.tif").read_bytes()
+    )
+    csv = item_dir / "bands.csv"
+    csv.write_text("band,name\n1,red\n")
+    return csv
+
+
 class TestCollectionLevelAssetWorkflow:
     """Test complete workflow for collection-level vector assets."""
 
@@ -439,13 +451,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
         from portolan_cli.versions import read_versions
 
         catalog = fresh_catalog_no_versions
-        item_dir = catalog / "imagery" / "scene"
-        item_dir.mkdir(parents=True)
-        (item_dir / "scene.tif").write_bytes(
-            (fixtures_dir / "raster" / "valid" / "rgb.tif").read_bytes()
-        )
-        csv = item_dir / "bands.csv"
-        csv.write_text("band,name\n1,red\n")
+        csv = _raster_item_with_csv(catalog, fixtures_dir)
         _, _, failures = add_files(paths=[catalog / "imagery"], catalog_root=catalog)
         assert failures == []
 
@@ -828,13 +834,7 @@ class TestTheBumpOfAnAdd:
         self, fresh_catalog_no_versions: Path, fixtures_dir: Path
     ) -> None:
         catalog = fresh_catalog_no_versions
-        item_dir = catalog / "imagery" / "scene"
-        item_dir.mkdir(parents=True)
-        (item_dir / "scene.tif").write_bytes(
-            (fixtures_dir / "raster" / "valid" / "rgb.tif").read_bytes()
-        )
-        csv = item_dir / "bands.csv"
-        csv.write_text("band,name\n1,red\n")
+        csv = _raster_item_with_csv(catalog, fixtures_dir)
         self._readd(catalog, catalog / "imagery")
         csv.write_text("band,name\n1,red\n2,green\n")
 

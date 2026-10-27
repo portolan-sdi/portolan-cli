@@ -338,10 +338,10 @@ def _apply_publish_per_companion(root: Path, faulty: bool) -> None:
     if faulty:
         _replace_once(
             root / "portolan_cli/finalization.py",
-            "    state.stage(collection_id, assets=records)\n",
+            "    state.stage(collection_id, assets=records, minor=True)\n",
             "    from portolan_cli.version_ops import commit_run\n\n"
             "    for key, record in records.items():\n"
-            "        state.stage(collection_id, assets={key: record}, message=key)\n"
+            "        state.stage(collection_id, assets={key: record}, message=key, minor=True)\n"
             "        commit_run(state)\n",
         )
 
@@ -383,9 +383,9 @@ def _apply_cog_write_reopen(root: Path, faulty: bool) -> None:
     if faulty:
         _replace_once(
             root / "portolan_cli/convert.py",
-            '        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:\n',
-            "        rasterio.open(source).close()\n"
-            '        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:\n',
+            '    with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:\n',
+            "    rasterio.open(source).close()\n"
+            '    with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:\n',
         )
 
 
