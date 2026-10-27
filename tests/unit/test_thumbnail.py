@@ -5,16 +5,15 @@ Tests vector thumbnail generation from PMTiles and GeoParquet sources.
 
 from __future__ import annotations
 
-import io
 import json
-import threading
-from collections import OrderedDict
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from tests.conftest import STUB_TILE_RGBA
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -1246,9 +1245,7 @@ def test_thumbnails_quality_reaches_the_geoparquet_render(tmp_path: Path) -> Non
 # Cheap basemap, one draw, bulk geometry (Issues #993 and #1007)
 # =============================================================================
 
-#: The stub tile colour. No thumbnail preset uses it, so a pixel of this colour
-#: in the output came from the basemap.
-_STUB_TILE_RGBA = (201, 74, 203, 255)
+_STUB_TILE_RGBA = STUB_TILE_RGBA
 
 _REALDATA = Path(__file__).parents[1] / "fixtures" / "realdata"
 
@@ -1273,37 +1270,9 @@ def _counter(name: str) -> int:
 
 
 @pytest.fixture
-def stub_tiles(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Serve every basemap tile as one fixed PNG and record each tile URL.
-
-    The real contextily runs: it picks the tiles, fetches them through its
-    ``_fetch_tile``, and merges them. Only the HTTP request is replaced. The
-    autouse ``no_basemap_tiles`` fixture turns the basemap off. This fixture
-    turns it on again with the stub.
-    """
-    ctx = pytest.importorskip("contextily")
-    import contextily.tile
-    import numpy as np
-    from PIL import Image
-
-    from portolan_cli.viz import thumbnail
-
-    buffer = io.BytesIO()
-    Image.new("RGBA", (256, 256), _STUB_TILE_RGBA).save(buffer, "PNG")
-    png = buffer.getvalue()
-    urls: list[str] = []
-    lock = threading.Lock()
-
-    def fetch(tile_url: str, wait: int, max_retries: int, headers: dict[str, str]) -> Any:
-        with lock:
-            urls.append(tile_url)
-        return np.asarray(Image.open(io.BytesIO(png)).convert("RGBA"))
-
-    monkeypatch.setattr(contextily.tile, "_fetch_tile", fetch)
-    monkeypatch.setattr(thumbnail, "_ensure_contextily", lambda: ctx)
-    monkeypatch.setattr(thumbnail, "_tile_memo", OrderedDict())
-    monkeypatch.setattr(thumbnail, "_warned_keyless", set())
-    return urls
+def stub_tiles(stub_basemap_tiles: list[str]) -> list[str]:
+    """The shared stub tile source (tests/conftest.py), under a short name."""
+    return stub_basemap_tiles
 
 
 @pytest.fixture

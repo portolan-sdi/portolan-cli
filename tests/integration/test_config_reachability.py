@@ -1034,6 +1034,87 @@ def test_thumbnails_quality_reaches_the_jpeg(form: str, catalog: Path, run_cli: 
     assert _jpeg_quality(catalog / "places" / "places.thumb.jpg") == [20]
 
 
+def _tile_zooms(urls: list[str]) -> set[int]:
+    """Zoom levels in tile URLs of the form ``.../{z}/{x}/{y}`` or ``.../{z}/{y}/{x}``."""
+    return {int(url.split("?")[0].split("/")[-3]) for url in urls}
+
+
+@_tests("thumbnails.basemap.provider")
+@_forms()
+def test_thumbnails_basemap_provider_picks_the_tile_server(
+    form: str, catalog: Path, run_cli: RunCli, stub_basemap_tiles: list[str]
+) -> None:
+    source = _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
+    configure(
+        run_cli,
+        catalog,
+        form,
+        {"thumbnails.basemap.provider": ("OpenStreetMap.Mapnik", "OpenStreetMap.Mapnik")},
+    )
+
+    _add(run_cli, catalog, source)
+
+    assert stub_basemap_tiles
+    assert all(url.startswith("https://tile.openstreetmap.org/") for url in stub_basemap_tiles)
+
+
+@_tests("thumbnails.basemap.api_key")
+@_forms()
+def test_thumbnails_basemap_api_key_reaches_the_tile_url(
+    form: str, catalog: Path, run_cli: RunCli, stub_basemap_tiles: list[str]
+) -> None:
+    source = _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
+    configure(
+        run_cli,
+        catalog,
+        form,
+        {
+            "thumbnails.basemap.provider": ("CartoDB.Positron", "CartoDB.Positron"),
+            "thumbnails.basemap.api_key": ("abc123", "abc123"),
+        },
+    )
+
+    _add(run_cli, catalog, source)
+
+    assert stub_basemap_tiles
+    assert all(url.endswith(".png?key=abc123") for url in stub_basemap_tiles)
+
+
+@_tests("thumbnails.basemap.zoom_adjust")
+@_forms()
+def test_thumbnails_basemap_zoom_adjust_moves_the_zoom(
+    form: str, catalog: Path, run_cli: RunCli, stub_basemap_tiles: list[str]
+) -> None:
+    source = _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
+    configure(run_cli, catalog, form, {"thumbnails.basemap.zoom_adjust": ("1", 1)})
+
+    _add(run_cli, catalog, source)
+
+    # Without the setting, the 512 px image of these points takes zoom 12.
+    assert _tile_zooms(stub_basemap_tiles) == {13}
+
+
+@_tests("thumbnails.basemap.opacity")
+@_forms()
+def test_thumbnails_basemap_opacity_fades_the_tiles(
+    form: str, catalog: Path, run_cli: RunCli, stub_basemap_tiles: list[str]
+) -> None:
+    from PIL import Image
+
+    from tests.conftest import STUB_TILE_RGBA
+
+    source = _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
+    configure(run_cli, catalog, form, {"thumbnails.basemap.opacity": ("0.5", 0.5)})
+
+    _add(run_cli, catalog, source)
+
+    with Image.open(catalog / "places" / "places.thumb.jpg") as image:
+        corner = image.convert("RGB").getpixel((image.size[0] - 3, 2))
+    # Half the stub colour over the white figure.
+    faded = tuple((channel + 255) / 2 for channel in STUB_TILE_RGBA[:3])
+    assert corner == pytest.approx(faded, abs=8)
+
+
 def test_the_default_vector_thumbnail_is_over_128_at_quality_75(
     catalog: Path, run_cli: RunCli
 ) -> None:

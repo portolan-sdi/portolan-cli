@@ -976,6 +976,50 @@ def no_basemap_tiles(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(thumbnail, "_ensure_contextily", lambda: None)
 
 
+#: The colour of every stub basemap tile. No thumbnail preset uses it, so a
+#: pixel of this colour in a thumbnail came from the basemap.
+STUB_TILE_RGBA = (201, 74, 203, 255)
+
+
+@pytest.fixture
+def stub_basemap_tiles(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Serve every basemap tile as one fixed PNG and record each tile URL.
+
+    The real contextily runs: it picks the tiles, fetches them through its
+    ``_fetch_tile``, and merges them. Only the HTTP request is replaced, so
+    the basemap code runs with no network. This fixture turns the basemap on
+    again after ``no_basemap_tiles``, and it empties the run memos.
+    """
+    import io
+    import threading
+    from collections import OrderedDict
+    from typing import Any
+
+    ctx = pytest.importorskip("contextily")
+    import contextily.tile
+    import numpy as np
+    from PIL import Image
+
+    from portolan_cli.viz import thumbnail
+
+    buffer = io.BytesIO()
+    Image.new("RGBA", (256, 256), STUB_TILE_RGBA).save(buffer, "PNG")
+    png = buffer.getvalue()
+    urls: list[str] = []
+    lock = threading.Lock()
+
+    def fetch(tile_url: str, wait: int, max_retries: int, headers: dict[str, str]) -> Any:
+        with lock:
+            urls.append(tile_url)
+        return np.asarray(Image.open(io.BytesIO(png)).convert("RGBA"))
+
+    monkeypatch.setattr(contextily.tile, "_fetch_tile", fetch)
+    monkeypatch.setattr(thumbnail, "_ensure_contextily", lambda: ctx)
+    monkeypatch.setattr(thumbnail, "_tile_memo", OrderedDict())
+    monkeypatch.setattr(thumbnail, "_warned_keyless", set())
+    return urls
+
+
 @pytest.fixture
 def no_extract_side_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub the requests the extract orchestrators make next to the feature requests.
