@@ -5,10 +5,13 @@ The state reads each ``versions.json`` once, hashes each file once, and parses
 each YAML file once. Every in-run reader asks the state, so a per-file loop
 costs a ``stat`` and a dict lookup, not a read (issue #995).
 
-Every memo entry is keyed on the file's inode, size, and ``st_mtime_ns``. A file
-that changes during the run gets a new key, and the next call reads it again.
-An atomic write replaces the inode, so a rewrite within the clock tick of the
-file system still misses the memo.
+Every memo entry is keyed on the file's inode, size, ``st_mtime_ns``, and
+``st_ctime_ns``. A file that changes during the run gets a new key, and the
+next call reads it again. A copy that restores the old mtime still moves the
+status-change time. One limit stays: on a file system with a coarse clock, a
+same-size rewrite in the same clock tick as the memo read can keep every field
+of the key. ext4 can also give the inode of a replaced file to the next atomic
+write. A writer in the run therefore calls :meth:`RunState.invalidate`.
 
 The state also holds the versions that a command stages. ``versions()`` returns
 the disk record with the staged assets applied, so a reader in the same run
@@ -31,7 +34,7 @@ from __future__ import annotations
 
 import copy
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import yaml
@@ -62,7 +65,7 @@ T = TypeVar("T")
 #: system kept sub-second time, so only float rounding can move it.
 FINE_MTIME_TOLERANCE_SECONDS = 1e-6
 
-_StatKey = tuple[int, int, int]
+_StatKey = tuple[int, int, int, int]
 
 
 def mtime_matches(current: float, recorded: float) -> bool:
@@ -107,7 +110,14 @@ def stat_matches(st: os.stat_result, mtime: float | None, size: int | None) -> b
 
 
 def _stat_key(st: os.stat_result) -> _StatKey:
-    return (st.st_ino, st.st_size, st.st_mtime_ns)
+    """The memo key of a file: inode, size, mtime, and status-change time.
+
+    The size and the mtime are the key on every platform. The status-change
+    time is a POSIX safeguard: a write or an ``os.utime`` call moves it. On
+    Windows ``st_ctime_ns`` is the creation time, which an in-place rewrite
+    does not change.
+    """
+    return (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
 def _empty_versions() -> VersionsFile:
@@ -262,15 +272,28 @@ class RunState:
         """
         disk_key, disk = self._disk_versions(collection_dir / "versions.json")
         coll_id = self._collection_id(collection_dir) if include_staged and self._staged else None
-        staged = self._staged.get(coll_id) if coll_id is not None else None
+        with self._lock:
+            # Read the stage and its generation together, and project a copy, so
+            # a stage call in another thread cannot change the projection.
+            generation = self._generation
+            staged = self._staged.get(coll_id) if coll_id is not None else None
+            hit = self._projected.get(coll_id) if coll_id is not None else None
+            if staged is not None:
+                staged = replace(
+                    staged,
+                    assets=dict(staged.assets),
+                    removed=set(staged.removed),
+                    messages=list(staged.messages),
+                )
         if staged is None or coll_id is None:
             return _copy(disk)
-        hit = self._projected.get(coll_id)
-        if hit is not None and hit[0] == disk_key and hit[1] == self._generation:
+        if hit is not None and hit[0] == disk_key and hit[1] == generation:
             return _copy(hit[2])
         projected = staged.apply(disk)
         with self._lock:
-            self._projected[coll_id] = (disk_key, self._generation, projected)
+            # A stage call since the read makes this projection old. Keep it out.
+            if generation == self._generation:
+                self._projected[coll_id] = (disk_key, generation, projected)
         return _copy(projected)
 
     def tracked_assets(self, collection_dir: Path) -> dict[str, Asset]:
@@ -512,6 +535,15 @@ class RunState:
             return (_config.catalog_file_config(self.catalog_root, self._yaml).data,)
 
         return _config.resolve_setting(key, cli_value, layers)
+
+    def backend(self, collection_dir: Path) -> str:
+        """The versioning backend of a collection, ``"file"`` when none is set.
+
+        It reads the config hierarchy of the collection, as the push check
+        does, so a collection can set its own backend.
+        """
+        name: str | None = self.setting("backend", collection_dir=collection_dir)
+        return name or "file"
 
     # ── staging ─────────────────────────────────────────────────────────────
 

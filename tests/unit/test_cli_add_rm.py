@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -1345,6 +1345,219 @@ class TestCatalogIndexAfterAdd:
                 len(current["assets"]),
                 sum(asset["size_bytes"] for asset in current["assets"].values()),
             ), collection_id
+
+
+class TestSideStepExitAfterAdd:
+    """A side step that fails after ``add_files`` still commits the added files.
+
+    ``add_files`` writes collection.json for each collection. The mirror, the
+    PMTiles, and the thumbnail steps run after it. A failure in one of them
+    keeps its exit code, and versions.json and the catalog index still record
+    the files that collection.json lists.
+    """
+
+    @staticmethod
+    def _assert_catalog_agrees(root: Path, collection_ids: list[str]) -> None:
+        from portolan_cli.sync.checksums import compute_checksum
+
+        index = json.loads((root / "versions.json").read_text(encoding="utf-8"))["collections"]
+        for collection_id in collection_ids:
+            collection_dir = root / collection_id
+            versions = json.loads((collection_dir / "versions.json").read_text(encoding="utf-8"))
+            assert versions["current_version"] == "1.0.0", collection_id
+            records = versions["versions"][-1]["assets"]
+            stac = json.loads((collection_dir / "collection.json").read_text(encoding="utf-8"))
+            files = [collection_dir / a["href"] for a in stac.get("assets", {}).values()]
+            for link in stac["links"]:
+                if link["rel"] == "item":
+                    item_path = collection_dir / link["href"]
+                    item = json.loads(item_path.read_text(encoding="utf-8"))
+                    files += [item_path.parent / a["href"] for a in item["assets"].values()]
+            assert files, collection_id
+            for path in files:
+                key = path.resolve().relative_to(collection_dir.resolve()).as_posix()
+                assert records[key]["sha256"] == compute_checksum(path), key
+            entry = index[collection_id]
+            assert (entry["current_version"], entry["asset_count"], entry["total_size_bytes"]) == (
+                "1.0.0",
+                len(records),
+                sum(record["size_bytes"] for record in records.values()),
+            ), collection_id
+
+    @pytest.mark.integration
+    def test_pmtiles_without_tippecanoe(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_points_parquet: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``--pmtiles`` without tippecanoe exits 1 and keeps the version of the add."""
+        import portolan_cli.viz.pmtiles as pmtiles
+
+        def exit_like_missing_tippecanoe(*_args: object, **_kwargs: object) -> None:
+            raise SystemExit(1)
+
+        monkeypatch.setattr(pmtiles, "generate_or_suggest_pmtiles", exit_like_missing_tippecanoe)
+        root = conformant_catalog
+        (root / "roads").mkdir()
+        (root / "roads" / "roads.parquet").write_bytes(valid_points_parquet.read_bytes())
+
+        run_cli("add", "--pmtiles", "--portolan-dir", str(root), str(root), expect=1)
+
+        self._assert_catalog_agrees(root, ["roads"])
+
+    @pytest.mark.integration
+    def test_an_explicit_mirror_failure(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_rgb_cog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A ``--stac-geoparquet`` failure still raises and keeps the version of the add."""
+        import portolan_cli.stac_parquet as stac_parquet
+
+        def broken_mirror(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("mirror broke")
+
+        monkeypatch.setattr(stac_parquet, "generate_items_parquet", broken_mirror)
+        root = conformant_catalog
+        (root / "imagery" / "scene").mkdir(parents=True)
+        (root / "imagery" / "scene" / "scene.tif").write_bytes(valid_rgb_cog.read_bytes())
+
+        with pytest.raises(RuntimeError, match="mirror broke"):
+            run_cli("add", "--stac-geoparquet", "--portolan-dir", str(root), str(root))
+
+        assert not (root / "imagery" / "items.parquet").exists()
+        self._assert_catalog_agrees(root, ["imagery"])
+
+    @pytest.mark.integration
+    def test_a_thumbnail_exception(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_points_parquet: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An exception in the thumbnail step still raises and keeps the version of the add."""
+        import portolan_cli.collection_thumbnail as collection_thumbnail
+
+        def broken_thumbnails(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("thumbnail broke")
+
+        monkeypatch.setattr(collection_thumbnail, "ensure_collection_thumbnails", broken_thumbnails)
+        root = conformant_catalog
+        (root / "roads").mkdir()
+        (root / "roads" / "roads.parquet").write_bytes(valid_points_parquet.read_bytes())
+
+        with pytest.raises(RuntimeError, match="thumbnail broke"):
+            run_cli("add", "--portolan-dir", str(root), str(root))
+
+        self._assert_catalog_agrees(root, ["roads"])
+
+
+class _RecordingBackend:
+    """A plugin backend that records each publish and refuses push."""
+
+    def __init__(self) -> None:
+        self.published: list[tuple[str, list[str]]] = []
+
+    def publish(
+        self, collection: str, assets: dict[str, str], *_args: object, **_kw: object
+    ) -> Any:
+        from datetime import datetime, timezone
+
+        from portolan_cli.versions import Version
+
+        self.published.append((collection, sorted(assets)))
+        return Version(
+            version="1.0.0",
+            created=datetime.now(timezone.utc),
+            breaking=False,
+            assets={},
+            changes=[],
+        )
+
+    def on_post_add(self, _context: object) -> None:
+        return None
+
+    def supports_push(self) -> bool:
+        return False
+
+    def push_blocked_message(self, _remote: str | None) -> str:
+        return "push is blocked"
+
+
+class TestBackendOfEachCollection:
+    """``add`` and the push check read the backend of each collection the same way."""
+
+    @staticmethod
+    def _catalog(root: Path, parquet: Path, monkeypatch: pytest.MonkeyPatch) -> _RecordingBackend:
+        import portolan_cli.backends as backends
+        from portolan_cli.backends.json_file import JsonFileBackend
+
+        fake = _RecordingBackend()
+
+        def get_backend(name: str, **kwargs: Any) -> Any:
+            return fake if name == "iceberg" else JsonFileBackend(**kwargs)
+
+        monkeypatch.setattr(backends, "get_backend", get_backend)
+        for collection_id in ("roads", "parks"):
+            (root / collection_id).mkdir()
+            data = root / collection_id / f"{collection_id}.parquet"
+            data.write_bytes(parquet.read_bytes())
+            (root / collection_id / "notes.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+        return fake
+
+    @pytest.mark.integration
+    def test_a_collection_backend_routes_only_that_collection(
+        self,
+        conformant_catalog: Path,
+        valid_points_parquet: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from portolan_cli.add import add_files
+        from portolan_cli.version_ops import check_backend_supports_push
+
+        root = conformant_catalog
+        fake = self._catalog(root, valid_points_parquet, monkeypatch)
+        (root / "roads" / ".portolan").mkdir()
+        (root / "roads" / ".portolan" / "config.yaml").write_text("backend: iceberg\n")
+
+        add_files(paths=[root], catalog_root=root)
+
+        assert [collection for collection, _assets in fake.published] == ["roads"]
+        assert "roads.parquet" in fake.published[0][1]
+        assert not (root / "roads" / "versions.json").exists()
+        assert (root / "parks" / "versions.json").exists()
+        blocked = check_backend_supports_push(root, "roads")
+        assert blocked is not None
+        assert blocked.message == "push is blocked"
+        assert check_backend_supports_push(root, "parks") is None
+
+    @pytest.mark.integration
+    def test_a_catalog_backend_routes_every_collection(
+        self,
+        conformant_catalog: Path,
+        valid_points_parquet: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from portolan_cli.add import add_files
+
+        root = conformant_catalog
+        fake = self._catalog(root, valid_points_parquet, monkeypatch)
+        config = root / ".portolan" / "config.yaml"
+        config.write_text(config.read_text(encoding="utf-8") + "backend: iceberg\n")
+
+        add_files(paths=[root], catalog_root=root)
+
+        assert sorted({collection for collection, _assets in fake.published}) == [
+            "parks",
+            "roads",
+        ]
+        assert not (root / "roads" / "versions.json").exists()
+        assert not (root / "parks" / "versions.json").exists()
 
 
 class TestAddUnknownHandlerPin:

@@ -1093,7 +1093,13 @@ def _finalize_with_backend(
         for file_path, _checksum, _size in p.asset_files.values()
     }
     assets.update({versions_asset_key(path, collection_dir): str(path) for path in companions})
-    publish_version(collection_id, assets=assets, catalog_root=catalog_root, state=state)
+    publish_version(
+        collection_id,
+        assets=assets,
+        backend_name=active_backend,
+        catalog_root=catalog_root,
+        state=state,
+    )
 
     # NOTE: Plugin backends (e.g. Iceberg) may override table:* STAC extension
     # fields in collection.json via on_post_add, since the backend's table state
@@ -1151,8 +1157,8 @@ def _publish_collection_version(
     writes it with the catalog-level index at the end of the run. The
     companion files join that one version on either backend.
     """
-    active_backend = state.setting("backend")
-    if active_backend is not None and active_backend != "file":
+    active_backend = state.backend(collection_dir)
+    if active_backend != "file":
         _finalize_with_backend(
             catalog_root=catalog_root,
             collection_id=collection_id,

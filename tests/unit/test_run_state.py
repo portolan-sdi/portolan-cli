@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from portolan_cli.versions import VersionsFile
+
     Snapshot = Callable[[Path, dict[str, Asset]], None]
 
 pytestmark = pytest.mark.unit
@@ -160,6 +162,30 @@ class TestChecksumMemo:
 
         assert state.checksum(f) == _sha(b"HELLO")
         assert counters("checksum.files") == 2
+
+    def test_rewrite_that_restores_the_mtime_forces_rehash(self, tmp_path: Path) -> None:
+        """A copy that keeps the source mtime (``cp -p``, ``rsync -t``) is new bytes.
+
+        The inode, size, and mtime stay the same. The status-change time moves.
+        """
+        f = tmp_path / "a.bin"
+        f.write_bytes(b"hello")
+        _pin_mtime(f)
+        state = RunState.open(tmp_path)
+        assert state.checksum(f) == _sha(b"hello")
+        before = f.stat()
+
+        with f.open("r+b") as fh:
+            fh.write(b"HELLO")
+        _pin_mtime(f)
+        after = f.stat()
+        assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        )
+
+        assert state.checksum(f) == _sha(b"HELLO")
 
     def test_directory_asset_is_fingerprinted_each_call(self, tmp_path: Path) -> None:
         gdb = tmp_path / "data.gdb"
@@ -315,6 +341,35 @@ class TestStage:
         state.stage("c", assets={"a.bin": a})
         assert list(state.versions(coll).versions[-1].assets) == ["a.bin"]
         state.stage("c", assets={"b.bin": b})
+        assert sorted(state.versions(coll).versions[-1].assets) == ["a.bin", "b.bin"]
+
+    def test_a_stage_during_a_projection_is_not_lost(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Another thread stages while versions() projects. The next call sees the stage.
+
+        The wrapper runs the stage call after the projection is built and
+        before versions() stores it, which is the order a second thread can
+        take.
+        """
+        from portolan_cli.run_state import StagedVersion
+
+        coll, a, b = self._two_files(tmp_path)
+        state = RunState.open(tmp_path)
+        state.stage("c", assets={"a.bin": a})
+        project = StagedVersion.apply
+        interleaved: list[bool] = []
+
+        def apply_then_stage(self: StagedVersion, versions_file: VersionsFile) -> VersionsFile:
+            projected = project(self, versions_file)
+            if not interleaved:
+                interleaved.append(True)
+                state.stage("c", assets={"b.bin": b})
+            return projected
+
+        monkeypatch.setattr(StagedVersion, "apply", apply_then_stage)
+        assert list(state.versions(coll).versions[-1].assets) == ["a.bin"]
+
         assert sorted(state.versions(coll).versions[-1].assets) == ["a.bin", "b.bin"]
 
     def test_concurrent_stage_keeps_every_asset(self, tmp_path: Path) -> None:

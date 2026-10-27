@@ -3567,48 +3567,52 @@ def add_cmd(
     skips = [(p, skip_reasons.get(p, SKIP_UNCHANGED)) for p in all_skipped]
     affected, versioned = _report_skips_and_find_collections(all_added, skips, catalog_root)
 
-    # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state)
-    # Always run parquet generation if --stac-geoparquet flag was passed, regardless of output mode
-    with trace.span("add.mirrors"):
-        _generate_add_mirrors(
+    # The side steps may exit, as --pmtiles does without tippecanoe. The files
+    # that add_files finalized keep their version, so the commit runs in any case.
+    # A side step stages an asset only after it writes the file.
+    try:
+        # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state).
+        # Always run it when --stac-geoparquet was passed, in every output mode.
+        with trace.span("add.mirrors"):
+            _generate_add_mirrors(
+                catalog_root,
+                affected,
+                generate_parquet=generate_parquet,
+                verbose=verbose,
+                versioned_collections=versioned,
+                state=state,
+            )
+
+        # Handle PMTiles generation BEFORE output (so JSON reflects final state)
+        from portolan_cli.viz.pmtiles import generate_or_suggest_pmtiles
+
+        with trace.span("add.pmtiles"):
+            generate_or_suggest_pmtiles(
+                catalog_root,
+                affected,
+                generate_pmtiles=generate_pmtiles,
+                force=force_pmtiles,
+                verbose=verbose,
+                use_json=use_json,
+                state=state,
+            )
+
+        # Thumbnails last, so a higher-fidelity render from the PMTiles above is
+        # adopted rather than replaced. Every geospatial collection needs a
+        # thumbnail asset to satisfy PTL-VIZ-001 (Issue #683).
+        from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
+
+        ensure_collection_thumbnails(
             catalog_root,
             affected,
-            generate_parquet=generate_parquet,
-            verbose=verbose,
+            generate=generate_thumbnails,
+            force=force_thumbnails,
             versioned_collections=versioned,
-            state=state,
-        )
-
-    # Handle PMTiles generation BEFORE output (so JSON reflects final state)
-    from portolan_cli.viz.pmtiles import generate_or_suggest_pmtiles
-
-    with trace.span("add.pmtiles"):
-        generate_or_suggest_pmtiles(
-            catalog_root,
-            affected,
-            generate_pmtiles=generate_pmtiles,
-            force=force_pmtiles,
             verbose=verbose,
-            use_json=use_json,
             state=state,
         )
-
-    # Thumbnails last, so a higher-fidelity render from the PMTiles above is
-    # adopted rather than replaced. Every geospatial collection needs a
-    # thumbnail asset to satisfy PTL-VIZ-001 (Issue #683).
-    from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
-
-    ensure_collection_thumbnails(
-        catalog_root,
-        affected,
-        generate=generate_thumbnails,
-        force=force_thumbnails,
-        versioned_collections=versioned,
-        verbose=verbose,
-        state=state,
-    )
-    # The mirrors stage their versions in the state, so the commit runs last.
-    commit_run(state)
+    finally:
+        commit_run(state)
 
     # Output combined results (after all processing complete)
     _output_add_results(all_added, skips, all_failures, verbose, use_json)

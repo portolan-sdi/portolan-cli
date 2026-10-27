@@ -656,7 +656,9 @@ def track_parquet_in_versions(
 
     The record goes into the run state, so the run commits one version for the
     collection. The checksum comes from the memo of the run, so
-    ``items.parquet`` is hashed once per run (issue #995).
+    ``items.parquet`` is hashed once per run (issue #995). On a plugin backend,
+    the record goes to the local ``versions.json`` at once, as before #995. The
+    plugin never gets the mirror, because it reads each Parquet asset as data.
 
     A mirror whose bytes are already tracked in the latest snapshot is a
     no-op: regenerating identical content records no new user intent, so it
@@ -683,7 +685,7 @@ def track_parquet_in_versions(
         FileNotFoundError: If items.parquet doesn't exist.
     """
     from portolan_cli.version_ops import owned_run
-    from portolan_cli.versions import generated_asset_record
+    from portolan_cli.versions import generated_asset_record, track_generated_assets
 
     root = catalog_root if catalog_root is not None else collection_path.parent
     parquet_path = collection_path / PARQUET_FILENAME
@@ -700,6 +702,18 @@ def track_parquet_in_versions(
         # new mtime and fingerprint. A published version stays as it is.
         same_bytes = tracked is not None and tracked.sha256 == digest
         if same_bytes and (not amend_latest or tracked == record):
+            return
+        if run.backend(collection_path) != "file":
+            # A plugin backend reads each .parquet asset as table data, so the
+            # mirror never goes to it. The local versions.json records it now.
+            track_generated_assets(
+                collection_path,
+                [parquet_path],
+                root,
+                message=_MIRROR_MESSAGE,
+                amend_latest=amend_latest,
+                state=run,
+            )
             return
         run.stage(
             collection_path.resolve().relative_to(root.resolve()).as_posix(),

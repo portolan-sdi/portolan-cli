@@ -1694,9 +1694,17 @@ class TestOneParsePerFile:
             assert _parses() == 3
 
     @pytest.mark.unit
-    def test_invalidate_drops_a_file_whose_stat_did_not_change(self, tmp_path: Path) -> None:
+    def test_invalidate_drops_a_file_whose_stat_did_not_change(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli import run_state
         from portolan_cli.run_state import RunState
 
+        # A coarse clock gives the rewrite the same status-change time too.
+        def coarse_key(st: os.stat_result) -> tuple[int, int, int, int]:
+            return (st.st_ino, st.st_size, st.st_mtime_ns, 0)
+
+        monkeypatch.setattr(run_state, "_stat_key", coarse_key)
         collection = _hierarchy(tmp_path)
         metadata_file = collection / ".portolan" / "metadata.yaml"
         before = metadata_file.stat()
