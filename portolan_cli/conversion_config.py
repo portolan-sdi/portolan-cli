@@ -432,33 +432,77 @@ def validate_cog_settings(settings: CogSettings) -> list[str]:
     return warnings
 
 
-_SETTINGS_OVERRIDE: ContextVar[tuple[CogSettings | None, VectorSettings | None]] = ContextVar(
-    "portolan_conversion_settings_override", default=(None, None)
+#: The ``partitioning.*`` keys that ``partitioning`` reads for one directory.
+PARTITION_KEYS: tuple[str, ...] = (
+    "partitioning.enabled",
+    "partitioning.threshold_gb",
+    "partitioning.strategy",
+    "partitioning.target_rows",
 )
+
+
+@dataclass(frozen=True)
+class PartitionSettings:
+    """The resolved ``partitioning.*`` settings of one directory.
+
+    Attributes:
+        directory: The directory whose config hierarchy gave the values.
+        values: Each key of ``PARTITION_KEYS`` to its value, None when unset.
+    """
+
+    directory: Path
+    values: dict[str, Any]
+
+
+def resolve_partition_settings(directory: Path, state: ConfigSource) -> PartitionSettings:
+    """Resolve the ``partitioning.*`` settings of ``directory`` through the run state."""
+    return PartitionSettings(
+        directory, {key: state.setting(key, collection_dir=directory) for key in PARTITION_KEYS}
+    )
+
+
+_SETTINGS_OVERRIDE: ContextVar[
+    tuple[CogSettings | None, VectorSettings | None, PartitionSettings | None]
+] = ContextVar("portolan_conversion_settings_override", default=(None, None, None))
 
 
 @contextmanager
 def settings_override(
-    cog: CogSettings | None = None, vector: VectorSettings | None = None
+    cog: CogSettings | None = None,
+    vector: VectorSettings | None = None,
+    partition: PartitionSettings | None = None,
 ) -> Iterator[None]:
-    """Make ``get_cog_settings`` and ``get_vector_settings`` return these values.
+    """Make the settings loaders return these values.
 
     ``convert_file`` takes explicit settings, and a format handler loads its
     settings by catalog root (#947). The override carries the explicit
-    settings to the handler. A None value leaves that loader unchanged.
+    settings to the handler. ``add`` also carries the settings it resolved
+    through its run state, because a handler method takes no state. A None
+    value leaves that loader unchanged.
+
+    The override is a context variable. ``add`` sets it in the worker thread
+    that calls the handler, so it reaches the handler in that thread.
 
     Args:
-        cog: COG settings to return, or None.
-        vector: Vector settings to return, or None.
+        cog: COG settings for ``get_cog_settings``, or None.
+        vector: Vector settings for ``get_vector_settings``, or None.
+        partition: Partition settings for ``partitioning.partition_strategy``
+            in their directory, or None.
 
     Yields:
         Nothing. The override ends with the block.
     """
-    token = _SETTINGS_OVERRIDE.set((cog, vector))
+    token = _SETTINGS_OVERRIDE.set((cog, vector, partition))
     try:
         yield
     finally:
         _SETTINGS_OVERRIDE.reset(token)
+
+
+def partition_override(directory: Path) -> PartitionSettings | None:
+    """The partition settings of ``settings_override`` when they are for ``directory``."""
+    partition = _SETTINGS_OVERRIDE.get()[2]
+    return partition if partition is not None and partition.directory == directory else None
 
 
 def get_cog_settings(

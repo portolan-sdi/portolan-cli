@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
     from portolan_cli.convert import ConversionResult
     from portolan_cli.query import ItemInfo
+    from portolan_cli.run_state import RunState
     from portolan_cli.sync.pull import PullResult
 
 import click
@@ -273,7 +274,7 @@ def output_json_envelope(envelope: Any) -> None:
     click.echo(envelope.to_json())
 
 
-def load_dotenv_and_warn_sensitive(catalog_path: Path) -> None:
+def load_dotenv_and_warn_sensitive(catalog_path: Path, *, state: RunState | None = None) -> None:
     """Load .env from catalog and warn if config.yaml has sensitive settings.
 
     This should be called after the actual catalog path is resolved (not in
@@ -282,12 +283,13 @@ def load_dotenv_and_warn_sensitive(catalog_path: Path) -> None:
 
     Args:
         catalog_path: Resolved catalog root path.
+        state: The run state, which parses config.yaml once per run.
     """
     from portolan_cli.config import check_sensitive_settings_in_config, load_dotenv_from_catalog
 
     load_dotenv_from_catalog(catalog_path)
 
-    sensitive_in_config = check_sensitive_settings_in_config(catalog_path)
+    sensitive_in_config = check_sensitive_settings_in_config(catalog_path, state=state)
     if sensitive_in_config:
         settings_str = ", ".join(sensitive_in_config)
         warn(
@@ -3160,6 +3162,7 @@ def _validate_item_id_usage(
 def _check_partition_prompt(
     resolved_paths: list[Path],
     catalog_root: Path,
+    state: RunState | None = None,
 ) -> bool:
     """Check if user wants to skip partitioning for large files.
 
@@ -3169,6 +3172,7 @@ def _check_partition_prompt(
     Args:
         resolved_paths: List of resolved paths to check.
         catalog_root: Path to catalog root for config lookup.
+        state: The run state, which parses the config once per run.
 
     Returns:
         True if user declined partitioning, False otherwise.
@@ -3180,7 +3184,7 @@ def _check_partition_prompt(
     if not sys.stderr.isatty():
         return False
 
-    decision = find_large_partition_candidates(resolved_paths, catalog_root)
+    decision = find_large_partition_candidates(resolved_paths, catalog_root, state=state)
     large_files = decision.large_files
     if not large_files:
         return False
@@ -3414,9 +3418,15 @@ def add_cmd(
     # Resolve and validate catalog root (git-style auto-detection)
     catalog_root = _resolve_catalog_root_for_add(catalog_path, use_json)
 
+    from portolan_cli.run_state import RunState
+    from portolan_cli.version_ops import commit_run
+
+    # One state for the whole command: each YAML file parses once (issue #994).
+    state = RunState.open(catalog_root)
+
     # Load .env so PORTOLAN_REMOTE (and other sensitive settings) reach the
     # versioning backend's post-add hooks (e.g. iceberg STAC upload).
-    load_dotenv_and_warn_sensitive(catalog_root)
+    load_dotenv_and_warn_sensitive(catalog_root, state=state)
 
     # Validate --item-id usage (only valid with single file, not directory)
     _validate_item_id_usage(item_id, paths, use_json)
@@ -3470,7 +3480,7 @@ def add_cmd(
 
     # Check if user wants to skip partitioning for large files (Phase 5: auto-partition UX)
     skip_partitioning = (
-        _check_partition_prompt(resolved_paths, catalog_root) if not use_json else False
+        _check_partition_prompt(resolved_paths, catalog_root, state) if not use_json else False
     )
 
     # item_datetime is parsed by Click via FLEXIBLE_DATETIME type
@@ -3490,7 +3500,9 @@ def add_cmd(
                 skip_partitioning=skip_partitioning,
                 merge_strategy=MergeStrategy(merge_strategy),
                 skip_reasons=skip_reasons,
+                state=state,
             )
+        commit_run(state)
     except MissingLicenseError as err:
         # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
         # check reads it, so add refuses the write and names what to supply.
@@ -3535,6 +3547,7 @@ def add_cmd(
             force=force_pmtiles,
             verbose=verbose,
             use_json=use_json,
+            state=state,
         )
 
     # Thumbnails last, so a higher-fidelity render from the PMTiles above is
@@ -3549,6 +3562,7 @@ def add_cmd(
         force=force_thumbnails,
         versioned_collections=versioned,
         verbose=verbose,
+        state=state,
     )
     sync_catalog_index(catalog_root, affected)
 

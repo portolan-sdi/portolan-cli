@@ -77,6 +77,7 @@ from portolan_cli.versions import (
 if TYPE_CHECKING:
     from portolan_cli.plugins.formats import FormatContext
     from portolan_cli.preparation import PreparedItem
+    from portolan_cli.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -333,7 +334,9 @@ def _asset_member_path(collection_dir: Path, asset: pystac.Asset) -> Path | None
     return path if path.is_absolute() else collection_dir / href.removeprefix("./")
 
 
-def _read_wgs84_bbox(path: Path, catalog_root: Path | None) -> list[float] | None:
+def _read_wgs84_bbox(
+    path: Path, catalog_root: Path | None, state: RunState | None = None
+) -> list[float] | None:
     """The WGS84 footprint of a data file, measured the way ``add`` measures it.
 
     None when no handler reads the file, so a table or a remote asset adds no
@@ -343,7 +346,7 @@ def _read_wgs84_bbox(path: Path, catalog_root: Path | None) -> list[float] | Non
     from portolan_cli.preparation import _extract_bbox_wgs84
 
     try:
-        handler = handler_for(path, catalog_root)
+        handler = handler_for(path, catalog_root, state=state)
         if handler is None:
             return None
         metadata = handler.read_metadata(path)
@@ -383,6 +386,7 @@ def collection_members(
     *,
     catalog_root: Path | None = None,
     known_bboxes: dict[str, list[float]] | None = None,
+    state: RunState | None = None,
 ) -> list[CollectionMember]:
     """Every item and collection-level data asset of a collection, from disk.
 
@@ -396,6 +400,7 @@ def collection_members(
         collection_dir: Directory holding collection.json.
         catalog_root: Catalog root, for the format handler pins.
         known_bboxes: WGS84 bbox per resolved asset path, measured in this run.
+        state: The run state, which parses the config once per run.
 
     Returns:
         One member per item and per collection-level data asset.
@@ -408,7 +413,7 @@ def collection_members(
             continue
         bbox = known.get(str(path.resolve()))
         if bbox is None:
-            bbox = _read_wgs84_bbox(path, catalog_root)
+            bbox = _read_wgs84_bbox(path, catalog_root, state)
         members.append(CollectionMember(bbox=bbox))
     return members
 
@@ -419,14 +424,22 @@ def derive_and_apply_fields(
     *,
     catalog_root: Path | None = None,
     known_bboxes: dict[str, list[float]] | None = None,
+    state: RunState | None = None,
 ) -> None:
     """Replace the derived fields of an in-memory collection from its members."""
     members = collection_members(
-        collection, collection_dir, catalog_root=catalog_root, known_bboxes=known_bboxes
+        collection,
+        collection_dir,
+        catalog_root=catalog_root,
+        known_bboxes=known_bboxes,
+        state=state,
     )
-    apply_collection_fields(
-        collection, derive_collection_fields(members, load_own_metadata(collection_dir))
+    own = (
+        state.metadata(collection_dir, inherit=False)
+        if state is not None
+        else load_own_metadata(collection_dir)
     )
+    apply_collection_fields(collection, derive_collection_fields(members, own))
 
 
 def refresh_collection_fields(catalog_root: Path, collection_dir: Path) -> bool:
@@ -524,6 +537,7 @@ def apply_human_metadata(
     collection: pystac.Collection,
     collection_dir: Path,
     catalog_root: Path,
+    state: RunState | None = None,
 ) -> None:
     """Write human-authored metadata onto a collection, own value over inherited.
 
@@ -543,9 +557,14 @@ def apply_human_metadata(
         collection: The collection to update in place.
         collection_dir: The collection's directory under the catalog root.
         catalog_root: Root directory of the catalog.
+        state: The run state, which parses each metadata.yaml once per run.
     """
-    own = load_own_metadata(collection_dir)
-    merged = load_merged_metadata(collection_dir, catalog_root)
+    if state is not None:
+        own = state.metadata(collection_dir, inherit=False)
+        merged = state.metadata(collection_dir)
+    else:
+        own = load_own_metadata(collection_dir)
+        merged = load_merged_metadata(collection_dir, catalog_root)
 
     # Title and description: only the collection's own declaration applies. An
     # ancestor title names the catalog, not this collection, so it never inherits.
@@ -992,6 +1011,7 @@ def _finalize_with_backend(
     collection: object,
     items: list[PreparedItem],
     active_backend: str,
+    state: RunState | None = None,
 ) -> None:
     """Run backend versioning and post-add hooks for a non-file backend.
 
@@ -1018,7 +1038,11 @@ def _finalize_with_backend(
     # fields in collection.json via on_post_add, since the backend's table state
     # (actual row counts, schema excluding derived columns) is authoritative.
     backend = get_backend(active_backend, catalog_root=catalog_root)
-    remote = get_setting("remote", catalog_path=catalog_root, collection=collection_id)
+    remote = (
+        state.setting("remote", collection_dir=collection_dir)
+        if state is not None
+        else get_setting("remote", catalog_path=catalog_root, collection=collection_id)
+    )
     first = items[0]
     # For collection-level assets, item_json_path is None; use collection_dir
     first_item_dir = first.item_json_path.parent if first.item_json_path else collection_dir
@@ -1104,6 +1128,7 @@ def _publish_collection_version(
     collection_dir: Path,
     collection: pystac.Collection,
     items: list[PreparedItem],
+    state: RunState | None = None,
 ) -> None:
     """Route the collection's version snapshot to the active backend.
 
@@ -1113,7 +1138,11 @@ def _publish_collection_version(
     """
     from portolan_cli.config import get_setting
 
-    active_backend = get_setting("backend", catalog_path=catalog_root)
+    active_backend = (
+        state.setting("backend")
+        if state is not None
+        else get_setting("backend", catalog_path=catalog_root)
+    )
 
     if active_backend is not None and active_backend != "file":
         _finalize_with_backend(
@@ -1123,6 +1152,7 @@ def _publish_collection_version(
             collection=collection,
             items=items,
             active_backend=active_backend,
+            state=state,
         )
     else:
         _finalize_with_file_backend(
@@ -1166,6 +1196,7 @@ def _describe_collection(
     collection_dir: Path,
     items: list[PreparedItem],
     merge_strategy: MergeStrategy,
+    state: RunState | None = None,
 ) -> None:
     """Let each format handler in this batch add its collection fields (#947).
 
@@ -1177,6 +1208,7 @@ def _describe_collection(
         collection_dir: Directory holding collection.json.
         items: Prepared items of this batch.
         merge_strategy: How to merge detected values into existing ones.
+        state: The run state, which parses the config once per run.
     """
     from portolan_cli.plugins.formats import FormatContext, handler_named
 
@@ -1185,7 +1217,10 @@ def _describe_collection(
         if prepared.format_name and prepared.metadata is not None:
             by_handler.setdefault(prepared.format_name, []).append(prepared.metadata)
     context = FormatContext(
-        catalog_root=catalog_root, collection_dir=collection_dir, merge_strategy=merge_strategy
+        catalog_root=catalog_root,
+        collection_dir=collection_dir,
+        merge_strategy=merge_strategy,
+        state=state,
     )
     for name, metadata in by_handler.items():
         handler = handler_named(name)
@@ -1278,6 +1313,7 @@ def _finalize_collection(
     collection_id: str,
     items: list[PreparedItem],
     merge_strategy: MergeStrategy,
+    state: RunState | None = None,
 ) -> list[ItemInfo]:
     """Assemble and persist a single collection from its prepared items.
 
@@ -1290,6 +1326,7 @@ def _finalize_collection(
         collection_id: Collection identifier (may be nested).
         items: Prepared items belonging to this collection.
         merge_strategy: How to merge auto-detected metadata with existing values.
+        state: The run state, which parses the config once per run.
 
     Returns:
         List of ItemInfo for each finalized item in this collection.
@@ -1307,7 +1344,7 @@ def _finalize_collection(
     # Issue #502/#654/#684/#755: apply human title/description/license/providers
     # from metadata.yaml. The collection's own metadata.yaml wins; inherited
     # ancestor metadata only fills fields the collection still lacks.
-    apply_human_metadata(collection, collection_dir, catalog_root)
+    apply_human_metadata(collection, collection_dir, catalog_root, state)
 
     # Add items or collection-level assets to collection (in memory)
     _add_prepared_items_to_collection(collection, items, merge_strategy)
@@ -1316,7 +1353,7 @@ def _finalize_collection(
     _emit_stale_asset_warnings(collection, collection_dir)
 
     # Add table extension if any items are GeoParquet format (Issue #304/#447)
-    _describe_collection(collection, catalog_root, collection_dir, items, merge_strategy)
+    _describe_collection(collection, catalog_root, collection_dir, items, merge_strategy, state)
 
     # Add partition extension if any items have partition metadata (Issue #232/#443)
     _emit_partition_warnings(collection, collection_dir, items)
@@ -1331,6 +1368,7 @@ def _finalize_collection(
         collection_dir,
         catalog_root=catalog_root,
         known_bboxes=_batch_bboxes(items),
+        state=state,
     )
 
     # Save collection.json ONCE for all items in this collection
@@ -1341,7 +1379,9 @@ def _finalize_collection(
     _enrich_saved_documents(catalog_root, collection_id, collection_dir, items)
 
     # Route version snapshot to the active backend (plugin or file)
-    _publish_collection_version(catalog_root, collection_id, collection_dir, collection, items)
+    _publish_collection_version(
+        catalog_root, collection_id, collection_dir, collection, items, state
+    )
 
     # Build results
     return [
@@ -1360,6 +1400,8 @@ def finalize_items(
     catalog_root: Path,
     prepared: list[PreparedItem],
     merge_strategy: MergeStrategy = MergeStrategy.SMART,
+    *,
+    state: RunState | None = None,
 ) -> list[ItemInfo]:
     """Finalize prepared items by writing versions.json and collection.json.
 
@@ -1370,6 +1412,7 @@ def finalize_items(
         catalog_root: Root directory of the catalog.
         prepared: List of PreparedItem objects from prepare_item().
         merge_strategy: How to merge auto-detected metadata with existing values.
+        state: The run state, which parses the config once per run.
 
     Returns:
         List of ItemInfo for each finalized item.
@@ -1392,7 +1435,9 @@ def finalize_items(
 
     results: list[ItemInfo] = []
     for collection_id, items in by_collection.items():
-        results.extend(_finalize_collection(catalog_root, collection_id, items, merge_strategy))
+        results.extend(
+            _finalize_collection(catalog_root, collection_id, items, merge_strategy, state)
+        )
 
     from portolan_cli.catalog import (
         apply_catalog_human_titles,
@@ -1419,7 +1464,7 @@ def finalize_items(
 
     ensure_schema_uris(catalog_root)
     ensure_agents_md_tree(catalog_root)
-    ensure_readmes(catalog_root)
+    ensure_readmes(catalog_root, state=state)
 
     # Issue #684: a catalog whose every collection is a mirror carries the sync
     # time itself. Needs the whole tree, so it runs after the last collection.

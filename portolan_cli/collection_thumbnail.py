@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path, PurePath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli import extension_registry as _reg
 from portolan_cli.constants import ROLE_THUMBNAIL
@@ -39,6 +39,9 @@ from portolan_cli.stac_parquet import sync_file_extension
 from portolan_cli.sync.checksums import compute_checksum, multihash_sha256
 from portolan_cli.trace import span
 from portolan_cli.versions import track_generated_assets
+
+if TYPE_CHECKING:
+    from portolan_cli.config import ConfigSource
 from portolan_cli.viz.thumbnail import (
     generate_vector_thumbnail,
     get_thumbnail_config,
@@ -332,7 +335,12 @@ def _find_source(
 
 
 def _resolve_for_collection(
-    collection_path: Path, catalog_root: Path, data: dict[str, Any], *, force: bool = False
+    collection_path: Path,
+    catalog_root: Path,
+    data: dict[str, Any],
+    *,
+    force: bool = False,
+    state: ConfigSource | None = None,
 ) -> tuple[Path, bool] | None:
     """Return (thumbnail path, was_rendered), or None when there is nothing to do."""
     source = _find_source(collection_path, data, force=force)
@@ -347,7 +355,7 @@ def _resolve_for_collection(
     rendered = generate_vector_thumbnail(
         pmtiles_path=None,
         geoparquet_path=path,
-        config=get_thumbnail_config(catalog_root),
+        config=get_thumbnail_config(catalog_root, state=state),
         style_path=_discover_style_for_thumbnail(collection_path),
     )
     if rendered is None:
@@ -358,11 +366,13 @@ def _resolve_for_collection(
     return rendered, True
 
 
-def _thumbnails_wanted(catalog_root: Path, generate: bool | None) -> bool:
+def _thumbnails_wanted(
+    catalog_root: Path, generate: bool | None, state: ConfigSource | None = None
+) -> bool:
     """Resolve ``--thumbnails/--no-thumbnails`` against the catalog setting."""
     if generate is not None:
         return generate
-    return get_thumbnail_config(catalog_root).enabled
+    return get_thumbnail_config(catalog_root, state=state).enabled
 
 
 def would_generate_thumbnail(
@@ -390,6 +400,7 @@ def ensure_collection_thumbnail(
     force: bool = False,
     amend_latest: bool = False,
     verbose: bool = False,
+    state: ConfigSource | None = None,
 ) -> Path | None:
     """Give one collection a thumbnail asset, if it needs and can have one.
 
@@ -408,11 +419,12 @@ def ensure_collection_thumbnail(
             instead of bumping. ``add`` sets this for collections it versioned
             this run, so one add stays one version.
         verbose: Emit a line per collection touched.
+        state: The run state, which parses the config once per run.
 
     Returns:
         The registered thumbnail path, or None when nothing was registered.
     """
-    if not _thumbnails_wanted(catalog_root, generate):
+    if not _thumbnails_wanted(catalog_root, generate, state):
         return None
     data = _load_collection(collection_path)
     if data is None:
@@ -423,7 +435,9 @@ def ensure_collection_thumbnail(
         return None
 
     try:
-        resolved = _resolve_for_collection(collection_path, catalog_root, data, force=force)
+        resolved = _resolve_for_collection(
+            collection_path, catalog_root, data, force=force, state=state
+        )
     except Exception as exc:
         warn(f"Thumbnail generation failed for {collection_path.name}: {exc}")
         return None
@@ -464,6 +478,7 @@ def ensure_collection_thumbnails(
     force: bool = False,
     versioned_collections: set[str] | None = None,
     verbose: bool = False,
+    state: ConfigSource | None = None,
 ) -> None:
     """Ensure every affected collection carries a thumbnail asset.
 
@@ -482,13 +497,14 @@ def ensure_collection_thumbnails(
             so its backfilled thumbnail gets its own version instead of editing
             a snapshot that may already be published.
         verbose: Emit a line per collection touched.
+        state: The run state, which parses the config once per run.
     """
     with span("add.thumbnails", collections=len(affected_collections)):
         if not affected_collections:
             return
         # Resolve the flag against config once, then hand the answer down, so the
         # config read does not repeat per collection.
-        if not _thumbnails_wanted(catalog_root, generate):
+        if not _thumbnails_wanted(catalog_root, generate, state):
             return
 
         for collection_id in sorted(affected_collections):
@@ -503,6 +519,7 @@ def ensure_collection_thumbnails(
                     force=force,
                     amend_latest=collection_id in (versioned_collections or set()),
                     verbose=verbose,
+                    state=state,
                 )
 
 

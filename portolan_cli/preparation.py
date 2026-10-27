@@ -14,6 +14,7 @@ dependency edge is one-directional (add -> preparation).
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import glob
 import logging
@@ -29,7 +30,12 @@ from portolan_cli import extension_registry as _reg
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
 from portolan_cli.config import get_ignored_files, get_setting, load_merged_metadata
 from portolan_cli.constants import ROLE_VISUAL
-from portolan_cli.conversion_config import VectorSettings, get_vector_settings
+from portolan_cli.conversion_config import (
+    VectorSettings,
+    get_cog_settings,
+    get_vector_settings,
+    settings_override,
+)
 from portolan_cli.convert import apply_vector_settings, run_with_transient_convert_retry
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
 from portolan_cli.errors import AssetKeyCollisionError, NoGeometryError, RewriteFidelityError
@@ -81,7 +87,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
 
+    from portolan_cli.config import ConfigSource
     from portolan_cli.plugins.formats import FormatHandler
+    from portolan_cli.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -769,6 +777,7 @@ def _convert_and_extract_metadata(
     catalog_root: Path | None = None,
     force: bool = False,
     reconvert: bool = False,
+    state: RunState | None = None,
 ) -> tuple[Path, AllMetadata]:
     """Convert with the format handler and read the metadata (#947).
 
@@ -789,6 +798,8 @@ def _convert_and_extract_metadata(
         catalog_root: Catalog root, for reading conversion settings.
         force: If True, bypass change detection (Issue #386).
         reconvert: If True, re-convert from source (requires force=True).
+        state: The run state. The handler takes no state, so the conversion
+            settings reach it through ``settings_override``.
 
     Returns:
         Tuple of (output_path, metadata). A plugin's FormatMetadata provides
@@ -797,17 +808,26 @@ def _convert_and_extract_metadata(
     expected = handler.output_path(path, item_dir)
     in_place = expected.resolve() == path.resolve()
     reconvert_method = getattr(handler, "reconvert", None)
+    override = (
+        settings_override(
+            cog=get_cog_settings(catalog_root, state=state),
+            vector=get_vector_settings(catalog_root, state=state),
+        )
+        if state is not None
+        else contextlib.nullcontext()
+    )
 
-    if force and not reconvert and expected.exists():
-        if not in_place:
-            _warn_if_source_newer(path, expected)
-        output = expected
-        if extension_of(expected) in handler.extensions:
-            output = handler.convert(expected, item_dir, catalog_root)
-    elif reconvert and in_place and reconvert_method is not None:
-        output = reconvert_method(path, catalog_root)
-    else:
-        output = handler.convert(path, item_dir, catalog_root)
+    with override:
+        if force and not reconvert and expected.exists():
+            if not in_place:
+                _warn_if_source_newer(path, expected)
+            output = expected
+            if extension_of(expected) in handler.extensions:
+                output = handler.convert(expected, item_dir, catalog_root)
+        elif reconvert and in_place and reconvert_method is not None:
+            output = reconvert_method(path, catalog_root)
+        else:
+            output = handler.convert(path, item_dir, catalog_root)
     return output, cast("AllMetadata", handler.read_metadata(output))
 
 
@@ -816,6 +836,7 @@ def _extract_statistics_best_effort(
     format_type: str | None,
     catalog_root: Path,
     collection_path: Path | None = None,
+    state: ConfigSource | None = None,
 ) -> tuple[list[Any], dict[str, Any]]:
     """Extract statistics with best-effort error handling.
 
@@ -824,27 +845,20 @@ def _extract_statistics_best_effort(
         format_type: Format type (RASTER or VECTOR).
         catalog_root: Catalog root for config lookup.
         collection_path: Collection directory for hierarchical config.
+        state: The run state, which parses the config once per run.
 
     Returns:
         Tuple of (band_stats, parquet_stats). Empty if disabled or failed.
     """
     band_stats: list[Any] = []
     parquet_stats: dict[str, Any] = {}
-    stats_enabled = get_setting(
-        "statistics.enabled",
-        catalog_path=catalog_root,
-        collection_path=collection_path,
-    )
+    stats_enabled = _setting("statistics.enabled", catalog_root, collection_path, state)
     if not stats_enabled:
         return band_stats, parquet_stats
 
     try:
         if format_type == RASTER:
-            raster_mode = get_setting(
-                "statistics.raster_mode",
-                catalog_path=catalog_root,
-                collection_path=collection_path,
-            )
+            raster_mode = _setting("statistics.raster_mode", catalog_root, collection_path, state)
             mode = raster_mode if raster_mode in ("cached", "approx", "exact") else "approx"
             band_stats = extract_band_statistics(output_path, mode=mode)  # type: ignore[arg-type]
         else:
@@ -984,13 +998,18 @@ def _apply_nodata_defaults_to_bands(
             band["nodata"] = updated_nodatavals[i]
 
 
+def _setting(
+    key: str, catalog_root: Path, collection_path: Path | None, state: ConfigSource | None
+) -> Any:
+    """Resolve a setting, through the run state when there is one."""
+    if state is not None:
+        return state.setting(key, collection_dir=collection_path)
+    return get_setting(key, catalog_path=catalog_root, collection_path=collection_path)
+
+
 def _stats_enabled(context: FormatContext) -> bool:
     return bool(
-        get_setting(
-            "statistics.enabled",
-            catalog_path=context.catalog_root,
-            collection_path=context.collection_dir,
-        )
+        _setting("statistics.enabled", context.catalog_root, context.collection_dir, context.state)
     )
 
 
@@ -1008,9 +1027,13 @@ def describe_raster_item(
         context: Where the file sits.
     """
     # Enrich COG assets with render extension properties (Issue #13)
-    enrich_cog_assets(item.assets, context.catalog_root)
+    enrich_cog_assets(item.assets, context.catalog_root, state=context.state)
     band_stats, _ = _extract_statistics_best_effort(
-        output, RASTER, context.catalog_root, collection_path=context.collection_dir
+        output,
+        RASTER,
+        context.catalog_root,
+        collection_path=context.collection_dir,
+        state=context.state,
     )
     _add_statistics_to_properties(item.properties, RASTER, band_stats, {}, _stats_enabled(context))
     # Raster nodata defaults: applied to bands missing nodata values
@@ -1033,7 +1056,11 @@ def describe_vector_item(
         context: Where the file sits.
     """
     _, parquet_stats = _extract_statistics_best_effort(
-        output, VECTOR, context.catalog_root, collection_path=context.collection_dir
+        output,
+        VECTOR,
+        context.catalog_root,
+        collection_path=context.collection_dir,
+        state=context.state,
     )
     _add_statistics_to_properties(
         item.properties, VECTOR, [], parquet_stats, _stats_enabled(context)
@@ -1053,6 +1080,7 @@ def prepare_item(
     force: bool = False,
     reconvert: bool = False,
     exclude_sibling_names: frozenset[str] = frozenset(),
+    state: RunState | None = None,
 ) -> PreparedItem:
     """Prepare files for addition (convert, extract metadata, create STAC item).
 
@@ -1076,6 +1104,7 @@ def prepare_item(
         exclude_sibling_names: Base filenames of other batch items (sources +
             converted outputs) to prune from a collection-level asset scan
             (issue #465). Forwarded to _scan_item_assets; see its docstring.
+        state: The run state, which parses the config once per run.
 
     Returns:
         PreparedItem with all metadata needed for finalization.
@@ -1088,7 +1117,7 @@ def prepare_item(
     # Step 1: Validate inputs
     _validate_collection_id(collection_id)
 
-    handler = handler_for(path, catalog_root)
+    handler = handler_for(path, catalog_root, state=state)
     if handler is None:
         raise ValueError(f"Unsupported format: {path.suffix}")
     format_type = handler.family
@@ -1122,10 +1151,15 @@ def prepare_item(
         catalog_root=catalog_root,
         force=force,
         reconvert=reconvert,
+        state=state,
     )
 
     # Step 3b: Load metadata.yaml defaults (for temporal/nodata when source lacks them)
-    metadata_yaml = load_merged_metadata(collection_dir, catalog_root)
+    metadata_yaml = (
+        state.metadata(collection_dir)
+        if state is not None
+        else load_merged_metadata(collection_dir, catalog_root)
+    )
     defaults = metadata_yaml.get("defaults", {})
 
     # Validate defaults section if present (fail fast on invalid config)
@@ -1159,7 +1193,7 @@ def prepare_item(
             collection_id=collection_id,
             exclude_names=exclude_sibling_names,
             collection_level=collection_level,
-            ignored_patterns=get_ignored_files(catalog_root),
+            ignored_patterns=get_ignored_files(catalog_root, state=state),
         )
     except AssetKeyCollisionError:
         # The add stops before any STAC or versions.json write. A file this
@@ -1218,6 +1252,7 @@ def prepare_item(
                 collection_dir=collection_dir,
                 source=path,
                 defaults=defaults,
+                state=state,
             ),
         ),
         metadata=metadata,

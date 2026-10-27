@@ -1342,6 +1342,7 @@ class TestAddFilesCodePaths:
             force=False,
             reconvert=False,
             exclude_sibling_names=frozenset(),
+            state=None,
         ):
             """Simulate add: success for geojson, geometry error for csv."""
             if path.suffix.lower() == ".geojson":

@@ -1814,6 +1814,54 @@ class TestReadersTakeTheState:
             assert _parses() == first
 
 
+class TestHandlersReadTheState:
+    """A format handler takes no state. add hands it the settings (issue #994)."""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("workers", [1, 4])
+    def test_partition_settings_reach_the_handler_in_each_worker(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workers: int
+    ) -> None:
+        import shutil
+        import threading
+
+        from portolan_cli import conversion_config
+        from portolan_cli.add import add_files
+        from tests.conftest import _init_catalog
+
+        root = _init_catalog(tmp_path / "catalog")
+        source = (
+            Path(__file__).parent.parent
+            / "fixtures"
+            / "realdata"
+            / "philadelphia-housing"
+            / "council_districts_2024.parquet"
+        )
+        for name in ("a", "b", "c", "d"):
+            (root / name).mkdir()
+            shutil.copy(source, root / name / "districts.parquet")
+        seen: list[tuple[str, bool]] = []
+        real = conversion_config.partition_override
+
+        def spy(directory: Path) -> conversion_config.PartitionSettings | None:
+            found = real(directory)
+            seen.append((threading.current_thread().name, found is not None))
+            return found
+
+        monkeypatch.setattr(conversion_config, "partition_override", spy)
+
+        with _tracing():
+            added, _skipped, failures = add_files(paths=[root], catalog_root=root, workers=workers)
+
+        assert failures == []
+        assert len(added) == 4
+        # partition_strategy reads partitioning.enabled and threshold_gb per file.
+        assert len(seen) == 8
+        assert all(found for _thread, found in seen)
+        workers_used = {thread for thread, _found in seen}
+        assert (workers_used == {"MainThread"}) is (workers == 1)
+
+
 class TestYamlLoader:
     """Every YAML load uses libyaml when PyYAML has it (issue #994)."""
 

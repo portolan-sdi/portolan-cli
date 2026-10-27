@@ -1487,16 +1487,21 @@ def load_dotenv_from_catalog(catalog_path: Path | None = None) -> bool:
     return True
 
 
-def check_sensitive_settings_in_config(catalog_path: Path) -> list[str]:
+def check_sensitive_settings_in_config(
+    catalog_path: Path, *, state: ConfigSource | None = None
+) -> list[str]:
     """Check if config.yaml contains sensitive settings that should be in .env.
 
     Args:
         catalog_path: Path to catalog root.
+        state: The run state, which parses the file once per run. The
+            environment it adds holds no sensitive key, because
+            ``KNOWN_SETTINGS`` names none.
 
     Returns:
         List of sensitive setting names found in config.yaml.
     """
-    config = load_config(catalog_path)
+    config = load_catalog_config(catalog_path, state=state).data
 
     # Check top-level sensitive settings
     found = [key for key in SENSITIVE_SETTINGS if key in config]

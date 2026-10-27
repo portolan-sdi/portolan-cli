@@ -728,9 +728,17 @@ def partition_strategy(
 def _directory_setting(
     key: str, directory: Path, catalog_root: Path, state: ConfigSource | None
 ) -> Any:
-    """Resolve a setting for the config hierarchy of ``directory``."""
-    from portolan_cli.config import get_setting
+    """Resolve a setting for the config hierarchy of ``directory``.
 
+    The partition settings that ``add`` resolved through its run state win.
+    A format handler calls ``partition_vector_file`` without the state.
+    """
+    from portolan_cli.config import get_setting
+    from portolan_cli.conversion_config import partition_override
+
+    override = partition_override(directory)
+    if override is not None and key in override.values:
+        return override.values[key]
     if state is not None:
         return state.setting(key, collection_dir=directory)
     return get_setting(key, catalog_path=catalog_root, collection_path=directory)

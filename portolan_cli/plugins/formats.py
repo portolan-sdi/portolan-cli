@@ -43,6 +43,8 @@ class FormatContext:
         source: The file the operator added. None for a collection.
         defaults: The ``defaults`` section of the merged ``metadata.yaml``.
         merge_strategy: How ``add`` merges detected values into existing ones.
+        state: The run state of the command, or None. A handler passes it to
+            the ``api`` helpers that read config, so each file is read once.
     """
 
     catalog_root: Path
@@ -50,6 +52,7 @@ class FormatContext:
     source: Path | None = None
     defaults: dict[str, Any] = field(default_factory=dict)
     merge_strategy: Any = None
+    state: ConfigSource | None = None
 
 
 @runtime_checkable

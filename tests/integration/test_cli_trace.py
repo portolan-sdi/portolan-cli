@@ -115,7 +115,8 @@ class TestTimings:
         assert counters["checksum.bytes"] > 0
         assert counters["versions_json.reads"] > 0
         # One parse per YAML file in the catalog: the root config.yaml and the
-        # root metadata.yaml. Each reader shares that parse (issue #1006).
+        # root metadata.yaml. The add command opens one RunState, and every
+        # reader asks it, so each file parses once (issues #1006, #994).
         assert counters["config.yaml_parses"] == 2
         assert counters["parquet.opens"] > 0
         assert counters["raster.opens"] > 0
