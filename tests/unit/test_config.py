@@ -2018,6 +2018,62 @@ class TestCheckFixReadsTheState:
         assert report.conversion_report is not None
         assert [r.status for r in report.conversion_report.results] == [ConversionStatus.SUCCESS]
 
+    @staticmethod
+    def _preserved_catalog(root: Path) -> Path:
+        """A catalog whose config preserves ``sub/a.tif``, a GeoTIFF that is not a COG."""
+        import shutil
+
+        from tests.conftest import _init_catalog
+
+        catalog = _init_catalog(root)
+        with (catalog / ".portolan" / "config.yaml").open("a", encoding="utf-8") as handle:
+            handle.write('conversion:\n  paths:\n    preserve: ["sub/a.tif"]\n')
+        (catalog / "sub").mkdir()
+        source = Path(__file__).parent.parent / "fixtures" / "raster" / "natural-earth-non-cog.tif"
+        shutil.copy(source, catalog / "sub" / "a.tif")
+        return catalog
+
+    @pytest.mark.integration
+    def test_a_path_glob_matches_from_the_catalog_root_in_a_subdirectory_check(
+        self, tmp_path: Path
+    ) -> None:
+        from portolan_cli.validation import run_check
+
+        catalog = self._preserved_catalog(tmp_path / "catalog")
+
+        statuses = []
+        for target in (catalog, catalog / "sub"):
+            report = run_check(target, metadata=False, geo_assets=True).format_report
+            assert report is not None
+            statuses.append({f.path.name: f.status.value for f in report.files})
+
+        assert statuses == [{"a.tif": "cloud_native"}, {"a.tif": "cloud_native"}]
+
+    @pytest.mark.integration
+    def test_a_path_glob_matches_from_the_catalog_root_in_a_subdirectory_fix(
+        self, tmp_path: Path
+    ) -> None:
+        from portolan_cli.run_state import RunState
+        from portolan_cli.scan.check import run_fix_workflow
+
+        catalog = self._preserved_catalog(tmp_path / "catalog")
+
+        outcome = run_fix_workflow(
+            path=catalog / "sub",
+            run_metadata=False,
+            run_geo_assets=True,
+            dry_run=True,
+            remove_legacy=False,
+            workers=1,
+            state=RunState.open(catalog),
+        )
+
+        report = outcome.format_fix_report
+        assert report is not None
+        assert [f.status.value for f in report.files] == ["cloud_native"]
+        assert report.conversion_report is not None
+        assert report.conversion_report.results == []
+
     @pytest.mark.unit
     def test_a_pool_worker_parses_the_config_once(self, tmp_path: Path) -> None:
         from portolan_cli import convert
