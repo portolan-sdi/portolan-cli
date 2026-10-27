@@ -616,6 +616,50 @@ class TestConvertVectorRetriesTransientInterrupt:
         assert out.exists()
 
 
+class TestConvertTabularKeepsAForeignFile:
+    """``convert_tabular`` never writes over a Parquet file that its source did not make."""
+
+    @pytest.mark.unit
+    def test_a_foreign_parquet_stays_and_the_output_takes_a_distinct_name(
+        self, tmp_path: Path
+    ) -> None:
+        import pyarrow.parquet as pq
+
+        from portolan_cli.preparation import convert_tabular
+
+        (tmp_path / "t.csv").write_text("id\n1\n")
+        foreign = tmp_path / "t.parquet"
+        foreign.write_bytes(b"operator data")
+
+        first = convert_tabular(tmp_path / "t.csv", tmp_path)
+        (tmp_path / "t.csv").write_text("id\n1\n2\n")
+        second = convert_tabular(tmp_path / "t.csv", tmp_path)
+
+        assert foreign.read_bytes() == b"operator data"
+        assert first == second == tmp_path / "t-csv.parquet"
+        assert pq.read_metadata(second).num_rows == 2
+
+    @pytest.mark.unit
+    def test_the_output_names_its_source(self, tmp_path: Path) -> None:
+        import json
+
+        import pyarrow.parquet as pq
+
+        from portolan_cli.convert import PROVENANCE_KEY
+        from portolan_cli.preparation import convert_tabular
+        from portolan_cli.sync.checksums import compute_checksum
+
+        (tmp_path / "t.csv").write_text("id\n1\n")
+
+        out = convert_tabular(tmp_path / "t.csv", tmp_path)
+
+        recorded = pq.read_metadata(out).metadata[PROVENANCE_KEY.encode()]
+        assert json.loads(recorded) == {
+            "path": "t.csv",
+            "sha256": compute_checksum(tmp_path / "t.csv"),
+        }
+
+
 class TestIsRewriteTemp:
     """`add` must recognize the scratch file of an in-place rewrite.
 
@@ -707,9 +751,21 @@ class TestForceRule:
             def convert(self, source: Path, output_dir: Path, catalog_root: Path | None) -> Path:
                 raise AssertionError("convert must not run")
 
+        import json
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.convert import PROVENANCE_KEY
+
         source = tmp_path / "survey.xyz"
         source.write_text("1 2 3\n", encoding="utf-8")
-        (tmp_path / "survey.parquet").write_bytes(b"PAR1")
+        # The plugin names its source in the footer, so the file is its output.
+        record = json.dumps({"path": "survey.xyz", "sha256": "x"})
+        pq.write_table(
+            pa.table({"a": [1]}).replace_schema_metadata({PROVENANCE_KEY: record}),
+            tmp_path / "survey.parquet",
+        )
 
         output, _ = _convert_and_extract_metadata(
             source, tmp_path, _Xyz("xyz", frozenset({".xyz"})), force=True
@@ -830,6 +886,23 @@ class TestAssertRewriteKeptEverything:
             _assert_rewrite_kept_everything(tmp_path / "a.parquet", tmp_path / "b.parquet", before)
 
     @pytest.mark.unit
+    def test_it_refuses_a_dropped_schema_key(self, tmp_path: Path) -> None:
+        """A publisher key on the operator's file must survive the rewrite."""
+        from portolan_cli.errors import RewriteFidelityError
+        from portolan_cli.metadata import RewriteFidelity
+        from portolan_cli.preparation import _assert_rewrite_kept_everything
+
+        columns = frozenset({"geometry"})
+        before = RewriteFidelity(1, None, columns, extra_keys=frozenset({b"source"}))
+        after = RewriteFidelity(1, None, columns, extra_keys=frozenset())
+
+        with (
+            patch("portolan_cli.preparation.read_rewrite_fidelity", return_value=after),
+            pytest.raises(RewriteFidelityError, match="schema metadata keys \\['source'\\]"),
+        ):
+            _assert_rewrite_kept_everything(tmp_path / "a.parquet", tmp_path / "b.parquet", before)
+
+    @pytest.mark.unit
     def test_an_unreadable_source_skips_the_gate(self, tmp_path: Path) -> None:
         """With nothing to compare against, the gate cannot judge."""
         from portolan_cli.preparation import _assert_rewrite_kept_everything
@@ -876,3 +949,107 @@ class TestRewriteOrKeep:
 
         captured = capsys.readouterr()
         assert "Kept roads.parquet as it is" in captured.out + captured.err
+
+
+class TestAnAddedCogCarriesItsStatistics:
+    """``convert_raster`` embeds band statistics in a COG that has none (issue #748).
+
+    rashid reads with GDAL_PAM_ENABLED=NO, so a ``.aux.xml`` does not count.
+    A lossless COG gets one rewrite. A lossy COG stays, with a warning.
+    """
+
+    @staticmethod
+    def _tags(path: Path) -> dict[str, str]:
+        import rasterio
+
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(path) as src:
+            tags: dict[str, str] = src.tags(1)
+        return tags
+
+    @staticmethod
+    def _spy_write_cog(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+        from portolan_cli import convert
+
+        calls: list[Path] = []
+        real = convert.write_cog
+
+        def spy(source: Path, *args: Any, **kwargs: Any) -> Path:
+            calls.append(source)
+            return real(source, *args, **kwargs)
+
+        monkeypatch.setattr(convert, "write_cog", spy)
+        return calls
+
+    @pytest.mark.unit
+    def test_a_lossless_cog_gets_its_statistics_once(
+        self, tmp_path: Path, fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import shutil
+
+        from portolan_cli.preparation import convert_raster
+
+        cog = tmp_path / "rgb.tif"
+        shutil.copy(fixtures_dir / "raster" / "valid" / "rgb.tif", cog)
+        assert "STATISTICS_MEAN" not in self._tags(cog)
+        calls = self._spy_write_cog(monkeypatch)
+
+        convert_raster(cog, tmp_path)
+        first = cog.read_bytes()
+        convert_raster(cog, tmp_path)
+
+        assert calls == [cog]
+        assert cog.read_bytes() == first
+        tags = self._tags(cog)
+        assert {"STATISTICS_MINIMUM", "STATISTICS_MAXIMUM", "STATISTICS_MEAN"} <= set(tags)
+        assert {"STATISTICS_STDDEV", "STATISTICS_VALID_PERCENT"} <= set(tags)
+        assert sorted(p.name for p in tmp_path.rglob("*.aux.xml")) == []
+
+    @pytest.mark.unit
+    def test_a_lossy_cog_stays_and_the_add_says_why(
+        self,
+        tmp_path: Path,
+        fixtures_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """GDAL re-encodes JPEG and WEBP tiles on every copy, so a rewrite loses quality."""
+        from rio_cogeo.cogeo import cog_translate
+        from rio_cogeo.profiles import cog_profiles
+
+        from portolan_cli.preparation import convert_raster
+
+        cog = tmp_path / "photo.tif"
+        cog_translate(
+            str(fixtures_dir / "raster" / "valid" / "rgb.tif"),
+            str(cog),
+            cog_profiles.get("jpeg"),
+            quiet=True,
+        )
+        before = cog.read_bytes()
+        calls = self._spy_write_cog(monkeypatch)
+
+        convert_raster(cog, tmp_path)
+
+        assert calls == []
+        assert cog.read_bytes() == before
+        out = capsys.readouterr()
+        assert "PTL-DAT-009" in out.out + out.err
+        assert "photo.tif" in out.out + out.err
+
+
+class TestBandStatisticsWriteNoSidecar:
+    """Reading band statistics leaves no ``.aux.xml`` beside the COG (issue #748)."""
+
+    @pytest.mark.unit
+    def test_computed_statistics_leave_no_sidecar(self, tmp_path: Path, fixtures_dir: Path) -> None:
+        import shutil
+
+        from portolan_cli.metadata.statistics import extract_band_statistics
+
+        cog = tmp_path / "rgb.tif"
+        shutil.copy(fixtures_dir / "raster" / "valid" / "rgb.tif", cog)
+
+        stats = extract_band_statistics(cog, mode="approx")
+
+        assert len(stats) == 3
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["rgb.tif"]

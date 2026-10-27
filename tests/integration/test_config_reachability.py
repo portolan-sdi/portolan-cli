@@ -162,7 +162,7 @@ def test_statistics_raster_mode_exact_reads_every_pixel(
     form: str, catalog: Path, run_cli: RunCli
 ) -> None:
     """The approximate statistics read an overview. The exact ones read the full raster."""
-    scene = _copy(NON_COG, catalog / "imagery" / "scene" / "scene.tif")
+    scene = _lossy_cog(catalog / "imagery" / "scene" / "scene.tif")
     configure(run_cli, catalog, form, {"statistics.raster_mode": ("exact", "exact")})
 
     _add(run_cli, catalog, scene)
@@ -170,31 +170,47 @@ def test_statistics_raster_mode_exact_reads_every_pixel(
     assert _band_statistics(catalog / "imagery" / "scene" / "scene.json") == EXACT_STATISTICS
 
 
-# Measured on natural-earth-non-cog.tif, one band. The approximate mode reads
-# an overview, so its mean and stddev differ from the full read in the fourth
-# significant digit. The relative tolerance absorbs float noise across GDAL
-# builds and stays far below that gap.
+def _lossy_cog(dest: Path) -> Path:
+    """Write natural-earth-non-cog.tif as a JPEG COG at ``dest``.
+
+    add embeds exact statistics in each COG it writes, and the approximate mode
+    reads them as they are (issue #748). A lossy COG keeps no embedded
+    statistics, because a rewrite would re-encode it. So only on a lossy COG
+    does the mode decide what the item gets.
+    """
+    from rio_cogeo.cogeo import cog_translate
+    from rio_cogeo.profiles import cog_profiles
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cog_translate(str(NON_COG), str(dest), cog_profiles.get("jpeg"), quiet=True)
+    return dest
+
+
+# Measured on the JPEG COG of _lossy_cog, one band. The approximate mode reads
+# an overview, so its minimum, mean and stddev differ from the full read. The
+# relative tolerance absorbs float noise across GDAL builds and stays far below
+# that gap.
 EXACT_STATISTICS = [
     {
-        "minimum": 53.0,
-        "maximum": 249.0,
-        "mean": pytest.approx(204.917273, rel=1e-7),
-        "stddev": pytest.approx(10.830305777930326, rel=1e-7),
+        "minimum": 40.0,
+        "maximum": 255.0,
+        "mean": pytest.approx(204.918336, rel=1e-7),
+        "stddev": pytest.approx(10.836549311986, rel=1e-7),
     }
 ]
 APPROX_STATISTICS = [
     {
-        "minimum": 53.0,
-        "maximum": 249.0,
-        "mean": pytest.approx(204.915208, rel=1e-7),
-        "stddev": pytest.approx(10.819868128435576, rel=1e-7),
+        "minimum": 22.0,
+        "maximum": 255.0,
+        "mean": pytest.approx(204.91976, rel=1e-7),
+        "stddev": pytest.approx(10.96873819281, rel=1e-7),
     }
 ]
 
 
 def test_the_default_raster_mode_is_approximate(catalog: Path, run_cli: RunCli) -> None:
     """Pin the default, so the exact test above cannot pass by accident."""
-    scene = _copy(NON_COG, catalog / "imagery" / "scene" / "scene.tif")
+    scene = _lossy_cog(catalog / "imagery" / "scene" / "scene.tif")
 
     _add(run_cli, catalog, scene)
 
@@ -1206,7 +1222,10 @@ def test_a_catalog_only_key_in_a_collection_config_warns(
     with caplog.at_level("WARNING", logger="portolan_cli.config"):
         _add(run_cli, catalog, scene)
 
-    assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+    # GDAL logs its own warnings while add writes the COG. Only the config
+    # logger's records are about the setting.
+    records = [r for r in caplog.records if r.name == "portolan_cli.config"]
+    assert [(r.levelname, r.getMessage()) for r in records] == [
         (
             "WARNING",
             f"{config_file.resolve()}: 'thumbnails.enabled' applies to the whole catalog, "

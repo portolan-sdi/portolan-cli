@@ -691,10 +691,15 @@ class TestAddItemIdDerivation:
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
-            # Simulate conversion output in the SAME directory (in-place)
+            # Simulate conversion output in the SAME directory (in-place). The
+            # converter writes it, so no file of another source holds the name.
             output_file = item_dir / "radios.parquet"
-            output_file.write_bytes(b"fake parquet")
-            mock_convert.return_value = output_file
+
+            def convert(*_args: object, **_kwargs: object) -> Path:
+                output_file.write_bytes(b"fake parquet")
+                return output_file
+
+            mock_convert.side_effect = convert
             mock_metadata.return_value = MagicMock(
                 bbox=(-58.5, -34.7, -58.3, -34.5),
                 crs="EPSG:4326",
@@ -753,10 +758,15 @@ class TestAddItemIdDerivation:
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
-            # Simulate conversion output in the SAME directory (in-place)
+            # Simulate conversion output in the SAME directory (in-place). The
+            # converter writes it, so no file of another source holds the name.
             output_file = item_dir / "radios.parquet"
-            output_file.write_bytes(b"fake parquet")
-            mock_convert.return_value = output_file
+
+            def convert(*_args: object, **_kwargs: object) -> Path:
+                output_file.write_bytes(b"fake parquet")
+                return output_file
+
+            mock_convert.side_effect = convert
             mock_metadata.return_value = MagicMock(
                 bbox=(-58.5, -34.7, -58.3, -34.5),
                 crs="EPSG:4326",

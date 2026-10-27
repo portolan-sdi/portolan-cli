@@ -564,6 +564,10 @@ class TestCheckFileMetadata:
         versions_data = json.loads(versions_path.read_text())
         current_mtime = Path(parquet_path).stat().st_mtime
         versions_data["versions"][0]["assets"]["parcels.parquet"]["source_mtime"] = current_mtime
+        # The stat check needs the size too (run_state.stat_matches).
+        versions_data["versions"][0]["assets"]["parcels.parquet"]["size_bytes"] = (
+            parquet_path.stat().st_size
+        )
         versions_path.write_text(json.dumps(versions_data, indent=2))
 
         result = check_file_metadata(parquet_path, collection_dir)
@@ -801,3 +805,307 @@ class TestDetectionEdgeCases:
         # For now, exact comparison is used, so this would show as changed
         # This test documents the behavior
         assert isinstance(changes, list)
+
+
+# =============================================================================
+# One read per file and run (issue #995 suspects 3 and 8)
+# =============================================================================
+
+
+def _count_footer_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record each ``pq.ParquetFile`` open."""
+    import pyarrow.parquet as pq
+
+    opened: list[str] = []
+    real = pq.ParquetFile
+
+    class Counted(real):  # type: ignore[misc, valid-type]
+        def __init__(self, source: object, *args: object, **kwargs: object) -> None:
+            opened.append(str(source))
+            super().__init__(source, *args, **kwargs)
+
+    monkeypatch.setattr(pq, "ParquetFile", Counted)
+    return opened
+
+
+def _versions_entry(path: Path, *, mtime: float, size: int) -> dict[str, Any]:
+    return {
+        "sha256": "0" * 64,
+        "size_bytes": size,
+        "href": f"coll/{path.name}",
+        "mtime": mtime,
+        "source_mtime": mtime,
+        "feature_count": 1,
+        "schema_fingerprint": "f" * 16,
+    }
+
+
+def _write_versions(collection_dir: Path, assets: dict[str, dict[str, Any]]) -> None:
+    (collection_dir / "versions.json").write_text(
+        json.dumps(
+            {
+                "spec_version": "1.0.0",
+                "current_version": "1.0.0",
+                "versions": [
+                    {
+                        "version": "1.0.0",
+                        "created": "2026-01-15T10:30:00Z",
+                        "breaking": False,
+                        "assets": assets,
+                        "changes": sorted(assets),
+                    }
+                ],
+            }
+        )
+    )
+
+
+class TestOneFooterReadPerFile:
+    """The freshness reads share one footer read per file."""
+
+    @pytest.mark.unit
+    def test_current_metadata_opens_a_geoparquet_once(
+        self, valid_points_parquet: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli.metadata.detection import (
+            compute_schema_fingerprint,
+            get_current_metadata,
+        )
+
+        fingerprint = compute_schema_fingerprint(valid_points_parquet)
+        opened = _count_footer_reads(monkeypatch)
+
+        current = get_current_metadata(valid_points_parquet)
+
+        assert len(opened) == 1
+        assert current.current_schema_fingerprint == fingerprint
+
+    @pytest.mark.unit
+    def test_the_run_state_shares_the_footer(
+        self, valid_points_parquet: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli.metadata.detection import get_current_metadata
+        from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+        from portolan_cli.run_state import RunState
+
+        state = RunState.open(tmp_path)
+        opened = _count_footer_reads(monkeypatch)
+
+        extract_geoparquet_metadata(valid_points_parquet, state=state)
+        get_current_metadata(valid_points_parquet, state=state)
+
+        assert len(opened) == 1
+
+
+class TestStatBeforeOpen:
+    """An unchanged stat proves a file fresh with no open of the file (#995-8)."""
+
+    @pytest.mark.unit
+    def test_an_unchanged_item_asset_is_fresh_unopened(
+        self,
+        catalog_with_metadata: Path,
+        valid_points_parquet: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import shutil
+
+        from portolan_cli.metadata import detection
+        from portolan_cli.metadata.models import MetadataStatus
+
+        collection_dir = catalog_with_metadata / "test-collection"
+        parquet_path = collection_dir / "parcels.parquet"
+        shutil.copy(valid_points_parquet, parquet_path)
+        st = parquet_path.stat()
+        entry = _versions_entry(parquet_path, mtime=st.st_mtime, size=st.st_size)
+        _write_versions(collection_dir, {"parcels.parquet": entry})
+
+        def refuse(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError("the data file was opened")
+
+        monkeypatch.setattr(detection, "get_current_metadata", refuse)
+
+        result = detection.check_file_metadata(parquet_path, collection_dir)
+
+        assert result.status == MetadataStatus.FRESH
+
+    @pytest.mark.unit
+    def test_a_resized_file_is_read(
+        self, catalog_with_metadata: Path, valid_points_parquet: Path
+    ) -> None:
+        """Size must match. The same mtime with another size is no proof."""
+        import shutil
+
+        from portolan_cli.metadata.detection import check_file_metadata
+        from portolan_cli.metadata.models import MetadataStatus
+
+        collection_dir = catalog_with_metadata / "test-collection"
+        parquet_path = collection_dir / "parcels.parquet"
+        shutil.copy(valid_points_parquet, parquet_path)
+        st = parquet_path.stat()
+        entry = _versions_entry(parquet_path, mtime=st.st_mtime, size=st.st_size + 1)
+        _write_versions(collection_dir, {"parcels.parquet": entry})
+
+        result = check_file_metadata(parquet_path, collection_dir)
+
+        # The stored fingerprint "fff..." differs from the file, so the read
+        # finds a schema change. The stat alone would have said FRESH.
+        assert result.status == MetadataStatus.BREAKING
+
+
+class TestOneMtimePredicate:
+    """``is_stale`` uses ``run_state.mtime_matches``, pinned at the tolerance edges."""
+
+    @staticmethod
+    def _state(current: float, stored: float) -> Any:
+        from portolan_cli.metadata.models import FileMetadataState
+
+        return FileMetadataState(
+            file_path=Path("x.parquet"),
+            current_mtime=current,
+            stored_mtime=stored,
+            current_bbox=None,
+            stored_bbox=None,
+            current_feature_count=1,
+            stored_feature_count=2,
+            current_schema_fingerprint="a",
+            stored_schema_fingerprint="a",
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("current", "stored", "stale"),
+        [
+            (1700000001.999, 1700000000.0, False),  # whole second: coarse file system
+            (1700000002.0, 1700000000.0, True),  # the 2.0 s bound is strict
+            (1700000000.2500005, 1700000000.25, False),  # fraction: 1 microsecond
+            (1700000000.251, 1700000000.25, True),
+        ],
+    )
+    def test_the_tolerance_edges(self, current: float, stored: float, stale: bool) -> None:
+        from portolan_cli.metadata.detection import is_stale
+
+        assert is_stale(self._state(current, stored))[0] is stale
+
+
+class TestScanReadsVersionsOncePerCollection:
+    """``check --metadata`` reads each versions.json once per run (#995-3)."""
+
+    @pytest.mark.unit
+    def test_three_assets_one_read(
+        self, tmp_path: Path, valid_points_parquet: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import shutil
+
+        from portolan_cli import versions
+        from portolan_cli.metadata.models import MetadataStatus
+        from portolan_cli.metadata.scan import scan_catalog_metadata
+
+        catalog = tmp_path / "cat"
+        collection_dir = catalog / "coll"
+        collection_dir.mkdir(parents=True)
+        (catalog / "catalog.json").write_text(json.dumps({"type": "Catalog", "links": []}))
+        assets: dict[str, dict[str, Any]] = {}
+        entries: dict[str, dict[str, Any]] = {}
+        for name in ("a", "b", "c"):
+            path = collection_dir / f"{name}.parquet"
+            shutil.copy(valid_points_parquet, path)
+            assets[name] = {"href": f"./{name}.parquet", "roles": ["data"]}
+            st = path.stat()
+            entries[path.name] = _versions_entry(path, mtime=st.st_mtime, size=st.st_size)
+        (collection_dir / "collection.json").write_text(
+            json.dumps({"type": "Collection", "assets": assets, "links": []})
+        )
+        _write_versions(collection_dir, entries)
+        reads: list[Path] = []
+        real = versions.read_versions
+
+        def counted(path: Path) -> Any:
+            reads.append(path)
+            return real(path)
+
+        monkeypatch.setattr(versions, "read_versions", counted)
+        monkeypatch.setattr("portolan_cli.run_state.read_versions", counted)
+        opened = _count_footer_reads(monkeypatch)
+
+        report = scan_catalog_metadata(catalog)
+
+        assert [r.status for r in report.results] == [MetadataStatus.FRESH] * 3
+        assert reads == [collection_dir / "versions.json"]
+        assert opened == []
+
+
+class TestPrepareSharesTheFooterWithTheRun:
+    """``prepare_item`` puts the metadata it read into the run state.
+
+    The handler API takes no state, so finalization read the footer again.
+    """
+
+    @pytest.mark.unit
+    def test_a_later_read_in_the_run_opens_nothing(
+        self, tmp_path: Path, valid_points_geojson: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import shutil
+
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+        from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+        from portolan_cli.preparation import prepare_item
+        from portolan_cli.run_state import RunState
+
+        assert (
+            CliRunner()
+            .invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
+            .exit_code
+            == 0
+        )
+        (tmp_path / "pts").mkdir()
+        source = tmp_path / "pts" / "pts.geojson"
+        shutil.copy(valid_points_geojson, source)
+        state = RunState.open(tmp_path)
+        prepared = prepare_item(
+            path=source, catalog_root=tmp_path, collection_id="pts", state=state
+        )
+        opened = _count_footer_reads(monkeypatch)
+
+        again = extract_geoparquet_metadata(tmp_path / "pts" / "pts.parquet", state=state)
+
+        assert opened == []
+        assert again is prepared.metadata
+
+
+class TestPrepareHashesEachFileOnce:
+    """The provenance record and the asset scan share one hash of the source."""
+
+    @pytest.mark.unit
+    def test_a_converted_geojson_costs_two_hashes(
+        self, tmp_path: Path, valid_points_geojson: Path
+    ) -> None:
+        """One hash of the source, one of the output, with no run state given."""
+        import shutil
+
+        from click.testing import CliRunner
+
+        from portolan_cli import trace
+        from portolan_cli.cli import cli
+        from portolan_cli.preparation import prepare_item
+
+        assert (
+            CliRunner()
+            .invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
+            .exit_code
+            == 0
+        )
+        (tmp_path / "pts").mkdir()
+        source = tmp_path / "pts" / "pts.geojson"
+        shutil.copy(valid_points_geojson, source)
+
+        trace.enable()
+        try:
+            prepared = prepare_item(path=source, catalog_root=tmp_path, collection_id="pts")
+            hashed = trace.counters()["checksum.files"]
+        finally:
+            trace.reset()
+
+        assert sorted(prepared.asset_files) == ["pts.geojson", "pts.parquet"]
+        assert hashed == 2

@@ -51,7 +51,9 @@ from portolan_cli.metadata.detection import (
     check_file_metadata,
     detect_changes,
     get_current_metadata,
-    is_stale,
+    judge_staleness,
+    load_current_assets,
+    stored_baseline_mtime,
 )
 from portolan_cli.metadata.models import (
     FileMetadataState,
@@ -59,7 +61,7 @@ from portolan_cli.metadata.models import (
     MetadataReport,
     MetadataStatus,
 )
-from portolan_cli.sync.checksums import compute_checksum
+from portolan_cli.run_state import RunState, stat_matches
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -103,15 +105,20 @@ _NON_LOCAL_MEDIA_TYPES = frozenset(
 )
 
 
-def scan_catalog_metadata(catalog_path: Path) -> MetadataReport:
+def scan_catalog_metadata(catalog_path: Path, *, state: RunState | None = None) -> MetadataReport:
     """Scan a catalog using STAC manifests as ground truth.
 
     Walks the catalog tree from `catalog.json`, descends into nested
     catalogs, and at each collection emits one `MetadataCheckResult` per
     registered or stray data asset.
 
+    The scan reads each versions.json once, and it opens a data file only
+    when its stat differs from the size and mtime that versions.json holds
+    (issue #995).
+
     Args:
         catalog_path: Catalog root (must contain `catalog.json`).
+        state: The run state. None opens one for this scan.
 
     Returns:
         Aggregate `MetadataReport`.
@@ -125,13 +132,13 @@ def scan_catalog_metadata(catalog_path: Path) -> MetadataReport:
     if not (catalog_path / "catalog.json").exists():
         raise FileNotFoundError(f"Not a portolan catalog: {catalog_path} has no catalog.json")
     report = MetadataReport()
-    _scan_node(catalog_path, report)
+    _scan_node(catalog_path, report, state or RunState.open(catalog_path))
     return report
 
 
-def _scan_node(node_dir: Path, report: MetadataReport) -> None:
+def _scan_node(node_dir: Path, report: MetadataReport, state: RunState) -> None:
     if (node_dir / "collection.json").exists():
-        _scan_collection(node_dir, report)
+        _scan_collection(node_dir, report, state)
         return
     if (node_dir / "catalog.json").exists():
         # Pattern 1: catalog above collections. Each significant
@@ -140,7 +147,7 @@ def _scan_node(node_dir: Path, report: MetadataReport) -> None:
         # handled by _scan_collection_child where the collection's own
         # context is preserved.
         for child in _iter_significant_subdirs(node_dir):
-            _scan_node(child, report)
+            _scan_node(child, report, state)
 
 
 def _iter_significant_subdirs(directory: Path) -> Iterator[Path]:
@@ -152,7 +159,7 @@ def _iter_significant_subdirs(directory: Path) -> Iterator[Path]:
         yield sub
 
 
-def _scan_collection(collection_dir: Path, report: MetadataReport) -> None:
+def _scan_collection(collection_dir: Path, report: MetadataReport, state: RunState) -> None:
     registered: set[Path] = set()
 
     collection = _safe_read_json(collection_dir / "collection.json") or {}
@@ -181,12 +188,12 @@ def _scan_collection(collection_dir: Path, report: MetadataReport) -> None:
             continue
         if not _is_freshness_checkable(asset_path):
             continue
-        result = _check_collection_level_asset(asset_path, collection_dir)
+        result = _check_collection_level_asset(asset_path, collection_dir, state)
         if result is not None:
             report.results.append(result)
 
     for sub in _iter_significant_subdirs(collection_dir):
-        _scan_collection_child(sub, collection_dir, registered, report)
+        _scan_collection_child(sub, collection_dir, registered, report, state)
 
     _emit_orphans(collection_dir, registered, report)
 
@@ -196,13 +203,14 @@ def _scan_collection_child(
     collection_dir: Path,
     registered: set[Path],
     report: MetadataReport,
+    state: RunState,
 ) -> None:
     if (child / "catalog.json").exists():
         # Pattern 2 sub-catalog under a collection: organize items by year,
         # theme, etc. The DATA-OWNING unit is still `collection_dir`, so
         # versions.json + item assets are resolved against it.
         for grandchild in _iter_significant_subdirs(child):
-            _scan_collection_child(grandchild, collection_dir, registered, report)
+            _scan_collection_child(grandchild, collection_dir, registered, report, state)
         _emit_orphans(child, registered, report)
         return
 
@@ -211,13 +219,13 @@ def _scan_collection_child(
         # its own orphans. The outer `_emit_orphans` only walks top-level
         # files in collection_dir (no recursion), so nested files are out
         # of its sweep regardless — no need to mark them registered.
-        _scan_collection(child, report)
+        _scan_collection(child, report, state)
         return
 
     item_id = child.name
     item_json_path = child / f"{item_id}.json"
     if item_json_path.exists():
-        _scan_item(item_json_path, child, collection_dir, registered, report)
+        _scan_item(item_json_path, child, collection_dir, registered, report, state)
         return
 
     # `add --item-id` names the item file after the id, not after the directory,
@@ -228,7 +236,7 @@ def _scan_collection_child(
     named_items = _item_jsons_in(child)
     if named_items:
         for path in named_items:
-            _scan_item(path, child, collection_dir, registered, report)
+            _scan_item(path, child, collection_dir, registered, report, state)
         return
 
     # Heuristic: a subdir is treated as an item-needing-JSON only if it
@@ -285,6 +293,7 @@ def _scan_item(
     collection_dir: Path,
     registered: set[Path],
     report: MetadataReport,
+    state: RunState,
 ) -> None:
     registered.add(item_json_path.resolve())
     item = _safe_read_json(item_json_path)
@@ -316,7 +325,7 @@ def _scan_item(
         # versions.json + item.json lookup happen via `collection_dir` so
         # the data-owning unit is the truth, even when the
         # item lives under a Pattern 2 sub-catalog.
-        report.results.append(check_file_metadata(asset_path, collection_dir))
+        report.results.append(check_file_metadata(asset_path, collection_dir, state=state))
 
     _emit_orphans(item_dir, registered, report)
 
@@ -351,6 +360,7 @@ def _emit_orphans(
 def _check_collection_level_asset(
     asset_path: Path,
     collection_dir: Path,
+    state: RunState,
 ) -> MetadataCheckResult | None:
     """Freshness check for a registered collection-level asset.
 
@@ -362,22 +372,31 @@ def _check_collection_level_asset(
     — registration alone is not a freshness claim, and emitting STALE for
     every rollup index (e.g., `items.parquet`) would be noise.
     """
-    versions_path = collection_dir / "versions.json"
-    stored = _read_versions_entry(versions_path, asset_path.name)
+    assets = load_current_assets(collection_dir, state)
+    stored = assets.get(asset_path.name) if assets else None
     if stored is None:
         return None
 
-    current = get_current_metadata(asset_path)
     # Freshness baseline is the asset's own mtime. `add` records it under the
     # `mtime` field (fast-path), while `--fix`'s
     # `update_versions_tracking` records it under `source_mtime`; a single asset
     # may carry either (or both). Prefer `source_mtime` but fall back to `mtime`
     # so a plain `add` (which never wrote `source_mtime` for collection-level
     # assets) is not perpetually STALE — the #512 regression.
-    stored_source_mtime = stored.get("source_mtime")
-    stored_mtime = stored_source_mtime if stored_source_mtime is not None else stored.get("mtime")
+    stored_mtime = stored_baseline_mtime(stored)
+    stored_size = stored.get("size_bytes")
+    st = asset_path.stat()
+    if stat_matches(st, stored_mtime, stored_size):
+        return MetadataCheckResult(
+            file_path=asset_path,
+            status=MetadataStatus.FRESH,
+            message="Metadata is up to date (mtime_unchanged)",
+        )
+    resized = stored_size is not None and st.st_size != stored_size
+
+    current = get_current_metadata(asset_path, state=state)
     stored_schema_fingerprint = stored.get("schema_fingerprint")
-    state = FileMetadataState(
+    file_state = FileMetadataState(
         file_path=asset_path,
         current_mtime=current.current_mtime,
         stored_mtime=stored_mtime,
@@ -391,7 +410,7 @@ def _check_collection_level_asset(
         current_schema_fingerprint=current.current_schema_fingerprint,
         stored_schema_fingerprint=stored_schema_fingerprint,
     )
-    stale, reason = is_stale(state)
+    stale, reason = judge_staleness(file_state, resized=resized)
     if not stale:
         return MetadataCheckResult(
             file_path=asset_path,
@@ -410,14 +429,14 @@ def _check_collection_level_asset(
     if (
         stored_schema_fingerprint is None
         and isinstance(stored_sha256, str)
-        and _content_hash_matches(asset_path, stored_sha256)
+        and _content_hash_matches(asset_path, stored_sha256, state)
     ):
         return MetadataCheckResult(
             file_path=asset_path,
             status=MetadataStatus.FRESH,
             message="Metadata is up to date (content unchanged)",
         )
-    changes = detect_changes(state)
+    changes = detect_changes(file_state)
     # Only escalate to BREAKING when a stored schema fingerprint actually
     # exists to compare against. Without a baseline (older catalogs, or entries
     # written before heuristics were persisted) a mtime change cannot prove a
@@ -439,7 +458,7 @@ def _check_collection_level_asset(
     )
 
 
-def _content_hash_matches(asset_path: Path, stored_sha256: str) -> bool:
+def _content_hash_matches(asset_path: Path, stored_sha256: str, state: RunState) -> bool:
     """True if the asset file's SHA-256 equals the stored checksum.
 
     Mirrors the slow-path tiebreaker in `is_current` (query.py) so `check`
@@ -452,37 +471,9 @@ def _content_hash_matches(asset_path: Path, stored_sha256: str) -> bool:
     if not asset_path.is_file():
         return False
     try:
-        return compute_checksum(asset_path) == stored_sha256
+        return state.checksum(asset_path) == stored_sha256
     except (ValueError, OSError):
         return False
-
-
-def _read_versions_entry(versions_path: Path, asset_filename: str) -> dict[str, Any] | None:
-    """Return the current-version asset entry for `asset_filename`, or None."""
-    if not versions_path.exists():
-        return None
-    data = _safe_read_json(versions_path)
-    if data is None:
-        return None
-    versions = data.get("versions") or []
-    if not isinstance(versions, list) or not versions:
-        return None
-    current_id = data.get("current_version")
-    selected = None
-    if current_id:
-        for v in versions:
-            if isinstance(v, dict) and v.get("version") == current_id:
-                selected = v
-                break
-    if selected is None:
-        selected = versions[-1] if isinstance(versions[-1], dict) else None
-    if selected is None:
-        return None
-    assets = selected.get("assets")
-    if not isinstance(assets, dict):
-        return None
-    entry = assets.get(asset_filename)
-    return entry if isinstance(entry, dict) else None
 
 
 def _is_data_file(path: Path) -> bool:

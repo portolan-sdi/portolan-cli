@@ -24,7 +24,6 @@ import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-from portolan_cli.conversion_config import get_vector_settings
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -1209,29 +1208,15 @@ def scale_1000_add(
     the catalog-level versions.json. The two tests in TestScaleAt1000Files
     only read the result. One CLI invocation serves both of them.
 
-    The catalog turns off the Hilbert sort and the bbox covering column. These
-    tests check the versions.json records at the #339 scale. They do not
-    check the GeoParquet output. The sort and the bbox column cost the same
-    for each file at any file count. The tests in
-    tests/integration/test_add_spatial_optimization.py cover both settings.
-    With the defaults, each one-point file takes about 48% longer to convert.
-    SCALE_1000_TIMEOUT_S gives the measured times.
+    The catalog keeps the default conversion settings, the Hilbert sort and
+    the bbox covering column included. SCALE_1000_TIMEOUT_S gives the
+    measured times. The scale gate in tests/perf counts the work per file.
     """
     catalog_root = tmp_path_factory.mktemp("scale-1000")
     result = CliRunner().invoke(
         cli, ["init", str(catalog_root), "--auto", "--license", "CC-BY-4.0"]
     )
     assert result.exit_code == 0, f"Init failed: {result.output}"
-
-    # The documented opt-out block (docs/reference/configuration.md).
-    config = catalog_root / ".portolan" / "config.yaml"
-    config.write_text(
-        config.read_text() + "conversion:\n  vector:\n    sort: none\n    add_bbox: false\n",
-        encoding="utf-8",
-    )
-    # A wrong key path falls back to the slow defaults without an error.
-    settings = get_vector_settings(catalog_root)
-    assert (settings.sort, settings.add_bbox) == ("none", False), settings
 
     collection_dir = catalog_root / "large-collection"
     collection_dir.mkdir()
@@ -1257,16 +1242,17 @@ def scale_1000_add(
 # global --timeout=300. The 1000-file add takes longer than 300 s. The shared
 # add runs in the setup of the first test, and that test's timeout covers it.
 #
-# Measurements from October 2026, for one-point files on an idle dev machine:
-# - With sort and bbox on, the add costs about 294 ms for each file.
-# - With sort and bbox off, the add costs about 200 ms for each file.
-# The 1000-file fixture took 270 s on a dev machine under heavy load.
+# Measured on 2026-10-27 with the default settings (Hilbert sort and bbox
+# column on), geoparquet-io 1.7.0, on a shared 64-core dev machine: the setup
+# took 336.5 s, about 337 ms for each one-point file. geoparquet-io opens 5
+# DuckDB connections for each file (convert, geometry repair, bbox, sort,
+# write), each with the spatial extension, at about 33 ms each. It offers no
+# way to reuse one connection, so the cost per file did not move.
 #
-# The nightly add with sort and bbox on took 840 s to 1281 s. That is 2.9x to
-# 4.4x the dev machine time. The old 900 s limit failed on about half the
-# nights. With sort and bbox off, the slowest projected CI add is 880 s
-# (200 s x 4.4). 1800 s gives twice that time. It also stops a hung test
-# before the 50 minute job limit.
+# The nightly runner took 2.9x to 4.4x the dev machine time in October 2026.
+# 337 s x 4.4 is 1483 s. 1800 s holds that and stops a hung test before the
+# 50 minute job limit. tests/perf counts the work per file, so a new cost
+# fails that gate first.
 SCALE_1000_TIMEOUT_S = 1800
 
 

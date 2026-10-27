@@ -5,9 +5,6 @@
 #   invariant<TAB>a build_damaged_catalog reason, verbatim
 #   config-key<TAB>key: why the reachability test cannot observe it
 
-# #748 has no owner. COG statistics land in a PAM sidecar, and no #1035 agent
-# owns raster statistics.
-xfail	#748	none	tests/integration/test_generated_catalog_conformance.py PTL-DAT-009 rows fresh, re-add, item-id, realdata-rapidai4eo-sample
 xfail	#914	spec	tests/integration/test_generated_catalog_conformance.py PTL-EXT-001, PTL-PRT-001, PTL-SCH-001 row partitioned
 xfail	#932	spec	tests/integration/test_generated_catalog_conformance.py PTL-DAT-005 row multi-file
 

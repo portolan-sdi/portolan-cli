@@ -383,6 +383,92 @@ class TestConvertFileSkip:
         assert result.format_from == "FlatGeobuf"
 
 
+class TestConvertFileKeepsAForeignOutput:
+    """``check --fix`` never converts over a file that its source did not make."""
+
+    @pytest.mark.unit
+    def test_a_foreign_parquet_of_the_stem_stays(
+        self, valid_points_geojson: Path, tmp_path: Path
+    ) -> None:
+        import shutil
+
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        source = tmp_path / "points.geojson"
+        shutil.copy(valid_points_geojson, source)
+        foreign = tmp_path / "points.parquet"
+        foreign.write_bytes(b"operator data")
+
+        result = convert_file(source)
+
+        assert foreign.read_bytes() == b"operator data"
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output == tmp_path / "points-geojson.parquet"
+
+
+class TestClaimOutput:
+    """``claim_output`` picks a name that writes over no file of another source."""
+
+    @staticmethod
+    def _stamped(path: Path, source_name: str) -> None:
+        import json
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.convert import PROVENANCE_KEY
+
+        table = pa.table({"a": [1]}).replace_schema_metadata(
+            {PROVENANCE_KEY: json.dumps({"path": source_name, "sha256": "x"})}
+        )
+        pq.write_table(table, path)
+
+    @pytest.mark.unit
+    def test_a_free_name_is_kept(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import claim_output
+
+        (tmp_path / "a.csv").write_text("x\n")
+        assert claim_output(tmp_path / "a.csv", tmp_path / "a.parquet") == tmp_path / "a.parquet"
+
+    @pytest.mark.unit
+    def test_an_output_of_the_same_source_is_replaced(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import claim_output
+
+        (tmp_path / "a.csv").write_text("x\n")
+        self._stamped(tmp_path / "a.parquet", "a.csv")
+        assert claim_output(tmp_path / "a.csv", tmp_path / "a.parquet") == tmp_path / "a.parquet"
+
+    @pytest.mark.unit
+    def test_an_output_of_another_source_moves_the_output(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import claim_output
+
+        (tmp_path / "a.csv").write_text("x\n")
+        self._stamped(tmp_path / "a.parquet", "a.geojson")
+        assert (
+            claim_output(tmp_path / "a.csv", tmp_path / "a.parquet") == tmp_path / "a-csv.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_a_byte_copy_of_the_source_is_the_source_output(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import claim_output
+
+        (tmp_path / "a.tiff").write_bytes(b"cog bytes")
+        (tmp_path / "a.tif").write_bytes(b"cog bytes")
+        assert claim_output(tmp_path / "a.tiff", tmp_path / "a.tif") == tmp_path / "a.tif"
+
+    @pytest.mark.unit
+    def test_no_free_name_raises(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import claim_output
+        from portolan_cli.errors import OutputExistsError
+
+        (tmp_path / "a.csv").write_text("x\n")
+        (tmp_path / "a.parquet").write_bytes(b"operator data")
+        (tmp_path / "a-csv.parquet").write_bytes(b"more operator data")
+
+        with pytest.raises(OutputExistsError, match="would replace a.parquet"):
+            claim_output(tmp_path / "a.csv", tmp_path / "a.parquet")
+
+
 class TestConvertFileVector:
     """Tests for convert_file() with vector input."""
 
@@ -440,6 +526,68 @@ class TestConvertFileRaster:
         assert result.format_from == "TIFF"
         assert result.format_to == "COG"
         assert result.error is None
+
+
+class TestTheCogCarriesItsStatistics:
+    """A converted COG embeds its band statistics (issue #748, PTL-DAT-009/010).
+
+    rashid reads with GDAL_PAM_ENABLED=NO, so statistics in a ``.aux.xml``
+    sidecar do not count. The conversion writes them into the COG itself.
+    """
+
+    @staticmethod
+    def _gtiff(path: Path) -> Path:
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+
+        data = np.arange(64 * 64, dtype="uint16").reshape(1, 64, 64) % 251
+        with rasterio.open(
+            path,
+            "w",
+            driver="GTiff",
+            width=64,
+            height=64,
+            count=1,
+            dtype="uint16",
+            crs="EPSG:4326",
+            transform=from_origin(0, 1, 0.01, 0.01),
+            nodata=0,
+        ) as dst:
+            dst.write(data)
+        return path
+
+    @pytest.mark.unit
+    def test_the_statistics_are_in_the_file(self, tmp_path: Path) -> None:
+        import numpy as np
+        import rasterio
+
+        from portolan_cli.convert import write_cog
+
+        (tmp_path / "src").mkdir()
+        source = self._gtiff(tmp_path / "src" / "scene.tiff")
+        output = write_cog(source, tmp_path)
+
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(output) as cog:
+            tags = cog.tags(1)
+        with rasterio.open(source) as src:
+            pixels = src.read(1, masked=True).compressed().astype("float64")
+        assert float(tags["STATISTICS_MINIMUM"]) == pixels.min()
+        assert float(tags["STATISTICS_MAXIMUM"]) == pixels.max()
+        assert float(tags["STATISTICS_MEAN"]) == pytest.approx(pixels.mean())
+        assert float(tags["STATISTICS_STDDEV"]) == pytest.approx(np.std(pixels))
+        # 17 of the 4096 pixels hold the nodata value 0.
+        assert float(tags["STATISTICS_VALID_PERCENT"]) == pytest.approx(100 * 4079 / 4096, abs=0.01)
+
+    @pytest.mark.unit
+    def test_no_sidecar_is_written(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import write_cog
+
+        (tmp_path / "src").mkdir()
+        source = self._gtiff(tmp_path / "src" / "scene.tiff")
+        write_cog(source, tmp_path)
+
+        assert sorted(p.name for p in tmp_path.rglob("*.aux.xml")) == []
 
 
 class TestConvertFileException:
@@ -2649,15 +2797,6 @@ class TestPartitionedOutputWithGeoparquetIO:
         assert kept.created_output is False
 
     @pytest.mark.integration
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "https://github.com/geoparquet/geoparquet-io/issues/1222: "
-            "Table.add_kdtree raises ST_Centroid(BLOB) on a table from "
-            "gpio.convert(). When a release fixes it, raise the pin and "
-            "remove this marker."
-        ),
-    )
     def test_single_file_kdtree_index(self, tmp_path: Path) -> None:
         """A non-partitioned kdtree index adds the `kdtree_cell` column."""
         from portolan_cli.conversion_config import VectorSettings

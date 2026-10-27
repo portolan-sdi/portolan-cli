@@ -17,7 +17,7 @@ to do with the scan bound and made the test take 8 s locally and 41 s on CI.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -81,10 +81,11 @@ def test_collection_level_scan_is_bounded_not_quadratic(
 ) -> None:
     """Adding N collection-level vectors must NOT re-checksum every sibling.
 
-    Pre-fix, each file's scan re-checksums all N siblings, so `compute_checksum`
-    is called N*N times (400 for N=20, measured). Post-fix each file checksums
-    only itself (+ its own sidecars), so the count is O(N) (20, measured). The
-    bound 3*N (60) sits far below the quadratic value and above the linear count.
+    Pre-fix, each file's scan measures and re-checksums all N siblings, so
+    `_measure` runs N*N times (400 for N=20, measured). Post-fix each file
+    measures only itself (+ its own sidecars), so the count is O(N) (20,
+    measured). The bound 3*N (60) sits far below the quadratic value and above
+    the linear count.
     """
     n = 20
     collection_dir = initialized_catalog / "many"
@@ -92,18 +93,18 @@ def test_collection_level_scan_is_bounded_not_quadratic(
     for i in range(n):
         (collection_dir / f"f{i:04d}.parquet").write_bytes(conformant_parquet_bytes)
 
-    # `_scan_item_assets` lives in preparation.py and checksums through that
-    # module's import. Counting `add.compute_checksum` saw 0 calls with or
-    # without the fix, so the bound below could never fail.
-    real_compute_checksum = prep_mod.compute_checksum
+    # Count the files the scan measures. Each measure hashes the file, and a
+    # run state answers a second hash of one file from its memo, so a count of
+    # hashes would stay linear even with the quadratic scan back.
+    real_measure = prep_mod._measure
     call_count = 0
 
-    def counting_checksum(path: Path) -> str:
+    def counting_measure(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
         call_count += 1
-        return real_compute_checksum(path)
+        return real_measure(*args, **kwargs)
 
-    with patch.object(prep_mod, "compute_checksum", side_effect=counting_checksum):
+    with patch.object(prep_mod, "_measure", side_effect=counting_measure):
         added, _skipped, failures = add_files(
             paths=[collection_dir],
             catalog_root=initialized_catalog,
@@ -113,10 +114,10 @@ def test_collection_level_scan_is_bounded_not_quadratic(
     assert not failures, f"unexpected failures: {failures}"
 
     # The counter must see the scan: each file checksums at least itself.
-    assert call_count >= n, f"compute_checksum counted {call_count} calls for {n} files"
+    assert call_count >= n, f"_measure counted {call_count} calls for {n} files"
     # Bound: linear, not quadratic. Without the fix the scan makes n*n = 400.
     assert call_count <= 3 * n, (
-        f"compute_checksum called {call_count} times for {n} files "
+        f"_measure called {call_count} times for {n} files "
         f"(expected O(n) <= {3 * n}; quadratic would be ~{n * n}). "
         "The collection-level scan is re-checksumming siblings (issue #465)."
     )

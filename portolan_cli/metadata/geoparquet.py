@@ -6,24 +6,45 @@ Extracts bbox, CRS, schema, and geometry type from file metadata.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, overload
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Protocol, TypeVar, overload
 
 import pyarrow.parquet as pq
 from pyproj import CRS
 from pyproj.exceptions import CRSError
 
-from portolan_cli.formats import read_geo_metadata, read_kv_metadata
+from portolan_cli.formats import read_geo_metadata
 from portolan_cli.models.schema import ColumnSchema, SchemaModel
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
-# Footer keys a rewrite must never carry over. geoparquet-io writes a fresh
-# ``geo``, and ``ARROW:schema`` describes the source columns.
-_WRITER_OWNED_KEYS: frozenset[bytes] = frozenset({b"geo", b"ARROW:schema"})
+T = TypeVar("T")
+
+
+class _Memo(Protocol):
+    """The part of ``run_state.RunState`` this module uses.
+
+    A Protocol, not an import: the ``viz`` layer imports this module, and
+    ``run_state`` imports ``sync.checksums``, which ``viz`` must not reach.
+    """
+
+    def memo(self, kind: str, path: Path, loader: Callable[[Path], T]) -> T:
+        """Load a value derived from one file once per run."""
+        ...
+
+
+# Footer keys the writer owns. geoparquet-io writes a fresh ``geo``. It drops
+# ``ARROW:schema``, ``pandas`` and ``geo:overviews`` on purpose, because they
+# describe the rows of the input, not of the output (gpio#1268). A rewrite
+# keeps every other key.
+_WRITER_OWNED_KEYS: frozenset[bytes] = frozenset(
+    {b"geo", b"ARROW:schema", b"pandas", b"geo:overviews"}
+)
 
 
 @dataclass
@@ -38,6 +59,8 @@ class GeoParquetMetadata:
         geometry_column: Name of the geometry column.
         feature_count: Number of features (rows).
         schema: Column names and types.
+        schema_fingerprint: The freshness fingerprint of the Arrow schema (see
+            :func:`schema_fingerprint`), read in the same footer read.
     """
 
     bbox: tuple[float, float, float, float] | None
@@ -46,6 +69,7 @@ class GeoParquetMetadata:
     geometry_column: str | None
     feature_count: int
     schema: dict[str, str]
+    schema_fingerprint: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
@@ -102,14 +126,25 @@ class GeoParquetMetadata:
         return props
 
 
-def extract_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
+def schema_fingerprint(schema: Any) -> str:
+    """The freshness fingerprint of an Arrow schema: 16 hex digits of its SHA-256.
+
+    versions.json stores this value, so the text it hashes must not change.
+    """
+    return hashlib.sha256(str(schema).encode()).hexdigest()[:16]
+
+
+def extract_geoparquet_metadata(path: Path, *, state: _Memo | None = None) -> GeoParquetMetadata:
     """Extract metadata from a GeoParquet file.
 
     Uses pyarrow to read file metadata without loading all data.
-    Parses GeoParquet geo metadata from file's custom metadata.
+    Parses GeoParquet geo metadata from file's custom metadata. One footer read
+    gives every field, the schema fingerprint included. With ``state``, the run
+    reads each footer once while the file stays unchanged.
 
     Args:
         path: Path to GeoParquet file.
+        state: The run state, for one footer read per file and run.
 
     Returns:
         GeoParquetMetadata with extracted information.
@@ -123,7 +158,12 @@ def extract_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
     """
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
+    if state is not None:
+        return state.memo("geoparquet.metadata", path, _read_geoparquet_metadata)
+    return _read_geoparquet_metadata(path)
 
+
+def _read_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
     # Open parquet file (metadata only)
     count("parquet.opens")
     pf = pq.ParquetFile(path)
@@ -157,6 +197,7 @@ def extract_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
         geometry_column=geometry_column,
         feature_count=feature_count,
         schema=schema,
+        schema_fingerprint=schema_fingerprint(pf.schema_arrow),
     )
 
 
@@ -233,11 +274,14 @@ class RewriteFidelity(NamedTuple):
         row_count: Number of rows in the file.
         crs: The primary geometry column's declared CRS, as written.
         columns: Every column name in the schema.
+        extra_keys: The footer keys the writer does not own, such as a
+            publisher's provenance key.
     """
 
     row_count: int
     crs: Any
     columns: frozenset[str]
+    extra_keys: frozenset[bytes] = frozenset()
 
 
 def read_rewrite_fidelity(path: Path) -> RewriteFidelity | None:
@@ -265,36 +309,13 @@ def read_rewrite_fidelity(path: Path) -> RewriteFidelity | None:
     columns = geo.get("columns")
     column_meta = columns.get(primary, {}) if isinstance(columns, dict) else {}
     crs = column_meta.get("crs") if isinstance(column_meta, dict) else None
+    metadata = parquet.metadata.metadata or {}
     return RewriteFidelity(
         row_count=parquet.metadata.num_rows,
         crs=crs,
         columns=frozenset(parquet.schema_arrow.names),
+        extra_keys=frozenset(metadata) - _WRITER_OWNED_KEYS,
     )
-
-
-def read_extra_schema_metadata(path: Path) -> dict[bytes, bytes]:
-    """Read the schema key-value metadata a rewrite must carry over.
-
-    A GeoParquet rewrite runs the file through geoparquet-io, which writes a
-    fresh ``geo`` key and drops every other key. Publishers do put keys there:
-    geopandas writes ``pandas``, and provenance keys are common. This function
-    reads the footer so a rewrite can restore them (issue #805).
-
-    ``geo`` is excluded because the writer owns it. Restoring the old value
-    would contradict the columns the rewrite added. ``ARROW:schema`` is excluded
-    for the same reason: the blob describes the source columns, and pyarrow
-    rebuilds the schema from it, so restoring it would hide the rewritten
-    schema (issue #864).
-
-    Args:
-        path: Path to a Parquet file.
-
-    Returns:
-        Every footer key except ``geo`` and ``ARROW:schema``. Empty for a file
-        with no extra keys, and empty for an unreadable file.
-    """
-    metadata = read_kv_metadata(path)
-    return {key: value for key, value in metadata.items() if key not in _WRITER_OWNED_KEYS}
 
 
 def _extract_bbox(column_meta: dict[str, Any]) -> tuple[float, float, float, float] | None:

@@ -14,15 +14,17 @@ Actual conversion is delegated to geoparquet-io and rio-cogeo.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import time
 import warnings
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
-from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
+from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
 from portolan_cli.conversion_config import (
     LOSSY_COMPRESSIONS,
     QUALITY_COMPRESSIONS,
@@ -36,20 +38,23 @@ from portolan_cli.conversion_config import (
 from portolan_cli.errors import (
     ConversionFailedError,
     InvalidOutputError,
+    OutputExistsError,
 )
 from portolan_cli.formats import (
     CloudNativeStatus,
     get_cloud_native_status,
 )
-from portolan_cli.trace import current_span, span
+from portolan_cli.trace import count, current_span, span
+from portolan_cli.versions import read_versions, versions_asset_key
 from portolan_cli.viz.thumbnail import (
     thumbnail_path_for,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from portolan_cli.plugins.formats import FormatHandler
+    from portolan_cli.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -526,8 +531,13 @@ def convert_with_handler(
     catalog_root: Path | None,
     *,
     reoptimize: bool = False,
+    target: Path | None = None,
+    state: RunState | None = None,
 ) -> Path:
     """Convert ``source`` with its format handler. ``add`` and ``check --fix`` both call this.
+
+    The output never replaces a file that ``source`` did not write. See
+    :func:`claim_output`.
 
     Args:
         handler: The handler ``handler_for`` picked.
@@ -536,18 +546,329 @@ def convert_with_handler(
         catalog_root: Catalog root, for settings.
         reoptimize: Rewrite a file that is already cloud-native. Only a handler
             with a ``reoptimize`` method supports it.
+        target: The output path that :func:`claim_output` gave. None claims it here.
+        state: The run state, for one hash per file and run.
 
     Returns:
         The converted file.
 
     Raises:
         InvalidOutputError: The converted file fails the handler's validation.
+        OutputExistsError: No output name is free of another file.
     """
     reoptimize_method = getattr(handler, "reoptimize", None)
     if reoptimize and reoptimize_method is not None:
         output: Path = reoptimize_method(source, catalog_root)
         return output
-    return handler.convert(source, output_dir, catalog_root)
+    expected = handler.output_path(source, output_dir)
+    if target is None:
+        target = claim_output(source, expected, state=state)
+    if target == expected:
+        return handler.convert(source, output_dir, catalog_root)
+    written = _convert_to(handler, source, output_dir, catalog_root, target)
+    return settle_output(source, expected, written, state=state, geometry_required=True)
+
+
+#: The Parquet footer key that names the source of a converted file. Its value
+#: is JSON: the source path relative to the output directory and the SHA-256 of
+#: the source. GeoParquet defines no provenance key, so Portolan names its own.
+PROVENANCE_KEY = "portolan:source"
+#: The GDAL metadata tag that carries the same record in a COG.
+COG_PROVENANCE_TAG = "PORTOLAN_SOURCE"
+
+
+#: The checksum function of the run that converts. A format handler takes no
+#: run state, so ``prepare_item`` sets this around the conversion, as
+#: ``conversion_config.settings_override`` does for the settings. The record
+#: then reuses the run's hash of the source, and the asset scan hits the same
+#: memo, so ``add`` hashes each source once.
+_RUN_CHECKSUM: ContextVar[Callable[[Path], str] | None] = ContextVar(
+    "portolan_run_checksum", default=None
+)
+
+
+@contextlib.contextmanager
+def run_checksums(checksum: Callable[[Path], str]) -> Iterator[None]:
+    """Make :func:`provenance_record` hash through ``checksum``, such as ``RunState.checksum``."""
+    token = _RUN_CHECKSUM.set(checksum)
+    try:
+        yield
+    finally:
+        _RUN_CHECKSUM.reset(token)
+
+
+def provenance_record(source: Path) -> str:
+    """The provenance value a converter writes into the output of ``source``."""
+    checksum = _RUN_CHECKSUM.get()
+    if checksum is None:
+        from portolan_cli.sync.checksums import compute_checksum, compute_dir_checksum
+
+        # A FileGDB source is a directory.
+        checksum = compute_dir_checksum if source.is_dir() else compute_checksum
+    return json.dumps({"path": source.name, "sha256": checksum(source)}, sort_keys=True)
+
+
+def with_provenance(table: Any, source: Path, *, require_geometry: bool = False) -> Any:
+    """Return a geoparquet-io table whose footer will name ``source``.
+
+    geoparquet-io 1.7.0 keeps the schema metadata keys of the table it writes
+    (gpio#1280), so the key reaches the file with no second write.
+
+    Args:
+        table: The table to write.
+        source: The file the table comes from.
+        require_geometry: Add no record to a table with no geometry. ``add``
+            deletes that output and tracks the source as a companion, so a
+            record would only cost a hash of the source.
+    """
+    from geoparquet_io.api.table import Table  # type: ignore[import-untyped]
+
+    if not isinstance(table, Table):
+        return table
+    if require_geometry and table.geometry_column is None:
+        return table
+    arrow = table.table
+    metadata = dict(arrow.schema.metadata or {})
+    metadata[PROVENANCE_KEY.encode()] = provenance_record(source).encode()
+    return Table(
+        arrow.replace_schema_metadata(metadata),
+        geometry_column=table.geometry_column,
+        crs=table.crs,
+    )
+
+
+def _recorded_source(output: Path) -> str | None:
+    """The source name that the provenance record of ``output`` holds, or None."""
+    raw: str | bytes | None = None
+    suffix = output.suffix.lower()
+    try:
+        if suffix == ".parquet":
+            import pyarrow.parquet as pq
+
+            count("parquet.opens")
+            raw = (pq.read_metadata(output).metadata or {}).get(PROVENANCE_KEY.encode())
+        elif suffix in (".tif", ".tiff"):
+            import rasterio
+
+            count("raster.opens")
+            with rasterio.open(output) as dataset:
+                raw = dataset.tags().get(COG_PROVENANCE_TAG)
+    except Exception:  # noqa: BLE001 - an unreadable file names no source
+        return None
+    if raw is None:
+        return None
+    try:
+        recorded = json.loads(raw)["path"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    return recorded if isinstance(recorded, str) else None
+
+
+def _produced_by(output: Path, source: Path, state: RunState | None) -> bool | None:
+    """Report whether ``output`` is a file that a conversion of ``source`` wrote.
+
+    The provenance record decides. A file with no record is the source's when
+    it is a byte copy of it, such as a COG that ``convert_raster`` copied to
+    its ``.tif`` name.
+
+    Returns:
+        True or False when the file proves it, None when it carries no record.
+    """
+    recorded = _recorded_source(output)
+    if recorded is not None:
+        return recorded == source.name
+    try:
+        if output.stat().st_size != source.stat().st_size:
+            return None
+    except OSError:
+        return None
+    if state is not None:
+        same = state.checksum(output) == state.checksum(source)
+    else:
+        from portolan_cli.sync.checksums import compute_checksum
+
+        same = compute_checksum(output) == compute_checksum(source)
+    return True if same else None
+
+
+def _collection_dir_of(path: Path) -> Path | None:
+    """The nearest directory above ``path`` that holds ``versions.json``.
+
+    The search stops at the catalog root, whose ``versions.json`` is the
+    catalog index and names no asset.
+    """
+    for directory in path.resolve().parents:
+        if (directory / ".portolan").is_dir():
+            return None
+        if (directory / "versions.json").is_file():
+            return directory
+    return None
+
+
+def _legacy_output_of(output: Path, source: Path, state: RunState | None) -> bool:
+    """Report whether versions.json shows that an add of ``source`` wrote ``output``.
+
+    Portolan 0.8.0 wrote no provenance record. Its versions.json tracks the
+    output and the source side by side, and the output entry has no
+    ``source_path``. Every output entry that an add writes now has one.
+    """
+    if output.parent != source.parent:
+        return False
+    collection_dir = _collection_dir_of(output)
+    if collection_dir is None:
+        return False
+    try:
+        record = (
+            state.versions(collection_dir)
+            if state is not None
+            else read_versions(collection_dir / "versions.json")
+        )
+    except (ValueError, OSError):
+        return False
+    if not record.versions:
+        return False
+    assets = record.versions[-1].assets
+    tracked = assets.get(versions_asset_key(output, collection_dir))
+    return (
+        tracked is not None
+        and tracked.source_path is None
+        and versions_asset_key(source, collection_dir) in assets
+    )
+
+
+def _footer_shape(path: Path) -> tuple[bool, frozenset[str]] | None:
+    """Whether a Parquet file is GeoParquet, and its column names. None when unreadable."""
+    import pyarrow.parquet as pq
+
+    try:
+        count("parquet.opens")
+        metadata = pq.read_metadata(path)
+    except Exception:  # noqa: BLE001 - an unreadable file has no shape
+        return None
+    has_geo = b"geo" in (metadata.metadata or {})
+    return has_geo, frozenset(metadata.schema.to_arrow_schema().names)
+
+
+def settle_output(
+    source: Path,
+    output: Path,
+    written: Path,
+    *,
+    state: RunState | None = None,
+    geometry_required: bool = False,
+) -> Path:
+    """Move the distinct output of a tabular source over the output 0.8.0 wrote.
+
+    0.8.0 converted a CSV with geometry, and with ``tabular.convert`` any CSV,
+    over the Parquet file of its stem. It tracked a CSV with no geometry
+    beside a GeoParquet as a companion. The two pairs look the same in
+    versions.json, so :func:`claim_output` sends a tabular source to the
+    distinct name. This function then compares the file it wrote with the
+    tracked file of the stem. The written file replaces it only when both are
+    GeoParquet, or both are plain Parquet, and they have the same columns.
+    Any other file stays, so a companion CSV that gains geometry beside a
+    foreign GeoParquet keeps its distinct output.
+
+    Args:
+        source: The tabular source.
+        output: The path the converter names, ``<stem>.parquet``.
+        written: The path the conversion wrote.
+        state: The run state, for one ``versions.json`` read per run.
+        geometry_required: Replace only with a GeoParquet file.
+
+    Returns:
+        The path that holds the output now.
+    """
+    if written == output or source.suffix.lower() not in TABULAR_EXTENSIONS:
+        return written
+    if not output.is_file() or _recorded_source(output) is not None:
+        return written
+    if not _legacy_output_of(output, source, state):
+        return written
+    shape = _footer_shape(written)
+    if shape is None or shape != _footer_shape(output) or (geometry_required and not shape[0]):
+        return written
+    written.replace(output)
+    return output
+
+
+def distinct_output_path(source: Path, output: Path) -> Path:
+    """The output name ``claim_output`` falls back to: ``<stem>-<ext><suffix>``."""
+    extension = source.suffix.lstrip(".").lower()
+    return output.with_name(f"{output.stem}-{extension}{output.suffix}")
+
+
+def claim_output(source: Path, output: Path, *, state: RunState | None = None) -> Path:
+    """Pick the path a conversion of ``source`` writes, so it replaces no other file.
+
+    A converter names its output after the source stem, so ``b1.csv`` and a
+    GeoParquet ``b1.parquet`` claim one name. A file at that name is the
+    source's to replace when its provenance record names the source, or when
+    it has no record and versions.json shows that an add of the source wrote
+    it (:func:`_legacy_output_of`). Any other file belongs to the operator. The
+    output then takes the name ``<stem>-<source extension>``, such as
+    ``b1-csv.parquet``, and the asset key follows the new stem.
+
+    Args:
+        source: The file to convert.
+        output: The path the converter names.
+        state: The run state, for one hash per file and run.
+
+    Returns:
+        ``output``, or the distinct name when ``output`` holds another file.
+
+    Raises:
+        OutputExistsError: Both names hold a file that ``source`` did not write.
+    """
+    if not output.exists() or output.resolve() == source.resolve():
+        return output
+    owned = _produced_by(output, source, state)
+    if owned:
+        return output
+    distinct = distinct_output_path(source, output)
+    if distinct.exists() and _produced_by(distinct, source, state):
+        return distinct
+    # A tabular source goes to the distinct name. settle_output decides after
+    # the conversion, because only the output shows whether it has geometry.
+    tabular = source.suffix.lower() in TABULAR_EXTENSIONS
+    if owned is None and not tabular and _legacy_output_of(output, source, state):
+        return output
+    if not distinct.exists():
+        return distinct
+    raise OutputExistsError(source.name, output.name)
+
+
+def _convert_to(
+    handler: FormatHandler,
+    source: Path,
+    output_dir: Path,
+    catalog_root: Path | None,
+    target: Path,
+) -> Path:
+    """Convert ``source`` with its handler and store the output at ``target``.
+
+    The handler writes the name it derives, so it converts into a scratch
+    directory. Each file it writes moves to ``output_dir``, with the output
+    stem changed to the stem of ``target``. A side file whose new name holds a
+    file stays out, so the move replaces nothing but ``target``.
+    """
+    import shutil
+    import tempfile
+
+    stem = handler.output_path(source, output_dir).stem
+    with tempfile.TemporaryDirectory(prefix=".portolan-convert-", dir=output_dir) as scratch:
+        produced = handler.convert(source, Path(scratch), catalog_root)
+        if produced.parent != Path(scratch):
+            # The handler wrote outside the directory it was given.
+            return produced
+        for entry in sorted(Path(scratch).iterdir()):
+            if entry.name == produced.name:
+                shutil.move(entry, target)
+                continue
+            name = target.stem + entry.name[len(stem) :] if entry.name.startswith(stem) else ""
+            if name and not (output_dir / name).exists():
+                shutil.move(entry, output_dir / name)
+    return target
 
 
 def _convert_partitioned_by_index(
@@ -907,6 +1228,11 @@ def _write_partitioned(table: Any, output_dir: Path, settings: VectorSettings) -
 #: codec in ``QUALITY_COMPRESSIONS``.
 _GTIFF_QUALITY_OPTION = {"JPEG": "jpeg_quality", "WEBP": "webp_level"}
 
+#: Up to this many pixels (4096 x 4096), write_cog embeds exact band statistics.
+#: Above it, GDAL computes them from a sample of the blocks, so a large source
+#: costs no second full read. The band then carries STATISTICS_APPROXIMATE=YES.
+EXACT_STATISTICS_PIXELS = 4096 * 4096
+
 
 def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = None) -> Path:
     """Write a raster file as a COG with the given settings.
@@ -934,6 +1260,7 @@ def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = Non
     """
     import tempfile
 
+    import rasterio
     from rio_cogeo.cogeo import cog_translate
     from rio_cogeo.profiles import cog_profiles
 
@@ -988,13 +1315,28 @@ def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = Non
 
         os.close(temp_fd)
 
-        cog_translate(
-            str(source),
-            str(temp_path),
-            profile,
-            quiet=True,
-            overview_resampling=cast("ResamplingMethod", settings.resampling),
-        )
+        # The COG carries its band statistics, so a reader with PAM off sees
+        # them (issue #748, PTL-DAT-009 and PTL-DAT-010). GDAL computes them on
+        # the open source and keeps them as band tags, and rio-cogeo forwards
+        # the band tags into the one write. PAM is off, so no .aux.xml appears.
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:
+            # Exact up to EXACT_STATISTICS_PIXELS. Above it, GDAL samples a
+            # subset of the blocks and tags the result STATISTICS_APPROXIMATE.
+            src.stats(approx=src.width * src.height > EXACT_STATISTICS_PIXELS)
+            cog_translate(
+                src,
+                str(temp_path),
+                profile,
+                quiet=True,
+                overview_resampling=cast("ResamplingMethod", settings.resampling),
+                forward_band_tags=True,
+                # A COG written in place is its own source, so it needs no record.
+                additional_cog_metadata=(
+                    {}
+                    if output_path.resolve() == source.resolve()
+                    else {COG_PROVENANCE_TAG: provenance_record(source)}
+                ),
+            )
 
         # Atomic replace
         temp_path.replace(output_path)
@@ -1343,6 +1685,8 @@ def convert_multilayer_file(
     source: Path,
     output_dir: Path,
     settings: VectorSettings | None = None,
+    *,
+    state: RunState | None = None,
 ) -> list[LayerConversionResult]:
     """Convert all layers in a multi-layer file to separate GeoParquet files.
 
@@ -1350,10 +1694,14 @@ def convert_multilayer_file(
     converts each layer to a separate GeoParquet file named:
         {source_stem}_{layer_name}.parquet
 
+    A layer output never replaces a file that ``source`` did not write. It
+    takes a distinct name instead (see :func:`claim_output`).
+
     Args:
         source: Path to the multi-layer file (GeoPackage or FileGDB).
         output_dir: Directory for output files.
         settings: Vector conversion settings. If None, uses defaults (no optimization).
+        state: The run state, for one hash per file and run.
 
     Returns:
         List of LayerConversionResult, one per layer.
@@ -1385,6 +1733,11 @@ def convert_multilayer_file(
 
     for layer_name in layers:
         output_path = output_dir / f"{source.stem}_{layer_name}.parquet"
+        try:
+            output_path = claim_output(source, output_path, state=state)
+        except OutputExistsError as err:
+            results.append(LayerConversionResult(source, layer_name, None, False, str(err)))
+            continue
 
         try:
             _convert_vector_layer(source, layer_name, output_path, settings)
@@ -1455,6 +1808,6 @@ def _convert_vector_layer(
     def _run() -> None:
         table = gpio.convert(source, layer=layer)
         table = apply_vector_settings(table, resolved)
-        table.write(output)
+        with_provenance(table, source).write(output)
 
     run_with_transient_convert_retry(_run, source_name=f"{source.name}:{layer}")

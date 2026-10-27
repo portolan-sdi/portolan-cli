@@ -68,7 +68,6 @@ from portolan_cli.metadata.geoparquet import (
     RewriteFidelity,
     SpatialLayout,
     extract_geoparquet_metadata,
-    read_extra_schema_metadata,
     read_rewrite_fidelity,
     read_spatial_layout,
 )
@@ -118,7 +117,6 @@ __all__ = [
     "extract_pmtiles_metadata",
     "RewriteFidelity",
     "SpatialLayout",
-    "read_extra_schema_metadata",
     "read_rewrite_fidelity",
     "read_spatial_layout",
     "extract_tabular_metadata",

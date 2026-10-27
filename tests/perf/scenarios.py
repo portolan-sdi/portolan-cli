@@ -312,15 +312,14 @@ SCENARIOS: dict[str, Scenario] = {
         # S3: n raster items with history, then an add that changes nothing.
         Scenario("re-add-unchanged", _rasters, ADD, setup=_setup_re_add),
         # S4: check --metadata on an unchanged catalog of n raster items, with
-        # thumbnails on, as PTL-VIZ-001 asks. check exits 1 today because the
-        # converted COGs carry no band statistics (PTL-DAT-009, a product defect).
+        # thumbnails on, as PTL-VIZ-001 asks. add embeds the band statistics
+        # in each COG (#748), so check exits 0.
         Scenario(
             "check-metadata",
             _rasters,
             ("check", "--metadata"),
             setup=_setup_add,
             config="",
-            exit_code=1,
         ),
         # S6: status on an unchanged catalog.
         Scenario("status", _one_collection, ("status",), setup=_setup_add),

@@ -19,7 +19,7 @@ import fnmatch
 import glob
 import logging
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -36,7 +36,16 @@ from portolan_cli.conversion_config import (
     get_vector_settings,
     settings_override,
 )
-from portolan_cli.convert import apply_vector_settings, run_with_transient_convert_retry
+from portolan_cli.convert import (
+    apply_vector_settings,
+    claim_output,
+    convert_with_handler,
+    distinct_output_path,
+    run_checksums,
+    run_with_transient_convert_retry,
+    settle_output,
+    with_provenance,
+)
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
 from portolan_cli.errors import AssetKeyCollisionError, NoGeometryError, RewriteFidelityError
 from portolan_cli.format_families import RASTER, VECTOR
@@ -44,7 +53,6 @@ from portolan_cli.formats import is_cloud_optimized_geotiff, is_geoparquet
 from portolan_cli.metadata import (
     extract_band_statistics,
     extract_parquet_statistics,
-    read_extra_schema_metadata,
     read_rewrite_fidelity,
     read_spatial_layout,
 )
@@ -52,6 +60,7 @@ from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.flatgeobuf import FlatGeobufMetadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata, RewriteFidelity
 from portolan_cli.metadata.pmtiles import PMTilesMetadata
+from portolan_cli.metadata.statistics import embedded_statistics
 from portolan_cli.metadata_yaml import (
     NodataMismatchError,
     apply_raster_nodata_defaults,
@@ -60,6 +69,7 @@ from portolan_cli.metadata_yaml import (
 )
 from portolan_cli.plugins.formats import FormatContext, extension_of, handler_for
 from portolan_cli.readme import README_FILENAME
+from portolan_cli.run_state import RunState
 from portolan_cli.scan.detect import is_filegdb
 from portolan_cli.stac import (
     STEM_RANK_SOURCE,
@@ -80,6 +90,8 @@ from portolan_cli.sync.checksums import (
     compute_dir_size,
     file_fields_from,
 )
+from portolan_cli.trace import span
+from portolan_cli.versions import versions_asset_key
 from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
 from portolan_cli.viz.style import enrich_cog_assets
 
@@ -89,7 +101,6 @@ if TYPE_CHECKING:
 
     from portolan_cli.config import ConfigSource
     from portolan_cli.plugins.formats import FormatHandler
-    from portolan_cli.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -224,6 +235,7 @@ def _scan_item_assets(
     exclude_names: frozenset[str] = frozenset(),
     collection_level: bool = False,
     ignored_patterns: list[str] | None = None,
+    state: RunState | None = None,
 ) -> tuple[dict[str, pystac.Asset], dict[str, tuple[Path, str, int]], list[str]]:
     """Scan an item directory for all trackable assets.
 
@@ -252,6 +264,7 @@ def _scan_item_assets(
             item JSON in ``item_dir``.
         ignored_patterns: The ``ignored_files`` patterns of the catalog. A
             companion that matches one is not an asset (#1044).
+        state: The run state, so each file is hashed once per run.
 
     Returns:
         Tuple of (stac_assets, asset_files, asset_paths):
@@ -279,7 +292,11 @@ def _scan_item_assets(
         # Issue #465: skip siblings that belong to OTHER items in this batch.
         # Keep the primary and its own same-stem source/sidecars; keep loose
         # companions (not in exclude_names) so tracking is preserved.
-        if is_flat and file_path.stem != primary_file.stem and file_path.name in exclude_names:
+        if (
+            is_flat
+            and primary_file.stem not in (file_path.stem, _distinct_stem(file_path))
+            and _in_batch(file_path.name, exclude_names)
+        ):
             continue
         if file_path.name in IGNORED_FILES or file_path.name == f"{item_id}.json":
             continue
@@ -294,7 +311,7 @@ def _scan_item_assets(
         # it the data role, so the PMTiles side-step drew tiles of it.
         if in_collection_dir and file_path.name in (README_FILENAME, PARQUET_FILENAME):
             continue
-        measured = _measure(file_path)
+        measured = _measure(file_path, state)
         if measured is not None:
             scanned.append(measured)
 
@@ -316,7 +333,25 @@ def _scan_item_assets(
     return stac_assets, asset_files, [str(f.path) for f in scanned]
 
 
-def _measure(file_path: Path) -> _ScannedFile | None:
+def _distinct_stem(source: Path) -> str:
+    """The stem of the distinct output name of ``source`` (``convert.claim_output``)."""
+    return distinct_output_path(source, source.with_suffix(".parquet")).stem
+
+
+def _in_batch(name: str, batch_names: frozenset[str]) -> bool:
+    """Report whether ``name`` is a batch source, its output, or its distinct output.
+
+    The distinct output of ``b1.csv`` is ``b1-csv.<suffix>``. The test reads
+    the name only, so it costs no ``stat`` per sibling (issue #465).
+    """
+    if name in batch_names:
+        return True
+    stem = name.rpartition(".")[0]
+    base, dash, extension = stem.rpartition("-")
+    return bool(dash) and f"{base}.{extension}" in batch_names
+
+
+def _measure(file_path: Path, state: RunState | None = None) -> _ScannedFile | None:
     """Checksum and type one directory entry, or None when it is no asset."""
     if file_path.is_dir():
         # FileGDB directories are single container assets (Issue #174).
@@ -324,7 +359,7 @@ def _measure(file_path: Path) -> _ScannedFile | None:
             return None
         return _ScannedFile(
             file_path,
-            compute_dir_checksum(file_path),
+            state.checksum(file_path) if state is not None else compute_dir_checksum(file_path),
             compute_dir_size(file_path),
             "application/x-filegdb",
             "data",
@@ -334,7 +369,7 @@ def _measure(file_path: Path) -> _ScannedFile | None:
         return None
     return _ScannedFile(
         file_path,
-        compute_checksum(file_path),
+        state.checksum(file_path) if state is not None else compute_checksum(file_path),
         file_path.stat().st_size,
         _get_media_type(file_path),
         _get_asset_role(file_path),
@@ -396,11 +431,15 @@ def _resolve_assets(
     """
     groups: dict[str, list[_ScannedFile]] = {}
     role_files: list[_ScannedFile] = []
+    stems = {scanned_file.path.stem for scanned_file in scanned}
     for scanned_file in scanned:
         if scanned_file.role in _ROLE_KEYS:
             role_files.append(scanned_file)
-        else:
-            groups.setdefault(scanned_file.path.stem, []).append(scanned_file)
+            continue
+        # A source whose output took the distinct name joins that output.
+        distinct = _distinct_stem(scanned_file.path)
+        stem = distinct if distinct in stems else scanned_file.path.stem
+        groups.setdefault(stem, []).append(scanned_file)
 
     resolved: dict[str, tuple[_ScannedFile, str]] = {}
 
@@ -486,6 +525,11 @@ class PreparedItem:
     # True when this run wrote the output and no file was there before. Only
     # such a file is safe to remove when a later step fails.
     created_output: bool = False
+    # The versions.json source_path of each output, by output path: the key of
+    # the source it was converted from, or its own key for a file added as it
+    # is. convert.claim_output reads the field to tell a 0.8.0 output, which
+    # has none, from a file of the operator.
+    source_paths: dict[Path, str] = field(default_factory=dict)
 
 
 def _pre_validate_geometry(path: Path) -> None:
@@ -774,6 +818,7 @@ def _convert_and_extract_metadata(
     item_dir: Path,
     handler: FormatHandler,
     *,
+    target: Path | None = None,
     catalog_root: Path | None = None,
     force: bool = False,
     reconvert: bool = False,
@@ -789,24 +834,30 @@ def _convert_and_extract_metadata(
       (issue #805).
     - ``--reconvert`` on a source that is its own output rewrites it with the
       handler's ``reconvert``, when it has one.
-    - Otherwise the handler converts the source.
+    - Otherwise the handler converts the source into ``target``.
+
+    ``target`` comes from :func:`convert.claim_output`, so no branch writes over
+    a file that the source did not make.
 
     Args:
         path: Source file path.
         item_dir: Item directory for output.
         handler: The format handler that claims the file.
+        target: The output path from :func:`convert.claim_output`. None claims it here.
         catalog_root: Catalog root, for reading conversion settings.
         force: If True, bypass change detection (Issue #386).
         reconvert: If True, re-convert from source (requires force=True).
         state: The run state. The handler takes no state, so the conversion
-            settings reach it through ``settings_override``.
+            settings reach it through ``settings_override``. The state also
+            gives one hash and one ``versions.json`` read per run.
 
     Returns:
         Tuple of (output_path, metadata). A plugin's FormatMetadata provides
         the bbox, crs, and to_stac_properties that the add path reads.
     """
-    expected = handler.output_path(path, item_dir)
-    in_place = expected.resolve() == path.resolve()
+    if target is None:
+        target = claim_output(path, handler.output_path(path, item_dir))
+    in_place = target.resolve() == path.resolve()
     reconvert_method = getattr(handler, "reconvert", None)
     override = (
         settings_override(
@@ -818,16 +869,18 @@ def _convert_and_extract_metadata(
     )
 
     with override:
-        if force and not reconvert and expected.exists():
+        if force and not reconvert and target.exists():
             if not in_place:
-                _warn_if_source_newer(path, expected)
-            output = expected
-            if extension_of(expected) in handler.extensions:
-                output = handler.convert(expected, item_dir, catalog_root)
+                _warn_if_source_newer(path, target)
+            output = target
+            if extension_of(target) in handler.extensions:
+                output = handler.convert(target, item_dir, catalog_root)
         elif reconvert and in_place and reconvert_method is not None:
             output = reconvert_method(path, catalog_root)
         else:
-            output = handler.convert(path, item_dir, catalog_root)
+            output = convert_with_handler(
+                handler, path, item_dir, catalog_root, target=target, state=state
+            )
     return output, cast("AllMetadata", handler.read_metadata(output))
 
 
@@ -1104,7 +1157,8 @@ def prepare_item(
         exclude_sibling_names: Base filenames of other batch items (sources +
             converted outputs) to prune from a collection-level asset scan
             (issue #465). Forwarded to _scan_item_assets; see its docstring.
-        state: The run state, which parses the config once per run.
+        state: The run state, which parses the config once per run and hashes
+            each file once. None reads each shared file here.
 
     Returns:
         PreparedItem with all metadata needed for finalization.
@@ -1113,6 +1167,8 @@ def prepare_item(
         ValueError: If the format is unsupported or collection_id is invalid.
         FileNotFoundError: If the source file doesn't exist.
         NoGeometryError: If the file has no valid geometry.
+        OutputExistsError: Both output names hold a file that the source did
+            not write.
     """
     # Step 1: Validate inputs
     _validate_collection_id(collection_id)
@@ -1142,17 +1198,31 @@ def prepare_item(
             f"Expected path under '{collection_dir}'."
         ) from err
 
-    # Step 3: Convert and extract metadata
-    created_output = not handler.output_path(path, item_dir).exists()
-    output_path, metadata = _convert_and_extract_metadata(
-        path,
-        item_dir,
-        handler,
-        catalog_root=catalog_root,
-        force=force,
-        reconvert=reconvert,
-        state=state,
-    )
+    # Step 3: Convert and extract metadata. The output never replaces a file
+    # that the source did not make (claim_output). A caller with no state gets
+    # one for this item, so the source is hashed once (provenance and scan).
+    if state is None:
+        state = RunState.open(catalog_root)
+    target = claim_output(path, handler.output_path(path, item_dir), state=state)
+    created_output = not target.exists()
+    with run_checksums(state.checksum):
+        output_path, metadata = _convert_and_extract_metadata(
+            path,
+            item_dir,
+            handler,
+            target=target,
+            catalog_root=catalog_root,
+            force=force,
+            reconvert=reconvert,
+            state=state,
+        )
+    # settle_output can move a tabular output over the file 0.8.0 wrote.
+    created_output = created_output and output_path == target
+    source_paths = {output_path: versions_asset_key(path, collection_dir)}
+    if state is not None and isinstance(metadata, GeoParquetMetadata) and output_path.is_file():
+        # The handler API takes no state. Give the run the footer the handler
+        # read, so finalization does not read it again.
+        state.memo("geoparquet.metadata", output_path, lambda _path: metadata)
 
     # Step 3b: Load metadata.yaml defaults (for temporal/nodata when source lacks them)
     metadata_yaml = (
@@ -1175,7 +1245,8 @@ def prepare_item(
 
     # Step 4: Extract and transform bbox
     if not metadata.bbox:
-        _cleanup_orphaned_output(output_path, item_dir, path)
+        if created_output:
+            _cleanup_orphaned_output(output_path, item_dir, path)
         raise NoGeometryError(
             path=metadata.id if hasattr(metadata, "id") else path.stem,
             reason="The source file may have no valid geometry.",
@@ -1194,6 +1265,7 @@ def prepare_item(
             exclude_names=exclude_sibling_names,
             collection_level=collection_level,
             ignored_patterns=get_ignored_files(catalog_root, state=state),
+            state=state,
         )
     except AssetKeyCollisionError:
         # The add stops before any STAC or versions.json write. A file this
@@ -1234,6 +1306,7 @@ def prepare_item(
             metadata=metadata,
             format_name=handler.name,
             created_output=created_output,
+            source_paths=source_paths,
         )
 
     # Item-level: create STAC item and save item.json
@@ -1271,6 +1344,7 @@ def prepare_item(
         metadata=metadata,
         format_name=handler.name,
         created_output=created_output,
+        source_paths=source_paths,
     )
 
 
@@ -1429,7 +1503,7 @@ def convert_vector(
             gpio.convert(str(source)), resolved, partitioned=partition_dir is not None
         )
         if partition_dir is None:
-            table.write(str(output_path))
+            with_provenance(table, source, require_geometry=True).write(str(output_path))
         else:
             _write_partitioned(table, partition_dir, resolved)
 
@@ -1513,10 +1587,12 @@ def _rewrite_parquet_in_place(source: Path, settings: VectorSettings) -> None:
     below, so a leftover file would otherwise be collected as a source on the
     next run. :func:`is_rewrite_temp` lets ``add`` skip it.
 
-    geoparquet-io writes a fresh ``geo`` key and drops every other schema
-    metadata key, so any extra key the source carried is restored afterwards.
-    That restore reads and rewrites the file a second time, so it runs only
-    when the source has such a key.
+    geoparquet-io 1.7.0 writes a fresh ``geo`` key and keeps every other footer
+    key a publisher set, such as a provenance key (gpio#1280). It drops
+    ``pandas`` on purpose, because that key describes the columns of the input
+    (gpio#1268). So the rewrite writes the file once.
+    :func:`_assert_rewrite_kept_everything` refuses a rewrite that drops a
+    publisher key.
 
     Args:
         source: GeoParquet file to rewrite.
@@ -1525,7 +1601,6 @@ def _rewrite_parquet_in_place(source: Path, settings: VectorSettings) -> None:
     import geoparquet_io as gpio
 
     temp_path = source.with_name(f".{source.stem}{REWRITE_TEMP_INFIX}.parquet")
-    preserved = read_extra_schema_metadata(source)
     before = read_rewrite_fidelity(source)
 
     def _run() -> None:
@@ -1534,8 +1609,6 @@ def _rewrite_parquet_in_place(source: Path, settings: VectorSettings) -> None:
 
     try:
         run_with_transient_convert_retry(_run, source_name=source.name)
-        if preserved:
-            _restore_schema_metadata(temp_path, preserved)
         _assert_rewrite_kept_everything(source, temp_path, before)
         temp_path.replace(source)
     finally:
@@ -1612,7 +1685,8 @@ def _assert_rewrite_kept_everything(
         before: The source's fidelity fields, read before the rewrite ran.
 
     Raises:
-        RewriteFidelityError: When the rewrite loses rows, columns, or the CRS.
+        RewriteFidelityError: When the rewrite loses rows, columns, schema
+            metadata keys, or the CRS.
     """
     if before is None:
         return
@@ -1629,6 +1703,11 @@ def _assert_rewrite_kept_everything(
     if dropped:
         raise RewriteFidelityError(source.name, f"the columns {sorted(dropped)}")
 
+    lost_keys = before.extra_keys - after.extra_keys
+    if lost_keys:
+        names = sorted(key.decode(errors="replace") for key in lost_keys)
+        raise RewriteFidelityError(source.name, f"the schema metadata keys {names}")
+
     if before.crs is not None and after.crs is None and not _means_wgs84(before.crs):
         raise RewriteFidelityError(source.name, "the CRS it declared")
 
@@ -1639,67 +1718,7 @@ def _assert_rewrite_kept_everything(
         raise RewriteFidelityError(source.name, "its CRS, which the rewrite changed")
 
 
-def _writer_compression(reader: Any) -> str:
-    """Name the compression to rewrite a file with, as ParquetWriter spells it.
-
-    ``ParquetFile`` reports an uncompressed column as ``UNCOMPRESSED``, which
-    ``ParquetWriter`` rejects: it spells the same thing ``none``. Reading the
-    codec back without this translation raises ``Unsupported compression:
-    uncompressed`` and loses the rewrite.
-
-    Reads column 0 of the first row group. Portolan writes one codec for the
-    whole file, so one column answers for all of them.
-
-    Args:
-        reader: An open :class:`pyarrow.parquet.ParquetFile` with row groups.
-
-    Returns:
-        A compression name ``ParquetWriter`` accepts.
-    """
-    codec = reader.metadata.row_group(0).column(0).compression.lower()
-    return "none" if codec == "uncompressed" else codec
-
-
-def _restore_schema_metadata(path: Path, preserved: dict[bytes, bytes]) -> None:
-    """Put the source's extra schema metadata back on a rewritten file.
-
-    geoparquet-io owns the ``geo`` key and writes its own, so ``preserved``
-    must already exclude it. Every other key the publisher set is restored:
-    geopandas writes ``pandas``, and provenance keys are common (issue #805).
-
-    Copies row group by row group so memory does not scale with the file, and
-    keeps the compression geoparquet-io chose.
-
-    Args:
-        path: Rewritten Parquet file to amend, in place.
-        preserved: Schema metadata keys to restore.
-    """
-    import pyarrow.parquet as pq
-
-    amended = path.with_name(f"{path.name}.meta")
-
-    try:
-        reader = pq.ParquetFile(path)
-        try:
-            schema = reader.schema_arrow
-            # The writer's own keys win. Only keys it dropped come back.
-            merged = {**preserved, **(schema.metadata or {})}
-            groups = reader.num_row_groups
-            compression = _writer_compression(reader) if groups else "snappy"
-            with pq.ParquetWriter(
-                amended, schema.with_metadata(merged), compression=compression
-            ) as writer:
-                for index in range(groups):
-                    writer.write_table(reader.read_row_group(index))
-        finally:
-            # Windows cannot replace a file that is still open.
-            reader.close()
-        amended.replace(path)
-    finally:
-        amended.unlink(missing_ok=True)
-
-
-def convert_tabular(source: Path, dest_dir: Path) -> Path:
+def convert_tabular(source: Path, dest_dir: Path, *, state: RunState | None = None) -> Path:
     """Convert tabular file to Parquet using geoparquet-io (Issue #432).
 
     Routes CSV/TSV/XLSX through gpio.convert().write() — the same pipeline
@@ -1711,13 +1730,19 @@ def convert_tabular(source: Path, dest_dir: Path) -> Path:
     Args:
         source: Source tabular file (CSV, TSV, XLSX, or plain Parquet).
         dest_dir: Destination directory.
+        state: The run state, for one hash per file and run.
 
     Returns:
         Path to the output Parquet file.
+
+    Raises:
+        OutputExistsError: Both output names hold a file that ``source`` did
+            not write (see :func:`convert.claim_output`).
     """
     import geoparquet_io as gpio
 
-    output_path = dest_dir / f"{source.stem}.parquet"
+    default_path = dest_dir / f"{source.stem}.parquet"
+    output_path = claim_output(source, default_path, state=state)
 
     # If already Parquet, just copy (no conversion needed)
     if source.suffix.lower() == ".parquet":
@@ -1735,11 +1760,15 @@ def convert_tabular(source: Path, dest_dir: Path) -> Path:
     # bulk add on the tabular path (Issue #339).
     def _run() -> None:
         table = gpio.convert(str(source))
-        table.write(str(output_path))
+        with_provenance(table, source).write(str(output_path))
 
-    run_with_transient_convert_retry(_run, source_name=source.name)
+    if state is None:
+        run_with_transient_convert_retry(_run, source_name=source.name)
+    else:
+        with run_checksums(state.checksum):
+            run_with_transient_convert_retry(_run, source_name=source.name)
 
-    return output_path
+    return settle_output(source, default_path, output_path, state=state)
 
 
 def convert_raster(
@@ -1768,11 +1797,50 @@ def convert_raster(
     """
     from portolan_cli.conversion_config import get_cog_settings
     from portolan_cli.convert import write_cog
+    from portolan_cli.output import warn as warn_output
 
     output_path = dest_dir / f"{source.stem}.tif"
     is_cog = source.suffix.lower() in (".tif", ".tiff") and is_cloud_optimized_geotiff(source)
     if is_cog and not reoptimize:
+        embedded = embedded_statistics(source)
+        if embedded == "missing":
+            embedded_now = _embed_statistics(source, dest_dir, catalog_root)
+            if embedded_now is not None:
+                return embedded_now
+        elif embedded == "lossy":
+            warn_output(
+                f"{source.name} has no band statistics in the file (PTL-DAT-009). "
+                "Portolan keeps it as it is, because its tiles use lossy compression "
+                "and a rewrite would re-encode them."
+            )
         if source.resolve() != output_path.resolve():
             shutil.copy2(source, output_path)
         return output_path
     return write_cog(source, dest_dir, get_cog_settings(catalog_root))
+
+
+def _embed_statistics(source: Path, dest_dir: Path, catalog_root: Path | None) -> Path | None:
+    """Rewrite a lossless COG through ``write_cog`` so that it carries its statistics.
+
+    PTL-DAT-009 and PTL-DAT-010 read the statistics from the COG itself with
+    PAM off (issue #748). A tag update in place breaks the COG layout, so the
+    COG is written again, once. The next add finds the statistics and keeps the
+    file. ``write_cog`` writes a scratch file and swaps it in, so a failure
+    keeps the operator's file.
+
+    Returns:
+        The COG with its statistics, or None when the rewrite failed.
+    """
+    from portolan_cli.conversion_config import get_cog_settings
+    from portolan_cli.convert import write_cog
+    from portolan_cli.output import warn as warn_output
+
+    try:
+        with span("convert.embed_statistics", file=source.name):
+            return write_cog(source, dest_dir, get_cog_settings(catalog_root))
+    except Exception as err:  # noqa: BLE001 - the original file stays usable
+        warn_output(
+            f"{source.name} has no band statistics in the file (PTL-DAT-009), "
+            f"and the rewrite that adds them failed: {err}"
+        )
+        return None

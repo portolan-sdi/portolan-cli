@@ -118,6 +118,25 @@ class TestMultiLayerConversion:
         assert len(set(output_files)) == 3  # All unique
 
     @pytest.mark.unit
+    def test_a_foreign_layer_file_stays(self, tmp_path: Path) -> None:
+        """A file with the name of a layer output is not the layer's to replace."""
+        import shutil
+
+        from portolan_cli.convert import convert_multilayer_file
+
+        gpkg_path = tmp_path / "multilayer.gpkg"
+        shutil.copy(FIXTURES_DIR / "multilayer.gpkg", gpkg_path)
+        foreign = tmp_path / "multilayer_points.parquet"
+        foreign.write_bytes(b"operator data")
+
+        results = {r.layer: r for r in convert_multilayer_file(gpkg_path, output_dir=tmp_path)}
+
+        assert foreign.read_bytes() == b"operator data"
+        assert results["points"].success is True
+        assert results["points"].output == tmp_path / "multilayer_points-gpkg.parquet"
+        assert results["lines"].output == tmp_path / "multilayer_lines.parquet"
+
+    @pytest.mark.unit
     def test_convert_multilayer_output_naming(self, tmp_path: Path) -> None:
         """Output files are named with layer suffix: source_layername.parquet."""
         from portolan_cli.convert import convert_multilayer_file

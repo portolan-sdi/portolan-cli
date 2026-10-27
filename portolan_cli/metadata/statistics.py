@@ -127,7 +127,9 @@ def extract_band_statistics(
         List of BandStatistics, one per band.
     """
     count("raster.opens")
-    with rasterio.open(path) as src:
+    # PAM off: GDAL would write the statistics it computes to a .aux.xml
+    # sidecar, which is no part of the published COG (issue #748).
+    with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(path) as src:
         results: list[BandStatistics] = []
         computed_stats: list[RasterioStats] | None = None  # Lazy-computed via stats()
 
@@ -165,6 +167,41 @@ def extract_band_statistics(
             )
 
         return results
+
+
+#: The band tags that PTL-DAT-009 and PTL-DAT-010 read from a COG.
+EMBEDDED_STATISTICS_TAGS = frozenset(
+    {
+        "STATISTICS_MINIMUM",
+        "STATISTICS_MAXIMUM",
+        "STATISTICS_MEAN",
+        "STATISTICS_STDDEV",
+        "STATISTICS_VALID_PERCENT",
+    }
+)
+
+
+def embedded_statistics(path: Path) -> Literal["present", "missing", "lossy"]:
+    """Report whether a COG carries its band statistics in the file itself.
+
+    The read has PAM off, as rashid reads, so a ``.aux.xml`` does not count.
+
+    Args:
+        path: A COG.
+
+    Returns:
+        ``present`` when every band has the five statistics tags. ``lossy``
+        when some are missing and the tiles use lossy compression, such as JPEG
+        or lossy WEBP. A rewrite would re-encode those pixels. ``missing``
+        otherwise.
+    """
+    count("raster.opens")
+    with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(path) as src:
+        if all(set(src.tags(bidx=band)) >= EMBEDDED_STATISTICS_TAGS for band in src.indexes):
+            return "present"
+        structure = src.tags(ns="IMAGE_STRUCTURE")
+    lossy = structure.get("COMPRESSION_REVERSIBILITY", "").upper() == "LOSSY"
+    return "lossy" if lossy or "JPEG" in structure.get("COMPRESSION", "").upper() else "missing"
 
 
 def _as_gdal_stores(value: float) -> float:

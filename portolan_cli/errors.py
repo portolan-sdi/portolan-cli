@@ -536,6 +536,28 @@ class PartitionCollisionError(ConversionError):
         )
 
 
+class OutputExistsError(ConversionError):
+    """Raised when a conversion would write over a file that its source did not make.
+
+    Error code: PRTLN-CNV010
+
+    A converter names its output after the source stem, so ``b1.csv`` and
+    ``b1.geojson`` both convert to ``b1.parquet``. When that name holds a file
+    and no earlier add tracked the source, the file belongs to the operator.
+    Portolan keeps it and does not convert.
+    """
+
+    code = "PRTLN-CNV010"
+
+    def __init__(self, source: str, output: str) -> None:
+        super().__init__(
+            f"converting {source} would replace {output}, which no add of {source} wrote. "
+            "Rename one of the two files.",
+            source=source,
+            output=output,
+        )
+
+
 class AmbiguousFormatError(ConversionError):
     """Raised when two plugin format handlers claim one file and no pin decides.
 

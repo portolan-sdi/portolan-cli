@@ -28,6 +28,14 @@
     "method": "GET",
     "path": "/api/v2/sql",
     "query_subset": {
+      "q": "SELECT DISTINCT ST_SRID(\"the_geom\") AS srid FROM (SELECT * FROM \"zoning_basedistricts\" LIMIT 3) AS q WHERE \"the_geom\" IS NOT NULL LIMIT 2"
+    },
+    "body_file": "srid.json"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/sql",
+    "query_subset": {
       "q": "SELECT * FROM \"zoning_basedistricts\" LIMIT 3",
       "format": "GeoJSON"
     },

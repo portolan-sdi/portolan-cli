@@ -301,11 +301,12 @@ class TestRewriteScratchFileIsNeverIngested:
 
 
 class TestRewritePreservesPublisherMetadata:
-    """geoparquet-io writes a fresh `geo` key and drops every other one.
+    """geoparquet-io writes a fresh `geo` key and keeps a publisher's keys.
 
-    Publishers do set other keys. geopandas writes `pandas`, which carries the
-    index and dtype information `pd.read_parquet` restores. The rewrite mutates
-    the operator's own file, so it must put those keys back.
+    Publishers set other keys, such as provenance. The rewrite mutates the
+    operator's own file, so those keys must survive it. geoparquet-io 1.7.0
+    keeps them (gpio#1280). It drops `pandas` on purpose, because that key
+    names the columns of the input (gpio#1268).
     """
 
     def test_extra_schema_metadata_survives_the_rewrite(self, tmp_path: Path) -> None:
@@ -327,6 +328,53 @@ class TestRewritePreservesPublisherMetadata:
         assert after[b"publisher:provenance"] == b"national cadastre 2024"
         # The writer still owns `geo`: the rewrite added the covering column.
         assert _covering(target) is not None
+
+    def test_a_geopandas_file_is_rewritten_with_one_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """geoparquet-io 1.7.0 keeps publisher keys (gpio#1280), so the rewrite writes once.
+
+        Before the bump, a second full read and write put the keys back. The
+        ``pandas`` key is the one key gpio drops on purpose: it names the columns
+        of the input, and the rewrite adds a column (gpio#1268).
+        """
+        import geopandas as gpd
+        from geoparquet_io.api.table import Table
+
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.preparation import _rewrite_parquet_in_place
+
+        target = tmp_path / "buildings.parquet"
+        frame = gpd.read_parquet(FIXTURES / "realdata" / "open-buildings.parquet")
+        frame.to_parquet(target)
+        table = pq.read_table(target)
+        metadata = {**(table.schema.metadata or {}), b"publisher:provenance": b"cadastre"}
+        pq.write_table(table.replace_schema_metadata(metadata), target)
+        assert b"pandas" in metadata
+        writes: list[str] = []
+        table_write = Table.write
+        parquet_writer = pq.ParquetWriter
+
+        def counted_write(self: Table, path: str, *args: object, **kwargs: object) -> Path:
+            writes.append(str(path))
+            return table_write(self, path, *args, **kwargs)  # type: ignore[arg-type]
+
+        class CountedWriter(parquet_writer):  # type: ignore[misc, valid-type]
+            def __init__(self, where: object, *args: object, **kwargs: object) -> None:
+                writes.append(str(where))
+                super().__init__(where, *args, **kwargs)
+
+        monkeypatch.setattr(Table, "write", counted_write)
+        monkeypatch.setattr(pq, "ParquetWriter", CountedWriter)
+
+        _rewrite_parquet_in_place(target, VectorSettings())
+
+        assert len(writes) == 1, writes
+        after = pq.read_metadata(target).metadata
+        assert after[b"publisher:provenance"] == b"cadastre"
+        assert b"pandas" not in after
+        assert _covering(target) is not None
+        assert len(gpd.read_parquet(target)) == len(frame)
 
     def test_the_geo_key_is_not_restored_from_the_source(self, tmp_path: Path) -> None:
         """Restoring the old `geo` would contradict the column just added."""
@@ -599,22 +647,6 @@ class TestTheGuardsCoverEveryRewritePath:
 
         before = read_rewrite_fidelity(source)
         _assert_rewrite_kept_everything(source, rewritten, before)
-
-    def test_an_uncompressed_file_can_be_rewritten(self, tmp_path: Path) -> None:
-        """`ParquetFile` says UNCOMPRESSED; `ParquetWriter` only accepts none."""
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-
-        from portolan_cli.preparation import _restore_schema_metadata
-
-        target = tmp_path / "plain.parquet"
-        table = pa.table({"n": [1, 2, 3]})
-        pq.write_table(table, target, compression="NONE")
-
-        _restore_schema_metadata(target, {b"pandas": b"{}"})
-
-        assert pq.ParquetFile(target).schema_arrow.metadata[b"pandas"] == b"{}"
-        assert pq.ParquetFile(target).metadata.num_rows == 3
 
     def test_a_misspelled_setting_warns_once_per_catalog(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

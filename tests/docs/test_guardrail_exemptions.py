@@ -43,7 +43,7 @@ DESIGN_REASONS = frozenset(
     }
 )
 
-EXPECTED_COUNTS = {"xfail": 3, "invariant": 3, "config-key": 7}
+EXPECTED_COUNTS = {"xfail": 2, "invariant": 3, "config-key": 7}
 
 
 def _sources() -> dict[Path, ast.Module]:
@@ -198,12 +198,16 @@ def test_every_invariant_reason_is_used() -> None:
 
 
 def test_the_scan_sees_the_markers_it_counts() -> None:
-    """Guard the scan: a known strict xfail reason is among the strings it reads."""
-    reasons = {text for tree in _sources().values() for text in xfail_reasons(tree)}
+    """Guard the scan: it reads the reason of a strict xfail marker.
 
-    # The #801 marker that this guard read is gone with its fix. The last
-    # strict xfail in the tree is the geoparquet-io one.
-    assert any(
-        reason.startswith("https://github.com/geoparquet/geoparquet-io/issues/1222:")
-        for reason in reasons
+    geoparquet-io 1.7.0 fixed gpio#1222, the marker this guard read. The guard
+    now reads a module written here, so it does not depend on a marker in the
+    tree.
+    """
+    tree = ast.parse(
+        "import pytest\n"
+        "@pytest.mark.xfail(strict=True, reason='https://example.org/issues/1: kept')\n"
+        "def test_x() -> None: ...\n"
     )
+
+    assert xfail_reasons(tree) == {"https://example.org/issues/1: kept"}
