@@ -15,17 +15,11 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import pytest
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    # tomli is not a project dependency. It arrives through pytest, which
-    # requires it on Python 3.10.
-    import tomli as tomllib
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = REPO_ROOT / "pyproject.toml"

@@ -13,7 +13,7 @@ statistics give the temporal bounds.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
+from datetime import UTC, date, datetime, time
 from typing import TYPE_CHECKING
 
 import pyarrow as pa
@@ -119,8 +119,8 @@ def _as_utc(value: object) -> datetime | None:
     """
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
     if isinstance(value, date):
-        return datetime.combine(value, time.min, tzinfo=timezone.utc)
+        return datetime.combine(value, time.min, tzinfo=UTC)
     return None

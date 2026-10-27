@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -97,7 +97,7 @@ def snapshot_to_version(snapshot: Snapshot) -> Version:
     version_str = props["portolake.version"]
     breaking = props.get("portolake.breaking", "false") == "true"
     message = props.get("portolake.message", "") or None
-    created = datetime.fromtimestamp(snapshot.timestamp_ms / 1000, tz=timezone.utc)
+    created = datetime.fromtimestamp(snapshot.timestamp_ms / 1000, tz=UTC)
 
     # Deserialize assets
     assets_json = props.get("portolake.assets", "{}")

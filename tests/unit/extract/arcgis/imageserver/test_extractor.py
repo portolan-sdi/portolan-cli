@@ -6,6 +6,7 @@ Uses mocking for HTTP and COG conversion to keep tests fast and isolated.
 
 from __future__ import annotations
 
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -855,7 +856,7 @@ class TestFailedTileOutput:
     def test_failed_tile_line_includes_reason(
         self, tmp_path: Path, sample_tile: TileSpec, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from portolan_cli.extract.arcgis.imageserver.extractor import (
             _ProcessingStats,
@@ -868,7 +869,7 @@ class TestFailedTileOutput:
             succeeded_tiles=set(),
             failed_tiles=set(),
             service_url="https://example.com/ImageServer",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
 
         _update_stats_and_state(
@@ -1070,7 +1071,7 @@ class TestResumeSplitRunsBeforeTheCoarseScan:
         coarse level called empty lost its "skipped" status and was counted as
         empty instead.
         """
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from portolan_cli.extract.arcgis.imageserver.resume import ImageServerResumeState
 
@@ -1078,7 +1079,7 @@ class TestResumeSplitRunsBeforeTheCoarseScan:
             succeeded_tiles={(0, 0)},
             failed_tiles=set(),
             service_url="https://example.com/ImageServer",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
 
         result, scanned = await self._run(tmp_path, sample_metadata, state)
@@ -1693,7 +1694,7 @@ class TestResumeGridGuard:
 
     @staticmethod
     def _state(tmp_path: Path, tile_size: int) -> Path:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from portolan_cli.extract.arcgis.imageserver.resume import (
             ImageServerResumeState,
@@ -1707,7 +1708,7 @@ class TestResumeGridGuard:
                 succeeded_tiles={(0, 0), (1, 0)},
                 failed_tiles=set(),
                 service_url="https://example.com/ImageServer",
-                started_at=datetime(2026, 9, 22, tzinfo=timezone.utc),
+                started_at=datetime(2026, 9, 22, tzinfo=UTC),
                 grid=TileGrid(tile_size=tile_size, extent=(0.0, 0.0, 100.0, 100.0)),
             ),
             path,

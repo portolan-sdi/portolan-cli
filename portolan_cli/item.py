@@ -7,7 +7,7 @@ extract geometry and assets, and write item metadata to JSON.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -60,7 +60,7 @@ def create_item(
 
     # Create properties with datetime
     properties: dict[str, Any] = {
-        "datetime": datetime.now(timezone.utc).isoformat(),
+        "datetime": datetime.now(UTC).isoformat(),
     }
 
     # Determine media type

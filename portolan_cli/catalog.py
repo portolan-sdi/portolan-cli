@@ -13,10 +13,10 @@ import json
 import logging
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, Self, overload
 
 from portolan_cli.errors import CatalogAlreadyExistsError
 from portolan_cli.humanize import humanize_slug
@@ -36,12 +36,6 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from portolan_cli.versions import Version
-
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
-
 
 # Cross-platform file locking (fcntl on Unix, msvcrt on Windows)
 if sys.platform == "win32":
@@ -351,7 +345,7 @@ def create_catalog(
     catalog_id = _sanitize_id(path.name)
 
     # Auto-generate timestamps
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Set description with default if not provided
     if description is None:
@@ -694,7 +688,7 @@ def init_catalog(
     # reserved for internal tooling state only).
     # Written early so failure here leaves directory in FRESH state.
     if backend == "file":
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         versions_data = {
             "schema_version": "1.0.0",
             "catalog_id": catalog_id,
@@ -1257,7 +1251,7 @@ def update_catalog_versions(
                 raise CatalogVersionsCorruptedError(msg)
 
             # Update the collections entry
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             if "collections" not in content:
                 content["collections"] = {}
 

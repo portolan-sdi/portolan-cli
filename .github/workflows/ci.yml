@@ -154,14 +154,12 @@ jobs:
         # newest interpreter on each OS, plus the ubuntu-3.11 coverage cell.
         # The other cells run the unit lane on pull requests and the full
         # suite on push to main, so an interpreter-specific integration break
-        # surfaces at merge instead of never. 3.10 runs on Linux only, as
-        # before.
+        # surfaces at merge instead of never.
         include:
           - {os: ubuntu-latest, python-version: '3.11', suite: full}
           - {os: ubuntu-latest, python-version: '3.13', suite: full}
           - {os: windows-latest, python-version: '3.13', suite: full}
           - {os: macos-latest, python-version: '3.13', suite: full}
-          - {os: ubuntu-latest, python-version: '3.10', suite: unit}
           - {os: ubuntu-latest, python-version: '3.12', suite: unit}
           - {os: windows-latest, python-version: '3.11', suite: unit}
           - {os: windows-latest, python-version: '3.12', suite: unit}
@@ -261,7 +259,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {os: ubuntu-latest, python-version: '3.10'}
+          - {os: ubuntu-latest, python-version: '3.11'}
           - {os: windows-latest, python-version: '3.13'}
     env:
       AWS_EC2_METADATA_DISABLED: "true"
@@ -292,7 +290,7 @@ jobs:
           command: uv sync --all-extras
 
       # Install into the project environment. With uv 0.6.14, `uv run --with`
-      # built its overlay on the runner's system Python, not the synced 3.10
+      # built its overlay on the runner's system Python, not the synced 3.11
       # environment, and pytest could not import the plugin.
       - name: Install the example plugin
         run: uv pip install ./tests/plugins/portolan_example

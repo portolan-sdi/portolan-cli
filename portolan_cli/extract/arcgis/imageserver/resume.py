@@ -22,7 +22,7 @@ import json
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.json_io import write_json_atomic
@@ -256,9 +256,9 @@ def _parse_report_data(
     # Parse timestamp
     started_at_str = data.get("started_at", "")
     try:
-        started_at = datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
+        started_at = datetime.fromisoformat(started_at_str)
     except (ValueError, AttributeError):
-        started_at = datetime.now(timezone.utc)
+        started_at = datetime.now(UTC)
 
     return ImageServerResumeState(
         succeeded_tiles=succeeded_tiles,

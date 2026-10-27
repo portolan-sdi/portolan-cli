@@ -10,7 +10,7 @@ Tests cover:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -52,7 +52,7 @@ class TestCollectionModelCreation:
     @pytest.mark.unit
     def test_create_collection_with_all_fields(self) -> None:
         """CollectionModel can be created with all fields."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         extent = ExtentModel(
             spatial=SpatialExtent(bbox=[[-122.5, 37.5, -122.0, 38.0]]),
             temporal=TemporalExtent(interval=[["2024-01-01T00:00:00Z", "2024-12-31T23:59:59Z"]]),
@@ -243,7 +243,7 @@ class TestCollectionSerialization:
     @pytest.mark.unit
     def test_roundtrip_serialization(self) -> None:
         """to_dict -> from_dict should preserve all data."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         extent = ExtentModel(
             spatial=SpatialExtent(bbox=[[-122.5, 37.5, -122.0, 38.0]]),
             temporal=TemporalExtent(interval=[["2024-01-01T00:00:00Z", "2024-12-31T23:59:59Z"]]),

@@ -13,7 +13,7 @@ Test categories:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -632,7 +632,7 @@ class TestVersionDiffing:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime(2024, 1, 15, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 15, tzinfo=UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
@@ -648,7 +648,7 @@ class TestVersionDiffing:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime(2024, 1, 15, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 15, tzinfo=UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
@@ -657,7 +657,7 @@ class TestVersionDiffing:
                 ),
                 Version(
                     version="1.1.0",
-                    created=datetime(2024, 1, 20, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 20, tzinfo=UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(sha256="def456", size_bytes=2000, href="data.parquet")
@@ -686,7 +686,7 @@ class TestVersionDiffing:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime(2024, 1, 15, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 15, tzinfo=UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
@@ -719,7 +719,7 @@ class TestVersionDiffing:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime(2024, 1, 15, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 15, tzinfo=UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(
@@ -1156,7 +1156,7 @@ class TestLocalAheadDetection:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime(2024, 1, 15, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 15, tzinfo=UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
@@ -1165,7 +1165,7 @@ class TestLocalAheadDetection:
                 ),
                 Version(
                     version="1.1.0",
-                    created=datetime(2024, 1, 20, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 20, tzinfo=UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(sha256="def456", size_bytes=2000, href="data.parquet")
@@ -1182,7 +1182,7 @@ class TestLocalAheadDetection:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime(2024, 1, 15, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 15, tzinfo=UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
@@ -1211,7 +1211,7 @@ class TestLocalAheadDetection:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime(2024, 1, 15, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 15, tzinfo=UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
@@ -1220,7 +1220,7 @@ class TestLocalAheadDetection:
                 ),
                 Version(
                     version="1.1.0",
-                    created=datetime(2024, 1, 20, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 20, tzinfo=UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(
@@ -1239,7 +1239,7 @@ class TestLocalAheadDetection:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime(2024, 1, 15, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 15, tzinfo=UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
@@ -1248,7 +1248,7 @@ class TestLocalAheadDetection:
                 ),
                 Version(
                     version="1.0.1",
-                    created=datetime(2024, 1, 18, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 18, tzinfo=UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(

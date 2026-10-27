@@ -13,7 +13,7 @@ Covers:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -63,7 +63,7 @@ def _make_version(
     """Build a mock Version object matching the VersioningBackend protocol."""
     ver = MagicMock()
     ver.version = version
-    ver.created = created or datetime(2024, 1, 1, tzinfo=timezone.utc)
+    ver.created = created or datetime(2024, 1, 1, tzinfo=UTC)
     ver.breaking = breaking
     ver.message = message
     ver.assets = assets if assets is not None else {}

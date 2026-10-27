@@ -7,7 +7,7 @@ wrong stored value cannot survive a rebuild.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pystac
 import pytest
@@ -31,7 +31,7 @@ VALENCIA_TRANSFORM = [697917.4537159235, 20.0, 0.0, 4390253.961476656, 0.0, -20.
 
 
 def _utc(year: int, month: int, day: int) -> datetime:
-    return datetime(year, month, day, tzinfo=timezone.utc)
+    return datetime(year, month, day, tzinfo=UTC)
 
 
 class TestBuildSpatialExtent:

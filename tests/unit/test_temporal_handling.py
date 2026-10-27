@@ -5,7 +5,7 @@ Default to null (open interval), mark provisional, flag in check.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -22,22 +22,22 @@ class TestParseFlexibleDatetime:
     def test_parses_iso_format(self) -> None:
         """Should parse ISO 8601 datetime."""
         result = parse_flexible_datetime("2024-01-15T10:30:00Z")
-        assert result == datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+        assert result == datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)
 
     def test_parses_iso_without_z(self) -> None:
         """Should parse ISO 8601 without Z suffix as UTC."""
         result = parse_flexible_datetime("2024-01-15T10:30:00")
-        assert result == datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+        assert result == datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)
 
     def test_parses_date_only(self) -> None:
         """Should parse date-only format as UTC midnight."""
         result = parse_flexible_datetime("2024-01-15")
-        assert result == datetime(2024, 1, 15, 0, 0, 0, tzinfo=timezone.utc)
+        assert result == datetime(2024, 1, 15, 0, 0, 0, tzinfo=UTC)
 
     def test_parses_space_separated(self) -> None:
         """Should parse space-separated datetime as UTC."""
         result = parse_flexible_datetime("2024-01-15 10:30:00")
-        assert result == datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+        assert result == datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)
 
     def test_preserves_explicit_offset(self) -> None:
         """Should keep an explicit UTC offset instead of forcing UTC."""
@@ -71,7 +71,7 @@ class TestFlexibleDatetimeType:
 
     def test_passes_through_datetime_objects(self) -> None:
         """Should pass through datetime objects unchanged."""
-        dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        dt = datetime(2024, 1, 1, tzinfo=UTC)
         result = FLEXIBLE_DATETIME.convert(dt, None, None)
         assert result == dt
 
@@ -88,7 +88,7 @@ class TestCreateItemDatetime:
         """Should use provided datetime when specified."""
         from portolan_cli.stac import create_item
 
-        dt = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
         item = create_item(
             item_id="test-item",
             bbox=[-180, -90, 180, 90],
@@ -122,7 +122,7 @@ class TestCreateItemDatetime:
         """An explicit datetime leaves no portolan: field behind either."""
         from portolan_cli.stac import create_item
 
-        dt = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        dt = datetime(2020, 1, 1, tzinfo=UTC)
         item = create_item(
             item_id="test-item",
             bbox=[-180, -90, 180, 90],

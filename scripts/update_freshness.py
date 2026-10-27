@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Repo-specific instructions live in AGENTS.md. CLAUDE.md only imports it,
@@ -118,7 +118,7 @@ def main() -> int:
         return 0
 
     # Update freshness markers
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     content = instructions_path.read_text()
     original = content
 
