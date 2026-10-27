@@ -383,6 +383,92 @@ class TestConvertFileSkip:
         assert result.format_from == "FlatGeobuf"
 
 
+class TestConvertFileKeepsAForeignOutput:
+    """``check --fix`` never converts over a file that its source did not make."""
+
+    @pytest.mark.unit
+    def test_a_foreign_parquet_of_the_stem_stays(
+        self, valid_points_geojson: Path, tmp_path: Path
+    ) -> None:
+        import shutil
+
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        source = tmp_path / "points.geojson"
+        shutil.copy(valid_points_geojson, source)
+        foreign = tmp_path / "points.parquet"
+        foreign.write_bytes(b"operator data")
+
+        result = convert_file(source)
+
+        assert foreign.read_bytes() == b"operator data"
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output == tmp_path / "points-geojson.parquet"
+
+
+class TestClaimOutput:
+    """``claim_output`` picks a name that writes over no file of another source."""
+
+    @staticmethod
+    def _stamped(path: Path, source_name: str) -> None:
+        import json
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.convert import PROVENANCE_KEY
+
+        table = pa.table({"a": [1]}).replace_schema_metadata(
+            {PROVENANCE_KEY: json.dumps({"path": source_name, "sha256": "x"})}
+        )
+        pq.write_table(table, path)
+
+    @pytest.mark.unit
+    def test_a_free_name_is_kept(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import claim_output
+
+        (tmp_path / "a.csv").write_text("x\n")
+        assert claim_output(tmp_path / "a.csv", tmp_path / "a.parquet") == tmp_path / "a.parquet"
+
+    @pytest.mark.unit
+    def test_an_output_of_the_same_source_is_replaced(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import claim_output
+
+        (tmp_path / "a.csv").write_text("x\n")
+        self._stamped(tmp_path / "a.parquet", "a.csv")
+        assert claim_output(tmp_path / "a.csv", tmp_path / "a.parquet") == tmp_path / "a.parquet"
+
+    @pytest.mark.unit
+    def test_an_output_of_another_source_moves_the_output(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import claim_output
+
+        (tmp_path / "a.csv").write_text("x\n")
+        self._stamped(tmp_path / "a.parquet", "a.geojson")
+        assert (
+            claim_output(tmp_path / "a.csv", tmp_path / "a.parquet") == tmp_path / "a-csv.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_a_byte_copy_of_the_source_is_the_source_output(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import claim_output
+
+        (tmp_path / "a.tiff").write_bytes(b"cog bytes")
+        (tmp_path / "a.tif").write_bytes(b"cog bytes")
+        assert claim_output(tmp_path / "a.tiff", tmp_path / "a.tif") == tmp_path / "a.tif"
+
+    @pytest.mark.unit
+    def test_no_free_name_raises(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import claim_output
+        from portolan_cli.errors import OutputExistsError
+
+        (tmp_path / "a.csv").write_text("x\n")
+        (tmp_path / "a.parquet").write_bytes(b"operator data")
+        (tmp_path / "a-csv.parquet").write_bytes(b"more operator data")
+
+        with pytest.raises(OutputExistsError, match="would replace a.parquet"):
+            claim_output(tmp_path / "a.csv", tmp_path / "a.parquet")
+
+
 class TestConvertFileVector:
     """Tests for convert_file() with vector input."""
 

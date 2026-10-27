@@ -14,6 +14,7 @@ Actual conversion is delegated to geoparquet-io and rio-cogeo.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import time
 import warnings
@@ -36,12 +37,13 @@ from portolan_cli.conversion_config import (
 from portolan_cli.errors import (
     ConversionFailedError,
     InvalidOutputError,
+    OutputExistsError,
 )
 from portolan_cli.formats import (
     CloudNativeStatus,
     get_cloud_native_status,
 )
-from portolan_cli.trace import current_span, span
+from portolan_cli.trace import count, current_span, span
 from portolan_cli.viz.thumbnail import (
     thumbnail_path_for,
 )
@@ -50,6 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from portolan_cli.plugins.formats import FormatHandler
+    from portolan_cli.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -526,8 +529,13 @@ def convert_with_handler(
     catalog_root: Path | None,
     *,
     reoptimize: bool = False,
+    target: Path | None = None,
+    state: RunState | None = None,
 ) -> Path:
     """Convert ``source`` with its format handler. ``add`` and ``check --fix`` both call this.
+
+    The output never replaces a file that ``source`` did not write. See
+    :func:`claim_output`.
 
     Args:
         handler: The handler ``handler_for`` picked.
@@ -536,18 +544,184 @@ def convert_with_handler(
         catalog_root: Catalog root, for settings.
         reoptimize: Rewrite a file that is already cloud-native. Only a handler
             with a ``reoptimize`` method supports it.
+        target: The output path that :func:`claim_output` gave. None claims it here.
+        state: The run state, for one hash per file and run.
 
     Returns:
         The converted file.
 
     Raises:
         InvalidOutputError: The converted file fails the handler's validation.
+        OutputExistsError: No output name is free of another file.
     """
     reoptimize_method = getattr(handler, "reoptimize", None)
     if reoptimize and reoptimize_method is not None:
         output: Path = reoptimize_method(source, catalog_root)
         return output
-    return handler.convert(source, output_dir, catalog_root)
+    expected = handler.output_path(source, output_dir)
+    if target is None:
+        target = claim_output(source, expected, state=state)
+    if target == expected:
+        return handler.convert(source, output_dir, catalog_root)
+    return _convert_to(handler, source, output_dir, catalog_root, target)
+
+
+#: The Parquet footer key that names the source of a converted file. Its value
+#: is JSON: the source path relative to the output directory and the SHA-256 of
+#: the source. GeoParquet defines no provenance key, so Portolan names its own.
+PROVENANCE_KEY = "portolan:source"
+#: The GDAL metadata tag that carries the same record in a COG.
+COG_PROVENANCE_TAG = "PORTOLAN_SOURCE"
+
+
+def provenance_record(source: Path) -> str:
+    """The provenance value a converter writes into the output of ``source``."""
+    from portolan_cli.sync.checksums import compute_checksum, compute_dir_checksum
+
+    # A FileGDB source is a directory.
+    digest = compute_dir_checksum(source) if source.is_dir() else compute_checksum(source)
+    return json.dumps({"path": source.name, "sha256": digest}, sort_keys=True)
+
+
+def with_provenance(table: Any, source: Path) -> Any:
+    """Return a geoparquet-io table whose footer will name ``source``.
+
+    geoparquet-io 1.7.0 keeps the schema metadata keys of the table it writes
+    (gpio#1280), so the key reaches the file with no second write.
+    """
+    from geoparquet_io.api.table import Table  # type: ignore[import-untyped]
+
+    if not isinstance(table, Table):
+        return table
+    arrow = table.table
+    metadata = dict(arrow.schema.metadata or {})
+    metadata[PROVENANCE_KEY.encode()] = provenance_record(source).encode()
+    return Table(
+        arrow.replace_schema_metadata(metadata),
+        geometry_column=table.geometry_column,
+        crs=table.crs,
+    )
+
+
+def _recorded_source(output: Path) -> str | None:
+    """The source name that the provenance record of ``output`` holds, or None."""
+    raw: str | bytes | None = None
+    suffix = output.suffix.lower()
+    try:
+        if suffix == ".parquet":
+            import pyarrow.parquet as pq
+
+            count("parquet.opens")
+            raw = (pq.read_metadata(output).metadata or {}).get(PROVENANCE_KEY.encode())
+        elif suffix in (".tif", ".tiff"):
+            import rasterio
+
+            count("raster.opens")
+            with rasterio.open(output) as dataset:
+                raw = dataset.tags().get(COG_PROVENANCE_TAG)
+    except Exception:  # noqa: BLE001 - an unreadable file names no source
+        return None
+    if raw is None:
+        return None
+    try:
+        recorded = json.loads(raw)["path"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    return recorded if isinstance(recorded, str) else None
+
+
+def _produced_by(output: Path, source: Path, state: RunState | None) -> bool:
+    """Report whether ``output`` is a file that a conversion of ``source`` wrote.
+
+    The provenance record decides. A file with no record is the source's only
+    when it is a byte copy of it, such as a COG that ``convert_raster`` copied
+    to its ``.tif`` name.
+    """
+    recorded = _recorded_source(output)
+    if recorded is not None:
+        return recorded == source.name
+    try:
+        if output.stat().st_size != source.stat().st_size:
+            return False
+    except OSError:
+        return False
+    if state is not None:
+        return state.checksum(output) == state.checksum(source)
+    from portolan_cli.sync.checksums import compute_checksum
+
+    return compute_checksum(output) == compute_checksum(source)
+
+
+def distinct_output_path(source: Path, output: Path) -> Path:
+    """The output name ``claim_output`` falls back to: ``<stem>-<ext><suffix>``."""
+    extension = source.suffix.lstrip(".").lower()
+    return output.with_name(f"{output.stem}-{extension}{output.suffix}")
+
+
+def claim_output(source: Path, output: Path, *, state: RunState | None = None) -> Path:
+    """Pick the path a conversion of ``source`` writes, so it replaces no other file.
+
+    A converter names its output after the source stem, so ``b1.csv`` and a
+    GeoParquet ``b1.parquet`` claim one name. A file at that name is the
+    source's to replace only when its provenance record names the source. Any
+    other file belongs to the operator. The output then takes the name
+    ``<stem>-<source extension>``, such as ``b1-csv.parquet``, and the asset
+    key follows the new stem.
+
+    Args:
+        source: The file to convert.
+        output: The path the converter names.
+        state: The run state, for one hash per file and run.
+
+    Returns:
+        ``output``, or the distinct name when ``output`` holds another file.
+
+    Raises:
+        OutputExistsError: Both names hold a file that ``source`` did not write.
+    """
+    if (
+        not output.exists()
+        or output.resolve() == source.resolve()
+        or _produced_by(output, source, state)
+    ):
+        return output
+    distinct = distinct_output_path(source, output)
+    if not distinct.exists() or _produced_by(distinct, source, state):
+        return distinct
+    raise OutputExistsError(source.name, output.name)
+
+
+def _convert_to(
+    handler: FormatHandler,
+    source: Path,
+    output_dir: Path,
+    catalog_root: Path | None,
+    target: Path,
+) -> Path:
+    """Convert ``source`` with its handler and store the output at ``target``.
+
+    The handler writes the name it derives, so it converts into a scratch
+    directory. Each file it writes moves to ``output_dir``, with the output
+    stem changed to the stem of ``target``. A side file whose new name holds a
+    file stays out, so the move replaces nothing but ``target``.
+    """
+    import shutil
+    import tempfile
+
+    stem = handler.output_path(source, output_dir).stem
+    with tempfile.TemporaryDirectory(prefix=".portolan-convert-", dir=output_dir) as scratch:
+        produced = handler.convert(source, Path(scratch), catalog_root)
+        if produced.parent != Path(scratch):
+            # The handler wrote outside the directory it was given.
+            return produced
+        for entry in sorted(Path(scratch).iterdir()):
+            if entry.name == produced.name:
+                shutil.move(entry, target)
+                continue
+            name = target.stem + entry.name[len(stem) :] if entry.name.startswith(stem) else ""
+            if name and not (output_dir / name).exists():
+                shutil.move(entry, output_dir / name)
+    return target
 
 
 def _convert_partitioned_by_index(
@@ -994,6 +1168,7 @@ def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = Non
             profile,
             quiet=True,
             overview_resampling=cast("ResamplingMethod", settings.resampling),
+            additional_cog_metadata={COG_PROVENANCE_TAG: provenance_record(source)},
         )
 
         # Atomic replace
@@ -1343,6 +1518,8 @@ def convert_multilayer_file(
     source: Path,
     output_dir: Path,
     settings: VectorSettings | None = None,
+    *,
+    state: RunState | None = None,
 ) -> list[LayerConversionResult]:
     """Convert all layers in a multi-layer file to separate GeoParquet files.
 
@@ -1350,10 +1527,14 @@ def convert_multilayer_file(
     converts each layer to a separate GeoParquet file named:
         {source_stem}_{layer_name}.parquet
 
+    A layer output never replaces a file that ``source`` did not write. It
+    takes a distinct name instead (see :func:`claim_output`).
+
     Args:
         source: Path to the multi-layer file (GeoPackage or FileGDB).
         output_dir: Directory for output files.
         settings: Vector conversion settings. If None, uses defaults (no optimization).
+        state: The run state, for one hash per file and run.
 
     Returns:
         List of LayerConversionResult, one per layer.
@@ -1385,6 +1566,11 @@ def convert_multilayer_file(
 
     for layer_name in layers:
         output_path = output_dir / f"{source.stem}_{layer_name}.parquet"
+        try:
+            output_path = claim_output(source, output_path, state=state)
+        except OutputExistsError as err:
+            results.append(LayerConversionResult(source, layer_name, None, False, str(err)))
+            continue
 
         try:
             _convert_vector_layer(source, layer_name, output_path, settings)
@@ -1455,6 +1641,6 @@ def _convert_vector_layer(
     def _run() -> None:
         table = gpio.convert(source, layer=layer)
         table = apply_vector_settings(table, resolved)
-        table.write(output)
+        with_provenance(table, source).write(output)
 
     run_with_transient_convert_retry(_run, source_name=f"{source.name}:{layer}")

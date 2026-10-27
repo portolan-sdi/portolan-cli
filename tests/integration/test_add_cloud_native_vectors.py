@@ -16,6 +16,7 @@ import json
 import shutil
 from pathlib import Path
 
+import pyarrow.parquet as pq
 import pytest
 from click.testing import CliRunner
 
@@ -1003,3 +1004,140 @@ class TestRasterRebuild:
             "mean": 460.38215,
             "stddev": 51.769646139195,
         }
+
+
+def _sha(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+class TestNoConversionReplacesAForeignFile:
+    """A conversion never writes over a file that its source did not make.
+
+    The output of ``b1.csv`` is ``b1.parquet``. The add converted the CSV into
+    that name over the operator's GeoParquet, and then deleted the result,
+    because the CSV holds no geometry. Only ``b1.csv`` stayed on disk.
+    """
+
+    @staticmethod
+    def _points(path: Path, count: int) -> None:
+        features = [
+            {
+                "type": "Feature",
+                "properties": {"i": i},
+                "geometry": {"type": "Point", "coordinates": [i + 0.5, 10.5]},
+            }
+            for i in range(count)
+        ]
+        path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+
+    @staticmethod
+    def _tracked(collection_dir: Path) -> dict[str, dict[str, object]]:
+        versions = json.loads((collection_dir / "versions.json").read_text())
+        assets: dict[str, dict[str, object]] = versions["versions"][-1]["assets"]
+        return assets
+
+    @pytest.mark.integration
+    def test_a_same_stem_csv_is_a_companion_of_the_geoparquet(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        collection_dir = initialized_catalog / "buildings"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "b1.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
+        (collection_dir / "b1.csv").write_text("id,name\n1,a\n2,b\n")
+        rows = pq.read_metadata(geoparquet).num_rows
+
+        result = runner.invoke(
+            cli, ["add", "--portolan-dir", str(initialized_catalog), str(collection_dir)]
+        )
+
+        assert result.exit_code == 0, result.output
+        # The add rewrites the GeoParquet in place to add a bbox column (#805),
+        # so the bytes change. The rows stay, and versions.json tracks them.
+        assert pq.read_metadata(geoparquet).num_rows == rows
+        assert (collection_dir / "b1.csv").read_text() == "id,name\n1,a\n2,b\n"
+        tracked = self._tracked(collection_dir)
+        assert tracked["b1.parquet"]["sha256"] == _sha(geoparquet)
+        assert tracked["b1.csv"]["sha256"] == _sha(collection_dir / "b1.csv")
+        assert sorted(p.name for p in collection_dir.glob("*.parquet")) == ["b1.parquet"]
+
+    @pytest.mark.integration
+    def test_a_geojson_beside_a_foreign_parquet_converts_to_a_distinct_name(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        collection_dir = initialized_catalog / "places"
+        collection_dir.mkdir()
+        foreign = collection_dir / "points.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", foreign)
+        source = collection_dir / "points.geojson"
+        self._points(source, 1)
+        before = _sha(foreign)
+        args = ["add", "--portolan-dir", str(initialized_catalog), str(source)]
+
+        first = runner.invoke(cli, args, catch_exceptions=False)
+        self._points(source, 2)
+        second = runner.invoke(cli, args, catch_exceptions=False)
+
+        assert first.exit_code == 0, first.output
+        assert second.exit_code == 0, second.output
+        assert _sha(foreign) == before
+        output = collection_dir / "points-geojson.parquet"
+        assert pq.read_metadata(output).num_rows == 2
+        assert sorted(p.name for p in collection_dir.glob("*.parquet")) == [
+            "points-geojson.parquet",
+            "points.parquet",
+        ]
+        collection = json.loads((collection_dir / "collection.json").read_text())
+        assert collection["assets"]["points-geojson"]["href"] == "./points-geojson.parquet"
+        assert collection["assets"]["points.geojson"]["roles"] == ["source"]
+        assert "points.parquet" not in self._tracked(collection_dir)
+
+    @pytest.mark.integration
+    def test_a_changed_source_converts_again_into_its_own_output(
+        self, runner: CliRunner, initialized_catalog: Path
+    ) -> None:
+        collection_dir = initialized_catalog / "pts"
+        collection_dir.mkdir()
+        source = collection_dir / "pts.geojson"
+        args = ["add", "--portolan-dir", str(initialized_catalog), str(source)]
+
+        self._points(source, 1)
+        assert runner.invoke(cli, args, catch_exceptions=False).exit_code == 0
+        self._points(source, 2)
+        result = runner.invoke(cli, args, catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        assert pq.read_metadata(collection_dir / "pts.parquet").num_rows == 2
+        assert sorted(p.name for p in collection_dir.glob("*.parquet")) == ["pts.parquet"]
+
+    @pytest.mark.integration
+    def test_an_add_after_a_crash_before_the_commit_reuses_the_output(
+        self, runner: CliRunner, initialized_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The output of a killed run carries its source, so the next add replaces it."""
+        from portolan_cli import add
+
+        collection_dir = initialized_catalog / "pts"
+        collection_dir.mkdir()
+        source = collection_dir / "pts.geojson"
+        self._points(source, 1)
+        args = ["add", "--portolan-dir", str(initialized_catalog), str(source)]
+
+        def killed(*_args: object, **_kwargs: object) -> None:
+            raise KeyboardInterrupt
+
+        with monkeypatch.context() as patch:
+            patch.setattr(add, "finalize_items", killed)
+            crashed = runner.invoke(cli, args)
+        assert (collection_dir / "pts.parquet").is_file()
+        assert not (collection_dir / "versions.json").exists(), crashed.output
+
+        result = runner.invoke(cli, args, catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        assert sorted(p.name for p in collection_dir.glob("*.parquet")) == ["pts.parquet"]
+        assert self._tracked(collection_dir)["pts.parquet"]["sha256"] == _sha(
+            collection_dir / "pts.parquet"
+        )

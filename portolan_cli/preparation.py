@@ -36,7 +36,14 @@ from portolan_cli.conversion_config import (
     get_vector_settings,
     settings_override,
 )
-from portolan_cli.convert import apply_vector_settings, run_with_transient_convert_retry
+from portolan_cli.convert import (
+    apply_vector_settings,
+    claim_output,
+    convert_with_handler,
+    distinct_output_path,
+    run_with_transient_convert_retry,
+    with_provenance,
+)
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
 from portolan_cli.errors import AssetKeyCollisionError, NoGeometryError, RewriteFidelityError
 from portolan_cli.format_families import RASTER, VECTOR
@@ -279,7 +286,11 @@ def _scan_item_assets(
         # Issue #465: skip siblings that belong to OTHER items in this batch.
         # Keep the primary and its own same-stem source/sidecars; keep loose
         # companions (not in exclude_names) so tracking is preserved.
-        if is_flat and file_path.stem != primary_file.stem and file_path.name in exclude_names:
+        if (
+            is_flat
+            and primary_file.stem not in (file_path.stem, _distinct_stem(file_path))
+            and _in_batch(file_path.name, exclude_names)
+        ):
             continue
         if file_path.name in IGNORED_FILES or file_path.name == f"{item_id}.json":
             continue
@@ -314,6 +325,24 @@ def _scan_item_assets(
         )
     asset_files = {f.path.name: (f.path, f.checksum, f.size) for f in scanned}
     return stac_assets, asset_files, [str(f.path) for f in scanned]
+
+
+def _distinct_stem(source: Path) -> str:
+    """The stem of the distinct output name of ``source`` (``convert.claim_output``)."""
+    return distinct_output_path(source, source.with_suffix(".parquet")).stem
+
+
+def _in_batch(name: str, batch_names: frozenset[str]) -> bool:
+    """Report whether ``name`` is a batch source, its output, or its distinct output.
+
+    The distinct output of ``b1.csv`` is ``b1-csv.<suffix>``. The test reads
+    the name only, so it costs no ``stat`` per sibling (issue #465).
+    """
+    if name in batch_names:
+        return True
+    stem = name.rpartition(".")[0]
+    base, dash, extension = stem.rpartition("-")
+    return bool(dash) and f"{base}.{extension}" in batch_names
 
 
 def _measure(file_path: Path) -> _ScannedFile | None:
@@ -396,11 +425,15 @@ def _resolve_assets(
     """
     groups: dict[str, list[_ScannedFile]] = {}
     role_files: list[_ScannedFile] = []
+    stems = {scanned_file.path.stem for scanned_file in scanned}
     for scanned_file in scanned:
         if scanned_file.role in _ROLE_KEYS:
             role_files.append(scanned_file)
-        else:
-            groups.setdefault(scanned_file.path.stem, []).append(scanned_file)
+            continue
+        # A source whose output took the distinct name joins that output.
+        distinct = _distinct_stem(scanned_file.path)
+        stem = distinct if distinct in stems else scanned_file.path.stem
+        groups.setdefault(stem, []).append(scanned_file)
 
     resolved: dict[str, tuple[_ScannedFile, str]] = {}
 
@@ -774,6 +807,7 @@ def _convert_and_extract_metadata(
     item_dir: Path,
     handler: FormatHandler,
     *,
+    target: Path | None = None,
     catalog_root: Path | None = None,
     force: bool = False,
     reconvert: bool = False,
@@ -789,12 +823,16 @@ def _convert_and_extract_metadata(
       (issue #805).
     - ``--reconvert`` on a source that is its own output rewrites it with the
       handler's ``reconvert``, when it has one.
-    - Otherwise the handler converts the source.
+    - Otherwise the handler converts the source into ``target``.
+
+    ``target`` comes from :func:`convert.claim_output`, so no branch writes over
+    a file that the source did not make.
 
     Args:
         path: Source file path.
         item_dir: Item directory for output.
         handler: The format handler that claims the file.
+        target: The output path from :func:`convert.claim_output`. None claims it here.
         catalog_root: Catalog root, for reading conversion settings.
         force: If True, bypass change detection (Issue #386).
         reconvert: If True, re-convert from source (requires force=True).
@@ -805,8 +843,9 @@ def _convert_and_extract_metadata(
         Tuple of (output_path, metadata). A plugin's FormatMetadata provides
         the bbox, crs, and to_stac_properties that the add path reads.
     """
-    expected = handler.output_path(path, item_dir)
-    in_place = expected.resolve() == path.resolve()
+    if target is None:
+        target = claim_output(path, handler.output_path(path, item_dir))
+    in_place = target.resolve() == path.resolve()
     reconvert_method = getattr(handler, "reconvert", None)
     override = (
         settings_override(
@@ -818,16 +857,16 @@ def _convert_and_extract_metadata(
     )
 
     with override:
-        if force and not reconvert and expected.exists():
+        if force and not reconvert and target.exists():
             if not in_place:
-                _warn_if_source_newer(path, expected)
-            output = expected
-            if extension_of(expected) in handler.extensions:
-                output = handler.convert(expected, item_dir, catalog_root)
+                _warn_if_source_newer(path, target)
+            output = target
+            if extension_of(target) in handler.extensions:
+                output = handler.convert(target, item_dir, catalog_root)
         elif reconvert and in_place and reconvert_method is not None:
             output = reconvert_method(path, catalog_root)
         else:
-            output = handler.convert(path, item_dir, catalog_root)
+            output = convert_with_handler(handler, path, item_dir, catalog_root, target=target)
     return output, cast("AllMetadata", handler.read_metadata(output))
 
 
@@ -1104,7 +1143,8 @@ def prepare_item(
         exclude_sibling_names: Base filenames of other batch items (sources +
             converted outputs) to prune from a collection-level asset scan
             (issue #465). Forwarded to _scan_item_assets; see its docstring.
-        state: The run state, which parses the config once per run.
+        state: The run state, which parses the config once per run and hashes
+            each file once. None reads each shared file here.
 
     Returns:
         PreparedItem with all metadata needed for finalization.
@@ -1113,6 +1153,8 @@ def prepare_item(
         ValueError: If the format is unsupported or collection_id is invalid.
         FileNotFoundError: If the source file doesn't exist.
         NoGeometryError: If the file has no valid geometry.
+        OutputExistsError: Both output names hold a file that the source did
+            not write.
     """
     # Step 1: Validate inputs
     _validate_collection_id(collection_id)
@@ -1142,12 +1184,15 @@ def prepare_item(
             f"Expected path under '{collection_dir}'."
         ) from err
 
-    # Step 3: Convert and extract metadata
-    created_output = not handler.output_path(path, item_dir).exists()
+    # Step 3: Convert and extract metadata. The output never replaces a file
+    # that the source did not make (claim_output).
+    target = claim_output(path, handler.output_path(path, item_dir), state=state)
+    created_output = not target.exists()
     output_path, metadata = _convert_and_extract_metadata(
         path,
         item_dir,
         handler,
+        target=target,
         catalog_root=catalog_root,
         force=force,
         reconvert=reconvert,
@@ -1175,7 +1220,8 @@ def prepare_item(
 
     # Step 4: Extract and transform bbox
     if not metadata.bbox:
-        _cleanup_orphaned_output(output_path, item_dir, path)
+        if created_output:
+            _cleanup_orphaned_output(output_path, item_dir, path)
         raise NoGeometryError(
             path=metadata.id if hasattr(metadata, "id") else path.stem,
             reason="The source file may have no valid geometry.",
@@ -1429,7 +1475,7 @@ def convert_vector(
             gpio.convert(str(source)), resolved, partitioned=partition_dir is not None
         )
         if partition_dir is None:
-            table.write(str(output_path))
+            with_provenance(table, source).write(str(output_path))
         else:
             _write_partitioned(table, partition_dir, resolved)
 
@@ -1699,7 +1745,7 @@ def _restore_schema_metadata(path: Path, preserved: dict[bytes, bytes]) -> None:
         amended.unlink(missing_ok=True)
 
 
-def convert_tabular(source: Path, dest_dir: Path) -> Path:
+def convert_tabular(source: Path, dest_dir: Path, *, state: RunState | None = None) -> Path:
     """Convert tabular file to Parquet using geoparquet-io (Issue #432).
 
     Routes CSV/TSV/XLSX through gpio.convert().write() — the same pipeline
@@ -1711,13 +1757,18 @@ def convert_tabular(source: Path, dest_dir: Path) -> Path:
     Args:
         source: Source tabular file (CSV, TSV, XLSX, or plain Parquet).
         dest_dir: Destination directory.
+        state: The run state, for one hash per file and run.
 
     Returns:
         Path to the output Parquet file.
+
+    Raises:
+        OutputExistsError: Both output names hold a file that ``source`` did
+            not write (see :func:`convert.claim_output`).
     """
     import geoparquet_io as gpio
 
-    output_path = dest_dir / f"{source.stem}.parquet"
+    output_path = claim_output(source, dest_dir / f"{source.stem}.parquet", state=state)
 
     # If already Parquet, just copy (no conversion needed)
     if source.suffix.lower() == ".parquet":
@@ -1735,7 +1786,7 @@ def convert_tabular(source: Path, dest_dir: Path) -> Path:
     # bulk add on the tabular path (Issue #339).
     def _run() -> None:
         table = gpio.convert(str(source))
-        table.write(str(output_path))
+        with_provenance(table, source).write(str(output_path))
 
     run_with_transient_convert_retry(_run, source_name=source.name)
 

@@ -616,6 +616,50 @@ class TestConvertVectorRetriesTransientInterrupt:
         assert out.exists()
 
 
+class TestConvertTabularKeepsAForeignFile:
+    """``convert_tabular`` never writes over a Parquet file that its source did not make."""
+
+    @pytest.mark.unit
+    def test_a_foreign_parquet_stays_and_the_output_takes_a_distinct_name(
+        self, tmp_path: Path
+    ) -> None:
+        import pyarrow.parquet as pq
+
+        from portolan_cli.preparation import convert_tabular
+
+        (tmp_path / "t.csv").write_text("id\n1\n")
+        foreign = tmp_path / "t.parquet"
+        foreign.write_bytes(b"operator data")
+
+        first = convert_tabular(tmp_path / "t.csv", tmp_path)
+        (tmp_path / "t.csv").write_text("id\n1\n2\n")
+        second = convert_tabular(tmp_path / "t.csv", tmp_path)
+
+        assert foreign.read_bytes() == b"operator data"
+        assert first == second == tmp_path / "t-csv.parquet"
+        assert pq.read_metadata(second).num_rows == 2
+
+    @pytest.mark.unit
+    def test_the_output_names_its_source(self, tmp_path: Path) -> None:
+        import json
+
+        import pyarrow.parquet as pq
+
+        from portolan_cli.convert import PROVENANCE_KEY
+        from portolan_cli.preparation import convert_tabular
+        from portolan_cli.sync.checksums import compute_checksum
+
+        (tmp_path / "t.csv").write_text("id\n1\n")
+
+        out = convert_tabular(tmp_path / "t.csv", tmp_path)
+
+        recorded = pq.read_metadata(out).metadata[PROVENANCE_KEY.encode()]
+        assert json.loads(recorded) == {
+            "path": "t.csv",
+            "sha256": compute_checksum(tmp_path / "t.csv"),
+        }
+
+
 class TestIsRewriteTemp:
     """`add` must recognize the scratch file of an in-place rewrite.
 
@@ -707,9 +751,21 @@ class TestForceRule:
             def convert(self, source: Path, output_dir: Path, catalog_root: Path | None) -> Path:
                 raise AssertionError("convert must not run")
 
+        import json
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.convert import PROVENANCE_KEY
+
         source = tmp_path / "survey.xyz"
         source.write_text("1 2 3\n", encoding="utf-8")
-        (tmp_path / "survey.parquet").write_bytes(b"PAR1")
+        # The plugin names its source in the footer, so the file is its output.
+        record = json.dumps({"path": "survey.xyz", "sha256": "x"})
+        pq.write_table(
+            pa.table({"a": [1]}).replace_schema_metadata({PROVENANCE_KEY: record}),
+            tmp_path / "survey.parquet",
+        )
 
         output, _ = _convert_and_extract_metadata(
             source, tmp_path, _Xyz("xyz", frozenset({".xyz"})), force=True
