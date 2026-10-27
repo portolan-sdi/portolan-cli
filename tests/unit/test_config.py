@@ -9,17 +9,16 @@ Tests the configuration system including:
 from __future__ import annotations
 
 import os
-from contextlib import contextmanager
 from typing import TYPE_CHECKING
 from unittest import mock
 
 import pytest
 
+from portolan_cli import trace
 from portolan_cli.errors import ConfigError
 from tests.conftest import cleared_environ
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -1512,21 +1511,7 @@ class TestLegacyFlatKeys:
         }
 
 
-@contextmanager
-def _tracing() -> Iterator[None]:
-    """Turn the trace counters on for one block."""
-    from portolan_cli import trace
-
-    trace.enable()
-    try:
-        yield
-    finally:
-        trace.reset()
-
-
 def _parses() -> int:
-    from portolan_cli import trace
-
     return trace.counters().get("config.yaml_parses", 0)
 
 
@@ -1547,7 +1532,7 @@ class TestOneParsePerFile:
         collection = tmp_path / "demo"
         collection.mkdir()
 
-        with _tracing():
+        with trace.tracing():
             for _ in range(5):
                 get_setting("statistics.enabled", catalog_path=tmp_path)
                 get_setting("pmtiles.enabled", catalog_path=tmp_path, collection_path=collection)
@@ -1566,7 +1551,7 @@ class TestOneParsePerFile:
         config_file = tmp_path / ".portolan" / "config.yaml"
         config_file.parent.mkdir()
         config_file.write_text("conversion:\n  vector:\n    sort: hilbert\n")
-        with _tracing():
+        with trace.tracing():
             assert get_vector_settings(tmp_path).sort == "hilbert"
 
             # Same size and the same mtime window: only the content differs.

@@ -199,7 +199,7 @@ _TOOL_OUTPUTS = (
     ".mypy_cache/",
     ".ruff_cache/",
     ".hypothesis/",
-    ".benchmarks/",
+    ".codspeed/",
     ".coverage",
     "coverage.xml",
     "htmlcov/",

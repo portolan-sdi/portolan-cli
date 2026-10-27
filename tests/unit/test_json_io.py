@@ -299,3 +299,26 @@ class TestSitesAdoptedInIssue687:
 
         assert target.read_text(encoding="utf-8") == before
         assert _temp_siblings(tmp_path) == []
+
+
+class TestWriteCounters:
+    """The perf gates count each versions.json and collection.json write here (#992)."""
+
+    @pytest.mark.parametrize(
+        ("name", "counter"),
+        [
+            ("versions.json", "versions_json.writes"),
+            ("collection.json", "collection_json.writes"),
+        ],
+    )
+    def test_each_write_counts_once(self, tmp_path: Path, name: str, counter: str) -> None:
+        from portolan_cli import trace
+
+        with trace.tracing():
+            write_json_atomic(tmp_path / name, {})
+            write_json_atomic(tmp_path / "sub" / name, {})
+            write_json_atomic(tmp_path / "catalog.json", {})
+            counts = trace.counters()
+
+        writes = {key: counts[key] for key in ("versions_json.writes", "collection_json.writes")}
+        assert writes == {"versions_json.writes": 0, "collection_json.writes": 0, counter: 2}

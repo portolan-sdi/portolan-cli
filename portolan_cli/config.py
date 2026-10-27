@@ -1199,6 +1199,7 @@ def load_merged_yaml(
         Merged dictionary from all YAML files in hierarchy.
         Empty dict if no files exist.
     """
+    count("config.merges")
     return copy.deepcopy(_merge_files(find_portolan_files(start_path, filename, catalog_root)))
 
 
@@ -1253,6 +1254,7 @@ def load_merged_config(
     Returns:
         Merged configuration dictionary.
     """
+    count("config.merges")
     files = find_portolan_files(path, CONFIG_FILENAME, catalog_root)
     root_file = get_config_path(catalog_root).resolve()
     for file_path in files:

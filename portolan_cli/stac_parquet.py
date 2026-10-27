@@ -183,6 +183,7 @@ def generate_items_parquet(collection_path: Path) -> Path:
     # Write to parquet with GeoParquet metadata
     output_path = collection_path / PARQUET_FILENAME
     stac_geoparquet.arrow.to_parquet(table, output_path)
+    count("items_parquet.writes")
 
     return output_path
 

@@ -378,6 +378,7 @@ def add_version(
     ):
         return versions_file
 
+    count("versions.published")
     new_version = Version(
         version=version,
         created=datetime.now(timezone.utc),

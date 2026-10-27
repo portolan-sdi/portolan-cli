@@ -62,6 +62,7 @@ from portolan_cli.stac import (
 )
 from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
 from portolan_cli.stac_links import in_link_order, iter_links
+from portolan_cli.trace import count
 from portolan_cli.utils import href_root, relative_href
 from portolan_cli.versions import (
     Asset,
@@ -278,6 +279,7 @@ def _save_collection_with_links(
     collection.set_self_href(str(collection_dir / "collection.json"))
     collection.normalize_hrefs(href_root(collection_dir), strategy=AsIsLayoutStrategy())
     collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
+    count("collection_json.writes")
 
     collection_json_path = collection_dir / "collection.json"
     _fix_collection_links(collection_json_path, catalog_root, collection_dir)
