@@ -1,8 +1,10 @@
 """tracemalloc ceiling for the 100,000-feature thumbnail (#992).
 
 The test runs the scenario in a cold child process with
-``PORTOLAN_TIMINGS=mem``. The trace records the tracemalloc peak of each span.
-The ceiling is the measured peak plus 15%. The thumbnail memory is Python and
+``PORTOLAN_TIMINGS=mem``. The trace records the tracemalloc growth of each
+span over the traced memory at its entry. The ceiling is the measured growth
+plus 15%. Modules that load before the span do not count, so the ceiling does
+not move when an import moves from one stage to another. The thumbnail memory is Python and
 matplotlib memory, so tracemalloc sees it.
 
 The large-vector add has no ceiling here because tracemalloc misses Arrow and
@@ -38,5 +40,5 @@ def test_large_thumbnail_stays_under_its_ceiling(tmp_path: Path) -> None:
     record = measure(SCENARIOS["thumbnail-large"], tmp_path, 100_000, mem=True)
 
     assert (record["exit_code"], record["network"]) == (0, [])
-    assert _span(record, "add.thumbnails")["mem_peak_mb"] <= THUMBNAIL_TRACEMALLOC_MB
+    assert _span(record, "add.thumbnails")["mem_growth_mb"] <= THUMBNAIL_TRACEMALLOC_MB
     assert record["counters"]["thumbnail.draws"] == THUMBNAIL_DRAWS

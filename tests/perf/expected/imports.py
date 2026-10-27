@@ -1,8 +1,8 @@
 """S7 constants: the heavy modules that each help command loads (#994).
 
-Lane F owns this file. ``cli.py`` imports ``portolan_cli.add`` and
-``portolan_cli.metadata.fix`` at the top, and they load the read stack.
-duckdb, matplotlib, contextily, and geoparquet_io load later already.
+Lane F owns this file. ``cli.py`` imports the add, fix, and check stacks
+inside the commands that use them, and the metadata package loads each
+export on first access. A help command loads none of the heavy modules.
 """
 
 from __future__ import annotations
@@ -22,10 +22,7 @@ HEAVY_MODULES: tuple[str, ...] = (
 )
 
 EXPECTED: dict[tuple[str, ...], list[str]] = {
-    # cli.py:28 add_files and cli.py:49 metadata.fix load these.
-    ("--help",): ["rasterio", "pyogrio", "geopandas", "pandas", "pyarrow.compute", "boto3"],
-    # cli.py:28 add_files and cli.py:49 metadata.fix load these.
-    ("init", "--help"): ["rasterio", "pyogrio", "geopandas", "pandas", "pyarrow.compute", "boto3"],
-    # cli.py:28 add_files and cli.py:49 metadata.fix load these.
-    ("check", "--help"): ["rasterio", "pyogrio", "geopandas", "pandas", "pyarrow.compute", "boto3"],
+    ("--help",): [],
+    ("init", "--help"): [],
+    ("check", "--help"): [],
 }

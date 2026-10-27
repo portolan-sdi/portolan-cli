@@ -16,12 +16,8 @@ import re
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
-import rasterio
-
 from portolan_cli.formats import RASTER, RASTER_EXTENSIONS
 from portolan_cli.json_io import write_json_atomic
-from portolan_cli.metadata.cog import extract_cog_metadata
-from portolan_cli.metadata.detection import versions_asset_lookup_keys
 from portolan_cli.models.item import ItemModel
 from portolan_cli.versions import (
     Asset,
@@ -185,9 +181,15 @@ def _extract_raster_bands(file_path: Path) -> list[dict[str, Any]]:
     copy the old raster's numbers onto the new bands. It is also how rashid reads
     a COG for PTL-DAT-009.
     """
-    # Imported inside the function on purpose: `preparation` imports the
+    # Imported inside the function on purpose. `preparation` imports the
     # `metadata` package this module belongs to, so a module-level import would
-    # close an import cycle.
+    # close an import cycle. rasterio and the COG extractor load here and not
+    # at the top, because `portolan check` imports this module through
+    # `validation.fixers` and must not pay for rasterio before it reads a
+    # raster (#994).
+    import rasterio
+
+    from portolan_cli.metadata.cog import extract_cog_metadata
     from portolan_cli.preparation import (
         _add_statistics_to_properties,
         _extract_statistics_best_effort,
@@ -277,6 +279,10 @@ def _tracked_asset_key(
     collection-level file with the same name owns the bare key, so an item-level
     asset skips the bare name and never binds to a foreign baseline (issue #709).
     """
+    # `detection` imports the COG extractor, which loads rasterio. `portolan
+    # check` imports this module through `validation.fixers` (#994).
+    from portolan_cli.metadata.detection import versions_asset_lookup_keys
+
     relative = versions_asset_key(file_path, collection_dir)
     for key in versions_asset_lookup_keys(file_path, collection_dir):
         if key in assets:
