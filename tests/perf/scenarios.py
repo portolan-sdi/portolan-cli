@@ -40,6 +40,19 @@ SMALL_FILE_ROWS = 100
 LICENSE = "CC-BY-4.0"
 THUMBNAILS_OFF = "thumbnails:\n  enabled: false\n"
 RASTER_SIZE = 64
+#: The catalog metadata.yaml. It names a contact, providers, and a source, so
+#: ``check`` reports no finding that the scenario itself causes.
+METADATA_YAML = """\
+contact:
+  name: "Perf harness"
+  email: "perf@example.org"
+license: "CC-BY-4.0"
+source_url: "https://source.coop/vida/google-microsoft-osm-open-buildings"
+providers:
+  - name: "Perf harness"
+    roles: [producer, host]
+    url: "https://example.org"
+"""
 
 # ---------------------------------------------------------------------------
 # Input writers
@@ -164,7 +177,7 @@ def run_portolan(
 
 
 def init_catalog(root: Path, config: str = THUMBNAILS_OFF) -> None:
-    """Create a catalog at ``root`` and append ``config`` to its config.yaml."""
+    """Create a catalog at ``root``, append ``config`` to its config.yaml, and fill metadata.yaml."""
     root.mkdir(parents=True, exist_ok=True)
     record = run_portolan(
         root, ["init", "--auto", "--license", LICENSE], root.parent / f".{root.name}-init.json"
@@ -172,6 +185,7 @@ def init_catalog(root: Path, config: str = THUMBNAILS_OFF) -> None:
     _require_success(record)
     with (root / ".portolan" / "config.yaml").open("a", encoding="utf-8") as handle:
         handle.write(config)
+    (root / ".portolan" / "metadata.yaml").write_text(METADATA_YAML, encoding="utf-8")
 
 
 def _require_success(record: dict[str, Any]) -> None:
@@ -297,10 +311,16 @@ SCENARIOS: dict[str, Scenario] = {
         Scenario("add-large-vector", _large_vector, ADD),
         # S3: n raster items with history, then an add that changes nothing.
         Scenario("re-add-unchanged", _rasters, ADD, setup=_setup_re_add),
-        # S4: check --metadata on an unchanged catalog of n raster items. The
-        # catalog has no providers and no thumbnail, so check exits 1.
+        # S4: check --metadata on an unchanged catalog of n raster items, with
+        # thumbnails on, as PTL-VIZ-001 asks. check exits 1 today because the
+        # converted COGs carry no band statistics (PTL-DAT-009, a product defect).
         Scenario(
-            "check-metadata", _rasters, ("check", "--metadata"), setup=_setup_add, exit_code=1
+            "check-metadata",
+            _rasters,
+            ("check", "--metadata"),
+            setup=_setup_add,
+            config="",
+            exit_code=1,
         ),
         # S6: status on an unchanged catalog.
         Scenario("status", _one_collection, ("status",), setup=_setup_add),

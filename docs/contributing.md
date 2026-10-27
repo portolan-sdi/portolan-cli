@@ -114,7 +114,7 @@ Alongside `quality`, CI runs the **test matrix** (Python 3.10–3.13 × Linux/ma
 Windows), **pip-audit** (dependency CVEs, ignores tracked in `.pip-audit-ignores`
 with expiry dates), the **docs build**, and the **package build**.
 
-Two perf gates also run on each pull request. **Perf counter gates** run each
+Each pull request also runs the perf gates. **Perf counter gates** run each
 scenario in `tests/perf` at two sizes and compare how each work counter grows
 with the constants in `tests/perf/expected/`. A change that adds a read, a
 write, or a parse per file fails the gate. **CodSpeed** counts the CPU
