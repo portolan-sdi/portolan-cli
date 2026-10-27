@@ -19,9 +19,3 @@ EXPECTED: dict[tuple[str, str], tuple[int, int]] = {
     ("check-metadata", "raster.opens"): (3, 0),  # metadata.cog:extract_cog_metadata x6
 }
 # fmt: on
-
-#: The tracemalloc peak of ``portolan.add`` for one file of 1,000,000 polygons,
-#: in MB: 9.45 measured plus 15%. tracemalloc sees the Python heap and numpy,
-#: not Arrow or DuckDB buffers. The same run peaks at 1,532 MB RSS, which the
-#: nightly scenario job gates.
-LARGE_VECTOR_TRACEMALLOC_MB = 10.9
