@@ -11,6 +11,8 @@ import logging
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
+from portolan_cli.trace import count
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
@@ -123,9 +125,13 @@ def publish_version(
     name = _resolve_backend_name(backend_name, catalog_root, state)
     backend = get_backend(name, catalog_root=catalog_root)
     schema = schema or {"columns": [], "types": {}, "hash": "unknown"}
-    return backend.publish(
+    published = backend.publish(
         collection, assets, schema, breaking, message, removed=removed, version=version
     )
+    # The backend persisted a version. add_version counts nothing, so a
+    # projection of a staged change never counts as a publish.
+    count("versions.published")
+    return published
 
 
 def _schema_fingerprint(staged: StagedVersion) -> SchemaFingerprint | None:
@@ -203,6 +209,9 @@ def commit_run(state: RunState) -> dict[str, Version]:
             write_versions(versions_path, updated)
             state.invalidate(versions_path)
             published[collection_id] = updated.versions[-1]
+            if len(updated.versions) > len(disk.versions):
+                # An amend rewrites the latest version and publishes none.
+                count("versions.published")
         if updated.versions:
             summaries[collection_id] = CollectionSummary.of(updated.versions[-1])
     try:

@@ -358,6 +358,33 @@ class TestStage:
         assert results == {f.name: _sha(f.read_bytes()) for f in files}
 
 
+class TestTrackedAssets:
+    """tracked_assets merges the stage into the disk record and builds no version."""
+
+    def test_stage_and_removal_merge_without_add_version(
+        self,
+        tmp_path: Path,
+        write_snapshot: Snapshot,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from portolan_cli import run_state
+
+        coll, a, b = TestStage._two_files(tmp_path)
+        write_snapshot(coll, {"a.bin": a, "b.bin": b})
+        c = coll / "c.bin"
+        c.write_bytes(b"c")
+        new = _asset(c, tmp_path, b"c")
+        state = RunState.open(tmp_path)
+        state.stage("c", assets={"c.bin": new}, removed={"a.bin"})
+
+        def _no_version(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError("tracked_assets must not build a version")
+
+        monkeypatch.setattr(run_state, "add_version", _no_version)
+        assert state.tracked_assets(coll) == {"b.bin": b, "c.bin": new}
+        assert state.tracked_assets(tmp_path / "none") == {}
+
+
 class TestMemo:
     """The generic memo is keyed on kind plus the file's stat."""
 

@@ -154,7 +154,6 @@ class TestAddDirectory:
             patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.api.convert_vector") as mock_convert,
             patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
 
@@ -176,7 +175,6 @@ class TestAddDirectory:
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=dict,
             )
-            mock_checksum.return_value = "abc"
 
             results = add_directory(
                 path=item_dir,
@@ -219,7 +217,6 @@ class TestAddDirectory:
             patch("portolan_cli.api.write_raster_thumbnail"),
             patch("portolan_cli.api.extract_geoparquet_metadata") as mock_meta_v,
             patch("portolan_cli.api.extract_cog_metadata") as mock_meta_r,
-            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
 
             def detect_side_effect(
@@ -264,7 +261,6 @@ class TestAddDirectory:
                 band_count=1,
                 to_stac_properties=dict,
             )
-            mock_checksum.return_value = "abc"
 
             results = add_directory(
                 path=item_dir,
@@ -314,7 +310,6 @@ class TestAddDirectory:
             patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.api.convert_vector") as mock_convert,
             patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
 
@@ -336,7 +331,6 @@ class TestAddDirectory:
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=dict,
             )
-            mock_checksum.return_value = "abc"
 
             results = add_directory(
                 path=col_dir,

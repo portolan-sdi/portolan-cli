@@ -163,7 +163,7 @@ class TestCatalogVersionsSchemaCompliance:
         valid_points_geojson: Path,
         catalog_versions_schema: dict[str, Any],
     ) -> None:
-        """Regression for #561: ``update_catalog_versions`` wrote keys the
+        """Regression for #561: the catalog index writer wrote keys the
         schema rejected; ``init`` alone never exercised this write path."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             _add_points_collection(runner, valid_points_geojson)

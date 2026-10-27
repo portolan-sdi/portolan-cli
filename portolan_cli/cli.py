@@ -29,7 +29,7 @@ from rashid.model import Severity as RashidSeverity
 
 from portolan_cli import trace
 from portolan_cli.add_progress import AddProgressReporter, count_files
-from portolan_cli.catalog import find_catalog_root, sync_catalog_index
+from portolan_cli.catalog import find_catalog_root
 from portolan_cli.catalog_list import (
     AssetInfo,
     AssetStatus,
@@ -3572,7 +3572,6 @@ def add_cmd(
     )
     # The mirrors stage their versions in the state, so the commit runs last.
     commit_run(state)
-    sync_catalog_index(catalog_root, affected)
 
     # Output combined results (after all processing complete)
     _output_add_results(all_added, skips, all_failures, verbose, use_json)

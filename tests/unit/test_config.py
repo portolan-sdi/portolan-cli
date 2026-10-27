@@ -1771,6 +1771,7 @@ def _read_through_state(name: str, root: Path, collection: Path, state: Any) -> 
         catalog_list,
         config,
         conversion_config,
+        finalization,
         formats,
         metadata_yaml,
         partitioning,
@@ -1807,19 +1808,18 @@ def _read_through_state(name: str, root: Path, collection: Path, state: Any) -> 
         ),
         "generate_catalog_readme": lambda: readme.generate_catalog_readme(root, state=state),
         "list_catalog_contents": lambda: catalog_list.list_catalog_contents(root, state=state),
-        "update_collection_with_asset": lambda: add._update_collection_with_asset(
-            collection, data, merge_strategy=MergeStrategy.SMART, state=state
+        "write_companion_collection": lambda: add._write_companion_collection(
+            root,
+            collection.relative_to(root).as_posix(),
+            [finalization.CompanionAsset(data)],
+            MergeStrategy.SMART,
+            False,
+            state,
         ),
         "load_rules_config": lambda: validation_config.load_rules_config(root, state=state),
         "load_public_url": lambda: validation_config.load_public_url(root, state=state),
-        "update_versions": lambda: add._update_versions(
-            collection,
-            "data",
-            "demo",
-            asset_files={data.name: (data, "0" * 64, 4)},
-            is_collection_level_asset=True,
-            catalog_root=root,
-            state=state,
+        "plan_tabular": lambda: add._plan_tabular(
+            add._DeferredPlan(), data, collection.relative_to(root).as_posix(), root, [], state
         ),
     }
     return calls[name]()
@@ -1846,8 +1846,8 @@ class TestReadersTakeTheState:
             "generate_readme_for_collection",
             "generate_catalog_readme",
             "list_catalog_contents",
-            "update_collection_with_asset",
-            "update_versions",
+            "write_companion_collection",
+            "plan_tabular",
             "load_rules_config",
             "load_public_url",
         ],

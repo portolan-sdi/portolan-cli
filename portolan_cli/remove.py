@@ -260,7 +260,7 @@ def _matching_asset_keys(file_path: Path, version: Version, catalog_root: Path) 
 
     Match on the tracked asset's href, not a key reconstructed from the file
     stem. Hrefs are catalog-root-relative and POSIX and already encode the
-    true item directory that add._batch_update_versions used as the key prefix
+    true item directory that add used as the key prefix when it staged the version
     ("{collection_id}/{item_id}/{filename}", or "{collection_id}/{filename}"
     for collection-level assets). Reconstructing "{stem}/{filename}" is wrong
     for every layout where the item dir name != the file stem — every real

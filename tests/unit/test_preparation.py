@@ -704,8 +704,11 @@ class TestForceRule:
     def _keep(target: Path, layout: object) -> MagicMock:
         from portolan_cli.preparation import _convert_and_extract_metadata
 
+        # The handler reads the footer of the fake file through this open file.
         with (
+            patch("portolan_cli.preparation.open_footer", return_value=MagicMock()),
             patch("portolan_cli.preparation.read_spatial_layout", return_value=layout),
+            patch("portolan_cli.preparation.read_rewrite_fidelity", return_value=None),
             patch("portolan_cli.preparation._rewrite_parquet_in_place") as rewrite,
             patch("portolan_cli.api.is_geoparquet", return_value=False),
             patch("portolan_cli.api.extract_geoparquet_metadata"),
@@ -928,7 +931,7 @@ class TestRewriteOrKeep:
         error = RewriteFidelityError("roads.parquet", "the CRS it declared")
 
         with patch("portolan_cli.preparation._rewrite_parquet_in_place", side_effect=error):
-            _rewrite_or_keep(source, VectorSettings())
+            _rewrite_or_keep(source, VectorSettings(), None)
 
         captured = capsys.readouterr()
         assert "Kept roads.parquet as it is" in captured.out + captured.err
@@ -945,7 +948,7 @@ class TestRewriteOrKeep:
         error = RuntimeError("Invalid Input Error: Skipping beyond end of binary data")
 
         with patch("portolan_cli.preparation._rewrite_parquet_in_place", side_effect=error):
-            _rewrite_or_keep(source, VectorSettings())
+            _rewrite_or_keep(source, VectorSettings(), None)
 
         captured = capsys.readouterr()
         assert "Kept roads.parquet as it is" in captured.out + captured.err

@@ -175,11 +175,10 @@ def _mirror_is_current(run: RunState, collection_path: Path, fingerprint: str) -
     """
     from portolan_cli.versions import versions_asset_key
 
-    versions = run.versions(collection_path).versions
-    if not versions:
-        return False
     output_path = collection_path / PARQUET_FILENAME
-    record = versions[-1].assets.get(versions_asset_key(output_path, collection_path))
+    record = run.tracked_assets(collection_path).get(
+        versions_asset_key(output_path, collection_path)
+    )
     if record is None or record.source_fingerprint != fingerprint:
         return False
     return run.unchanged(output_path, record)
@@ -696,8 +695,7 @@ def track_parquet_in_versions(
         key, record = generated_asset_record(parquet_path, root, collection_path, digest)
         fingerprint: str | None = run.memo(_SOURCE_FINGERPRINT, parquet_path, lambda _path: None)
         record = replace(record, source_fingerprint=fingerprint)
-        versions = run.versions(collection_path).versions
-        tracked = versions[-1].assets.get(key) if versions else None
+        tracked = run.tracked_assets(collection_path).get(key)
         # For the same bytes, only a version that this command writes takes the
         # new mtime and fingerprint. A published version stays as it is.
         same_bytes = tracked is not None and tracked.sha256 == digest

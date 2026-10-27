@@ -333,14 +333,16 @@ def _apply_extra_duckdb_connect(root: Path, faulty: bool) -> None:
 
 
 def _apply_publish_per_companion(root: Path, faulty: bool) -> None:
-    # _update_versions publishes each deferred companion. A second publish
-    # with a message is never a no-op, so each companion adds a version.
+    # stage_companions commits each companion on its own. Each commit writes
+    # a version, so the versions of one add grow with the companions.
     if faulty:
         _replace_once(
-            root / "portolan_cli/add.py",
-            "    published = publish_version(\n",
-            '    publish_version(collection_id, assets=assets, catalog_root=catalog_root, message="x")\n'
-            "    published = publish_version(\n",
+            root / "portolan_cli/finalization.py",
+            "    state.stage(collection_id, assets=records)\n",
+            "    from portolan_cli.version_ops import commit_run\n\n"
+            "    for key, record in records.items():\n"
+            "        state.stage(collection_id, assets={key: record}, message=key)\n"
+            "        commit_run(state)\n",
         )
 
 

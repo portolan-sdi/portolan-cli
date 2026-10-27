@@ -772,7 +772,8 @@ class TestIsCurrentEdgeCases:
         """is_current falls back to sha256 when mtime differs but size matches."""
         import json
 
-        from portolan_cli.add import compute_checksum, is_current
+        from portolan_cli.add import is_current
+        from portolan_cli.sync.checksums import compute_checksum
 
         test_file = tmp_path / "test.parquet"
         content = b"exact content"

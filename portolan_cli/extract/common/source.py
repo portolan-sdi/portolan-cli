@@ -957,7 +957,12 @@ def build_catalog(
         init_extracted_catalog,
         register_collection_styles,
     )
+    from portolan_cli.run_state import RunState
+    from portolan_cli.version_ops import commit_run
 
+    # One run state holds the add and the thumbnails. The commit at the end
+    # writes one version per collection and the catalog index once.
+    state = RunState.open(output_dir)
     added = init_extracted_catalog(
         output_dir,
         report,
@@ -965,6 +970,7 @@ def build_catalog(
         title=discovery.catalog_title,
         description=discovery.catalog_description,
         post_init=_post_init(layer_source.name, discovery, resolved_license),
+        state=state,
     )
     if added is None:
         return
@@ -987,12 +993,10 @@ def build_catalog(
     # frees aborts the process on Windows.
     files, versioned = added
     collection_ids = {path.parent.relative_to(output_dir).as_posix() for path in files}
-    ensure_collection_thumbnails(output_dir, collection_ids, versioned_collections=versioned)
-    # The styles and the thumbnails add assets after add_files wrote the root
-    # index, so the root counts lag without this call, as in `add`.
-    from portolan_cli.catalog import sync_catalog_index
-
-    sync_catalog_index(output_dir, collection_ids)
+    ensure_collection_thumbnails(
+        output_dir, collection_ids, versioned_collections=versioned, state=state
+    )
+    commit_run(state)
 
 
 def run_layer_extraction(

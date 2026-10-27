@@ -114,6 +114,44 @@ class TestDefaultAddWritesACoveringColumn:
         assert "no bbox covering column" in output
 
 
+class TestTheSourceFooterIsReadOnce:
+    """convert_vector reads the source footer once, and closes it before the swap."""
+
+    def test_the_in_place_rewrite_opens_the_source_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli import preparation, trace
+        from portolan_cli.conversion_config import VectorSettings
+
+        source = tmp_path / "roads.parquet"
+        shutil.copy(POINTS, source)
+        opened: list[pq.ParquetFile] = []
+        open_footer = preparation.open_footer
+
+        def recorded(path: Path) -> pq.ParquetFile | None:
+            parquet = open_footer(path)
+            if parquet is not None:
+                opened.append(parquet)
+            return parquet
+
+        monkeypatch.setattr(preparation, "open_footer", recorded)
+
+        with trace.tracing():
+            output = preparation.convert_vector(source, tmp_path, settings=VectorSettings())
+            opens = trace.counters().get("parquet.opens", 0)
+
+        # The replace of the source succeeded: it now carries the covering.
+        assert output == source
+        assert _covering(source) is not None
+        # One open of the source, one of the rewritten sibling.
+        assert opens == 2
+        assert len(opened) == 1
+        assert opened[0].closed
+        # No handle holds the file, so it deletes on every platform.
+        source.unlink()
+        assert not source.exists()
+
+
 class TestAddLeavesFilesAlone:
     def test_conformant_geoparquet_is_copied_untouched(self, tmp_path: Path) -> None:
         """A file that already carries the column costs nothing to add."""
@@ -342,6 +380,7 @@ class TestRewritePreservesPublisherMetadata:
         from geoparquet_io.api.table import Table
 
         from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.metadata.geoparquet import read_rewrite_fidelity
         from portolan_cli.preparation import _rewrite_parquet_in_place
 
         target = tmp_path / "buildings.parquet"
@@ -367,7 +406,7 @@ class TestRewritePreservesPublisherMetadata:
         monkeypatch.setattr(Table, "write", counted_write)
         monkeypatch.setattr(pq, "ParquetWriter", CountedWriter)
 
-        _rewrite_parquet_in_place(target, VectorSettings())
+        _rewrite_parquet_in_place(target, VectorSettings(), read_rewrite_fidelity(target))
 
         assert len(writes) == 1, writes
         after = pq.read_metadata(target).metadata

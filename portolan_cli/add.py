@@ -33,12 +33,13 @@ from portolan_cli.collection_id import (
     infer_nested_collection_id,
     resolve_collection_id,  # noqa: F401
 )
-from portolan_cli.config import get_ignored_files, get_setting, load_merged_metadata
+from portolan_cli.config import get_ignored_files, load_merged_metadata
 from portolan_cli.constants import (
     GEOSPATIAL_EXTENSIONS,
     TABULAR_EXTENSIONS,
 )
 from portolan_cli.conversion_config import (
+    VectorSettings,
     get_vector_settings,
     resolve_partition_settings,
     settings_override,
@@ -51,6 +52,12 @@ from portolan_cli.errors import (
     NoGeometryError,
     PartitionCollisionError,
 )
+from portolan_cli.finalization import (
+    CompanionAsset,
+    add_companion_assets,
+    apply_human_metadata_to_dict,
+    stage_companions,
+)
 
 # Batch finalization (STAC-write + backend coordination) was extracted to
 # finalization.py (issue #624). add.py orchestrates on top of it: add_files /
@@ -62,9 +69,6 @@ from portolan_cli.errors import (
 # finalization); finalization imports nothing from add.
 from portolan_cli.finalization import (  # noqa: F401
     _asset_freshness_fields as _asset_freshness_fields,  # noqa: PLC0414
-)
-from portolan_cli.finalization import (  # noqa: F401
-    _batch_update_versions as _batch_update_versions,  # noqa: PLC0414
 )
 from portolan_cli.finalization import (  # noqa: F401
     _ensure_partition_metadata as _ensure_partition_metadata,  # noqa: PLC0414
@@ -88,9 +92,6 @@ from portolan_cli.finalization import (
     apply_human_metadata as apply_human_metadata,  # noqa: PLC0414
 )
 from portolan_cli.finalization import (
-    apply_human_metadata_to_dict,
-)
-from portolan_cli.finalization import (
     finalize_items as finalize_items,  # noqa: PLC0414
 )
 from portolan_cli.format_families import VECTOR
@@ -103,7 +104,6 @@ from portolan_cli.hookspecs import EnrichContext
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.licensing import LICENSE_REL, license_gap, resolve_license
-from portolan_cli.metadata.tabular import extract_tabular_metadata
 from portolan_cli.plugins.formats import handler_for, plugin_extensions
 from portolan_cli.preparation import (
     _MEDIA_TYPE_MAP as _MEDIA_TYPE_MAP,  # noqa: PLC0414
@@ -170,15 +170,12 @@ from portolan_cli.remove import remove_files  # noqa: F401
 from portolan_cli.stac import (
     MergeStrategy,
     create_collection,
-    declare_file_extension,
-    document_tabular_table,
-    set_temporal_extent,
     update_catalog_provenance,
 )
 from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
 from portolan_cli.stac_parquet import PARQUET_FILENAME
-from portolan_cli.sync.checksums import compute_checksum, file_fields
-from portolan_cli.trace import count, span, submit
+from portolan_cli.trace import span, submit
+from portolan_cli.versions import Asset, versions_asset_key
 from portolan_cli.viz.pmtiles_links import PMTILES_SUFFIX
 from portolan_cli.viz.style import enrich_cog_assets
 
@@ -439,21 +436,25 @@ def add(
         ValueError: If the format is unsupported or collection_id is invalid.
         FileNotFoundError: If the source file doesn't exist.
     """
-    # Prepare: extract metadata, convert, create STAC item
-    prepared = prepare_item(
-        path=path,
-        catalog_root=catalog_root,
-        collection_id=collection_id,
-        title=title,
-        description=description,
-        item_id=item_id,
-        item_datetime=item_datetime,
-        force=force,
-        reconvert=reconvert,
-    )
+    from portolan_cli.version_ops import owned_run
 
-    # Finalize: batch write versions.json and collection.json
-    results = finalize_items(catalog_root, [prepared])
+    with owned_run(catalog_root) as state:
+        # Prepare: extract metadata, convert, create STAC item
+        prepared = prepare_item(
+            path=path,
+            catalog_root=catalog_root,
+            collection_id=collection_id,
+            title=title,
+            description=description,
+            item_id=item_id,
+            item_datetime=item_datetime,
+            force=force,
+            reconvert=reconvert,
+            state=state,
+        )
+
+        # Finalize: write collection.json and stage the version
+        results = finalize_items(catalog_root, [prepared], state=state)
 
     # Return the single result with title/description preserved
     result = results[0]
@@ -468,36 +469,33 @@ def add(
     )
 
 
-def _ensure_tabular_collection(
+def _new_tabular_collection(
     catalog_root: Path,
     collection_id: str,
     collection_dir: Path,
-    state: RunState | None = None,
-) -> None:
-    """Ensure a collection exists for standalone tabular data (Issue #432).
+    state: RunState,
+) -> pystac.Collection:
+    """Build the collection of standalone tabular data in memory (Issue #432).
 
-    For tabular-only collections (no geometry), creates a collection with
-    spatial extent determined by (in priority order):
+    For tabular-only collections (no geometry), the spatial extent comes from
+    (in priority order):
     1. Explicit bbox in metadata.yaml (manual override)
     2. Inherited from sibling geo collections (AOI inheritance)
     3. Global fallback [-180, -90, 180, 90]
 
     Per design decision: companion tabular data is almost always about the same
     area as the catalog's geo data, so inheriting the AOI is correct and zero-friction.
+    The caller writes the collection once, with its assets.
 
     Args:
         catalog_root: Root directory of the catalog.
         collection_id: Collection identifier.
         collection_dir: Path to the collection directory.
-        state: The run state, which parses the config once per run.
+        state: The run state, which parses each metadata.yaml once per run.
+
+    Returns:
+        The new collection, not yet on disk.
     """
-    collection_json_path = collection_dir / "collection.json"
-
-    if collection_json_path.exists():
-        # Collection already exists (maybe from previous geo files)
-        # Preserve existing extent
-        return
-
     # Priority 1: Check metadata.yaml for explicit bbox
     explicit_bbox = _get_metadata_yaml_bbox(collection_dir)
     if explicit_bbox is not None:
@@ -510,6 +508,12 @@ def _ensure_tabular_collection(
         final_bbox = _compute_union_bbox(sibling_bboxes)  # Falls back to global if empty
         sibling_count = len(sibling_bboxes)
         bbox_source = "sibling" if sibling_count > 0 else "global"
+    logger.info(
+        "Creating tabular collection %s with extent from %s (%d sibling collection(s))",
+        collection_id,
+        bbox_source,
+        sibling_count,
+    )
 
     # Issue #502: human-readable title; description defaults to it.
     tabular_title = humanize_slug(collection_id)
@@ -523,135 +527,33 @@ def _ensure_tabular_collection(
     # A tabular-only add never reaches finalize_items, so apply the same
     # human-authored title, license, providers, and derived provenance
     # metadata.yaml carries for geo collections (issue #654 / issue #684 / #755).
-    apply_human_metadata(collection, collection_dir, catalog_root)
+    apply_human_metadata(collection, collection_dir, catalog_root, state)
+    return collection
 
-    # Save collection.json
-    collection_dir.mkdir(parents=True, exist_ok=True)
-    collection.set_self_href(str(collection_json_path))
-    collection.save_object()
-    count("collection_json.writes")
 
-    # ...and the same root/parent link repair, which pystac's save_object skips.
-    _fix_collection_links(collection_json_path, catalog_root, collection_dir)
+def _sweep_catalog(catalog_root: Path, state: RunState) -> None:
+    """Run the catalog-wide conformance sweeps after a new tabular collection.
 
-    # Update catalog links to include this collection
-    _update_catalog_links(catalog_root, collection_id)
-
+    ``finalize_items`` runs the same sweeps for the collections it writes. A
+    tabular collection that phase 3 creates needs them too: the root title
+    from metadata.yaml (issue #815), the child link titles (issue #502), the
+    AGENTS.md and README.md files with their links and the profile schema URI
+    (issue #654), and the root sync stamp of an all-mirror tree (issue #684).
+    """
+    from portolan_cli.agents_md import ensure_agents_md_tree
     from portolan_cli.catalog import (
         apply_catalog_human_titles,
         ensure_link_titles,
         ensure_schema_uris,
     )
-
-    # Issue #815: the root catalog takes its own title and description from the
-    # root metadata.yaml.
-    apply_catalog_human_titles(catalog_root, state=state)
-
-    # Issue #502: backfill the human-readable title onto the new child link.
-    ensure_link_titles(catalog_root)
-
-    # / issue #654: the same conformance artifacts finalize_items writes
-    # — AGENTS.md, the profile schema URI, README.md and its describedby link.
-    from portolan_cli.agents_md import ensure_agents_md_tree
     from portolan_cli.readme import ensure_readmes
 
-    # Tree-wide, as `finalize_items` does: repairing only the collection just
-    # written left a pre-existing root or subcatalog without its guide, so the
-    # same catalog came out different depending on which path added to it.
+    apply_catalog_human_titles(catalog_root, state=state)
+    ensure_link_titles(catalog_root)
     ensure_agents_md_tree(catalog_root)
     ensure_schema_uris(catalog_root)
     ensure_readmes(catalog_root, state=state)
-
-    # Issue #684: and the root-catalog sync stamp, for an all-mirror tree.
     update_catalog_provenance(catalog_root)
-
-    # Log based on bbox source (priority order)
-    if bbox_source == "metadata.yaml":
-        logger.info(
-            "Created tabular collection %s with extent from metadata.yaml",
-            collection_id,
-        )
-    elif bbox_source == "sibling":
-        logger.info(
-            "Created tabular collection %s with extent inherited from %d sibling collection(s)",
-            collection_id,
-            sibling_count,
-        )
-    else:
-        logger.info(
-            "Created tabular collection %s with global extent (no sibling collections)",
-            collection_id,
-        )
-
-
-def _update_versions(
-    collection_dir: Path,
-    item_id: str,
-    collection_id: str,
-    output_path: Path | None = None,
-    checksum: str | None = None,
-    *,
-    asset_files: dict[str, tuple[Path, str, int]] | None = None,
-    is_collection_level_asset: bool = False,
-    catalog_root: Path | None = None,
-    state: RunState | None = None,
-) -> None:
-    """Update versions via the active backend.
-
-    Supports both single-file (backward compat) and multi-file modes.
-    Routes through version_ops.publish_version() so that the configured
-    backend (file or plugin) handles storage.
-
-    Args:
-        collection_dir: Path to collection directory.
-        item_id: Item identifier.
-        collection_id: Collection identifier (full path like "climate/hittekaart" for nested).
-        output_path: Path to single output file (legacy mode).
-        checksum: SHA-256 checksum for single file (legacy mode).
-        asset_files: Dict mapping filename to (path, checksum, size) tuples.
-            If provided, output_path/checksum are ignored.
-        is_collection_level_asset: If True, asset is at collection level.
-            Affects href construction (no item_id in path).
-        catalog_root: Root directory of the catalog. If None, derived from collection_dir.
-        state: The run state, which reads the backend setting once per run.
-    """
-    from portolan_cli.version_ops import publish_version
-
-    if catalog_root is None:
-        catalog_root = collection_dir.parents[len(Path(collection_id).parts) - 1]
-
-    # Build assets dict (asset_key -> file_path) for the backend.
-    # The backend (file or plugin) handles checksum/size computation internally.
-    assets: dict[str, str] = {}
-    if asset_files is not None:
-        # Multi-asset mode (per issue #133)
-        for filename, (file_path, _checksum, _size) in asset_files.items():
-            # For collection-level assets (Issue #250), use filename only.
-            # Both backends prepend collection/ when building the href,
-            # so do NOT include collection_id here to avoid doubling.
-            asset_key = filename if is_collection_level_asset else f"{item_id}/{filename}"
-            assets[asset_key] = str(file_path)
-    elif output_path is not None and checksum is not None:
-        # Legacy single-file mode (backward compatibility)
-        assets[output_path.name] = str(output_path)
-    else:
-        raise ValueError("Either asset_files or (output_path, checksum) must be provided")
-
-    published = publish_version(
-        collection_id,
-        assets=assets,
-        catalog_root=catalog_root,
-        state=state,
-    )
-
-    # Mirror the collection's new state into the catalog-level versions.json
-    # index, the "update versions.json then catalog versions.json" step of the
-    # add flow in .claude/rules/stac-assets.md. The deferred tabular and
-    # companion path reaches versions.json only through here, so without this
-    # the collection is missing from the catalog-level index (issue #650).
-    from portolan_cli.catalog import mirror_into_catalog_index
-
-    mirror_into_catalog_index(catalog_root, collection_id, published)
 
 
 def add_directory(
@@ -684,21 +586,25 @@ def add_directory(
     # so per-file work stays O(n) instead of O(n²).
     batch_exclude_names = _batch_sibling_names(files)
 
-    # Phase 1: Prepare all items (GDAL work, parallelizable)
-    prepared: list[PreparedItem] = []
-    for file_path in files:
-        result = prepare_item(
-            path=file_path,
-            catalog_root=catalog_root,
-            collection_id=collection_id,
-            force=force,
-            reconvert=reconvert,
-            exclude_sibling_names=batch_exclude_names,
-        )
-        prepared.append(result)
+    from portolan_cli.version_ops import owned_run
 
-    # Phase 2: Finalize (batch write versions.json + collection.json)
-    return finalize_items(catalog_root=catalog_root, prepared=prepared)
+    with owned_run(catalog_root) as state:
+        # Phase 1: Prepare all items (GDAL work, parallelizable)
+        prepared = [
+            prepare_item(
+                path=file_path,
+                catalog_root=catalog_root,
+                collection_id=collection_id,
+                force=force,
+                reconvert=reconvert,
+                exclude_sibling_names=batch_exclude_names,
+                state=state,
+            )
+            for file_path in files
+        ]
+
+        # Phase 2: Finalize (collection.json once, one staged version)
+        return finalize_items(catalog_root=catalog_root, prepared=prepared, state=state)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -878,7 +784,8 @@ def _collect_files_for_add(
             # Check if unchanged (skip this check when force=True per Issue #386)
             if not force:
                 versions_path = catalog_root / Path(*coll_id.split("/")) / "versions.json"
-                if is_current(file_path, versions_path):
+                # The run state reads each versions.json once (issue #995).
+                if is_current(file_path, versions_path, state=state):
                     skip(file_path, SKIP_UNCHANGED)
                     continue
 
@@ -955,6 +862,8 @@ class _PrepareOptions:
     skip_partitioning: bool
     batch_exclude_names: frozenset[str]
     state: RunState | None = None
+    #: The ``conversion.vector`` settings of the catalog, resolved once per batch.
+    vector_settings: VectorSettings | None = None
 
 
 @dataclass
@@ -993,12 +902,16 @@ def _prepare_multilayer_file(
     skips: dict[Path, str] = {}
 
     try:
-        # Load vector settings from catalog config, then convert all layers.
-        vector_settings = get_vector_settings(opts.catalog_root, state=opts.state)
+        # The batch resolves the vector settings once. Then convert all layers.
+        vector_settings = opts.vector_settings or get_vector_settings(
+            opts.catalog_root, state=opts.state
+        )
         # prepare_item sees each layer file after it exists, so it cannot tell
         # a new layer file from an old one. Record the old ones here.
         existing = set(file_path.parent.glob("*.parquet"))
-        results = convert_multilayer_file(file_path, file_path.parent, settings=vector_settings)
+        results = convert_multilayer_file(
+            file_path, file_path.parent, settings=vector_settings, state=opts.state
+        )
 
         for result in results:
             if not (result.success and result.output):
@@ -1218,21 +1131,6 @@ def _phase_process(
     return result
 
 
-def _declare_file_extension_for_collections(affected_collections: set[Path]) -> None:
-    """Phase 3.5: re-check the file extension on collections that got deferred assets.
-
-    Deferred non-geo assets are added after ``finalize_items``, so a collection
-    can gain its first ``file:size`` after the declaration ran (Issue #501).
-    """
-    for collection_dir in affected_collections:
-        collection_json_path = collection_dir / "collection.json"
-        if collection_json_path.exists():
-            collection = pystac.Collection.from_file(str(collection_json_path))
-            declare_file_extension(collection)
-            collection.save_object(include_self_link=False)
-            count("collection_json.writes")
-
-
 def _collection_license_on_disk(collection_json_path: Path) -> tuple[str | None, bool]:
     """Read the license and license-link state off a collection.json already on disk.
 
@@ -1420,6 +1318,7 @@ def add_files(
             skip_partitioning=skip_partitioning,
             batch_exclude_names=_batch_sibling_names([fp for fp, _ in files_to_process]),
             state=state,
+            vector_settings=get_vector_settings(catalog_root, state=state),
         )
 
         # Phase 2: Prepare each file (GDAL work), accumulating prepared items (Issue #281).
@@ -1436,38 +1335,34 @@ def add_files(
             skipped.append(path)
             reasons[path] = reason
 
-        # Phase 2.5: Batch finalize — ONE write per collection instead of O(n) (Issue #281).
+        # Phase 2.5: plan the deferred non-geo files, so that a collection that
+        # finalize writes takes its companions in the same write.
+        plan = _plan_deferred(proc, catalog_root, failures, state)
+
+        # Phase 2.6: finalize writes each collection once (Issue #281).
         with span("add.finalize", items=len(proc.prepared_items)):
-            added: list[ItemInfo] = (
-                finalize_items(catalog_root, proc.prepared_items, merge_strategy, state=state)
-                if proc.prepared_items
-                else []
+            added: list[ItemInfo] = finalize_items(
+                catalog_root,
+                proc.prepared_items,
+                merge_strategy,
+                state=state,
+                companions=plan.companions,
             )
 
-        # Phase 3: Track deferred non-geo files as companion assets.
+        # Phase 3: write the deferred files that finalize did not write.
         touched_items: list[tuple[str, str]] = []
         with span("add.deferred_non_geo", files=len(proc.deferred_non_geo)):
-            affected_collections = _process_deferred_non_geo_files(
-                deferred_non_geo=proc.deferred_non_geo,
-                source_to_item_dir=proc.source_to_item_dir,
-                source_to_collection_dir=proc.source_to_collection_dir,
-                catalog_root=catalog_root,
+            affected_collections = _write_deferred(
+                plan,
+                {p.collection_id for p in proc.prepared_items},
+                catalog_root,
                 added=added,
                 skipped=skipped,
-                failures=failures,
                 merge_strategy=merge_strategy,
                 touched_items=touched_items,
                 skip_reasons=reasons,
                 state=state,
             )
-
-            # Phase 3.5: re-check the file extension on collections with deferred assets (#501).
-            _declare_file_extension_for_collections(affected_collections)
-            # A tabular collection takes its providers from metadata.yaml in phase 3
-            # (#813), so it can turn the whole catalog into a mirror after finalize.
-            # The root then needs its sync time (rashid PTL-PRO-003).
-            if affected_collections:
-                update_catalog_provenance(catalog_root)
 
         # Phase 4: run the enrichment hooks on the documents phase 3 changed (#947).
         with span("add.enrich", items=len(touched_items)):
@@ -1541,15 +1436,6 @@ def _collection_aoi_bbox(collection_dir: Path) -> list[float]:
     return [-180.0, -90.0, 180.0, 90.0]
 
 
-def _collection_setting(
-    key: str, catalog_root: Path, collection_dir: Path, state: RunState | None
-) -> Any:
-    """Resolve a setting for a collection, through the run state when there is one."""
-    if state is not None:
-        return state.setting(key, collection_dir=collection_dir)
-    return get_setting(key, catalog_path=catalog_root, collection_path=collection_dir)
-
-
 #: Tracked files that make a directory a home for companions. A tabular file
 #: counts only when it is GeoParquet. Tiles render data and own no companion.
 _COMPANION_HOST_EXTENSIONS = GEOSPATIAL_EXTENSIONS - TABULAR_EXTENSIONS - {PMTILES_SUFFIX}
@@ -1568,7 +1454,7 @@ def _map_recorded_geo_dirs(
     source_to_item_dir: dict[Path, tuple[Path, str, str]],
     source_to_collection_dir: dict[Path, tuple[Path, str]],
     catalog_root: Path,
-    state: RunState | None,
+    state: RunState,
 ) -> None:
     """Map each companion directory that holds an unchanged, tracked geo file.
 
@@ -1577,7 +1463,8 @@ def _map_recorded_geo_dirs(
     the latest version of its collection, so that record names the directory.
     The collection is the directory itself, or its parent for an item. Phase 1
     infers the collection of a lone CSV in an item directory as the item
-    directory, so the inferred id is not the answer.
+    directory, so the inferred id is not the answer. The catalog root is never
+    a collection, and its ``versions.json`` is the catalog index.
 
     Args:
         deferred_non_geo: The ``(file, source_dir, collection_id)`` of phase 2.
@@ -1586,19 +1473,18 @@ def _map_recorded_geo_dirs(
         catalog_root: Root directory of the catalog.
         state: The run state, which reads each ``versions.json`` once.
     """
-    from portolan_cli.run_state import RunState
-
-    run = state if state is not None else RunState.open(catalog_root)
+    root = catalog_root.resolve()
     for _file, source_dir, _coll_id in deferred_non_geo:
         if source_dir in source_to_item_dir or source_dir in source_to_collection_dir:
             continue
         for collection_dir in (source_dir, source_dir.parent):
+            if collection_dir.resolve() == root:
+                break
             if not (collection_dir / "versions.json").exists():
                 continue
-            record = run.versions(collection_dir)
             hosts = [
                 collection_dir / key
-                for key in (record.versions[-1].assets if record.versions else ())
+                for key in state.tracked_assets(collection_dir)
                 if (collection_dir / key).parent == source_dir
             ]
             if not any(_hosts_companions(path) for path in hosts):
@@ -1611,244 +1497,238 @@ def _map_recorded_geo_dirs(
             break
 
 
-def _process_deferred_non_geo_files(
-    *,
-    deferred_non_geo: list[tuple[Path, Path, str]],
-    source_to_item_dir: dict[Path, tuple[Path, str, str]],
-    source_to_collection_dir: dict[Path, tuple[Path, str]],
-    catalog_root: Path,
-    added: list[ItemInfo],
-    skipped: list[Path],
-    failures: list[AddFailure],
-    merge_strategy: MergeStrategy,
-    touched_items: list[tuple[str, str]] | None = None,
-    skip_reasons: dict[Path, str] | None = None,
-    state: RunState | None = None,
-) -> set[Path]:
-    """Process deferred non-geospatial files.
+@dataclass
+class _DeferredPlan:
+    """Where each deferred file without geometry goes (phase 3).
 
-    These files were deferred during the main add loop because they lack
-    geometry. They are tracked as auxiliary assets alongside geo files.
+    Attributes:
+        item_companions: ``(file, (item_dir, collection_id, item_id))`` of each
+            file that joins an item.
+        companions: Collection id to the collection-level files it gains. The
+            files of a collection that ``finalize_items`` writes go in that
+            write. ``_write_deferred`` writes the others.
+        tabular: Collections of standalone tabular data, to create when absent.
+        tabular_added: Collection id to the ``(asset file, file names)`` that
+            ``add`` reports as added (#712).
+        companion_files: The deferred files that phase 3 tracks as companions.
+            ``add`` lists them as skipped, because it converts none of them.
+    """
+
+    item_companions: list[tuple[Path, tuple[Path, str, str]]] = field(default_factory=list)
+    companions: dict[str, list[CompanionAsset]] = field(default_factory=dict)
+    tabular: set[str] = field(default_factory=set)
+    tabular_added: dict[str, list[tuple[Path, list[str]]]] = field(default_factory=dict)
+    companion_files: list[Path] = field(default_factory=list)
+
+
+def _plan_deferred(
+    proc: _ProcessResult,
+    catalog_root: Path,
+    failures: list[AddFailure],
+    state: RunState,
+) -> _DeferredPlan:
+    """Decide where each deferred file goes, before any collection is written.
+
+    A file in an item directory joins the item. A file beside a
+    collection-level geo file is a collection asset (Issue #383). Any other
+    file is standalone tabular data: a failure while ``tabular.enabled`` is
+    off, and its own collection asset otherwise (Issue #432). With
+    ``tabular.convert``, the Parquet conversion runs here, and the source file
+    becomes a companion with the ``source`` role (#960).
 
     Args:
-        deferred_non_geo: List of (file_path, source_dir, collection_id) tuples.
-        source_to_item_dir: Mapping from source dirs to (item_dir, coll_id, item_id).
-        source_to_collection_dir: Mapping from source dirs to (collection_dir, coll_id)
-            for collection-level assets (Issue #383).
+        proc: The result of phase 2.
         catalog_root: Root directory of the catalog.
-        added: List to append newly tracked standalone tabular assets to
-            (modified in place). Companion assets stay in ``skipped``, since
-            they attach to an item or collection that is already reported.
-        skipped: List to append skipped files to (modified in place).
-        failures: List to append failures to (modified in place).
-        merge_strategy: The strategy of the ``add`` run.
-        touched_items: List to append each updated item's
-            ``(collection_id, item_id)`` to (modified in place).
-        skip_reasons: Receives the reason for a file that two files claim one
-            asset key for in its item (modified in place).
-        state: The run state, which parses the config once per run.
+        failures: Receives each file that cannot be tracked (mutated).
+        state: The run state.
 
     Returns:
-        Set of collection directories that received deferred assets (for statistics recomputation).
+        The plan that ``finalize_items`` and ``_write_deferred`` carry out.
     """
-    affected_collections: set[Path] = set()
-    reasons = skip_reasons if skip_reasons is not None else {}
-    source_to_item_dir = dict(source_to_item_dir)
-    source_to_collection_dir = dict(source_to_collection_dir)
+    plan = _DeferredPlan()
+    source_to_item_dir = dict(proc.source_to_item_dir)
+    source_to_collection_dir = dict(proc.source_to_collection_dir)
     _map_recorded_geo_dirs(
-        deferred_non_geo, source_to_item_dir, source_to_collection_dir, catalog_root, state
+        proc.deferred_non_geo, source_to_item_dir, source_to_collection_dir, catalog_root, state
     )
-    for file_path, source_dir, coll_id in deferred_non_geo:
+    for file_path, source_dir, coll_id in proc.deferred_non_geo:
         try:
             if source_dir in source_to_item_dir:
-                try:
-                    _track_companion_in_item(
-                        file_path,
-                        source_to_item_dir[source_dir],
-                        catalog_root,
-                        touched_items,
-                        state,
-                    )
-                except AssetKeyCollisionError as err:
-                    reasons[file_path] = err.message
-                else:
-                    # Track for statistics recomputation
-                    affected_collections.add(catalog_root / coll_id)
-                # Add to skipped (tracked but not converted)
-                skipped.append(file_path)
-
+                plan.item_companions.append((file_path, source_to_item_dir[source_dir]))
             elif source_dir in source_to_collection_dir:
-                # Collection-level: new behavior for Issue #383
-                resolved_collection_dir, resolved_coll_id = source_to_collection_dir[source_dir]
-
-                # For collection-level, file is already in place (same as geo file)
-                # Register it as an asset in collection.json AND versions.json
-                ext = file_path.suffix.upper().lstrip(".")
-                logger.info(
-                    "Tracking %s as non-geospatial %s collection-level asset: %s",
-                    file_path,
-                    ext,
-                    file_path.name,
-                )
-
-                # Update collection.json with the non-geo asset
-                _update_collection_with_asset(
-                    collection_dir=resolved_collection_dir,
-                    asset_path=file_path,
-                    merge_strategy=merge_strategy,
-                    state=state,
-                )
-
-                # Update versions.json so is_current() finds the asset
-                file_checksum = compute_checksum(file_path)
-                file_size = file_path.stat().st_size
-                asset_files = {file_path.name: (file_path, file_checksum, file_size)}
-                _update_versions(
-                    collection_dir=resolved_collection_dir,
-                    item_id=file_path.stem,  # Use file stem as item_id for collection-level
-                    collection_id=resolved_coll_id,
-                    asset_files=asset_files,
-                    is_collection_level_asset=True,
-                    catalog_root=catalog_root,
-                    state=state,
-                )
-
-                # Track for statistics recomputation
-                affected_collections.add(resolved_collection_dir)
-
-                # Add to skipped (tracked but not converted)
-                skipped.append(file_path)
-
+                _, owner_id = source_to_collection_dir[source_dir]
+                logger.info("Tracking %s as a collection-level companion asset", file_path)
+                plan.companions.setdefault(owner_id, []).append(CompanionAsset(file_path))
+                plan.companion_files.append(file_path)
             else:
-                # No geo file in same dir - check if tabular support is enabled
-                ext = file_path.suffix.upper().lstrip(".")
-                collection_dir = catalog_root / Path(*coll_id.split("/"))
-
-                # Check tabular.enabled config (Issue #432)
-                tabular_enabled = _collection_setting(
-                    "tabular.enabled", catalog_root, collection_dir, state
-                )
-
-                if not tabular_enabled:
-                    # tabular.enabled=false (default): fail with helpful hint
-                    failures.append(
-                        AddFailure(
-                            path=file_path,
-                            error=(
-                                f"Tabular data support is disabled. "
-                                f"File '{file_path.name}' has no geometry and no companion "
-                                f"geospatial file in the same directory. "
-                                f"To track standalone tabular data as collection-level assets, "
-                                f"set 'tabular.enabled: true' in .portolan/config.yaml"
-                            ),
-                        )
-                    )
-                else:
-                    # tabular.enabled=true: track as standalone collection-level asset
-                    # Check if conversion is enabled (Issue #432)
-                    tabular_convert = _collection_setting(
-                        "tabular.convert", catalog_root, collection_dir, state
-                    )
-
-                    # Ensure collection exists first (AOI inheritance from siblings)
-                    _ensure_tabular_collection(
-                        catalog_root=catalog_root,
-                        collection_id=coll_id,
-                        collection_dir=collection_dir,
-                        state=state,
-                    )
-
-                    # Determine the final asset path (convert if needed)
-                    if tabular_convert and file_path.suffix.lower() != ".parquet":
-                        # Convert CSV/TSV/XLSX to Parquet via gpio (Issue #432)
-                        logger.info(
-                            "Converting %s to Parquet via geoparquet-io: %s",
-                            ext,
-                            file_path.name,
-                        )
-                        asset_path = convert_tabular(file_path, collection_dir)
-                        logger.info(
-                            "Tracking %s as standalone tabular collection-level asset: %s",
-                            file_path,
-                            asset_path.name,
-                        )
-                        # Track BOTH converted Parquet and source file (consistent with
-                        # vector behavior: side-by-side, both tracked)
-                        source_tracked = True
-                    else:
-                        # Already Parquet or conversion disabled - track as-is
-                        asset_path = file_path
-                        logger.info(
-                            "Tracking %s as standalone tabular %s collection-level asset: %s",
-                            file_path,
-                            ext,
-                            file_path.name,
-                        )
-                        source_tracked = False
-
-                    # Update collection.json with the tabular asset(s)
-                    # Primary asset: the Parquet file (or source if no conversion)
-                    _update_collection_with_asset(
-                        collection_dir=collection_dir,
-                        asset_path=asset_path,
-                        merge_strategy=merge_strategy,
-                        state=state,
-                    )
-
-                    # If converted, also track source file as companion asset
-                    # (consistent with vector conversion behavior)
-                    if source_tracked:
-                        # The CSV is the source of the Parquet (#960).
-                        _update_collection_with_asset(
-                            collection_dir=collection_dir,
-                            asset_path=file_path,
-                            merge_strategy=merge_strategy,
-                            role=ROLE_SOURCE,
-                            state=state,
-                        )
-
-                    # Update versions.json so is_current() finds the asset(s)
-                    asset_checksum = compute_checksum(asset_path)
-                    asset_size = asset_path.stat().st_size
-                    asset_files = {asset_path.name: (asset_path, asset_checksum, asset_size)}
-                    if source_tracked:
-                        source_checksum = compute_checksum(file_path)
-                        source_size = file_path.stat().st_size
-                        asset_files[file_path.name] = (file_path, source_checksum, source_size)
-                    _update_versions(
-                        collection_dir=collection_dir,
-                        item_id=asset_path.stem,  # Use file stem as item_id
-                        collection_id=coll_id,
-                        asset_files=asset_files,
-                        is_collection_level_asset=True,
-                        catalog_root=catalog_root,
-                        state=state,
-                    )
-
-                    # Track for statistics recomputation
-                    affected_collections.add(collection_dir)
-
-                    # Report as added, not skipped (#712). A standalone tabular
-                    # file is its own collection-level data asset on the
-                    # single-file collection pattern, so it reports like the
-                    # equivalent geo asset rather than as a no-op.
-                    asset_names = [asset_path.name]
-                    if source_tracked:
-                        asset_names.append(file_path.name)
-                    added.append(
-                        ItemInfo(
-                            item_id=asset_path.stem,
-                            collection_id=coll_id,
-                            format_type=None,
-                            bbox=_collection_aoi_bbox(collection_dir),
-                            asset_paths=asset_names,
-                        )
-                    )
+                _plan_tabular(plan, file_path, coll_id, catalog_root, failures, state)
         except Exception as err:
             # Record failure and continue (Issue #175).
             failures.append(AddFailure(path=file_path, error=str(err)))
+    return plan
 
-    return affected_collections
+
+def _plan_tabular(
+    plan: _DeferredPlan,
+    file_path: Path,
+    coll_id: str,
+    catalog_root: Path,
+    failures: list[AddFailure],
+    state: RunState,
+) -> None:
+    """Plan a file with no geo file beside it as standalone tabular data (#432)."""
+    collection_dir = catalog_root / Path(*coll_id.split("/"))
+    if not state.setting("tabular.enabled", collection_dir=collection_dir):
+        failures.append(
+            AddFailure(
+                path=file_path,
+                error=(
+                    f"Tabular data support is disabled. "
+                    f"File '{file_path.name}' has no geometry and no companion "
+                    f"geospatial file in the same directory. "
+                    f"To track standalone tabular data as collection-level assets, "
+                    f"set 'tabular.enabled: true' in .portolan/config.yaml"
+                ),
+            )
+        )
+        return
+    companions = plan.companions.setdefault(coll_id, [])
+    plan.tabular.add(coll_id)
+    convert = state.setting("tabular.convert", collection_dir=collection_dir)
+    if convert and file_path.suffix.lower() != ".parquet":
+        # Convert CSV/TSV/XLSX to Parquet via gpio (Issue #432), and track both
+        # files side by side, as the vector path does.
+        asset_path = convert_tabular(file_path, collection_dir, state=state)
+        companions += [CompanionAsset(asset_path), CompanionAsset(file_path, ROLE_SOURCE)]
+        names = [asset_path.name, file_path.name]
+    else:
+        asset_path = file_path
+        companions.append(CompanionAsset(file_path))
+        names = [file_path.name]
+    logger.info("Tracking %s as standalone tabular collection-level asset", asset_path)
+    plan.tabular_added.setdefault(coll_id, []).append((asset_path, names))
+
+
+def _write_deferred(
+    plan: _DeferredPlan,
+    finalized: set[str],
+    catalog_root: Path,
+    *,
+    added: list[ItemInfo],
+    skipped: list[Path],
+    merge_strategy: MergeStrategy,
+    touched_items: list[tuple[str, str]],
+    skip_reasons: dict[Path, str],
+    state: RunState,
+) -> set[Path]:
+    """Write the deferred files that ``finalize_items`` did not write (phase 3).
+
+    Each collection gets one ``collection.json`` write for all its files, and
+    one staged version for all of them.
+
+    Args:
+        plan: The plan of :func:`_plan_deferred`.
+        finalized: The collections that ``finalize_items`` wrote, with their
+            companions.
+        catalog_root: Root directory of the catalog.
+        added: Receives each standalone tabular asset (mutated, #712).
+        skipped: Receives each companion file (mutated).
+        merge_strategy: The strategy of the ``add`` run.
+        touched_items: Receives the ``(collection_id, item_id)`` of each
+            updated item (mutated).
+        skip_reasons: Receives the reason of a companion that two files claim
+            one asset key for in its item (mutated).
+        state: The run state, which holds the staged versions.
+
+    Returns:
+        The collection directories that received deferred assets.
+    """
+    affected: set[Path] = set()
+    for file_path, item in plan.item_companions:
+        try:
+            _track_companion_in_item(file_path, item, catalog_root, touched_items, state)
+        except AssetKeyCollisionError as err:
+            skip_reasons[file_path] = err.message
+        else:
+            affected.add(catalog_root / item[1])
+        skipped.append(file_path)
+
+    created = False
+    for coll_id, companions in plan.companions.items():
+        collection_dir = catalog_root / Path(*coll_id.split("/"))
+        if coll_id not in finalized:
+            created |= _write_companion_collection(
+                catalog_root, coll_id, companions, merge_strategy, coll_id in plan.tabular, state
+            )
+            stage_companions(state, coll_id, [c.path for c in companions])
+        affected.add(collection_dir)
+    if created:
+        _sweep_catalog(catalog_root, state)
+    elif affected:
+        # A tabular collection takes its providers from metadata.yaml (#813),
+        # so it can turn the whole catalog into a mirror. The root then needs
+        # its sync time (rashid PTL-PRO-003).
+        update_catalog_provenance(catalog_root)
+
+    skipped.extend(plan.companion_files)
+    for coll_id, assets in plan.tabular_added.items():
+        collection_dir = catalog_root / Path(*coll_id.split("/"))
+        added.extend(
+            ItemInfo(
+                item_id=asset_path.stem,
+                collection_id=coll_id,
+                format_type=None,
+                bbox=_collection_aoi_bbox(collection_dir),
+                asset_paths=names,
+            )
+            for asset_path, names in assets
+        )
+    return affected
+
+
+def _write_companion_collection(
+    catalog_root: Path,
+    coll_id: str,
+    companions: list[CompanionAsset],
+    merge_strategy: MergeStrategy,
+    create: bool,
+    state: RunState,
+) -> bool:
+    """Write the companions of one collection in one ``collection.json`` write.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        coll_id: Collection identifier.
+        companions: The files to add.
+        merge_strategy: The strategy of the ``add`` run.
+        create: Create the collection when it is absent (standalone tabular).
+        state: The run state.
+
+    Returns:
+        True when this created the collection.
+    """
+    collection_dir = catalog_root / Path(*coll_id.split("/"))
+    collection_json_path = collection_dir / "collection.json"
+    if collection_json_path.exists():
+        data = json.loads(collection_json_path.read_text(encoding="utf-8"))
+        # metadata.yaml applies here too, so an ``add --force`` of a tabular
+        # collection carries an edited title, license, or providers into STAC
+        # as the spatial path does (issue #813).
+        apply_human_metadata_to_dict(data, collection_dir, catalog_root, state)
+        add_companion_assets(data, collection_dir, companions, merge_strategy, state)
+        write_json_atomic(collection_json_path, data)
+        return False
+    if not create:
+        logger.warning("collection.json not found: %s", collection_json_path)
+        return False
+    collection = _new_tabular_collection(catalog_root, coll_id, collection_dir, state)
+    collection_dir.mkdir(parents=True, exist_ok=True)
+
+    def finish(data: dict[str, Any]) -> None:
+        add_companion_assets(data, collection_dir, companions, merge_strategy, state)
+
+    _save_collection_with_links(collection, collection_dir, catalog_root, coll_id, finish)
+    return True
 
 
 def _track_companion_in_item(
@@ -1856,7 +1736,7 @@ def _track_companion_in_item(
     item: tuple[Path, str, str],
     catalog_root: Path,
     touched_items: list[tuple[str, str]] | None,
-    state: RunState | None = None,
+    state: RunState,
 ) -> None:
     """Copy a non-geo file into an item directory and add it to the item.
 
@@ -1865,7 +1745,7 @@ def _track_companion_in_item(
         item: ``(item_dir, collection_id, item_id)`` of the item.
         catalog_root: Root directory of the catalog.
         touched_items: List to append ``(collection_id, item_id)`` to.
-        state: The run state, which parses the config once per run.
+        state: The run state, which holds the staged version.
 
     Raises:
         AssetKeyCollisionError: Two files claim one asset key in the item. The
@@ -1895,18 +1775,19 @@ def _update_item_with_asset(
     catalog_root: Path,
     collection_id: str,
     item_id: str,
-    state: RunState | None = None,
+    state: RunState,
 ) -> None:
     """Update a STAC item to include a new asset file.
 
     Re-scans the item directory and updates the item.json with all assets.
     This is used to add non-geospatial companion files to existing items.
+    The scanned files go in the staged version of the collection.
 
     Args:
         catalog_root: Root directory of the catalog.
         collection_id: Collection identifier.
         item_id: Item identifier.
-        state: The run state, which parses the config once per run.
+        state: The run state, which holds the staged version.
     """
     collection_dir = catalog_root / collection_id
     item_dir = collection_dir / item_id
@@ -1986,118 +1867,16 @@ def _update_item_with_asset(
     # Write updated item
     write_json_atomic(item_json_path, item_data)
 
-    # Detect if this is a collection-level asset
-    is_collection_level = item_dir.resolve() == collection_dir.resolve()
-
-    # Update versions.json with new asset
-    _update_versions(
-        collection_dir=collection_dir,
-        item_id=item_id,
-        collection_id=collection_id,
-        asset_files=asset_files,
-        is_collection_level_asset=is_collection_level,
-        catalog_root=catalog_root,
-        state=state,
+    # Stage the files of the item. The scan already hashed them.
+    state.stage(
+        collection_id,
+        assets={
+            versions_asset_key(path, collection_dir): Asset(
+                sha256=checksum,
+                size_bytes=size,
+                href=f"{collection_id}/{versions_asset_key(path, collection_dir)}",
+                mtime=path.stat().st_mtime,
+            )
+            for path, checksum, size in asset_files.values()
+        },
     )
-
-
-def _update_collection_with_asset(
-    collection_dir: Path,
-    asset_path: Path,
-    *,
-    merge_strategy: MergeStrategy,
-    role: str | None = None,
-    state: RunState | None = None,
-) -> None:
-    """Update a collection.json to include a new non-geo asset file (Issue #383).
-
-    For collection-level non-geospatial files, this adds them as assets directly
-    to collection.json rather than an item.json.
-
-    Args:
-        collection_dir: Path to the collection directory.
-        asset_path: Path to the non-geo asset file.
-        merge_strategy: The strategy of the ``add`` run.
-        role: The asset role. None takes the role of the file extension.
-        state: The run state, which parses each metadata.yaml once per run.
-    """
-    collection_json_path = collection_dir / "collection.json"
-
-    if not collection_json_path.exists():
-        logger.warning("collection.json not found: %s", collection_json_path)
-        return
-
-    # Load existing collection
-    with Path(collection_json_path).open(encoding="utf-8") as f:
-        collection_data = json.load(f)
-
-    # Add asset to collection
-    assets = collection_data.setdefault("assets", {})
-    media_type = _get_media_type(asset_path)
-    role = role or _get_asset_role(asset_path)
-
-    # Use stem as key, but fall back to full filename on collision
-    # (consistent with _scan_item_assets behavior for vectors)
-    asset_key = asset_path.stem
-    if asset_key in assets:
-        # Check if it's the same file (idempotent update) or a different file
-        existing_href = assets[asset_key].get("href", "")
-        if existing_href != f"./{asset_path.name}":
-            # Different file with same stem - use full filename to avoid collision
-            asset_key = asset_path.name
-
-    assets[asset_key] = {
-        "href": f"./{asset_path.name}",
-        "type": media_type,
-        "roles": [role],
-        **file_fields(asset_path),
-    }
-
-    _document_tabular_asset(collection_data, asset_key, asset_path, merge_strategy, state)
-
-    # Write updated collection
-    write_json_atomic(collection_json_path, collection_data)
-
-
-def _document_tabular_asset(
-    collection_data: dict[str, Any],
-    asset_key: str,
-    asset_path: Path,
-    merge_strategy: MergeStrategy,
-    state: RunState | None = None,
-) -> None:
-    """Answer the Tabular Data SHOULDs for a plain-Parquet asset (issue #749).
-
-    The spec asks a tabular collection to document its columns with the table
-    extension, and to populate ``extent.temporal`` when the data carries a time
-    dimension. Both are read from the Parquet footer here, because this function
-    is the only writer a collection-level non-geo asset passes through — the
-    tabular path never reaches ``finalize_items``, where geo collections get
-    their table metadata and their metadata.yaml.
-
-    metadata.yaml applies here for the same reason, so an ``add --force`` of a
-    tabular collection carries an edited title, license, or providers into
-    STAC as the spatial path does (issue #813).
-
-    Non-Parquet and GeoParquet assets get no table fields:
-    :func:`extract_tabular_metadata` returns None for both.
-
-    Args:
-        collection_data: Parsed ``collection.json``, mutated in place.
-        asset_key: Key the asset was just written under.
-        asset_path: Path to the asset file on disk.
-        merge_strategy: Decides only the column descriptions (issue #931).
-        state: The run state, which parses each metadata.yaml once per run.
-    """
-    from portolan_cli.catalog import find_catalog_root
-
-    collection_dir = asset_path.parent
-    catalog_root = find_catalog_root(collection_dir)
-    if catalog_root is not None:
-        apply_human_metadata_to_dict(collection_data, collection_dir, catalog_root, state)
-    metadata = extract_tabular_metadata(asset_path)
-    if metadata is None:
-        return
-    document_tabular_table(collection_data, asset_key, metadata, merge_strategy)
-    if metadata.temporal_interval is not None:
-        set_temporal_extent(collection_data, metadata.temporal_interval)

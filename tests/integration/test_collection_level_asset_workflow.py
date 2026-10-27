@@ -11,6 +11,7 @@ verifying STAC metadata generation, and ensuring correct path structure.
 from __future__ import annotations
 
 import json
+import shutil
 from typing import TYPE_CHECKING
 
 import pytest
@@ -454,3 +455,238 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
         assert csv in skipped
         tracked = read_versions(catalog / "imagery" / "versions.json").versions[-1].assets
         assert tracked["scene/bands.csv"].size_bytes == csv.stat().st_size
+
+
+def _init_catalog(root: Path) -> None:
+    from click.testing import CliRunner
+
+    from portolan_cli.cli import cli
+
+    result = CliRunner().invoke(
+        cli,
+        ["init", str(root), "--auto", "--title", "One version", "--license", "CC-BY-4.0"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+
+
+def _add_cli(root: Path, target: Path) -> None:
+    from click.testing import CliRunner
+
+    from portolan_cli.cli import cli
+
+    result = CliRunner().invoke(
+        cli, ["add", "--portolan-dir", str(root), str(target)], catch_exceptions=False
+    )
+    assert result.exit_code == 0, result.output
+
+
+def _stub_thumbnail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Draw a 4 px JPEG where the renderer would, with no basemap and no network."""
+    from PIL import Image
+
+    from portolan_cli.viz.thumbnail import thumbnail_path_for
+
+    def render(*, geoparquet_path: Path, **_: object) -> Path:
+        out = thumbnail_path_for(geoparquet_path)
+        Image.new("RGB", (4, 4)).save(out, "JPEG")
+        return out
+
+    monkeypatch.setattr("portolan_cli.collection_thumbnail.generate_vector_thumbnail", render)
+
+
+def _index_entry(root: Path, collection_id: str) -> dict[str, object] | None:
+    collections = json.loads((root / "versions.json").read_text())["collections"] or {}
+    entry: dict[str, object] | None = collections.get(collection_id)
+    return entry
+
+
+class _CrashError(Exception):
+    """The fault that the crash tests inject after collection.json is on disk."""
+
+
+@pytest.mark.integration
+class TestOneAddIsOneVersion:
+    """One add writes one version per collection, with every side step in it (#995)."""
+
+    def test_the_pmtiles_and_the_thumbnail_join_the_add_version(
+        self, tmp_path: Path, fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli.versions import read_versions
+
+        root = tmp_path / "catalog"
+        _init_catalog(root)
+        collection_dir = root / "roads"
+        collection_dir.mkdir()
+        shutil.copy(
+            fixtures_dir / "vector" / "valid" / "points.parquet", collection_dir / "roads.parquet"
+        )
+        shutil.copy(
+            fixtures_dir / "cloud_native" / "sample.pmtiles", collection_dir / "roads.pmtiles"
+        )
+        _stub_thumbnail(monkeypatch)
+
+        from portolan_cli import json_io
+
+        written: list[Path] = []
+        write_text_atomic = json_io.write_text_atomic
+
+        def recorded(path: Path, content: str) -> None:
+            written.append(path)
+            write_text_atomic(path, content)
+
+        monkeypatch.setattr(json_io, "write_text_atomic", recorded)
+
+        _add_cli(root, collection_dir)
+
+        # One write of the collection record and one of the catalog index.
+        # The thumbnail amended the record in a second write before (#995).
+        assert [p for p in written if p.name == "versions.json"] == [
+            collection_dir / "versions.json",
+            root / "versions.json",
+        ]
+        versions_file = read_versions(collection_dir / "versions.json")
+        assert [v.version for v in versions_file.versions] == ["1.0.0"]
+        latest = versions_file.versions[-1]
+        assert sorted(latest.assets) == ["roads.parquet", "roads.pmtiles", "roads.thumb.jpg"]
+        # One commit writes the catalog index after the side steps, so it
+        # counts every asset of the version.
+        assert _index_entry(root, "roads") == {
+            "updated": _index_entry(root, "roads")["updated"],  # type: ignore[index]
+            "current_version": "1.0.0",
+            "asset_count": 3,
+            "total_size_bytes": sum(a.size_bytes for a in latest.assets.values()),
+        }
+
+    def test_the_catalog_index_matches_each_current_version(
+        self, tmp_path: Path, fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """commit_run writes the index that the removed sync_catalog_index wrote.
+
+        The index entry of each collection summarizes its current version,
+        side steps included. A re-add that changes nothing leaves the index bytes.
+        """
+        from portolan_cli.catalog import CollectionSummary
+        from portolan_cli.versions import read_versions
+
+        root = tmp_path / "catalog"
+        _init_catalog(root)
+        for name in ("roads", "parks"):
+            (root / name).mkdir()
+            shutil.copy(
+                fixtures_dir / "vector" / "valid" / "points.parquet",
+                root / name / f"{name}.parquet",
+            )
+        shutil.copy(
+            fixtures_dir / "cloud_native" / "sample.pmtiles", root / "roads" / "roads.pmtiles"
+        )
+        _stub_thumbnail(monkeypatch)
+
+        _add_cli(root, root)
+
+        for name in ("roads", "parks"):
+            versions_file = read_versions(root / name / "versions.json")
+            current = versions_file.versions[-1]
+            entry = _index_entry(root, name)
+            assert entry is not None
+            assert CollectionSummary(
+                str(entry["current_version"]),
+                int(entry["asset_count"]),  # type: ignore[call-overload]
+                int(entry["total_size_bytes"]),  # type: ignore[call-overload]
+            ) == CollectionSummary.of(current)
+        before = (root / "versions.json").read_bytes()
+
+        _add_cli(root, root)
+
+        assert (root / "versions.json").read_bytes() == before
+
+    def test_a_failed_file_still_commits_the_others(
+        self, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        from portolan_cli.add import add_files
+        from portolan_cli.versions import read_versions
+
+        root = tmp_path / "catalog"
+        _init_catalog(root)
+        (root / "good").mkdir()
+        shutil.copy(
+            fixtures_dir / "vector" / "valid" / "points.geojson", root / "good" / "good.geojson"
+        )
+        (root / "bad").mkdir()
+        bad = root / "bad" / "bad.geojson"
+        bad.write_text("{not json")
+
+        _added, _skipped, failures = add_files(
+            paths=[root / "good", root / "bad"], catalog_root=root
+        )
+
+        assert [f.path for f in failures] == [bad]
+        assert read_versions(root / "good" / "versions.json").current_version == "1.0.0"
+        assert not (root / "bad" / "versions.json").exists()
+        assert _index_entry(root, "bad") is None
+
+    def test_an_unhandled_error_commits_nothing(
+        self, tmp_path: Path, fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli.add import add_files
+
+        root = tmp_path / "catalog"
+        _init_catalog(root)
+        collection_dir = root / "roads"
+        collection_dir.mkdir()
+        shutil.copy(
+            fixtures_dir / "vector" / "valid" / "points.geojson", collection_dir / "roads.geojson"
+        )
+
+        def crash(*_args: object, **_kwargs: object) -> None:
+            raise _CrashError
+
+        monkeypatch.setattr("portolan_cli.add._write_deferred", crash)
+        with pytest.raises(_CrashError):
+            add_files(paths=[collection_dir], catalog_root=root)
+
+        assert (collection_dir / "collection.json").exists()
+        assert not (collection_dir / "versions.json").exists()
+        assert _index_entry(root, "roads") is None
+
+    def test_an_add_after_a_crash_converges(
+        self, tmp_path: Path, fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The crash leaves collection.json and the converted file with no version.
+
+        The next add replaces its own output, which carries the source
+        provenance record, and writes the version. versions.json and
+        collection.json then agree.
+        """
+        from portolan_cli.add import add_files
+        from portolan_cli.sync.checksums import compute_checksum
+        from portolan_cli.versions import read_versions
+
+        root = tmp_path / "catalog"
+        _init_catalog(root)
+        collection_dir = root / "roads"
+        collection_dir.mkdir()
+        shutil.copy(
+            fixtures_dir / "vector" / "valid" / "points.geojson", collection_dir / "roads.geojson"
+        )
+
+        def crash(*_args: object, **_kwargs: object) -> None:
+            raise _CrashError
+
+        with monkeypatch.context() as patched:
+            patched.setattr("portolan_cli.add._write_deferred", crash)
+            with pytest.raises(_CrashError):
+                add_files(paths=[collection_dir], catalog_root=root)
+
+        _added, _skipped, failures = add_files(paths=[collection_dir], catalog_root=root)
+
+        assert failures == []
+        assert sorted(p.name for p in collection_dir.glob("*.parquet")) == ["roads.parquet"]
+        tracked = read_versions(collection_dir / "versions.json").versions
+        assert len(tracked) == 1
+        records = tracked[-1].assets
+        stac = json.loads((collection_dir / "collection.json").read_text())["assets"]
+        tracked_hrefs = {f"./{key}" for key in records}
+        assert {asset["href"] for asset in stac.values()} <= tracked_hrefs
+        assert records["roads.parquet"].sha256 == compute_checksum(collection_dir / "roads.parquet")
+        assert _index_entry(root, "roads")["current_version"] == "1.0.0"  # type: ignore[index]

@@ -257,6 +257,34 @@ class RunState:
             self._projected[coll_id] = (disk_key, self._generation, projected)
         return _copy(projected)
 
+    def tracked_assets(self, collection_dir: Path) -> dict[str, Asset]:
+        """The assets that the collection tracks once this run commits.
+
+        The result is the latest version on disk, updated with the assets that
+        the run staged, without the keys it staged for removal. It builds no
+        version, so a reader that needs only the asset records does not
+        project the staged change through ``add_version``.
+
+        Args:
+            collection_dir: The collection directory.
+
+        Returns:
+            Asset key to its record. A new map, which the caller may edit.
+
+        Raises:
+            ValueError: If ``versions.json`` does not parse.
+        """
+        _key, disk = self._disk_versions(collection_dir / "versions.json")
+        assets = dict(disk.versions[-1].assets) if disk.versions else {}
+        coll_id = self._collection_id(collection_dir)
+        with self._lock:
+            staged = self._staged.get(coll_id) if coll_id is not None else None
+            if staged is not None:
+                assets.update(staged.assets)
+                for key in staged.removed:
+                    assets.pop(key, None)
+        return assets
+
     # ── checksums and change checks ─────────────────────────────────────────
 
     def checksum(self, path: Path) -> str:

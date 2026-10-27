@@ -266,7 +266,9 @@ def add_external(
 
     # Collection dir mirrors the layout 'add' produces: <root>/<collection_id>/.
     collection_dir.mkdir(parents=True, exist_ok=True)
-    _save_collection_with_links(collection, collection_dir, catalog_root, resolved_id)
+    _save_collection_with_links(
+        collection, collection_dir, catalog_root, resolved_id, readme_link=False
+    )
 
     from portolan_cli.catalog import apply_catalog_human_titles, ensure_link_titles
 

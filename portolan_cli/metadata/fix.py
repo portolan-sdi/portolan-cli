@@ -189,19 +189,22 @@ def _finalize_created_items(
     """Finalize the prepared MISSING items of one catalog, then write their mirrors.
 
     One ``finalize_items`` call writes the batch, and the items.parquet mirror
-    folds into the version it publishes, as after ``add``. A failure fails
-    every result of the batch, because ``finalize_items`` writes the batch as
-    one unit.
+    folds into the version it stages, as after ``add``. One run state holds
+    both, and one commit writes each collection version and the catalog index.
+    A failure fails every result of the batch and commits nothing, because
+    ``finalize_items`` writes the batch as one unit.
 
     Returns:
         One SKIPPED result for each collection whose mirror could not be written.
     """
-    from portolan_cli.catalog import sync_catalog_index
     from portolan_cli.finalization import finalize_items
+    from portolan_cli.run_state import RunState
     from portolan_cli.stac_parquet import generate_parquet_mirrors
+    from portolan_cli.version_ops import commit_run
 
+    state = RunState.open(catalog_root)
     try:
-        finalize_items(catalog_root, [item for _result, item in batch])
+        finalize_items(catalog_root, [item for _result, item in batch], state=state)
     except Exception as e:
         for result, _item in batch:
             result.success = False
@@ -210,11 +213,13 @@ def _finalize_created_items(
 
     collections = {item.collection_id for _result, item in batch}
     mirrors = generate_parquet_mirrors(
-        catalog_root, collections, generate_parquet=False, versioned_collections=collections
+        catalog_root,
+        collections,
+        generate_parquet=False,
+        versioned_collections=collections,
+        state=state,
     )
-    # The mirror changes the collection snapshot after finalize_items wrote the
-    # root counts, so the root index is brought in step, as add does.
-    sync_catalog_index(catalog_root, collections)
+    commit_run(state)
     return [
         FixResult(
             file_path=catalog_root / collection_id / "collection.json",

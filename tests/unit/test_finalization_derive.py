@@ -2,7 +2,8 @@
 
 ``refresh_collection_fields`` reports whether it changed collection.json,
 because ``check --fix`` turns that answer into an UPDATED result.
-``_batch_update_versions`` writes the version snapshot that ``push`` trusts.
+``_stage_items`` stages the version snapshot that ``push`` trusts, and
+``commit_run`` writes it.
 """
 
 from __future__ import annotations
@@ -16,16 +17,20 @@ import pytest
 import shapely
 
 from portolan_cli.finalization import (
-    _batch_update_versions,
+    _stage_items,
     refresh_collection_fields,
 )
 from portolan_cli.metadata.detection import get_current_metadata
 from portolan_cli.preparation import PreparedItem
+from portolan_cli.run_state import RunState
 from portolan_cli.stac import create_collection
 from portolan_cli.sync.checksums import compute_checksum
+from portolan_cli.version_ops import commit_run
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from portolan_cli.versions import Version
 
 pytestmark = pytest.mark.unit
 
@@ -95,16 +100,24 @@ def _prepared(collection_dir: Path) -> PreparedItem:
     )
 
 
-class TestBatchUpdateVersions:
+def _commit(collection_dir: Path, items: list[PreparedItem]) -> dict[str, Version]:
+    """Stage the items in a new run of the catalog above the collection and commit it."""
+    state = RunState.open(collection_dir.parent)
+    _stage_items(state, "coll", collection_dir, items)
+    return commit_run(state)
+
+
+class TestStageItems:
     def test_the_first_version_records_every_field(self, tmp_path: Path) -> None:
         collection_dir = _collection_with_asset(tmp_path, [1.0, 1.0, 2.0, 2.0])
         prepared = _prepared(collection_dir)
         data = collection_dir / "data.parquet"
         size = data.stat().st_size
 
-        result = _batch_update_versions(collection_dir, "coll", [prepared])
+        published = _commit(collection_dir, [prepared])
 
-        assert result == ("1.0.0", 1, size)
+        assert list(published) == ["coll"]
+        assert (published["coll"].version, len(published["coll"].assets)) == ("1.0.0", 1)
         versions = _load(collection_dir / "versions.json")
         assert (versions["spec_version"], versions["current_version"]) == ("1.0.0", "1.0.0")
         latest = versions["versions"][-1]
@@ -121,28 +134,23 @@ class TestBatchUpdateVersions:
 
     def test_a_changed_file_gets_the_next_version(self, tmp_path: Path) -> None:
         collection_dir = _collection_with_asset(tmp_path, [1.0, 1.0, 2.0, 2.0])
-        _batch_update_versions(collection_dir, "coll", [_prepared(collection_dir)])
+        _commit(collection_dir, [_prepared(collection_dir)])
         gpd.GeoDataFrame({"id": [1]}, geometry=[shapely.Point(1, 1)], crs="EPSG:4326").to_parquet(
             collection_dir / "data.parquet"
         )
 
-        version, count, _size = _batch_update_versions(
-            collection_dir, "coll", [_prepared(collection_dir)]
-        )
+        published = _commit(collection_dir, [_prepared(collection_dir)])
 
-        assert (version, count) == ("1.0.1", 1)
+        assert published["coll"].version == "1.0.1"
         assert _load(collection_dir / "versions.json")["current_version"] == "1.0.1"
 
-    def test_an_unchanged_file_keeps_the_current_version(self, tmp_path: Path) -> None:
-        """add_version records no new version, so the result names the current one."""
+    def test_an_unchanged_file_writes_no_version(self, tmp_path: Path) -> None:
         collection_dir = _collection_with_asset(tmp_path, [1.0, 1.0, 2.0, 2.0])
-        _batch_update_versions(collection_dir, "coll", [_prepared(collection_dir)])
+        _commit(collection_dir, [_prepared(collection_dir)])
+        before = (collection_dir / "versions.json").read_bytes()
 
-        version, _count, _size = _batch_update_versions(
-            collection_dir, "coll", [_prepared(collection_dir)]
-        )
-
-        assert version == "1.0.0"
+        assert _commit(collection_dir, [_prepared(collection_dir)]) == {}
+        assert (collection_dir / "versions.json").read_bytes() == before
 
     def test_no_asset_files_record_an_empty_version(self, tmp_path: Path) -> None:
         collection_dir = _collection_with_asset(tmp_path, [1.0, 1.0, 2.0, 2.0])
@@ -156,4 +164,6 @@ class TestBatchUpdateVersions:
             is_collection_level_asset=True,
         )
 
-        assert _batch_update_versions(collection_dir, "coll", [empty]) == ("1.0.0", 0, 0)
+        published = _commit(collection_dir, [empty])
+
+        assert (published["coll"].version, published["coll"].assets) == ("1.0.0", {})

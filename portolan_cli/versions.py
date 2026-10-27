@@ -342,7 +342,9 @@ def add_version(
     """Add a new version to a VersionsFile.
 
     This function is immutable - it returns a new VersionsFile rather than
-    modifying the input.
+    modifying the input. It does not count ``versions.published``. The code
+    that writes the result counts it, so a projection of a staged change in
+    ``RunState.versions`` counts nothing.
 
     Each version is a complete SNAPSHOT of all assets at that point in time. New assets are merged with the previous version's assets,
     and any assets in `removed` are excluded.
@@ -390,7 +392,6 @@ def add_version(
     ):
         return versions_file
 
-    count("versions.published")
     new_version = Version(
         version=version,
         created=datetime.now(timezone.utc),
@@ -680,6 +681,13 @@ def track_generated_assets(
             like ``check --fix`` leaves it False, since amending a snapshot that
             may already be published would rewrite history.
         state: The run state. Its checksum memo hashes each asset once per run.
+            With a state on the file backend, the assets join the version
+            that the run stages for the collection, and
+            ``version_ops.commit_run`` writes it. ``add`` stages its own
+            version first, so the side steps of one ``add`` stay in that one
+            version. Without a state, or on a plugin backend, this writes
+            ``versions.json`` now. A plugin backend publishes in
+            ``finalize_items`` and cannot amend that version.
 
     Raises:
         FileNotFoundError: If any asset path doesn't exist.
@@ -690,6 +698,7 @@ def track_generated_assets(
 
     versions_path = collection_path / "versions.json"
 
+    staged = state is not None and (state.setting("backend") or "file") == "file"
     # If no versions.json, create a minimal one
     if not versions_path.exists():
         versions_file = VersionsFile(
@@ -697,8 +706,15 @@ def track_generated_assets(
             current_version=None,
             versions=[],
         )
+    elif state is not None and staged:
+        versions_file = state.versions(collection_path, include_staged=False)
     else:
         versions_file = read_versions(versions_path)
+    if state is not None and staged:
+        # The records that the run staged count as tracked too.
+        tracked = state.tracked_assets(collection_path)
+    else:
+        tracked = dict(versions_file.versions[-1].assets) if versions_file.versions else {}
 
     # Backfill mode: skip assets already tracked, and create no version if none
     # are missing (otherwise the message would force a no-op version bump).
@@ -708,8 +724,7 @@ def track_generated_assets(
     # `item-b/data.thumb.jpg` indistinguishable, so the second one was silently
     # dropped from the snapshot.
     paths_to_track = asset_paths
-    if only_if_missing and versions_file.versions:
-        tracked = versions_file.versions[-1].assets
+    if only_if_missing and tracked:
         paths_to_track = [
             p for p in asset_paths if not _is_tracked(p, tracked, catalog_root, collection_path)
         ]
@@ -721,6 +736,15 @@ def track_generated_assets(
         generated_asset_record(p, catalog_root, collection_path, checksum(p))
         for p in paths_to_track
     )
+
+    if state is not None and staged:
+        state.stage(
+            collection_path.resolve().relative_to(catalog_root.resolve()).as_posix(),
+            assets=assets,
+            message=None if amend_latest else message,
+            amend=amend_latest,
+        )
+        return
 
     if amend_latest and versions_file.versions:
         # Fold into the snapshot the caller just wrote, rather than bumping.
@@ -746,3 +770,5 @@ def track_generated_assets(
     )
 
     write_versions(versions_path, updated)
+    if updated is not versions_file:
+        count("versions.published")

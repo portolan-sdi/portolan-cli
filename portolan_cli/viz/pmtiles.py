@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from portolan_cli.config import ConfigSource
+    from portolan_cli.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -648,7 +649,9 @@ def add_pmtiles_link_to_collection(
         write_json_atomic(collection_json_path, data)
 
 
-def _backfill_skipped_assets(collection_path: Path, pmtiles_path: Path, catalog_root: Path) -> None:
+def _backfill_skipped_assets(
+    collection_path: Path, pmtiles_path: Path, catalog_root: Path, state: RunState | None
+) -> None:
     """Track an up-to-date PMTiles and its thumbnail if not already tracked.
 
     Runs on the skip path to heal catalogs whose artifacts were generated before
@@ -672,6 +675,7 @@ def _backfill_skipped_assets(collection_path: Path, pmtiles_path: Path, catalog_
             catalog_root,
             message="Backfilled visualization asset tracking",
             only_if_missing=True,
+            state=state,
         )
     except Exception as e:
         warn(f"Failed to backfill versions.json tracking for {pmtiles_path.name}: {e}")
@@ -682,6 +686,7 @@ def _generate_thumbnail_asset(
     parquet_path: Path,
     pmtiles_path: Path,
     catalog_root: Path,
+    state: RunState | None,
 ) -> Path | None:
     """Render the vector thumbnail, preferring the exact GeoParquet geometry.
 
@@ -697,7 +702,7 @@ def _generate_thumbnail_asset(
     and adoption never overwrites.
     """
     try:
-        thumb_config = get_thumbnail_config(catalog_root)
+        thumb_config = get_thumbnail_config(catalog_root, state=state)
         if not thumb_config.enabled:
             return None
         # Discover style for thumbnail (Issue #495)
@@ -718,6 +723,7 @@ def _track_side_step_assets(
     pmtiles_path: Path,
     thumb_path: Path | None,
     catalog_root: Path,
+    state: RunState | None,
 ) -> None:
     """Track the PMTiles and its thumbnail in a SINGLE versions.json snapshot.
 
@@ -732,7 +738,9 @@ def _track_side_step_assets(
     else:
         message = f"Generated PMTiles: {pmtiles_path.name}"
     try:
-        track_generated_assets(collection_path, generated_assets, catalog_root, message=message)
+        track_generated_assets(
+            collection_path, generated_assets, catalog_root, message=message, state=state
+        )
     except Exception as e:
         warn(f"Failed to track generated assets in versions.json for {pmtiles_path.name}: {e}")
 
@@ -752,7 +760,7 @@ def generate_pmtiles_for_collection(
     precision: int = 6,
     attribution: str | None = None,
     src_crs: str | None = None,
-    state: ConfigSource | None = None,
+    state: RunState | None = None,
 ) -> PMTilesResult:
     """Generate PMTiles for all GeoParquet assets in a collection.
 
@@ -850,7 +858,7 @@ def generate_pmtiles_for_collection(
             )
             # Backfill versions.json for artifacts generated before this tracking
             # existed (the original #519 bug state), idempotently.
-            _backfill_skipped_assets(collection_path, pmtiles_path, catalog_root)
+            _backfill_skipped_assets(collection_path, pmtiles_path, catalog_root, state)
             result.skipped.append(pmtiles_path)
             continue
 
@@ -905,9 +913,9 @@ def generate_pmtiles_for_collection(
         # snapshot (one side-step == one version, not two, Issue #519).
         if generation_succeeded:
             thumb_path = _generate_thumbnail_asset(
-                collection_path, parquet_path, pmtiles_path, catalog_root
+                collection_path, parquet_path, pmtiles_path, catalog_root, state
             )
-            _track_side_step_assets(collection_path, pmtiles_path, thumb_path, catalog_root)
+            _track_side_step_assets(collection_path, pmtiles_path, thumb_path, catalog_root, state)
 
     # Discover and register style assets
     from portolan_cli.viz.style import (
@@ -996,7 +1004,7 @@ def generate_or_suggest_pmtiles(
     force: bool,
     verbose: bool,
     use_json: bool = False,
-    state: ConfigSource | None = None,
+    state: RunState | None = None,
 ) -> None:
     """Generate PMTiles for affected collections when requested or configured.
 

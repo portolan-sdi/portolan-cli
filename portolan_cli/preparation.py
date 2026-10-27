@@ -58,7 +58,7 @@ from portolan_cli.metadata import (
 )
 from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.flatgeobuf import FlatGeobufMetadata
-from portolan_cli.metadata.geoparquet import GeoParquetMetadata, RewriteFidelity
+from portolan_cli.metadata.geoparquet import GeoParquetMetadata, RewriteFidelity, open_footer
 from portolan_cli.metadata.pmtiles import PMTilesMetadata
 from portolan_cli.metadata.statistics import embedded_statistics
 from portolan_cli.metadata_yaml import (
@@ -98,6 +98,8 @@ from portolan_cli.viz.style import enrich_cog_assets
 if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
+
+    import pyarrow.parquet as pq
 
     from portolan_cli.config import ConfigSource
     from portolan_cli.plugins.formats import FormatHandler
@@ -1371,7 +1373,7 @@ def is_rewrite_temp(path: Path) -> bool:
 
 
 def _needs_spatial_rewrite(
-    source: Path, settings: VectorSettings, *, reconvert: bool = False
+    source: Path | pq.ParquetFile, settings: VectorSettings, *, reconvert: bool = False
 ) -> bool:
     """Decide whether an existing Parquet file must be rewritten on ``add``.
 
@@ -1397,7 +1399,7 @@ def _needs_spatial_rewrite(
     --reconvert`` rewrites the file whatever its footer says.
 
     Args:
-        source: Source Parquet file.
+        source: Source Parquet file, or the file open for its footer.
         settings: Vector conversion settings.
         reconvert: True when the operator asked to re-convert from source.
 
@@ -1467,7 +1469,19 @@ def convert_vector(
     # Check if already GeoParquet
     if source.suffix.lower() == ".parquet":
         same_file = source.resolve() == output_path.resolve()
-        if not _needs_spatial_rewrite(source, settings, reconvert=reconvert):
+        # One footer read answers both questions (issue #995). The file closes
+        # before the rewrite swaps a sibling over it, because an open handle
+        # blocks that replace on Windows.
+        footer = open_footer(source)
+        try:
+            needs = footer is not None and _needs_spatial_rewrite(
+                footer, settings, reconvert=reconvert
+            )
+            before = read_rewrite_fidelity(footer) if footer is not None and needs else None
+        finally:
+            if footer is not None:
+                footer.close()
+        if not needs:
             if not same_file:
                 shutil.copy2(source, output_path)
             return output_path
@@ -1479,14 +1493,14 @@ def convert_vector(
             # so there is no separate destination to write to. Write a sibling
             # and swap it in, because geoparquet-io cannot write the file it
             # reads.
-            _rewrite_or_keep(source, settings)
+            _rewrite_or_keep(source, settings, before)
         else:
             # Copy first, then rewrite the copy. Converting straight into
             # `output_path` would skip `_assert_rewrite_kept_everything`, so a
             # `.parquet` source would silently lose its CRS on this path while
             # the same file kept it on the path above.
             shutil.copy2(source, output_path)
-            _rewrite_or_keep(output_path, settings)
+            _rewrite_or_keep(output_path, settings, before)
         return output_path
 
     # A non-Parquet source. Convert with the geoparquet-io fluent API, wrapped
@@ -1548,7 +1562,9 @@ def _announce_rewrite(source: Path, reason: str) -> None:
         )
 
 
-def _rewrite_or_keep(source: Path, settings: VectorSettings) -> None:
+def _rewrite_or_keep(
+    source: Path, settings: VectorSettings, before: RewriteFidelity | None
+) -> None:
     """Rewrite a GeoParquet in place, or keep it and say why the rewrite failed.
 
     ``add`` used to copy a ``.parquet`` source through untouched, so a file
@@ -1562,11 +1578,12 @@ def _rewrite_or_keep(source: Path, settings: VectorSettings) -> None:
     Args:
         source: GeoParquet file to rewrite.
         settings: Vector conversion settings to apply.
+        before: The fidelity fields of the bytes in ``source``, read before.
     """
     from portolan_cli.output import warn
 
     try:
-        _rewrite_parquet_in_place(source, settings)
+        _rewrite_parquet_in_place(source, settings, before)
     except RewriteFidelityError as err:
         warn(f"Kept {source.name} as it is: it would lose {err.lost}")
     except Exception as err:  # noqa: BLE001 - a copy is better than a failed add
@@ -1574,7 +1591,9 @@ def _rewrite_or_keep(source: Path, settings: VectorSettings) -> None:
         warn(f"Kept {source.name} as it is: geoparquet-io could not rewrite it ({err})")
 
 
-def _rewrite_parquet_in_place(source: Path, settings: VectorSettings) -> None:
+def _rewrite_parquet_in_place(
+    source: Path, settings: VectorSettings, before: RewriteFidelity | None
+) -> None:
     """Rewrite a GeoParquet file with the vector settings applied.
 
     Writes a sibling temporary file and swaps it in with :meth:`Path.replace`,
@@ -1597,11 +1616,12 @@ def _rewrite_parquet_in_place(source: Path, settings: VectorSettings) -> None:
     Args:
         source: GeoParquet file to rewrite.
         settings: Vector conversion settings to apply.
+        before: The fidelity fields of the bytes in ``source``. The caller
+            reads them in the same footer read as the spatial layout.
     """
     import geoparquet_io as gpio
 
     temp_path = source.with_name(f".{source.stem}{REWRITE_TEMP_INFIX}.parquet")
-    before = read_rewrite_fidelity(source)
 
     def _run() -> None:
         table = apply_vector_settings(gpio.convert(str(source)), settings)

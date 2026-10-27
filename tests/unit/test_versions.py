@@ -1717,3 +1717,48 @@ class TestTrackGeneratedAssets:
         assert {key: asset.href for key, asset in assets.items()} == {
             "scene/scene.thumb.jpg": "imagery/scene/scene.thumb.jpg"
         }
+
+    @pytest.mark.unit
+    def test_with_a_state_the_assets_join_the_staged_version(self, tmp_path: Path) -> None:
+        """add stages its version first. A side step amends it, and one commit writes both."""
+        from portolan_cli.run_state import RunState
+        from portolan_cli.version_ops import commit_run
+        from portolan_cli.versions import Asset, track_generated_assets
+
+        data = tmp_path / "roads" / "roads.parquet"
+        data.parent.mkdir()
+        data.write_bytes(b"data")
+        tiles = data.with_suffix(".pmtiles")
+        tiles.write_bytes(b"tiles")
+        state = RunState.open(tmp_path)
+        record = Asset(sha256=_sha256("data"), size_bytes=4, href="roads/roads.parquet")
+        state.stage("roads", assets={"roads.parquet": record})
+
+        track_generated_assets(
+            data.parent, [tiles], tmp_path, message="tiles", amend_latest=True, state=state
+        )
+
+        assert not (data.parent / "versions.json").exists()
+        commit_run(state)
+        versions_file = read_versions(data.parent / "versions.json")
+        assert [v.version for v in versions_file.versions] == ["1.0.0"]
+        assert sorted(versions_file.versions[-1].assets) == ["roads.parquet", "roads.pmtiles"]
+
+    @pytest.mark.unit
+    def test_a_plugin_backend_keeps_the_direct_write(self, tmp_path: Path) -> None:
+        """A plugin publishes in finalize_items and cannot amend, so nothing is staged."""
+        from portolan_cli.run_state import RunState
+        from portolan_cli.versions import track_generated_assets
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text("backend: iceberg\n")
+        tiles = tmp_path / "roads" / "roads.pmtiles"
+        tiles.parent.mkdir()
+        tiles.write_bytes(b"tiles")
+        state = RunState.open(tmp_path)
+
+        track_generated_assets(tiles.parent, [tiles], tmp_path, message="tiles", state=state)
+
+        assert state.staged() == {}
+        assets = read_versions(tiles.parent / "versions.json").versions[-1].assets
+        assert list(assets) == ["roads.pmtiles"]
