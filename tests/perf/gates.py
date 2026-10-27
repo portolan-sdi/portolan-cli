@@ -83,6 +83,7 @@ SCALE_SIZES: dict[str, int] = {
     "add-large-vector": 1_000,
     "re-add-unchanged": 3,
     "check-metadata": 3,
+    "check-fix-geo-assets": 3,
     "status": 3,
     "add-rasters": 3,
 }

@@ -87,7 +87,9 @@ class ConversionOverrides:
         # Check path patterns first (higher precedence)
         if self.paths_preserve and root is not None:
             try:
-                relative = path.relative_to(root)
+                # Resolve both, so a relative checked path still matches an
+                # absolute catalog root.
+                relative = path.resolve().relative_to(root.resolve())
                 # Use POSIX-style paths for consistent matching across platforms
                 relative_str = relative.as_posix()
                 for pattern in self.paths_preserve:

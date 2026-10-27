@@ -339,6 +339,7 @@ def _early_exit_result(
     force: bool,
     start_time: float,
     catalog_path: Path | None = None,
+    state: RunState | None = None,
 ) -> ConversionResult | None:
     """Return a SKIPPED/UNSUPPORTED result if no conversion should run, else None.
 
@@ -351,7 +352,7 @@ def _early_exit_result(
         # --force re-optimizes a file whose handler can rewrite it (issue #530).
         from portolan_cli.plugins.formats import handler_for
 
-        handler = handler_for(source, catalog_path) if force else None
+        handler = handler_for(source, catalog_path, state=state) if force else None
         if handler is not None and hasattr(handler, "reoptimize"):
             return None
         return _result(
@@ -385,6 +386,7 @@ def convert_file(
     cog_settings: CogSettings | None = None,
     vector_settings: VectorSettings | None = None,
     force: bool = False,
+    state: RunState | None = None,
 ) -> ConversionResult:
     """Convert a single file to cloud-native format.
 
@@ -407,6 +409,7 @@ def convert_file(
             ``cog_settings`` (e.g. to add missing overviews). Raster-scoped only:
             cloud-native vectors are still skipped (issue #530). Has no effect on
             CONVERTIBLE or UNSUPPORTED files.
+        state: The run state, which parses the config once per command.
 
     Returns:
         ConversionResult with conversion outcome, timing, and paths.
@@ -424,19 +427,24 @@ def convert_file(
 
         # A plugin format handler converts the formats it claims (#947). A built-in
         # format first passes the cloud-native check.
-        handler = plugin_handler_for(source, catalog_path)
+        handler = plugin_handler_for(source, catalog_path, state=state)
         reoptimize = False
         display_name = handler.display_name if handler is not None else ""
         if handler is None:
-            format_info = get_cloud_native_status(source, catalog_path)
+            format_info = get_cloud_native_status(source, catalog_path, state=state)
             early_exit = _early_exit_result(
-                source, format_info, force=force, start_time=start_time, catalog_path=catalog_path
+                source,
+                format_info,
+                force=force,
+                start_time=start_time,
+                catalog_path=catalog_path,
+                state=state,
             )
             if early_exit is not None:
                 return early_exit
             reoptimize = format_info.status == CloudNativeStatus.CLOUD_NATIVE
             display_name = format_info.display_name
-            handler = handler_for(source, catalog_path)
+            handler = handler_for(source, catalog_path, state=state)
         if handler is None:
             return _result(
                 source,
@@ -1509,6 +1517,7 @@ def convert_directory(
             force=force,
             on_progress=on_progress,
             workers=effective_workers,
+            state=state,
         )
         return ConversionReport(results=results)
 
@@ -1521,6 +1530,7 @@ def convert_directory(
         vector_settings=vector_settings,
         force=force,
         on_progress=on_progress,
+        state=state,
     )
     return ConversionReport(results=results)
 
@@ -1534,6 +1544,7 @@ def _convert_files_serial(
     vector_settings: VectorSettings | None,
     force: bool,
     on_progress: Callable[[ConversionResult], None] | None,
+    state: RunState | None = None,
 ) -> list[ConversionResult]:
     """Convert files one at a time in the current process.
 
@@ -1552,11 +1563,29 @@ def _convert_files_serial(
             cog_settings=cog_settings,
             vector_settings=vector_settings,
             force=force,
+            state=state,
         )
         results.append(result)
         if on_progress is not None:
             on_progress(result)
     return results
+
+
+#: The run state of a conversion worker process. ``_init_worker_state`` sets it.
+_WORKER_STATE: RunState | None = None
+
+
+def _init_worker_state(catalog_path: Path | None) -> None:
+    """Give this worker process one run state, so it parses the config once."""
+    global _WORKER_STATE
+    from portolan_cli.run_state import RunState
+
+    _WORKER_STATE = RunState.open(catalog_path) if catalog_path is not None else None
+
+
+def _convert_in_worker(source: Path, **kwargs: Any) -> ConversionResult:
+    """Run :func:`convert_file` with the run state of this worker process."""
+    return convert_file(source, state=_WORKER_STATE, **kwargs)
 
 
 def _convert_files_parallel(
@@ -1569,6 +1598,7 @@ def _convert_files_parallel(
     force: bool,
     on_progress: Callable[[ConversionResult], None] | None,
     workers: int,
+    state: RunState | None = None,
 ) -> list[ConversionResult]:
     """Convert files concurrently with a ProcessPoolExecutor (issue #530).
 
@@ -1583,6 +1613,10 @@ def _convert_files_parallel(
     multiprocessing context such as mutmut's mutation runner), the remaining
     files are converted serially in this process instead of all being reported
     FAILED.
+
+    Each worker process opens one run state for ``catalog_path``, so it parses
+    the config once. A run state cannot cross a process boundary. The serial
+    fallback uses ``state``.
     """
     import multiprocessing
     from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -1603,10 +1637,15 @@ def _convert_files_parallel(
             on_progress(result)
 
     try:
-        with ProcessPoolExecutor(max_workers=workers, mp_context=mp_context) as executor:
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            mp_context=mp_context,
+            initializer=_init_worker_state,
+            initargs=(catalog_path,),
+        ) as executor:
             future_to_file = {
                 executor.submit(
-                    convert_file,
+                    _convert_in_worker,
                     file_path,
                     output_dir=output_dir or file_path.parent,
                     catalog_path=catalog_path,
@@ -1654,6 +1693,7 @@ def _convert_files_parallel(
             vector_settings=vector_settings,
             force=force,
             on_progress=on_progress,
+            state=state,
         )
         completed.update(dict(zip(remaining, serial_results, strict=True)))
 

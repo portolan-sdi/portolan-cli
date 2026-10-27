@@ -29,6 +29,7 @@ EXPECTED: dict[tuple[str, str], tuple[int, int]] = {
     ("add-with-companions", "versions.published"): (0, 1),  # version_ops:commit_run x1
     ("add-with-companions", "versions_json.reads"): (0, 1),  # catalog:_read_catalog_index x1
     ("add-with-companions", "versions_json.writes"): (0, 2),  # versions:write_versions x1, catalog:update_catalog_index x1
+    ("check-fix-geo-assets", "checksum.files"): (3, 0),  # sync.checksums:compute_checksum x6
     ("check-metadata", "versions_json.reads"): (0, 1),  # versions:read_versions x1
     ("re-add-unchanged", "checksum.files"): (0, 1),  # sync.checksums:compute_checksum x1
     ("re-add-unchanged", "versions_json.reads"): (0, 1),  # versions:read_versions x1

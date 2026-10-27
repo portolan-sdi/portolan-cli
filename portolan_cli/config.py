@@ -38,6 +38,7 @@ import contextlib
 import copy
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -329,8 +330,12 @@ def safe_load(text: str) -> Any:
     """Parse YAML text with the safe loader, through libyaml when PyYAML has it.
 
     ``CSafeLoader`` parses several times faster than the pure-Python
-    ``SafeLoader`` and builds the same objects. Both refuse Python tags. The
-    lookup runs on each call, so a test can remove the C loader.
+    ``SafeLoader``. Both build the same objects for valid YAML, dates, merge
+    keys, and anchors included, and both refuse Python tags. libyaml is less
+    strict on some invalid input. It accepts a tab after a value and a comment
+    directly after a block scalar indicator, which ``SafeLoader`` rejects. It
+    reads an empty ``!`` tag as an empty string, not None. The lookup runs on
+    each call, so a test can remove the C loader.
 
     Raises:
         yaml.YAMLError: If the text is not valid YAML.
@@ -412,9 +417,17 @@ def _parse_text(kind: str, text: str) -> Any:
     if kind == "list" and not text.lstrip().startswith("["):
         return [item.strip() for item in text.split(",") if item.strip()]
     try:
-        return safe_load(text)
+        parsed = safe_load(text)
     except yaml.YAMLError:
         return text
+    if kind == "number" and isinstance(parsed, str) and _FLOAT_TEXT.fullmatch(parsed):
+        # YAML 1.1 reads 1e-3 and -.5 as text. A number setting takes them.
+        return float(parsed)
+    return parsed
+
+
+#: A decimal number with an optional exponent, such as 1e-3, -.5, or 2.0.
+_FLOAT_TEXT = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
 
 
 def _coerce_value(key: str, kind: str, value: Any) -> Any:

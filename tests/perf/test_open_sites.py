@@ -7,7 +7,8 @@ source and fails on a function that opens a file more times than it counts
 one. ``READERS`` names each reader and the counter it feeds:
 
 - ``parquet.opens``: the readers of ``pyarrow.parquet``,
-  ``pyarrow.dataset.dataset``, ``read_parquet`` of geopandas and pandas, and a
+  ``pyarrow.dataset.dataset``, ``read_parquet`` of geopandas and pandas, the
+  footer reader ``get_geo_metadata`` of geoparquet-io, and a
   DuckDB SQL string that reads Parquet (``read_parquet``, ``parquet_scan``,
   ``parquet_metadata``, ``parquet_schema``) passed to ``execute``, ``sql``, or
   ``query``.
@@ -50,6 +51,8 @@ READERS: dict[tuple[str, str], str] = {
         )
     },
     ("pyarrow.dataset", "dataset"): PARQUET,
+    # geoparquet-io reads the raw footer with pyarrow.
+    ("geoparquet_io.core.duckdb_metadata", "get_geo_metadata"): PARQUET,
     ("geopandas", "read_parquet"): PARQUET,
     ("pandas", "read_parquet"): PARQUET,
     ("rasterio", "open"): RASTER,

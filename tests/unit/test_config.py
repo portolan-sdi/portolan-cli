@@ -1961,6 +1961,269 @@ class TestHandlersReadTheState:
         assert (workers_used == {"MainThread"}) is (workers == 1)
 
 
+def _geo_asset_catalog(root: Path, n: int) -> Path:
+    """A catalog with ``n`` valid COGs and ``n`` FlatGeobuf files, one per directory."""
+    import shutil
+
+    from tests.conftest import _init_catalog
+
+    fixtures = Path(__file__).parent.parent / "fixtures"
+    catalog = _init_catalog(root)
+    for i in range(n):
+        (catalog / f"r{i}").mkdir()
+        shutil.copy(fixtures / "raster" / "valid" / "rgb.tif", catalog / f"r{i}" / "rgb.tif")
+        (catalog / f"v{i}").mkdir()
+        shutil.copy(fixtures / "cloud_native" / "sample.fgb", catalog / f"v{i}" / "sample.fgb")
+    return catalog
+
+
+class _NoPushBackend:
+    """A backend that blocks push and names the remote it was given."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def supports_push(self) -> bool:
+        return False
+
+    def push_blocked_message(self, remote: str | None) -> str:
+        return f"{self.name} blocks push to {remote}"
+
+
+class TestCollectionBackendAndRemote:
+    """``backend`` and ``remote`` resolve through the collection hierarchy.
+
+    On ``main`` the push check read only the legacy ``collections:`` section.
+    A collection's own ``.portolan/config.yaml`` now applies, as for every
+    other setting.
+    """
+
+    @staticmethod
+    def _catalog(root: Path, *, own: str = "", legacy: str = "") -> Path:
+        from tests.conftest import _init_catalog
+
+        catalog = _init_catalog(root)
+        if legacy:
+            with (catalog / ".portolan" / "config.yaml").open("a", encoding="utf-8") as handle:
+                handle.write(f"collections:\n  demo:\n    {legacy}\n")
+        (catalog / "demo").mkdir()
+        if own:
+            _write_config(catalog / "demo", own)
+        return catalog
+
+    @staticmethod
+    def _no_push(monkeypatch: pytest.MonkeyPatch) -> None:
+        from portolan_cli import backends
+
+        monkeypatch.setattr(
+            backends, "get_backend", lambda name, catalog_root=None: _NoPushBackend(name)
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("own", "legacy"),
+        [("backend: lakehouse\n", ""), ("", "backend: lakehouse")],
+        ids=["collection-config", "legacy-section"],
+    )
+    def test_the_collection_backend_drives_the_push_block(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, own: str, legacy: str
+    ) -> None:
+        from portolan_cli.run_state import RunState
+        from portolan_cli.version_ops import check_backend_supports_push
+
+        self._no_push(monkeypatch)
+        catalog = self._catalog(tmp_path / "catalog", own=own, legacy=legacy)
+
+        with cleared_environ(PORTOLAN_REMOTE="s3://bucket/catalog"):
+            for state in (None, RunState.open(catalog)):
+                blocked = check_backend_supports_push(catalog, "demo", state=state)
+
+                assert blocked is not None
+                assert blocked.message == "lakehouse blocks push to s3://bucket/catalog"
+                assert check_backend_supports_push(catalog, None, state=state) is None
+
+    @pytest.mark.unit
+    def test_a_collection_config_remote_is_rejected_as_sensitive(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli.run_state import RunState
+        from portolan_cli.version_ops import check_backend_supports_push
+
+        self._no_push(monkeypatch)
+        catalog = self._catalog(
+            tmp_path / "catalog", own="backend: lakehouse\nremote: s3://bucket/demo\n"
+        )
+        state = RunState.open(catalog)
+
+        with cleared_environ():
+            # The iceberg add path reads the remote this way (finalization).
+            with pytest.raises(ValueError, match="'remote' found in config.yaml"):
+                state.setting("remote", collection_dir=catalog / "demo")
+            with pytest.raises(ValueError, match="'remote' found in config.yaml"):
+                check_backend_supports_push(catalog, "demo", state=state)
+
+    @pytest.mark.unit
+    def test_the_environment_remote_reaches_a_collection(self, tmp_path: Path) -> None:
+        from portolan_cli.run_state import RunState
+
+        catalog = self._catalog(tmp_path / "catalog", own="backend: lakehouse\n")
+        state = RunState.open(catalog)
+
+        with cleared_environ(PORTOLAN_REMOTE="s3://bucket/catalog"):
+            assert state.setting("remote", collection_dir=catalog / "demo") == (
+                "s3://bucket/catalog"
+            )
+            assert state.setting("backend", collection_dir=catalog / "demo") == "lakehouse"
+
+
+class TestCheckFixReadsTheState:
+    """The geo-asset pass of ``check --fix`` reads config.yaml once per run (#994)."""
+
+    @staticmethod
+    def _parses_at(root: Path, n: int, *, dry_run: bool) -> int:
+        from portolan_cli.run_state import RunState
+        from portolan_cli.scan.check import check_directory
+
+        catalog = _geo_asset_catalog(root, n)
+        with trace.tracing():
+            check_directory(
+                catalog,
+                fix=True,
+                dry_run=dry_run,
+                force=True,
+                catalog_path=catalog,
+                workers=1,
+                state=RunState.open(catalog),
+            )
+            return _parses()
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "fix"])
+    def test_force_parses_the_config_once(self, tmp_path: Path, dry_run: bool) -> None:
+        one = self._parses_at(tmp_path / "one", 1, dry_run=dry_run)
+        two = self._parses_at(tmp_path / "two", 2, dry_run=dry_run)
+
+        assert (one, two) == (1, 1)
+
+    @pytest.mark.integration
+    def test_fix_on_a_subdirectory_converts_what_check_reports(self, tmp_path: Path) -> None:
+        """The status and the conversion read the same catalog overrides."""
+        from portolan_cli.convert import ConversionStatus
+        from portolan_cli.run_state import RunState
+        from portolan_cli.scan.check import check_directory
+
+        catalog = _geo_asset_catalog(tmp_path / "catalog", 1)
+        with (catalog / ".portolan" / "config.yaml").open("a", encoding="utf-8") as handle:
+            handle.write('conversion:\n  extensions:\n    convert: [".fgb"]\n')
+        sub = catalog / "v0"
+
+        report = check_directory(
+            sub, fix=True, catalog_path=sub, workers=1, state=RunState.open(catalog)
+        )
+
+        assert [f.status.value for f in report.files] == ["convertible"]
+        assert report.conversion_report is not None
+        assert [r.status for r in report.conversion_report.results] == [ConversionStatus.SUCCESS]
+
+    @staticmethod
+    def _preserved_catalog(root: Path) -> Path:
+        """A catalog whose config preserves ``sub/a.tif``, a GeoTIFF that is not a COG."""
+        import shutil
+
+        from tests.conftest import _init_catalog
+
+        catalog = _init_catalog(root)
+        with (catalog / ".portolan" / "config.yaml").open("a", encoding="utf-8") as handle:
+            handle.write('conversion:\n  paths:\n    preserve: ["sub/a.tif"]\n')
+        (catalog / "sub").mkdir()
+        source = Path(__file__).parent.parent / "fixtures" / "raster" / "natural-earth-non-cog.tif"
+        shutil.copy(source, catalog / "sub" / "a.tif")
+        return catalog
+
+    @pytest.mark.integration
+    def test_a_path_glob_matches_from_the_catalog_root_in_a_subdirectory_check(
+        self, tmp_path: Path
+    ) -> None:
+        from portolan_cli.validation import run_check
+
+        catalog = self._preserved_catalog(tmp_path / "catalog")
+
+        statuses = []
+        for target in (catalog, catalog / "sub"):
+            report = run_check(target, metadata=False, geo_assets=True).format_report
+            assert report is not None
+            statuses.append({f.path.name: f.status.value for f in report.files})
+
+        assert statuses == [{"a.tif": "cloud_native"}, {"a.tif": "cloud_native"}]
+
+    @pytest.mark.integration
+    def test_a_path_glob_matches_from_the_catalog_root_in_a_subdirectory_fix(
+        self, tmp_path: Path
+    ) -> None:
+        from portolan_cli.run_state import RunState
+        from portolan_cli.scan.check import run_fix_workflow
+
+        catalog = self._preserved_catalog(tmp_path / "catalog")
+
+        outcome = run_fix_workflow(
+            path=catalog / "sub",
+            run_metadata=False,
+            run_geo_assets=True,
+            dry_run=True,
+            remove_legacy=False,
+            workers=1,
+            state=RunState.open(catalog),
+        )
+
+        report = outcome.format_fix_report
+        assert report is not None
+        assert [f.status.value for f in report.files] == ["cloud_native"]
+        assert report.conversion_report is not None
+        assert report.conversion_report.results == []
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("target", [".", "sub"])
+    def test_check_fix_preserves_a_path_glob_from_any_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
+    ) -> None:
+        """``portolan check <target> --fix`` with a relative path keeps the preserved file."""
+        import json
+
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+
+        catalog = self._preserved_catalog(tmp_path / "catalog")
+        before = (catalog / "sub" / "a.tif").read_bytes()
+        monkeypatch.chdir(catalog)
+
+        result = CliRunner().invoke(
+            cli, ["check", target, "--geo-assets", "--fix", "--workers", "1", "--json"]
+        )
+
+        assert result.exit_code == 0, result.output
+        conversion = json.loads(result.stdout)["data"]["fix"]["conversion"]
+        assert [f["status"] for f in conversion["files"]] == ["cloud_native"]
+        assert (catalog / "sub" / "a.tif").read_bytes() == before
+
+    @pytest.mark.unit
+    def test_a_pool_worker_parses_the_config_once(self, tmp_path: Path) -> None:
+        from portolan_cli import convert
+
+        catalog = _geo_asset_catalog(tmp_path / "catalog", 2)
+        convert._init_worker_state(catalog)
+        try:
+            with trace.tracing():
+                for i in range(2):
+                    convert._convert_in_worker(
+                        catalog / f"v{i}" / "sample.fgb", catalog_path=catalog
+                    )
+
+                assert _parses() == 1
+        finally:
+            convert._init_worker_state(None)
+
+
 class TestYamlLoader:
     """Every YAML load uses libyaml when PyYAML has it (issue #994)."""
 
@@ -1994,6 +2257,30 @@ class TestYamlLoader:
         assert config.safe_load("[1, 2]") == [1, 2]
         expected = yaml.CSafeLoader if with_libyaml else yaml.SafeLoader
         assert loaders == [expected, expected]
+
+    @pytest.mark.unit
+    def test_both_loaders_build_the_same_dates_merges_and_anchors(self) -> None:
+        import datetime
+
+        import yaml
+
+        text = (
+            "day: 2024-01-02\n"
+            "stamp: 2024-01-02 03:04:05.5+02:00\n"
+            "base: &base {a: 1, b: [x, y]}\n"
+            "child:\n  <<: *base\n  b: [z]\n"
+            "multi:\n  <<: [*base, {c: 3}]\n"
+            "alias: *base\n"
+        )
+        python = yaml.load(text, Loader=yaml.SafeLoader)  # noqa: S506 (a safe loader)
+        libyaml = yaml.load(text, Loader=yaml.CSafeLoader)  # noqa: S506 (a safe loader)
+
+        assert python == libyaml
+        assert libyaml["day"] == datetime.date(2024, 1, 2)
+        assert libyaml["stamp"].utcoffset() == datetime.timedelta(hours=2)
+        assert libyaml["child"] == {"a": 1, "b": ["z"]}
+        assert libyaml["multi"] == {"a": 1, "b": ["x", "y"], "c": 3}
+        assert libyaml["alias"] == {"a": 1, "b": ["x", "y"]}
 
     @pytest.mark.unit
     def test_the_loader_refuses_python_tags(self) -> None:
@@ -2031,6 +2318,37 @@ class TestTypedValues:
 
         with pytest.raises(ConfigError, match="takes an integer or 'auto'"):
             set_setting(tmp_path, "conversion.vector.resolution", value)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("text", "stored"),
+        [("1e-3", 0.001), ("-1e-3", -0.001), ("2E3", 2000.0), ("-.5", -0.5), ("+.25", 0.25)],
+    )
+    def test_a_number_takes_the_float_spellings_that_yaml_reads_as_text(
+        self, tmp_path: Path, text: str, stored: float
+    ) -> None:
+        from portolan_cli.config import set_setting
+
+        set_setting(tmp_path, "partitioning.threshold_gb", text)
+
+        assert _read_yaml(tmp_path) == {"partitioning": {"threshold_gb": stored}}
+
+    @pytest.mark.unit
+    def test_an_environment_number_takes_an_exponent(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting
+
+        with cleared_environ(PORTOLAN_PARTITIONING_THRESHOLD_GB="5e-1"):
+            assert get_setting("partitioning.threshold_gb", catalog_path=tmp_path) == 0.5
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("text", ["1e3", "-x", "e5", "1e", "nan"])
+    def test_an_int_still_rejects_text_that_is_not_an_integer(
+        self, tmp_path: Path, text: str
+    ) -> None:
+        from portolan_cli.config import set_setting
+
+        with pytest.raises(ConfigError, match="takes an integer"):
+            set_setting(tmp_path, "thumbnails.basemap.zoom_adjust", text)
 
     @pytest.mark.unit
     def test_a_string_setting_keeps_yaml_like_text_as_text(self, tmp_path: Path) -> None:
