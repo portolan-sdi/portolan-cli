@@ -949,3 +949,107 @@ class TestRewriteOrKeep:
 
         captured = capsys.readouterr()
         assert "Kept roads.parquet as it is" in captured.out + captured.err
+
+
+class TestAnAddedCogCarriesItsStatistics:
+    """``convert_raster`` embeds band statistics in a COG that has none (issue #748).
+
+    rashid reads with GDAL_PAM_ENABLED=NO, so a ``.aux.xml`` does not count.
+    A lossless COG gets one rewrite. A lossy COG stays, with a warning.
+    """
+
+    @staticmethod
+    def _tags(path: Path) -> dict[str, str]:
+        import rasterio
+
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(path) as src:
+            tags: dict[str, str] = src.tags(1)
+        return tags
+
+    @staticmethod
+    def _spy_write_cog(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+        from portolan_cli import convert
+
+        calls: list[Path] = []
+        real = convert.write_cog
+
+        def spy(source: Path, *args: Any, **kwargs: Any) -> Path:
+            calls.append(source)
+            return real(source, *args, **kwargs)
+
+        monkeypatch.setattr(convert, "write_cog", spy)
+        return calls
+
+    @pytest.mark.unit
+    def test_a_lossless_cog_gets_its_statistics_once(
+        self, tmp_path: Path, fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import shutil
+
+        from portolan_cli.preparation import convert_raster
+
+        cog = tmp_path / "rgb.tif"
+        shutil.copy(fixtures_dir / "raster" / "valid" / "rgb.tif", cog)
+        assert "STATISTICS_MEAN" not in self._tags(cog)
+        calls = self._spy_write_cog(monkeypatch)
+
+        convert_raster(cog, tmp_path)
+        first = cog.read_bytes()
+        convert_raster(cog, tmp_path)
+
+        assert calls == [cog]
+        assert cog.read_bytes() == first
+        tags = self._tags(cog)
+        assert {"STATISTICS_MINIMUM", "STATISTICS_MAXIMUM", "STATISTICS_MEAN"} <= set(tags)
+        assert {"STATISTICS_STDDEV", "STATISTICS_VALID_PERCENT"} <= set(tags)
+        assert sorted(p.name for p in tmp_path.rglob("*.aux.xml")) == []
+
+    @pytest.mark.unit
+    def test_a_lossy_cog_stays_and_the_add_says_why(
+        self,
+        tmp_path: Path,
+        fixtures_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """GDAL re-encodes JPEG and WEBP tiles on every copy, so a rewrite loses quality."""
+        from rio_cogeo.cogeo import cog_translate
+        from rio_cogeo.profiles import cog_profiles
+
+        from portolan_cli.preparation import convert_raster
+
+        cog = tmp_path / "photo.tif"
+        cog_translate(
+            str(fixtures_dir / "raster" / "valid" / "rgb.tif"),
+            str(cog),
+            cog_profiles.get("jpeg"),
+            quiet=True,
+        )
+        before = cog.read_bytes()
+        calls = self._spy_write_cog(monkeypatch)
+
+        convert_raster(cog, tmp_path)
+
+        assert calls == []
+        assert cog.read_bytes() == before
+        out = capsys.readouterr()
+        assert "PTL-DAT-009" in out.out + out.err
+        assert "photo.tif" in out.out + out.err
+
+
+class TestBandStatisticsWriteNoSidecar:
+    """Reading band statistics leaves no ``.aux.xml`` beside the COG (issue #748)."""
+
+    @pytest.mark.unit
+    def test_computed_statistics_leave_no_sidecar(self, tmp_path: Path, fixtures_dir: Path) -> None:
+        import shutil
+
+        from portolan_cli.metadata.statistics import extract_band_statistics
+
+        cog = tmp_path / "rgb.tif"
+        shutil.copy(fixtures_dir / "raster" / "valid" / "rgb.tif", cog)
+
+        stats = extract_band_statistics(cog, mode="approx")
+
+        assert len(stats) == 3
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["rgb.tif"]

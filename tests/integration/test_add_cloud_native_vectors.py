@@ -1309,3 +1309,48 @@ class TestALegacyOutputIsItsSourceOwn:
 
         assert _sha(geoparquet) == before
         assert self._parquets(collection_dir) == ["points-geojson.parquet", "points.parquet"]
+
+
+class TestAConvertedCogPassesItsOwnCheck:
+    """A COG that add converts from a GTiff embeds its statistics (issue #748).
+
+    A striped 600 x 600 GTiff is no COG, so add converts it. A GTiff under
+    512 pixels already validates as a COG, and add keeps it as it is.
+    """
+
+    @pytest.mark.integration
+    def test_check_metadata_reports_no_missing_statistics(
+        self, runner: CliRunner, initialized_catalog: Path
+    ) -> None:
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+
+        rng = np.random.default_rng(7)
+        for i in range(3):
+            path = initialized_catalog / "scenes" / f"s{i}" / f"s{i}.tif"
+            path.parent.mkdir(parents=True)
+            with rasterio.open(
+                path,
+                "w",
+                driver="GTiff",
+                width=600,
+                height=600,
+                count=1,
+                dtype="uint8",
+                crs="EPSG:4326",
+                transform=from_origin(10.0 + i, 50.0, 0.001, 0.001),
+            ) as dst:
+                dst.write(rng.integers(0, 255, size=(1, 600, 600), dtype="uint8"))
+        added = runner.invoke(
+            cli, ["add", "--portolan-dir", str(initialized_catalog), str(initialized_catalog)]
+        )
+        assert added.exit_code == 0, added.output
+
+        result = runner.invoke(
+            cli, ["--format", "json", "check", "--metadata", str(initialized_catalog)]
+        )
+
+        assert "PTL-DAT-009" not in result.output
+        assert "PTL-DAT-010" not in result.output
+        assert sorted(p.name for p in initialized_catalog.rglob("*.aux.xml")) == []

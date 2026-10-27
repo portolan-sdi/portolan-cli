@@ -59,6 +59,7 @@ from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.flatgeobuf import FlatGeobufMetadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata, RewriteFidelity
 from portolan_cli.metadata.pmtiles import PMTilesMetadata
+from portolan_cli.metadata.statistics import embedded_statistics
 from portolan_cli.metadata_yaml import (
     NodataMismatchError,
     apply_raster_nodata_defaults,
@@ -87,6 +88,7 @@ from portolan_cli.sync.checksums import (
     compute_dir_size,
     file_fields_from,
 )
+from portolan_cli.trace import span
 from portolan_cli.versions import versions_asset_key
 from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
 from portolan_cli.viz.style import enrich_cog_assets
@@ -1782,11 +1784,50 @@ def convert_raster(
     """
     from portolan_cli.conversion_config import get_cog_settings
     from portolan_cli.convert import write_cog
+    from portolan_cli.output import warn as warn_output
 
     output_path = dest_dir / f"{source.stem}.tif"
     is_cog = source.suffix.lower() in (".tif", ".tiff") and is_cloud_optimized_geotiff(source)
     if is_cog and not reoptimize:
+        embedded = embedded_statistics(source)
+        if embedded == "missing":
+            embedded_now = _embed_statistics(source, dest_dir, catalog_root)
+            if embedded_now is not None:
+                return embedded_now
+        elif embedded == "lossy":
+            warn_output(
+                f"{source.name} has no band statistics in the file (PTL-DAT-009). "
+                "Portolan keeps it as it is, because its tiles use lossy compression "
+                "and a rewrite would re-encode them."
+            )
         if source.resolve() != output_path.resolve():
             shutil.copy2(source, output_path)
         return output_path
     return write_cog(source, dest_dir, get_cog_settings(catalog_root))
+
+
+def _embed_statistics(source: Path, dest_dir: Path, catalog_root: Path | None) -> Path | None:
+    """Rewrite a lossless COG through ``write_cog`` so that it carries its statistics.
+
+    PTL-DAT-009 and PTL-DAT-010 read the statistics from the COG itself with
+    PAM off (issue #748). A tag update in place breaks the COG layout, so the
+    COG is written again, once. The next add finds the statistics and keeps the
+    file. ``write_cog`` writes a scratch file and swaps it in, so a failure
+    keeps the operator's file.
+
+    Returns:
+        The COG with its statistics, or None when the rewrite failed.
+    """
+    from portolan_cli.conversion_config import get_cog_settings
+    from portolan_cli.convert import write_cog
+    from portolan_cli.output import warn as warn_output
+
+    try:
+        with span("convert.embed_statistics", file=source.name):
+            return write_cog(source, dest_dir, get_cog_settings(catalog_root))
+    except Exception as err:  # noqa: BLE001 - the original file stays usable
+        warn_output(
+            f"{source.name} has no band statistics in the file (PTL-DAT-009), "
+            f"and the rewrite that adds them failed: {err}"
+        )
+        return None

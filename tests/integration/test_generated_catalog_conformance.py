@@ -490,11 +490,6 @@ def build_clone(root: Path, run: RunCli) -> None:
 # The scenario table
 # ---------------------------------------------------------------------------
 
-# PTL-DAT-009 (issue #748): COGs ship without embedded band statistics.
-# Portolan does compute them and does write them into the item, but GDAL puts
-# them in a `.aux.xml` PAM sidecar. rashid reads with GDAL_PAM_ENABLED=NO, as
-# PORTO-FMT-026..030 require, and sees none.
-COG_STATS = {"PTL-DAT-009": "#748"}
 # A design reason, not an issue: tests/docs/test_guardrail_exemptions.py
 # lists it in DESIGN_REASONS.
 SINGLE_COG_LAYOUT = "single COG layout: spec and CLI disagree (PTL-COL-001), maintainer decision"
@@ -523,21 +518,8 @@ def _realdata_row(source: Path) -> Scenario:
 
 
 SCENARIOS: dict[str, Scenario] = {
-    "fresh": Scenario(
-        build_fresh,
-        known_errors=COG_STATS,
-        expected_advisories={
-            # One per raster item: the valid-percent half of the PTL-DAT-009
-            # sidecar problem above. Same root cause, same issue #748.
-            "PTL-DAT-010": 2,
-            "PTL-PRO-002": 4,
-        },
-    ),
-    "re-add": Scenario(
-        build_re_add,
-        known_errors=COG_STATS,
-        expected_advisories={"PTL-DAT-010": 2, "PTL-PRO-002": 4},
-    ),
+    "fresh": Scenario(build_fresh, expected_advisories={"PTL-PRO-002": 4}),
+    "re-add": Scenario(build_re_add, expected_advisories={"PTL-PRO-002": 4}),
     "force-after-mutation": Scenario(
         build_force_after_mutation,
         # metadata.yaml now reaches both collections (#813), and it names a
@@ -545,11 +527,7 @@ SCENARIOS: dict[str, Scenario] = {
         expected_advisories={"PTL-PRO-002": 2},
     ),
     "readme": Scenario(build_readme, expected_advisories=ONE_MIRROR),
-    "item-id": Scenario(
-        build_item_id,
-        known_errors=COG_STATS,
-        expected_advisories={"PTL-DAT-010": 2, "PTL-PRO-002": 1},
-    ),
+    "item-id": Scenario(build_item_id, expected_advisories={"PTL-PRO-002": 1}),
     "multi-file": Scenario(
         build_multi_file,
         # rashid compares each collection-level asset with extent.spatial.bbox[0]
@@ -607,13 +585,12 @@ SCENARIOS: dict[str, Scenario] = {
     "realdata-rapidai4eo-sample": Scenario(
         _realdata(REALDATA / "rapidai4eo-sample.tif"),
         known_errors={
-            **COG_STATS,
             # `add` refuses a raster outside an item directory, and PTL-COL-001
             # asks a single-file collection to carry its data at collection
             # level. No layout of one COG passes both. The maintainer decides.
             "PTL-COL-001": SINGLE_COG_LAYOUT,
         },
-        expected_advisories={"PTL-DAT-010": 1, "PTL-PRO-002": 1},
+        expected_advisories={"PTL-PRO-002": 1},
         marks=(pytest.mark.realdata,),
     ),
     "realdata-affordable-housing": _realdata_row(PHILADELPHIA / "affordable_housing.parquet"),
@@ -710,20 +687,20 @@ def _validate(root: Path, **kwargs: Any) -> Any:
     )
 
 
-def _findings(root: Path, known: Mapping[str, str] = COG_STATS) -> list[Any]:
+def _findings(root: Path, known: Mapping[str, str] | None = None) -> list[Any]:
     """Return rashid findings with the known rules disabled."""
-    report = _validate(root, config=RulesConfig(disabled=frozenset(known)))
+    report = _validate(root, config=RulesConfig(disabled=frozenset(known or {})))
     return list(report.findings)
 
 
 def _rule_counts(
-    root: Path, severity: Severity, known: Mapping[str, str] = COG_STATS
+    root: Path, severity: Severity, known: Mapping[str, str] | None = None
 ) -> Counter[str]:
     """Count findings by rule id at one severity, with the known rules disabled."""
     return Counter(f.rule_id for f in _findings(root, known) if f.severity is severity)
 
 
-def _errors(root: Path, known: Mapping[str, str] = COG_STATS) -> list[dict[str, Any]]:
+def _errors(root: Path, known: Mapping[str, str] | None = None) -> list[dict[str, Any]]:
     return [f.to_dict() for f in _findings(root, known) if f.severity is Severity.ERROR]
 
 

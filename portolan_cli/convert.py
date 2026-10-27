@@ -1196,6 +1196,11 @@ def _write_partitioned(table: Any, output_dir: Path, settings: VectorSettings) -
 #: codec in ``QUALITY_COMPRESSIONS``.
 _GTIFF_QUALITY_OPTION = {"JPEG": "jpeg_quality", "WEBP": "webp_level"}
 
+#: Up to this many pixels (4096 x 4096), write_cog embeds exact band statistics.
+#: Above it, GDAL computes them from a sample of the blocks, so a large source
+#: costs no second full read. The band then carries STATISTICS_APPROXIMATE=YES.
+EXACT_STATISTICS_PIXELS = 4096 * 4096
+
 
 def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = None) -> Path:
     """Write a raster file as a COG with the given settings.
@@ -1223,6 +1228,7 @@ def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = Non
     """
     import tempfile
 
+    import rasterio
     from rio_cogeo.cogeo import cog_translate
     from rio_cogeo.profiles import cog_profiles
 
@@ -1277,14 +1283,23 @@ def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = Non
 
         os.close(temp_fd)
 
-        cog_translate(
-            str(source),
-            str(temp_path),
-            profile,
-            quiet=True,
-            overview_resampling=cast("ResamplingMethod", settings.resampling),
-            additional_cog_metadata={COG_PROVENANCE_TAG: provenance_record(source)},
-        )
+        # The COG carries its band statistics, so a reader with PAM off sees
+        # them (issue #748, PTL-DAT-009 and PTL-DAT-010). GDAL computes them on
+        # the open source and keeps them as band tags, and rio-cogeo forwards
+        # the band tags into the one write. PAM is off, so no .aux.xml appears.
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:
+            # Exact up to EXACT_STATISTICS_PIXELS. Above it, GDAL samples a
+            # subset of the blocks and tags the result STATISTICS_APPROXIMATE.
+            src.stats(approx=src.width * src.height > EXACT_STATISTICS_PIXELS)
+            cog_translate(
+                src,
+                str(temp_path),
+                profile,
+                quiet=True,
+                overview_resampling=cast("ResamplingMethod", settings.resampling),
+                forward_band_tags=True,
+                additional_cog_metadata={COG_PROVENANCE_TAG: provenance_record(source)},
+            )
 
         # Atomic replace
         temp_path.replace(output_path)

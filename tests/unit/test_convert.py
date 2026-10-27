@@ -528,6 +528,68 @@ class TestConvertFileRaster:
         assert result.error is None
 
 
+class TestTheCogCarriesItsStatistics:
+    """A converted COG embeds its band statistics (issue #748, PTL-DAT-009/010).
+
+    rashid reads with GDAL_PAM_ENABLED=NO, so statistics in a ``.aux.xml``
+    sidecar do not count. The conversion writes them into the COG itself.
+    """
+
+    @staticmethod
+    def _gtiff(path: Path) -> Path:
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+
+        data = np.arange(64 * 64, dtype="uint16").reshape(1, 64, 64) % 251
+        with rasterio.open(
+            path,
+            "w",
+            driver="GTiff",
+            width=64,
+            height=64,
+            count=1,
+            dtype="uint16",
+            crs="EPSG:4326",
+            transform=from_origin(0, 1, 0.01, 0.01),
+            nodata=0,
+        ) as dst:
+            dst.write(data)
+        return path
+
+    @pytest.mark.unit
+    def test_the_statistics_are_in_the_file(self, tmp_path: Path) -> None:
+        import numpy as np
+        import rasterio
+
+        from portolan_cli.convert import write_cog
+
+        (tmp_path / "src").mkdir()
+        source = self._gtiff(tmp_path / "src" / "scene.tiff")
+        output = write_cog(source, tmp_path)
+
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(output) as cog:
+            tags = cog.tags(1)
+        with rasterio.open(source) as src:
+            pixels = src.read(1, masked=True).compressed().astype("float64")
+        assert float(tags["STATISTICS_MINIMUM"]) == pixels.min()
+        assert float(tags["STATISTICS_MAXIMUM"]) == pixels.max()
+        assert float(tags["STATISTICS_MEAN"]) == pytest.approx(pixels.mean())
+        assert float(tags["STATISTICS_STDDEV"]) == pytest.approx(np.std(pixels))
+        # 17 of the 4096 pixels hold the nodata value 0.
+        assert float(tags["STATISTICS_VALID_PERCENT"]) == pytest.approx(100 * 4079 / 4096, abs=0.01)
+
+    @pytest.mark.unit
+    def test_no_sidecar_is_written(self, tmp_path: Path) -> None:
+        from portolan_cli.convert import write_cog
+
+        (tmp_path / "src").mkdir()
+        source = self._gtiff(tmp_path / "src" / "scene.tiff")
+        write_cog(source, tmp_path)
+
+        assert sorted(p.name for p in tmp_path.rglob("*.aux.xml")) == []
+
+
 class TestConvertFileException:
     """Tests for convert_file() exception handling."""
 
