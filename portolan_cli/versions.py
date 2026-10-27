@@ -487,6 +487,17 @@ def _increment_version(version: str) -> str:
     return f"{major}.{minor}.{patch + 1}"
 
 
+def next_version(versions_file: VersionsFile) -> str:
+    """The version string that the next snapshot of ``versions_file`` takes.
+
+    The first version is ``1.0.0``. Each later one bumps the patch through
+    :func:`_increment_version`, which keeps a pre-release tag.
+    """
+    if versions_file.current_version is None:
+        return "1.0.0"
+    return _increment_version(versions_file.current_version)
+
+
 def _compute_changes(versions_file: VersionsFile, new_assets: dict[str, Asset]) -> list[str]:
     """Compute which files changed compared to the previous version.
 

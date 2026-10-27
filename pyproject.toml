@@ -623,6 +623,8 @@ source_modules = [
     "portolan_cli.status",
     "portolan_cli.catalog_list",
     "portolan_cli.agents_md",
+    # The run state of one command (issue #995). Every read module may take it.
+    "portolan_cli.run_state",
 ]
 forbidden_modules = [
     "click",
