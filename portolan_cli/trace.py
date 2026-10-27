@@ -58,10 +58,10 @@ TRACE_FILE_ENV = "PORTOLAN_TRACE_FILE"
 
 # Counter names that ``meta.counters`` always holds, at 0 when nothing counted.
 # Each one counts at the single choke point of its work, so the scale gates in
-# tests/perf see every call site. Two have no product choke point.
+# tests/perf see every call site. One has no product choke point.
 # ``duckdb.connects`` counts through a patch of ``duckdb.connect`` that
 # tests/perf/runner.py installs, because geoparquet-io calls it by attribute
-# lookup. ``tiles.fetched`` counts in the stub tile source of the same runner.
+# lookup.
 KNOWN_COUNTERS: tuple[str, ...] = (
     "checksum.files",
     "checksum.bytes",

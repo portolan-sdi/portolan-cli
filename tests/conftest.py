@@ -977,6 +977,28 @@ def no_basemap_tiles(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyP
 
 
 @pytest.fixture
+def stub_basemap_tiles(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Serve every basemap tile from the perf runner's stub and return the tile URLs.
+
+    The stub replaces only the HTTP request (``tests/perf/runner.py``). This
+    fixture turns the basemap on again after ``no_basemap_tiles``, and it
+    empties the run memos.
+    """
+    from collections import OrderedDict
+
+    from tests.perf.runner import install_stub_tiles
+
+    ctx = pytest.importorskip("contextily")
+    from portolan_cli.viz import thumbnail
+
+    urls = install_stub_tiles(monkeypatch)
+    monkeypatch.setattr(thumbnail, "_ensure_contextily", lambda: ctx)
+    monkeypatch.setattr(thumbnail, "_tile_memo", OrderedDict())
+    monkeypatch.setattr(thumbnail, "_warned_keyless", set())
+    return urls
+
+
+@pytest.fixture
 def no_extract_side_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub the requests the extract orchestrators make next to the feature requests.
 

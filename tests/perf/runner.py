@@ -13,9 +13,9 @@ Before the command runs, the module installs three things:
   function by attribute lookup, so the wrapper sees each connection. The
   counter is ``duckdb.connects``. A query on DuckDB's module-level default
   connection opens no connection and does not count.
-- A stub tile source for contextily. It returns one fixed 256 px tile and
-  counts ``tiles.fetched``. contextily caches tiles per process, so the count
-  is the number of distinct tiles that the run asks for.
+- A stub tile source for contextily, ``install_stub_tiles``. It returns one
+  fixed 256 px tile. The unit tests use the same stub. The thumbnail code
+  counts ``tiles.fetched`` for each tile that it asks contextily for.
 
 The command runs in this process with tracing on. The result file holds the
 exit code, the counters, the span tree, the wall time, and the peak RSS. It
@@ -94,24 +94,35 @@ def _install_duckdb_counter() -> None:
     duckdb.connect = counted_connect
 
 
-def _install_stub_tiles(patch: pytest.MonkeyPatch) -> None:
-    try:
-        import contextily.tile
-        import numpy as np
-    except ImportError:
-        return  # no thumbnail extra, so no basemap is drawn
+#: The colour of every stub basemap tile. No thumbnail preset uses it, so a
+#: pixel of this colour in a thumbnail came from the basemap.
+STUB_TILE_RGBA = (201, 74, 203, 255)
 
-    from portolan_cli import trace
 
-    # A fixed light grey RGBA tile, the shape contextily's own fetch returns.
-    tile = np.full((TILE_SIZE, TILE_SIZE, 4), 235, dtype=np.uint8)
-    tile[..., 3] = 255
+def install_stub_tiles(patch: pytest.MonkeyPatch) -> list[str]:
+    """Serve every basemap tile as one fixed tile and record each tile URL.
 
-    def stub_fetch_tile(*_args: Any, **_kwargs: Any) -> Any:
-        trace.count("tiles.fetched")
+    The real contextily runs: it picks the tiles, fetches them through its
+    ``_fetch_tile``, and merges them. Only the HTTP request is replaced, so
+    the basemap code runs with no network. Without the thumbnail extra the
+    import of contextily raises ``ImportError``.
+    """
+    import contextily.tile
+    import numpy as np
+
+    # The shape and dtype that contextily's own fetch returns.
+    tile = np.empty((TILE_SIZE, TILE_SIZE, 4), dtype=np.uint8)
+    tile[...] = STUB_TILE_RGBA
+    urls: list[str] = []
+    lock = threading.Lock()
+
+    def stub_fetch_tile(tile_url: str, *_args: Any, **_kwargs: Any) -> Any:
+        with lock:
+            urls.append(tile_url)
         return tile.copy()
 
     patch.setattr(contextily.tile, "_fetch_tile", stub_fetch_tile)
+    return urls
 
 
 def _peak_rss_mb() -> float | None:
@@ -142,7 +153,8 @@ def run(argv: list[str], *, mem: bool) -> dict[str, Any]:
         sentinel = stack.enter_context(contextlib.contextmanager(SentinelProxy().run)())
         guard = NetworkGuard(test=" ".join(argv), sentinel=sentinel)
         patch = stack.enter_context(pytest.MonkeyPatch.context())
-        _install_stub_tiles(patch)
+        with contextlib.suppress(ImportError):  # no thumbnail extra, so no basemap
+            install_stub_tiles(patch)
         guard.install(patch)
         start = time.perf_counter()
         try:

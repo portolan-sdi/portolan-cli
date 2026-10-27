@@ -22,6 +22,3 @@ config-key	pmtiles.include_cols: shows only in decoded tile contents
 config-key	pmtiles.precision: shows only in decoded tile coordinates
 config-key	pmtiles.src_crs: shows only when the file CRS metadata is wrong
 config-key	thumbnails.max_features: changes only which features the drawing samples
-config-key	thumbnails.basemap.provider: draws only with basemap tiles from the network, which tests block
-config-key	thumbnails.basemap.opacity: draws only with basemap tiles from the network, which tests block
-config-key	thumbnails.basemap.zoom_adjust: draws only with basemap tiles from the network, which tests block
