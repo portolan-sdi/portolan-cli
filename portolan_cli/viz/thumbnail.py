@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from portolan_cli.config import load_catalog_config
 from portolan_cli.trace import count
-from portolan_cli.utils import get_dict
+from portolan_cli.utils import get_dict, redact_credentials
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -299,9 +299,16 @@ def _transform_coord(
     """
     lon_min, lat_min, lon_max, lat_max = tile_bounds
     lon = lon_min + (mvt_x / extent) * (lon_max - lon_min)
-    # Y is inverted in MVT (0 at top)
-    lat = lat_max - (mvt_y / extent) * (lat_max - lat_min)
+    # Y is inverted in MVT (0 at top). A tile is linear in Web Mercator y,
+    # not in latitude, so the interpolation runs in Mercator y.
+    top, bottom = _mercator_y(lat_max), _mercator_y(lat_min)
+    lat = math.degrees(math.atan(math.sinh(top - (mvt_y / extent) * (top - bottom))))
     return (lon, lat)
+
+
+def _mercator_y(lat: float) -> float:
+    """Web Mercator y of ``lat`` on the unit sphere."""
+    return math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
 
 
 def _transform_coords(
@@ -408,7 +415,9 @@ def _process_tile_data(
     if tile_data[:2] == b"\x1f\x8b":
         tile_data = gzip.decompress(tile_data)
 
-    decoded = mvt_decoder.decode(tile_data)
+    # MVT y grows down. The decoder flips it up by default, and
+    # _transform_coord expects the MVT convention.
+    decoded = mvt_decoder.decode(tile_data, default_options={"y_coord_down": True})
     tile_bounds = _tile_bounds(z, x, y)
 
     for layer in decoded.values():
@@ -858,11 +867,17 @@ def _to_web_mercator(
     which took 17 s of a 36 s 100-collection add (#993). The geometries are a
     sample of at most ``max_features``, so this is cheap.
 
+    A geographic source keeps its longitudes in one piece. EPSG:3857 wraps
+    longitude 190 to -170, so the projection adds the whole turns of the
+    world back. A GeoParquet bbox with minx > maxx crosses the antimeridian,
+    and the longitudes west of the crossing move east by 360.
+
     Returns:
-        The projected geometries and bounds, or None when the CRS is unknown
-        or the coordinates do not fit it (for example projected values under a
-        geographic CRS, #516). The caller then draws in the source CRS with no
-        basemap.
+        The projected geometries and bounds, or None when the CRS is unknown,
+        when the coordinates do not fit it (for example projected values under
+        a geographic CRS, #516), or when the data lies wholly past the
+        EPSG:3857 latitude limit, where it would collapse to a line. The caller
+        then draws in the source CRS with no basemap.
     """
     import numpy as np
     import shapely
@@ -878,6 +893,13 @@ def _to_web_mercator(
         return None
 
     geographic = source.is_geographic
+    world = 2 * _MERCATOR_LIMIT
+    minx, miny, maxx, maxy = bounds
+    crossing = geographic and minx > maxx
+    # The middle of the gap between the two halves of a crossing extent.
+    unwrap_below = (minx + maxx) / 2
+    if crossing:
+        maxx += 360
 
     def clip_lat(lat: Any) -> Any:
         # Clip a valid latitude to the EPSG:3857 limit. A value beyond +-90 is
@@ -887,22 +909,43 @@ def _to_web_mercator(
         return np.where(np.abs(lat) <= 90, np.clip(lat, -_MERCATOR_MAX_LAT, _MERCATOR_MAX_LAT), lat)
 
     def project(xy: Any) -> Any:
-        x, y = transformer.transform(xy[:, 0], clip_lat(xy[:, 1]))
-        return np.column_stack((x, y))
+        if not geographic:
+            x, y = transformer.transform(xy[:, 0], xy[:, 1])
+            return np.column_stack((x, y))
+        lon = xy[:, 0]
+        if crossing:
+            lon = np.where(lon < unwrap_below, lon + 360, lon)
+        turns = np.floor((lon + 180) / 360)
+        x, y = transformer.transform(lon - 360 * turns, clip_lat(xy[:, 1]))
+        return np.column_stack((x + turns * world, y))
 
-    minx, miny, maxx, maxy = bounds
     with np.errstate(invalid="ignore", over="ignore"):
         projected = shapely.transform(geoms, project)
-        box = transformer.transform_bounds(
-            minx,
-            float(clip_lat(np.array(miny))),
-            maxx,
-            float(clip_lat(np.array(maxy))),
-            densify_pts=21,
-        )
+        if geographic:
+            # EPSG:3857 maps longitude and latitude apart, so the corners
+            # give the box.
+            corners = project(np.array([[minx, miny], [maxx, maxy]], dtype=float))
+            box = (corners[0, 0], corners[0, 1], corners[1, 0], corners[1, 1])
+        else:
+            box = transformer.transform_bounds(minx, miny, maxx, maxy, densify_pts=21)
     coords = shapely.get_coordinates(projected)
     if not (np.isfinite(box).all() and np.isfinite(coords).all()):
         logger.debug("Coordinates do not fit %s; drawing without a basemap", crs)
+        return None
+    # A geographic longitude lies in -180 to 360 (the 0 to 360 convention),
+    # plus 360 for the east side of a crossing. One degree more on each side
+    # is rounding.
+    degree = world / 360
+    if (
+        len(coords)
+        and geographic
+        and not (-181 * degree <= coords[:, 0].min() and coords[:, 0].max() <= 541 * degree)
+    ):
+        logger.debug("Longitudes do not fit %s; drawing without a basemap", crs)
+        return None
+    edge = _MERCATOR_LIMIT * (1 - 1e-9)
+    if box[1] >= edge or box[3] <= -edge:
+        logger.debug("Data lies past the EPSG:3857 latitude limit; drawing without a basemap")
         return None
     return projected, (box[0], box[1], box[2], box[3])
 
@@ -955,6 +998,8 @@ def _render(
     # a second draw.
     figure.savefig(
         output_path,
+        # A savefig.dpi in the user's matplotlibrc would scale the image.
+        dpi=_DPI,
         facecolor="white",
         edgecolor="none",
         pil_kwargs={"quality": config.quality},
@@ -1492,6 +1537,32 @@ def _fetch_basemap(
     return result
 
 
+def _world_copies(left: float, right: float) -> list[tuple[float, float, float]]:
+    """Split the x range of a frame at the edges of the EPSG:3857 tile world.
+
+    A frame past longitude 180, as for data that crosses the antimeridian,
+    takes those tiles from the west edge of the world. The tile server has
+    no tile east of 180.
+
+    Returns:
+        For each copy of the world that the frame touches: the x shift of
+        that copy, and the part of the frame in it.
+    """
+    world = 2 * _MERCATOR_LIMIT
+    first = math.floor((left + _MERCATOR_LIMIT) / world)
+    last = math.ceil((right + _MERCATOR_LIMIT) / world) - 1
+    if last - first > 2:  # No frame of a geographic source is this wide.
+        return [(0.0, left, right)]
+    copies = []
+    for turn in range(first, last + 1):
+        shift = turn * world
+        piece_left = max(left, shift - _MERCATOR_LIMIT)
+        piece_right = min(right, shift + _MERCATOR_LIMIT)
+        if piece_right > piece_left:
+            copies.append((shift, piece_left, piece_right))
+    return copies
+
+
 def add_basemap(
     ax: Axes,
     provider: str,
@@ -1540,27 +1611,38 @@ def add_basemap(
         left, right = ax.get_xlim()
         bottom, top = ax.get_ylim()
         zoom = _basemap_zoom(ax, tile_provider, zoom_adjust)
-        size_px = (round(ax.bbox.width), round(ax.bbox.height))
-        frame = (left, bottom, right, top)
-        image, extent = _fetch_basemap(ctx_module, tile_provider, frame, zoom, size_px)
+        width_px, height_px = round(ax.bbox.width), round(ax.bbox.height)
+        images = []
+        for shift, piece_left, piece_right in _world_copies(left, right):
+            piece_px = (
+                max(1, round(width_px * (piece_right - piece_left) / (right - left))),
+                height_px,
+            )
+            piece = (piece_left - shift, bottom, piece_right - shift, top)
+            image, (img_left, img_right, img_bottom, img_top) = _fetch_basemap(
+                ctx_module, tile_provider, piece, zoom, piece_px
+            )
+            images.append((image, (img_left + shift, img_right + shift, img_bottom, img_top)))
     except Exception as e:
-        logger.debug("Failed to add basemap '%s': %s", provider, e)
+        # The error of a failed tile quotes the tile URL, which holds the key.
+        logger.debug("Failed to add basemap '%s': %s", provider, redact_credentials(str(e)))
         return
 
     from matplotlib import patheffects
 
-    # zorder 0 puts the tiles under the data patches (zorder 1).
-    ax.imshow(
-        image,
-        extent=extent,
-        # One image pixel per output pixel, so no smoothing is needed.
-        interpolation="nearest",
-        # "auto" keeps the axes box. The default "equal" would shrink it by a
-        # rounding error and leave a white line at the edge.
-        aspect="auto",
-        alpha=opacity,
-        zorder=0,
-    )
+    for image, extent in images:
+        # zorder 0 puts the tiles under the data patches (zorder 1).
+        ax.imshow(
+            image,
+            extent=extent,
+            # One image pixel per output pixel, so no smoothing is needed.
+            interpolation="nearest",
+            # "auto" keeps the axes box. The default "equal" would shrink it
+            # by a rounding error and leave a white line at the edge.
+            aspect="auto",
+            alpha=opacity,
+            zorder=0,
+        )
     ax.set_xlim(left, right)
     ax.set_ylim(bottom, top)
     attribution = tile_provider.get("attribution")

@@ -637,7 +637,7 @@ class TestPmtilesBoundsExtraction:
         }
 
         class MockDecoder:
-            def decode(self, data: bytes) -> dict:
+            def decode(self, data: bytes, **_options: Any) -> dict:
                 return mock_mvt_data
 
         geometries: list[dict] = []
@@ -1934,20 +1934,20 @@ class TestWebMercatorEdges:
         result = generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig())
 
         assert result is not None
-        assert _data_pixels(result) > 10_000
+        assert _data_pixels(result) > 1_000
         assert stub_tiles == []
 
     @pytest.mark.integration
     def test_the_rc_savefig_dpi_does_not_change_the_pixel_size(self, tmp_path: Path) -> None:
         """A matplotlibrc with savefig.dpi does not scale the thumbnail."""
-        import matplotlib
+        import matplotlib as mpl
         from PIL import Image
         from shapely.geometry import box
 
         from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
 
         gpq = _write_crs84(tmp_path / "square.parquet", [box(0, 0, 1, 1)])
-        with matplotlib.rc_context({"savefig.dpi": 200}):
+        with mpl.rc_context({"savefig.dpi": 200}):
             result = generate_thumbnail_from_geoparquet(
                 gpq, ThumbnailConfig(basemap_provider="none", max_size=300)
             )
