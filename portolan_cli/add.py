@@ -1880,9 +1880,11 @@ def _update_item_with_asset(
     # Write updated item
     write_json_atomic(item_json_path, item_data)
 
-    # Stage the files of the item. The scan already hashed them.
+    # Stage the files of the item. The scan already hashed them. A companion
+    # bumps the minor, as it did when add published it through the backend.
     state.stage(
         collection_id,
+        minor=True,
         assets={
             versions_asset_key(path, collection_dir): Asset(
                 sha256=checksum,
