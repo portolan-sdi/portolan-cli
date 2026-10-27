@@ -6,9 +6,10 @@ Extracts bbox, CRS, schema, and geometry type from file metadata.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, overload
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Protocol, TypeVar, overload
 
 import pyarrow.parquet as pq
 from pyproj import CRS
@@ -19,7 +20,23 @@ from portolan_cli.models.schema import ColumnSchema, SchemaModel
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
+
+T = TypeVar("T")
+
+
+class _Memo(Protocol):
+    """The part of ``run_state.RunState`` this module uses.
+
+    A Protocol, not an import: the ``viz`` layer imports this module, and
+    ``run_state`` imports ``sync.checksums``, which ``viz`` must not reach.
+    """
+
+    def memo(self, kind: str, path: Path, loader: Callable[[Path], T]) -> T:
+        """Load a value derived from one file once per run."""
+        ...
+
 
 # Footer keys the writer owns. geoparquet-io writes a fresh ``geo``. It drops
 # ``ARROW:schema``, ``pandas`` and ``geo:overviews`` on purpose, because they
@@ -42,6 +59,8 @@ class GeoParquetMetadata:
         geometry_column: Name of the geometry column.
         feature_count: Number of features (rows).
         schema: Column names and types.
+        schema_fingerprint: The freshness fingerprint of the Arrow schema (see
+            :func:`schema_fingerprint`), read in the same footer read.
     """
 
     bbox: tuple[float, float, float, float] | None
@@ -50,6 +69,7 @@ class GeoParquetMetadata:
     geometry_column: str | None
     feature_count: int
     schema: dict[str, str]
+    schema_fingerprint: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
@@ -106,14 +126,25 @@ class GeoParquetMetadata:
         return props
 
 
-def extract_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
+def schema_fingerprint(schema: Any) -> str:
+    """The freshness fingerprint of an Arrow schema: 16 hex digits of its SHA-256.
+
+    versions.json stores this value, so the text it hashes must not change.
+    """
+    return hashlib.sha256(str(schema).encode()).hexdigest()[:16]
+
+
+def extract_geoparquet_metadata(path: Path, *, state: _Memo | None = None) -> GeoParquetMetadata:
     """Extract metadata from a GeoParquet file.
 
     Uses pyarrow to read file metadata without loading all data.
-    Parses GeoParquet geo metadata from file's custom metadata.
+    Parses GeoParquet geo metadata from file's custom metadata. One footer read
+    gives every field, the schema fingerprint included. With ``state``, the run
+    reads each footer once while the file stays unchanged.
 
     Args:
         path: Path to GeoParquet file.
+        state: The run state, for one footer read per file and run.
 
     Returns:
         GeoParquetMetadata with extracted information.
@@ -127,7 +158,12 @@ def extract_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
     """
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
+    if state is not None:
+        return state.memo("geoparquet.metadata", path, _read_geoparquet_metadata)
+    return _read_geoparquet_metadata(path)
 
+
+def _read_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
     # Open parquet file (metadata only)
     count("parquet.opens")
     pf = pq.ParquetFile(path)
@@ -161,6 +197,7 @@ def extract_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
         geometry_column=geometry_column,
         feature_count=feature_count,
         schema=schema,
+        schema_fingerprint=schema_fingerprint(pf.schema_arrow),
     )
 
 

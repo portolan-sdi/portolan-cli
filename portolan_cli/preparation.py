@@ -232,6 +232,7 @@ def _scan_item_assets(
     exclude_names: frozenset[str] = frozenset(),
     collection_level: bool = False,
     ignored_patterns: list[str] | None = None,
+    state: RunState | None = None,
 ) -> tuple[dict[str, pystac.Asset], dict[str, tuple[Path, str, int]], list[str]]:
     """Scan an item directory for all trackable assets.
 
@@ -260,6 +261,7 @@ def _scan_item_assets(
             item JSON in ``item_dir``.
         ignored_patterns: The ``ignored_files`` patterns of the catalog. A
             companion that matches one is not an asset (#1044).
+        state: The run state, so each file is hashed once per run.
 
     Returns:
         Tuple of (stac_assets, asset_files, asset_paths):
@@ -306,7 +308,7 @@ def _scan_item_assets(
         # it the data role, so the PMTiles side-step drew tiles of it.
         if in_collection_dir and file_path.name in (README_FILENAME, PARQUET_FILENAME):
             continue
-        measured = _measure(file_path)
+        measured = _measure(file_path, state)
         if measured is not None:
             scanned.append(measured)
 
@@ -346,7 +348,7 @@ def _in_batch(name: str, batch_names: frozenset[str]) -> bool:
     return bool(dash) and f"{base}.{extension}" in batch_names
 
 
-def _measure(file_path: Path) -> _ScannedFile | None:
+def _measure(file_path: Path, state: RunState | None = None) -> _ScannedFile | None:
     """Checksum and type one directory entry, or None when it is no asset."""
     if file_path.is_dir():
         # FileGDB directories are single container assets (Issue #174).
@@ -354,7 +356,7 @@ def _measure(file_path: Path) -> _ScannedFile | None:
             return None
         return _ScannedFile(
             file_path,
-            compute_dir_checksum(file_path),
+            state.checksum(file_path) if state is not None else compute_dir_checksum(file_path),
             compute_dir_size(file_path),
             "application/x-filegdb",
             "data",
@@ -364,7 +366,7 @@ def _measure(file_path: Path) -> _ScannedFile | None:
         return None
     return _ScannedFile(
         file_path,
-        compute_checksum(file_path),
+        state.checksum(file_path) if state is not None else compute_checksum(file_path),
         file_path.stat().st_size,
         _get_media_type(file_path),
         _get_asset_role(file_path),
@@ -1252,6 +1254,7 @@ def prepare_item(
             exclude_names=exclude_sibling_names,
             collection_level=collection_level,
             ignored_patterns=get_ignored_files(catalog_root, state=state),
+            state=state,
         )
     except AssetKeyCollisionError:
         # The add stops before any STAC or versions.json write. A file this
