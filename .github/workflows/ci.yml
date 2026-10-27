@@ -134,12 +134,17 @@ jobs:
         # has an expiry + reason; expired entries drop automatically). The same
         # file feeds nightly.yml and security-audit.yml — no more triplicated,
         # never-expiring inline --ignore-vuln lists.
+        #
+        # The export pins every package with hashes, so pip-audit audits the
+        # list as written and builds no virtual environment. On the Ubuntu
+        # 26.04 runner, the temporary environment fails in ensurepip.
         run: |
-          uv export --no-dev --no-emit-project --no-hashes \
+          uv export --no-dev --no-emit-project \
             --extra iceberg --extra pmtiles --extra thumbnails \
             -o /tmp/runtime-deps.txt
           # shellcheck disable=SC2046  # intentional word-splitting of the flag list
           uv run pip-audit \
+            --disable-pip --require-hashes \
             --requirement /tmp/runtime-deps.txt \
             $(uv run python scripts/pip_audit_ignores.py)
 
