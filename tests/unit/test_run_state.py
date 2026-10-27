@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from portolan_cli.versions import VersionsFile
+
     Snapshot = Callable[[Path, dict[str, Asset]], None]
 
 pytestmark = pytest.mark.unit
@@ -315,6 +317,35 @@ class TestStage:
         state.stage("c", assets={"a.bin": a})
         assert list(state.versions(coll).versions[-1].assets) == ["a.bin"]
         state.stage("c", assets={"b.bin": b})
+        assert sorted(state.versions(coll).versions[-1].assets) == ["a.bin", "b.bin"]
+
+    def test_a_stage_during_a_projection_is_not_lost(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Another thread stages while versions() projects. The next call sees the stage.
+
+        The wrapper runs the stage call after the projection is built and
+        before versions() stores it, which is the order a second thread can
+        take.
+        """
+        from portolan_cli.run_state import StagedVersion
+
+        coll, a, b = self._two_files(tmp_path)
+        state = RunState.open(tmp_path)
+        state.stage("c", assets={"a.bin": a})
+        project = StagedVersion.apply
+        interleaved: list[bool] = []
+
+        def apply_then_stage(self: StagedVersion, versions_file: VersionsFile) -> VersionsFile:
+            projected = project(self, versions_file)
+            if not interleaved:
+                interleaved.append(True)
+                state.stage("c", assets={"b.bin": b})
+            return projected
+
+        monkeypatch.setattr(StagedVersion, "apply", apply_then_stage)
+        assert list(state.versions(coll).versions[-1].assets) == ["a.bin"]
+
         assert sorted(state.versions(coll).versions[-1].assets) == ["a.bin", "b.bin"]
 
     def test_concurrent_stage_keeps_every_asset(self, tmp_path: Path) -> None:
