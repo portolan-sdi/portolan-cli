@@ -1347,6 +1347,109 @@ class TestCatalogIndexAfterAdd:
             ), collection_id
 
 
+class TestSideStepExitAfterAdd:
+    """A side step that fails after ``add_files`` still commits the added files.
+
+    ``add_files`` writes collection.json for each collection. The mirror, the
+    PMTiles, and the thumbnail steps run after it. A failure in one of them
+    keeps its exit code, and versions.json and the catalog index still record
+    the files that collection.json lists.
+    """
+
+    @staticmethod
+    def _assert_catalog_agrees(root: Path, collection_ids: list[str]) -> None:
+        from portolan_cli.sync.checksums import compute_checksum
+
+        index = json.loads((root / "versions.json").read_text(encoding="utf-8"))["collections"]
+        for collection_id in collection_ids:
+            collection_dir = root / collection_id
+            versions = json.loads((collection_dir / "versions.json").read_text(encoding="utf-8"))
+            assert versions["current_version"] == "1.0.0", collection_id
+            records = versions["versions"][-1]["assets"]
+            stac = json.loads((collection_dir / "collection.json").read_text(encoding="utf-8"))
+            for asset in stac["assets"].values():
+                key = asset["href"].removeprefix("./")
+                assert records[key]["sha256"] == compute_checksum(collection_dir / key), key
+            entry = index[collection_id]
+            assert (entry["current_version"], entry["asset_count"], entry["total_size_bytes"]) == (
+                "1.0.0",
+                len(records),
+                sum(record["size_bytes"] for record in records.values()),
+            ), collection_id
+
+    @pytest.mark.integration
+    def test_pmtiles_without_tippecanoe(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_points_parquet: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``--pmtiles`` without tippecanoe exits 1 and keeps the version of the add."""
+        import portolan_cli.viz.pmtiles as pmtiles
+
+        def exit_like_missing_tippecanoe(*_args: object, **_kwargs: object) -> None:
+            raise SystemExit(1)
+
+        monkeypatch.setattr(pmtiles, "generate_or_suggest_pmtiles", exit_like_missing_tippecanoe)
+        root = conformant_catalog
+        (root / "roads").mkdir()
+        (root / "roads" / "roads.parquet").write_bytes(valid_points_parquet.read_bytes())
+
+        run_cli("add", "--pmtiles", "--portolan-dir", str(root), str(root), expect=1)
+
+        self._assert_catalog_agrees(root, ["roads"])
+
+    @pytest.mark.integration
+    def test_an_explicit_mirror_failure(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_rgb_cog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A ``--stac-geoparquet`` failure still raises and keeps the version of the add."""
+        import portolan_cli.stac_parquet as stac_parquet
+
+        def broken_mirror(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("mirror broke")
+
+        monkeypatch.setattr(stac_parquet, "generate_items_parquet", broken_mirror)
+        root = conformant_catalog
+        (root / "imagery" / "scene").mkdir(parents=True)
+        (root / "imagery" / "scene" / "scene.tif").write_bytes(valid_rgb_cog.read_bytes())
+
+        with pytest.raises(RuntimeError, match="mirror broke"):
+            run_cli("add", "--stac-geoparquet", "--portolan-dir", str(root), str(root))
+
+        assert not (root / "imagery" / "items.parquet").exists()
+        self._assert_catalog_agrees(root, ["imagery"])
+
+    @pytest.mark.integration
+    def test_a_thumbnail_exception(
+        self,
+        run_cli: RunCli,
+        conformant_catalog: Path,
+        valid_points_parquet: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An exception in the thumbnail step still raises and keeps the version of the add."""
+        import portolan_cli.collection_thumbnail as collection_thumbnail
+
+        def broken_thumbnails(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("thumbnail broke")
+
+        monkeypatch.setattr(collection_thumbnail, "ensure_collection_thumbnails", broken_thumbnails)
+        root = conformant_catalog
+        (root / "roads").mkdir()
+        (root / "roads" / "roads.parquet").write_bytes(valid_points_parquet.read_bytes())
+
+        with pytest.raises(RuntimeError, match="thumbnail broke"):
+            run_cli("add", "--portolan-dir", str(root), str(root))
+
+        self._assert_catalog_agrees(root, ["roads"])
+
+
 class TestAddUnknownHandlerPin:
     """A ``conversion.handlers`` pin to a missing handler fails add with a typed error."""
 
