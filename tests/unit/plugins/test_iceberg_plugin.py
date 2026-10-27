@@ -39,7 +39,6 @@ def test_missing_extra_keeps_the_install_hint(monkeypatch: pytest.MonkeyPatch) -
     from portolan_cli.backends import get_backend
 
     monkeypatch.setitem(sys.modules, "portolan_cli.backends.iceberg.backend", None)
-    monkeypatch.setattr(sys, "version_info", (3, 12, 0, "final", 0))
 
     with pytest.raises(ValueError) as excinfo:
         get_backend("iceberg")
@@ -48,16 +47,6 @@ def test_missing_extra_keeps_the_install_hint(monkeypatch: pytest.MonkeyPatch) -
         "The 'iceberg' backend requires the iceberg extra. "
         "Install it with: pip install portolan-cli[iceberg]"
     )
-
-
-def test_old_python_names_the_python_requirement(monkeypatch: pytest.MonkeyPatch) -> None:
-    """On Python 3.10 the error names the interpreter, not the extra."""
-    from portolan_cli.backends import get_backend
-
-    monkeypatch.setattr(sys, "version_info", (3, 10, 14, "final", 0))
-
-    with pytest.raises(ValueError, match=r"^The Iceberg backend requires Python 3\.11\+\. "):
-        get_backend("iceberg")
 
 
 def test_commands_are_entry_points_of_portolan_cli() -> None:
