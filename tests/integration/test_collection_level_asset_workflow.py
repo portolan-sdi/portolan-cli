@@ -526,7 +526,8 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
         assert added == []
         assert [(f.path, f.error) for f in failures] == [(csv, "No space left on device")]
         assert sorted(p.name for p in collection_dir.iterdir()) == ["records.csv"]
-        assert _index_entry(catalog, "records") is None
+        # The fixture holds no catalog index, and the add commits no version.
+        assert not (catalog / "versions.json").exists()
 
 
 def _init_catalog(root: Path) -> None:

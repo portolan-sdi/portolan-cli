@@ -789,8 +789,12 @@ def _collect_files_for_add(
                     skip(file_path, SKIP_UNCHANGED)
                     continue
 
-            # Set up nested catalog structure if needed
-            _ensure_nested_catalogs(coll_id, catalog_root, setup_collections)
+            # Set up nested catalog structure if needed. A tabular file can be
+            # the companion of an item, so the collection that phase 1 infers
+            # for it can be an item directory. Phase 2 and phase 3 set up the
+            # catalogs once they know where the file goes.
+            if file_path.suffix.lower() not in TABULAR_EXTENSIONS:
+                _ensure_nested_catalogs(coll_id, catalog_root, setup_collections)
 
             files_to_process.append((file_path, coll_id))
 
@@ -1334,6 +1338,10 @@ def add_files(
         for path, reason in proc.skips.items():
             skipped.append(path)
             reasons[path] = reason
+        # A tabular file with geometry is a collection of its own. Phase 1 left
+        # its catalogs to this point.
+        for coll_id in sorted({p.collection_id for p in proc.prepared_items}):
+            _ensure_nested_catalogs(coll_id, catalog_root, setup_collections)
 
         # Phase 2.5: plan the deferred non-geo files, so that a collection that
         # finalize writes takes its companions in the same write.
@@ -1592,19 +1600,20 @@ def _plan_tabular(
             )
         )
         return
-    companions = plan.companions.setdefault(coll_id, [])
-    plan.tabular.add(coll_id)
     convert = state.setting("tabular.convert", collection_dir=collection_dir)
     if convert and file_path.suffix.lower() != ".parquet":
         # Convert CSV/TSV/XLSX to Parquet via gpio (Issue #432), and track both
-        # files side by side, as the vector path does.
+        # files side by side, as the vector path does. The plan takes the
+        # collection only after the conversion, so a failed one writes nothing.
         asset_path = convert_tabular(file_path, collection_dir, state=state)
-        companions += [CompanionAsset(asset_path), CompanionAsset(file_path, ROLE_SOURCE)]
+        new = [CompanionAsset(asset_path), CompanionAsset(file_path, ROLE_SOURCE)]
         names = [asset_path.name, file_path.name]
     else:
         asset_path = file_path
-        companions.append(CompanionAsset(file_path))
+        new = [CompanionAsset(file_path)]
         names = [file_path.name]
+    plan.companions.setdefault(coll_id, []).extend(new)
+    plan.tabular.add(coll_id)
     logger.info("Tracking %s as standalone tabular collection-level asset", asset_path)
     plan.tabular_added.setdefault(coll_id, []).append((asset_path, names))
 
@@ -1723,6 +1732,10 @@ def _write_companion_collection(
         return False
     collection = _new_tabular_collection(catalog_root, coll_id, collection_dir, state)
     collection_dir.mkdir(parents=True, exist_ok=True)
+    # Phase 1 sets up no catalogs for a tabular file (see _collect_files_for_add).
+    from portolan_cli.catalog import create_intermediate_catalogs
+
+    create_intermediate_catalogs(coll_id, catalog_root)
 
     def finish(data: dict[str, Any]) -> None:
         add_companion_assets(data, collection_dir, companions, merge_strategy, state)
