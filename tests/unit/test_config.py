@@ -2086,6 +2086,37 @@ class TestTypedValues:
             set_setting(tmp_path, "conversion.vector.resolution", value)
 
     @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("text", "stored"),
+        [("1e-3", 0.001), ("-1e-3", -0.001), ("2E3", 2000.0), ("-.5", -0.5), ("+.25", 0.25)],
+    )
+    def test_a_number_takes_the_float_spellings_that_yaml_reads_as_text(
+        self, tmp_path: Path, text: str, stored: float
+    ) -> None:
+        from portolan_cli.config import set_setting
+
+        set_setting(tmp_path, "partitioning.threshold_gb", text)
+
+        assert _read_yaml(tmp_path) == {"partitioning": {"threshold_gb": stored}}
+
+    @pytest.mark.unit
+    def test_an_environment_number_takes_an_exponent(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting
+
+        with cleared_environ(PORTOLAN_PARTITIONING_THRESHOLD_GB="5e-1"):
+            assert get_setting("partitioning.threshold_gb", catalog_path=tmp_path) == 0.5
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("text", ["1e3", "-x", "e5", "1e", "nan"])
+    def test_an_int_still_rejects_text_that_is_not_an_integer(
+        self, tmp_path: Path, text: str
+    ) -> None:
+        from portolan_cli.config import set_setting
+
+        with pytest.raises(ConfigError, match="takes an integer"):
+            set_setting(tmp_path, "thumbnails.basemap.zoom_adjust", text)
+
+    @pytest.mark.unit
     def test_a_string_setting_keeps_yaml_like_text_as_text(self, tmp_path: Path) -> None:
         from portolan_cli.config import set_setting
 
