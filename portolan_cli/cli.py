@@ -6964,6 +6964,7 @@ def _process_collection_for_parquet(
         register_mirror_asset,
         track_parquet_in_versions,
     )
+    from portolan_cli.version_ops import owned_run
 
     collection_path = catalog_path / coll_id
 
@@ -7008,9 +7009,10 @@ def _process_collection_for_parquet(
 
     # Generate parquet
     try:
-        parquet_path = generate_items_parquet(collection_path)
-        register_mirror_asset(collection_path)
-        track_parquet_in_versions(collection_path, catalog_path)
+        with owned_run(catalog_path) as run:
+            parquet_path = generate_items_parquet(collection_path, state=run)
+            register_mirror_asset(collection_path, state=run)
+            track_parquet_in_versions(collection_path, catalog_path, state=run)
         if not use_json and not is_bulk:
             success(f"Generated items.parquet for '{coll_id}'")
             detail(f"    Items: {item_count}")

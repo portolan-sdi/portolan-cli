@@ -8,8 +8,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -19,8 +20,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 pytestmark = pytest.mark.unit
-
-_OLD_NS = 1_600_000_000 * 1_000_000_000
 
 
 @pytest.fixture
@@ -223,6 +222,22 @@ def _items_collection(root: Path, n: int) -> Path:
     return coll
 
 
+@pytest.fixture
+def mirror_writes(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """Record each ``items.parquet`` that ``stac_geoparquet.arrow.to_parquet`` writes."""
+    import stac_geoparquet.arrow
+
+    writes: list[Path] = []
+    write = stac_geoparquet.arrow.to_parquet
+
+    def spy(table: Any, output_path: str | Path, **kwargs: Any) -> None:
+        writes.append(Path(output_path))
+        write(table, output_path, **kwargs)
+
+    monkeypatch.setattr(stac_geoparquet.arrow, "to_parquet", spy)
+    return writes
+
+
 class TestItemsParquetMirror:
     """#995-6 and #995-7: the mirror rebuilt on every run and hashed twice or more."""
 
@@ -238,42 +253,75 @@ class TestItemsParquetMirror:
         generate_parquet_mirrors(catalog, {"c"}, generate_parquet=True)
         assert counters("checksum.files") == 2
 
-    def test_unchanged_items_do_not_rebuild(self, catalog: Path) -> None:
-        from portolan_cli.stac_parquet import generate_items_parquet
+    def test_unchanged_rerun_writes_no_mirror(
+        self, catalog: Path, mirror_writes: list[Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The second run with unchanged items writes no ``items.parquet``.
+
+        The private ``stac_geoparquet.arrow._to_parquet`` module is made
+        unimportable, as a stac-geoparquet that moves it would do. Before the
+        fix, the footer fingerprint needed that module, so the second run
+        rebuilt the file.
+        """
+        from portolan_cli.stac_parquet import generate_parquet_mirrors
+
+        monkeypatch.setitem(sys.modules, "stac_geoparquet.arrow._to_parquet", None)
+        coll = _items_collection(catalog, 3)
+        generate_parquet_mirrors(catalog, {"c"}, generate_parquet=True)
+        assert mirror_writes == [coll / "items.parquet"]
+        generate_parquet_mirrors(catalog, {"c"}, generate_parquet=True)
+        assert mirror_writes == [coll / "items.parquet"]
+
+    def test_fingerprint_is_in_the_versions_record(self, catalog: Path) -> None:
+        import pyarrow.parquet as pq
+
+        from portolan_cli.stac_parquet import generate_parquet_mirrors
 
         coll = _items_collection(catalog, 3)
-        out = generate_items_parquet(coll)
-        os.utime(out, ns=(_OLD_NS, _OLD_NS))
-        generate_items_parquet(coll)
-        assert out.stat().st_mtime_ns == _OLD_NS
+        generate_parquet_mirrors(catalog, {"c"}, generate_parquet=True)
+        record = read_versions(coll / "versions.json").versions[-1].assets["items.parquet"]
+        assert record.source_fingerprint is not None
+        assert len(record.source_fingerprint) == 64
+        metadata = pq.read_schema(coll / "items.parquet").metadata
+        assert sorted(metadata) == [b"geo", b"stac-geoparquet"]
+
+    def test_replaced_mirror_rebuilds(self, catalog: Path, mirror_writes: list[Path]) -> None:
+        from portolan_cli.stac_parquet import generate_parquet_mirrors
+
+        coll = _items_collection(catalog, 3)
+        generate_parquet_mirrors(catalog, {"c"}, generate_parquet=True)
+        (coll / "items.parquet").write_bytes(b"not the recorded bytes")
+        generate_parquet_mirrors(catalog, {"c"}, generate_parquet=True)
+        assert mirror_writes == [coll / "items.parquet"] * 2
 
     def test_changed_item_rebuilds(self, catalog: Path) -> None:
         import pyarrow.parquet as pq
 
-        from portolan_cli.stac_parquet import generate_items_parquet
+        from portolan_cli.stac_parquet import generate_parquet_mirrors
 
         coll = _items_collection(catalog, 3)
-        out = generate_items_parquet(coll)
+        generate_parquet_mirrors(catalog, {"c"}, generate_parquet=True)
         item = coll / "i1" / "i1.json"
         data = json.loads(item.read_text())
         data["properties"]["title"] = "Renamed"
         item.write_text(json.dumps(data))
-        generate_items_parquet(coll)
-        titles = pq.read_table(out, columns=["title"]).column("title").to_pylist()
-        assert titles == ["Item 0", "Renamed", "Item 2"]
+        generate_parquet_mirrors(catalog, {"c"}, generate_parquet=True)
+        titles = pq.read_table(coll / "items.parquet", columns=["title"]).column("title")
+        assert titles.to_pylist() == ["Item 0", "Renamed", "Item 2"]
 
     def test_added_item_rebuilds(self, catalog: Path) -> None:
         import pyarrow.parquet as pq
 
-        from portolan_cli.stac_parquet import generate_items_parquet
+        from portolan_cli.stac_parquet import generate_parquet_mirrors
 
         coll = _items_collection(catalog, 2)
-        out = generate_items_parquet(coll)
+        generate_parquet_mirrors(catalog, {"c"}, generate_parquet=True)
         item_dir = coll / "i9"
         item_dir.mkdir()
         (item_dir / "i9.json").write_text((coll / "i0" / "i0.json").read_text().replace("i0", "i9"))
         doc = json.loads((coll / "collection.json").read_text())
         doc["links"].append({"rel": "item", "href": "./i9/i9.json"})
         (coll / "collection.json").write_text(json.dumps(doc))
-        generate_items_parquet(coll)
-        assert pq.read_table(out, columns=["id"]).column("id").to_pylist() == ["i0", "i1", "i9"]
+        generate_parquet_mirrors(catalog, {"c"}, generate_parquet=True)
+        ids = pq.read_table(coll / "items.parquet", columns=["id"]).column("id").to_pylist()
+        assert ids == ["i0", "i1", "i9"]

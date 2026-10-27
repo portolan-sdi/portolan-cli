@@ -71,6 +71,8 @@ def version_to_snapshot_properties(
             asset_data["feature_count"] = asset.feature_count
         if asset.schema_fingerprint is not None:
             asset_data["schema_fingerprint"] = asset.schema_fingerprint
+        if asset.source_fingerprint is not None:
+            asset_data["source_fingerprint"] = asset.source_fingerprint
         assets_dict[name] = asset_data
     props["portolake.assets"] = json.dumps(assets_dict)
     # Serialize schema
@@ -112,6 +114,7 @@ def snapshot_to_version(snapshot: Snapshot) -> Version:
             mtime=adata.get("mtime"),
             feature_count=adata.get("feature_count"),
             schema_fingerprint=adata.get("schema_fingerprint"),
+            source_fingerprint=adata.get("source_fingerprint"),
         )
 
     # Deserialize schema

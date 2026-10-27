@@ -87,6 +87,10 @@ class Asset:
             asset read FRESH instead of a spurious STALE (heuristics).
         schema_fingerprint: Optional hash of the asset schema captured when the
             asset was tracked. Used to detect breaking schema changes.
+        source_fingerprint: Optional hash of the input files of a generated
+            asset, captured when it was built. ``items.parquet`` stores the
+            href, size, and mtime of each item file here. The next run
+            rebuilds the file only when this hash or the file bytes differ.
     """
 
     sha256: str
@@ -97,6 +101,7 @@ class Asset:
     mtime: float | None = None
     feature_count: int | None = None
     schema_fingerprint: str | None = None
+    source_fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -197,6 +202,7 @@ def _parse_versions_file(data: dict[str, Any]) -> VersionsFile:
                     # Optional freshness heuristics
                     feature_count=asset_data.get("feature_count"),
                     schema_fingerprint=asset_data.get("schema_fingerprint"),
+                    source_fingerprint=asset_data.get("source_fingerprint"),
                 )
                 for name, asset_data in v["assets"].items()
             }
@@ -249,7 +255,7 @@ def _serialize_asset(asset: Asset) -> dict[str, Any]:
     """Serialize an Asset to a JSON-compatible dictionary.
 
     Only includes optional fields (source_path, source_mtime, mtime,
-    feature_count, schema_fingerprint) when not None.
+    feature_count, schema_fingerprint, source_fingerprint) when not None.
 
     Args:
         asset: The Asset to serialize.
@@ -273,6 +279,8 @@ def _serialize_asset(asset: Asset) -> dict[str, Any]:
         data["feature_count"] = asset.feature_count
     if asset.schema_fingerprint is not None:
         data["schema_fingerprint"] = asset.schema_fingerprint
+    if asset.source_fingerprint is not None:
+        data["source_fingerprint"] = asset.source_fingerprint
     return data
 
 
