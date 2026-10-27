@@ -41,6 +41,7 @@ from portolan_cli.convert import (
     claim_output,
     convert_with_handler,
     distinct_output_path,
+    run_checksums,
     run_with_transient_convert_retry,
     settle_output,
     with_provenance,
@@ -68,6 +69,7 @@ from portolan_cli.metadata_yaml import (
 )
 from portolan_cli.plugins.formats import FormatContext, extension_of, handler_for
 from portolan_cli.readme import README_FILENAME
+from portolan_cli.run_state import RunState
 from portolan_cli.scan.detect import is_filegdb
 from portolan_cli.stac import (
     STEM_RANK_SOURCE,
@@ -99,7 +101,6 @@ if TYPE_CHECKING:
 
     from portolan_cli.config import ConfigSource
     from portolan_cli.plugins.formats import FormatHandler
-    from portolan_cli.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -1198,19 +1199,23 @@ def prepare_item(
         ) from err
 
     # Step 3: Convert and extract metadata. The output never replaces a file
-    # that the source did not make (claim_output).
+    # that the source did not make (claim_output). A caller with no state gets
+    # one for this item, so the source is hashed once (provenance and scan).
+    if state is None:
+        state = RunState.open(catalog_root)
     target = claim_output(path, handler.output_path(path, item_dir), state=state)
     created_output = not target.exists()
-    output_path, metadata = _convert_and_extract_metadata(
-        path,
-        item_dir,
-        handler,
-        target=target,
-        catalog_root=catalog_root,
-        force=force,
-        reconvert=reconvert,
-        state=state,
-    )
+    with run_checksums(state.checksum):
+        output_path, metadata = _convert_and_extract_metadata(
+            path,
+            item_dir,
+            handler,
+            target=target,
+            catalog_root=catalog_root,
+            force=force,
+            reconvert=reconvert,
+            state=state,
+        )
     # settle_output can move a tabular output over the file 0.8.0 wrote.
     created_output = created_output and output_path == target
     source_paths = {output_path: versions_asset_key(path, collection_dir)}
@@ -1498,7 +1503,7 @@ def convert_vector(
             gpio.convert(str(source)), resolved, partitioned=partition_dir is not None
         )
         if partition_dir is None:
-            with_provenance(table, source).write(str(output_path))
+            with_provenance(table, source, require_geometry=True).write(str(output_path))
         else:
             _write_partitioned(table, partition_dir, resolved)
 
@@ -1757,7 +1762,11 @@ def convert_tabular(source: Path, dest_dir: Path, *, state: RunState | None = No
         table = gpio.convert(str(source))
         with_provenance(table, source).write(str(output_path))
 
-    run_with_transient_convert_retry(_run, source_name=source.name)
+    if state is None:
+        run_with_transient_convert_retry(_run, source_name=source.name)
+    else:
+        with run_checksums(state.checksum):
+            run_with_transient_convert_retry(_run, source_name=source.name)
 
     return settle_output(source, default_path, output_path, state=state)
 

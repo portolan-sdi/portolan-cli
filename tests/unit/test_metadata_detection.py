@@ -1072,3 +1072,40 @@ class TestPrepareSharesTheFooterWithTheRun:
 
         assert opened == []
         assert again is prepared.metadata
+
+
+class TestPrepareHashesEachFileOnce:
+    """The provenance record and the asset scan share one hash of the source."""
+
+    @pytest.mark.unit
+    def test_a_converted_geojson_costs_two_hashes(
+        self, tmp_path: Path, valid_points_geojson: Path
+    ) -> None:
+        """One hash of the source, one of the output, with no run state given."""
+        import shutil
+
+        from click.testing import CliRunner
+
+        from portolan_cli import trace
+        from portolan_cli.cli import cli
+        from portolan_cli.preparation import prepare_item
+
+        assert (
+            CliRunner()
+            .invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
+            .exit_code
+            == 0
+        )
+        (tmp_path / "pts").mkdir()
+        source = tmp_path / "pts" / "pts.geojson"
+        shutil.copy(valid_points_geojson, source)
+
+        trace.enable()
+        try:
+            prepared = prepare_item(path=source, catalog_root=tmp_path, collection_id="pts")
+            hashed = trace.counters()["checksum.files"]
+        finally:
+            trace.reset()
+
+        assert sorted(prepared.asset_files) == ["pts.geojson", "pts.parquet"]
+        assert hashed == 2

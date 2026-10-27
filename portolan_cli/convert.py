@@ -18,6 +18,7 @@ import json
 import logging
 import time
 import warnings
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -50,7 +51,7 @@ from portolan_cli.viz.thumbnail import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from portolan_cli.plugins.formats import FormatHandler
     from portolan_cli.run_state import RunState
@@ -576,24 +577,55 @@ PROVENANCE_KEY = "portolan:source"
 COG_PROVENANCE_TAG = "PORTOLAN_SOURCE"
 
 
+#: The checksum function of the run that converts. A format handler takes no
+#: run state, so ``prepare_item`` sets this around the conversion, as
+#: ``conversion_config.settings_override`` does for the settings. The record
+#: then reuses the run's hash of the source, and the asset scan hits the same
+#: memo, so ``add`` hashes each source once.
+_RUN_CHECKSUM: ContextVar[Callable[[Path], str] | None] = ContextVar(
+    "portolan_run_checksum", default=None
+)
+
+
+@contextlib.contextmanager
+def run_checksums(checksum: Callable[[Path], str]) -> Iterator[None]:
+    """Make :func:`provenance_record` hash through ``checksum``, such as ``RunState.checksum``."""
+    token = _RUN_CHECKSUM.set(checksum)
+    try:
+        yield
+    finally:
+        _RUN_CHECKSUM.reset(token)
+
+
 def provenance_record(source: Path) -> str:
     """The provenance value a converter writes into the output of ``source``."""
-    from portolan_cli.sync.checksums import compute_checksum, compute_dir_checksum
+    checksum = _RUN_CHECKSUM.get()
+    if checksum is None:
+        from portolan_cli.sync.checksums import compute_checksum, compute_dir_checksum
 
-    # A FileGDB source is a directory.
-    digest = compute_dir_checksum(source) if source.is_dir() else compute_checksum(source)
-    return json.dumps({"path": source.name, "sha256": digest}, sort_keys=True)
+        # A FileGDB source is a directory.
+        checksum = compute_dir_checksum if source.is_dir() else compute_checksum
+    return json.dumps({"path": source.name, "sha256": checksum(source)}, sort_keys=True)
 
 
-def with_provenance(table: Any, source: Path) -> Any:
+def with_provenance(table: Any, source: Path, *, require_geometry: bool = False) -> Any:
     """Return a geoparquet-io table whose footer will name ``source``.
 
     geoparquet-io 1.7.0 keeps the schema metadata keys of the table it writes
     (gpio#1280), so the key reaches the file with no second write.
+
+    Args:
+        table: The table to write.
+        source: The file the table comes from.
+        require_geometry: Add no record to a table with no geometry. ``add``
+            deletes that output and tracks the source as a companion, so a
+            record would only cost a hash of the source.
     """
     from geoparquet_io.api.table import Table  # type: ignore[import-untyped]
 
     if not isinstance(table, Table):
+        return table
+    if require_geometry and table.geometry_column is None:
         return table
     arrow = table.table
     metadata = dict(arrow.schema.metadata or {})
@@ -1298,7 +1330,12 @@ def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = Non
                 quiet=True,
                 overview_resampling=cast("ResamplingMethod", settings.resampling),
                 forward_band_tags=True,
-                additional_cog_metadata={COG_PROVENANCE_TAG: provenance_record(source)},
+                # A COG written in place is its own source, so it needs no record.
+                additional_cog_metadata=(
+                    {}
+                    if output_path.resolve() == source.resolve()
+                    else {COG_PROVENANCE_TAG: provenance_record(source)}
+                ),
             )
 
         # Atomic replace
