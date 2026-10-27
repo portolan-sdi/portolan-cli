@@ -258,7 +258,7 @@ jobs:
     # compares the slope and intercept of each counter with the constants in
     # tests/perf/expected. A count does not depend on machine load, so one
     # Linux cell gates it, and the test matrix skips tests/perf. The slow
-    # memory ceilings run in the nightly slow job.
+    # thumbnail memory ceiling runs in the nightly slow job.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
