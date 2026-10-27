@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from portolan_cli.preparation import PreparedItem
+    from portolan_cli.run_state import RunState
 
 
 class FixAction(Enum):
@@ -138,6 +139,7 @@ def fix_metadata(
     report: MetadataReport,
     *,
     dry_run: bool = False,
+    state: RunState | None = None,
 ) -> FixReport:
     """Apply fixes for all issues in a MetadataReport.
 
@@ -155,6 +157,7 @@ def fix_metadata(
         directory: Root directory of the catalog/collection.
         report: MetadataReport with check results.
         dry_run: If True, don't actually make changes.
+        state: The run state of the command. None opens one run per catalog.
 
     Returns:
         FixReport with results of all fix operations.
@@ -174,52 +177,51 @@ def fix_metadata(
                 catalog_root, item = prepared
                 to_finalize.setdefault(catalog_root, []).append((result, item))
         else:
-            result = _fix_single_file(check_result, directory, dry_run=dry_run)
+            result = _fix_single_file(check_result, directory, dry_run=dry_run, state=state)
         fix_results.append(result)
 
     for catalog_root, batch in to_finalize.items():
-        fix_results.extend(_finalize_created_items(catalog_root, batch))
+        fix_results.extend(_finalize_created_items(catalog_root, batch, state))
 
     return FixReport(results=fix_results, fresh_skipped=fresh_skipped)
 
 
 def _finalize_created_items(
-    catalog_root: Path, batch: list[tuple[FixResult, PreparedItem]]
+    catalog_root: Path, batch: list[tuple[FixResult, PreparedItem]], state: RunState | None
 ) -> list[FixResult]:
     """Finalize the prepared MISSING items of one catalog, then write their mirrors.
 
     One ``finalize_items`` call writes the batch, and the items.parquet mirror
     folds into the version it stages, as after ``add``. One run state holds
-    both, and one commit writes each collection version and the catalog index.
-    A failure fails every result of the batch and commits nothing, because
-    ``finalize_items`` writes the batch as one unit.
+    both. The command commits it once, or this function commits its own state
+    when the caller passes none. A failure fails every result of the batch.
+    The versions that ``finalize_items`` staged before the failure stay staged,
+    so versions.json follows the collection.json files already on disk.
 
     Returns:
         One SKIPPED result for each collection whose mirror could not be written.
     """
     from portolan_cli.finalization import finalize_items
-    from portolan_cli.run_state import RunState
     from portolan_cli.stac_parquet import generate_parquet_mirrors
-    from portolan_cli.version_ops import commit_run
+    from portolan_cli.version_ops import owned_run
 
-    state = RunState.open(catalog_root)
-    try:
-        finalize_items(catalog_root, [item for _result, item in batch], state=state)
-    except Exception as e:
-        for result, _item in batch:
-            result.success = False
-            result.message = f"Failed to fix: {e}"
-        return []
+    with owned_run(catalog_root, state) as run:
+        try:
+            finalize_items(catalog_root, [item for _result, item in batch], state=run)
+        except Exception as e:
+            for result, _item in batch:
+                result.success = False
+                result.message = f"Failed to fix: {e}"
+            return []
 
-    collections = {item.collection_id for _result, item in batch}
-    mirrors = generate_parquet_mirrors(
-        catalog_root,
-        collections,
-        generate_parquet=False,
-        versioned_collections=collections,
-        state=state,
-    )
-    commit_run(state)
+        collections = {item.collection_id for _result, item in batch}
+        mirrors = generate_parquet_mirrors(
+            catalog_root,
+            collections,
+            generate_parquet=False,
+            versioned_collections=collections,
+            state=run,
+        )
     return [
         FixResult(
             file_path=catalog_root / collection_id / "collection.json",
@@ -231,7 +233,9 @@ def _finalize_created_items(
     ]
 
 
-def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
+def repair_titles_and_links(
+    catalog_root: Path, *, dry_run: bool = False, state: RunState | None = None
+) -> list[FixResult]:
     """Populate human-readable titles/descriptions and link titles (Issue #502).
 
     Repairs what rashid's mandatory-title rules (PTL-TTL-001/-002/-003) flag:
@@ -247,6 +251,7 @@ def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> lis
     Args:
         catalog_root: Root directory of the catalog.
         dry_run: If True, report what would change without writing.
+        state: The run state, which reads metadata.yaml once per command.
 
     Returns:
         FixResults for each file that was (or would be) modified.
@@ -305,7 +310,7 @@ def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> lis
             success=True,
             message="Applied the metadata.yaml title/description",
         )
-        for catalog_path in apply_catalog_human_titles(catalog_root, dry_run=dry_run)
+        for catalog_path in apply_catalog_human_titles(catalog_root, dry_run=dry_run, state=state)
     )
 
     # Backfill child/item link titles from their (now-titled) targets.
@@ -621,6 +626,7 @@ def _fix_single_file(
     directory: Path,
     *,
     dry_run: bool = False,
+    state: RunState | None = None,
 ) -> FixResult:
     """Fix metadata for a single file based on its check result.
 
@@ -631,6 +637,7 @@ def _fix_single_file(
         check_result: The check result indicating what needs fixing.
         directory: Root directory for context.
         dry_run: If True, don't actually make changes.
+        state: The run state, which parses the config once per command.
 
     Returns:
         FixResult describing what was done.
@@ -683,7 +690,7 @@ def _fix_single_file(
                     ),
                 )
 
-            update_item_metadata(item_path, file_path)
+            update_item_metadata(item_path, file_path, state=state)
 
             versions_path = collection_dir / "versions.json"
             if versions_path.exists():

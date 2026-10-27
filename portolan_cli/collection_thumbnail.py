@@ -377,13 +377,17 @@ def _thumbnails_wanted(
 
 
 def would_generate_thumbnail(
-    collection_path: Path, catalog_root: Path, *, generate: bool | None = None
+    collection_path: Path,
+    catalog_root: Path,
+    *,
+    generate: bool | None = None,
+    state: ConfigSource | None = None,
 ) -> bool:
     """True when :func:`ensure_collection_thumbnail` would register something.
 
     Runs every gate except the render itself, so a dry run and a real run agree.
     """
-    if not _thumbnails_wanted(catalog_root, generate):
+    if not _thumbnails_wanted(catalog_root, generate, state):
         return False
     data = _load_collection(collection_path)
     if data is None or _has_thumbnail_asset(data):

@@ -29,6 +29,7 @@ from portolan_cli.versions import (
 )
 
 if TYPE_CHECKING:
+    from portolan_cli.config import ConfigSource
     from portolan_cli.preparation import PreparedItem
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,9 @@ logger = logging.getLogger(__name__)
 _GENERATED_BAND_NAME = re.compile(r"^band_\d+$")
 
 
-def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
+def update_item_metadata(
+    item_path: Path, file_path: Path, *, state: ConfigSource | None = None
+) -> ItemModel:
     """Re-extract metadata from file and update existing STAC item.
 
     Refreshes only the fields this metadata pass owns, the item's bbox,
@@ -67,6 +70,7 @@ def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
     Args:
         item_path: Path to existing item JSON file.
         file_path: Path to the data file (GeoParquet or COG).
+        state: The run state, which parses the config once per command.
 
     Returns:
         Updated ItemModel (a lossy view, the on-disk JSON is the full record).
@@ -119,7 +123,7 @@ def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
     if not data_asset.get("type"):
         data_asset["type"] = _get_media_type(file_path)
     data_asset.setdefault("roles", ["data"])
-    _refresh_raster_bands(data_asset, file_path)
+    _refresh_raster_bands(data_asset, file_path, state)
 
     # Write the full record back to disk. Atomic, so a kill mid-write cannot
     # leave a truncated item.json where a valid one used to be (issue #687).
@@ -128,7 +132,9 @@ def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
     return ItemModel.from_dict(item_data)
 
 
-def _refresh_raster_bands(data_asset: dict[str, Any], file_path: Path) -> None:
+def _refresh_raster_bands(
+    data_asset: dict[str, Any], file_path: Path, state: ConfigSource | None
+) -> None:
     """Re-extract a raster data asset's ``bands`` array in place (#737).
 
     A non-raster asset is untouched, so a GeoParquet asset's array still survives
@@ -145,7 +151,7 @@ def _refresh_raster_bands(data_asset: dict[str, Any], file_path: Path) -> None:
     if file_path.suffix.lower() not in RASTER_EXTENSIONS:
         return
 
-    fresh = _extract_raster_bands(file_path)
+    fresh = _extract_raster_bands(file_path, state)
     if not fresh:
         logger.warning(
             "Could not re-extract bands from '%s'; keeping the recorded array",
@@ -163,7 +169,7 @@ def _refresh_raster_bands(data_asset: dict[str, Any], file_path: Path) -> None:
     data_asset["bands"] = fresh
 
 
-def _extract_raster_bands(file_path: Path) -> list[dict[str, Any]]:
+def _extract_raster_bands(file_path: Path, state: ConfigSource | None) -> list[dict[str, Any]]:
     """The ``bands`` array ``portolan add`` would write for this raster.
 
     Orchestrates the extractors the add path uses, ``extract_cog_metadata`` for
@@ -207,7 +213,7 @@ def _extract_raster_bands(file_path: Path) -> list[dict[str, Any]]:
         catalog_root, collection_dir = _statistics_scope(file_path)
         if catalog_root is not None:
             band_stats, parquet_stats = _extract_statistics_best_effort(
-                file_path, RASTER, catalog_root, collection_path=collection_dir
+                file_path, RASTER, catalog_root, collection_path=collection_dir, state=state
             )
             # `_extract_statistics_best_effort` already applied the
             # `statistics.enabled` gate, returning nothing when the setting is

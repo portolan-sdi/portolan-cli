@@ -1432,6 +1432,7 @@ def convert_directory(
     catalog_path: Path | None = None,
     workers: int | None = None,
     force: bool = False,
+    state: RunState | None = None,
 ) -> ConversionReport:
     """Convert all geospatial files in a directory to cloud-native formats.
 
@@ -1457,6 +1458,7 @@ def convert_directory(
             count (e.g. ``os.cpu_count()``) before calling.
         force: Re-optimize already-cloud-native rasters (passed through to
             :func:`convert_file`). Raster-scoped; valid vectors stay skipped.
+        state: The run state, which parses the config once per command.
 
     Returns:
         ConversionReport with results for all processed files.
@@ -1488,8 +1490,8 @@ def convert_directory(
 
     # Load conversion settings once and pass them explicitly to every file, so a
     # large batch does not re-read .portolan/config.yaml per file (4,200+ tiles).
-    cog_settings = get_cog_settings(catalog_path) if catalog_path else None
-    vector_settings = get_vector_settings(catalog_path) if catalog_path else None
+    cog_settings = get_cog_settings(catalog_path, state=state) if catalog_path else None
+    vector_settings = get_vector_settings(catalog_path, state=state) if catalog_path else None
 
     # Parallelize only when explicitly asked for (>1 worker) and there is more
     # than one file. A single file or workers<=1 stays serial to avoid pool

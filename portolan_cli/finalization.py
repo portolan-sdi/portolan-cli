@@ -523,7 +523,9 @@ def derive_and_apply_fields(
     apply_collection_fields(collection, derive_collection_fields(members, own))
 
 
-def refresh_collection_fields(catalog_root: Path, collection_dir: Path) -> bool:
+def refresh_collection_fields(
+    catalog_root: Path, collection_dir: Path, *, state: RunState | None = None
+) -> bool:
     """Derive the fields of a saved collection again, after its members changed.
 
     ``rm`` and ``check --fix --metadata`` change the members without passing
@@ -534,6 +536,7 @@ def refresh_collection_fields(catalog_root: Path, collection_dir: Path) -> bool:
     Args:
         catalog_root: Root directory of the catalog.
         collection_dir: Directory holding collection.json.
+        state: The run state, which reads metadata.yaml once per command.
 
     Returns:
         True when collection.json changed.
@@ -549,7 +552,12 @@ def refresh_collection_fields(catalog_root: Path, collection_dir: Path) -> bool:
         logger.warning("Cannot read %s; its extent is not derived", path)
         return False
     members = collection_members(collection, collection_dir, catalog_root=catalog_root)
-    fields = derive_collection_fields(members, load_own_metadata(collection_dir))
+    own = (
+        state.metadata(collection_dir, inherit=False)
+        if state is not None
+        else load_own_metadata(collection_dir)
+    )
+    fields = derive_collection_fields(members, own)
     data = json.loads(path.read_text(encoding="utf-8"))
     before = json.dumps(data, sort_keys=True)
     apply_collection_fields_to_dict(data, fields)

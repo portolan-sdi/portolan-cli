@@ -998,7 +998,7 @@ class TestExitCodePerMode:
         from portolan_cli.validation import fixers
 
         root = _mirror_catalog_with_a_lost_child_link(valid_catalog)
-        monkeypatch.setitem(fixers.FIXERS, "links", lambda _root, _dry_run: [])
+        monkeypatch.setitem(fixers.FIXERS, "links", lambda _root, _dry_run, _state=None: [])
 
         result = runner.invoke(cli, ["check", str(root), "--json", "--fix", "--metadata"])
 
@@ -1015,7 +1015,7 @@ class TestExitCodePerMode:
 
         root = _mirror_catalog_with_a_lost_child_link(valid_catalog)
 
-        def _failing(fix_root: Path, _dry_run: bool) -> list[FixResult]:
+        def _failing(fix_root: Path, _dry_run: bool, _state: object = None) -> list[FixResult]:
             target = fix_root / "catalog.json"
             return [FixResult(target, FixAction.UPDATED, success=False, message="injected")]
 
