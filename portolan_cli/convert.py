@@ -26,7 +26,8 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
 from portolan_cli.conversion_config import (
-    LOSSY_COMPRESSIONS,
+    GDAL_COMPRESS_NAMES,
+    PREDICTOR_COMPRESSIONS,
     QUALITY_COMPRESSIONS,
     CogSettings,
     VectorSettings,
@@ -1287,15 +1288,14 @@ def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = Non
     else:
         # DEFLATE, LZW, ZSTD, etc. use the deflate profile as base
         profile = cog_profiles.get("deflate")  # type: ignore[no-untyped-call]
-        profile["compress"] = settings.compression
+        profile["compress"] = GDAL_COMPRESS_NAMES.get(settings.compression, settings.compression)
 
     # Apply tile size settings
     profile["blockxsize"] = settings.tile_size
     profile["blockysize"] = settings.tile_size
 
-    # Apply predictor only for non-lossy compression
-    # Predictor is meaningless for JPEG/WEBP and can cause issues
-    if settings.compression not in LOSSY_COMPRESSIONS:
+    # GDAL ignores PREDICTOR for any other codec and logs a warning per file.
+    if settings.compression in PREDICTOR_COMPRESSIONS:
         profile["predictor"] = settings.predictor
 
     # The GTiff driver has no QUALITY option. Each lossy codec takes its own.

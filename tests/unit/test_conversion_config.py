@@ -800,7 +800,19 @@ class TestValidateCogSettings:
         settings = CogSettings(compression="JPEG", predictor=2)
         warnings = validate_cog_settings(settings)
 
-        assert any("ignored for lossy compression" in w for w in warnings)
+        assert any("ignored for compression 'JPEG'" in w for w in warnings)
+
+    @pytest.mark.unit
+    def test_predictor_with_packbits_warns(self) -> None:
+        """validate_cog_settings() warns that PACKBITS takes no predictor."""
+        from portolan_cli.conversion_config import CogSettings, validate_cog_settings
+
+        warnings = validate_cog_settings(CogSettings(compression="PACKBITS", predictor=2))
+
+        assert warnings == [
+            "Predictor=2 is ignored for compression 'PACKBITS'. "
+            "A predictor applies only to: DEFLATE, LZMA, LZW, ZSTD."
+        ]
 
     @pytest.mark.unit
     def test_webp_quality_no_warning(self) -> None:
