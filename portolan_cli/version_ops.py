@@ -178,7 +178,9 @@ def commit_run(state: RunState) -> dict[str, Version]:
     collection, under the catalog lock. A failure of that index update is
     logged, because the collection records are already on disk.
 
-    A plugin backend gets one ``publish_version`` for each staged collection.
+    Each collection goes to its own backend, which ``RunState.backend`` reads
+    from its config hierarchy. A plugin backend gets one ``publish_version``
+    for each of its staged collections.
 
     The staged changes are cleared, so a second call commits nothing.
 
@@ -192,15 +194,16 @@ def commit_run(state: RunState) -> dict[str, Version]:
     from portolan_cli.versions import write_versions
 
     staged = state.take_staged()
-    if not staged:
-        return {}
-    backend_name = _resolve_backend_name(None, state.catalog_root, state)
-    if backend_name != "file":
-        return _commit_to_plugin(state, staged, backend_name)
-
     published: dict[str, Version] = {}
+    by_backend: dict[str, dict[str, StagedVersion]] = {}
+    for collection_id, change in staged.items():
+        backend = state.backend(state.collection_dir(collection_id))
+        by_backend.setdefault(backend, {})[collection_id] = change
+    for backend, changes in sorted(by_backend.items()):
+        if backend != "file":
+            published.update(_commit_to_plugin(state, changes, backend))
     summaries: dict[str, CollectionSummary] = {}
-    for collection_id, change in sorted(staged.items()):
+    for collection_id, change in sorted(by_backend.get("file", {}).items()):
         collection_dir = state.collection_dir(collection_id)
         disk = state.versions(collection_dir, include_staged=False)
         updated = change.apply(disk)

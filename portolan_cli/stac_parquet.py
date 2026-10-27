@@ -703,7 +703,7 @@ def track_parquet_in_versions(
         same_bytes = tracked is not None and tracked.sha256 == digest
         if same_bytes and (not amend_latest or tracked == record):
             return
-        if (run.setting("backend") or "file") != "file":
+        if run.backend(collection_path) != "file":
             # A plugin backend reads each .parquet asset as table data, so the
             # mirror never goes to it. The local versions.json records it now.
             track_generated_assets(

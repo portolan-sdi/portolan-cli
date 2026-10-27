@@ -698,7 +698,7 @@ def track_generated_assets(
 
     versions_path = collection_path / "versions.json"
 
-    staged = state is not None and (state.setting("backend") or "file") == "file"
+    staged = state is not None and state.backend(collection_path) == "file"
     # If no versions.json, create a minimal one
     if not versions_path.exists():
         versions_file = VersionsFile(

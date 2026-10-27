@@ -520,6 +520,15 @@ class RunState:
 
         return _config.resolve_setting(key, cli_value, layers)
 
+    def backend(self, collection_dir: Path) -> str:
+        """The versioning backend of a collection, ``"file"`` when none is set.
+
+        It reads the config hierarchy of the collection, as the push check
+        does, so a collection can set its own backend.
+        """
+        name: str | None = self.setting("backend", collection_dir=collection_dir)
+        return name or "file"
+
     # ── staging ─────────────────────────────────────────────────────────────
 
     def stage(
