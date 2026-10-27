@@ -24,7 +24,6 @@ import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-from portolan_cli.conversion_config import get_vector_settings
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -1209,29 +1208,15 @@ def scale_1000_add(
     the catalog-level versions.json. The two tests in TestScaleAt1000Files
     only read the result. One CLI invocation serves both of them.
 
-    The catalog turns off the Hilbert sort and the bbox covering column. These
-    tests check the versions.json records at the #339 scale. They do not
-    check the GeoParquet output. The sort and the bbox column cost the same
-    for each file at any file count. The tests in
-    tests/integration/test_add_spatial_optimization.py cover both settings.
-    With the defaults, each one-point file takes about 48% longer to convert.
-    SCALE_1000_TIMEOUT_S gives the measured times.
+    The catalog keeps the default conversion settings, the Hilbert sort and
+    the bbox covering column included. SCALE_1000_TIMEOUT_S gives the
+    measured times. The scale gate in tests/perf counts the work per file.
     """
     catalog_root = tmp_path_factory.mktemp("scale-1000")
     result = CliRunner().invoke(
         cli, ["init", str(catalog_root), "--auto", "--license", "CC-BY-4.0"]
     )
     assert result.exit_code == 0, f"Init failed: {result.output}"
-
-    # The documented opt-out block (docs/reference/configuration.md).
-    config = catalog_root / ".portolan" / "config.yaml"
-    config.write_text(
-        config.read_text() + "conversion:\n  vector:\n    sort: none\n    add_bbox: false\n",
-        encoding="utf-8",
-    )
-    # A wrong key path falls back to the slow defaults without an error.
-    settings = get_vector_settings(catalog_root)
-    assert (settings.sort, settings.add_bbox) == ("none", False), settings
 
     collection_dir = catalog_root / "large-collection"
     collection_dir.mkdir()

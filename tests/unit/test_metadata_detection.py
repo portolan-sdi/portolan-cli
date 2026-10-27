@@ -1032,3 +1032,43 @@ class TestScanReadsVersionsOncePerCollection:
         assert [r.status for r in report.results] == [MetadataStatus.FRESH] * 3
         assert reads == [collection_dir / "versions.json"]
         assert opened == []
+
+
+class TestPrepareSharesTheFooterWithTheRun:
+    """``prepare_item`` puts the metadata it read into the run state.
+
+    The handler API takes no state, so finalization read the footer again.
+    """
+
+    @pytest.mark.unit
+    def test_a_later_read_in_the_run_opens_nothing(
+        self, tmp_path: Path, valid_points_geojson: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import shutil
+
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+        from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+        from portolan_cli.preparation import prepare_item
+        from portolan_cli.run_state import RunState
+
+        assert (
+            CliRunner()
+            .invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
+            .exit_code
+            == 0
+        )
+        (tmp_path / "pts").mkdir()
+        source = tmp_path / "pts" / "pts.geojson"
+        shutil.copy(valid_points_geojson, source)
+        state = RunState.open(tmp_path)
+        prepared = prepare_item(
+            path=source, catalog_root=tmp_path, collection_id="pts", state=state
+        )
+        opened = _count_footer_reads(monkeypatch)
+
+        again = extract_geoparquet_metadata(tmp_path / "pts" / "pts.parquet", state=state)
+
+        assert opened == []
+        assert again is prepared.metadata

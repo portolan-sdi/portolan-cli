@@ -1214,6 +1214,10 @@ def prepare_item(
     # settle_output can move a tabular output over the file 0.8.0 wrote.
     created_output = created_output and output_path == target
     source_paths = {output_path: versions_asset_key(path, collection_dir)}
+    if state is not None and isinstance(metadata, GeoParquetMetadata) and output_path.is_file():
+        # The handler API takes no state. Give the run the footer the handler
+        # read, so finalization does not read it again.
+        state.memo("geoparquet.metadata", output_path, lambda _path: metadata)
 
     # Step 3b: Load metadata.yaml defaults (for temporal/nodata when source lacks them)
     metadata_yaml = (
