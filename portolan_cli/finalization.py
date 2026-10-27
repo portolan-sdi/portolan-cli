@@ -37,7 +37,6 @@ from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata import extract_geoparquet_metadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
 from portolan_cli.query import ItemInfo
-from portolan_cli.trace import count
 from portolan_cli.stac import (
     DEFAULT_LICENSE,
     PROVISIONAL_END_DATETIME,
@@ -63,6 +62,7 @@ from portolan_cli.stac import (
 )
 from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
 from portolan_cli.stac_links import in_link_order, iter_links
+from portolan_cli.trace import count
 from portolan_cli.utils import href_root, relative_href
 from portolan_cli.versions import (
     Asset,
