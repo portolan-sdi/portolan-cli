@@ -4974,7 +4974,9 @@ def config() -> None:
     """
 
 
-@config.command("set")
+# A negative number such as -1 is a VALUE. Click reads an unknown token that
+# starts with "-" as an option and fails, so the command passes it through.
+@config.command("set", context_settings={"ignore_unknown_options": True})
 @click.argument("key")
 @click.argument("value")
 @click.option(
