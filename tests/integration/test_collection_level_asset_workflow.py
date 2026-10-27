@@ -505,6 +505,33 @@ class _CrashError(Exception):
     """The fault that the crash tests inject after collection.json is on disk."""
 
 
+def _crashed_add(
+    tmp_path: Path, fixtures_dir: Path, patcher: pytest.MonkeyPatch
+) -> tuple[Path, Path]:
+    """Run an add that raises after collection.json is on disk.
+
+    Returns:
+        The catalog root and the collection directory.
+    """
+    from portolan_cli.add import add_files
+
+    root = tmp_path / "catalog"
+    _init_catalog(root)
+    collection_dir = root / "roads"
+    collection_dir.mkdir()
+    shutil.copy(
+        fixtures_dir / "vector" / "valid" / "points.geojson", collection_dir / "roads.geojson"
+    )
+
+    def crash(*_args: object, **_kwargs: object) -> None:
+        raise _CrashError
+
+    patcher.setattr("portolan_cli.add._write_deferred", crash)
+    with pytest.raises(_CrashError):
+        add_files(paths=[collection_dir], catalog_root=root)
+    return root, collection_dir
+
+
 @pytest.mark.integration
 class TestOneAddIsOneVersion:
     """One add writes one version per collection, with every side step in it (#995)."""
@@ -628,22 +655,7 @@ class TestOneAddIsOneVersion:
     def test_an_unhandled_error_commits_nothing(
         self, tmp_path: Path, fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from portolan_cli.add import add_files
-
-        root = tmp_path / "catalog"
-        _init_catalog(root)
-        collection_dir = root / "roads"
-        collection_dir.mkdir()
-        shutil.copy(
-            fixtures_dir / "vector" / "valid" / "points.geojson", collection_dir / "roads.geojson"
-        )
-
-        def crash(*_args: object, **_kwargs: object) -> None:
-            raise _CrashError
-
-        monkeypatch.setattr("portolan_cli.add._write_deferred", crash)
-        with pytest.raises(_CrashError):
-            add_files(paths=[collection_dir], catalog_root=root)
+        root, collection_dir = _crashed_add(tmp_path, fixtures_dir, monkeypatch)
 
         assert (collection_dir / "collection.json").exists()
         assert not (collection_dir / "versions.json").exists()
@@ -662,21 +674,8 @@ class TestOneAddIsOneVersion:
         from portolan_cli.sync.checksums import compute_checksum
         from portolan_cli.versions import read_versions
 
-        root = tmp_path / "catalog"
-        _init_catalog(root)
-        collection_dir = root / "roads"
-        collection_dir.mkdir()
-        shutil.copy(
-            fixtures_dir / "vector" / "valid" / "points.geojson", collection_dir / "roads.geojson"
-        )
-
-        def crash(*_args: object, **_kwargs: object) -> None:
-            raise _CrashError
-
         with monkeypatch.context() as patched:
-            patched.setattr("portolan_cli.add._write_deferred", crash)
-            with pytest.raises(_CrashError):
-                add_files(paths=[collection_dir], catalog_root=root)
+            root, collection_dir = _crashed_add(tmp_path, fixtures_dir, patched)
 
         _added, _skipped, failures = add_files(paths=[collection_dir], catalog_root=root)
 

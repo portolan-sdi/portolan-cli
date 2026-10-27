@@ -897,6 +897,39 @@ class TestOneFooterReadPerFile:
         assert len(opened) == 1
 
 
+def _tracked_parcels(catalog: Path, source: Path, *, size_delta: int = 0) -> tuple[Path, Path]:
+    """Copy ``source`` into the collection and record its stat, off by ``size_delta``.
+
+    Returns:
+        The collection directory and the copied file.
+    """
+    import shutil
+
+    collection_dir = catalog / "test-collection"
+    parquet_path = collection_dir / "parcels.parquet"
+    shutil.copy(source, parquet_path)
+    st = parquet_path.stat()
+    entry = _versions_entry(parquet_path, mtime=st.st_mtime, size=st.st_size + size_delta)
+    _write_versions(collection_dir, {"parcels.parquet": entry})
+    return collection_dir, parquet_path
+
+
+def _catalog_with_points(root: Path, points: Path) -> Path:
+    """Init a catalog at ``root`` and copy ``points`` into its ``pts`` directory."""
+    import shutil
+
+    from click.testing import CliRunner
+
+    from portolan_cli.cli import cli
+
+    result = CliRunner().invoke(cli, ["init", str(root), "--auto", "--license", "CC-BY-4.0"])
+    assert result.exit_code == 0, result.output
+    (root / "pts").mkdir()
+    source = root / "pts" / "pts.geojson"
+    shutil.copy(points, source)
+    return source
+
+
 class TestStatBeforeOpen:
     """An unchanged stat proves a file fresh with no open of the file (#995-8)."""
 
@@ -907,17 +940,10 @@ class TestStatBeforeOpen:
         valid_points_parquet: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import shutil
-
         from portolan_cli.metadata import detection
         from portolan_cli.metadata.models import MetadataStatus
 
-        collection_dir = catalog_with_metadata / "test-collection"
-        parquet_path = collection_dir / "parcels.parquet"
-        shutil.copy(valid_points_parquet, parquet_path)
-        st = parquet_path.stat()
-        entry = _versions_entry(parquet_path, mtime=st.st_mtime, size=st.st_size)
-        _write_versions(collection_dir, {"parcels.parquet": entry})
+        collection_dir, parquet_path = _tracked_parcels(catalog_with_metadata, valid_points_parquet)
 
         def refuse(*_args: object, **_kwargs: object) -> None:
             raise AssertionError("the data file was opened")
@@ -933,17 +959,12 @@ class TestStatBeforeOpen:
         self, catalog_with_metadata: Path, valid_points_parquet: Path
     ) -> None:
         """Size must match. The same mtime with another size is no proof."""
-        import shutil
-
         from portolan_cli.metadata.detection import check_file_metadata
         from portolan_cli.metadata.models import MetadataStatus
 
-        collection_dir = catalog_with_metadata / "test-collection"
-        parquet_path = collection_dir / "parcels.parquet"
-        shutil.copy(valid_points_parquet, parquet_path)
-        st = parquet_path.stat()
-        entry = _versions_entry(parquet_path, mtime=st.st_mtime, size=st.st_size + 1)
-        _write_versions(collection_dir, {"parcels.parquet": entry})
+        collection_dir, parquet_path = _tracked_parcels(
+            catalog_with_metadata, valid_points_parquet, size_delta=1
+        )
 
         result = check_file_metadata(parquet_path, collection_dir)
 
@@ -1044,24 +1065,11 @@ class TestPrepareSharesTheFooterWithTheRun:
     def test_a_later_read_in_the_run_opens_nothing(
         self, tmp_path: Path, valid_points_geojson: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import shutil
-
-        from click.testing import CliRunner
-
-        from portolan_cli.cli import cli
         from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
         from portolan_cli.preparation import prepare_item
         from portolan_cli.run_state import RunState
 
-        assert (
-            CliRunner()
-            .invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
-            .exit_code
-            == 0
-        )
-        (tmp_path / "pts").mkdir()
-        source = tmp_path / "pts" / "pts.geojson"
-        shutil.copy(valid_points_geojson, source)
+        source = _catalog_with_points(tmp_path, valid_points_geojson)
         state = RunState.open(tmp_path)
         prepared = prepare_item(
             path=source, catalog_root=tmp_path, collection_id="pts", state=state
@@ -1082,23 +1090,10 @@ class TestPrepareHashesEachFileOnce:
         self, tmp_path: Path, valid_points_geojson: Path
     ) -> None:
         """One hash of the source, one of the output, with no run state given."""
-        import shutil
-
-        from click.testing import CliRunner
-
         from portolan_cli import trace
-        from portolan_cli.cli import cli
         from portolan_cli.preparation import prepare_item
 
-        assert (
-            CliRunner()
-            .invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
-            .exit_code
-            == 0
-        )
-        (tmp_path / "pts").mkdir()
-        source = tmp_path / "pts" / "pts.geojson"
-        shutil.copy(valid_points_geojson, source)
+        source = _catalog_with_points(tmp_path, valid_points_geojson)
 
         trace.enable()
         try:
