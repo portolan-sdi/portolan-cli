@@ -141,3 +141,29 @@ def test_auto_init_skipped_when_no_successful_tables(tmp_path: Path) -> None:
 
     _auto_init_catalog(tmp_path, report, _discovery(), TEST_LICENSE)
     assert not (tmp_path / "catalog.json").exists()
+
+
+def test_a_thumbnail_exception_keeps_the_versions_of_the_add(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The thumbnails run after the add. An exception there still commits the add."""
+    import portolan_cli.collection_thumbnail as collection_thumbnail
+    from portolan_cli.versions import read_versions
+
+    def broken_thumbnails(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("thumbnail broke")
+
+    monkeypatch.setattr(collection_thumbnail, "ensure_collection_thumbnails", broken_thumbnails)
+    collection_dir = tmp_path / "vacant_land"
+    collection_dir.mkdir()
+    shutil.copy(FIXTURES_DIR / "simple.parquet", collection_dir / "vacant_land.parquet")
+    report = _report("vacant_land/vacant_land.parquet", "vacant_land")
+
+    with pytest.raises(RuntimeError, match="thumbnail broke"):
+        _auto_init_catalog(tmp_path, report, _discovery(), TEST_LICENSE)
+
+    versions = read_versions(collection_dir / "versions.json")
+    assert versions.current_version == "1.0.0"
+    assert sorted(versions.versions[-1].assets) == ["vacant_land.parquet"]
+    index = json.loads((tmp_path / "versions.json").read_text(encoding="utf-8"))
+    assert index["collections"]["vacant_land"]["current_version"] == "1.0.0"
