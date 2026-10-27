@@ -200,8 +200,9 @@ def test_every_invariant_reason_is_used() -> None:
 def test_the_scan_sees_the_markers_it_counts() -> None:
     """Guard the scan: it reads the reason of a strict xfail marker.
 
-    The tree holds no strict xfail now. geoparquet-io 1.7.0 fixed gpio#1222,
-    the last one. So the guard reads a module written here.
+    geoparquet-io 1.7.0 fixed gpio#1222, the marker this guard read. The guard
+    now reads a module written here, so it does not depend on a marker in the
+    tree.
     """
     tree = ast.parse(
         "import pytest\n"
