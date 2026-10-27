@@ -16,20 +16,22 @@ from __future__ import annotations
 
 import functools
 import gzip
-import json
 import logging
 import math
 import threading
+import time
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
 from portolan_cli.config import load_catalog_config
 from portolan_cli.trace import count
-from portolan_cli.utils import get_dict
+from portolan_cli.utils import get_dict, redact_credentials
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from matplotlib.axes import Axes
 
     from portolan_cli.config import ConfigSource
@@ -167,6 +169,54 @@ class ThumbnailConfig:
     basemap_zoom_adjust: int = 0
     basemap_api_key: str | None = None
     max_features: int = 100_000
+    basemap_run: BasemapRun | None = field(default=None, compare=False, repr=False)
+
+
+class BasemapRun:
+    """The basemap state of one run: the providers that did not answer.
+
+    One run marks a provider after a tile timeout or the deadline. Its later
+    thumbnails then draw no basemap and do not wait again. A new run asks the
+    provider again. ``get_thumbnail_config`` keeps one per run state.
+    """
+
+    def __init__(self) -> None:
+        """Start a run in which every provider may answer."""
+        self._lock = threading.Lock()
+        self._unreachable: set[str] = set()
+
+    def reachable(self, provider: str) -> bool:
+        """False when ``provider`` did not answer earlier in this run."""
+        with self._lock:
+            return provider not in self._unreachable
+
+    def mark_unreachable(self, provider: str) -> bool:
+        """Mark ``provider`` for the rest of the run. True on the first mark."""
+        with self._lock:
+            first = provider not in self._unreachable
+            self._unreachable.add(provider)
+            return first
+
+
+_T = TypeVar("_T")
+
+
+@runtime_checkable
+class _RunMemo(Protocol):
+    """The memo of ``run_state.RunState``. viz does not import run_state."""
+
+    def memo(self, kind: str, path: Path, loader: Callable[[Path], _T]) -> _T:
+        """Load a value derived from one file once per run."""
+        ...
+
+
+def _basemap_run(catalog_path: Path, state: object) -> BasemapRun | None:
+    """Return the basemap state of the run of ``state``, or None outside a run."""
+    config_file = catalog_path / ".portolan" / "config.yaml"
+    if not isinstance(state, _RunMemo) or not config_file.is_file():
+        return None
+    run: BasemapRun = state.memo("thumbnails.basemap_run", config_file, lambda _p: BasemapRun())
+    return run
 
 
 def get_thumbnail_config(
@@ -185,8 +235,9 @@ def get_thumbnail_config(
     """
     config = load_catalog_config(catalog_path, state=state).data
     thumbnails = get_dict(config, "thumbnails")
+    run = _basemap_run(catalog_path, state)
     if not thumbnails:
-        return ThumbnailConfig()
+        return ThumbnailConfig(basemap_run=run)
 
     basemap = get_dict(thumbnails, "basemap")
 
@@ -208,6 +259,7 @@ def get_thumbnail_config(
         max_features=_parse_positive_int(
             thumbnails.get("max_features"), "thumbnails.max_features", 100_000
         ),
+        basemap_run=run,
     )
 
 
@@ -299,9 +351,16 @@ def _transform_coord(
     """
     lon_min, lat_min, lon_max, lat_max = tile_bounds
     lon = lon_min + (mvt_x / extent) * (lon_max - lon_min)
-    # Y is inverted in MVT (0 at top)
-    lat = lat_max - (mvt_y / extent) * (lat_max - lat_min)
+    # Y is inverted in MVT (0 at top). A tile is linear in Web Mercator y,
+    # not in latitude, so the interpolation runs in Mercator y.
+    top, bottom = _mercator_y(lat_max), _mercator_y(lat_min)
+    lat = math.degrees(math.atan(math.sinh(top - (mvt_y / extent) * (top - bottom))))
     return (lon, lat)
+
+
+def _mercator_y(lat: float) -> float:
+    """Web Mercator y of ``lat`` on the unit sphere."""
+    return math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
 
 
 def _transform_coords(
@@ -408,7 +467,9 @@ def _process_tile_data(
     if tile_data[:2] == b"\x1f\x8b":
         tile_data = gzip.decompress(tile_data)
 
-    decoded = mvt_decoder.decode(tile_data)
+    # MVT y grows down. The decoder flips it up by default, and
+    # _transform_coord expects the MVT convention.
+    decoded = mvt_decoder.decode(tile_data, default_options={"y_coord_down": True})
     tile_bounds = _tile_bounds(z, x, y)
 
     for layer in decoded.values():
@@ -858,11 +919,17 @@ def _to_web_mercator(
     which took 17 s of a 36 s 100-collection add (#993). The geometries are a
     sample of at most ``max_features``, so this is cheap.
 
+    A geographic source keeps its longitudes in one piece. EPSG:3857 wraps
+    longitude 190 to -170, so the projection adds the whole turns of the
+    world back. A GeoParquet bbox with minx > maxx crosses the antimeridian,
+    and the longitudes west of the crossing move east by 360.
+
     Returns:
-        The projected geometries and bounds, or None when the CRS is unknown
-        or the coordinates do not fit it (for example projected values under a
-        geographic CRS, #516). The caller then draws in the source CRS with no
-        basemap.
+        The projected geometries and bounds, or None when the CRS is unknown,
+        when the coordinates do not fit it (for example projected values under
+        a geographic CRS, #516), or when the data lies wholly past the
+        EPSG:3857 latitude limit, where it would collapse to a line. The caller
+        then draws in the source CRS with no basemap.
     """
     import numpy as np
     import shapely
@@ -878,6 +945,13 @@ def _to_web_mercator(
         return None
 
     geographic = source.is_geographic
+    world = 2 * _MERCATOR_LIMIT
+    minx, miny, maxx, maxy = bounds
+    crossing = geographic and minx > maxx
+    # The middle of the gap between the two halves of a crossing extent.
+    unwrap_below = (minx + maxx) / 2
+    if crossing:
+        maxx += 360
 
     def clip_lat(lat: Any) -> Any:
         # Clip a valid latitude to the EPSG:3857 limit. A value beyond +-90 is
@@ -887,22 +961,43 @@ def _to_web_mercator(
         return np.where(np.abs(lat) <= 90, np.clip(lat, -_MERCATOR_MAX_LAT, _MERCATOR_MAX_LAT), lat)
 
     def project(xy: Any) -> Any:
-        x, y = transformer.transform(xy[:, 0], clip_lat(xy[:, 1]))
-        return np.column_stack((x, y))
+        if not geographic:
+            x, y = transformer.transform(xy[:, 0], xy[:, 1])
+            return np.column_stack((x, y))
+        lon = xy[:, 0]
+        if crossing:
+            lon = np.where(lon < unwrap_below, lon + 360, lon)
+        turns = np.floor((lon + 180) / 360)
+        x, y = transformer.transform(lon - 360 * turns, clip_lat(xy[:, 1]))
+        return np.column_stack((x + turns * world, y))
 
-    minx, miny, maxx, maxy = bounds
     with np.errstate(invalid="ignore", over="ignore"):
         projected = shapely.transform(geoms, project)
-        box = transformer.transform_bounds(
-            minx,
-            float(clip_lat(np.array(miny))),
-            maxx,
-            float(clip_lat(np.array(maxy))),
-            densify_pts=21,
-        )
+        if geographic:
+            # EPSG:3857 maps longitude and latitude apart, so the corners
+            # give the box.
+            corners = project(np.array([[minx, miny], [maxx, maxy]], dtype=float))
+            box = (corners[0, 0], corners[0, 1], corners[1, 0], corners[1, 1])
+        else:
+            box = transformer.transform_bounds(minx, miny, maxx, maxy, densify_pts=21)
     coords = shapely.get_coordinates(projected)
     if not (np.isfinite(box).all() and np.isfinite(coords).all()):
         logger.debug("Coordinates do not fit %s; drawing without a basemap", crs)
+        return None
+    # A geographic longitude lies in -180 to 360 (the 0 to 360 convention),
+    # plus 360 for the east side of a crossing. One degree more on each side
+    # is rounding.
+    degree = world / 360
+    if (
+        len(coords)
+        and geographic
+        and not (-181 * degree <= coords[:, 0].min() and coords[:, 0].max() <= 541 * degree)
+    ):
+        logger.debug("Longitudes do not fit %s; drawing without a basemap", crs)
+        return None
+    edge = _MERCATOR_LIMIT * (1 - 1e-9)
+    if box[1] >= edge or box[3] <= -edge:
+        logger.debug("Data lies past the EPSG:3857 latitude limit; drawing without a basemap")
         return None
     return projected, (box[0], box[1], box[2], box[3])
 
@@ -950,11 +1045,14 @@ def _render(
             config.basemap_opacity,
             config.basemap_zoom_adjust,
             api_key=config.basemap_api_key,
+            run=config.basemap_run,
         )
     # No bbox_inches="tight": the axes fill the figure, and a tight bbox costs
     # a second draw.
     figure.savefig(
         output_path,
+        # A savefig.dpi in the user's matplotlibrc would scale the image.
+        dpi=_DPI,
         facecolor="white",
         edgecolor="none",
         pil_kwargs={"quality": config.quality},
@@ -1038,61 +1136,6 @@ def _bbox_from_geo(geo_meta: dict[str, Any]) -> tuple[float, float, float, float
     return None
 
 
-def _read_geoparquet_bounds(source: Path | Any) -> tuple[float, float, float, float] | None:
-    """Read bounding box from GeoParquet file metadata (O(1) operation).
-
-    Falls back to computing bounds from the geometry column when the metadata
-    has no bbox.
-
-    Args:
-        source: Path to a GeoParquet file, or an open ``pyarrow.parquet.ParquetFile``.
-
-    Returns:
-        Tuple of (minx, miny, maxx, maxy) or None if empty/unavailable.
-    """
-    from portolan_cli.formats import read_geo_metadata
-
-    # The read goes through the raw footer: the Arrow schema hides a ``geo``
-    # key the writer appended at close (issue #864).
-    geo_meta = read_geo_metadata(source) or {}
-    bbox = _bbox_from_geo(geo_meta)
-    if bbox is not None:
-        return bbox
-    logger.debug("No bbox in GeoParquet metadata, falling back to data read")
-    path = Path(source.reader.path) if hasattr(source, "reader") else Path(source)
-    return _read_geoparquet_bounds_from_data(path, geo_meta.get("primary_column"))
-
-
-def _read_geoparquet_bounds_from_data(
-    gpq_path: Path, geometry_column: str | None = None
-) -> tuple[float, float, float, float] | None:
-    """Fallback: compute bounds by reading the geometry column.
-
-    Validates bounds for inf/nan values (issue #516). CRS may not be WGS84.
-    """
-    try:
-        import geopandas as gpd
-    except ImportError:
-        return None
-
-    try:
-        from portolan_cli.bbox import is_finite_bbox
-
-        columns = [geometry_column] if geometry_column else None
-        gdf = gpd.read_parquet(gpq_path, columns=columns, partitioning=None)
-        if gdf.empty:
-            return None
-        bounds = gdf.total_bounds
-        bbox_list = [bounds[0], bounds[1], bounds[2], bounds[3]]
-        if is_finite_bbox(bbox_list):
-            return (bounds[0], bounds[1], bounds[2], bounds[3])
-        logger.warning("Invalid bounds from GeoParquet data (inf/nan): %s", bbox_list)
-        return None
-    except Exception as e:
-        logger.debug("Failed to read GeoParquet bounds from data: %s", e)
-        return None
-
-
 #: Rows per Arrow batch when the reader takes every n-th row. A multiple of the
 #: stride keeps the picks evenly spaced across batch boundaries.
 _SAMPLE_BATCH_ROWS = 65_536
@@ -1125,30 +1168,29 @@ def _sample_rows(parquet_file: Any, columns: list[str], max_features: int) -> An
     return pa.Table.from_batches(batches, schema=pa.schema([schema.field(c) for c in columns]))
 
 
-def _sample_geoparquet(
-    source: Path | Any, max_features: int, columns: list[str] | None = None
-) -> Any:
-    """Read a spread-out sample of a GeoParquet too large to render whole.
+def _encoding(geo_meta: dict[str, Any], primary: str) -> str:
+    """Return the GeoParquet encoding of ``primary`` in lower case. WKB is the default."""
+    return str(get_dict(get_dict(geo_meta, "columns"), primary).get("encoding", "WKB")).lower()
 
-    The frame is unaffected: the extent comes from file metadata in O(1), so a
-    sampled render still spans the whole bbox. Only feature density drops.
 
-    Args:
-        source: Path to the file, or an open ``pyarrow.parquet.ParquetFile``.
-        max_features: About how many rows to read.
-        columns: Columns to read. None reads the geometry column only.
+def _geo_frame(table: Any, primary: str, encoding: str, crs: Any) -> Any:
+    """Build a GeoDataFrame from an Arrow table read from a GeoParquet file.
 
-    Returns:
-        GeoDataFrame of the sampled rows.
+    A GeoArrow column (GeoParquet 1.1) gets the extension name of its
+    encoding, so that ``GeoDataFrame.from_arrow`` decodes it. A writer can
+    leave the name out of the Arrow schema. The table comes from the open
+    file, so the read opens the file once.
     """
-    import pyarrow.parquet as pq
+    import geopandas as gpd
 
-    count("parquet.opens", 0 if isinstance(source, pq.ParquetFile) else 1)
-    parquet_file = source if isinstance(source, pq.ParquetFile) else pq.ParquetFile(str(source))
-    geo_meta = json.loads((parquet_file.metadata.metadata or {})[b"geo"].decode("utf-8"))
-    primary = geo_meta["primary_column"]
-    table = _sample_rows(parquet_file, columns or [primary], max_features)
-    return _wkb_frame(table, primary, _declared_crs(geo_meta, primary))
+    if encoding == "wkb":
+        return _wkb_frame(table, primary, crs)
+    index = table.schema.get_field_index(primary)
+    field = table.schema.field(index).with_metadata(
+        {b"ARROW:extension:name": f"geoarrow.{encoding}".encode()}
+    )
+    table = table.set_column(index, field, table.column(index))
+    return gpd.GeoDataFrame.from_arrow(table, geometry=primary).set_crs(crs, allow_override=True)
 
 
 def _declared_crs(geo_meta: dict[str, Any], primary: str) -> Any:
@@ -1206,7 +1248,7 @@ def _read_geoparquet_for_thumbnail(
         - source_crs: CRS of the data, or None when unknown
     """
     try:
-        import geopandas as gpd
+        import geopandas  # noqa: F401 - the gate for the optional extra
         import pyarrow.parquet as pq
     except ImportError:
         logger.debug("geopandas not available")
@@ -1226,27 +1268,23 @@ def _read_geoparquet_for_thumbnail(
             if field is not None and field != primary:
                 columns.insert(0, field)
         full_bbox = _bbox_from_geo(geo_meta)
-        encoding = str(get_dict(get_dict(geo_meta, "columns"), primary).get("encoding", "WKB"))
+        encoding = _encoding(geo_meta, primary)
+        crs = _declared_crs(geo_meta, primary)
         sampled = max_features is not None and parquet_file.metadata.num_rows > max_features
 
-        if encoding.upper() != "WKB":
-            # A GeoArrow-encoded column: geopandas decodes it. Rare enough
-            # that the reader does not sample it.
-            gdf = gpd.read_parquet(gpq_path, columns=columns, partitioning=None)
-            sampled = False
-        elif sampled and max_features is not None:
-            gdf = _sample_geoparquet(parquet_file, max_features, columns)
+        if sampled and max_features is not None:
+            table = _sample_rows(parquet_file, columns, max_features)
         else:
             table = parquet_file.read(columns=columns)
-            gdf = _wkb_frame(table, primary, _declared_crs(geo_meta, primary))
+        gdf = _geo_frame(table, primary, encoding, crs)
         if gdf.empty:
             return None, None, None
 
         if full_bbox is None:
             # No bbox in the footer. A full read knows the exact extent. A
-            # sample does not, so read the geometry column for it.
+            # sample does not, so stream the geometry column of the open file.
             if sampled:
-                full_bbox = _read_geoparquet_bounds_from_data(gpq_path, primary)
+                full_bbox = _stream_bounds(parquet_file, primary, encoding, crs)
             else:
                 full_bbox = _finite_bounds(gdf)
             if full_bbox is None:
@@ -1257,6 +1295,41 @@ def _read_geoparquet_for_thumbnail(
     except Exception as e:
         logger.warning("Could not read %s for its thumbnail: %s", gpq_path.name, e)
         return None, None, None
+
+
+def _stream_bounds(
+    parquet_file: Any, primary: str, encoding: str, crs: Any
+) -> tuple[float, float, float, float] | None:
+    """Return the extent of every row, one batch of the geometry column at a time.
+
+    Memory stays bounded by one batch. The read uses the open file.
+    """
+    import numpy as np
+    import pyarrow as pa
+    import shapely
+
+    boxes = [
+        shapely.total_bounds(
+            _geo_frame(pa.Table.from_batches([batch]), primary, encoding, crs).geometry.array
+        )
+        for batch in parquet_file.iter_batches(batch_size=_SAMPLE_BATCH_ROWS, columns=[primary])
+    ]
+    if not boxes:
+        return None
+    stacked = np.array(boxes)
+    with np.errstate(invalid="ignore"):
+        bounds = (
+            np.nanmin(stacked[:, 0]),
+            np.nanmin(stacked[:, 1]),
+            np.nanmax(stacked[:, 2]),
+            np.nanmax(stacked[:, 3]),
+        )
+    from portolan_cli.bbox import is_finite_bbox
+
+    if not is_finite_bbox(list(bounds)):
+        logger.warning("Invalid bounds from GeoParquet data (inf/nan): %s", list(bounds))
+        return None
+    return (float(bounds[0]), float(bounds[1]), float(bounds[2]), float(bounds[3]))
 
 
 def _finite_bounds(gdf: Any) -> tuple[float, float, float, float] | None:
@@ -1340,6 +1413,27 @@ def _render_geoparquet(
 #: every provider. Measured on this repo's dev VM, 25 CARTO tiles took 1.37 s
 #: on one connection and 0.95 s on two.
 _TILE_CONNECTIONS = 2
+
+#: Seconds that one tile request waits to connect, and then for each read.
+#: contextily sends its requests with no timeout, so a server that did not
+#: answer stopped the add.
+_TILE_TIMEOUT_S = 10.0
+
+#: Seconds that all the tiles of one basemap may take. After it the
+#: thumbnail has no basemap, and the run asks that provider no more.
+_BASEMAP_DEADLINE_S = 30.0
+
+#: More requests for a tile after an HTTP error other than 404, as contextily.
+_TILE_RETRIES = 2
+
+
+class _TileServerDownError(Exception):
+    """A tile request passed its timeout or the deadline, or did not connect."""
+
+    def __init__(self, url: str) -> None:
+        super().__init__(url)
+        self.url = url
+
 
 #: Tile hosts that serve a watermark tile to a request without a key.
 _KEYED_TILE_HOSTS = ("basemaps.cartocdn.com",)
@@ -1429,6 +1523,7 @@ def _fetch_basemap(
     frame: tuple[float, float, float, float],
     zoom: int,
     size_px: tuple[int, int],
+    deadline: float,
 ) -> tuple[Any, tuple[float, float, float, float]]:
     """Return the basemap of ``frame`` (EPSG:3857) at the output resolution.
 
@@ -1437,10 +1532,21 @@ def _fetch_basemap(
     render, which took half of a 85 ms collection thumbnail. The result is
     memoized for the run.
 
+    Args:
+        ctx_module: The contextily module.
+        provider: The tile provider, with its key.
+        frame: (left, bottom, right, top) in EPSG:3857.
+        zoom: The tile zoom.
+        size_px: The pixel size of the frame in the output.
+        deadline: The ``time.monotonic`` value by which the tiles must be in.
+
     Returns:
         An RGBA array, and its extent (left, right, bottom, top). The extent is
         smaller than the frame when the frame passes the edge of the tile
         world, as a frame around global data does.
+
+    Raises:
+        _TileServerDownError: When a tile passes its timeout or the deadline.
     """
     key = (provider.build_url(), zoom, *frame, *size_px)
     with _tile_memo_lock:
@@ -1452,19 +1558,20 @@ def _fetch_basemap(
     import numpy as np
     from PIL import Image
 
+    # Private parts of contextily, read at version 1.7.0. bounds2img has no
+    # way to time a request out, so this function fetches the tiles itself
+    # and uses contextily for the tile list and the mosaic.
+    # tests/unit/test_thumbnail.py pins their signatures.
+    tile_module = ctx_module.tile
     left, bottom, right, top = frame
-    mosaic, (img_left, img_right, img_bottom, img_top) = ctx_module.bounds2img(
-        left,
-        bottom,
-        right,
-        top,
-        zoom=zoom,
-        source=provider,
-        ll=False,
-        n_connections=_TILE_CONNECTIONS,
-        use_cache=False,
-    )
-    count("tiles.fetched", ctx_module.howmany(left, bottom, right, top, zoom, verbose=False))
+    west, south = tile_module._sm2ll(left, bottom)
+    east, north = tile_module._sm2ll(right, top)
+    tiles = list(tile_module.mt.tiles(west, south, east, north, [zoom]))
+    urls = [provider.build_url(x=t.x, y=t.y, z=t.z) for t in tiles]
+    count("tiles.fetched", len(urls))
+    mosaic, (west, south, east, north) = tile_module._merge_tiles(tiles, _get_tiles(urls, deadline))
+    img_left, img_bottom = tile_module.mt.xy(west, south)
+    img_right, img_top = tile_module.mt.xy(east, north)
     # Tile pixels are linear in EPSG:3857, so the covered part of the frame
     # maps to a pixel box of the mosaic.
     cut_left, cut_right = max(left, img_left), min(right, img_right)
@@ -1492,19 +1599,124 @@ def _fetch_basemap(
     return result
 
 
+def _get_tile(url: str) -> Any:
+    """Fetch one tile with a socket timeout, as an RGBA array.
+
+    The request, the retries, and the decode are those of contextily's
+    ``_retryer`` with its defaults, plus the timeout. An HTTP error other than
+    404 gets ``_TILE_RETRIES`` more requests.
+    """
+    import io
+
+    import numpy as np
+    import requests  # type: ignore[import-untyped]
+    from contextily.tile import USER_AGENT
+    from PIL import Image
+
+    for attempt in range(_TILE_RETRIES + 1):
+        response = requests.get(url, headers={"user-agent": USER_AGENT}, timeout=_TILE_TIMEOUT_S)
+        if response.status_code == 404 or attempt == _TILE_RETRIES:
+            response.raise_for_status()
+        if response.ok:
+            break
+    with Image.open(io.BytesIO(response.content)) as image:
+        return np.asarray(image.convert("RGBA"))
+
+
+def _get_tiles(urls: list[str], deadline: float) -> list[Any]:
+    """Fetch ``urls`` on ``_TILE_CONNECTIONS`` daemon threads by ``deadline``.
+
+    A worker holds the lock only to take the next URL, never during a
+    request. A worker that is still in a request at the deadline is a
+    daemon. It ends at its socket timeout and does not keep the process
+    alive.
+
+    Raises:
+        _TileServerDownError: When a request times out or does not connect, or
+            the deadline passes.
+        Exception: The first other error of a request.
+    """
+    import requests
+
+    tiles: list[Any] = [None] * len(urls)
+    queue = list(reversed(list(enumerate(urls))))
+    errors: list[Exception] = []
+    lock = threading.Lock()
+    stop = threading.Event()
+
+    def work() -> None:
+        while not stop.is_set():
+            with lock:
+                if not queue:
+                    return
+                index, url = queue.pop()
+            try:
+                tiles[index] = _get_tile(url)
+            except (requests.Timeout, requests.ConnectionError):
+                errors.append(_TileServerDownError(url))
+                stop.set()
+            except Exception as error:  # noqa: BLE001 - the caller raises it
+                errors.append(error)
+                stop.set()
+
+    workers = [
+        threading.Thread(target=work, name=f"portolan-tile-{n}", daemon=True)
+        for n in range(min(_TILE_CONNECTIONS, len(urls)))
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(max(0.0, deadline - time.monotonic()))
+    stop.set()
+    if errors:
+        raise errors[0]
+    missing = [url for url, tile in zip(urls, tiles, strict=True) if tile is None]
+    if missing:
+        raise _TileServerDownError(missing[0])
+    return tiles
+
+
+def _world_copies(left: float, right: float) -> list[tuple[float, float, float]]:
+    """Split the x range of a frame at the edges of the EPSG:3857 tile world.
+
+    A frame past longitude 180, as for data that crosses the antimeridian,
+    takes those tiles from the west edge of the world. The tile server has
+    no tile east of 180.
+
+    Returns:
+        For each copy of the world that the frame touches: the x shift of
+        that copy, and the part of the frame in it.
+    """
+    world = 2 * _MERCATOR_LIMIT
+    first = math.floor((left + _MERCATOR_LIMIT) / world)
+    last = math.ceil((right + _MERCATOR_LIMIT) / world) - 1
+    if last - first > 2:  # No frame of a geographic source is this wide.
+        return [(0.0, left, right)]
+    copies = []
+    for turn in range(first, last + 1):
+        shift = turn * world
+        piece_left = max(left, shift - _MERCATOR_LIMIT)
+        piece_right = min(right, shift + _MERCATOR_LIMIT)
+        if piece_right > piece_left:
+            copies.append((shift, piece_left, piece_right))
+    return copies
+
+
 def add_basemap(
     ax: Axes,
     provider: str,
     opacity: float = 1.0,
     zoom_adjust: int = 0,
     api_key: str | None = None,
+    run: BasemapRun | None = None,
 ) -> None:
     """Draw basemap tiles under the data of an EPSG:3857 axes.
 
-    The tiles are fetched with ``contextily.bounds2img`` on
-    ``_TILE_CONNECTIONS`` connections and drawn with ``imshow``. The
-    attribution is an ``ax.text``. contextily's ``add_attribution`` drew the
-    whole figure once more to wrap the text.
+    The tiles come on ``_TILE_CONNECTIONS`` connections. Each request has
+    ``_TILE_TIMEOUT_S``, and all of them have ``_BASEMAP_DEADLINE_S``. The
+    tiles are drawn with ``imshow``. The attribution is an ``ax.text``.
+    contextily's ``add_attribution`` drew the whole figure once more to wrap
+    the text.
 
     Args:
         ax: Matplotlib Axes in EPSG:3857, with its limits set to the frame.
@@ -1513,8 +1725,12 @@ def add_basemap(
         opacity: Basemap opacity 0.0-1.0.
         zoom_adjust: Zoom level adjustment.
         api_key: Key for the tile provider. CARTO needs one.
+        run: The basemap state of the run. None makes this call its own run.
     """
     if provider == "none":
+        return
+    run = run if run is not None else BasemapRun()
+    if not run.reachable(provider):
         return
 
     ctx_module = _ensure_contextily()
@@ -1540,27 +1756,48 @@ def add_basemap(
         left, right = ax.get_xlim()
         bottom, top = ax.get_ylim()
         zoom = _basemap_zoom(ax, tile_provider, zoom_adjust)
-        size_px = (round(ax.bbox.width), round(ax.bbox.height))
-        frame = (left, bottom, right, top)
-        image, extent = _fetch_basemap(ctx_module, tile_provider, frame, zoom, size_px)
+        width_px, height_px = round(ax.bbox.width), round(ax.bbox.height)
+        deadline = time.monotonic() + _BASEMAP_DEADLINE_S
+        images = []
+        for shift, piece_left, piece_right in _world_copies(left, right):
+            piece_px = (
+                max(1, round(width_px * (piece_right - piece_left) / (right - left))),
+                height_px,
+            )
+            piece = (piece_left - shift, bottom, piece_right - shift, top)
+            image, (img_left, img_right, img_bottom, img_top) = _fetch_basemap(
+                ctx_module, tile_provider, piece, zoom, piece_px, deadline
+            )
+            images.append((image, (img_left + shift, img_right + shift, img_bottom, img_top)))
+    except _TileServerDownError as down:
+        if run.mark_unreachable(provider):
+            logger.warning(
+                "Basemap provider %s did not answer in time (%s). The thumbnails "
+                "of this run get no basemap.",
+                provider,
+                redact_credentials(down.url),
+            )
+        return
     except Exception as e:
-        logger.debug("Failed to add basemap '%s': %s", provider, e)
+        # The error of a failed tile quotes the tile URL, which holds the key.
+        logger.debug("Failed to add basemap '%s': %s", provider, redact_credentials(str(e)))
         return
 
     from matplotlib import patheffects
 
-    # zorder 0 puts the tiles under the data patches (zorder 1).
-    ax.imshow(
-        image,
-        extent=extent,
-        # One image pixel per output pixel, so no smoothing is needed.
-        interpolation="nearest",
-        # "auto" keeps the axes box. The default "equal" would shrink it by a
-        # rounding error and leave a white line at the edge.
-        aspect="auto",
-        alpha=opacity,
-        zorder=0,
-    )
+    for image, extent in images:
+        # zorder 0 puts the tiles under the data patches (zorder 1).
+        ax.imshow(
+            image,
+            extent=extent,
+            # One image pixel per output pixel, so no smoothing is needed.
+            interpolation="nearest",
+            # "auto" keeps the axes box. The default "equal" would shrink it
+            # by a rounding error and leave a white line at the edge.
+            aspect="auto",
+            alpha=opacity,
+            zorder=0,
+        )
     ax.set_xlim(left, right)
     ax.set_ylim(bottom, top)
     attribution = tile_provider.get("attribution")

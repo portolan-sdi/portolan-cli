@@ -20,6 +20,11 @@ Without a flag, ``PORTOLAN_LOG`` (``debug``, ``info``, or ``warning``) sets the 
 ``PORTOLAN_GDAL_DEBUG=1`` sets ``CPL_DEBUG=ON`` for GDAL and shows the GDAL
 debug messages that rasterio logs, at any verbosity.
 
+Each handler removes URL credentials from the text it writes, with
+``utils.redact_credentials``. urllib3 logs each request line at DEBUG, and an
+HTTP error quotes the URL. A basemap tile URL holds its API key, and so does
+an extract request.
+
 This module uses no click, so library code can call it too.
 """
 
@@ -33,6 +38,7 @@ from datetime import datetime, timezone
 from typing import TextIO
 
 from portolan_cli import trace
+from portolan_cli.utils import redact_credentials
 
 LOG_ENV = "PORTOLAN_LOG"
 LOG_FILE_ENV = "PORTOLAN_LOG_FILE"
@@ -61,10 +67,24 @@ class _StderrHandler(logging.StreamHandler):  # type: ignore[type-arg]
         pass
 
 
-class _RelativeFormatter(logging.Formatter):
-    """Format a record as ``+3.214s DEBUG portolan_cli.add: message``."""
+class _RedactingFormatter(logging.Formatter):
+    """A formatter whose output holds no URL credential.
+
+    The redaction runs on the formatted text, so it covers the message, its
+    arguments, and the traceback.
+    """
 
     def format(self, record: logging.LogRecord) -> str:
+        return redact_credentials(self._format(record))
+
+    def _format(self, record: logging.LogRecord) -> str:
+        return super().format(record)
+
+
+class _RelativeFormatter(_RedactingFormatter):
+    """Format a record as ``+3.214s DEBUG portolan_cli.add: message``."""
+
+    def _format(self, record: logging.LogRecord) -> str:
         line = f"+{record.relativeCreated / 1000:.3f}s {record.levelname} {record.name}: {record.getMessage()}"
         if record.exc_info:
             line = f"{line}\n{self.formatException(record.exc_info)}"
@@ -80,15 +100,19 @@ class _UserFormatter(_RelativeFormatter):
     record format.
     """
 
-    def format(self, record: logging.LogRecord) -> str:
+    def _format(self, record: logging.LogRecord) -> str:
         if record.name != PACKAGE_LOGGER and not record.name.startswith(f"{PACKAGE_LOGGER}."):
-            return super().format(record)
+            return super()._format(record)
         prefix = "✗" if record.levelno >= logging.ERROR else "⚠"
         return f"{prefix} {record.getMessage()}"
 
 
 class _JsonFormatter(logging.Formatter):
-    """Format a record as one JSON object with the run ID."""
+    """Format a record as one JSON object with the run ID.
+
+    The text fields lose their URL credentials before the JSON encoding, so
+    the redaction does not cut a JSON escape.
+    """
 
     def format(self, record: logging.LogRecord) -> str:
         doc = {
@@ -96,11 +120,11 @@ class _JsonFormatter(logging.Formatter):
             "rel": round(record.relativeCreated / 1000, 3),
             "level": record.levelname,
             "logger": record.name,
-            "msg": record.getMessage(),
+            "msg": redact_credentials(record.getMessage()),
             "run_id": trace.run_id(),
         }
         if record.exc_info:
-            doc["exc"] = self.formatException(record.exc_info)
+            doc["exc"] = redact_credentials(self.formatException(record.exc_info))
         return json.dumps(doc)
 
 

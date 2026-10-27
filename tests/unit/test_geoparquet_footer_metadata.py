@@ -183,13 +183,16 @@ def test_thumbnail_bounds_come_from_the_declared_bbox(
     The fallback is replaced by a raiser. Before the fix the metadata lookup
     found no ``geo`` key and the fallback ran, so this test failed.
     """
+    pytest.importorskip("geopandas")
     from portolan_cli.viz import thumbnail
 
-    def _no_fallback(_: Path) -> None:
+    def _no_fallback(*_args: object) -> None:
         raise AssertionError("bounds fell back to a data read")
 
-    monkeypatch.setattr(thumbnail, "_read_geoparquet_bounds_from_data", _no_fallback)
-    assert thumbnail._read_geoparquet_bounds(appended_geo_parquet) == (1.0, 2.0, 3.0, 4.0)
+    monkeypatch.setattr(thumbnail, "_stream_bounds", _no_fallback)
+    monkeypatch.setattr(thumbnail, "_finite_bounds", _no_fallback)
+    _gdf, bbox, _crs = thumbnail._read_geoparquet_for_thumbnail(appended_geo_parquet)
+    assert bbox == (1.0, 2.0, 3.0, 4.0)
 
 
 def test_thumbnail_sample_reads_the_crs(appended_geo_parquet: Path) -> None:
@@ -200,9 +203,9 @@ def test_thumbnail_sample_reads_the_crs(appended_geo_parquet: Path) -> None:
     pins that difference so a later refactor does not lose it.
     """
     pytest.importorskip("geopandas")
-    from portolan_cli.viz.thumbnail import _sample_geoparquet
+    from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
 
-    frame = _sample_geoparquet(appended_geo_parquet, max_features=2)
+    frame, _bbox, _crs = _read_geoparquet_for_thumbnail(appended_geo_parquet, max_features=2)
     assert frame is not None
     assert len(frame) == 2
 

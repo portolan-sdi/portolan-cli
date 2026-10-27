@@ -102,13 +102,16 @@ STUB_TILE_RGBA = (201, 74, 203, 255)
 def install_stub_tiles(patch: pytest.MonkeyPatch) -> list[str]:
     """Serve every basemap tile as one fixed tile and record each tile URL.
 
-    The real contextily runs: it picks the tiles, fetches them through its
-    ``_fetch_tile``, and merges them. Only the HTTP request is replaced, so
-    the basemap code runs with no network. Without the thumbnail extra the
-    import of contextily raises ``ImportError``.
+    The real basemap code runs: contextily picks the tiles and merges them,
+    and the thumbnail fetches them on its threads. Only the HTTP request in
+    ``thumbnail._get_tile`` is replaced, so the basemap code runs with no
+    network. Without the thumbnail extra the import of contextily raises
+    ``ImportError``.
     """
-    import contextily.tile
+    import contextily.tile  # noqa: F401 - the gate for the thumbnail extra
     import numpy as np
+
+    from portolan_cli.viz import thumbnail
 
     # The shape and dtype that contextily's own fetch returns.
     tile = np.empty((TILE_SIZE, TILE_SIZE, 4), dtype=np.uint8)
@@ -116,12 +119,12 @@ def install_stub_tiles(patch: pytest.MonkeyPatch) -> list[str]:
     urls: list[str] = []
     lock = threading.Lock()
 
-    def stub_fetch_tile(tile_url: str, *_args: Any, **_kwargs: Any) -> Any:
+    def stub_get_tile(tile_url: str) -> Any:
         with lock:
             urls.append(tile_url)
         return tile.copy()
 
-    patch.setattr(contextily.tile, "_fetch_tile", stub_fetch_tile)
+    patch.setattr(thumbnail, "_get_tile", stub_get_tile)
     return urls
 
 
