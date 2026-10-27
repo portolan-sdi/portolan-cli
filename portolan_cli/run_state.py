@@ -109,6 +109,13 @@ def stat_matches(st: os.stat_result, mtime: float | None, size: int | None) -> b
 
 
 def _stat_key(st: os.stat_result) -> _StatKey:
+    """The memo key of a file: inode, size, mtime, and status-change time.
+
+    The size and the mtime are the key on every platform. The status-change
+    time is a POSIX safeguard: a write or an ``os.utime`` call moves it. On
+    Windows ``st_ctime_ns`` is the creation time, which an in-place rewrite
+    does not change.
+    """
     return (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
