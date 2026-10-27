@@ -3209,6 +3209,7 @@ def _generate_add_mirrors(
     generate_parquet: bool,
     verbose: bool,
     versioned_collections: set[str],
+    state: RunState | None = None,
 ) -> None:
     """Generate the item mirrors after ``add`` and report the outcome."""
     from portolan_cli.stac_parquet import generate_parquet_mirrors
@@ -3218,6 +3219,7 @@ def _generate_add_mirrors(
         affected,
         generate_parquet=generate_parquet,
         versioned_collections=versioned_collections,
+        state=state,
     )
     if verbose:
         for coll_id in mirrors.generated:
@@ -3534,6 +3536,7 @@ def add_cmd(
             generate_parquet=generate_parquet,
             verbose=verbose,
             versioned_collections=versioned,
+            state=state,
         )
 
     # Handle PMTiles generation BEFORE output (so JSON reflects final state)

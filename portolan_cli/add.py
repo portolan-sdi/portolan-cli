@@ -545,7 +545,7 @@ def _ensure_tabular_collection(
 
     # Issue #815: the root catalog takes its own title and description from the
     # root metadata.yaml.
-    apply_catalog_human_titles(catalog_root)
+    apply_catalog_human_titles(catalog_root, state=state)
 
     # Issue #502: backfill the human-readable title onto the new child link.
     ensure_link_titles(catalog_root)

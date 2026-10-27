@@ -1448,7 +1448,7 @@ def finalize_items(
     # Issue #815: the root catalog takes its title and description from the root
     # metadata.yaml, as every collection already does. It runs before the README
     # sweep below, which reads catalog.json.
-    apply_catalog_human_titles(catalog_root)
+    apply_catalog_human_titles(catalog_root, state=state)
 
     # Issue #502: backfill human-readable titles onto child/item links so STAC
     # Browser renders names without fetching every child. Done once per batch
