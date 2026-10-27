@@ -2054,3 +2054,92 @@ class TestBasemapKeyStaysPrivate:
         assert any(p.name.endswith(".thumb.jpg") for p in written)
         assert [p for p in written if self._KEY.encode() in p.read_bytes()] == []
         assert self._KEY not in result.output
+
+
+class TestOneOpenPerThumbnail:
+    """The thumbnail reads the footer and the rows from one open file."""
+
+    @staticmethod
+    def _record_opens(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        """Record each ParquetFile and each geopandas.read_parquet call."""
+        import geopandas as gpd
+        import pyarrow.parquet as pq
+
+        opens: list[str] = []
+        original_init = pq.ParquetFile.__init__
+        original_read = gpd.read_parquet
+
+        def init(self: Any, *args: Any, **kwargs: Any) -> None:
+            opens.append("ParquetFile")
+            original_init(self, *args, **kwargs)
+
+        def read(*args: Any, **kwargs: Any) -> Any:
+            opens.append("geopandas.read_parquet")
+            return original_read(*args, **kwargs)
+
+        monkeypatch.setattr(pq.ParquetFile, "__init__", init)
+        monkeypatch.setattr(gpd, "read_parquet", read)
+        return opens
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("max_features", [100, 3], ids=["full", "sampled"])
+    def test_a_geoarrow_column_opens_the_file_once(
+        self, max_features: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Before the fix, the footer read and geopandas each opened the file."""
+        gpd = pytest.importorskip("geopandas")
+        from shapely.geometry import box
+
+        from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
+
+        gpq = tmp_path / "geoarrow.parquet"
+        boxes = [box(i, 0, i + 1, 1) for i in range(10)]
+        gpd.GeoDataFrame(geometry=boxes, crs="EPSG:4326").to_parquet(
+            gpq, geometry_encoding="geoarrow"
+        )
+        opens = self._record_opens(monkeypatch)
+
+        gdf, bbox, crs = _read_geoparquet_for_thumbnail(gpq, max_features=max_features)
+
+        assert opens == ["ParquetFile"]
+        assert bbox == (0.0, 0.0, 10.0, 1.0)
+        assert crs.to_epsg() == 4326
+        assert len(gdf) == (10 if max_features == 100 else 3)
+        assert gdf.geometry.iloc[0].equals(boxes[0])
+
+    @pytest.mark.integration
+    def test_a_sampled_file_with_no_bbox_opens_once_and_keeps_its_extent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The extent comes from every row, read through the same open file.
+
+        Before the fix, geopandas opened the file a second time for it.
+        """
+        gpd = pytest.importorskip("geopandas")
+        from shapely.geometry import Point
+
+        from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
+
+        gpq = tmp_path / "nobbox.parquet"
+        # The one far point is row 1, so a stride of 3 does not sample it.
+        points = [Point(i, i) for i in range(30)]
+        points[1] = Point(-50, 70)
+        gpd.GeoDataFrame(geometry=points, crs="EPSG:4326").to_parquet(
+            gpq, write_covering_bbox=False, row_group_size=7
+        )
+        # The footer that to_parquet writes holds a bbox, so drop it.
+        import pyarrow.parquet as pq
+
+        table = pq.read_table(gpq)
+        metadata = dict(table.schema.metadata)
+        geo = json.loads(metadata[b"geo"])
+        del geo["columns"]["geometry"]["bbox"]
+        metadata[b"geo"] = json.dumps(geo).encode()
+        pq.write_table(table.replace_schema_metadata(metadata), gpq, row_group_size=7)
+        opens = self._record_opens(monkeypatch)
+
+        gdf, bbox, _crs = _read_geoparquet_for_thumbnail(gpq, max_features=10)
+
+        assert opens == ["ParquetFile"]
+        assert len(gdf) == 10
+        assert bbox == (-50.0, 0.0, 29.0, 70.0)
