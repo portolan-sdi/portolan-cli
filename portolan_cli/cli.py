@@ -17,7 +17,9 @@ from typing import TYPE_CHECKING, Any, NoReturn, TextIO
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from portolan_cli.add import AddFailure
     from portolan_cli.convert import ConversionResult
+    from portolan_cli.metadata.fix import FixReport, FixResult
     from portolan_cli.query import ItemInfo
     from portolan_cli.run_state import RunState
     from portolan_cli.sync.pull import PullResult
@@ -26,12 +28,6 @@ import click
 from rashid.model import Severity as RashidSeverity
 
 from portolan_cli import trace
-from portolan_cli.add import (
-    SKIP_UNCHANGED,
-    SKIPS_THAT_TRACK,
-    AddFailure,
-    add_files,
-)
 from portolan_cli.add_progress import AddProgressReporter, count_files
 from portolan_cli.catalog import find_catalog_root, sync_catalog_index
 from portolan_cli.catalog_list import (
@@ -52,6 +48,7 @@ from portolan_cli.errors import (
     PortolanError,
     UnknownFormatHandlerError,
 )
+from portolan_cli.input_hardening import InputValidationError, validate_safe_path
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.licensing import (
     CLI_LICENSE_REMEDIATION,
@@ -60,7 +57,6 @@ from portolan_cli.licensing import (
     license_gap,
 )
 from portolan_cli.logging_setup import configure_logging
-from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.output import detail, error, set_writer, stdout_to_stderr, success, warn
 from portolan_cli.output import info as info_output
 from portolan_cli.plugins.commands import ExtractGroup, PluginGroup
@@ -88,19 +84,8 @@ from portolan_cli.scan.output import (
     render_tree_view,
 )
 from portolan_cli.scan.progress import ScanProgressReporter, count_directories
-from portolan_cli.stac import MergeStrategy
 from portolan_cli.status import CollectionStatus, get_collection_status
 from portolan_cli.utils import format_size
-from portolan_cli.validation import (
-    InputValidationError,
-    annotate_survivors,
-    build_check_payload,
-    build_fix_payload,
-    remediation_for,
-    run_check,
-    validate_safe_path,
-)
-from portolan_cli.validation.runner import validate_live_base_url
 
 
 def click_writer(
@@ -1246,6 +1231,8 @@ def _print_finding(finding: Any, requirement: str) -> None:
 
 def _print_findings(report: Any, *, verbose: bool) -> None:
     """Print findings grouped by severity, worst first."""
+    from portolan_cli.validation import remediation_for
+
     groups = (
         ("Errors", report.errors),
         ("Warnings", report.warnings),
@@ -1571,6 +1558,8 @@ def _fix_json_section(
     Returns:
         The fix results, keyed by which repair produced them.
     """
+    from portolan_cli.metadata.fix import FixReport
+
     data: dict[str, Any] = {}
 
     if metadata_fix_report is not None:
@@ -1600,6 +1589,8 @@ def _output_fix_human(
         verbose: Show detailed output.
         dry_run: Whether this was a dry run.
     """
+    from portolan_cli.metadata.fix import FixReport
+
     # Output metadata fix results
     if metadata_fix_report is not None:
         if not isinstance(metadata_fix_report, FixReport):
@@ -1710,6 +1701,9 @@ def _execute_check_workflow(
     ``--dry-run`` reports what the fixers would change, writes nothing, and
     skips the re-check: with no writes there is nothing new to find.
     """
+    from portolan_cli.validation import annotate_survivors, build_check_payload, run_check
+    from portolan_cli.validation.runner import validate_live_base_url
+
     validate_metadata = _should_validate(path, run_metadata=run_metadata, fix=fix)
     if live and validate_metadata:
         try:
@@ -1989,7 +1983,9 @@ def _run_fix_and_repairs(
         The JSON ``fix`` section and whether a fix failed.
     """
     from portolan_cli.catalog import apply_catalog_human_titles
+    from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
     from portolan_cli.scan.check import resolve_catalog_root_for_check
+    from portolan_cli.validation import build_fix_payload
     from portolan_cli.validation.fixers import apply_fixers
 
     fixer_report = FixReport()
@@ -2096,6 +2092,7 @@ def _run_legacy_fix_workflow(
         whose items the freshness pass updated. The caller repairs those items,
         which the finding-driven registry ran too early to see (#709).
     """
+    from portolan_cli.metadata.fix import FixAction
     from portolan_cli.scan.check import run_fix_workflow
 
     # Progress callback for conversion (skip for JSON mode: per-file only in verbose)
@@ -2954,6 +2951,8 @@ def _print_add_failures_batched(failures: list[AddFailure]) -> None:
 
 def _output_add_unchanged(skipped: list[tuple[Path, str]], verbose: bool) -> None:
     """Say that the add changed nothing, and why each file was skipped."""
+    from portolan_cli.add import SKIPS_THAT_TRACK
+
     skip_count = len(skipped)
     noun = "file" if skip_count == 1 else "files"
     if all(reason in SKIPS_THAT_TRACK for _, reason in skipped):
@@ -3042,6 +3041,8 @@ def _report_skips_and_find_collections(
     absent, so its backfill gets a version of its own rather than editing a
     published snapshot.
     """
+    from portolan_cli.add import SKIPS_THAT_TRACK
+
     affected: set[str] = set()
     versioned: set[str] = set()
     for a in added:
@@ -3410,6 +3411,9 @@ def add_cmd(
             partitioning.prompt: true/false (default: true)
             partitioning.threshold_gb: size in GB (default: 2.0)
     """
+    from portolan_cli.add import SKIP_UNCHANGED, add_files
+    from portolan_cli.stac import MergeStrategy
+
     use_json = should_output_json(ctx, json_output)
 
     # Validate --reconvert requires --force

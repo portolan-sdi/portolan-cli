@@ -125,7 +125,7 @@ class TestForceBypassesChangeDetection:
                 },
             )
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = (
                     [
                         ItemInfo(
@@ -175,7 +175,7 @@ class TestForceSkipsConversionWhenOutputExists:
             output_file = item_dir / "data.parquet"
             output_file.write_text("fake geoparquet")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(cli, ["add", str(source_file), "--force"])
@@ -201,7 +201,7 @@ class TestReconvertFlag:
             test_file = collection_dir / "test.geojson"
             test_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
@@ -241,7 +241,7 @@ class TestSourceNewerWarning:
             source_file = item_dir / "data.shp"
             source_file.write_text("newer shapefile")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(cli, ["add", str(source_file), "--force"])
@@ -303,7 +303,7 @@ class TestForceWithoutExistingOutput:
 
             # No existing .parquet output
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(cli, ["add", str(test_file), "--force"])

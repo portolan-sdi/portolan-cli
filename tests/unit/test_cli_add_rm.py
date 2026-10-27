@@ -73,7 +73,7 @@ class TestAdd:
             test_file = collection_dir / "census.geojson"
             test_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = (
                     [
                         ItemInfo(
@@ -110,7 +110,7 @@ class TestAdd:
             test_file = collection_dir / "satellite.tif"
             test_file.write_bytes(b"GeoTIFF content")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 runner.invoke(
@@ -138,7 +138,7 @@ class TestAdd:
             (collection_dir / "file1.geojson").write_text("{}")
             (collection_dir / "file2.geojson").write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
@@ -162,7 +162,7 @@ class TestAdd:
             test_file = collection_dir / "existing.geojson"
             test_file.write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 # Return empty list to indicate nothing was added (all unchanged)
                 mock_add.return_value = ([], [test_file], [])
 
@@ -188,7 +188,7 @@ class TestAdd:
             test_file = collection_dir / "existing.geojson"
             test_file.write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [test_file], [])
 
                 result = runner.invoke(
@@ -317,7 +317,7 @@ class TestAdd:
             test_file = collection_dir / "data.geojson"
             test_file.write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 runner.invoke(
@@ -359,7 +359,7 @@ class TestAdd:
             file2 = coll2 / "data2.geojson"
             file2.write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
@@ -396,7 +396,7 @@ class TestAdd:
             satellite = imagery / "satellite.tif"
             satellite.write_bytes(b"tiff")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 runner.invoke(
@@ -429,7 +429,7 @@ class TestAdd:
             file2 = coll / "data2.geojson"
             file2.write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 # Two items added from the same collection
                 mock_add.return_value = (
                     [
@@ -478,7 +478,7 @@ class TestAdd:
             file2 = coll / "data2.geojson"
             file2.write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.side_effect = ValueError("invalid geometry")
 
                 result = runner.invoke(
@@ -501,7 +501,7 @@ class TestAdd:
             file1 = coll / "data1.geojson"
             file1.write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
@@ -531,7 +531,7 @@ class TestAdd:
             symlink_file = coll / "link_to_data1.geojson"
             symlink_file.symlink_to(real_file)
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
@@ -561,7 +561,7 @@ class TestAdd:
             file2 = coll / "data2.geojson"
             file2.write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 # Pass one absolute path and one path that Click will resolve
@@ -831,7 +831,7 @@ class TestAddSidecarDetection:
             (collection_dir / "data.shx").write_bytes(b"shx")
             (collection_dir / "data.prj").write_text("EPSG:4326")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
@@ -856,7 +856,7 @@ class TestAddSidecarDetection:
             (collection_dir / "image.tif").write_bytes(b"tiff")
             (collection_dir / "image.tfw").write_text("1.0\n0.0\n0.0\n-1.0\n0.0\n0.0")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
@@ -889,7 +889,7 @@ class TestPathToCollectionResolution:
             test_file = nested_dir / "census.geojson"
             test_file.write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 runner.invoke(
@@ -916,7 +916,7 @@ class TestPathToCollectionResolution:
             test_file = collection_dir / "satellite.tif"
             test_file.write_bytes(b"tiff")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 runner.invoke(
