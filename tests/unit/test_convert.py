@@ -590,6 +590,78 @@ class TestTheCogCarriesItsStatistics:
         assert sorted(p.name for p in tmp_path.rglob("*.aux.xml")) == []
 
 
+class TestTheCogProfileSuitsItsCompression:
+    """write_cog sends GDAL only the creation options that its codec accepts.
+
+    GDAL accepts PREDICTOR only for DEFLATE, LZW, LZMA, and ZSTD. GDAL names
+    the uncompressed codec NONE, and Portolan accepts it as RAW, after the
+    rio-cogeo profile of that name.
+    """
+
+    @staticmethod
+    def _write(tmp_path: Path, compression: str, caplog: pytest.LogCaptureFixture) -> Path:
+        import logging
+
+        from portolan_cli.conversion_config import CogSettings
+        from portolan_cli.convert import write_cog
+
+        (tmp_path / "src").mkdir()
+        source = TestTheCogCarriesItsStatistics._gtiff(tmp_path / "src" / "scene.tiff")
+        with caplog.at_level(logging.WARNING, logger="rasterio"):
+            return write_cog(source, tmp_path, CogSettings(compression=compression, predictor=2))
+
+    @staticmethod
+    def _gdal_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+        # rio-cogeo copies the profile into an uncompressed intermediate file.
+        # GDAL warns about the PREDICTOR of that file with COMPRESS=NONE.
+        # Portolan does not write that file, so these tests ignore it.
+        return [
+            r.getMessage()
+            for r in caplog.records
+            if r.name.startswith("rasterio") and "COMPRESS=NONE" not in r.getMessage()
+        ]
+
+    @staticmethod
+    def _structure(path: Path) -> dict[str, str]:
+        import rasterio
+
+        with rasterio.open(path) as cog:
+            return dict(cog.tags(ns="IMAGE_STRUCTURE"))
+
+    @pytest.mark.unit
+    def test_packbits_gets_no_predictor(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        output = self._write(tmp_path, "PACKBITS", caplog)
+
+        assert self._gdal_messages(caplog) == []
+        structure = self._structure(output)
+        assert structure["COMPRESSION"] == "PACKBITS"
+        assert "PREDICTOR" not in structure
+
+    @pytest.mark.unit
+    def test_deflate_keeps_its_predictor(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        output = self._write(tmp_path, "DEFLATE", caplog)
+
+        assert self._gdal_messages(caplog) == []
+        structure = self._structure(output)
+        assert structure["COMPRESSION"] == "DEFLATE"
+        assert structure["PREDICTOR"] == "2"
+
+    @pytest.mark.unit
+    def test_raw_writes_an_uncompressed_cog(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        output = self._write(tmp_path, "RAW", caplog)
+
+        assert self._gdal_messages(caplog) == []
+        structure = self._structure(output)
+        assert "COMPRESSION" not in structure
+        assert "PREDICTOR" not in structure
+
+
 class TestConvertFileException:
     """Tests for convert_file() exception handling."""
 

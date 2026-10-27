@@ -203,8 +203,13 @@ VALID_COG_COMPRESSIONS: frozenset[str] = frozenset(
     }
 )
 
-# Lossy compression methods (predictor doesn't apply)
-LOSSY_COMPRESSIONS: frozenset[str] = frozenset({"JPEG", "WEBP"})
+# The compressions that take a predictor. GDAL ignores PREDICTOR for any other
+# codec and logs a warning for each file.
+PREDICTOR_COMPRESSIONS: frozenset[str] = frozenset({"DEFLATE", "LZW", "LZMA", "ZSTD"})
+
+# The GTiff COMPRESS value for each name that GDAL spells differently. RAW is
+# the rio-cogeo profile name for no compression, and GDAL calls it NONE.
+GDAL_COMPRESS_NAMES: dict[str, str] = {"RAW": "NONE"}
 
 # Compression methods that support quality setting
 QUALITY_COMPRESSIONS: frozenset[str] = frozenset({"JPEG", "WEBP"})
@@ -399,15 +404,16 @@ def validate_cog_settings(settings: CogSettings) -> list[str]:
             "or 'auto' to derive from the source raster. Using predictor=2."
         )
 
-    # Warn about predictor with lossy compression
+    # Warn about a predictor that the compression does not use
     if (
-        settings.compression in LOSSY_COMPRESSIONS
+        settings.compression not in PREDICTOR_COMPRESSIONS
         and settings.predictor != AUTO
         and settings.predictor != 1
     ):
         warnings.append(
-            f"Predictor={settings.predictor} is ignored for lossy compression "
-            f"'{settings.compression}'. Consider setting predictor=1 to avoid confusion."
+            f"Predictor={settings.predictor} is ignored for compression "
+            f"'{settings.compression}'. "
+            f"A predictor applies only to: {', '.join(sorted(PREDICTOR_COMPRESSIONS))}."
         )
 
     # Validate thumbnail_max_size (Issue #372)
