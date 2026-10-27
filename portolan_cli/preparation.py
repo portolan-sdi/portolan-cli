@@ -44,7 +44,6 @@ from portolan_cli.convert import (
     convert_with_handler,
     distinct_output_path,
     run_with_transient_convert_retry,
-    settle_output,
     with_provenance,
 )
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
@@ -1244,7 +1243,6 @@ def prepare_item(
             reconvert=reconvert,
             state=state,
         )
-    # settle_output can move a tabular output over the file 0.8.0 wrote.
     created_output = created_output and output_path == target
     source_paths = {output_path: versions_asset_key(path, collection_dir)}
     if state is not None and isinstance(metadata, GeoParquetMetadata) and output_path.is_file():
@@ -1865,7 +1863,7 @@ def convert_tabular(source: Path, dest_dir: Path, *, state: RunState | None = No
         with in_run(state):
             run_with_transient_convert_retry(_run, source_name=source.name)
 
-    return settle_output(source, default_path, output_path, state=state)
+    return output_path
 
 
 def convert_raster(

@@ -1210,7 +1210,12 @@ def _make_legacy(collection_dir: Path) -> None:
 
 
 class TestALegacyOutputIsItsSourceOwn:
-    """An output that 0.8.0 wrote has no record. versions.json tells whose it is."""
+    """An output that 0.8.0 wrote has no record, so an add never replaces it.
+
+    versions.json shows the same entries for a 0.8.0 output and for a file of
+    the operator that an add tracked. An equal layout does not prove which one
+    it is. So the new output takes the distinct name and the old file stays.
+    """
 
     @staticmethod
     def _add(runner: CliRunner, catalog: Path, target: Path) -> None:
@@ -1238,7 +1243,7 @@ class TestALegacyOutputIsItsSourceOwn:
         return collection_dir, geoparquet, companion
 
     @pytest.mark.integration
-    def test_an_edited_geojson_replaces_its_legacy_output(
+    def test_an_edited_geojson_leaves_its_legacy_output(
         self, runner: CliRunner, initialized_catalog: Path
     ) -> None:
         collection_dir = initialized_catalog / "pts"
@@ -1251,11 +1256,12 @@ class TestALegacyOutputIsItsSourceOwn:
         TestNoConversionReplacesAForeignFile._points(source, 2)
         self._add(runner, initialized_catalog, source)
 
-        assert self._parquets(collection_dir) == ["pts.parquet"]
-        assert pq.read_metadata(collection_dir / "pts.parquet").num_rows == 2
+        assert self._parquets(collection_dir) == ["pts-geojson.parquet", "pts.parquet"]
+        assert pq.read_metadata(collection_dir / "pts.parquet").num_rows == 1
+        assert pq.read_metadata(collection_dir / "pts-geojson.parquet").num_rows == 2
 
     @pytest.mark.integration
-    def test_an_edited_geo_csv_replaces_its_legacy_output(
+    def test_an_edited_geo_csv_leaves_its_legacy_output(
         self, runner: CliRunner, initialized_catalog: Path
     ) -> None:
         collection_dir = initialized_catalog / "sites"
@@ -1268,8 +1274,9 @@ class TestALegacyOutputIsItsSourceOwn:
         source.write_text("id,lat,lon\n1,10.5,1.5\n2,11.5,2.5\n")
         self._add(runner, initialized_catalog, source)
 
-        assert self._parquets(collection_dir) == ["sites.parquet"]
-        assert pq.read_metadata(collection_dir / "sites.parquet").num_rows == 2
+        assert self._parquets(collection_dir) == ["sites-csv.parquet", "sites.parquet"]
+        assert pq.read_metadata(collection_dir / "sites.parquet").num_rows == 1
+        assert pq.read_metadata(collection_dir / "sites-csv.parquet").num_rows == 2
 
     @pytest.mark.integration
     def test_an_edited_companion_csv_leaves_the_geoparquet(
@@ -1390,7 +1397,38 @@ class TestALegacyOutputIsItsSourceOwn:
         assert "points-geojson.parquet" in self._parquets(collection_dir)
 
     @pytest.mark.integration
-    def test_an_edited_geopackage_replaces_its_legacy_layer_outputs(
+    def test_an_edited_geojson_leaves_a_tracked_geoparquet_with_its_columns(
+        self, runner: CliRunner, initialized_catalog: Path, tmp_path: Path
+    ) -> None:
+        """Equal columns do not prove that the GeoJSON wrote the GeoParquet."""
+        from portolan_cli.convert import PROVENANCE_KEY, convert_file
+
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        TestNoConversionReplacesAForeignFile._points(scratch / "points.geojson", 5)
+        convert_file(scratch / "points.geojson", output_dir=scratch)
+        table = pq.read_table(scratch / "points.parquet")
+        metadata = dict(table.schema.metadata or {})
+        metadata.pop(PROVENANCE_KEY.encode(), None)
+        collection_dir = initialized_catalog / "places"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "points.parquet"
+        pq.write_table(table.replace_schema_metadata(metadata), geoparquet)
+        source = collection_dir / "points.geojson"
+        TestNoConversionReplacesAForeignFile._points(source, 1)
+        other = collection_dir / "other.geojson"
+        TestNoConversionReplacesAForeignFile._points(other, 1)
+        self._add(runner, initialized_catalog, other)
+        before = _sha(geoparquet)
+
+        TestNoConversionReplacesAForeignFile._points(source, 2)
+        self._add(runner, initialized_catalog, collection_dir)
+
+        assert _sha(geoparquet) == before
+        assert pq.read_metadata(collection_dir / "points-geojson.parquet").num_rows == 2
+
+    @pytest.mark.integration
+    def test_an_edited_geopackage_leaves_its_legacy_layer_outputs(
         self, runner: CliRunner, initialized_catalog: Path
     ) -> None:
         """0.8.0 tracked the layer outputs of a GeoPackage, not the GeoPackage."""
@@ -1418,11 +1456,17 @@ class TestALegacyOutputIsItsSourceOwn:
         write(source, 3)
         self._add(runner, initialized_catalog, collection_dir)
 
-        assert self._parquets(collection_dir) == ["m_l1.parquet", "m_l2.parquet"]
-        assert pq.read_metadata(collection_dir / "m_l1.parquet").num_rows == 3
+        assert self._parquets(collection_dir) == [
+            "m_l1-gpkg.parquet",
+            "m_l1.parquet",
+            "m_l2-gpkg.parquet",
+            "m_l2.parquet",
+        ]
+        assert pq.read_metadata(collection_dir / "m_l1.parquet").num_rows == 1
+        assert pq.read_metadata(collection_dir / "m_l1-gpkg.parquet").num_rows == 3
 
     @pytest.mark.integration
-    def test_an_edited_tiff_replaces_its_legacy_cog_and_thumbnail(
+    def test_an_edited_tiff_leaves_its_legacy_cog(
         self, runner: CliRunner, initialized_catalog: Path
     ) -> None:
         """A 0.8.0 COG of ``a.tiff`` is ``a.tif``, with no provenance tag."""
@@ -1457,13 +1501,10 @@ class TestALegacyOutputIsItsSourceOwn:
         write(source, 2)
         self._add(runner, initialized_catalog, item_dir.parent)
 
-        assert sorted(p.name for p in item_dir.iterdir()) == [
-            "a.json",
-            "a.thumb.jpg",
-            "a.tif",
-            "a.tiff",
-        ]
+        assert sorted(p.name for p in item_dir.glob("*.tif*")) == ["a-tiff.tif", "a.tif", "a.tiff"]
         with rasterio.open(legacy) as cog:
+            assert int(cog.read(1)[0, 0]) == 1
+        with rasterio.open(item_dir / "a-tiff.tif") as cog:
             assert int(cog.read(1)[0, 0]) == 2
 
 

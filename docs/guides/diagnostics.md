@@ -103,7 +103,7 @@ The counters are:
 | `config.merges` | Merges of the `config.yaml` or `metadata.yaml` hierarchy of a directory |
 | `versions.published` | Versions that the run publishes |
 | `thumbnail.draws` | Full draws of a vector thumbnail figure |
-| `tiles.fetched` | Basemap tiles that a vector thumbnail asks for |
+| `tiles.fetched` | Basemap tiles that a vector thumbnail downloads |
 | `raster.opens` | Rasters opened for reading |
 | `parquet.opens` | Parquet files opened for reading |
 | `vector.opens` | Other vector files opened for reading, such as FlatGeobuf |

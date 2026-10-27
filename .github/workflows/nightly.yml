@@ -32,6 +32,8 @@ jobs:
     name: Conformance vs rashid main
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # A baseline-recording dispatch needs only the scenarios job.
+    if: ${{ !inputs.record-baseline }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -71,6 +73,8 @@ jobs:
     # largest night runs roughly twice the mutants of the 6-file shard that took
     # 20 minutes. 90 leaves headroom without letting a hung run burn an hour.
     timeout-minutes: 90
+    # A baseline-recording dispatch skips the mutation shard, the costliest job.
+    if: ${{ !inputs.record-baseline }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

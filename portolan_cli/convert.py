@@ -49,7 +49,6 @@ from portolan_cli.formats import (
     run_scope,
 )
 from portolan_cli.trace import count, current_span, span
-from portolan_cli.versions import read_versions, versions_asset_key
 from portolan_cli.viz.thumbnail import (
     thumbnail_path_for,
 )
@@ -579,7 +578,7 @@ def convert_with_handler(
         target = claim_output(source, expected, state=state)
     if target == expected:
         return handler.convert(source, output_dir, catalog_root)
-    return _convert_to(handler, source, output_dir, catalog_root, target, expected, state)
+    return _convert_to(handler, source, output_dir, catalog_root, target)
 
 
 #: The Parquet footer key that names the source of a converted file. Its value
@@ -687,153 +686,6 @@ def _produced_by(output: Path, source: Path, state: RunState | None) -> bool | N
     return True if same else None
 
 
-def _collection_dir_of(path: Path) -> Path | None:
-    """The nearest directory above ``path`` that holds ``versions.json``.
-
-    The search stops at the catalog root, whose ``versions.json`` is the
-    catalog index and names no asset.
-    """
-    for directory in path.resolve().parents:
-        if (directory / ".portolan").is_dir():
-            return None
-        if (directory / "versions.json").is_file():
-            return directory
-    return None
-
-
-def _legacy_output_of(
-    output: Path, source: Path, state: RunState | None, *, layer: bool = False
-) -> bool:
-    """Report whether versions.json shows that an add of ``source`` wrote ``output``.
-
-    Portolan 0.8.0 wrote no provenance record. Its versions.json tracks the
-    output and the source side by side, and the output entry has no
-    ``source_path``. Every output entry that an add writes now has one.
-
-    Args:
-        output: The file at the output name.
-        source: The source file.
-        state: The run state, for one ``versions.json`` read per run.
-        layer: ``output`` is the layer output ``<stem>_<layer>.parquet`` of a
-            multi-layer file. 0.8.0 did not track a GeoPackage beside its
-            layer outputs, so the source need not be tracked.
-    """
-    if output.parent != source.parent:
-        return False
-    collection_dir = _collection_dir_of(output)
-    if collection_dir is None:
-        return False
-    try:
-        record = (
-            state.versions(collection_dir)
-            if state is not None
-            else read_versions(collection_dir / "versions.json")
-        )
-    except (ValueError, OSError):
-        return False
-    if not record.versions:
-        return False
-    assets = record.versions[-1].assets
-    tracked = assets.get(versions_asset_key(output, collection_dir))
-    return (
-        tracked is not None
-        and tracked.source_path is None
-        and (layer or versions_asset_key(source, collection_dir) in assets)
-    )
-
-
-def _footer_shape(path: Path) -> tuple[bool, frozenset[str]] | None:
-    """The kind and the layout of an output file. None when it does not open.
-
-    A Parquet file gives whether it is GeoParquet and its column names. A
-    GeoTIFF gives True and its grid: the size, the band types, and the CRS.
-    """
-    if path.suffix.lower() in (".tif", ".tiff"):
-        import rasterio
-
-        try:
-            count("raster.opens")
-            with rasterio.open(path) as dataset:
-                return True, frozenset(
-                    {
-                        f"size={dataset.width}x{dataset.height}",
-                        f"bands={','.join(dataset.dtypes)}",
-                        f"crs={dataset.crs}",
-                    }
-                )
-        except Exception:  # noqa: BLE001 - an unreadable file has no shape
-            return None
-
-    import pyarrow.parquet as pq
-
-    try:
-        count("parquet.opens")
-        metadata = pq.read_metadata(path)
-    except Exception:  # noqa: BLE001 - an unreadable file has no shape
-        return None
-    has_geo = b"geo" in (metadata.metadata or {})
-    return has_geo, frozenset(metadata.schema.to_arrow_schema().names)
-
-
-def settle_output(
-    source: Path,
-    output: Path,
-    written: Path,
-    *,
-    state: RunState | None = None,
-    geometry_required: bool = False,
-    layer: bool = False,
-) -> Path:
-    """Move the distinct output of a source over the output 0.8.0 wrote.
-
-    0.8.0 converted a source over the file of its stem, and it wrote no
-    provenance record and no ``source_path``. It also tracked a same-stem
-    source beside the operator's own file as a companion, and an add of
-    another file tracks both files with no ``source_path`` today. The pairs
-    look the same in versions.json, so :func:`claim_output` sends the source
-    to the distinct name. This function then compares the file it wrote with
-    the tracked file of the stem. The written file replaces it only when both
-    are GeoParquet, or both are plain Parquet, with the same columns, or both
-    are rasters with the same grid. Any other file stays, so an edited
-    GeoJSON beside the operator's GeoParquet keeps its distinct output.
-
-    Args:
-        source: The source file.
-        output: The path the converter names, ``<stem>.parquet``.
-        written: The path the conversion wrote.
-        state: The run state, for one ``versions.json`` read per run.
-        geometry_required: Replace only with a GeoParquet file.
-        layer: ``output`` is the output of one layer of a multi-layer file.
-
-    Returns:
-        The path that holds the output now.
-    """
-    if not _settles(source, output, written, state, geometry_required, layer=layer):
-        return written
-    written.replace(output)
-    return output
-
-
-def _settles(
-    source: Path,
-    output: Path,
-    written: Path,
-    state: RunState | None,
-    geometry_required: bool,
-    *,
-    layer: bool = False,
-) -> bool:
-    """Report whether ``written`` replaces the 0.8.0 output at ``output``. See :func:`settle_output`."""
-    if written == output or not output.is_file() or _recorded_source(output) is not None:
-        return False
-    if not _legacy_output_of(output, source, state, layer=layer):
-        return False
-    shape = _footer_shape(written)
-    if shape is None or shape != _footer_shape(output):
-        return False
-    return shape[0] or not geometry_required
-
-
 def distinct_output_path(source: Path, output: Path) -> Path:
     """The output name ``claim_output`` falls back to: ``<stem>-<ext><suffix>``."""
     extension = source.suffix.lstrip(".").lower()
@@ -849,8 +701,8 @@ def claim_output(source: Path, output: Path, *, state: RunState | None = None) -
     file can belong to the operator. The output then takes the name
     ``<stem>-<source extension>``, such as ``b1-csv.parquet``, and the asset
     key follows the new stem. A file with no record can be the output of a
-    0.8.0 add. :func:`settle_output` moves the new output over it after the
-    conversion, when the two files have the same layout.
+    0.8.0 add, or a file that the operator supplied. Nothing in the catalog
+    tells the two apart, so the conversion never replaces it.
 
     Args:
         source: The file to convert.
@@ -882,8 +734,6 @@ def _convert_to(
     output_dir: Path,
     catalog_root: Path | None,
     target: Path,
-    expected: Path,
-    state: RunState | None,
 ) -> Path:
     """Convert ``source`` with its handler and store the output at ``target``.
 
@@ -891,10 +741,6 @@ def _convert_to(
     directory. Each file it writes moves to ``output_dir``, with the output
     stem changed to the stem of ``target``. A side file whose new name holds a
     file stays out, so the move replaces nothing but ``target``.
-
-    When the output replaces the 0.8.0 output at ``expected`` (see
-    :func:`settle_output`), every file keeps the name the handler gave it, and
-    each one replaces the file of that name, such as the old thumbnail.
     """
     import shutil
     import tempfile
@@ -905,15 +751,12 @@ def _convert_to(
         if produced.parent != Path(scratch):
             # The handler wrote outside the directory it was given.
             return produced
-        settles = _settles(source, expected, produced, state, geometry_required=True)
-        if settles:
-            target = expected
         for entry in sorted(Path(scratch).iterdir()):
             if entry.name == produced.name:
                 shutil.move(entry, target)
                 continue
             name = target.stem + entry.name[len(stem) :] if entry.name.startswith(stem) else ""
-            if name and (settles or not (output_dir / name).exists()):
+            if name and not (output_dir / name).exists():
                 entry.replace(output_dir / name)
     return target
 
@@ -1986,9 +1829,6 @@ def convert_multilayer_file(
         try:
             with hashing:
                 _convert_vector_layer(source, layer_name, output_path, settings)
-            output_path = settle_output(
-                source, default_path, output_path, state=state, geometry_required=True, layer=True
-            )
 
             # Validate output
             validation_error = validate_geoparquet(output_path)

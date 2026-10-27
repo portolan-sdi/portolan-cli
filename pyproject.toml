@@ -29,7 +29,7 @@ dependencies = [
     "click>=8.4,<8.6", # PYSEC-2026-2132 fix; 8.4 makes ParamType generic (temporal.FlexibleDateTime subscripts it)
     "defusedxml>=0.7.1", # Safe XML parsing (XXE protection) for CSW/ISO 19139 metadata
     "duckdb>=1.5.6,<1.5.7", # Floor skips 1.5.5, which segfaults in ST_Read_Meta on malformed input (duckdb/duckdb-spatial#860)
-    "geopandas>=0.14.0", # Reads GeoParquet for the thumbnail floor, which every collection needs (Issue #683)
+    "geopandas>=1.0.0", # Reads GeoParquet for the thumbnail floor, which every collection needs (Issue #683). 1.0 adds GeoDataFrame.from_arrow, which the thumbnail reads with
     "geoparquet-io>=1.7.0", # Keeps schema metadata keys on write (gpio#1280) and drops whole-table DuckDB round-trips in sort, bbox and repair (gpio#1285)
     "httpx>=0.27.0", # HTTP client for ArcGIS REST API discovery
     "matplotlib>=3.8.0", # Renders the deterministic thumbnail floor. Core, not optional: PTL-VIZ-001 is an ERROR, so a default install must be able to produce a conformant catalog (#518 Track 1, #683)
@@ -76,7 +76,7 @@ portolan = "portolan_cli:cli"
 [project.optional-dependencies]
 iceberg = [
     "pyiceberg[sql-sqlite]>=0.8.0",
-    "shapely>=2.0.0",
+    "shapely>=2.1.0", # 2.1 adds orient_polygons, which the thumbnail draws polygon holes with
     "pygeohash>=1.2.0",
 ]
 e2e = [
