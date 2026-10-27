@@ -589,6 +589,24 @@ class TestTheCogCarriesItsStatistics:
 
         assert sorted(p.name for p in tmp_path.rglob("*.aux.xml")) == []
 
+    @pytest.mark.unit
+    def test_a_band_with_no_valid_pixel_still_converts(self, tmp_path: Path) -> None:
+        """GDAL computes no statistics for an empty band. The COG is written anyway."""
+        import rasterio
+
+        from portolan_cli.convert import write_cog
+        from tests.unit.test_preparation import _two_bands_one_empty
+
+        (tmp_path / "src").mkdir()
+        source = _two_bands_one_empty(tmp_path / "src" / "scene.tif")
+
+        output = write_cog(source, tmp_path)
+
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(output) as cog:
+            assert cog.tags(1).get("STATISTICS_VALID_PERCENT") == "0"
+            assert "STATISTICS_MINIMUM" not in cog.tags(1)
+            assert cog.tags(2)["STATISTICS_MEAN"] == "7"
+
 
 class TestTheCogProfileSuitsItsCompression:
     """write_cog sends GDAL only the creation options that its codec accepts.

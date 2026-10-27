@@ -1039,6 +1039,73 @@ class TestAnAddedCogCarriesItsStatistics:
         assert "PTL-DAT-009" in out.out + out.err
         assert "photo.tif" in out.out + out.err
 
+    @pytest.mark.unit
+    def test_a_lossy_codec_setting_keeps_the_pixels_of_a_lossless_cog(
+        self, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        """The rewrite only adds statistics. It must not re-encode the pixels with JPEG."""
+        import shutil
+
+        import numpy as np
+        import rasterio
+
+        from portolan_cli.conversion_config import CogSettings, settings_override
+        from portolan_cli.preparation import convert_raster
+
+        cog = tmp_path / "rgb.tif"
+        shutil.copy(fixtures_dir / "raster" / "valid" / "rgb.tif", cog)
+        with rasterio.open(cog) as src:
+            before = src.read()
+
+        with settings_override(cog=CogSettings(compression="JPEG", quality=50)):
+            convert_raster(cog, tmp_path)
+
+        with rasterio.open(cog) as src:
+            assert np.array_equal(src.read(), before)
+            assert "JPEG" not in src.tags(ns="IMAGE_STRUCTURE").get("COMPRESSION", "")
+        assert "STATISTICS_MEAN" in self._tags(cog)
+
+    @pytest.mark.unit
+    def test_a_cog_with_an_empty_band_is_rewritten_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A band with no valid pixel has no statistics to embed. One rewrite is enough."""
+        import rasterio
+        from rasterio.shutil import copy
+
+        from portolan_cli.preparation import convert_raster
+
+        source = _two_bands_one_empty(tmp_path / "src.tif")
+        cog = tmp_path / "scene.tif"
+        # The GDAL COG driver keeps the empty band. rio-cogeo writes 1 into it.
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"):
+            copy(source, cog, driver="COG", compress="DEFLATE")
+        source.unlink()
+        calls = self._spy_write_cog(monkeypatch)
+
+        convert_raster(cog, tmp_path)
+        first = cog.read_bytes()
+        convert_raster(cog, tmp_path)
+
+        assert calls == [cog]
+        assert cog.read_bytes() == first
+
+
+def _two_bands_one_empty(path: Path) -> Path:
+    """Write a striped GTiff whose band 1 is all nodata and band 2 holds 7."""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    data = np.zeros((2, 64, 64), "uint8")
+    data[1] = 7
+    with rasterio.open(
+        path, "w", driver="GTiff", width=64, height=64, count=2, dtype="uint8",
+        crs="EPSG:4326", transform=from_origin(0, 1, 0.01, 0.01), nodata=0,
+    ) as dst:  # fmt: skip
+        dst.write(data)
+    return path
+
 
 class TestBandStatisticsWriteNoSidecar:
     """Reading band statistics leaves no ``.aux.xml`` beside the COG (issue #748)."""
