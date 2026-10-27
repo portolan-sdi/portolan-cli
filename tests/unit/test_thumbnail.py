@@ -2124,3 +2124,119 @@ class TestOneOpenPerThumbnail:
         assert opens == ["ParquetFile"]
         assert len(gdf) == 10
         assert bbox == (-50.0, 0.0, 29.0, 70.0)
+
+
+class TestHungTileServer:
+    """A tile server that does not answer cannot stop the thumbnail or the add."""
+
+    _KEY = "SECRET123"
+
+    @pytest.mark.unit
+    def test_each_tile_request_has_a_socket_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """contextily calls requests.get with no timeout, so a dead socket waited forever."""
+        import io
+
+        import requests
+        from PIL import Image
+
+        from portolan_cli.viz import thumbnail
+
+        png = io.BytesIO()
+        Image.new("RGB", (256, 256), (1, 2, 3)).save(png, format="PNG")
+        calls: list[dict[str, Any]] = []
+
+        class Response:
+            content = png.getvalue()
+
+            def raise_for_status(self) -> None:
+                return None
+
+        def get(url: str, **kwargs: Any) -> Response:
+            calls.append({"url": url, **kwargs})
+            return Response()
+
+        monkeypatch.setattr(requests, "get", get)
+        tile = thumbnail._get_tile("https://tiles.example/1/2/3.png")
+
+        assert tile.shape == (256, 256, 4)
+        assert tuple(tile[0, 0]) == (1, 2, 3, 255)
+        assert [call["timeout"] for call in calls] == [thumbnail._TILE_TIMEOUT_S]
+        assert thumbnail._TILE_TIMEOUT_S == 10
+
+    @pytest.mark.integration
+    def test_a_hung_server_costs_one_deadline_per_run(
+        self,
+        tmp_path: Path,
+        stub_tiles: list[str],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The thumbnail has no basemap after the deadline, and the run stops asking.
+
+        Before the fix each tile waited for the server with no limit. A new
+        run asks the server again.
+        """
+        import threading
+        import time
+
+        import contextily.tile
+        from shapely.geometry import box
+
+        from portolan_cli.run_state import RunState
+        from portolan_cli.viz import thumbnail
+
+        release = threading.Event()
+        asked: list[str] = []
+
+        def hang(url: str, *_args: Any, **_kwargs: Any) -> Any:
+            import numpy as np
+
+            asked.append(url)
+            release.wait(1.0)
+            return np.zeros((256, 256, 4), dtype=np.uint8)
+
+        monkeypatch.setattr(contextily.tile, "_fetch_tile", hang)
+        monkeypatch.setattr(thumbnail, "_get_tile", hang, raising=False)
+        monkeypatch.setattr(thumbnail, "_BASEMAP_DEADLINE_S", 0.3, raising=False)
+        catalog = tmp_path / "catalog"
+        (catalog / ".portolan").mkdir(parents=True)
+        (catalog / ".portolan" / "config.yaml").write_text(
+            f"thumbnails:\n  basemap:\n    provider: CartoDB.Positron\n    api_key: {self._KEY}\n"
+        )
+        first = _write_crs84(tmp_path / "a.parquet", [box(10, 40, 12, 42)])
+        second = _write_crs84(tmp_path / "b.parquet", [box(20, 40, 22, 42)])
+
+        try:
+            run = RunState(catalog)
+            with caplog.at_level("WARNING", logger="portolan_cli.viz.thumbnail"):
+                start = time.monotonic()
+                result = thumbnail.generate_thumbnail_from_geoparquet(
+                    first, thumbnail.get_thumbnail_config(catalog, state=run)
+                )
+                elapsed = time.monotonic() - start
+                workers = [t for t in threading.enumerate() if t.name.startswith("portolan-tile")]
+                asked_in_first = len(asked)
+                assert thumbnail.generate_thumbnail_from_geoparquet(
+                    second, thumbnail.get_thumbnail_config(catalog, state=run)
+                )
+
+            assert result is not None
+            assert elapsed < 2.5
+            assert _stub_pixels(result) == 0
+            assert all(worker.daemon for worker in workers)
+            # The second thumbnail of the run does not ask the hung server.
+            assert len(asked) == asked_in_first
+            warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+            assert len(warnings) == 1, warnings
+            assert "basemaps.cartocdn.com" in warnings[0]
+            assert self._KEY not in warnings[0]
+
+            # A new run asks again.
+            again = thumbnail.get_thumbnail_config(catalog, state=RunState(catalog))
+            assert thumbnail.generate_thumbnail_from_geoparquet(second, again)
+            assert len(asked) > asked_in_first
+        finally:
+            release.set()
+        for worker in workers:
+            worker.join(5)
+            assert not worker.is_alive()
