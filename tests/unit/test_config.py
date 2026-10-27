@@ -1953,6 +1953,67 @@ class TestHandlersReadTheState:
         assert (workers_used == {"MainThread"}) is (workers == 1)
 
 
+def _geo_asset_catalog(root: Path, n: int) -> Path:
+    """A catalog with ``n`` valid COGs and ``n`` FlatGeobuf files, one per directory."""
+    import shutil
+
+    from tests.conftest import _init_catalog
+
+    fixtures = Path(__file__).parent.parent / "fixtures"
+    catalog = _init_catalog(root)
+    for i in range(n):
+        (catalog / f"r{i}").mkdir()
+        shutil.copy(fixtures / "raster" / "valid" / "rgb.tif", catalog / f"r{i}" / "rgb.tif")
+        (catalog / f"v{i}").mkdir()
+        shutil.copy(fixtures / "cloud_native" / "sample.fgb", catalog / f"v{i}" / "sample.fgb")
+    return catalog
+
+
+class TestCheckFixReadsTheState:
+    """The geo-asset pass of ``check --fix`` reads config.yaml once per run (#994)."""
+
+    @staticmethod
+    def _parses_at(root: Path, n: int, *, dry_run: bool) -> int:
+        from portolan_cli.run_state import RunState
+        from portolan_cli.scan.check import check_directory
+
+        catalog = _geo_asset_catalog(root, n)
+        with trace.tracing():
+            check_directory(
+                catalog,
+                fix=True,
+                dry_run=dry_run,
+                force=True,
+                catalog_path=catalog,
+                workers=1,
+                state=RunState.open(catalog),
+            )
+            return _parses()
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "fix"])
+    def test_force_parses_the_config_once(self, tmp_path: Path, dry_run: bool) -> None:
+        one = self._parses_at(tmp_path / "one", 1, dry_run=dry_run)
+        two = self._parses_at(tmp_path / "two", 2, dry_run=dry_run)
+
+        assert (one, two) == (1, 1)
+
+    @pytest.mark.unit
+    def test_a_pool_worker_parses_the_config_once(self, tmp_path: Path) -> None:
+        from portolan_cli import convert
+
+        catalog = _geo_asset_catalog(tmp_path / "catalog", 2)
+        convert._init_worker_state(catalog)
+        try:
+            with trace.tracing():
+                for i in range(2):
+                    convert._convert_in_worker(catalog / f"v{i}" / "sample.fgb", catalog_path=catalog)
+
+                assert _parses() == 1
+        finally:
+            convert._init_worker_state(None)
+
+
 class TestYamlLoader:
     """Every YAML load uses libyaml when PyYAML has it (issue #994)."""
 

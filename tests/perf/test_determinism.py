@@ -25,6 +25,7 @@ WRITERS = {
     "add-with-companions": (3, 6),
     "add-large-vector": (2_500, 1),
     "add-rasters": (3, 3),
+    "check-fix-geo-assets": (3, 3),
 }
 
 

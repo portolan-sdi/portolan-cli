@@ -16,6 +16,8 @@ EXPECTED: dict[tuple[str, str], tuple[int, int]] = {
     ("add-rasters", "config.yaml_parses"): (0, 2),  # config:parse_yaml x2
     ("add-with-companions", "config.merges"): (0, 4),  # config:merge_config_files x2, config:merge_metadata_files x2
     ("add-with-companions", "config.yaml_parses"): (0, 2),  # config:parse_yaml x2
+    ("check-fix-geo-assets", "config.merges"): (0, 1),  # config:merge_config_files x1
+    ("check-fix-geo-assets", "config.yaml_parses"): (0, 1),  # config:parse_yaml x1
     ("check-metadata", "config.merges"): (0, 1),  # config:merge_config_files x1
     ("check-metadata", "config.yaml_parses"): (0, 1),  # config:parse_yaml x1
     ("re-add-unchanged", "config.merges"): (0, 2),  # config:merge_config_files x2

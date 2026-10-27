@@ -120,6 +120,21 @@ def write_csv(path: Path, rows: int, rng: Any) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def write_geojson(path: Path, rows: int, rng: Any) -> None:
+    """Write ``rows`` seeded points as GeoJSON, a format that ``check --fix`` converts."""
+    xs, ys = rng.uniform(-170.0, 170.0, size=rows), rng.uniform(-80.0, 80.0, size=rows)
+    features = [
+        {
+            "type": "Feature",
+            "properties": {"id": i},
+            "geometry": {"type": "Point", "coordinates": [float(x), float(y)]},
+        }
+        for i, (x, y) in enumerate(zip(xs, ys, strict=True))
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"type": "FeatureCollection", "features": features}), "utf-8")
+
+
 def write_raster(path: Path, rng: Any) -> None:
     """Write one small single-band GeoTIFF at a seeded place."""
     import rasterio
@@ -289,6 +304,11 @@ def _large_vector(root: Path, n: int, seed: int) -> None:
     write_vector(root / "buildings" / "buildings.parquet", n, seeded_rng(seed, 0))
 
 
+def _geojson_collections(root: Path, n: int, seed: int) -> None:
+    for i in range(n):
+        write_geojson(root / f"c{i:04d}" / "points.geojson", 20, seeded_rng(seed, i))
+
+
 def _rasters(root: Path, n: int, seed: int) -> None:
     for i in range(n):
         write_raster(root / "scenes" / f"s{i:04d}" / f"s{i:04d}.tif", seeded_rng(seed, i))
@@ -320,6 +340,12 @@ SCENARIOS: dict[str, Scenario] = {
             ("check", "--metadata"),
             setup=_setup_add,
             config="",
+        ),
+        # check --fix converts n GeoJSON files to GeoParquet in one process.
+        Scenario(
+            "check-fix-geo-assets",
+            _geojson_collections,
+            ("check", "--geo-assets", "--fix", "--workers", "1"),
         ),
         # S6: status on an unchanged catalog.
         Scenario("status", _one_collection, ("status",), setup=_setup_add),
