@@ -1814,8 +1814,12 @@ def convert_multilayer_file(
             results.append(LayerConversionResult(source, layer_name, None, False, str(err)))
             continue
 
+        # The provenance record hashes the source through the run memo, so a
+        # file of N layers is hashed once, not N times.
+        hashing = run_checksums(state.checksum) if state is not None else contextlib.nullcontext()
         try:
-            _convert_vector_layer(source, layer_name, output_path, settings)
+            with hashing:
+                _convert_vector_layer(source, layer_name, output_path, settings)
             output_path = settle_output(
                 source, default_path, output_path, state=state, geometry_required=True, layer=True
             )
