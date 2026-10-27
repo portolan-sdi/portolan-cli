@@ -3504,7 +3504,6 @@ def add_cmd(
                 skip_reasons=skip_reasons,
                 state=state,
             )
-        commit_run(state)
     except MissingLicenseError as err:
         # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
         # check reads it, so add refuses the write and names what to supply.
@@ -3567,6 +3566,8 @@ def add_cmd(
         verbose=verbose,
         state=state,
     )
+    # The mirrors stage their versions in the state, so the commit runs last.
+    commit_run(state)
     sync_catalog_index(catalog_root, affected)
 
     # Output combined results (after all processing complete)
