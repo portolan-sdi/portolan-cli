@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -1455,6 +1455,109 @@ class TestSideStepExitAfterAdd:
             run_cli("add", "--portolan-dir", str(root), str(root))
 
         self._assert_catalog_agrees(root, ["roads"])
+
+
+class _RecordingBackend:
+    """A plugin backend that records each publish and refuses push."""
+
+    def __init__(self) -> None:
+        self.published: list[tuple[str, list[str]]] = []
+
+    def publish(
+        self, collection: str, assets: dict[str, str], *_args: object, **_kw: object
+    ) -> Any:
+        from datetime import datetime, timezone
+
+        from portolan_cli.versions import Version
+
+        self.published.append((collection, sorted(assets)))
+        return Version(
+            version="1.0.0",
+            created=datetime.now(timezone.utc),
+            breaking=False,
+            assets={},
+            changes=[],
+        )
+
+    def on_post_add(self, _context: object) -> None:
+        return None
+
+    def supports_push(self) -> bool:
+        return False
+
+    def push_blocked_message(self, _remote: str | None) -> str:
+        return "push is blocked"
+
+
+class TestBackendOfEachCollection:
+    """``add`` and the push check read the backend of each collection the same way."""
+
+    @staticmethod
+    def _catalog(root: Path, parquet: Path, monkeypatch: pytest.MonkeyPatch) -> _RecordingBackend:
+        import portolan_cli.backends as backends
+        from portolan_cli.backends.json_file import JsonFileBackend
+
+        fake = _RecordingBackend()
+
+        def get_backend(name: str, **kwargs: Any) -> Any:
+            return fake if name == "iceberg" else JsonFileBackend(**kwargs)
+
+        monkeypatch.setattr(backends, "get_backend", get_backend)
+        for collection_id in ("roads", "parks"):
+            (root / collection_id).mkdir()
+            data = root / collection_id / f"{collection_id}.parquet"
+            data.write_bytes(parquet.read_bytes())
+            (root / collection_id / "notes.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+        return fake
+
+    @pytest.mark.integration
+    def test_a_collection_backend_routes_only_that_collection(
+        self,
+        conformant_catalog: Path,
+        valid_points_parquet: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from portolan_cli.add import add_files
+        from portolan_cli.version_ops import check_backend_supports_push
+
+        root = conformant_catalog
+        fake = self._catalog(root, valid_points_parquet, monkeypatch)
+        (root / "roads" / ".portolan").mkdir()
+        (root / "roads" / ".portolan" / "config.yaml").write_text("backend: iceberg\n")
+
+        add_files(paths=[root], catalog_root=root)
+
+        assert [collection for collection, _assets in fake.published] == ["roads"]
+        assert "roads.parquet" in fake.published[0][1]
+        assert not (root / "roads" / "versions.json").exists()
+        assert (root / "parks" / "versions.json").exists()
+        blocked = check_backend_supports_push(root, "roads")
+        assert blocked is not None
+        assert blocked.message == "push is blocked"
+        assert check_backend_supports_push(root, "parks") is None
+
+    @pytest.mark.integration
+    def test_a_catalog_backend_routes_every_collection(
+        self,
+        conformant_catalog: Path,
+        valid_points_parquet: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from portolan_cli.add import add_files
+
+        root = conformant_catalog
+        fake = self._catalog(root, valid_points_parquet, monkeypatch)
+        config = root / ".portolan" / "config.yaml"
+        config.write_text(config.read_text(encoding="utf-8") + "backend: iceberg\n")
+
+        add_files(paths=[root], catalog_root=root)
+
+        assert sorted({collection for collection, _assets in fake.published}) == [
+            "parks",
+            "roads",
+        ]
+        assert not (root / "roads" / "versions.json").exists()
+        assert not (root / "parks" / "versions.json").exists()
 
 
 class TestAddUnknownHandlerPin:
