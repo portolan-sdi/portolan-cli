@@ -1367,9 +1367,16 @@ class TestSideStepExitAfterAdd:
             assert versions["current_version"] == "1.0.0", collection_id
             records = versions["versions"][-1]["assets"]
             stac = json.loads((collection_dir / "collection.json").read_text(encoding="utf-8"))
-            for asset in stac["assets"].values():
-                key = asset["href"].removeprefix("./")
-                assert records[key]["sha256"] == compute_checksum(collection_dir / key), key
+            files = [collection_dir / a["href"] for a in stac.get("assets", {}).values()]
+            for link in stac["links"]:
+                if link["rel"] == "item":
+                    item_path = collection_dir / link["href"]
+                    item = json.loads(item_path.read_text(encoding="utf-8"))
+                    files += [item_path.parent / a["href"] for a in item["assets"].values()]
+            assert files, collection_id
+            for path in files:
+                key = path.resolve().relative_to(collection_dir.resolve()).as_posix()
+                assert records[key]["sha256"] == compute_checksum(path), key
             entry = index[collection_id]
             assert (entry["current_version"], entry["asset_count"], entry["total_size_bytes"]) == (
                 "1.0.0",
