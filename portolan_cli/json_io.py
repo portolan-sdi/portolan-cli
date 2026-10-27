@@ -5,8 +5,10 @@ lands the same way: UTF-8, two-space indent, unescaped non-ASCII, a trailing
 newline, and an atomic ``os.replace`` so an interrupted write can never leave a
 half-written ``collection.json`` behind.
 
-Deliberately stdlib-only, so validation and generation paths alike can import it
-without dragging ``click``/``rich``/``config`` into a leaf module.
+Deliberately stdlib-only apart from ``trace``, so validation and generation
+paths alike can import it without dragging ``click``/``rich``/``config`` into a
+leaf module. Every write of ``versions.json`` and ``collection.json`` that does
+not go through pystac passes here, so this is where the perf gates count them.
 """
 
 from __future__ import annotations
@@ -17,6 +19,14 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Any
+
+from portolan_cli.trace import count
+
+#: The file names whose writes ``trace`` counts, and the counter for each.
+_COUNTED_WRITES = {
+    "versions.json": "versions_json.writes",
+    "collection.json": "collection_json.writes",
+}
 
 
 def write_json_atomic(path: Path, data: Any) -> None:
@@ -42,6 +52,9 @@ def write_json_atomic(path: Path, data: Any) -> None:
         OSError: If the temporary file cannot be written or renamed.
     """
     write_text_atomic(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    counter = _COUNTED_WRITES.get(path.name)
+    if counter is not None:
+        count(counter)
 
 
 def write_text_atomic(path: Path, content: str) -> None:

@@ -173,7 +173,7 @@ from portolan_cli.stac import (
 from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
 from portolan_cli.stac_parquet import PARQUET_FILENAME
 from portolan_cli.sync.checksums import compute_checksum, file_fields
-from portolan_cli.trace import span, submit
+from portolan_cli.trace import count, span, submit
 from portolan_cli.viz.pmtiles_links import PMTILES_SUFFIX
 from portolan_cli.viz.style import enrich_cog_assets
 
@@ -510,6 +510,7 @@ def _ensure_tabular_collection(
     collection_dir.mkdir(parents=True, exist_ok=True)
     collection.set_self_href(str(collection_json_path))
     collection.save_object()
+    count("collection_json.writes")
 
     # ...and the same root/parent link repair, which pystac's save_object skips.
     _fix_collection_links(collection_json_path, catalog_root, collection_dir)
@@ -1196,6 +1197,7 @@ def _declare_file_extension_for_collections(affected_collections: set[Path]) -> 
             collection = pystac.Collection.from_file(str(collection_json_path))
             declare_file_extension(collection)
             collection.save_object(include_self_link=False)
+            count("collection_json.writes")
 
 
 def _collection_license_on_disk(collection_json_path: Path) -> tuple[str | None, bool]:

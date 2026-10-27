@@ -37,6 +37,7 @@ from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata import extract_geoparquet_metadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
 from portolan_cli.query import ItemInfo
+from portolan_cli.trace import count
 from portolan_cli.stac import (
     DEFAULT_LICENSE,
     PROVISIONAL_END_DATETIME,
@@ -278,6 +279,7 @@ def _save_collection_with_links(
     collection.set_self_href(str(collection_dir / "collection.json"))
     collection.normalize_hrefs(href_root(collection_dir), strategy=AsIsLayoutStrategy())
     collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
+    count("collection_json.writes")
 
     collection_json_path = collection_dir / "collection.json"
     _fix_collection_links(collection_json_path, catalog_root, collection_dir)

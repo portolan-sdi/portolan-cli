@@ -19,12 +19,13 @@ A thread pool worker does not, so submit work through ``submit``.
 ``PORTOLAN_TIMINGS=mem`` also records the ``tracemalloc`` peak of each span.
 ``PORTOLAN_TRACE_FILE=<path>`` turns tracing on and names the Chrome trace file.
 
-This module imports only the standard library and ``json_io``, so any layer
-may import it.
+This module imports only the standard library, so any layer may import it.
+``json_io`` imports it to count the JSON writes.
 """
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import os
 import sys
@@ -35,10 +36,8 @@ import uuid
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
-from portolan_cli.json_io import write_json_atomic
-
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from concurrent.futures import Executor, Future
     from pathlib import Path
     from types import ModuleType, TracebackType
@@ -58,14 +57,26 @@ TIMINGS_ENV = "PORTOLAN_TIMINGS"
 TRACE_FILE_ENV = "PORTOLAN_TRACE_FILE"
 
 # Counter names that ``meta.counters`` always holds, at 0 when nothing counted.
+# Each one counts at the single choke point of its work, so the scale gates in
+# tests/perf see every call site. Two have no product choke point.
+# ``duckdb.connects`` counts through a patch of ``duckdb.connect`` that
+# tests/perf/runner.py installs, because geoparquet-io calls it by attribute
+# lookup. ``tiles.fetched`` counts in the stub tile source of the same runner.
 KNOWN_COUNTERS: tuple[str, ...] = (
     "checksum.files",
     "checksum.bytes",
     "versions_json.reads",
+    "versions_json.writes",
+    "collection_json.writes",
+    "items_parquet.writes",
     "config.yaml_parses",
+    "config.merges",
+    "versions.published",
     "thumbnail.draws",
+    "tiles.fetched",
     "raster.opens",
     "parquet.opens",
+    "duckdb.connects",
 )
 
 _MB = 1024 * 1024
@@ -254,6 +265,16 @@ def reset() -> None:
         tracemalloc.stop()
 
 
+@contextlib.contextmanager
+def tracing(*, mem: bool = False) -> Iterator[None]:
+    """Turn tracing on for one block, then reset it. Tests and the perf harness use it."""
+    enable(mem=mem)
+    try:
+        yield
+    finally:
+        reset()
+
+
 def is_enabled() -> bool:
     """Return True when tracing is on."""
     return _enabled
@@ -391,6 +412,8 @@ def chrome_trace_events() -> list[dict[str, Any]]:
 
 def write_chrome_trace(path: Path) -> None:
     """Write the spans to ``path`` as a Chrome trace file. Perfetto opens it."""
+    from portolan_cli.json_io import write_json_atomic  # json_io imports this module
+
     write_json_atomic(path, {"traceEvents": chrome_trace_events(), "displayTimeUnit": "ms"})
 
 

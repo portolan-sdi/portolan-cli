@@ -119,6 +119,40 @@ class TestCounters:
         assert set(trace.KNOWN_COUNTERS) <= set(trace.counters())
         assert all(v == 0 for v in trace.counters().values())
 
+    def test_known_counters_name_every_write_choke_point(self) -> None:
+        """The perf gates in tests/perf read these names (#992)."""
+        assert trace.KNOWN_COUNTERS == (
+            "checksum.files",
+            "checksum.bytes",
+            "versions_json.reads",
+            "versions_json.writes",
+            "collection_json.writes",
+            "items_parquet.writes",
+            "config.yaml_parses",
+            "config.merges",
+            "versions.published",
+            "thumbnail.draws",
+            "tiles.fetched",
+            "raster.opens",
+            "parquet.opens",
+            "duckdb.connects",
+        )
+
+    def test_tracing_enables_then_resets(self) -> None:
+        with trace.tracing():
+            assert trace.is_enabled()
+            trace.count("config.merges", 2)
+            assert trace.counters()["config.merges"] == 2
+        assert not trace.is_enabled()
+        assert trace.counters() == {}
+
+    def test_tracing_resets_after_an_error(self) -> None:
+        with pytest.raises(KeyError), trace.tracing():
+            trace.count("config.merges")
+            raise KeyError("boom")
+        assert not trace.is_enabled()
+        assert trace.counters() == {}
+
     def test_count_adds(self) -> None:
         trace.enable()
         trace.count("checksum.files")

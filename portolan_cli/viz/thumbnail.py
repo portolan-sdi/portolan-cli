@@ -767,6 +767,7 @@ def _render_geometries(
     params = _compute_render_params(*_profile_geometries(geometries))
 
     fig, ax = plt.subplots(figsize=(config.max_size / 100, config.max_size / 100), dpi=100)
+    fig.canvas.mpl_connect("draw_event", _count_draw)
     ax.set_aspect("equal")
     ax.axis("off")
 
@@ -843,7 +844,6 @@ def _render_geometries(
             crs="EPSG:4326",  # PMTiles are always WGS84
         )
 
-    count("thumbnail.draws")
     plt.savefig(
         output_path,
         bbox_inches="tight",
@@ -1110,6 +1110,7 @@ def _render_geoparquet(
                 fill_color = resolve_colors_for_gdf(gdf, style, fallback=THUMB_FILL_COLOR)
 
         fig, ax = plt.subplots(figsize=(config.max_size / 100, config.max_size / 100), dpi=100)
+        fig.canvas.mpl_connect("draw_event", _count_draw)
         ax.set_aspect("equal")
         ax.axis("off")
 
@@ -1145,7 +1146,6 @@ def _render_geoparquet(
                 crs=crs_str,
             )
 
-        count("thumbnail.draws")
         # thumbnails.quality reaches both render paths, as on the PMTiles path.
         plt.savefig(
             output_path,
@@ -1166,6 +1166,11 @@ def _render_geoparquet(
 # =============================================================================
 # Public API
 # =============================================================================
+
+
+def _count_draw(_event: object) -> None:
+    """Count one full figure draw. ``savefig`` and contextily can each draw."""
+    count("thumbnail.draws")
 
 
 def _pyplot() -> Any:
