@@ -255,6 +255,31 @@ class TestLoadResumeState:
         assert state is not None
         assert state.succeeded_tiles == {(0, 0), (1, 1)}
 
+    @pytest.mark.parametrize("bad_started_at", [None, 1712000000, ["2026-04-01"]])
+    def test_load_non_string_timestamp_keeps_tiles(
+        self, tmp_path: Path, bad_started_at: object
+    ) -> None:
+        """A damaged started_at falls back to the current time and keeps the tiles."""
+        report_path = tmp_path / ".portolan" / "extraction-report.json"
+        report_path.parent.mkdir(parents=True)
+        report_data = _create_imageserver_report(
+            service_url="https://example.com/ImageServer",
+            succeeded_tiles=[(0, 0), (0, 1)],
+            failed_tiles=[(1, 1)],
+            started_at="2026-04-01T10:30:00Z",
+        )
+        report_data["started_at"] = bad_started_at
+        report_path.write_text(json.dumps(report_data, indent=2))
+
+        before = datetime.now(UTC)
+        state = load_resume_state(report_path)
+        after = datetime.now(UTC)
+
+        assert state is not None
+        assert state.succeeded_tiles == {(0, 0), (0, 1)}
+        assert state.failed_tiles == {(1, 1)}
+        assert before <= state.started_at <= after
+
 
 class TestSaveResumeState:
     """Tests for save_resume_state function."""

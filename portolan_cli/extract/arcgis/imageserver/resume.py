@@ -257,7 +257,7 @@ def _parse_report_data(
     started_at_str = data.get("started_at", "")
     try:
         started_at = datetime.fromisoformat(started_at_str)
-    except (ValueError, AttributeError):
+    except (ValueError, TypeError):
         started_at = datetime.now(UTC)
 
     return ImageServerResumeState(
