@@ -17,8 +17,10 @@ collection once at the end of the run.
 
 The state is a parameter and not a contextvar. mypy and import-linter can see a
 parameter, and a worker that a plain ``executor.submit`` starts does not lose
-it. A lock guards only the dict inserts. Two workers that miss the same key at
-once both load it, and the second insert wins with an equal value.
+it. Two workers that miss the same key at once load it once. The first one
+loads, and the other one waits for its result. Workers on different keys load
+at the same time, so the checksums of different files do not wait for each
+other.
 
 This module is in the import-linter ``layer-read`` layer. It imports only
 ``versions``, ``config``, ``sync.checksums``, ``constants``, and ``trace``. A
@@ -178,6 +180,10 @@ class RunState:
         self.catalog_root = catalog_root
         self._resolved_root = catalog_root.resolve()
         self._lock = threading.Lock()
+        # One event per key that a worker loads now. See _once.
+        self._flights: dict[tuple[str, Any, _StatKey], threading.Event] = {}
+        # A merge reads several files, so it has no single key for _once.
+        self._config_lock = threading.Lock()
         self._versions: dict[Path, tuple[_StatKey, VersionsFile]] = {}
         self._projected: dict[str, tuple[_StatKey | None, int, VersionsFile]] = {}
         self._checksums: dict[Path, tuple[_StatKey, str]] = {}
@@ -211,13 +217,13 @@ class RunState:
         except FileNotFoundError:
             return None, _empty_versions()
         key = _stat_key(st)
-        resolved = versions_path.resolve()
-        hit = self._versions.get(resolved)
-        if hit is not None and hit[0] == key:
-            return key, hit[1]
-        parsed = read_versions(versions_path)
-        with self._lock:
-            self._versions[resolved] = (key, parsed)
+        parsed = self._once(
+            "versions",
+            self._versions,
+            versions_path.resolve(),
+            key,
+            lambda: read_versions(versions_path),
+        )
         return key, parsed
 
     def versions(self, collection_dir: Path, *, include_staged: bool = True) -> VersionsFile:
@@ -268,13 +274,9 @@ class RunState:
             return compute_dir_checksum(path)
         resolved = path.resolve()
         key = _stat_key(resolved.stat())
-        hit = self._checksums.get(resolved)
-        if hit is not None and hit[0] == key:
-            return hit[1]
-        digest = compute_checksum(resolved)
-        with self._lock:
-            self._checksums[resolved] = (key, digest)
-        return digest
+        return self._once(
+            "checksum", self._checksums, resolved, key, lambda: compute_checksum(resolved)
+        )
 
     def unchanged(self, path: Path, asset: Asset) -> bool:
         """Report whether ``path`` still holds the bytes that ``asset`` records.
@@ -323,14 +325,50 @@ class RunState:
         """
         resolved = path.resolve()
         key = _stat_key(resolved.stat())
-        hit = self._memo.get((kind, resolved))
-        if hit is not None and hit[0] == key:
-            value: T = hit[1]
-            return value
-        value = loader(path)
-        with self._lock:
-            self._memo[(kind, resolved)] = (key, value)
+        value: T = self._once(
+            f"memo:{kind}", self._memo, (kind, resolved), key, lambda: loader(path)
+        )
         return value
+
+    def _once(
+        self,
+        flight: str,
+        store: dict[Any, tuple[_StatKey, T]],
+        slot: Any,
+        key: _StatKey,
+        load: Callable[[], T],
+    ) -> T:
+        """Return the value of ``slot`` at ``key``, and load it once on a miss.
+
+        The first worker that misses loads the value. Another worker that misses
+        the same slot and key waits for it, then reads the store again. When the
+        load raises, each waiting worker loads again and gets its own error.
+        """
+        name = (flight, slot, key)
+        while True:
+            hit = store.get(slot)
+            if hit is not None and hit[0] == key:
+                return hit[1]
+            with self._lock:
+                hit = store.get(slot)
+                if hit is not None and hit[0] == key:
+                    return hit[1]
+                event = self._flights.get(name)
+                leader = event is None
+                if event is None:
+                    event = self._flights[name] = threading.Event()
+            if not leader:
+                event.wait()
+                continue
+            try:
+                value = load()
+                with self._lock:
+                    store[slot] = (key, value)
+                return value
+            finally:
+                with self._lock:
+                    del self._flights[name]
+                event.set()
 
     # ── config and metadata ─────────────────────────────────────────────────
     #
@@ -349,34 +387,40 @@ class RunState:
 
     def _merged_files(self, filename: str, directory: Path) -> dict[str, Any]:
         """The shared merge of ``filename`` for ``directory``. Do not mutate it."""
-        files = tuple(_config.find_portolan_files(directory, filename, self.catalog_root))
-        root_file = _config.get_config_path(self._resolved_root)
-        if filename == _config.CONFIG_FILENAME and root_file not in files and root_file.is_file():
-            # The merge reads the catalog file for its legacy collections: section.
-            files += (root_file,)
-        try:
-            sources: tuple[Any, ...] | None = tuple(self._yaml(path) for path in files)
-        except yaml.YAMLError:
-            sources = None  # The merge below raises the typed error.
-        key = (filename, directory.resolve())
-        hit = self._merged.get(key)
-        if (
-            hit is not None
-            and sources is not None
-            and hit[0] == files
-            and all(old is new for old, new in zip(hit[1], sources, strict=True))
-        ):
-            merged: dict[str, Any] = hit[2]
+        # Workers that miss one directory together merge it once.
+        with self._config_lock:
+            files = tuple(_config.find_portolan_files(directory, filename, self.catalog_root))
+            root_file = _config.get_config_path(self._resolved_root)
+            if (
+                filename == _config.CONFIG_FILENAME
+                and root_file not in files
+                and root_file.is_file()
+            ):
+                # The merge reads the catalog file for its legacy collections: section.
+                files += (root_file,)
+            try:
+                sources: tuple[Any, ...] | None = tuple(self._yaml(path) for path in files)
+            except yaml.YAMLError:
+                sources = None  # The merge below raises the typed error.
+            key = (filename, directory.resolve())
+            hit = self._merged.get(key)
+            if (
+                hit is not None
+                and sources is not None
+                and hit[0] == files
+                and all(old is new for old, new in zip(hit[1], sources, strict=True))
+            ):
+                merged: dict[str, Any] = hit[2]
+                return merged
+            merge = (
+                _config.merge_config_files
+                if filename == _config.CONFIG_FILENAME
+                else _config.merge_metadata_files
+            )
+            merged = merge(directory, self.catalog_root, self._yaml)
+            with self._lock:
+                self._merged[key] = (files, sources or (), merged)
             return merged
-        merge = (
-            _config.merge_config_files
-            if filename == _config.CONFIG_FILENAME
-            else _config.merge_metadata_files
-        )
-        merged = merge(directory, self.catalog_root, self._yaml)
-        with self._lock:
-            self._merged[key] = (files, sources or (), merged)
-        return merged
 
     def config(self, directory: Path) -> dict[str, Any]:
         """The merged ``config.yaml`` hierarchy that applies to ``directory``.

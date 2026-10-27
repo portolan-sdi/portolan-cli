@@ -1576,6 +1576,46 @@ class TestOneParsePerFile:
     """One run parses each YAML file once while it stays the same (issues #1006, #994)."""
 
     @pytest.mark.unit
+    def test_threads_that_miss_together_merge_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import threading
+        import time
+
+        from portolan_cli import config
+        from portolan_cli.run_state import RunState
+
+        collection = _hierarchy(tmp_path)
+        state = RunState.open(tmp_path)
+        real_parse, real_merge = config.parse_yaml, config.merge_config_files
+
+        def slow_parse(path: Path) -> Any:
+            time.sleep(0.02)  # Keeps the other threads inside the miss.
+            return real_parse(path)
+
+        def slow_merge(*args: Any) -> dict[str, Any]:
+            time.sleep(0.02)
+            return real_merge(*args)
+
+        monkeypatch.setattr(config, "parse_yaml", slow_parse)
+        monkeypatch.setattr(config, "merge_config_files", slow_merge)
+        start = threading.Barrier(4)
+
+        def read() -> None:
+            start.wait()
+            state.config(collection)
+
+        with trace.tracing():
+            threads = [threading.Thread(target=read) for _ in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+            # The config of demo and of the root.
+            assert (_parses(), _merges()) == (2, 1)
+
+    @pytest.mark.unit
     def test_a_run_parses_each_distinct_file_once(self, tmp_path: Path) -> None:
         from portolan_cli.conversion_config import (
             get_cog_settings,
