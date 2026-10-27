@@ -20,6 +20,7 @@ from portolan_cli.extract.common.orchestrator_base import (
     add_source_links,
     collect_successful_parquet_files,
     init_extracted_catalog,
+    parquet_row_count,
     register_collection_styles,
     seed_catalog_metadata,
 )
@@ -480,3 +481,26 @@ class TestLegendFileFields:
         data = json.loads((collection / "collection.json").read_text(encoding="utf-8"))
         asset = data["assets"]["legends/source"]
         assert {k: asset[k] for k in ("file:size", "file:checksum")} == file_fields(png)
+
+
+class TestParquetRowCount:
+    """parquet_row_count reads the footer once and counts the open."""
+
+    def test_missing_file_gives_zero_and_opens_nothing(self, tmp_path: Path) -> None:
+        from portolan_cli import trace
+
+        with trace.tracing():
+            assert parquet_row_count(tmp_path / "none.parquet") == 0
+            assert trace.counters()["parquet.opens"] == 0
+
+    def test_real_file_gives_its_rows_and_one_open(self, tmp_path: Path) -> None:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli import trace
+
+        path = tmp_path / "rows.parquet"
+        pq.write_table(pa.table({"id": [1, 2, 3]}), path)
+        with trace.tracing():
+            assert parquet_row_count(path) == 3
+            assert trace.counters()["parquet.opens"] == 1

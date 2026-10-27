@@ -35,6 +35,7 @@ from portolan_cli.extract.carto.discovery import (
     table_has_geometry,
     tables_from_names,
 )
+from portolan_cli.extract.common.orchestrator_base import parquet_row_count
 from portolan_cli.extract.common.report import MetadataExtracted
 from portolan_cli.extract.common.source import (
     Discovery,
@@ -45,7 +46,6 @@ from portolan_cli.extract.common.source import (
     filter_refs,
     run_layer_extraction,
 )
-from portolan_cli.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -231,12 +231,7 @@ class CartoLayerSource:
             overwrite=True,
             geometry=table.has_geometry,
         )
-        if not dest.exists():
-            return 0
-        import pyarrow.parquet as pq
-
-        count("parquet.opens")
-        return int(pq.read_metadata(dest).num_rows)
+        return parquet_row_count(dest)
 
     def layer_metadata(self, source: str, layer: LayerRef) -> LayerMetadata:
         """Seed table provenance. Carto has no per-table description."""
