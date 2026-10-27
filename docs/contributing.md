@@ -114,6 +114,14 @@ Alongside `quality`, CI runs the **test matrix** (Python 3.10–3.13 × Linux/ma
 Windows), **pip-audit** (dependency CVEs, ignores tracked in `.pip-audit-ignores`
 with expiry dates), the **docs build**, and the **package build**.
 
+Two perf gates also run on each pull request. **Perf counter gates** run each
+scenario in `tests/perf` at two sizes and compare how each work counter grows
+with the constants in `tests/perf/expected/`. A change that adds a read, a
+write, or a parse per file fails the gate. **CodSpeed** counts the CPU
+instructions of the benchmarks in `tests/benchmark` and reports a slower hot
+path on the pull request. To profile a scenario, run
+`uv run python scripts/profile.py add-many-collections --mode time`.
+
 **Required checks** (enforced by branch-protection rulesets, applied via
 `scripts/apply_branch_protection.sh`): `CI Success` (a single job that aggregates
 every gate above — so adding a Python/OS never drops a required check),
@@ -126,7 +134,9 @@ your PR:
 
 - **Mutation testing** (`mutmut`) — verifies tests actually catch injected bugs.
   "Tests and the mutation sandbox" under Testing gives the rules for its tests.
-- **Benchmark regression** — flags performance regressions.
+- **Perf scenarios** — runs fixed `add`, re-add, and `check --metadata`
+  scenarios at full size. The job fails when wall time grows by more than 30%
+  or peak RSS by more than 15% over `.benchmarks/scenarios.json`.
 - **Live-network tests** — hit real third-party services; because those can be
   flaky, this job is **non-blocking** and a failure opens a single self-closing
   tracking issue instead of turning the nightly red.
