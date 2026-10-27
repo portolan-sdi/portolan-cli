@@ -88,7 +88,7 @@ def _iceberg_backend(
         return require_iceberg_backend(catalog_path, name)
     except (BackendRequiredError, ValueError) as e:
         # get_backend raises ValueError when the backend cannot start, for
-        # example without the iceberg extra or on Python 3.10.
+        # example without the iceberg extra.
         _fail(command, "BackendError", str(e), use_json=use_json)
 
 

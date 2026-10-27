@@ -38,7 +38,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -208,7 +208,7 @@ def _parse_versions_file(data: dict[str, Any]) -> VersionsFile:
 
             version = Version(
                 version=v["version"],
-                created=datetime.fromisoformat(v["created"].replace("Z", "+00:00")),
+                created=datetime.fromisoformat(v["created"]),
                 breaking=v["breaking"],
                 assets=assets,
                 changes=v["changes"],
@@ -380,7 +380,7 @@ def add_version(
 
     new_version = Version(
         version=version,
-        created=datetime.now(timezone.utc),
+        created=datetime.now(UTC),
         breaking=breaking,
         assets=merged_assets,
         changes=changes,

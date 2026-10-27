@@ -7,7 +7,7 @@ It keeps each collection's history in
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -75,7 +75,7 @@ class ExampleBackend:
             version = f"{major}.{minor}.0"
         entry = {
             "version": version,
-            "created": datetime.now(timezone.utc).isoformat(),
+            "created": datetime.now(UTC).isoformat(),
             "breaking": breaking,
             "changes": sorted(assets),
             "message": message,

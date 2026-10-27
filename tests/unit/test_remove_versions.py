@@ -14,7 +14,7 @@ location, so it is correct regardless of how ``add`` derived the item id.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -54,7 +54,7 @@ def _catalog_with_assets(tmp_path: Path, asset_keys: list[str]) -> tuple[Path, P
     assets = {key: Asset(sha256="abc", size_bytes=1, href=f"mycoll/{key}") for key in asset_keys}
     version = Version(
         version="1.0.0",
-        created=datetime.now(timezone.utc),
+        created=datetime.now(UTC),
         breaking=False,
         assets=assets,
         changes=list(assets),
@@ -165,7 +165,7 @@ def _nested_catalog(tmp_path: Path, asset_key: str) -> tuple[Path, Path]:
     assets = {asset_key: Asset(sha256="abc", size_bytes=1, href=f"sub/coll/{asset_key}")}
     version = Version(
         version="1.0.0",
-        created=datetime.now(timezone.utc),
+        created=datetime.now(UTC),
         breaking=False,
         assets=assets,
         changes=[asset_key],
@@ -299,7 +299,7 @@ def test_nested_collection_resolves_hrefs_against_the_catalog_root(tmp_path: Pat
     assets = {key: Asset(sha256="abc", size_bytes=1, href=f"sub/coll/{key}")}
     version = Version(
         version="1.0.0",
-        created=datetime.now(timezone.utc),
+        created=datetime.now(UTC),
         breaking=False,
         assets=assets,
         changes=[key],

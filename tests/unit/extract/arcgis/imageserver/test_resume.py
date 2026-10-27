@@ -12,7 +12,7 @@ Following TDD: tests written before implementation.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -40,7 +40,7 @@ class TestImageServerResumeState:
             succeeded_tiles={(0, 0), (0, 1), (1, 0)},
             failed_tiles={(1, 1), (2, 0)},
             service_url="https://example.com/ImageServer",
-            started_at=datetime(2026, 4, 1, 10, 30, 0, tzinfo=timezone.utc),
+            started_at=datetime(2026, 4, 1, 10, 30, 0, tzinfo=UTC),
         )
 
         assert state.succeeded_tiles == {(0, 0), (0, 1), (1, 0)}
@@ -54,7 +54,7 @@ class TestImageServerResumeState:
             succeeded_tiles=set(),
             failed_tiles=set(),
             service_url="https://example.com/ImageServer",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
 
         assert len(state.succeeded_tiles) == 0
@@ -66,7 +66,7 @@ class TestImageServerResumeState:
             succeeded_tiles={(10, 20), (100, 200)},
             failed_tiles={(5, 5)},
             service_url="https://example.com/ImageServer",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
 
         # Verify coordinate structure
@@ -90,7 +90,7 @@ class TestShouldProcessTile:
             succeeded_tiles={(0, 0), (0, 1), (1, 0)},
             failed_tiles={(2, 2)},
             service_url="https://example.com/ImageServer",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
 
         assert should_process_tile(0, 0, state) is False
@@ -103,7 +103,7 @@ class TestShouldProcessTile:
             succeeded_tiles={(0, 0)},
             failed_tiles={(1, 1), (2, 2)},
             service_url="https://example.com/ImageServer",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
 
         assert should_process_tile(1, 1, state) is True
@@ -115,7 +115,7 @@ class TestShouldProcessTile:
             succeeded_tiles={(0, 0), (0, 1)},
             failed_tiles={(1, 0)},
             service_url="https://example.com/ImageServer",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
 
         # Tiles not in previous extraction
@@ -128,7 +128,7 @@ class TestShouldProcessTile:
             succeeded_tiles={(0, 0), (0, 1), (1, 0), (1, 1)},
             failed_tiles={(2, 0), (2, 1)},
             service_url="https://example.com/ImageServer",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
 
         # Succeeded - skip
@@ -255,6 +255,31 @@ class TestLoadResumeState:
         assert state is not None
         assert state.succeeded_tiles == {(0, 0), (1, 1)}
 
+    @pytest.mark.parametrize("bad_started_at", [None, 1712000000, ["2026-04-01"]])
+    def test_load_non_string_timestamp_keeps_tiles(
+        self, tmp_path: Path, bad_started_at: object
+    ) -> None:
+        """A damaged started_at falls back to the current time and keeps the tiles."""
+        report_path = tmp_path / ".portolan" / "extraction-report.json"
+        report_path.parent.mkdir(parents=True)
+        report_data = _create_imageserver_report(
+            service_url="https://example.com/ImageServer",
+            succeeded_tiles=[(0, 0), (0, 1)],
+            failed_tiles=[(1, 1)],
+            started_at="2026-04-01T10:30:00Z",
+        )
+        report_data["started_at"] = bad_started_at
+        report_path.write_text(json.dumps(report_data, indent=2))
+
+        before = datetime.now(UTC)
+        state = load_resume_state(report_path)
+        after = datetime.now(UTC)
+
+        assert state is not None
+        assert state.succeeded_tiles == {(0, 0), (0, 1)}
+        assert state.failed_tiles == {(1, 1)}
+        assert before <= state.started_at <= after
+
 
 class TestSaveResumeState:
     """Tests for save_resume_state function."""
@@ -266,7 +291,7 @@ class TestSaveResumeState:
             succeeded_tiles={(0, 0)},
             failed_tiles=set(),
             service_url="https://example.com/ImageServer",
-            started_at=datetime(2026, 4, 1, 10, 30, 0, tzinfo=timezone.utc),
+            started_at=datetime(2026, 4, 1, 10, 30, 0, tzinfo=UTC),
         )
 
         save_resume_state(state, report_path)
@@ -281,7 +306,7 @@ class TestSaveResumeState:
             succeeded_tiles={(0, 0), (1, 2), (100, 200)},
             failed_tiles={(5, 5), (10, 10)},
             service_url="https://example.com/ImageServer",
-            started_at=datetime(2026, 4, 1, 10, 30, 0, tzinfo=timezone.utc),
+            started_at=datetime(2026, 4, 1, 10, 30, 0, tzinfo=UTC),
         )
 
         save_resume_state(original_state, report_path)
@@ -306,7 +331,7 @@ class TestSaveResumeState:
             succeeded_tiles={(0, 0)},
             failed_tiles=set(),
             service_url="https://example.com/ImageServer",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
 
         save_resume_state(state, report_path)
@@ -322,7 +347,7 @@ class TestSaveResumeState:
             succeeded_tiles={(0, 0), (1, 1)},
             failed_tiles={(2, 2)},
             service_url="https://example.com/ImageServer",
-            started_at=datetime(2026, 4, 1, 10, 30, 0, tzinfo=timezone.utc),
+            started_at=datetime(2026, 4, 1, 10, 30, 0, tzinfo=UTC),
         )
 
         save_resume_state(state, report_path)
@@ -341,7 +366,7 @@ class TestSaveResumeState:
             succeeded_tiles=succeeded,
             failed_tiles={(1000, 1000)},
             service_url="https://example.com/ImageServer",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
 
         save_resume_state(state, report_path)
@@ -371,13 +396,13 @@ class TestEdgeCases:
             succeeded_tiles={(0, 0)},
             failed_tiles=set(),
             service_url="https://example.com/ImageServer",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
         state2 = ImageServerResumeState(
             succeeded_tiles={(1, 1), (2, 2)},
             failed_tiles={(3, 3)},
             service_url="https://example.com/ImageServer",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
 
         save_resume_state(state1, report_path)
@@ -395,7 +420,7 @@ class TestEdgeCases:
             succeeded_tiles={(-1, -1), (0, -5), (-10, 10)},
             failed_tiles=set(),
             service_url="https://example.com/ImageServer",
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
 
         save_resume_state(state, report_path)
@@ -414,7 +439,7 @@ class TestEdgeCases:
             succeeded_tiles={(0, 0)},
             failed_tiles=set(),
             service_url=url,
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
         )
 
         save_resume_state(state, report_path)
@@ -434,7 +459,7 @@ class TestCoarseEmptyTiles:
             succeeded_tiles={(0, 0)},
             failed_tiles=set(),
             service_url="https://example.com/ImageServer",
-            started_at=datetime(2026, 9, 22, tzinfo=timezone.utc),
+            started_at=datetime(2026, 9, 22, tzinfo=UTC),
             coarse_empty_tiles={(1, 1)},
         )
 
@@ -508,7 +533,7 @@ class TestTileGrid:
                 succeeded_tiles=set(),
                 failed_tiles=set(),
                 service_url="https://example.com/ImageServer",
-                started_at=datetime(2026, 9, 22, tzinfo=timezone.utc),
+                started_at=datetime(2026, 9, 22, tzinfo=UTC),
                 grid=grid,
             ),
             path,

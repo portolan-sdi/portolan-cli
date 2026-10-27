@@ -18,6 +18,8 @@ permissions:
 env:
   ISSUE_TITLE: "Security: Dependency vulnerabilities detected"
   ISSUE_LABEL: "security"
+  # renovate: datasource=pypi depName=uv
+  UV_VERSION: "0.13.4"
 
 jobs:
   audit:
@@ -39,7 +41,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          version: "0.6.14"
+          version: ${{ env.UV_VERSION }}
 
       - name: Set up Python
         run: uv python install 3.11
@@ -51,8 +53,9 @@ jobs:
         id: audit
         continue-on-error: true
         run: |
-          # Export runtime deps (what we ship)
-          uv export --no-dev --no-emit-project --no-hashes \
+          # Export runtime deps (what we ship). The hashes let pip-audit
+          # audit the pinned list with no virtual environment, as in ci.yml.
+          uv export --no-dev --no-emit-project \
             --extra iceberg --extra pmtiles --extra thumbnails \
             -o /tmp/runtime-deps.txt
 
@@ -63,6 +66,7 @@ jobs:
           IGNORES=$(uv run python scripts/pip_audit_ignores.py)
           # shellcheck disable=SC2086  # intentional word-splitting of the flag list
           AUDIT_OUTPUT=$(uv run pip-audit \
+            --disable-pip --require-hashes \
             --requirement /tmp/runtime-deps.txt \
             $IGNORES \
             --format json 2>&1) || true

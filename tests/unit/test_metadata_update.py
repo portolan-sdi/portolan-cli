@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -744,7 +744,7 @@ class TestUpdateVersionsTracking:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(
@@ -812,7 +812,7 @@ class TestUpdateVersionsTracking:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={
                         "other.parquet": Asset(
@@ -848,7 +848,7 @@ class TestUpdateVersionsTracking:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(

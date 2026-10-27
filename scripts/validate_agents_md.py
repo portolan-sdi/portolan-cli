@@ -19,7 +19,7 @@ import ast
 import re
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Repo-specific instructions live in AGENTS.md. CLAUDE.md only imports it,
@@ -432,7 +432,7 @@ def extract_freshness_markers(claude_md: str) -> list[FreshnessMarker]:
         line_number = claude_md[: match.start()].count("\n") + 1
 
         try:
-            last_verified = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            last_verified = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=UTC)
             markers.append(
                 FreshnessMarker(
                     section=section, last_verified=last_verified, line_number=line_number
@@ -449,7 +449,7 @@ def validate_freshness(claude_md: str, _root: Path, stale_days: int = 30) -> Val
     result = ValidationResult(validator="Freshness")
 
     markers = extract_freshness_markers(claude_md)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     stale_sections: list[str] = []
     for marker in markers:

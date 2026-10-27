@@ -153,7 +153,7 @@ def copy_head(repo: Path, dest: Path) -> Path:
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         if hasattr(tarfile, "data_filter"):
             tar.extractall(dest, filter="data")
-        else:  # Python before 3.10.12 has no extraction filters
+        else:  # Python 3.11 before 3.11.4 has no extraction filters
             tar.extractall(dest)  # noqa: S202 - the archive is this repository's own HEAD
     return dest
 

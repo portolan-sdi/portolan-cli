@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -802,7 +802,7 @@ def apply_provenance(
             )
         return
 
-    collection.extra_fields["updated"] = to_rfc3339(synced_at or datetime.now(timezone.utc))
+    collection.extra_fields["updated"] = to_rfc3339(synced_at or datetime.now(UTC))
 
     if source_url is None:
         import logging
@@ -828,8 +828,8 @@ def apply_provenance(
 def to_rfc3339(moment: datetime) -> str:
     """Format a datetime as the RFC 3339 date-time STAC's ``updated`` field wants."""
     if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=timezone.utc)
-    return moment.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        moment = moment.replace(tzinfo=UTC)
+    return moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def add_partition_metadata_to_collection(
@@ -1169,7 +1169,7 @@ def set_temporal_extent(
 
 def _rfc3339(moment: datetime) -> str:
     """Serialize a UTC datetime the way STAC spells it, with a trailing ``Z``."""
-    return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _merge_schemas(metadata_list: Sequence[object]) -> tuple[dict[str, str], list[str]]:

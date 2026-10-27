@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "portolan-example"
 version = "0.1.0"
 description = "Example Portolan plugin. CI installs it and calls every hook."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 # A published plugin declares its dependency on the CLI:
 #   dependencies = ["portolan-cli>=0.9"]

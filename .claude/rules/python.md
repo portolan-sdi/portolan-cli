@@ -42,7 +42,7 @@ All code must have type annotations (`mypy --strict`). The CLI is a thin Click l
   `.exists()`. Do not introduce `os.path.join`, `os.getcwd`, or `open(str_path)`.
   When comparing a filesystem path to a STAC href, normalize with
   `PurePath(...).as_posix()` so Windows backslashes do not break matching.
-- **Modern typing, Python 3.10+.** Nearly every module begins with
+- **Modern typing, Python 3.11+.** Nearly every module begins with
   `from __future__ import annotations` (the large majority do). Use `X | None`,
   `list[str]`, `dict[str, Any]`. Never import `Optional`, `List`, `Dict` from
   `typing` (ruff `UP` rejects them, and there are zero `Optional[` in the tree).

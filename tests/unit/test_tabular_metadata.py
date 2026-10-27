@@ -8,7 +8,7 @@ temporal extent without overwriting one that is already set.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -109,8 +109,8 @@ class TestTemporalInterval:
 
         assert metadata is not None
         assert metadata.temporal_interval == (
-            datetime(2020, 4, 1, tzinfo=timezone.utc),
-            datetime(2020, 9, 30, tzinfo=timezone.utc),
+            datetime(2020, 4, 1, tzinfo=UTC),
+            datetime(2020, 9, 30, tzinfo=UTC),
         )
 
     @pytest.mark.unit
@@ -125,8 +125,8 @@ class TestTemporalInterval:
 
         assert metadata is not None
         assert metadata.temporal_interval == (
-            datetime(2019, 1, 1, tzinfo=timezone.utc),
-            datetime(2022, 2, 2, tzinfo=timezone.utc),
+            datetime(2019, 1, 1, tzinfo=UTC),
+            datetime(2022, 2, 2, tzinfo=UTC),
         )
 
     @pytest.mark.unit
@@ -146,8 +146,8 @@ class TestTemporalInterval:
 
         assert metadata is not None
         assert metadata.temporal_interval == (
-            datetime(2020, 4, 1, tzinfo=timezone.utc),
-            datetime(2023, 8, 9, tzinfo=timezone.utc),
+            datetime(2020, 4, 1, tzinfo=UTC),
+            datetime(2023, 8, 9, tzinfo=UTC),
         )
 
     @pytest.mark.unit
@@ -340,8 +340,8 @@ class TestSetTemporalExtent:
         set_temporal_extent(
             collection,
             (
-                datetime(2020, 4, 1, tzinfo=timezone.utc),
-                datetime(2020, 9, 30, tzinfo=timezone.utc),
+                datetime(2020, 4, 1, tzinfo=UTC),
+                datetime(2020, 9, 30, tzinfo=UTC),
             ),
         )
 
@@ -359,8 +359,8 @@ class TestSetTemporalExtent:
         set_temporal_extent(
             collection,
             (
-                datetime(2020, 4, 1, tzinfo=timezone.utc),
-                datetime(2020, 9, 30, tzinfo=timezone.utc),
+                datetime(2020, 4, 1, tzinfo=UTC),
+                datetime(2020, 9, 30, tzinfo=UTC),
             ),
         )
 
@@ -373,8 +373,8 @@ class TestSetTemporalExtent:
         set_temporal_extent(
             collection,
             (
-                datetime(2020, 4, 1, tzinfo=timezone.utc),
-                datetime(2020, 9, 30, tzinfo=timezone.utc),
+                datetime(2020, 4, 1, tzinfo=UTC),
+                datetime(2020, 9, 30, tzinfo=UTC),
             ),
         )
 

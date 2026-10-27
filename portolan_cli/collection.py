@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -57,7 +57,7 @@ def create_collection(
         raise FileNotFoundError(f"Data file not found: {data_path}")
 
     # Capture single timestamp for consistency across all fields
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Extract metadata based on file type
     extent = _extract_extent_from_file(data_path, timestamp=now)
@@ -114,7 +114,7 @@ def _extract_extent_from_file(
         bbox = [[-180.0, -90.0, 180.0, 90.0]]
 
     # Use provided timestamp or current time
-    interval_start = (timestamp or datetime.now(timezone.utc)).isoformat()
+    interval_start = (timestamp or datetime.now(UTC)).isoformat()
 
     # Create extent with spatial bbox and open temporal interval
     # The STAC bbox rule (one bbox, or the envelope and its parts) lives in
