@@ -7,35 +7,16 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from portolan_cli import trace
 from portolan_cli.catalog import CollectionSummary, update_catalog_index
 from portolan_cli.run_state import RunState
 from portolan_cli.version_ops import commit_run, owned_run
 from portolan_cli.versions import Asset, read_versions
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
-
-
-@pytest.fixture
-def catalog(tmp_path: Path) -> Path:
-    (tmp_path / ".portolan").mkdir()
-    (tmp_path / ".portolan" / "config.yaml").write_text("{}\n")
-    (tmp_path / "versions.json").write_text(json.dumps({"collections": {}}))
-    return tmp_path
-
-
-@pytest.fixture
-def counters() -> Iterator[Callable[[str], int]]:
-    """Turn the trace counters on and return a reader for one counter."""
-    trace.enable()
-    try:
-        yield lambda name: trace.counters().get(name, 0)
-    finally:
-        trace.reset()
 
 
 def _asset(catalog: Path, rel: str, data: bytes) -> Asset:

@@ -3,36 +3,42 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import threading
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli import trace
 from portolan_cli.constants import MTIME_TOLERANCE_SECONDS
 from portolan_cli.run_state import RunState, mtime_matches, stat_matches
-from portolan_cli.versions import Asset, Version, VersionsFile, read_versions, write_versions
+from portolan_cli.versions import Asset, read_versions
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
     from pathlib import Path
+
+    Snapshot = Callable[[Path, dict[str, Asset]], None]
 
 pytestmark = pytest.mark.unit
 
-_SEC = 1_000_000_000
+_BASE_NS = 1_700_000_000 * 1_000_000_000
 
 
-@pytest.fixture
-def counters() -> Iterator[Callable[[str], int]]:
-    """Turn the trace counters on and return a reader for one counter."""
-    trace.enable()
-    try:
-        yield lambda name: trace.counters().get(name, 0)
-    finally:
-        trace.reset()
+def _pin_mtime(path: Path) -> None:
+    os.utime(path, ns=(_BASE_NS, _BASE_NS))
+
+
+def _next_tick(path: Path) -> int:
+    """Move the mtime of ``path`` one file-system tick past the pinned base.
+
+    A tick is 1 ns where the file system keeps nanoseconds (ext4) and 100 ns
+    on NTFS. The step is the smallest one that the file system records.
+    """
+    for step in (1, 100, 1_000, 1_000_000_000):
+        os.utime(path, ns=(_BASE_NS + step, _BASE_NS + step))
+        if path.stat().st_mtime_ns != _BASE_NS:
+            return step
+    raise AssertionError("the file system kept no mtime change")
 
 
 def _sha(data: bytes) -> str:
@@ -46,34 +52,6 @@ def _asset(path: Path, catalog_root: Path, data: bytes) -> Asset:
         size_bytes=st.st_size,
         href=path.relative_to(catalog_root).as_posix(),
         mtime=st.st_mtime,
-    )
-
-
-def _catalog(root: Path) -> Path:
-    """A minimal file-backend catalog with an empty catalog-level index."""
-    (root / ".portolan").mkdir(parents=True)
-    (root / ".portolan" / "config.yaml").write_text("{}\n")
-    (root / "versions.json").write_text(json.dumps({"collections": {}}))
-    return root
-
-
-def _write_versions(collection_dir: Path, assets: dict[str, Asset]) -> None:
-    collection_dir.mkdir(parents=True, exist_ok=True)
-    write_versions(
-        collection_dir / "versions.json",
-        VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                    breaking=False,
-                    assets=assets,
-                    changes=list(assets),
-                )
-            ],
-        ),
     )
 
 
@@ -148,14 +126,14 @@ class TestChecksumMemo:
     ) -> None:
         f = tmp_path / "a.bin"
         f.write_bytes(b"hello")
-        os.utime(f, ns=(1_700_000_000 * _SEC, 1_700_000_000 * _SEC))
+        _pin_mtime(f)
         state = RunState.open(tmp_path)
         assert state.checksum(f) == _sha(b"hello")
 
-        # Same size, same inode, mtime 1 ns later.
+        # Same size, same inode, mtime one tick later (1 ns on ext4).
         with f.open("r+b") as fh:
             fh.write(b"HELLO")
-        os.utime(f, ns=(1_700_000_000 * _SEC + 1, 1_700_000_000 * _SEC + 1))
+        _next_tick(f)
 
         assert state.checksum(f) == _sha(b"HELLO")
         assert counters("checksum.files") == 2
@@ -219,26 +197,28 @@ class TestUnchanged:
 class TestVersions:
     """versions.json is read once per run and re-read only when it changes."""
 
-    def test_read_once(self, tmp_path: Path, counters: Callable[[str], int]) -> None:
+    def test_read_once(
+        self, tmp_path: Path, counters: Callable[[str], int], write_snapshot: Snapshot
+    ) -> None:
         coll = tmp_path / "c"
         f = tmp_path / "x.bin"
         f.write_bytes(b"x")
-        _write_versions(coll, {"x.bin": _asset(f, tmp_path, b"x")})
+        write_snapshot(coll, {"x.bin": _asset(f, tmp_path, b"x")})
         state = RunState.open(tmp_path)
         for _ in range(5):
             assert state.versions(coll).current_version == "1.0.0"
         assert counters("versions_json.reads") == 1
 
     def test_atomic_rewrite_is_read_again(
-        self, tmp_path: Path, counters: Callable[[str], int]
+        self, tmp_path: Path, counters: Callable[[str], int], write_snapshot: Snapshot
     ) -> None:
         coll = tmp_path / "c"
-        _write_versions(coll, {})
+        write_snapshot(coll, {})
         state = RunState.open(tmp_path)
         state.versions(coll)
         f = tmp_path / "x.bin"
         f.write_bytes(b"x")
-        _write_versions(coll, {"x.bin": _asset(f, tmp_path, b"x")})
+        write_snapshot(coll, {"x.bin": _asset(f, tmp_path, b"x")})
         assert list(state.versions(coll).versions[-1].assets) == ["x.bin"]
         assert counters("versions_json.reads") == 2
 
@@ -246,9 +226,11 @@ class TestVersions:
         vf = RunState.open(tmp_path).versions(tmp_path / "none")
         assert (vf.current_version, vf.versions) == (None, [])
 
-    def test_caller_edit_does_not_change_the_memo(self, tmp_path: Path) -> None:
+    def test_caller_edit_does_not_change_the_memo(
+        self, tmp_path: Path, write_snapshot: Snapshot
+    ) -> None:
         coll = tmp_path / "c"
-        _write_versions(coll, {})
+        write_snapshot(coll, {})
         state = RunState.open(tmp_path)
         state.versions(coll).versions.clear()
         assert len(state.versions(coll).versions) == 1
@@ -264,9 +246,11 @@ class TestVersions:
 class TestStage:
     """Staged assets show in versions() and merge into one version."""
 
-    def test_staged_asset_is_visible_before_commit(self, tmp_path: Path) -> None:
+    def test_staged_asset_is_visible_before_commit(
+        self, tmp_path: Path, write_snapshot: Snapshot
+    ) -> None:
         coll = tmp_path / "c"
-        _write_versions(coll, {})
+        write_snapshot(coll, {})
         f = coll / "a.bin"
         f.write_bytes(b"a")
         state = RunState.open(tmp_path)
@@ -278,18 +262,23 @@ class TestStage:
         assert state.versions(coll, include_staged=False).current_version == "1.0.0"
         assert read_versions(coll / "versions.json").current_version == "1.0.0"
 
-    def test_calls_merge(self, tmp_path: Path) -> None:
-        coll = tmp_path / "c"
+    @staticmethod
+    def _two_files(root: Path) -> tuple[Path, Asset, Asset]:
+        coll = root / "c"
         coll.mkdir()
         a, b = coll / "a.bin", coll / "b.bin"
         a.write_bytes(b"a")
         b.write_bytes(b"b")
+        return coll, _asset(a, root, b"a"), _asset(b, root, b"b")
+
+    def test_calls_merge(self, tmp_path: Path) -> None:
+        _coll, a, b = self._two_files(tmp_path)
         state = RunState.open(tmp_path)
-        state.stage("c", assets={"a.bin": _asset(a, tmp_path, b"a")}, message="one")
+        state.stage("c", assets={"a.bin": a}, message="one")
         state.stage("c", removed={"a.bin"}, message="two")
-        state.stage("c", assets={"b.bin": _asset(b, tmp_path, b"b")}, message="one")
+        state.stage("c", assets={"b.bin": b}, message="one")
         state.stage("c", removed={"gone"})
-        state.stage("c", assets={"gone": _asset(b, tmp_path, b"b")}, breaking=True)
+        state.stage("c", assets={"gone": b}, breaking=True)
 
         staged = state.staged()["c"]
         assert sorted(staged.assets) == ["b.bin", "gone"]
@@ -298,15 +287,11 @@ class TestStage:
         assert staged.breaking is True
 
     def test_projection_follows_new_stage_calls(self, tmp_path: Path) -> None:
-        coll = tmp_path / "c"
-        coll.mkdir()
-        a, b = coll / "a.bin", coll / "b.bin"
-        a.write_bytes(b"a")
-        b.write_bytes(b"b")
+        coll, a, b = self._two_files(tmp_path)
         state = RunState.open(tmp_path)
-        state.stage("c", assets={"a.bin": _asset(a, tmp_path, b"a")})
+        state.stage("c", assets={"a.bin": a})
         assert list(state.versions(coll).versions[-1].assets) == ["a.bin"]
-        state.stage("c", assets={"b.bin": _asset(b, tmp_path, b"b")})
+        state.stage("c", assets={"b.bin": b})
         assert sorted(state.versions(coll).versions[-1].assets) == ["a.bin", "b.bin"]
 
     def test_concurrent_stage_keeps_every_asset(self, tmp_path: Path) -> None:
@@ -356,7 +341,7 @@ class TestMemo:
     def test_loader_runs_once_until_the_file_changes(self, tmp_path: Path) -> None:
         f = tmp_path / "a.bin"
         f.write_bytes(b"a")
-        os.utime(f, ns=(1_700_000_000 * _SEC, 1_700_000_000 * _SEC))
+        _pin_mtime(f)
         calls: list[Path] = []
 
         def loader(p: Path) -> int:
@@ -367,7 +352,7 @@ class TestMemo:
         assert state.memo("k", f, loader) == 1
         assert state.memo("k", f, loader) == 1
         assert state.memo("other", f, loader) == 2
-        os.utime(f, ns=(1_700_000_000 * _SEC + 1, 1_700_000_000 * _SEC + 1))
+        _next_tick(f)
         assert state.memo("k", f, loader) == 3
 
     def test_invalidate_drops_the_entry(self, tmp_path: Path) -> None:
@@ -392,21 +377,19 @@ class TestMemo:
 class TestConfigSeam:
     """config(), metadata(), and setting() keep the config.py precedence."""
 
-    def test_setting_reads_the_hierarchy(self, tmp_path: Path) -> None:
-        _catalog(tmp_path)
-        (tmp_path / ".portolan" / "config.yaml").write_text("backend: root\n")
-        coll = tmp_path / "c"
+    def test_setting_reads_the_hierarchy(self, catalog: Path) -> None:
+        (catalog / ".portolan" / "config.yaml").write_text("backend: root\n")
+        coll = catalog / "c"
         (coll / ".portolan").mkdir(parents=True)
         (coll / ".portolan" / "config.yaml").write_text("backend: coll\n")
-        state = RunState.open(tmp_path)
+        state = RunState.open(catalog)
         assert state.setting("backend") == "root"
         assert state.setting("backend", collection_dir=coll) == "coll"
         assert state.setting("backend", collection_dir=coll, cli_value="cli") == "cli"
         assert state.config(coll)["backend"] == "coll"
 
-    def test_metadata_drops_inherited_title(self, tmp_path: Path) -> None:
-        _catalog(tmp_path)
-        (tmp_path / ".portolan" / "metadata.yaml").write_text("title: Root\nlicense: MIT\n")
-        coll = tmp_path / "c"
+    def test_metadata_drops_inherited_title(self, catalog: Path) -> None:
+        (catalog / ".portolan" / "metadata.yaml").write_text("title: Root\nlicense: MIT\n")
+        coll = catalog / "c"
         coll.mkdir()
-        assert RunState.open(tmp_path).metadata(coll) == {"license": "MIT"}
+        assert RunState.open(catalog).metadata(coll) == {"license": "MIT"}

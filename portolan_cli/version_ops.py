@@ -98,16 +98,19 @@ def publish_version(
     catalog_root: Path | None = None,
     state: RunState | None = None,
 ) -> Version:
-    """Publish a new version of a collection.
+    """Publish a new version of a collection through the active backend.
+
+    The first seven arguments are those of ``VersioningBackend.publish``. A
+    missing schema becomes the ``"unknown"`` fingerprint.
 
     Args:
         collection: Collection identifier/path.
         assets: Mapping of asset names to asset paths/URIs.
-        schema: Schema fingerprint for change detection.
+        schema: Schema fingerprint, or None.
         breaking: Whether this is a breaking change.
         message: Human-readable description of the change.
-        removed: Set of asset keys to remove from the version.
-        version: Explicit version string. If None, auto-compute next version.
+        removed: Asset keys that the version drops.
+        version: Explicit version string, or None for the next one.
         backend_name: Backend to use. If None, resolved from config.
         catalog_root: Path to catalog root for config lookup.
         state: The run state, which reads the backend setting once per run.
