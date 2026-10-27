@@ -1807,3 +1807,250 @@ class TestGeometryOnlyReads:
         assert generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig(basemap_provider="none"))
 
         assert connects == []
+
+
+# =============================================================================
+# Extents at the edges of EPSG:3857, and the tile placement of PMTiles
+# =============================================================================
+
+#: EPSG:3857 metres per degree of longitude.
+_DEGREE = 111_319.49
+
+
+def _data_pixels(image_path: Path) -> int:
+    """Count the output pixels that hold the fill colour of a feature."""
+    import numpy as np
+    from PIL import Image
+
+    rgb = np.asarray(Image.open(image_path).convert("RGB")).astype(int)
+    return int(((rgb[..., 2] - rgb[..., 0]) > 100).sum())
+
+
+def _write_crs84(path: Path, geometries: list[Any], bbox: list[float] | None = None) -> Path:
+    """Write CRS84 geometries to GeoParquet, with an optional footer bbox."""
+    gpd = pytest.importorskip("geopandas")
+    import pyarrow.parquet as pq
+
+    gpd.GeoDataFrame(geometry=geometries, crs="OGC:CRS84").to_parquet(path)
+    if bbox is not None:
+        table = pq.read_table(path)
+        metadata = dict(table.schema.metadata)
+        geo = json.loads(metadata[b"geo"])
+        geo["columns"]["geometry"]["bbox"] = bbox
+        metadata[b"geo"] = json.dumps(geo).encode()
+        pq.write_table(table.replace_schema_metadata(metadata), path)
+    return path
+
+
+class TestWebMercatorEdges:
+    """Extents that EPSG:3857 wraps or clips still frame and draw the data."""
+
+    @pytest.mark.integration
+    def test_longitudes_past_180_stay_east_of_the_antimeridian(
+        self, tmp_path: Path, saved_figures: list[Any]
+    ) -> None:
+        """A 0 to 360 longitude is not wrapped to the other side of the world.
+
+        Before the fix, longitude 190 projected to -170. The frame and the
+        drawn box spanned the whole world.
+        """
+        from shapely.geometry import box
+
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        gpq = _write_crs84(tmp_path / "pacific.parquet", [box(170, -10, 190, 10)])
+        assert generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig(basemap_provider="none"))
+
+        (figure,) = saved_figures
+        left, right = figure.axes[0].get_xlim()
+        assert left == pytest.approx(169 * _DEGREE, rel=1e-3)
+        assert right == pytest.approx(191 * _DEGREE, rel=1e-3)
+
+    @pytest.mark.integration
+    def test_an_antimeridian_bbox_frames_the_crossing(
+        self, tmp_path: Path, saved_figures: list[Any]
+    ) -> None:
+        """A footer bbox with minx > maxx crosses the antimeridian (GeoParquet 1.1).
+
+        Before the fix, the frame spanned the whole world and the data was two
+        slivers at its edges.
+        """
+        import shapely
+        from shapely.geometry import box
+
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        crossing = shapely.MultiPolygon([box(175, -20, 180, -15), box(-180, -20, -175, -15)])
+        gpq = _write_crs84(tmp_path / "fiji.parquet", [crossing], bbox=[175, -20, -175, -15])
+        result = generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig(basemap_provider="none"))
+
+        assert result is not None
+        (figure,) = saved_figures
+        left, right = figure.axes[0].get_xlim()
+        assert left == pytest.approx(174.5 * _DEGREE, rel=1e-3)
+        assert right == pytest.approx(185.5 * _DEGREE, rel=1e-3)
+        # The two halves meet at 180 and fill most of the image.
+        assert _data_pixels(result) > 30_000
+
+    @pytest.mark.integration
+    def test_the_basemap_wraps_across_the_antimeridian(
+        self, tmp_path: Path, stub_tiles: list[str]
+    ) -> None:
+        """The tiles east of 180 come from the west edge of the tile world."""
+        import numpy as np
+        from PIL import Image
+        from shapely.geometry import box
+
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        gpq = _write_crs84(tmp_path / "pacific.parquet", [box(170, -10, 190, -9)])
+        result = generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig())
+
+        assert result is not None
+        rgb = np.asarray(Image.open(result).convert("RGB")).astype(int)
+        stub = np.abs(rgb - np.array(_STUB_TILE_RGBA[:3])).sum(axis=2) < 30
+        # Each column of the image has basemap pixels, also east of 180.
+        assert stub.any(axis=0).all()
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "polygon",
+        [(-10, 86, 10, 89), (-180, -90, 180, -86)],
+        ids=["arctic", "antarctic-band"],
+    )
+    def test_data_beyond_the_mercator_limit_is_drawn(
+        self, polygon: tuple[float, float, float, float], tmp_path: Path, stub_tiles: list[str]
+    ) -> None:
+        """Data that lies wholly past latitude 85.05 draws in its own CRS.
+
+        Before the fix, the clip to 85.05 collapsed it to a line, and the
+        thumbnail showed the basemap and no data.
+        """
+        from shapely.geometry import box
+
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        gpq = _write_crs84(tmp_path / "polar.parquet", [box(*polygon)])
+        result = generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig())
+
+        assert result is not None
+        assert _data_pixels(result) > 10_000
+        assert stub_tiles == []
+
+    @pytest.mark.integration
+    def test_the_rc_savefig_dpi_does_not_change_the_pixel_size(self, tmp_path: Path) -> None:
+        """A matplotlibrc with savefig.dpi does not scale the thumbnail."""
+        import matplotlib
+        from PIL import Image
+        from shapely.geometry import box
+
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        gpq = _write_crs84(tmp_path / "square.parquet", [box(0, 0, 1, 1)])
+        with matplotlib.rc_context({"savefig.dpi": 200}):
+            result = generate_thumbnail_from_geoparquet(
+                gpq, ThumbnailConfig(basemap_provider="none", max_size=300)
+            )
+
+        assert result is not None
+        with Image.open(result) as image:
+            assert max(image.size) == 300
+
+
+class TestPmtilesTilePlacement:
+    """Decoded MVT coordinates land at the place of the source feature."""
+
+    @pytest.mark.integration
+    def test_the_fixture_points_keep_their_latitude(self, fixtures_dir: Path) -> None:
+        """sample.pmtiles holds New York, Chicago, and San Francisco.
+
+        Before the fix the decoder flipped y, and the transform flipped it
+        again. Each point was mirrored in its tile: New York at latitude 22.
+        """
+        pytest.importorskip("pmtiles")
+        pytest.importorskip("mapbox_vector_tile")
+        from portolan_cli.viz.thumbnail import _read_pmtiles_geometries
+
+        geometries, _bounds = _read_pmtiles_geometries(
+            fixtures_dir / "cloud_native" / "sample.pmtiles"
+        )
+
+        got = sorted(tuple(g["coordinates"]) for g in geometries)
+        expected = sorted([(-73.9, 40.7), (-87.6, 41.9), (-122.4, 37.8)])
+        assert len(got) == 3
+        for (lon, lat), (want_lon, want_lat) in zip(got, expected, strict=True):
+            assert lon == pytest.approx(want_lon, abs=0.01)
+            assert lat == pytest.approx(want_lat, abs=0.01)
+
+
+class TestBasemapKeyStaysPrivate:
+    """The basemap key goes on the tile URL and nowhere else."""
+
+    _KEY = "SECRET123"
+
+    @pytest.mark.integration
+    def test_a_tile_error_logs_no_key(
+        self,
+        tmp_path: Path,
+        stub_tiles: list[str],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The thumbnail survives a failed tile, and its log record holds no key."""
+        import contextily.tile
+        import requests
+        from shapely.geometry import box
+
+        from portolan_cli.viz import thumbnail
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        def fail(tile_url: str, *_args: Any, **_kwargs: Any) -> Any:
+            # contextily's own error on a 404 quotes the tile URL.
+            raise requests.HTTPError(f"Tile URL resulted in a 404 error:\n{tile_url}")
+
+        monkeypatch.setattr(contextily.tile, "_fetch_tile", fail)
+        gpq = _write_crs84(tmp_path / "a.parquet", [box(10, 40, 12, 42)])
+        config = ThumbnailConfig(basemap_provider="CartoDB.Positron", basemap_api_key=self._KEY)
+        with caplog.at_level("DEBUG", logger="portolan_cli.viz.thumbnail"):
+            result = generate_thumbnail_from_geoparquet(gpq, config)
+
+        assert result is not None
+        assert len(thumbnail._tile_memo) == 0
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("Failed to add basemap" in m for m in messages), messages
+        assert [m for m in messages if self._KEY in m] == []
+
+    @pytest.mark.integration
+    def test_the_written_files_hold_no_key(
+        self, tmp_path: Path, stub_tiles: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An add with a keyed basemap writes the key into no catalog file.
+
+        The check reads every byte of every file, the JPEG metadata, README,
+        and collection.json included. The key comes from the environment, so
+        .portolan/config.yaml holds none.
+        """
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+
+        monkeypatch.setenv("PORTOLAN_THUMBNAILS_BASEMAP_API_KEY", self._KEY)
+        catalog = tmp_path / "catalog"
+        _copy_fixture("open-buildings.parquet", catalog / "buildings")
+        monkeypatch.chdir(catalog)
+        runner = CliRunner()
+        init = runner.invoke(cli, ["init", str(catalog), "--auto", "--license", "CC-BY-4.0"])
+        assert init.exit_code == 0, init.output
+        config = catalog / ".portolan" / "config.yaml"
+        config.write_text(
+            config.read_text() + "thumbnails:\n  basemap:\n    provider: CartoDB.Positron\n"
+        )
+        result = runner.invoke(cli, ["add", str(catalog / "buildings")])
+        assert result.exit_code == 0, result.output
+
+        assert stub_tiles
+        assert all(url.endswith(f"key={self._KEY}") for url in stub_tiles)
+        written = [p for p in catalog.rglob("*") if p.is_file()]
+        assert any(p.name.endswith(".thumb.jpg") for p in written)
+        assert [p for p in written if self._KEY.encode() in p.read_bytes()] == []
+        assert self._KEY not in result.output
