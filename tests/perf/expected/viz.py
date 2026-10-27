@@ -9,9 +9,10 @@ EXPECTED: dict[tuple[str, str], tuple[int, int]] = {
 }
 # fmt: on
 
-#: The tracemalloc peak of ``add.thumbnails`` for one file of 100,000 polygons
-#: with the stub basemap, in MB: 55.05 measured plus 15%.
-THUMBNAIL_TRACEMALLOC_MB = 63.3
+#: The tracemalloc growth of ``add.thumbnails`` for one file of 100,000 polygons
+#: with the stub basemap, in MB: 45.58 measured plus 15%. The growth is the same
+#: when the add stack loads at startup (45.57) or inside the command (45.58).
+THUMBNAIL_TRACEMALLOC_MB = 52.4
 #: Full figure draws for that thumbnail. The render draws the features and
 #: the basemap image on one axes, and Figure.savefig draws the figure once.
 THUMBNAIL_DRAWS = 1

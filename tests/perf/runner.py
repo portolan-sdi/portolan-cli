@@ -183,7 +183,9 @@ def main() -> int:
     """Parse the arguments, run the command, and write the record."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--out", type=Path, required=True, help="Where to write the record.")
-    parser.add_argument("--mem", action="store_true", help="Record tracemalloc peaks.")
+    parser.add_argument(
+        "--mem", action="store_true", help="Record the tracemalloc growth of each span."
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER, help="-- then the portolan args")
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command

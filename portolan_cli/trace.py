@@ -16,7 +16,9 @@ Spans nest through a ``ContextVar``. Asyncio tasks inherit the current span.
 A thread pool worker does not, so submit work through ``submit``.
 
 ``PORTOLAN_TIMINGS=1`` or ``--timings`` turns tracing on.
-``PORTOLAN_TIMINGS=mem`` also records the ``tracemalloc`` peak of each span.
+``PORTOLAN_TIMINGS=mem`` also records the ``tracemalloc`` growth of each span: its
+peak traced memory less the traced memory at span entry. Memory that an
+earlier stage holds, such as a module imported before the span, does not count.
 ``PORTOLAN_TRACE_FILE=<path>`` turns tracing on and names the Chrome trace file.
 
 This module imports only the standard library, so any layer may import it.
@@ -151,6 +153,7 @@ class _Span:
         self.cpu_end: float | None = None
         self.rss_peak_mb: float | None = None
         self.mem_peak = 0
+        self.mem_base = 0
         self._parent: _Span | None = None
         self._token: contextvars.Token[_Span | None] | None = None
 
@@ -173,6 +176,7 @@ class _Span:
         if _mem and tracemalloc.is_tracing():
             _propagate_mem_peak(self._parent)
             tracemalloc.reset_peak()
+            self.mem_base = tracemalloc.get_traced_memory()[0]
         self._token = _current.set(self)
         self.cpu_start = time.process_time()
         self.start = time.perf_counter()
@@ -215,7 +219,7 @@ class _Span:
             "children": [c.to_dict(now) for c in list(self.children)],
         }
         if _mem:
-            node["mem_peak_mb"] = round(self.mem_peak / _MB, 3)
+            node["mem_growth_mb"] = round(max(self.mem_peak - self.mem_base, 0) / _MB, 3)
         if self.end is None:
             node["open"] = True
         return node

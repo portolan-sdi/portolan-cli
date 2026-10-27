@@ -63,8 +63,10 @@ worker threads included.
 `rss MB` is the resident memory high-water mark of the process at the end of
 the stage.
 
-`PORTOLAN_TIMINGS=mem` also records the peak Python allocation of each stage
-with `tracemalloc`. This mode makes the run slower.
+`PORTOLAN_TIMINGS=mem` also records the Python memory growth of each stage
+with `tracemalloc`. The growth is the peak traced memory of the stage less the
+traced memory when the stage starts. Memory that an earlier stage holds does
+not count. This mode makes the run slower.
 
 ### The meta block
 
@@ -85,7 +87,7 @@ PORTOLAN_TIMINGS=1 portolan --format json add demographics/
 
 The envelope prints before the command span closes, so that span has
 `"open": true` and its duration stops at the print. In `mem` mode, each span
-also has `mem_peak_mb`.
+also has `mem_growth_mb`.
 
 The counters are:
 
