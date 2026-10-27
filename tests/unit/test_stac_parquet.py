@@ -1775,3 +1775,43 @@ class TestWriteReadme:
         asset = json.loads(collection_json.read_text())["assets"]["documentation"]
         fields = file_fields(collection_dir / "README.md")
         assert {key: asset[key] for key in fields} == fields
+
+
+class TestMirrorOnPluginBackend:
+    """A plugin backend never receives the item mirror as a data asset.
+
+    The Iceberg backend reads each ``.parquet`` asset that it gets and appends
+    the rows to the collection table. ``items.parquet`` holds STAC items, not
+    data rows. The mirror record stays in the local ``versions.json``.
+    """
+
+    @pytest.mark.unit
+    def test_mirror_is_not_published_to_the_plugin(
+        self, collection_with_items: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from typing import Any
+
+        import portolan_cli.version_ops as version_ops
+        from portolan_cli.stac_parquet import generate_parquet_mirrors
+        from portolan_cli.versions import read_versions
+
+        catalog_root = collection_with_items.parent
+        (catalog_root / ".portolan").mkdir(exist_ok=True)
+        (catalog_root / ".portolan" / "config.yaml").write_text("backend: fake\n")
+        _write_version_snapshot(collection_with_items, "1.0.0")
+        published: list[Any] = []
+
+        def fake_publish(collection: str, **kwargs: Any) -> Any:
+            published.append((collection, kwargs["assets"]))
+            return object()
+
+        monkeypatch.setattr(version_ops, "publish_version", fake_publish)
+
+        generate_parquet_mirrors(
+            catalog_root, {"landsat"}, generate_parquet=False, versioned_collections={"landsat"}
+        )
+
+        assert published == []
+        latest = read_versions(collection_with_items / "versions.json").versions[-1]
+        assert latest.version == "1.0.0"
+        assert sorted(latest.assets) == ["items.parquet", "scene-000.tif"]
