@@ -604,45 +604,40 @@ class TestReadSpatialLayout:
         assert is_geoparquet(path) is read_spatial_layout(path).is_geoparquet
 
 
-class TestReadExtraSchemaMetadata:
-    """The rewrite restores the schema keys geoparquet-io drops."""
+class TestRewriteFidelityExtraKeys:
+    """The rewrite gate reads the schema keys a rewrite must keep."""
 
     @pytest.mark.unit
     def test_it_returns_publisher_keys(self, tmp_path: Path) -> None:
-        """Every key except `geo` comes back."""
+        """Every key the writer does not own counts."""
         import pyarrow.parquet as pq
 
-        from portolan_cli.metadata import read_extra_schema_metadata
+        from portolan_cli.metadata import read_rewrite_fidelity
 
         source = Path(__file__).resolve().parents[1] / "fixtures" / "vector" / "valid"
         path = tmp_path / "tagged.parquet"
         table = pq.read_table(source / "points.parquet")
         metadata = dict(table.schema.metadata or {})
         metadata[b"pandas"] = b"{}"
+        metadata[b"publisher:provenance"] = b"cadastre"
         pq.write_table(table.replace_schema_metadata(metadata), path)
 
-        extra = read_extra_schema_metadata(path)
+        fidelity = read_rewrite_fidelity(path)
 
-        assert extra[b"pandas"] == b"{}"
+        assert fidelity is not None
+        # gpio drops `pandas` on purpose (gpio#1268), so the gate ignores it.
+        assert fidelity.extra_keys == frozenset({b"publisher:provenance"})
 
     @pytest.mark.unit
-    def test_it_excludes_geo(self, tmp_path: Path) -> None:
-        """The writer owns `geo`, so restoring it would undo the rewrite."""
-        from portolan_cli.metadata import read_extra_schema_metadata
+    def test_it_excludes_geo(self) -> None:
+        """The writer owns `geo`, so a fresh value is no loss."""
+        from portolan_cli.metadata import read_rewrite_fidelity
 
         source = Path(__file__).resolve().parents[1] / "fixtures" / "vector" / "valid"
+        fidelity = read_rewrite_fidelity(source / "points.parquet")
 
-        assert b"geo" not in read_extra_schema_metadata(source / "points.parquet")
-
-    @pytest.mark.unit
-    def test_an_unreadable_file_has_nothing_to_preserve(self, tmp_path: Path) -> None:
-        """A broken file yields an empty mapping rather than raising."""
-        from portolan_cli.metadata import read_extra_schema_metadata
-
-        path = tmp_path / "broken.parquet"
-        path.write_bytes(b"not a parquet file")
-
-        assert read_extra_schema_metadata(path) == {}
+        assert fidelity is not None
+        assert b"geo" not in fidelity.extra_keys
 
 
 def _write_declared_types(path: Path, geometry_types: list[str]) -> Path:

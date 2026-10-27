@@ -886,6 +886,23 @@ class TestAssertRewriteKeptEverything:
             _assert_rewrite_kept_everything(tmp_path / "a.parquet", tmp_path / "b.parquet", before)
 
     @pytest.mark.unit
+    def test_it_refuses_a_dropped_schema_key(self, tmp_path: Path) -> None:
+        """A publisher key on the operator's file must survive the rewrite."""
+        from portolan_cli.errors import RewriteFidelityError
+        from portolan_cli.metadata import RewriteFidelity
+        from portolan_cli.preparation import _assert_rewrite_kept_everything
+
+        columns = frozenset({"geometry"})
+        before = RewriteFidelity(1, None, columns, extra_keys=frozenset({b"source"}))
+        after = RewriteFidelity(1, None, columns, extra_keys=frozenset())
+
+        with (
+            patch("portolan_cli.preparation.read_rewrite_fidelity", return_value=after),
+            pytest.raises(RewriteFidelityError, match="schema metadata keys \\['source'\\]"),
+        ):
+            _assert_rewrite_kept_everything(tmp_path / "a.parquet", tmp_path / "b.parquet", before)
+
+    @pytest.mark.unit
     def test_an_unreadable_source_skips_the_gate(self, tmp_path: Path) -> None:
         """With nothing to compare against, the gate cannot judge."""
         from portolan_cli.preparation import _assert_rewrite_kept_everything

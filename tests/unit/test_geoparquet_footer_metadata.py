@@ -152,28 +152,20 @@ def test_rewrite_fidelity_reads_the_crs(tmp_path: Path) -> None:
     assert fidelity.columns == frozenset({"name", "geometry"})
 
 
-def test_extra_schema_metadata_keeps_publisher_keys(tmp_path: Path) -> None:
-    """A publisher key in the footer survives. It was invisible before the fix."""
-    from portolan_cli.metadata.geoparquet import read_extra_schema_metadata
+def test_rewrite_fidelity_keeps_publisher_keys(tmp_path: Path) -> None:
+    """A publisher key in the footer counts. ``geo`` and ``ARROW:schema`` do not.
+
+    geoparquet-io writes a fresh ``geo`` key, and ``ARROW:schema`` describes the
+    columns the source had, not the ones the rewrite produced.
+    """
+    from portolan_cli.metadata.geoparquet import read_rewrite_fidelity
 
     path = _write_appended_geo_parquet(tmp_path / "extra.parquet", extra={"source": "kiln"})
-    preserved = read_extra_schema_metadata(path)
-    assert preserved[b"source"] == b"kiln"
-
-
-def test_extra_schema_metadata_drops_geo_and_arrow_schema(tmp_path: Path) -> None:
-    """``geo`` and ``ARROW:schema`` never come back onto a rewritten file.
-
-    geoparquet-io writes a fresh ``geo`` key, and a restored ``ARROW:schema``
-    blob would describe the columns the source had, not the ones the rewrite
-    produced.
-    """
-    from portolan_cli.metadata.geoparquet import read_extra_schema_metadata
-
-    path = _write_appended_geo_parquet(tmp_path / "reserved.parquet", extra={"source": "kiln"})
-    preserved = read_extra_schema_metadata(path)
-    assert b"geo" not in preserved
-    assert b"ARROW:schema" not in preserved
+    fidelity = read_rewrite_fidelity(path)
+    assert fidelity is not None
+    assert b"source" in fidelity.extra_keys
+    assert b"geo" not in fidelity.extra_keys
+    assert b"ARROW:schema" not in fidelity.extra_keys
 
 
 def test_tabular_metadata_skips_the_file(appended_geo_parquet: Path) -> None:

@@ -51,7 +51,6 @@ from portolan_cli.formats import is_cloud_optimized_geotiff, is_geoparquet
 from portolan_cli.metadata import (
     extract_band_statistics,
     extract_parquet_statistics,
-    read_extra_schema_metadata,
     read_rewrite_fidelity,
     read_spatial_layout,
 )
@@ -1559,10 +1558,12 @@ def _rewrite_parquet_in_place(source: Path, settings: VectorSettings) -> None:
     below, so a leftover file would otherwise be collected as a source on the
     next run. :func:`is_rewrite_temp` lets ``add`` skip it.
 
-    geoparquet-io writes a fresh ``geo`` key and drops every other schema
-    metadata key, so any extra key the source carried is restored afterwards.
-    That restore reads and rewrites the file a second time, so it runs only
-    when the source has such a key.
+    geoparquet-io 1.7.0 writes a fresh ``geo`` key and keeps every other footer
+    key a publisher set, such as a provenance key (gpio#1280). It drops
+    ``pandas`` on purpose, because that key describes the columns of the input
+    (gpio#1268). So the rewrite writes the file once.
+    :func:`_assert_rewrite_kept_everything` refuses a rewrite that drops a
+    publisher key.
 
     Args:
         source: GeoParquet file to rewrite.
@@ -1571,7 +1572,6 @@ def _rewrite_parquet_in_place(source: Path, settings: VectorSettings) -> None:
     import geoparquet_io as gpio
 
     temp_path = source.with_name(f".{source.stem}{REWRITE_TEMP_INFIX}.parquet")
-    preserved = read_extra_schema_metadata(source)
     before = read_rewrite_fidelity(source)
 
     def _run() -> None:
@@ -1580,8 +1580,6 @@ def _rewrite_parquet_in_place(source: Path, settings: VectorSettings) -> None:
 
     try:
         run_with_transient_convert_retry(_run, source_name=source.name)
-        if preserved:
-            _restore_schema_metadata(temp_path, preserved)
         _assert_rewrite_kept_everything(source, temp_path, before)
         temp_path.replace(source)
     finally:
@@ -1658,7 +1656,8 @@ def _assert_rewrite_kept_everything(
         before: The source's fidelity fields, read before the rewrite ran.
 
     Raises:
-        RewriteFidelityError: When the rewrite loses rows, columns, or the CRS.
+        RewriteFidelityError: When the rewrite loses rows, columns, schema
+            metadata keys, or the CRS.
     """
     if before is None:
         return
@@ -1675,6 +1674,11 @@ def _assert_rewrite_kept_everything(
     if dropped:
         raise RewriteFidelityError(source.name, f"the columns {sorted(dropped)}")
 
+    lost_keys = before.extra_keys - after.extra_keys
+    if lost_keys:
+        names = sorted(key.decode(errors="replace") for key in lost_keys)
+        raise RewriteFidelityError(source.name, f"the schema metadata keys {names}")
+
     if before.crs is not None and after.crs is None and not _means_wgs84(before.crs):
         raise RewriteFidelityError(source.name, "the CRS it declared")
 
@@ -1683,66 +1687,6 @@ def _assert_rewrite_kept_everything(
     # PROJJSON text, because an equivalent CRS can serialize two ways.
     if before.crs is not None and after.crs is not None and not _same_crs(before.crs, after.crs):
         raise RewriteFidelityError(source.name, "its CRS, which the rewrite changed")
-
-
-def _writer_compression(reader: Any) -> str:
-    """Name the compression to rewrite a file with, as ParquetWriter spells it.
-
-    ``ParquetFile`` reports an uncompressed column as ``UNCOMPRESSED``, which
-    ``ParquetWriter`` rejects: it spells the same thing ``none``. Reading the
-    codec back without this translation raises ``Unsupported compression:
-    uncompressed`` and loses the rewrite.
-
-    Reads column 0 of the first row group. Portolan writes one codec for the
-    whole file, so one column answers for all of them.
-
-    Args:
-        reader: An open :class:`pyarrow.parquet.ParquetFile` with row groups.
-
-    Returns:
-        A compression name ``ParquetWriter`` accepts.
-    """
-    codec = reader.metadata.row_group(0).column(0).compression.lower()
-    return "none" if codec == "uncompressed" else codec
-
-
-def _restore_schema_metadata(path: Path, preserved: dict[bytes, bytes]) -> None:
-    """Put the source's extra schema metadata back on a rewritten file.
-
-    geoparquet-io owns the ``geo`` key and writes its own, so ``preserved``
-    must already exclude it. Every other key the publisher set is restored:
-    geopandas writes ``pandas``, and provenance keys are common (issue #805).
-
-    Copies row group by row group so memory does not scale with the file, and
-    keeps the compression geoparquet-io chose.
-
-    Args:
-        path: Rewritten Parquet file to amend, in place.
-        preserved: Schema metadata keys to restore.
-    """
-    import pyarrow.parquet as pq
-
-    amended = path.with_name(f"{path.name}.meta")
-
-    try:
-        reader = pq.ParquetFile(path)
-        try:
-            schema = reader.schema_arrow
-            # The writer's own keys win. Only keys it dropped come back.
-            merged = {**preserved, **(schema.metadata or {})}
-            groups = reader.num_row_groups
-            compression = _writer_compression(reader) if groups else "snappy"
-            with pq.ParquetWriter(
-                amended, schema.with_metadata(merged), compression=compression
-            ) as writer:
-                for index in range(groups):
-                    writer.write_table(reader.read_row_group(index))
-        finally:
-            # Windows cannot replace a file that is still open.
-            reader.close()
-        amended.replace(path)
-    finally:
-        amended.unlink(missing_ok=True)
 
 
 def convert_tabular(source: Path, dest_dir: Path, *, state: RunState | None = None) -> Path:
