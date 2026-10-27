@@ -1091,6 +1091,43 @@ class TestAnAddedCogCarriesItsStatistics:
         assert cog.read_bytes() == first
 
 
+class TestTheStatisticsRewriteKeepsEveryPixel:
+    """The rewrite adds statistics to a COG the operator made. It changes no pixel."""
+
+    @pytest.mark.unit
+    def test_a_nodata_pixel_of_one_band_stays_nodata(self, tmp_path: Path) -> None:
+        """Band 1 holds the nodata value 0 where bands 2 and 3 hold data.
+
+        A warp through rio-cogeo reads such a pixel as valid. It writes 1 into
+        band 1 so that the pixel does not read as nodata, and the data changes.
+        """
+        import numpy as np
+        import rasterio
+        from rasterio.shutil import copy
+        from rasterio.transform import from_origin
+
+        from portolan_cli.preparation import convert_raster
+
+        data = np.full((3, 64, 64), 50, "uint8")
+        data[0, :8, :] = 0
+        source = tmp_path / "src.tif"
+        with rasterio.open(
+            source, "w", driver="GTiff", width=64, height=64, count=3, dtype="uint8",
+            crs="EPSG:4326", transform=from_origin(0, 1, 0.01, 0.01), nodata=0,
+        ) as dst:  # fmt: skip
+            dst.write(data)
+        cog = tmp_path / "scene.tif"
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"):
+            copy(source, cog, driver="COG", compress="DEFLATE")
+        source.unlink()
+
+        convert_raster(cog, tmp_path)
+
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(cog) as out:
+            assert np.array_equal(out.read(), data)
+            assert "STATISTICS_MEAN" in out.tags(1)
+
+
 def _two_bands_one_empty(path: Path) -> Path:
     """Write a striped GTiff whose band 1 is all nodata and band 2 holds 7."""
     import numpy as np
