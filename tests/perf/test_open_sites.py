@@ -1,15 +1,20 @@
-"""Every Parquet and raster read in portolan_cli counts an open (#992).
+"""Every data file read in portolan_cli counts an open (#992).
 
 The scale gates see a re-open only when the code that opens the file counts
-it. pyarrow and rasterio have no choke point in our code, so each function
-that opens a file calls ``count("parquet.opens")`` or ``count("raster.opens")``
-itself. This test reads the source and fails on a function that opens a file
-more times than it counts one.
+it. pyarrow, rasterio, and OGR have no choke point in our code, so each
+function that opens a file calls ``count()`` itself. This test reads the
+source and fails on a function that opens a file more times than it counts
+one. ``READERS`` names each reader and the counter it feeds:
 
-It reads these calls: ``ParquetFile``, ``ParquetDataset``, ``read_metadata``,
-``read_schema``, and ``read_table`` of ``pyarrow.parquet``, and
-``rasterio.open`` in read mode. A write with ``rasterio.open(path, "w")``
-opens no file to read.
+- ``parquet.opens``: the readers of ``pyarrow.parquet``,
+  ``pyarrow.dataset.dataset``, ``read_parquet`` of geopandas and pandas, and a
+  DuckDB SQL string that reads Parquet (``read_parquet``, ``parquet_scan``,
+  ``parquet_metadata``, ``parquet_schema``) passed to ``execute``, ``sql``, or
+  ``query``.
+- ``raster.opens``: ``rasterio.open`` in read mode. A write with
+  ``rasterio.open(path, "w")`` opens no file to read.
+- ``vector.opens``: the OGR readers (``geopandas.read_file``, the readers of
+  pyogrio, ``fiona.open``) and ``geopandas.read_feather``.
 
 ``portolan_cli/backends/iceberg`` is not read. That package imports only
 ``portolan_cli.api`` and ``portolan_cli.hookspecs`` (the iceberg boundary
@@ -29,28 +34,63 @@ pytestmark = pytest.mark.unit
 PACKAGE = Path(__file__).resolve().parents[2] / "portolan_cli"
 #: The package that cannot import trace, and so cannot count, under the package root.
 SKIPPED = ("backends", "iceberg")
-PARQUET_READS = frozenset(
-    {"ParquetFile", "ParquetDataset", "read_metadata", "read_schema", "read_table"}
-)
+
+PARQUET, RASTER, VECTOR = "parquet.opens", "raster.opens", "vector.opens"
+#: ``(module, function)`` of each reader, and the counter it feeds.
+READERS: dict[tuple[str, str], str] = {
+    **{
+        ("pyarrow.parquet", name): PARQUET
+        for name in (
+            "ParquetFile",
+            "ParquetDataset",
+            "read_metadata",
+            "read_schema",
+            "read_table",
+            "read_pandas",
+        )
+    },
+    ("pyarrow.dataset", "dataset"): PARQUET,
+    ("geopandas", "read_parquet"): PARQUET,
+    ("pandas", "read_parquet"): PARQUET,
+    ("rasterio", "open"): RASTER,
+    ("geopandas", "read_file"): VECTOR,
+    ("geopandas", "read_feather"): VECTOR,
+    **{
+        ("pyogrio", name): VECTOR
+        for name in ("read_dataframe", "read_info", "read_arrow", "open_arrow", "list_layers")
+    },
+    ("fiona", "open"): VECTOR,
+}
+#: Table functions that make DuckDB read a Parquet file.
+SQL_PARQUET = ("read_parquet", "parquet_scan", "parquet_metadata", "parquet_schema")
+SQL_CALLS = frozenset({"execute", "sql", "query"})
 
 
-def _aliases(tree: ast.Module) -> tuple[set[str], set[str], set[str]]:
-    """Return the names bound to pyarrow.parquet, to its read functions, and to rasterio."""
-    parquet, reads, rasterio = set(), set(), set()
+def _aliases(tree: ast.Module) -> dict[str, str]:
+    """Map each name that an import binds to the dotted path it names."""
+    names: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name == "pyarrow.parquet" and alias.asname:
-                    parquet.add(alias.asname)
-                if alias.name == "rasterio":
-                    rasterio.add(alias.asname or "rasterio")
-        elif isinstance(node, ast.ImportFrom):
+                if alias.asname:
+                    names[alias.asname] = alias.name
+                else:
+                    head = alias.name.split(".")[0]
+                    names[head] = head
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
             for alias in node.names:
-                if node.module == "pyarrow" and alias.name == "parquet":
-                    parquet.add(alias.asname or "parquet")
-                if node.module == "pyarrow.parquet" and alias.name in PARQUET_READS:
-                    reads.add(alias.asname or alias.name)
-    return parquet, reads, rasterio
+                names[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return names
+
+
+def _dotted(node: ast.expr, aliases: dict[str, str]) -> str | None:
+    """Return the dotted path that ``node`` names through the imports, such as ``rasterio.open``."""
+    if isinstance(node, ast.Name):
+        return aliases.get(node.id)
+    if isinstance(node, ast.Attribute):
+        base = _dotted(node.value, aliases)
+        return f"{base}.{node.attr}" if base else None
+    return None
 
 
 def _read_mode(call: ast.Call) -> bool:
@@ -59,19 +99,30 @@ def _read_mode(call: ast.Call) -> bool:
     return all(isinstance(mode, ast.Constant) and mode.value == "r" for mode in modes)
 
 
-def _opened(call: ast.Call, aliases: tuple[set[str], set[str], set[str]]) -> str | None:
+def _sql_reads_parquet(call: ast.Call) -> bool:
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr in SQL_CALLS):
+        return False
+    texts = [
+        node.value
+        for arg in call.args[:1]
+        for node in ast.walk(arg)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+    return any(f"{name}(" in text.lower() for text in texts for name in SQL_PARQUET)
+
+
+def _opened(call: ast.Call, aliases: dict[str, str]) -> str | None:
     """Return the counter that ``call`` must feed, or None when it opens no file to read."""
-    parquet, reads, rasterio = aliases
-    func = call.func
-    if isinstance(func, ast.Name) and func.id in reads:
-        return "parquet.opens"
-    if not (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)):
+    if _sql_reads_parquet(call):
+        return PARQUET
+    path = _dotted(call.func, aliases)
+    if path is None:
         return None
-    if func.value.id in parquet and func.attr in PARQUET_READS:
-        return "parquet.opens"
-    if func.value.id in rasterio and func.attr == "open" and _read_mode(call):
-        return "raster.opens"
-    return None
+    module, _, name = path.rpartition(".")
+    counter = READERS.get((module, name))
+    if counter == RASTER and not _read_mode(call):
+        return None
+    return counter
 
 
 def _counted(call: ast.Call) -> str | None:
@@ -114,7 +165,7 @@ def uncounted_sites(package: Path = PACKAGE) -> list[str]:
         ]
         for scope in scopes:
             calls = _own_calls(scope)
-            for counter in ("parquet.opens", "raster.opens"):
+            for counter in (PARQUET, RASTER, VECTOR):
                 opened = sum(_opened(call, aliases) == counter for call in calls)
                 counted = sum(_counted(call) == counter for call in calls)
                 if opened > counted:
@@ -132,20 +183,26 @@ def test_the_scan_finds_an_uncounted_read_and_passes_a_counted_one(tmp_path: Pat
     package = tmp_path / "portolan_cli"
     package.mkdir()
     (package / "reads.py").write_text(
+        "import geopandas as gpd\n"
         "import pyarrow.parquet as pq\n"
         "import rasterio\n"
+        "from pyogrio import read_info\n"
         "from portolan_cli.trace import count\n\n"
         "def counted(path):\n"
         '    count("parquet.opens")\n'
         "    return pq.ParquetFile(path)\n\n"
-        "def uncounted(path):\n"
-        "    return pq.read_metadata(path), rasterio.open(path)\n\n"
-        "def written(path):\n"
+        "def uncounted(path, con):\n"
+        "    pq.read_metadata(path), rasterio.open(path), gpd.read_parquet(path)\n"
+        "    read_info(path), gpd.read_file(path)\n"
+        "    return con.execute(f\"SELECT * FROM read_parquet('{path}')\")\n\n"
+        "def written(path, con):\n"
+        '    con.execute("SELECT 1")\n'
         '    return rasterio.open(path, "w")\n',
         encoding="utf-8",
     )
 
     assert uncounted_sites(package) == [
-        "portolan_cli/reads.py:uncounted: parquet.opens opened 1, counted 0",
+        "portolan_cli/reads.py:uncounted: parquet.opens opened 3, counted 0",
         "portolan_cli/reads.py:uncounted: raster.opens opened 1, counted 0",
+        "portolan_cli/reads.py:uncounted: vector.opens opened 2, counted 0",
     ]
