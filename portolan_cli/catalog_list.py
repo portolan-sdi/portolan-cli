@@ -15,12 +15,16 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path, PurePath
+from typing import TYPE_CHECKING
 
 from portolan_cli.config import get_ignored_files
 from portolan_cli.constants import MANAGED_FILES
 from portolan_cli.format_families import FORMAT_DISPLAY_NAMES, is_geojson
 from portolan_cli.stac_links import catalog_collections
 from portolan_cli.versions import read_versions
+
+if TYPE_CHECKING:
+    from portolan_cli.config import ConfigSource
 
 logger = logging.getLogger(__name__)
 
@@ -393,6 +397,8 @@ def _scan_collection_directory(
 def list_catalog_contents(
     catalog_root: Path,
     collection_id: str | None = None,
+    *,
+    state: ConfigSource | None = None,
 ) -> CatalogListResult:
     """List all contents of a catalog with tracking status.
 
@@ -404,6 +410,7 @@ def list_catalog_contents(
     Args:
         catalog_root: Root directory of the catalog.
         collection_id: Optional collection to filter by.
+        state: The run state, which parses the config once per run.
 
     Returns:
         CatalogListResult with all collections, items, and assets.
@@ -413,7 +420,7 @@ def list_catalog_contents(
     if not catalog_path.exists():
         return CatalogListResult()
 
-    ignored_patterns = get_ignored_files(catalog_root)
+    ignored_patterns = get_ignored_files(catalog_root, state=state)
 
     ids = set(catalog_collections(catalog_root))
     try:

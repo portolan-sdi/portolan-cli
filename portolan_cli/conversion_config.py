@@ -32,7 +32,7 @@ from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.config import load_catalog_config
+from portolan_cli.config import ConfigSource, load_catalog_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -131,7 +131,9 @@ def _parse_paths(items: list[Any]) -> tuple[str, ...]:
     return tuple(p for p in items if isinstance(p, str))
 
 
-def get_conversion_overrides(catalog_path: Path) -> ConversionOverrides:
+def get_conversion_overrides(
+    catalog_path: Path, *, state: ConfigSource | None = None
+) -> ConversionOverrides:
     """Load conversion overrides from catalog config.
 
     Reads the 'conversion' section from .portolan/config.yaml and returns
@@ -139,11 +141,12 @@ def get_conversion_overrides(catalog_path: Path) -> ConversionOverrides:
 
     Args:
         catalog_path: Root path of the catalog.
+        state: The run state, which parses the config once per run.
 
     Returns:
         ConversionOverrides instance. Returns empty overrides if no config exists.
     """
-    config = load_catalog_config(catalog_path)
+    config = load_catalog_config(catalog_path, state=state)
     extensions = config.section("conversion", "extensions")
     paths = config.section("conversion", "paths")
 
@@ -154,7 +157,7 @@ def get_conversion_overrides(catalog_path: Path) -> ConversionOverrides:
     )
 
 
-def get_handler_pins(catalog_path: Path) -> dict[str, str]:
+def get_handler_pins(catalog_path: Path, *, state: ConfigSource | None = None) -> dict[str, str]:
     """Load ``conversion.handlers``: the format handler to use per extension (#947).
 
     A pin decides between format handlers that claim the same extension::
@@ -165,11 +168,12 @@ def get_handler_pins(catalog_path: Path) -> dict[str, str]:
 
     Args:
         catalog_path: Root path of the catalog.
+        state: The run state, which parses the config once per run.
 
     Returns:
         Lowercase extension with a leading dot, to handler name.
     """
-    handlers = load_catalog_config(catalog_path).section("conversion", "handlers")
+    handlers = load_catalog_config(catalog_path, state=state).section("conversion", "handlers")
     pins: dict[str, str] = {}
     for extension, name in handlers.items():
         ext = str(extension).strip().lower()
@@ -457,7 +461,9 @@ def settings_override(
         _SETTINGS_OVERRIDE.reset(token)
 
 
-def get_cog_settings(catalog_path: Path | None) -> CogSettings:
+def get_cog_settings(
+    catalog_path: Path | None, *, state: ConfigSource | None = None
+) -> CogSettings:
     """Load COG conversion settings from catalog config.
 
     Reads the 'conversion.cog' section from .portolan/config.yaml and returns
@@ -469,6 +475,7 @@ def get_cog_settings(catalog_path: Path | None) -> CogSettings:
 
     Args:
         catalog_path: Root path of the catalog.
+        state: The run state, which parses the config once per run.
 
     Returns:
         CogSettings instance. Returns defaults if no config exists.
@@ -478,7 +485,7 @@ def get_cog_settings(catalog_path: Path | None) -> CogSettings:
         return override
     if catalog_path is None:
         return CogSettings()
-    cog = load_catalog_config(catalog_path).section("conversion", "cog")
+    cog = load_catalog_config(catalog_path, state=state).section("conversion", "cog")
     if not cog:
         return CogSettings()
 
@@ -684,7 +691,9 @@ def _warn_once(catalog_path: Path, message: str) -> None:
     logger.warning(message)
 
 
-def get_vector_settings(catalog_path: Path | None) -> VectorSettings:
+def get_vector_settings(
+    catalog_path: Path | None, *, state: ConfigSource | None = None
+) -> VectorSettings:
     """Load vector conversion settings from catalog config.
 
     Reads the 'conversion.vector' section from .portolan/config.yaml and returns
@@ -692,6 +701,7 @@ def get_vector_settings(catalog_path: Path | None) -> VectorSettings:
 
     Args:
         catalog_path: Root path of the catalog.
+        state: The run state, which parses the config once per run.
 
     Returns:
         VectorSettings instance. Returns defaults if no config exists.
@@ -701,7 +711,7 @@ def get_vector_settings(catalog_path: Path | None) -> VectorSettings:
         return override
     if catalog_path is None:
         return VectorSettings()
-    vector = load_catalog_config(catalog_path).section("conversion", "vector")
+    vector = load_catalog_config(catalog_path, state=state).section("conversion", "vector")
     if not vector:
         return VectorSettings()
 

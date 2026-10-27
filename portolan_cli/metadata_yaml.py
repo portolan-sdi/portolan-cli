@@ -49,6 +49,8 @@ from portolan_cli.providers import HOST_ROLE, PROVIDER_ROLES
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from portolan_cli.config import ConfigSource
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -917,6 +919,8 @@ def apply_raster_nodata_defaults(
 def load_and_validate_metadata(
     path: Path,
     catalog_root: Path,
+    *,
+    state: ConfigSource | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Load metadata from hierarchy and validate.
 
@@ -926,13 +930,16 @@ def load_and_validate_metadata(
     Args:
         path: Directory to start from (collection or subcatalog).
         catalog_root: Catalog root directory.
+        state: The run state, which parses each metadata.yaml once per run.
 
     Returns:
         Tuple of (merged_metadata_dict, list_of_errors).
         Returns ({}, errors) if no metadata.yaml exists in hierarchy.
     """
     # Load merged metadata using existing hierarchy support
-    metadata = load_merged_metadata(path, catalog_root)
+    metadata = (
+        state.metadata(path) if state is not None else load_merged_metadata(path, catalog_root)
+    )
 
     # Validate the merged result
     errors = validate_metadata(metadata)

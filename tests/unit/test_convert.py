@@ -2504,7 +2504,7 @@ class TestPartitionedOutputWithGeoparquetIO:
 
         converted = tmp_path / "big.parquet"
         converted.write_bytes(b"PAR1")
-        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_: "kdtree")
+        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_, **__: "kdtree")
         monkeypatch.setattr(partitioning, "partition_geoparquet", lambda **_: [])
 
         assert partitioning.partition_vector_file(converted, tmp_path) == []
@@ -2527,7 +2527,7 @@ class TestPartitionedOutputWithGeoparquetIO:
         converted = tmp_path / "second.parquet"
         converted.write_bytes(b"PAR1")
         called: list[str] = []
-        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_: "kdtree")
+        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_, **__: "kdtree")
         monkeypatch.setattr(
             partitioning, "partition_geoparquet", lambda **_: called.append("write") or []
         )
@@ -2574,7 +2574,7 @@ class TestPartitionedOutputWithGeoparquetIO:
         (coll / "kdtree_cell=0000").mkdir(parents=True)
         converted = coll / "big.parquet"
         converted.write_bytes(b"PAR1")
-        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_: "kdtree")
+        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_, **__: "kdtree")
 
         with pytest.raises(PartitionCollisionError):
             _maybe_partition_large_file(self._prepared(converted, created_output), tmp_path, None)
@@ -2609,7 +2609,7 @@ class TestPartitionedOutputWithGeoparquetIO:
         monkeypatch.setattr(
             add, "prepare_item", lambda path, **_: self._prepared(path, created_output=False)
         )
-        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_: "kdtree")
+        monkeypatch.setattr(partitioning, "partition_strategy", lambda *_, **__: "kdtree")
         opts = add._PrepareOptions(
             catalog_root=tmp_path,
             item_id=None,

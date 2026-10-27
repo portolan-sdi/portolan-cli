@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from portolan_cli.bbox import compute_bbox_union, to_2d_bbox
@@ -23,6 +22,8 @@ from portolan_cli.models.collection import (
 from portolan_cli.stac_links import catalog_collections
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from portolan_cli.models.schema import SchemaModel
 
 logger = logging.getLogger(__name__)
@@ -248,10 +249,9 @@ def _get_metadata_yaml_bbox(collection_dir: Path) -> list[float] | None:
         return None
 
     try:
-        import yaml
+        from portolan_cli.config import safe_load
 
-        with Path(metadata_path).open(encoding="utf-8") as f:
-            metadata = yaml.safe_load(f) or {}
+        metadata = safe_load(metadata_path.read_text(encoding="utf-8")) or {}
 
         # Check for explicit bbox in metadata.yaml
         # Supported formats: extent.bbox or just bbox at top level

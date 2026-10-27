@@ -47,6 +47,7 @@ from portolan_cli.format_families import (
 if TYPE_CHECKING:
     import pyarrow.parquet as pq
 
+    from portolan_cli.config import ConfigSource
     from portolan_cli.conversion_config import ConversionOverrides
     from portolan_cli.plugins.formats import FormatHandler
 
@@ -327,12 +328,15 @@ def _status_by_content(path: Path, extension: str) -> FormatInfo | None:
     return None
 
 
-def detect_format(path: Path, catalog_root: Path | None = None) -> str | None:
+def detect_format(
+    path: Path, catalog_root: Path | None = None, *, state: ConfigSource | None = None
+) -> str | None:
     """Return the format family of a file, asking the plugin format handlers first.
 
     Args:
         path: Path to the file or directory to detect.
         catalog_root: Catalog root, for a ``conversion.handlers`` pin.
+        state: The run state, which parses the config once per run.
 
     Returns:
         The family of the handler that claims the file, for example
@@ -347,14 +351,14 @@ def detect_format(path: Path, catalog_root: Path | None = None) -> str | None:
     if extension_of(path) in plugin_extensions():
         if not path.exists():
             raise FileNotFoundError(f"File not found: {path}")
-        handler = handler_for(path, catalog_root)
+        handler = handler_for(path, catalog_root, state=state)
         if handler is not None:
             return handler.family
     return detect_family(path)
 
 
 def _plugin_handler(
-    path: Path, catalog_root: Path | None = None
+    path: Path, catalog_root: Path | None = None, state: ConfigSource | None = None
 ) -> tuple[FormatHandler | None, bool]:
     """Return the plugin handler for ``path``, and whether only plugins register its extension.
 
@@ -377,10 +381,13 @@ def _plugin_handler(
     extension = extension_of(path)
     if extension not in plugin_extensions():
         return None, False
-    return plugin_handler_for(path, catalog_root), extension not in builtin_extensions()
+    handler = plugin_handler_for(path, catalog_root, state=state)
+    return handler, extension not in builtin_extensions()
 
 
-def get_cloud_native_status(path: Path, catalog_root: Path | None = None) -> FormatInfo:
+def get_cloud_native_status(
+    path: Path, catalog_root: Path | None = None, *, state: ConfigSource | None = None
+) -> FormatInfo:
     """Determine cloud-native status and format info for a file.
 
     Classifies a file as CLOUD_NATIVE, CONVERTIBLE, or UNSUPPORTED based on
@@ -390,6 +397,7 @@ def get_cloud_native_status(path: Path, catalog_root: Path | None = None) -> For
     Args:
         path: Path to the file to classify.
         catalog_root: Catalog root, for a ``conversion.handlers`` pin.
+        state: The run state, which parses the config once per run.
 
     Returns:
         FormatInfo with status, display name, target format, and error message.
@@ -397,17 +405,20 @@ def get_cloud_native_status(path: Path, catalog_root: Path | None = None) -> For
     Raises:
         FileNotFoundError: If the file does not exist.
     """
-    info = _default_status(path, catalog_root)
+    info = _default_status(path, catalog_root, state)
     if catalog_root is None:
         return info
     # The catalog's conversion.extensions and conversion.paths lists win over
     # the default status, so convert and check agree on a file (#1020).
     from portolan_cli.conversion_config import get_conversion_overrides
 
-    return _apply_overrides(path, info, get_conversion_overrides(catalog_root), catalog_root)
+    overrides = get_conversion_overrides(catalog_root, state=state)
+    return _apply_overrides(path, info, overrides, catalog_root)
 
 
-def _default_status(path: Path, catalog_root: Path | None) -> FormatInfo:
+def _default_status(
+    path: Path, catalog_root: Path | None, state: ConfigSource | None = None
+) -> FormatInfo:
     """The status of a file by format alone. See ``get_cloud_native_status``."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
@@ -427,7 +438,7 @@ def _default_status(path: Path, catalog_root: Path | None) -> FormatInfo:
     # extension that a built-in handler also registers, the built-in checks
     # decide the status, so a valid COG stays CLOUD_NATIVE when a plugin
     # claims .tif. The plugin still names the target format.
-    handler, plugin_only = _plugin_handler(path, catalog_root)
+    handler, plugin_only = _plugin_handler(path, catalog_root, state)
     if handler is not None and plugin_only:
         return FormatInfo(
             status=CloudNativeStatus.CONVERTIBLE,

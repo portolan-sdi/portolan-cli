@@ -34,7 +34,7 @@ import contextlib
 import json
 import re
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from portolan_cli.agents_md import markdown_link_gap
@@ -43,6 +43,9 @@ from portolan_cli.errors import ConfigInvalidStructureError
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.stac_links import owned_item_hrefs
 from portolan_cli.stac_links import visible_stac_files as _visible_stac_files
+
+if TYPE_CHECKING:
+    from portolan_cli.config import ConfigSource
 
 # Keyword-badge rendering limits (#515). A junk-dominated list is a machine dump
 # (e.g. WFS layer ids seeded into metadata.yaml at extraction) and is suppressed;
@@ -818,9 +821,22 @@ def load_collection_stac(collection_path: Path) -> dict[str, Any]:
     return stac
 
 
+def _merged_metadata(directory: Path, root: Path, state: ConfigSource | None) -> dict[str, Any]:
+    """The merged metadata.yaml of ``directory`` below ``root``.
+
+    The state merges below the catalog root only. A sub-catalog README uses
+    the sub-catalog as its root, so it reads without the state.
+    """
+    if state is not None and root.resolve() == state.catalog_root.resolve():
+        return state.metadata(directory)
+    return load_merged_metadata(directory, root)
+
+
 def generate_readme_for_collection(
     collection_path: Path,
     catalog_root: Path,
+    *,
+    state: ConfigSource | None = None,
 ) -> str:
     """Generate README for a collection by loading STAC and metadata from disk.
 
@@ -832,6 +848,7 @@ def generate_readme_for_collection(
     Args:
         collection_path: Path to the collection directory.
         catalog_root: Path to the catalog root.
+        state: The run state, which parses each metadata.yaml once per run.
 
     Returns:
         README markdown string.
@@ -839,7 +856,7 @@ def generate_readme_for_collection(
     stac = load_collection_stac(collection_path)
 
     # Load merged metadata from hierarchy
-    metadata = load_merged_metadata(collection_path, catalog_root)
+    metadata = _merged_metadata(collection_path, catalog_root, state)
 
     return generate_readme(stac=stac, metadata=metadata)
 
@@ -946,6 +963,7 @@ def _add_collections_section(
     sections: list[str],
     catalog_path: Path,
     aggregation: dict[str, Any],
+    state: ConfigSource | None = None,
 ) -> None:
     """Add collections listing section for catalog README.
 
@@ -983,7 +1001,7 @@ def _add_collections_section(
         # malformed metadata.yaml in one collection must not abort the catalog
         # README, so fall back to STAC-only for that entry.
         try:
-            coll_metadata = load_merged_metadata(coll_dir, catalog_path)
+            coll_metadata = _merged_metadata(coll_dir, catalog_path, state)
         except (ConfigInvalidStructureError, OSError):
             coll_metadata = {}
         title, description = _resolve_title_description(stac, coll_metadata)
@@ -1045,7 +1063,7 @@ def _add_aggregated_extent_section(
         sections.append("")
 
 
-def generate_catalog_readme(catalog_path: Path) -> str:
+def generate_catalog_readme(catalog_path: Path, *, state: ConfigSource | None = None) -> str:
     """Generate README for a catalog with aggregated collection info.
 
     Creates a catalog-level README that:
@@ -1055,6 +1073,7 @@ def generate_catalog_readme(catalog_path: Path) -> str:
 
     Args:
         catalog_path: Path to the catalog root directory.
+        state: The run state, which parses each metadata.yaml once per run.
 
     Returns:
         README markdown string.
@@ -1069,7 +1088,7 @@ def generate_catalog_readme(catalog_path: Path) -> str:
             catalog = json.loads(catalog_json.read_text(encoding="utf-8"))
 
     # Load merged metadata
-    metadata = load_merged_metadata(catalog_path, catalog_path)
+    metadata = _merged_metadata(catalog_path, catalog_path, state)
 
     # Title and description (metadata.yaml overrides catalog.json, #534)
     title = (
@@ -1093,7 +1112,7 @@ def generate_catalog_readme(catalog_path: Path) -> str:
     aggregation = aggregate_catalog_extent(catalog_path)
 
     # Collections listing
-    _add_collections_section(sections, catalog_path, aggregation)
+    _add_collections_section(sections, catalog_path, aggregation, state)
 
     # Aggregated extent
     _add_aggregated_extent_section(sections, aggregation)
@@ -1230,7 +1249,7 @@ def write_readme(readme_path: Path, content: str) -> None:
     restamp_collection_assets(readme_path.parent, only={readme_path})
 
 
-def ensure_readmes(catalog_root: Path) -> bool:
+def ensure_readmes(catalog_root: Path, *, state: ConfigSource | None = None) -> bool:
     """Scaffold README.md and its ``describedby`` link across a catalog tree.
 
     Every catalog and collection directory carries a README.md referenced by a
@@ -1243,6 +1262,7 @@ def ensure_readmes(catalog_root: Path) -> bool:
 
     Args:
         catalog_root: Root directory of the catalog.
+        state: The run state, which parses each metadata.yaml once per run.
 
     Returns:
         True if any file was written or modified.
@@ -1262,9 +1282,9 @@ def ensure_readmes(catalog_root: Path) -> bool:
         readme_path = directory / README_FILENAME
         if not readme_path.exists():
             content = (
-                generate_readme_for_collection(directory, catalog_root)
+                generate_readme_for_collection(directory, catalog_root, state=state)
                 if stac_file.name == "collection.json"
-                else generate_catalog_readme(directory)
+                else generate_catalog_readme(directory, state=state)
             )
             # A README that did not exist backs no asset, so nothing to re-stamp.
             readme_path.write_text(content, encoding="utf-8")

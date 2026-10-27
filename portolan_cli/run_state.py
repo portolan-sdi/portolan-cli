@@ -27,9 +27,12 @@ loader that needs a heavy library is a parameter of :meth:`RunState.memo`.
 
 from __future__ import annotations
 
+import copy
 import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
+
+import yaml
 
 from portolan_cli import config as _config
 from portolan_cli.constants import MTIME_TOLERANCE_SECONDS
@@ -179,6 +182,7 @@ class RunState:
         self._projected: dict[str, tuple[_StatKey | None, int, VersionsFile]] = {}
         self._checksums: dict[Path, tuple[_StatKey, str]] = {}
         self._memo: dict[tuple[str, Path], tuple[_StatKey, Any]] = {}
+        self._merged: dict[tuple[str, Path], tuple[tuple[Path, ...], tuple[Any, ...], Any]] = {}
         self._staged: dict[str, StagedVersion] = {}
         self._generation = 0
 
@@ -328,15 +332,76 @@ class RunState:
             self._memo[(kind, resolved)] = (key, value)
         return value
 
-    # ── config and metadata (Lane C moves the memo into config.py) ──────────
+    # ── config and metadata ─────────────────────────────────────────────────
+    #
+    # Each YAML file parses once per run through ``memo``, so ``invalidate``
+    # drops it. A merged entry holds the parse objects it came from, and a
+    # lookup compares them by identity. A file that changes, or that a writer
+    # invalidates, parses to a new object, so the merge runs again.
+    #
+    # Each method returns a deep copy. Callers type the result as a plain
+    # dict, and some of them edit it. A copy of a config mapping costs
+    # microseconds. A read-only view would need every caller to change.
+
+    def _yaml(self, path: Path) -> Any:
+        """Parse a YAML file once per run while its stat stays the same."""
+        return self.memo("config.yaml", path, _config.parse_yaml)
+
+    def _merged_files(self, filename: str, directory: Path) -> dict[str, Any]:
+        """The shared merge of ``filename`` for ``directory``. Do not mutate it."""
+        files = tuple(_config.find_portolan_files(directory, filename, self.catalog_root))
+        root_file = _config.get_config_path(self._resolved_root)
+        if filename == _config.CONFIG_FILENAME and root_file not in files and root_file.is_file():
+            # The merge reads the catalog file for its legacy collections: section.
+            files += (root_file,)
+        try:
+            sources: tuple[Any, ...] | None = tuple(self._yaml(path) for path in files)
+        except yaml.YAMLError:
+            sources = None  # The merge below raises the typed error.
+        key = (filename, directory.resolve())
+        hit = self._merged.get(key)
+        if (
+            hit is not None
+            and sources is not None
+            and hit[0] == files
+            and all(old is new for old, new in zip(hit[1], sources, strict=True))
+        ):
+            merged: dict[str, Any] = hit[2]
+            return merged
+        merge = (
+            _config.merge_config_files
+            if filename == _config.CONFIG_FILENAME
+            else _config.merge_metadata_files
+        )
+        merged = merge(directory, self.catalog_root, self._yaml)
+        with self._lock:
+            self._merged[key] = (files, sources or (), merged)
+        return merged
 
     def config(self, directory: Path) -> dict[str, Any]:
-        """The merged ``config.yaml`` hierarchy that applies to ``directory``."""
-        return _config.load_merged_config(directory, self.catalog_root)
+        """The merged ``config.yaml`` hierarchy that applies to ``directory``.
 
-    def metadata(self, directory: Path) -> dict[str, Any]:
-        """The merged ``metadata.yaml`` hierarchy that applies to ``directory``."""
-        return _config.load_merged_metadata(directory, self.catalog_root)
+        It equals ``config.load_merged_config``. For the catalog root it equals
+        ``config.load_catalog_config(root).data``. The environment applies on
+        each call. The result is a copy that the caller may edit.
+        """
+        merged = self._merged_files(_config.CONFIG_FILENAME, directory)
+        return copy.deepcopy(_config.with_env(merged))
+
+    def metadata(self, directory: Path, *, inherit: bool = True) -> dict[str, Any]:
+        """The merged ``metadata.yaml`` hierarchy that applies to ``directory``.
+
+        Args:
+            directory: A collection or catalog directory.
+            inherit: When False, only the ``metadata.yaml`` that ``directory``
+                owns, as ``config.load_own_metadata`` reads it.
+
+        Returns:
+            A copy that the caller may edit.
+        """
+        if not inherit:
+            return copy.deepcopy(_config.own_metadata(directory, self._yaml))
+        return copy.deepcopy(self._merged_files(_config.METADATA_FILENAME, directory))
 
     def setting(
         self,
@@ -345,13 +410,20 @@ class RunState:
         collection_dir: Path | None = None,
         cli_value: Any | None = None,
     ) -> Any | None:
-        """Resolve a setting with the precedence of ``config.get_setting``."""
-        return _config.get_setting(
-            key,
-            cli_value=cli_value,
-            catalog_path=self.catalog_root,
-            collection_path=collection_dir,
-        )
+        """Resolve a setting with the precedence of ``config.get_setting``.
+
+        The order is the CLI value, the environment, the config hierarchy of
+        ``collection_dir`` (or the catalog config without one), then the
+        built-in default. A list or mapping comes back as a copy.
+        """
+
+        def layers() -> tuple[dict[str, Any], ...]:
+            if collection_dir is not None:
+                merged = self._merged_files(_config.CONFIG_FILENAME, collection_dir)
+                return (_config.with_env(merged),)
+            return (_config.catalog_file_config(self.catalog_root, self._yaml).data,)
+
+        return _config.resolve_setting(key, cli_value, layers)
 
     # ── staging ─────────────────────────────────────────────────────────────
 

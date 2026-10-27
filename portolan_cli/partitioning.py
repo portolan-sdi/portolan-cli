@@ -33,6 +33,8 @@ import pyarrow.parquet as pq
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from portolan_cli.config import ConfigSource
+
 
 @dataclass
 class SchemaValidationResult:
@@ -120,6 +122,8 @@ class PartitionPromptDecision:
 def find_large_partition_candidates(
     resolved_paths: list[Path],
     catalog_root: Path,
+    *,
+    state: ConfigSource | None = None,
 ) -> PartitionPromptDecision:
     """Read partition config and scan paths for files that would be partitioned.
 
@@ -132,19 +136,25 @@ def find_large_partition_candidates(
     Args:
         resolved_paths: Paths (files or directories) the add command will import.
         catalog_root: Catalog root used for hierarchical config lookup.
+        state: The run state, which parses the config once per run.
 
     Returns:
         A :class:`PartitionPromptDecision` describing the gating and candidates.
     """
     from portolan_cli.config import get_setting
 
-    enabled = get_setting("partitioning.enabled", catalog_path=catalog_root)
+    def _setting(key: str) -> Any:
+        if state is not None:
+            return state.setting(key)
+        return get_setting(key, catalog_path=catalog_root)
+
+    enabled = _setting("partitioning.enabled")
     if enabled is None:
         enabled = True  # Default: enabled (prompt before partitioning large files)
-    prompt = get_setting("partitioning.prompt", catalog_path=catalog_root)
+    prompt = _setting("partitioning.prompt")
     if prompt is None:
         prompt = True  # Default: prompt in interactive mode
-    threshold_gb = get_setting("partitioning.threshold_gb", catalog_path=catalog_root) or 2.0
+    threshold_gb = _setting("partitioning.threshold_gb") or 2.0
 
     if not (enabled and prompt):
         return PartitionPromptDecision(
@@ -677,7 +687,9 @@ def _describe_schema_diff(
     return "; ".join(diffs) if diffs else "Unknown schema difference"
 
 
-def partition_strategy(path: Path, catalog_root: Path | None) -> str | None:
+def partition_strategy(
+    path: Path, catalog_root: Path | None, *, state: ConfigSource | None = None
+) -> str | None:
     """Decide whether and how to partition a converted GeoParquet file (#947).
 
     This is the size rule. Only ``add`` applies it, as before #947, because
@@ -694,17 +706,16 @@ def partition_strategy(path: Path, catalog_root: Path | None) -> str | None:
     Args:
         path: The converted GeoParquet file.
         catalog_root: Catalog root. None applies only the built-in defaults.
+        state: The run state, which parses the config once per run.
 
     Returns:
         The strategy name, or None to keep one file.
     """
-    from portolan_cli.config import get_setting
-
     if catalog_root is None:
         return None
 
     def _setting(key: str) -> Any:
-        return get_setting(key, catalog_path=catalog_root, collection_path=path.parent)
+        return _directory_setting(key, path.parent, catalog_root, state)
 
     if _setting("partitioning.enabled") is False:
         return None
@@ -714,7 +725,20 @@ def partition_strategy(path: Path, catalog_root: Path | None) -> str | None:
     return str(_setting("partitioning.strategy") or DEFAULT_STRATEGY)
 
 
-def partition_vector_file(path: Path, catalog_root: Path | None) -> list[Path]:
+def _directory_setting(
+    key: str, directory: Path, catalog_root: Path, state: ConfigSource | None
+) -> Any:
+    """Resolve a setting for the config hierarchy of ``directory``."""
+    from portolan_cli.config import get_setting
+
+    if state is not None:
+        return state.setting(key, collection_dir=directory)
+    return get_setting(key, catalog_path=catalog_root, collection_path=directory)
+
+
+def partition_vector_file(
+    path: Path, catalog_root: Path | None, *, state: ConfigSource | None = None
+) -> list[Path]:
     """Partition a converted GeoParquet file when ``partition_strategy`` says so.
 
     The partitions go next to the file in Hive directories, through
@@ -728,6 +752,7 @@ def partition_vector_file(path: Path, catalog_root: Path | None) -> list[Path]:
     Args:
         path: The converted GeoParquet file.
         catalog_root: Catalog root, for the settings.
+        state: The run state, which parses the config once per run.
 
     Returns:
         The partition files, or an empty list when the file stays whole.
@@ -735,11 +760,10 @@ def partition_vector_file(path: Path, catalog_root: Path | None) -> list[Path]:
     Raises:
         PartitionCollisionError: The directory already holds partitions.
     """
-    strategy = partition_strategy(path, catalog_root)
-    if strategy is None:
+    strategy = partition_strategy(path, catalog_root, state=state)
+    if strategy is None or catalog_root is None:
         return []
 
-    from portolan_cli.config import get_setting
     from portolan_cli.errors import PartitionCollisionError
 
     column = PARTITION_COLUMNS.get(strategy, f"{strategy}_cell")
@@ -747,9 +771,7 @@ def partition_vector_file(path: Path, catalog_root: Path | None) -> list[Path]:
     if existing:
         raise PartitionCollisionError(str(path), str(path.parent), existing)
 
-    target_rows = get_setting(
-        "partitioning.target_rows", catalog_path=catalog_root, collection_path=path.parent
-    )
+    target_rows = _directory_setting("partitioning.target_rows", path.parent, catalog_root, state)
     files = partition_geoparquet(
         input_path=path,
         output_dir=path.parent,
