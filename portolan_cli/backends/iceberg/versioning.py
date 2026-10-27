@@ -6,13 +6,12 @@ Version/Asset/SchemaInfo dataclasses.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.api import Asset, SchemaInfo, Version, parse_version
+from portolan_cli.api import Asset, SchemaInfo, Version, compute_checksum, parse_version
 
 if TYPE_CHECKING:
     from pyiceberg.table.snapshots import Snapshot
@@ -72,6 +71,8 @@ def version_to_snapshot_properties(
             asset_data["feature_count"] = asset.feature_count
         if asset.schema_fingerprint is not None:
             asset_data["schema_fingerprint"] = asset.schema_fingerprint
+        if asset.source_fingerprint is not None:
+            asset_data["source_fingerprint"] = asset.source_fingerprint
         assets_dict[name] = asset_data
     props["portolake.assets"] = json.dumps(assets_dict)
     # Serialize schema
@@ -113,6 +114,7 @@ def snapshot_to_version(snapshot: Snapshot) -> Version:
             mtime=adata.get("mtime"),
             feature_count=adata.get("feature_count"),
             schema_fingerprint=adata.get("schema_fingerprint"),
+            source_fingerprint=adata.get("source_fingerprint"),
         )
 
     # Deserialize schema
@@ -156,7 +158,7 @@ def build_assets(
     for name, path_str in assets_input.items():
         asset_path = Path(path_str)
         if asset_path.exists():
-            sha256 = _compute_sha256(asset_path)
+            sha256 = compute_checksum(asset_path)
             size_bytes = asset_path.stat().st_size
         else:
             sha256 = ""
@@ -168,12 +170,3 @@ def build_assets(
         )
         changes.append(name)
     return asset_objects, changes
-
-
-def _compute_sha256(path: Path) -> str:
-    """Compute SHA-256 hex digest of a file."""
-    h = hashlib.sha256()
-    with Path(path).open("rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return h.hexdigest()

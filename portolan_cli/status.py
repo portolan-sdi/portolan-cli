@@ -13,13 +13,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.constants import MANAGED_FILES
+from portolan_cli.run_state import RunState
 from portolan_cli.stac_links import catalog_collections, versioned_collections
-from portolan_cli.sync.checksums import compute_checksum
-from portolan_cli.versions import VersionsFile, read_versions
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+    from portolan_cli.versions import VersionsFile
 
 
 @dataclass
@@ -97,36 +98,38 @@ class CollectionStatus:
 def detect_modified_files(
     collection_path: Path,
     versions_file: VersionsFile,
+    *,
+    state: RunState | None = None,
 ) -> list[str]:
     """Detect files modified since last versioned state.
 
-    Compares current file checksums against the checksums stored in
-    the latest version entry of versions.json.
+    ``RunState.unchanged`` checks the size and mtime of each asset first. It
+    hashes only a same-size file with a new mtime, so a ``status`` on an
+    unchanged catalog hashes nothing (issue #995).
 
     Args:
         collection_path: Path to the collection directory.
         versions_file: Parsed versions.json content.
+        state: The run state. Without one, the call opens its own.
 
     Returns:
-        List of filenames that have different checksums than versions.json.
+        List of filenames whose content differs from versions.json.
     """
     if not versions_file.versions:
         return []
 
-    current_version = versions_file.versions[-1]
+    if state is None:
+        state = RunState.open(collection_path.parent)
     modified = []
-
-    for asset_name, asset in current_version.assets.items():
+    for asset_name, asset in versions_file.versions[-1].assets.items():
         file_path = collection_path / asset_name
         if not file_path.exists():
             # Missing files are handled by detect_deleted_files
             continue
-
         try:
-            current_checksum = compute_checksum(file_path)
-            if current_checksum != asset.sha256:
+            if not state.unchanged(file_path, asset):
                 modified.append(asset_name)
-        except OSError:
+        except (OSError, ValueError):
             # Can't compute checksum, treat as modified
             modified.append(asset_name)
 
@@ -242,6 +245,7 @@ def get_collection_status(
     offline: bool = False,
     remote_url: str | None = None,
     fetch_remote_versions: Callable[[str, str], VersionsFile] | None = None,
+    state: RunState | None = None,
 ) -> CollectionStatus:
     """Get status for a single collection.
 
@@ -256,12 +260,15 @@ def get_collection_status(
             because the remote readers load Click and the write modules, and
             this module must not (issue #944). The CLI passes
             ``portolan_cli.sync.pull.fetch_remote_versions``.
+        state: The run state. Without one, the call opens its own.
 
     Returns:
         CollectionStatus with local/remote versions and file changes.
     """
     collection_path = catalog_root / collection
     versions_path = collection_path / "versions.json"
+    if state is None:
+        state = RunState.open(catalog_root)
 
     # Read local versions.json
     local_version: str | None = None
@@ -269,7 +276,7 @@ def get_collection_status(
 
     if versions_path.exists():
         try:
-            versions_file = read_versions(versions_path)
+            versions_file = state.versions(collection_path)
             local_version = versions_file.current_version
         except (ValueError, FileNotFoundError):
             pass
@@ -280,7 +287,7 @@ def get_collection_status(
     untracked_files: list[str] = []
 
     if versions_file is not None:
-        modified_files = detect_modified_files(collection_path, versions_file)
+        modified_files = detect_modified_files(collection_path, versions_file, state=state)
         deleted_files = detect_deleted_files(collection_path, versions_file)
         untracked_files = detect_untracked_files(collection_path, versions_file)
 

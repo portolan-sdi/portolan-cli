@@ -672,18 +672,21 @@ def _write_mirror(collection_dir: Path, root: Path) -> None:
     """Write items.parquet, register it, and record its bytes in versions.json.
 
     The snapshot records the new bytes through the writer ``add`` uses, so
-    ``push`` sees the change (issue #1046).
+    ``push`` sees the change (issue #1046). One run state carries the item
+    fingerprint from the build to the record.
     """
     from portolan_cli.stac_parquet import (
         generate_items_parquet,
         register_mirror_asset,
         track_parquet_in_versions,
     )
+    from portolan_cli.version_ops import owned_run
 
-    generate_items_parquet(collection_dir)
-    register_mirror_asset(collection_dir)
-    if (collection_dir / "versions.json").exists():
-        track_parquet_in_versions(collection_dir, root)
+    with owned_run(root) as run:
+        generate_items_parquet(collection_dir, state=run)
+        register_mirror_asset(collection_dir, state=run)
+        if (collection_dir / "versions.json").exists():
+            track_parquet_in_versions(collection_dir, root, state=run)
 
 
 def _generate_mirror(node: Node, root: Path, *, dry_run: bool) -> FixResult:

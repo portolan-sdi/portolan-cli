@@ -250,6 +250,26 @@ class TestWriteVersions:
         assert loaded.source_mtime == 1700000000.0
 
     @pytest.mark.unit
+    def test_source_fingerprint_roundtrip(self, tmp_path: Path) -> None:
+        """The fingerprint of a generated asset's inputs survives write and read."""
+        asset = Asset(sha256="fp", size_bytes=1, href="c/items.parquet", source_fingerprint="ab12")
+        version = Version(
+            version="1.0.0",
+            created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=timezone.utc),
+            breaking=False,
+            assets={"items.parquet": asset},
+            changes=["items.parquet"],
+        )
+        vf = VersionsFile(spec_version="1.0.0", current_version="1.0.0", versions=[version])
+        versions_path = tmp_path / "versions.json"
+
+        write_versions(versions_path, vf)
+        raw = json.loads(versions_path.read_text())
+
+        assert raw["versions"][0]["assets"]["items.parquet"]["source_fingerprint"] == "ab12"
+        assert read_versions(versions_path).versions[0].assets["items.parquet"] == asset
+
+    @pytest.mark.unit
     def test_heuristic_fields_default_to_none(self, tmp_path: Path) -> None:
         """An asset written without heuristics reads them back as None and
         omits them from the JSON (backward-compatible)."""
@@ -269,6 +289,7 @@ class TestWriteVersions:
         entry = raw["versions"][0]["assets"]["d.parquet"]
         assert "feature_count" not in entry
         assert "schema_fingerprint" not in entry
+        assert "source_fingerprint" not in entry
 
         loaded = read_versions(versions_path).versions[0].assets["d.parquet"]
         assert loaded.feature_count is None

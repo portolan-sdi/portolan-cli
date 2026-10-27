@@ -109,6 +109,29 @@ def test_version_to_snapshot_properties_roundtrip():
     assert parsed_changes == ["data.parquet"]
 
 
+@pytest.mark.unit
+def test_snapshot_keeps_the_source_fingerprint():
+    """A generated asset's input fingerprint survives the snapshot properties."""
+    assets = {
+        "items.parquet": Asset(
+            sha256="a", size_bytes=1, href="c/items.parquet", source_fingerprint="ab12"
+        )
+    }
+    props = version_to_snapshot_properties(
+        version="1.0.0",
+        breaking=False,
+        message="mirror",
+        assets=assets,
+        schema=None,
+        changes=["items.parquet"],
+    )
+    snapshot = MagicMock()
+    snapshot.timestamp_ms = 0
+    snapshot.summary.additional_properties = props
+
+    assert snapshot_to_version(snapshot).assets == assets
+
+
 # --- snapshot_to_version ---
 
 

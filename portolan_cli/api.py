@@ -16,7 +16,8 @@ Groups:
 - Format handlers: ``FormatHandler``, ``FormatMetadata``, ``FormatContext``.
 - Versioning backends: ``VersioningBackend``, ``DriftReport``,
   ``SchemaFingerprint``, ``PostAddContext``, ``PostAddItemContext``,
-  ``Version``, ``Asset``, ``SchemaInfo``, ``parse_version``, ``get_backend``.
+  ``Version``, ``Asset``, ``SchemaInfo``, ``parse_version``, ``get_backend``,
+  ``compute_checksum``.
 - Catalogs: ``find_catalog_root``, ``get_setting``, ``write_json_atomic``.
 - Extractors: ``Extractor``, ``ExtractionReport``.
 - Layer sources: ``LayerSource``, ``Discovery``, ``LayerRef``,
@@ -96,6 +97,7 @@ if TYPE_CHECKING:
         describe_raster_item,
         describe_vector_item,
     )
+    from portolan_cli.sync.checksums import compute_checksum
     from portolan_cli.sync.download import download_file
     from portolan_cli.sync.pull import PullResult
     from portolan_cli.sync.upload import upload_file
@@ -133,6 +135,7 @@ __all__ = [
     "Version",
     "VersioningBackend",
     "aggregate_table_extension",
+    "compute_checksum",
     "convert_raster",
     "convert_vector",
     "describe_raster_item",
@@ -201,6 +204,7 @@ _EXPORTS = {
     "Version": "portolan_cli.versions",
     "VersioningBackend": "portolan_cli.backends.protocol",
     "aggregate_table_extension": "portolan_cli.finalization",
+    "compute_checksum": "portolan_cli.sync.checksums",
     "convert_raster": "portolan_cli.preparation",
     "convert_vector": "portolan_cli.preparation",
     "describe_raster_item": "portolan_cli.preparation",

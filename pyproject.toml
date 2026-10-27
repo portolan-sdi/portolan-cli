@@ -578,6 +578,11 @@ ignore_imports = [
     # Same reasoning for the PMTiles writer, which was the one visual artifact
     # shipping without file:size/file:checksum until issue #746.
     "portolan_cli.viz.pmtiles -> portolan_cli.stac_parquet",
+    # versions.json records a checksum for each asset. versions and the run
+    # state hash through sync.checksums, the one hasher (issue #995). The
+    # same leaf reasoning applies.
+    "portolan_cli.versions -> portolan_cli.sync.checksums",
+    "portolan_cli.run_state -> portolan_cli.sync.checksums",
 ]
 
 [[tool.importlinter.contracts]]
@@ -623,6 +628,8 @@ source_modules = [
     "portolan_cli.status",
     "portolan_cli.catalog_list",
     "portolan_cli.agents_md",
+    # The run state of one command (issue #995). Every read module may take it.
+    "portolan_cli.run_state",
 ]
 forbidden_modules = [
     "click",

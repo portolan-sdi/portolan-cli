@@ -7,30 +7,52 @@ bodies) to keep the module lightweight and avoid circular imports.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import logging
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     from portolan_cli.backends.protocol import SchemaFingerprint
+    from portolan_cli.run_state import RunState, StagedVersion
     from portolan_cli.versions import Version
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_backend_name(
     cli_backend: str | None,
     catalog_root: Path | None,
+    state: RunState | None = None,
 ) -> str:
     """Resolve backend name: CLI flag > config > default ('file')."""
     if cli_backend is not None:
         return cli_backend
 
-    from portolan_cli.config import get_setting
+    if state is not None:
+        resolved: str | None = state.setting("backend")
+    else:
+        from portolan_cli.config import get_setting
 
-    resolved: str | None = get_setting("backend", catalog_path=catalog_root)
+        resolved = get_setting("backend", catalog_path=catalog_root)
     if resolved is not None:
         return resolved
 
     return "file"
+
+
+def _collection_setting(
+    key: str, catalog_path: Path, collection: str | None, state: RunState | None
+) -> Any | None:
+    """Read a setting for a collection through the run state."""
+    if state is None:
+        from portolan_cli.run_state import RunState
+
+        state = RunState.open(catalog_path)
+    collection_dir = state.collection_dir(collection) if collection else None
+    return state.setting(key, collection_dir=collection_dir)
 
 
 def get_current_version(
@@ -38,11 +60,12 @@ def get_current_version(
     *,
     backend_name: str | None = None,
     catalog_root: Path | None = None,
+    state: RunState | None = None,
 ) -> Version:
     """Get the current version of a collection."""
     from portolan_cli.backends import get_backend
 
-    name = _resolve_backend_name(backend_name, catalog_root)
+    name = _resolve_backend_name(backend_name, catalog_root, state)
     backend = get_backend(name, catalog_root=catalog_root)
     return backend.get_current_version(collection)
 
@@ -52,11 +75,12 @@ def list_versions(
     *,
     backend_name: str | None = None,
     catalog_root: Path | None = None,
+    state: RunState | None = None,
 ) -> list[Version]:
     """List all versions of a collection."""
     from portolan_cli.backends import get_backend
 
-    name = _resolve_backend_name(backend_name, catalog_root)
+    name = _resolve_backend_name(backend_name, catalog_root, state)
     backend = get_backend(name, catalog_root=catalog_root)
     return backend.list_versions(collection)
 
@@ -72,31 +96,149 @@ def publish_version(
     version: str | None = None,
     backend_name: str | None = None,
     catalog_root: Path | None = None,
+    state: RunState | None = None,
 ) -> Version:
-    """Publish a new version of a collection.
+    """Publish a new version of a collection through the active backend.
+
+    The first seven arguments are those of ``VersioningBackend.publish``. A
+    missing schema becomes the ``"unknown"`` fingerprint.
 
     Args:
         collection: Collection identifier/path.
         assets: Mapping of asset names to asset paths/URIs.
-        schema: Schema fingerprint for change detection.
+        schema: Schema fingerprint, or None.
         breaking: Whether this is a breaking change.
         message: Human-readable description of the change.
-        removed: Set of asset keys to remove from the version.
-        version: Explicit version string. If None, auto-compute next version.
+        removed: Asset keys that the version drops.
+        version: Explicit version string, or None for the next one.
         backend_name: Backend to use. If None, resolved from config.
         catalog_root: Path to catalog root for config lookup.
+        state: The run state, which reads the backend setting once per run.
 
     Returns:
         The newly created Version object.
     """
     from portolan_cli.backends import get_backend
 
-    name = _resolve_backend_name(backend_name, catalog_root)
+    name = _resolve_backend_name(backend_name, catalog_root, state)
     backend = get_backend(name, catalog_root=catalog_root)
     schema = schema or {"columns": [], "types": {}, "hash": "unknown"}
     return backend.publish(
         collection, assets, schema, breaking, message, removed=removed, version=version
     )
+
+
+def _schema_fingerprint(staged: StagedVersion) -> SchemaFingerprint | None:
+    if staged.schema is None:
+        return None
+    fingerprint = staged.schema.fingerprint
+    return {
+        "columns": fingerprint.get("columns", []),
+        "types": fingerprint.get("types", {}),
+        "hash": staged.schema.type,
+    }
+
+
+def _commit_to_plugin(
+    state: RunState, staged: dict[str, StagedVersion], backend_name: str
+) -> dict[str, Version]:
+    """Publish one version per staged collection through a plugin backend.
+
+    The protocol takes asset paths, so the plugin computes its own checksums.
+    """
+    published: dict[str, Version] = {}
+    for collection_id, change in sorted(staged.items()):
+        published[collection_id] = publish_version(
+            collection_id,
+            assets={key: str(state.catalog_root / a.href) for key, a in change.assets.items()},
+            schema=_schema_fingerprint(change),
+            breaking=change.breaking,
+            message=change.message or "",
+            removed=change.removed or None,
+            backend_name=backend_name,
+            catalog_root=state.catalog_root,
+            state=state,
+        )
+    return published
+
+
+def commit_run(state: RunState) -> dict[str, Version]:
+    """Write the versions that a run staged, one version per collection.
+
+    The file backend gets one ``add_version`` and one ``write_versions`` for
+    each staged collection. The staged assets carry their checksums, so nothing
+    is hashed again. A collection whose stage changes nothing gets no write.
+    Then one update of the catalog-level versions.json covers every staged
+    collection, under the catalog lock. A failure of that index update is
+    logged, because the collection records are already on disk.
+
+    A plugin backend gets one ``publish_version`` for each staged collection.
+
+    The staged changes are cleared, so a second call commits nothing.
+
+    Args:
+        state: The state of the run.
+
+    Returns:
+        Collection id to the version written, for each collection that got one.
+    """
+    from portolan_cli.catalog import CollectionSummary, update_catalog_index
+    from portolan_cli.versions import write_versions
+
+    staged = state.take_staged()
+    if not staged:
+        return {}
+    backend_name = _resolve_backend_name(None, state.catalog_root, state)
+    if backend_name != "file":
+        return _commit_to_plugin(state, staged, backend_name)
+
+    published: dict[str, Version] = {}
+    summaries: dict[str, CollectionSummary] = {}
+    for collection_id, change in sorted(staged.items()):
+        collection_dir = state.collection_dir(collection_id)
+        disk = state.versions(collection_dir, include_staged=False)
+        updated = change.apply(disk)
+        if updated is not disk:
+            versions_path = collection_dir / "versions.json"
+            write_versions(versions_path, updated)
+            state.invalidate(versions_path)
+            published[collection_id] = updated.versions[-1]
+        if updated.versions:
+            summaries[collection_id] = CollectionSummary.of(updated.versions[-1])
+    try:
+        update_catalog_index(state.catalog_root, summaries)
+    except Exception:
+        logger.warning(
+            "Failed to update catalog-level versions.json. "
+            "The collection versions were written, but the catalog-level view may be stale.",
+            exc_info=True,
+        )
+    return published
+
+
+@contextmanager
+def owned_run(catalog_root: Path, state: RunState | None = None) -> Iterator[RunState]:
+    """Yield the run state of a public entry point, and commit it if it is new.
+
+    A caller that passes its own ``state`` commits it itself, so this yields it
+    and commits nothing. With no ``state``, this opens one and commits it when
+    the block ends without an exception. An exception commits nothing.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        state: The caller's state, or None.
+
+    Yields:
+        The state to pass down.
+    """
+    if state is not None:
+        yield state
+        return
+    from portolan_cli.run_state import RunState
+
+    own = RunState.open(catalog_root)
+    yield own
+    commit_run(own)
 
 
 # =============================================================================
@@ -114,6 +256,8 @@ class PushBlockedResult:
 def check_backend_supports_push(
     catalog_path: Path,
     collection: str | None = None,
+    *,
+    state: RunState | None = None,
 ) -> PushBlockedResult | None:
     """Check if the active backend supports file-based push.
 
@@ -121,9 +265,8 @@ def check_backend_supports_push(
     blocking message if push is not supported.
     """
     from portolan_cli.backends import get_backend
-    from portolan_cli.config import get_setting
 
-    active_backend = get_setting("backend", catalog_path=catalog_path, collection=collection)
+    active_backend = _collection_setting("backend", catalog_path, collection, state)
     if active_backend is None or active_backend == "file":
         return None
 
@@ -131,7 +274,7 @@ def check_backend_supports_push(
     if backend.supports_push():
         return None
 
-    remote = get_setting("remote", catalog_path=catalog_path, collection=collection)
+    remote = _collection_setting("remote", catalog_path, collection, state)
     return PushBlockedResult(backend.push_blocked_message(remote))
 
 
@@ -162,6 +305,8 @@ def try_backend_pull(
     remote_url: str,
     collection: str | None,
     dry_run: bool,
+    *,
+    state: RunState | None = None,
 ) -> BackendPullResult:
     """Attempt a pull via the active non-file backend.
 
@@ -172,10 +317,9 @@ def try_backend_pull(
     turn, and the result sums them (issue #977).
     """
     from portolan_cli.backends import get_backend
-    from portolan_cli.config import get_setting
     from portolan_cli.stac_links import catalog_collections
 
-    active_backend = get_setting("backend", catalog_path=catalog_path, collection=collection)
+    active_backend = _collection_setting("backend", catalog_path, collection, state)
     if active_backend is None or active_backend == "file":
         return BackendPullResult(handled=False)
 

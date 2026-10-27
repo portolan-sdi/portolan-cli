@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from rashid.catalog import is_absolute_href
@@ -36,12 +36,14 @@ from rashid.catalog import is_absolute_href
 from portolan_cli.constants import ROLE_COLLECTION_MIRROR
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.stac_links import owned_item_hrefs, resolve_href
-from portolan_cli.sync.checksums import file_fields
+from portolan_cli.sync.checksums import file_fields, file_fields_from
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
     from pathlib import Path
+
+    from portolan_cli.run_state import RunState
 
 # Constants
 PARQUET_FILENAME = "items.parquet"
@@ -103,11 +105,12 @@ def has_mirror_asset(collection_path: Path) -> bool:
     )
 
 
-def _load_item_dicts(collection_path: Path) -> list[dict[str, Any]]:
+def _load_item_dicts(collection_path: Path, owned: list[tuple[str, Path]]) -> list[dict[str, Any]]:
     """Load all STAC item dictionaries from a collection.
 
     Args:
         collection_path: Path to collection directory.
+        owned: The ``(href, path)`` pairs of the items the collection owns.
 
     Returns:
         List of STAC item dictionaries.
@@ -115,9 +118,6 @@ def _load_item_dicts(collection_path: Path) -> list[dict[str, Any]]:
     Raises:
         ValueError: If no items found.
     """
-    collection_json_path = collection_path / "collection.json"
-    owned = owned_item_hrefs(collection_json_path)
-
     if not owned:
         raise ValueError(f"No items found in collection at {collection_path}")
 
@@ -147,15 +147,68 @@ def _load_item_dicts(collection_path: Path) -> list[dict[str, Any]]:
     return items
 
 
-def generate_items_parquet(collection_path: Path) -> Path:
+#: The run-state memo kind that carries the fingerprint of the item files from
+#: the build of ``items.parquet`` to its versions.json record.
+_SOURCE_FINGERPRINT = "items.parquet.source_fingerprint"
+
+
+def _items_fingerprint(owned: list[tuple[str, Path]]) -> str | None:
+    """Hash the href, size, and mtime of each owned item file, in link order.
+
+    Returns None when an item file is missing, so the build runs and reports it.
+    """
+    digest = hashlib.sha256()
+    for href, item_path in owned:
+        try:
+            st = item_path.stat()
+        except FileNotFoundError:
+            return None
+        digest.update(f"{href}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
+    return digest.hexdigest()
+
+
+def _mirror_is_current(run: RunState, collection_path: Path, fingerprint: str) -> bool:
+    """Whether the latest version records this mirror, built from these item files.
+
+    The record must hold the same item fingerprint, and the file must still hold
+    the recorded bytes. A file that another writer replaced fails the second test.
+    """
+    from portolan_cli.versions import versions_asset_key
+
+    versions = run.versions(collection_path).versions
+    if not versions:
+        return False
+    output_path = collection_path / PARQUET_FILENAME
+    record = versions[-1].assets.get(versions_asset_key(output_path, collection_path))
+    if record is None or record.source_fingerprint != fingerprint:
+        return False
+    return run.unchanged(output_path, record)
+
+
+def generate_items_parquet(collection_path: Path, *, state: RunState | None = None) -> Path:
     """Generate items.parquet from STAC items in a collection.
 
     Uses stac-geoparquet to convert all STAC items to GeoParquet format,
     enabling efficient spatial/temporal queries.
 
+    The versions.json record of ``items.parquet`` holds a fingerprint of the
+    owned item files: href, size, and mtime, in link order. When the record
+    holds the fingerprint of the files now, and the file holds the recorded
+    bytes, the mirror is current. Then this returns with no item read and no
+    write (issue #995). A collection with no record always builds.
+
+    The fingerprint goes into the memo of the run.
+    :func:`track_parquet_in_versions` reads it from there and records it. The
+    Parquet file holds only the stac-geoparquet metadata. A footer key would
+    need a private stac-geoparquet helper, because ``to_parquet`` replaces all
+    schema metadata.
+
     Args:
         collection_path: Path to collection directory containing collection.json
             and item subdirectories.
+        state: The run state. Pass the state that the call to
+            :func:`track_parquet_in_versions` uses, or the record gets no
+            fingerprint and the next run builds again.
 
     Returns:
         Path to generated items.parquet file.
@@ -171,20 +224,20 @@ def generate_items_parquet(collection_path: Path) -> Path:
             "stac-geoparquet is required for items.parquet generation. "
             "Install with: pip install stac-geoparquet"
         ) from e
+    from portolan_cli.run_state import RunState
 
-    # Load all item dictionaries
-    items = _load_item_dicts(collection_path)
-
-    # Convert to Arrow using stac-geoparquet
-    # parse_stac_items_to_arrow returns a RecordBatchReader
-    record_batch_reader = stac_geoparquet.arrow.parse_stac_items_to_arrow(items)
-    table = record_batch_reader.read_all()
-
-    # Write to parquet with GeoParquet metadata
+    run = state if state is not None else RunState.open(collection_path.parent)
     output_path = collection_path / PARQUET_FILENAME
-    stac_geoparquet.arrow.to_parquet(table, output_path)
-    count("items_parquet.writes")
-
+    owned = owned_item_hrefs(collection_path / "collection.json")
+    fingerprint = _items_fingerprint(owned)
+    if fingerprint is None or not _mirror_is_current(run, collection_path, fingerprint):
+        items = _load_item_dicts(collection_path, owned)
+        # parse_stac_items_to_arrow returns a RecordBatchReader
+        table = stac_geoparquet.arrow.parse_stac_items_to_arrow(items).read_all()
+        stac_geoparquet.arrow.to_parquet(table, output_path)
+        count("items_parquet.writes")
+        run.invalidate(output_path)
+    run.memo(_SOURCE_FINGERPRINT, output_path, lambda _path: fingerprint)
     return output_path
 
 
@@ -203,7 +256,9 @@ def _strip_file_fields(asset: dict[str, Any]) -> bool:
     return bool(present)
 
 
-def stamp_file_fields(asset: dict[str, Any], base_dir: Path) -> bool:
+def stamp_file_fields(
+    asset: dict[str, Any], base_dir: Path, *, state: RunState | None = None
+) -> bool:
     """Refresh ``file:size``/``file:checksum`` from the bytes the asset points at.
 
     Public because ``viz.style`` stamps style assets the same way. The rule is one
@@ -231,6 +286,7 @@ def stamp_file_fields(asset: dict[str, Any], base_dir: Path) -> bool:
     Args:
         asset: STAC asset dict, mutated in place.
         base_dir: Directory holding the collection.json that owns the asset.
+        state: The run state. Its memo hashes each file once per run.
 
     Returns:
         Whether the asset changed, so the caller writes collection.json only when
@@ -246,7 +302,10 @@ def stamp_file_fields(asset: dict[str, Any], base_dir: Path) -> bool:
     if not path.is_file():
         return False
 
-    fields = file_fields(path)
+    if state is None:
+        fields = file_fields(path)
+    else:
+        fields = file_fields_from(state.checksum(path), path.stat().st_size)
     if all(asset.get(name) == value for name, value in fields.items()):
         return False
     asset.update(fields)
@@ -448,7 +507,7 @@ def restamp_collection_assets(
     return changed_any
 
 
-def register_mirror_asset(collection_path: Path) -> None:
+def register_mirror_asset(collection_path: Path, *, state: RunState | None = None) -> None:
     """Register the item mirror as a collection-level asset in collection.json.
 
     The asset carries media type ``application/vnd.apache.parquet`` and the
@@ -462,6 +521,7 @@ def register_mirror_asset(collection_path: Path) -> None:
 
     Args:
         collection_path: Path to collection directory.
+        state: The run state. Its memo hashes ``items.parquet`` once per run.
 
     Raises:
         FileNotFoundError: If collection.json doesn't exist.
@@ -506,7 +566,7 @@ def register_mirror_asset(collection_path: Path) -> None:
             # Refresh, do not skip: generate_items_parquet overwrote the bytes
             # moments ago, so an asset carried over from an earlier run describes
             # a file that no longer exists in that form.
-            if stamp_file_fields(asset, collection_path):
+            if stamp_file_fields(asset, collection_path, state=state):
                 modified = True
     else:
         asset = {
@@ -515,7 +575,7 @@ def register_mirror_asset(collection_path: Path) -> None:
             "title": "STAC items as GeoParquet",
             "roles": [ROLE_COLLECTION_MIRROR],
         }
-        stamp_file_fields(asset, collection_path)
+        stamp_file_fields(asset, collection_path, state=state)
         assets[asset_key] = asset
         data["assets"] = assets
         modified = True
@@ -583,21 +643,31 @@ def remove_mirror_from_collection(collection_path: Path) -> bool:
     return modified
 
 
+_MIRROR_MESSAGE = "Generated items.parquet for STAC GeoParquet queries"
+
+
 def track_parquet_in_versions(
     collection_path: Path,
     catalog_root: Path | None = None,
     *,
     amend_latest: bool = False,
+    state: RunState | None = None,
 ) -> None:
-    """Track items.parquet in versions.json so push detects changes.
+    """Stage items.parquet in versions.json so push detects changes.
 
-    Delegates to :func:`portolan_cli.versions.track_generated_assets`, the
-    shared writer for derived assets (PMTiles, thumbnails, this mirror), so
-    every side-step records versions the same way.
+    The record goes into the run state, so the run commits one version for the
+    collection. The checksum comes from the memo of the run, so
+    ``items.parquet`` is hashed once per run (issue #995).
 
     A mirror whose bytes are already tracked in the latest snapshot is a
     no-op: regenerating identical content records no new user intent, so it
-    must not bump or amend anything (the #683 double-versioning family).
+    must not bump anything (the #683 double-versioning family). With
+    ``amend_latest``, the record of the same bytes takes the new mtime and item
+    fingerprint, because the version is the one this command writes.
+
+    The item fingerprint comes from the memo of the run, where
+    :func:`generate_items_parquet` puts it. A run that did not build the
+    mirror records no fingerprint.
 
     Args:
         collection_path: Path to collection directory.
@@ -607,37 +677,38 @@ def track_parquet_in_versions(
         amend_latest: Fold the mirror into the version the caller just wrote
             (the add flow) instead of creating a new one. Leave False when
             the latest version may already be published.
+        state: The run state. Without one, the call opens its own and
+            commits it.
 
     Raises:
         FileNotFoundError: If items.parquet doesn't exist.
     """
-    from portolan_cli.versions import read_versions, track_generated_assets
+    from portolan_cli.version_ops import owned_run
+    from portolan_cli.versions import generated_asset_record
 
+    root = catalog_root if catalog_root is not None else collection_path.parent
     parquet_path = collection_path / PARQUET_FILENAME
-    versions_path = collection_path / "versions.json"
-
     if not parquet_path.exists():
         raise FileNotFoundError(f"items.parquet not found at {parquet_path}")
 
-    if versions_path.exists():
-        versions_file = read_versions(versions_path)
-        if versions_file.versions:
-            tracked = versions_file.versions[-1].assets.get(PARQUET_FILENAME)
-            if tracked is not None:
-                content = parquet_path.read_bytes()
-                count("checksum.files")
-                count("checksum.bytes", len(content))
-                sha256 = hashlib.sha256(content).hexdigest()
-                if tracked.sha256 == sha256:
-                    return
-
-    track_generated_assets(
-        collection_path,
-        [parquet_path],
-        catalog_root if catalog_root is not None else collection_path.parent,
-        message="Generated items.parquet for STAC GeoParquet queries",
-        amend_latest=amend_latest,
-    )
+    with owned_run(root, state) as run:
+        digest = run.checksum(parquet_path)
+        key, record = generated_asset_record(parquet_path, root, collection_path, digest)
+        fingerprint: str | None = run.memo(_SOURCE_FINGERPRINT, parquet_path, lambda _path: None)
+        record = replace(record, source_fingerprint=fingerprint)
+        versions = run.versions(collection_path).versions
+        tracked = versions[-1].assets.get(key) if versions else None
+        # For the same bytes, only a version that this command writes takes the
+        # new mtime and fingerprint. A published version stays as it is.
+        same_bytes = tracked is not None and tracked.sha256 == digest
+        if same_bytes and (not amend_latest or tracked == record):
+            return
+        run.stage(
+            collection_path.resolve().relative_to(root.resolve()).as_posix(),
+            assets={key: record},
+            message=None if amend_latest else _MIRROR_MESSAGE,
+            amend=amend_latest,
+        )
 
 
 @dataclass
@@ -662,6 +733,7 @@ def generate_parquet_mirrors(
     *,
     generate_parquet: bool,
     versioned_collections: set[str] | None = None,
+    state: RunState | None = None,
 ) -> MirrorReport:
     """Generate the item mirror for each affected item-bearing collection.
 
@@ -685,6 +757,8 @@ def generate_parquet_mirrors(
         versioned_collections: Collections the add command wrote a version
             for in this run. Their mirror folds into that snapshot instead
             of bumping a second version (one add is one version, #683).
+        state: The run state. Without one, the call opens its own and
+            commits it when every collection is done.
 
     Returns:
         The collections that got a mirror and the ones that failed.
@@ -693,45 +767,37 @@ def generate_parquet_mirrors(
     if not affected_collections:
         return report
 
-    from portolan_cli.config import coerce_bool, get_setting
+    from portolan_cli.config import coerce_bool
+    from portolan_cli.version_ops import owned_run
 
-    for coll_id in affected_collections:
-        coll_path = catalog_root / coll_id
-        if not (coll_path / "collection.json").exists():
-            continue
+    with owned_run(catalog_root, state) as run:
+        for coll_id in affected_collections:
+            coll_path = catalog_root / coll_id
+            if not (coll_path / "collection.json").exists():
+                continue
 
-        # Opt-out setting per-collection with hierarchical lookup
-        parquet_enabled = coerce_bool(
-            get_setting(
-                "parquet.enabled",
-                catalog_path=catalog_root,
-                collection=coll_id,
-                collection_path=coll_path,
-            ),
-            default=True,
-        )
+            # Opt-out setting per-collection with hierarchical lookup
+            enabled = run.setting("parquet.enabled", collection_dir=coll_path)
+            if not (generate_parquet or coerce_bool(enabled, default=True)):
+                continue
+            if count_items(coll_path) == 0:
+                continue
 
-        if not (generate_parquet or parquet_enabled):
-            continue
-
-        item_count = count_items(coll_path)
-        if item_count == 0:
-            continue
-
-        try:
-            generate_items_parquet(coll_path)
-            register_mirror_asset(coll_path)
-            track_parquet_in_versions(
-                coll_path,
-                catalog_root,
-                amend_latest=coll_id in (versioned_collections or set()),
-            )
-            report.generated.append(coll_id)
-        except Exception as e:
-            # Explicit --stac-geoparquet should fail the command
-            if generate_parquet:
-                raise
-            # The caller warns about a default-generation failure
-            report.failed[coll_id] = e
+            try:
+                generate_items_parquet(coll_path, state=run)
+                register_mirror_asset(coll_path, state=run)
+                track_parquet_in_versions(
+                    coll_path,
+                    catalog_root,
+                    amend_latest=coll_id in (versioned_collections or set()),
+                    state=run,
+                )
+                report.generated.append(coll_id)
+            except Exception as e:
+                # Explicit --stac-geoparquet should fail the command
+                if generate_parquet:
+                    raise
+                # The caller warns about a default-generation failure
+                report.failed[coll_id] = e
 
     return report
