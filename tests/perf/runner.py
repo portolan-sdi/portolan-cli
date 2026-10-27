@@ -5,7 +5,7 @@ The scale gates, the nightly scenario job, and ``scripts/profile.py`` all run
 
     python -m tests.perf.runner --out result.json [--mem] -- add . --workers 1
 
-Before the command runs, the module installs three things:
+Before the command runs, the module installs these:
 
 - The network guard of ``tests/network_guard.py``. A scenario that reaches a
   remote host records it under ``network`` in the result, and the gates fail.
@@ -16,6 +16,8 @@ Before the command runs, the module installs three things:
 - A stub tile source for contextily, ``install_stub_tiles``. It returns one
   fixed 256 px tile. The unit tests use the same stub. The thumbnail code
   counts ``tiles.fetched`` for each tile that it asks contextily for.
+- A wrapper around ``pyarrow.parquet.ParquetFile`` that counts the footer
+  reads delegated to geoparquet-io. Core readers count their own opens.
 
 The command runs in this process with tracing on. The result file holds the
 exit code, the counters, the span tree, the wall time, and the peak RSS. It
@@ -94,6 +96,36 @@ def _install_duckdb_counter() -> None:
     duckdb.connect = counted_connect
 
 
+def _install_parquet_counter(patch: pytest.MonkeyPatch) -> None:
+    """Count geoparquet-io's PyArrow footer opens, which core counters cannot see.
+
+    A delegated conversion reads the source footer several times. Counting
+    only the explicit readers in portolan_cli leaves that work out of the
+    gates. Keep the class intact: footer consumers use isinstance checks.
+    """
+    import pyarrow.parquet as pq
+
+    from portolan_cli import trace
+
+    original = pq.ParquetFile.__init__
+
+    def counted_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        caller = sys._getframe(1)
+        # read_metadata/read_schema may reach ParquetFile through PyArrow's
+        # Python helpers. Attribute the open to the library that requested it.
+        while caller is not None and str(caller.f_globals.get("__name__", "")).startswith(
+            "pyarrow."
+        ):
+            caller = caller.f_back
+        if caller is not None and str(caller.f_globals.get("__name__", "")).startswith(
+            "geoparquet_io."
+        ):
+            trace.count("parquet.opens")
+        original(self, *args, **kwargs)
+
+    patch.setattr(pq.ParquetFile, "__init__", counted_init)
+
+
 #: The colour of every stub basemap tile. No thumbnail preset uses it, so a
 #: pixel of this colour in a thumbnail came from the basemap.
 STUB_TILE_RGBA = (201, 74, 203, 255)
@@ -156,6 +188,7 @@ def run(argv: list[str], *, mem: bool) -> dict[str, Any]:
         sentinel = stack.enter_context(contextlib.contextmanager(SentinelProxy().run)())
         guard = NetworkGuard(test=" ".join(argv), sentinel=sentinel)
         patch = stack.enter_context(pytest.MonkeyPatch.context())
+        _install_parquet_counter(patch)
         with contextlib.suppress(ImportError):  # no thumbnail extra, so no basemap
             install_stub_tiles(patch)
         guard.install(patch)

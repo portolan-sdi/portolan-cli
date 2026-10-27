@@ -88,9 +88,9 @@ class ConversionOverrides:
         # Check path patterns first (higher precedence)
         if self.paths_preserve and root is not None:
             try:
-                # Resolve both, so a relative checked path still matches an
-                # absolute catalog root.
-                relative = path.resolve().relative_to(root.resolve())
+                # Normalize the directory, keeping a symlinked asset's own
+                # name: preserve globs name catalog entries, not their targets.
+                relative = (path.parent.resolve() / path.name).relative_to(root.resolve())
                 # Use POSIX-style paths for consistent matching across platforms
                 relative_str = relative.as_posix()
                 for pattern in self.paths_preserve:

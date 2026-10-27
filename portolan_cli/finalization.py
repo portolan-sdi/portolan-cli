@@ -1490,20 +1490,35 @@ def _finalize_collection(
 
     _save_collection_with_links(collection, collection_dir, catalog_root, collection_id, finish)
 
+    # File-backend records describe the files just saved, even when an
+    # enrichment hook interrupts the run. Plugins publish after enrichment.
+    file_backend = state.backend(collection_dir) == "file"
+    if file_backend:
+        _publish_collection_version(
+            catalog_root,
+            collection_id,
+            collection_dir,
+            collection,
+            items,
+            state,
+            tuple(c.path for c in companions or ()),
+        )
+
     # Run the enrichment hooks on the saved files. A backend may upload the
     # STAC JSON when it publishes, so the hooks run first (#947).
     _enrich_saved_documents(catalog_root, collection_id, collection_dir, items)
 
     # Route version snapshot to the active backend (plugin or file)
-    _publish_collection_version(
-        catalog_root,
-        collection_id,
-        collection_dir,
-        collection,
-        items,
-        state,
-        tuple(c.path for c in companions or ()),
-    )
+    if not file_backend:
+        _publish_collection_version(
+            catalog_root,
+            collection_id,
+            collection_dir,
+            collection,
+            items,
+            state,
+            tuple(c.path for c in companions or ()),
+        )
 
     # Build results
     return [

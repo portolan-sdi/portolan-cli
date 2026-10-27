@@ -77,6 +77,10 @@ class RunMemo(Protocol):
         """The SHA-256 of one file, hashed once per run."""
         ...
 
+    def invalidate(self, path: Path) -> None:
+        """Drop values derived from a file after a writer replaces it."""
+        ...
+
 
 #: The run state of the command that runs. A format handler and a ``viz``
 #: function take no run state, so ``add`` and ``prepare_item`` set this. A
@@ -103,6 +107,17 @@ def run_scope(state: RunMemo | None) -> contextlib.AbstractContextManager[None]:
 def current_run() -> RunMemo | None:
     """The run state that :func:`in_run` set, or None."""
     return _RUN.get()
+
+
+def invalidate(path: Path) -> None:
+    """Drop the current run's cached reads after writing ``path``.
+
+    A filesystem can reuse a stat key, so writers cannot rely on stat changes
+    alone to invalidate a footer or checksum.
+    """
+    state = _RUN.get()
+    if state is not None:
+        state.invalidate(path)
 
 
 def remember(kind: str, path: Path, value: Any) -> None:

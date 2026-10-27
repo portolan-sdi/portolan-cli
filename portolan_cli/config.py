@@ -341,6 +341,8 @@ def safe_load(text: str) -> Any:
         yaml.YAMLError: If the text is not valid YAML.
     """
     loader: Any = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    # Count at the shared parser: callers can parse text without parse_yaml.
+    count("config.yaml_parses")
     return yaml.load(text, Loader=loader)  # noqa: S506 (a safe loader, chosen above)
 
 
@@ -360,7 +362,6 @@ def parse_yaml(file_path: Path) -> Any:
     content = file_path.read_text(encoding="utf-8")
     data: Any = None
     if content.strip():
-        count("config.yaml_parses")
         data = safe_load(content)
     if isinstance(data, dict) and file_path.name == CONFIG_FILENAME:
         data = _fold_config(data)
@@ -848,6 +849,8 @@ def get_setting(
     catalog_path: Path | None = None,
     collection: str | None = None,
     collection_path: Path | None = None,
+    *,
+    state: ConfigSource | None = None,
 ) -> Any | None:
     """Resolve a setting with full precedence.
 
@@ -865,6 +868,7 @@ def get_setting(
         catalog_path: Path to catalog root for loading config file
         collection: Optional collection name for legacy collection-level config
         collection_path: Optional path to collection directory for hierarchical lookup
+        state: The run state, which shares file reads across settings.
 
     Returns:
         Resolved value, or None if not found at any level. A list or mapping
@@ -877,8 +881,14 @@ def get_setting(
     def layers() -> Iterable[dict[str, Any]]:
         # 3. The hierarchical .portolan/ config of the collection directory.
         if collection_path is not None:
+            if state is not None:
+                return (state.config(collection_path),)
             return (with_env(merge_config_files(collection_path, root)),)
-        config = catalog_file_config(root)
+        config = (
+            load_catalog_config(root, state=state)
+            if state is not None
+            else catalog_file_config(root)
+        )
         # 4. The legacy collections: section, then 5. the catalog level.
         if collection is not None:
             return (config.section("collections", collection), config.data)
@@ -1040,6 +1050,8 @@ def _leaf_keys(mapping: dict[str, Any], prefix: str = "") -> list[str]:
 def list_settings(
     catalog_path: Path | None = None,
     collection: str | None = None,
+    *,
+    state: ConfigSource | None = None,
 ) -> dict[str, dict[str, Any]]:
     """List all settings with their sources.
 
@@ -1049,13 +1061,20 @@ def list_settings(
     Args:
         catalog_path: Path to catalog root for loading config file.
         collection: Optional collection name to include collection-level config.
+        state: The run state, which shares file reads across settings.
 
     Returns:
         Dict mapping setting keys to {"value": ..., "source": ...}
     """
     result: dict[str, dict[str, Any]] = {}
 
-    config = catalog_file_config(catalog_path) if catalog_path else CatalogConfig({})
+    config = CatalogConfig({})
+    if catalog_path is not None:
+        config = (
+            load_catalog_config(catalog_path, state=state)
+            if state is not None
+            else catalog_file_config(catalog_path)
+        )
     file_config = {key: value for key, value in config.data.items() if key != "collections"}
     all_keys = set(_leaf_keys(file_config))
 
@@ -1075,8 +1094,8 @@ def list_settings(
     # Resolve each setting
     for key in sorted(all_keys):
         try:
-            value = get_setting(key, catalog_path=catalog_path, collection=collection)
-            source = get_setting_source(key, catalog_path, collection)
+            value = get_setting(key, catalog_path=catalog_path, collection=collection, state=state)
+            source = get_setting_source(key, catalog_path, collection, state=state)
             if value is not None:
                 result[key] = {"value": value, "source": source}
         except ValueError:
@@ -1092,6 +1111,8 @@ def get_setting_source(
     key: str,
     catalog_path: Path | None,
     collection: str | None,
+    *,
+    state: ConfigSource | None = None,
 ) -> str:
     """Determine the source of a setting's value.
 
@@ -1099,6 +1120,7 @@ def get_setting_source(
         key: Setting key
         catalog_path: Path to catalog root
         collection: Optional collection name
+        state: The run state, which shares file reads across settings.
 
     Returns:
         Source string: "env", "collection", "catalog", or "default"
@@ -1109,7 +1131,11 @@ def get_setting_source(
     if catalog_path is None:
         return "default"
 
-    config = catalog_file_config(catalog_path)
+    config = (
+        load_catalog_config(catalog_path, state=state)
+        if state is not None
+        else catalog_file_config(catalog_path)
+    )
 
     # Check collection config
     if (

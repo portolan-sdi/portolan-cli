@@ -162,9 +162,6 @@ def is_current(
         True if file is unchanged (already tracked at current state),
         False if new or modified.
     """
-    if not versions_path.exists():
-        return False
-
     collection_dir = versions_path.parent
     if state is None:
         state = RunState.open(collection_dir.parent)

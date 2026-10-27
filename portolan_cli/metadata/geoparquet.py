@@ -23,6 +23,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    import pyarrow as pa
+
 T = TypeVar("T")
 
 
@@ -312,9 +314,9 @@ class RewriteFidelity(NamedTuple):
         geo_columns: The publisher fields of each geometry column in ``geo``:
             ``crs`` when the key is present, ``edges``, ``epoch``, and
             ``orientation``. None when the gate has nothing to compare.
-        field_metadata: The field metadata of each column, without the keys
-            that Arrow and Parquet write. None when the gate has nothing to
-            compare.
+        field_metadata: The field metadata of each column and nested child.
+            Nested children use a tuple of the column name and child indexes.
+            None when the gate has nothing to compare.
     """
 
     row_count: int
@@ -322,7 +324,7 @@ class RewriteFidelity(NamedTuple):
     columns: frozenset[str]
     extra_keys: frozenset[bytes] = frozenset()
     geo_columns: dict[str, dict[str, Any]] | None = None
-    field_metadata: dict[str, dict[bytes, bytes]] | None = None
+    field_metadata: dict[str | tuple[str, ...], dict[bytes, bytes]] | None = None
 
 
 #: The fields of a ``geo`` column entry that a publisher sets and a rewrite
@@ -370,22 +372,48 @@ def _rewrite_fidelity(parquet: pq.ParquetFile) -> RewriteFidelity:
         for name, entry in (columns.items() if isinstance(columns, dict) else ())
         if isinstance(entry, dict)
     }
-    field_metadata = {
-        field.name: {
-            key: value
-            for key, value in (field.metadata or {}).items()
-            if not key.startswith((b"ARROW:", b"PARQUET:"))
-        }
-        for field in parquet.schema_arrow
-    }
     return RewriteFidelity(
         row_count=parquet.metadata.num_rows,
         crs=crs,
         columns=frozenset(parquet.schema_arrow.names),
         extra_keys=frozenset(metadata) - _WRITER_OWNED_KEYS,
         geo_columns=geo_columns,
-        field_metadata={name: kept for name, kept in field_metadata.items() if kept},
+        field_metadata=_field_metadata(parquet.schema_arrow, frozenset(geo_columns)),
     )
+
+
+def _field_metadata(
+    schema: pa.Schema, geometry_columns: frozenset[str]
+) -> dict[str | tuple[str, ...], dict[bytes, bytes]]:
+    """Keep metadata at every depth, including semantic Arrow extension keys."""
+    result: dict[str | tuple[str, ...], dict[bytes, bytes]] = {}
+
+    def visit(field: pa.Field, path: tuple[str, ...]) -> None:
+        metadata = dict(field.metadata or {})
+        # The writer normalizes the GeoArrow WKB declaration. Its CRS and
+        # edges also live in `geo`, where the gate compares their meaning.
+        # Other extension declarations (and arbitrary ARROW:/PARQUET: keys)
+        # carry semantics the writer must not silently drop.
+        if (
+            len(path) == 1
+            and path[0] in geometry_columns
+            and metadata.get(b"ARROW:extension:name") == b"geoarrow.wkb"
+        ):
+            try:
+                declaration = json.loads(metadata.get(b"ARROW:extension:metadata", b"{}"))
+            except ValueError:
+                declaration = None  # An unreadable declaration must survive verbatim.
+            if isinstance(declaration, dict) and declaration.keys() <= {"crs", "edges"}:
+                metadata.pop(b"ARROW:extension:name", None)
+                metadata.pop(b"ARROW:extension:metadata", None)
+        if metadata:
+            result[path[0] if len(path) == 1 else path] = metadata
+        for index in range(field.type.num_fields):
+            visit(field.type.field(index), (*path, str(index)))
+
+    for field in schema:
+        visit(field, (field.name,))
+    return result
 
 
 def _extract_bbox(column_meta: dict[str, Any]) -> tuple[float, float, float, float] | None:

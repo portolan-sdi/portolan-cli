@@ -358,7 +358,7 @@ def _write_default_style_for_geoparquet(
     collection_path: Path,
     pmtiles_relative_path: str,
     catalog_path: Path | None = None,
-    state: ConfigSource | None = None,
+    state: RunState | None = None,
 ) -> Path | None:
     """Write a default style file for a PMTiles asset.
 
@@ -390,7 +390,8 @@ def _write_default_style_for_geoparquet(
         return None
 
     try:
-        metadata = extract_geoparquet_metadata(parquet_path)
+        with run_scope(state):
+            metadata = extract_geoparquet_metadata(parquet_path)
         if not metadata.geometry_type:
             logger.debug("No geometry type found in %s", parquet_path)
             return None

@@ -1374,10 +1374,16 @@ class TestCheapBasemap:
 
         stub = thumbnail._get_tile
         threads: set[tuple[str, bool]] = set()
+        fetching = threading.Barrier(2, timeout=5)
 
         def spy(url: str) -> Any:
             current = threading.current_thread()
-            threads.add((current.name, current.daemon))
+            identity = (current.name, current.daemon)
+            if identity not in threads:
+                threads.add(identity)
+                # A fast stub can let one worker drain the queue before the
+                # second worker starts. Make their first requests overlap.
+                fetching.wait()
             return stub(url)
 
         monkeypatch.setattr(thumbnail, "_get_tile", spy)
@@ -2272,3 +2278,39 @@ class TestContextilyPrivateParts:
         assert tile.mt.__name__ == "mercantile"
         assert isinstance(tile.USER_AGENT, str)
         assert tile.USER_AGENT.startswith("contextily-")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("provider", ["Jawg.Streets", "MapTilesAPI.OSMEnglish"])
+@pytest.mark.parametrize("failure", ["http", "timeout"])
+def test_all_provider_token_names_stay_out_of_logs(
+    provider: str,
+    failure: str,
+    stub_tiles: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Provider-specific credential query names must be redacted too."""
+    import requests
+
+    from portolan_cli.viz import thumbnail
+
+    key = "SECRET123"
+    asked: list[str] = []
+
+    def fail(url: str) -> Any:
+        asked.append(url)
+        if failure == "timeout":
+            raise requests.Timeout(url)
+        raise requests.HTTPError(f"Tile request failed: {url}")
+
+    monkeypatch.setattr(thumbnail, "_get_tile", fail)
+    with caplog.at_level("DEBUG", logger="portolan_cli.viz.thumbnail"):
+        thumbnail.add_basemap(TestAddBasemap._axes(), provider, api_key=key)
+
+    assert asked and all(key in url for url in asked)
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "Basemap provider" in message or "Failed to add basemap" in message for message in messages
+    )
+    assert key not in caplog.text

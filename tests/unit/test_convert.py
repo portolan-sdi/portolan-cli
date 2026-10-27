@@ -1189,12 +1189,12 @@ class TestConvertDirectoryPoolFallback:
                 self._source = source
                 self._ok = ok
 
-            def result(self) -> ConversionResult:
+            def result(self) -> tuple[ConversionResult, dict[str, int]]:
                 if not self._ok:
                     raise BrokenProcessPool("pool died after first file")
                 # A sentinel status the serial path never produces, so we can
                 # prove this result came from the pool and was NOT re-converted.
-                return ConversionResult(
+                result = ConversionResult(
                     source=self._source,
                     output=self._source.with_suffix(".parquet"),
                     format_from="GEOJSON",
@@ -1203,6 +1203,7 @@ class TestConvertDirectoryPoolFallback:
                     error=None,
                     duration_ms=0,
                 )
+                return result, {}
 
         class _PartialPool:
             """First submitted file succeeds; the pool then dies."""

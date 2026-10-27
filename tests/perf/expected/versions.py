@@ -12,7 +12,7 @@ EXPECTED: dict[tuple[str, str], tuple[int, int]] = {
     ("add-many-collections", "versions.published"): (3, 0),  # version_ops:commit_run x6
     ("add-many-collections", "versions_json.reads"): (0, 1),  # catalog:_read_catalog_index x1
     ("add-many-collections", "versions_json.writes"): (3, 1),  # versions:write_versions x6, catalog:update_catalog_index x1
-    ("add-many-collections-thumbs", "checksum.files"): (6, 0),  # sync.checksums:compute_checksum x12
+    ("add-many-collections-thumbs", "checksum.files"): (4, 0),  # sync.checksums:compute_checksum x8
     ("add-many-collections-thumbs", "versions.published"): (2, 0),  # version_ops:commit_run x4
     ("add-many-collections-thumbs", "versions_json.reads"): (0, 1),  # catalog:_read_catalog_index x1
     ("add-many-collections-thumbs", "versions_json.writes"): (2, 1),  # versions:write_versions x4, catalog:update_catalog_index x1

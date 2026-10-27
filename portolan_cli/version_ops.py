@@ -182,7 +182,8 @@ def commit_run(state: RunState) -> dict[str, Version]:
     from its config hierarchy. A plugin backend gets one ``publish_version``
     for each of its staged collections.
 
-    The staged changes are cleared, so a second call commits nothing.
+    Successful stages are cleared. If a collection fails, unfinished stages
+    remain available for retry, and the index still reflects earlier writes.
 
     Args:
         state: The state of the run.
@@ -193,38 +194,46 @@ def commit_run(state: RunState) -> dict[str, Version]:
     from portolan_cli.catalog import CollectionSummary, update_catalog_index
     from portolan_cli.versions import write_versions
 
-    staged = state.take_staged()
+    pending = state.take_staged()
     published: dict[str, Version] = {}
-    by_backend: dict[str, dict[str, StagedVersion]] = {}
-    for collection_id, change in staged.items():
-        backend = state.backend(state.collection_dir(collection_id))
-        by_backend.setdefault(backend, {})[collection_id] = change
-    for backend, changes in sorted(by_backend.items()):
-        if backend != "file":
-            published.update(_commit_to_plugin(state, changes, backend))
     summaries: dict[str, CollectionSummary] = {}
-    for collection_id, change in sorted(by_backend.get("file", {}).items()):
-        collection_dir = state.collection_dir(collection_id)
-        disk = state.versions(collection_dir, include_staged=False)
-        updated = change.apply(disk)
-        if updated is not disk:
-            versions_path = collection_dir / "versions.json"
-            write_versions(versions_path, updated)
-            state.invalidate(versions_path)
-            published[collection_id] = updated.versions[-1]
-            if len(updated.versions) > len(disk.versions):
-                # An amend rewrites the latest version and publishes none.
-                count("versions.published")
-        if updated.versions:
-            summaries[collection_id] = CollectionSummary.of(updated.versions[-1])
     try:
-        update_catalog_index(state.catalog_root, summaries)
-    except Exception:
-        logger.warning(
-            "Failed to update catalog-level versions.json. "
-            "The collection versions were written, but the catalog-level view may be stale.",
-            exc_info=True,
-        )
+        by_backend: dict[str, dict[str, StagedVersion]] = {}
+        for collection_id, change in pending.items():
+            backend = state.backend(state.collection_dir(collection_id))
+            by_backend.setdefault(backend, {})[collection_id] = change
+        for backend, changes in sorted(by_backend.items()):
+            if backend != "file":
+                for collection_id, change in sorted(changes.items()):
+                    published.update(_commit_to_plugin(state, {collection_id: change}, backend))
+                    pending.pop(collection_id)
+        for collection_id, change in sorted(by_backend.get("file", {}).items()):
+            collection_dir = state.collection_dir(collection_id)
+            disk = state.versions(collection_dir, include_staged=False)
+            updated = change.apply(disk)
+            if updated is not disk:
+                versions_path = collection_dir / "versions.json"
+                write_versions(versions_path, updated)
+                state.invalidate(versions_path)
+                published[collection_id] = updated.versions[-1]
+                if len(updated.versions) > len(disk.versions):
+                    # An amend rewrites the latest version and publishes none.
+                    count("versions.published")
+            if updated.versions:
+                summaries[collection_id] = CollectionSummary.of(updated.versions[-1])
+            pending.pop(collection_id)
+    finally:
+        # A later collection can fail after earlier writes reached disk. Keep
+        # its stage retryable, and index the writes that already succeeded.
+        state.restore_staged(pending)
+        try:
+            update_catalog_index(state.catalog_root, summaries)
+        except Exception:
+            logger.warning(
+                "Failed to update catalog-level versions.json. "
+                "The collection versions were written, but the catalog-level view may be stale.",
+                exc_info=True,
+            )
     return published
 
 
@@ -233,8 +242,8 @@ def owned_run(catalog_root: Path, state: RunState | None = None) -> Iterator[Run
     """Yield the run state of a public entry point, and commit it if it is new.
 
     A caller that passes its own ``state`` commits it itself, so this yields it
-    and commits nothing. With no ``state``, this opens one and commits it when
-    the block ends without an exception. An exception commits nothing.
+    and commits nothing. With no ``state``, this opens one and commits even
+    when the block raises: staged versions describe STAC files already saved.
 
     Args:
         catalog_root: Root directory of the catalog.
@@ -249,8 +258,10 @@ def owned_run(catalog_root: Path, state: RunState | None = None) -> Iterator[Run
     from portolan_cli.run_state import RunState
 
     own = RunState.open(catalog_root)
-    yield own
-    commit_run(own)
+    try:
+        yield own
+    finally:
+        commit_run(own)
 
 
 # =============================================================================

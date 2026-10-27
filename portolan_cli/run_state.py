@@ -12,6 +12,9 @@ status-change time. One limit stays: on a file system with a coarse clock, a
 same-size rewrite in the same clock tick as the memo read can keep every field
 of the key. ext4 can also give the inode of a replaced file to the next atomic
 write. A writer in the run therefore calls :meth:`RunState.invalidate`.
+A live writable memory map can also change bytes repeatedly without moving
+any stat field. Its writer must invalidate the memo; stat alone cannot detect
+those changes.
 
 The state also holds the versions that a command stages. ``versions()`` returns
 the disk record with the staged assets applied, so a reader in the same run
@@ -93,8 +96,10 @@ def stat_matches(st: os.stat_result, mtime: float | None, size: int | None) -> b
     """Report whether a ``stat`` result matches a recorded mtime and size.
 
     This is the one change predicate for every fast path. The size must match
-    exactly, and the mtime must pass :func:`mtime_matches`. A record without an
-    mtime or a size never matches, so the caller falls back to the checksum.
+    exactly, and the mtime must pass :func:`mtime_matches`. A whole-second
+    record must match exactly: a different timestamp inside the coarse window
+    can be a real edit, so it requires a checksum. A record without an mtime
+    or a size never matches.
 
     Args:
         st: The ``stat`` result of the file now.
@@ -105,6 +110,8 @@ def stat_matches(st: os.stat_result, mtime: float | None, size: int | None) -> b
         True when the file is the one the record describes.
     """
     if mtime is None or size is None or st.st_size != size:
+        return False
+    if float(mtime).is_integer() and st.st_mtime != mtime:
         return False
     return mtime_matches(st.st_mtime, mtime)
 
@@ -207,9 +214,10 @@ class RunState:
         self._resolved_root = catalog_root.resolve()
         self._lock = threading.Lock()
         # One event per key that a worker loads now. See _once.
-        self._flights: dict[tuple[str, Any, _StatKey], threading.Event] = {}
+        self._flights: dict[tuple[str, Any, _StatKey, int], tuple[threading.Event, int]] = {}
+        self._invalidations: dict[Path, int] = {}
         # A merge reads several files, so it has no single key for _once.
-        self._config_lock = threading.Lock()
+        self._config_lock = threading.RLock()
         self._versions: dict[Path, tuple[_StatKey, VersionsFile]] = {}
         self._projected: dict[str, tuple[_StatKey | None, int, VersionsFile]] = {}
         self._checksums: dict[Path, tuple[_StatKey, str]] = {}
@@ -243,12 +251,14 @@ class RunState:
         except FileNotFoundError:
             return None, _empty_versions()
         key = _stat_key(st)
+        resolved = versions_path.resolve()
         parsed = self._once(
             "versions",
             self._versions,
-            versions_path.resolve(),
+            resolved,
             key,
             lambda: read_versions(versions_path),
+            path=resolved,
         )
         return key, parsed
 
@@ -342,7 +352,12 @@ class RunState:
         resolved = path.resolve()
         key = _stat_key(resolved.stat())
         return self._once(
-            "checksum", self._checksums, resolved, key, lambda: compute_checksum(resolved)
+            "checksum",
+            self._checksums,
+            resolved,
+            key,
+            lambda: compute_checksum(resolved),
+            path=resolved,
         )
 
     def unchanged(self, path: Path, asset: Asset) -> bool:
@@ -393,7 +408,12 @@ class RunState:
         resolved = path.resolve()
         key = _stat_key(resolved.stat())
         value: T = self._once(
-            f"memo:{kind}", self._memo, (kind, resolved), key, lambda: loader(path)
+            f"memo:{kind}",
+            self._memo,
+            (kind, resolved),
+            key,
+            lambda: loader(path),
+            path=resolved,
         )
         return value
 
@@ -404,6 +424,8 @@ class RunState:
         slot: Any,
         key: _StatKey,
         load: Callable[[], T],
+        *,
+        path: Path,
     ) -> T:
         """Return the value of ``slot`` at ``key``, and load it once on a miss.
 
@@ -411,7 +433,6 @@ class RunState:
         the same slot and key waits for it, then reads the store again. When the
         load raises, each waiting worker loads again and gets its own error.
         """
-        name = (flight, slot, key)
         while True:
             hit = store.get(slot)
             if hit is not None and hit[0] == key:
@@ -420,17 +441,27 @@ class RunState:
                 hit = store.get(slot)
                 if hit is not None and hit[0] == key:
                     return hit[1]
-                event = self._flights.get(name)
-                leader = event is None
-                if event is None:
-                    event = self._flights[name] = threading.Event()
+                generation = self._invalidations.get(path, 0)
+                name = (flight, slot, key, generation)
+                active = self._flights.get(name)
+                leader = active is None
+                if active is None:
+                    active = self._flights[name] = (threading.Event(), threading.get_ident())
+                event, owner = active
             if not leader:
+                # A wrapper loader may delegate to another reader of this key.
+                # Its outer call owns the flight and will store the result.
+                if owner == threading.get_ident():
+                    return load()
                 event.wait()
                 continue
             try:
                 value = load()
                 with self._lock:
-                    store[slot] = (key, value)
+                    # A writer can invalidate while this loader is outside
+                    # the lock, even when the stat key itself stays unchanged.
+                    if self._invalidations.get(path, 0) == generation:
+                        store[slot] = (key, value)
                 return value
             finally:
                 with self._lock:
@@ -454,21 +485,19 @@ class RunState:
 
     def _merged_files(self, filename: str, directory: Path) -> dict[str, Any]:
         """The shared merge of ``filename`` for ``directory``. Do not mutate it."""
+        # A YAML loader can read metadata through this state. Do not wait for
+        # its flight while holding the merge lock that its metadata needs.
+        files = tuple(_config.find_portolan_files(directory, filename, self.catalog_root))
+        root_file = _config.get_config_path(self._resolved_root)
+        if filename == _config.CONFIG_FILENAME and root_file not in files and root_file.is_file():
+            # The merge reads the catalog file for its legacy collections: section.
+            files += (root_file,)
+        try:
+            sources: tuple[Any, ...] | None = tuple(self._yaml(path) for path in files)
+        except yaml.YAMLError:
+            sources = None  # The merge below raises the typed error.
         # Workers that miss one directory together merge it once.
         with self._config_lock:
-            files = tuple(_config.find_portolan_files(directory, filename, self.catalog_root))
-            root_file = _config.get_config_path(self._resolved_root)
-            if (
-                filename == _config.CONFIG_FILENAME
-                and root_file not in files
-                and root_file.is_file()
-            ):
-                # The merge reads the catalog file for its legacy collections: section.
-                files += (root_file,)
-            try:
-                sources: tuple[Any, ...] | None = tuple(self._yaml(path) for path in files)
-            except yaml.YAMLError:
-                sources = None  # The merge below raises the typed error.
             key = (filename, directory.resolve())
             hit = self._merged.get(key)
             if (
@@ -609,6 +638,27 @@ class RunState:
             self._generation += 1
         return staged
 
+    def restore_staged(self, pending: dict[str, StagedVersion]) -> None:
+        """Restore work a failed commit did not write, keeping newer stages last."""
+        if not pending:
+            return
+        with self._lock:
+            for collection_id, older in pending.items():
+                newer = self._staged.get(collection_id)
+                if newer is not None:
+                    for key in newer.removed:
+                        older.assets.pop(key, None)
+                    older.assets.update(newer.assets)
+                    older.removed = (older.removed | newer.removed) - newer.assets.keys()
+                    older.messages = list(dict.fromkeys([*older.messages, *newer.messages]))
+                    older.breaking |= newer.breaking
+                    older.schema = newer.schema if newer.schema is not None else older.schema
+                    older.amend &= newer.amend
+                    older.minor |= newer.minor
+                self._staged[collection_id] = older
+            self._projected.clear()
+            self._generation += 1
+
     # ── invalidation ────────────────────────────────────────────────────────
 
     def invalidate(self, path: Path) -> None:
@@ -620,6 +670,7 @@ class RunState:
         """
         resolved = path.resolve()
         with self._lock:
+            self._invalidations[resolved] = self._invalidations.get(resolved, 0) + 1
             self._versions.pop(resolved, None)
             self._checksums.pop(resolved, None)
             for memo_key in [k for k in self._memo if k[1] == resolved]:

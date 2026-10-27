@@ -1030,12 +1030,11 @@ class TestTheRewrittenFooterIsReadOnce:
         assert opens == 2
 
 
-class TestOneRasterAddOpensEachFileOnce:
-    """A raster add opens the source once and the COG once, plus the thumbnail read.
+class TestRasterAddCountsGdalReads:
+    """Count Python and GDAL reads, including the VRT's second source open.
 
-    The conversion reads the dtype, the band count, and the statistics in one
-    open of the source. One open of the new COG gives the statistics check,
-    the item metadata, and the band statistics through the run memo.
+    The source gives the dtype and statistics; the VRT reads its pixels.
+    The new COG gives the statistics check and item metadata through the memo.
     """
 
     @staticmethod
@@ -1065,7 +1064,7 @@ class TestOneRasterAddOpensEachFileOnce:
         return opens
 
     @pytest.mark.unit
-    def test_a_gtiff_add_opens_the_source_once(self, tmp_path: Path) -> None:
+    def test_a_gtiff_add_counts_the_vrt_and_its_source(self, tmp_path: Path) -> None:
         import numpy as np
         import rasterio
         from rasterio.transform import from_origin
@@ -1078,11 +1077,11 @@ class TestOneRasterAddOpensEachFileOnce:
         ) as dst:  # fmt: skip
             dst.write(np.arange(600 * 600, dtype="uint32").reshape(1, 600, 600) % 251)
 
-        # The source, the new COG, and the thumbnail read of the COG.
-        assert self._opens(tmp_path, source) == 3
+        # The source, the VRT and its source, the new COG, and the thumbnail read.
+        assert self._opens(tmp_path, source) == 5
 
     @pytest.mark.unit
-    def test_a_cog_with_no_statistics_opens_the_source_once(
+    def test_a_cog_with_no_statistics_counts_the_vrt_and_its_source(
         self, tmp_path: Path, fixtures_dir: Path
     ) -> None:
         import shutil
@@ -1091,8 +1090,8 @@ class TestOneRasterAddOpensEachFileOnce:
         source.parent.mkdir(parents=True)
         shutil.copy(fixtures_dir / "raster" / "valid" / "rgb.tif", source)
 
-        # The source, the rewritten COG, and the thumbnail read of the COG.
-        assert self._opens(tmp_path, source) == 3
+        # The source, the VRT and its source, the rewritten COG, and the thumbnail read.
+        assert self._opens(tmp_path, source) == 5
 
 
 class TestRewriteOrKeep:

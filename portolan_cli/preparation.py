@@ -49,7 +49,13 @@ from portolan_cli.convert import (
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
 from portolan_cli.errors import AssetKeyCollisionError, NoGeometryError, RewriteFidelityError
 from portolan_cli.format_families import RASTER, VECTOR
-from portolan_cli.formats import in_run, is_cloud_optimized_geotiff, is_geoparquet, remember
+from portolan_cli.formats import (
+    in_run,
+    invalidate,
+    is_cloud_optimized_geotiff,
+    is_geoparquet,
+    remember,
+)
 from portolan_cli.metadata import (
     extract_band_statistics,
     extract_parquet_statistics,
@@ -1502,6 +1508,7 @@ def convert_vector(
         if not needs:
             if not same_file:
                 shutil.copy2(source, output_path)
+                invalidate(output_path)
             return output_path
 
         reason = "re-convert requested" if reconvert else "it carries no bbox covering column"
@@ -1518,6 +1525,7 @@ def convert_vector(
             # `.parquet` source would silently lose its CRS on this path while
             # the same file kept it on the path above.
             shutil.copy2(source, output_path)
+            invalidate(output_path)
             _rewrite_or_keep(output_path, settings, before)
         return output_path
 
@@ -1646,6 +1654,9 @@ def _rewrite_parquet_in_place(
         table.write(str(temp_path))
 
     try:
+        # A prior attempt can leave a memo entry after deleting its scratch
+        # file. Its next incarnation may reuse the same stat key.
+        invalidate(temp_path)
         run_with_transient_convert_retry(_run, source_name=source.name)
         # One footer read gives the gate and the item metadata. The footer
         # closes before the replace, because an open handle blocks it on
@@ -1659,6 +1670,7 @@ def _rewrite_parquet_in_place(
             if footer is not None:
                 footer.close()
         temp_path.replace(source)
+        invalidate(source)
         if footer is not None and metadata is not None:
             remember("parquet.footer", source, footer)
             remember("geoparquet.metadata", source, metadata)
@@ -1968,7 +1980,12 @@ def _embed_statistics(src: Any, source: Path, output: Path) -> Path | None:
 
     structure = src.tags(ns="IMAGE_STRUCTURE")
     codec = structure.get("COMPRESSION", "NONE").upper()
-    options: dict[str, Any] = {"compress": "DEFLATE", "blocksize": src.block_shapes[0][1]}
+    options: dict[str, Any] = {
+        "compress": "DEFLATE",
+        "blocksize": src.block_shapes[0][1],
+        # Adding statistics must retain the source pyramid, including no overviews.
+        "overviews": "FORCE_USE_EXISTING",
+    }
     if codec in _LOSSLESS_COG_CODECS:
         options["compress"] = codec
         if structure.get("PREDICTOR") in _COG_PREDICTOR_NAMES:

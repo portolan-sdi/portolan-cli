@@ -121,6 +121,63 @@ class TestCommitRunFileBackend:
             "Removed a.bin",
         )
 
+    @pytest.mark.parametrize("failure", [OSError, KeyboardInterrupt])
+    def test_failed_commit_keeps_pending_stages_and_indexes_completed_writes(
+        self, catalog: Path, monkeypatch: pytest.MonkeyPatch, failure: type[BaseException]
+    ) -> None:
+        """A failed second write must retain retryable work and index the first write."""
+        import portolan_cli.versions as versions_mod
+        from portolan_cli.versions import VersionsFile
+
+        state = RunState.open(catalog)
+        for collection_id in ("a", "b", "c"):
+            state.stage(
+                collection_id,
+                assets={"data.bin": _asset(catalog, f"{collection_id}/data.bin", b"data")},
+            )
+        write = versions_mod.write_versions
+
+        def fail_second(path: Path, record: VersionsFile) -> None:
+            if path.parent.name == "b":
+                raise failure("second version write failed")
+            write(path, record)
+
+        monkeypatch.setattr(versions_mod, "write_versions", fail_second)
+        with pytest.raises(failure, match="second version write failed"):
+            commit_run(state)
+
+        assert read_versions(catalog / "a" / "versions.json").current_version == "1.0.0"
+        assert _index(catalog)["collections"]["a"]["current_version"] == "1.0.0"
+        assert set(state.staged()) == {"b", "c"}, "failed commit discarded pending stages"
+
+        monkeypatch.setattr(versions_mod, "write_versions", write)
+        assert set(commit_run(state)) == {"b", "c"}
+        assert set(_index(catalog)["collections"]) == {"a", "b", "c"}
+        assert len(read_versions(catalog / "a" / "versions.json").versions) == 1
+
+    def test_failed_commit_preserves_a_newer_stage(
+        self, catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A stage made during a failed write supersedes the restored older stage."""
+        import portolan_cli.versions as versions_mod
+        from portolan_cli.versions import VersionsFile
+
+        state = RunState.open(catalog)
+        state.stage("c", assets={"old.bin": _asset(catalog, "c/old.bin", b"old")})
+        replacement = _asset(catalog, "c/new.bin", b"replacement")
+
+        def stage_then_fail(_path: Path, _record: VersionsFile) -> None:
+            state.stage("c", assets={"new.bin": replacement}, removed={"old.bin"})
+            raise OSError("write failed after another stage")
+
+        monkeypatch.setattr(versions_mod, "write_versions", stage_then_fail)
+        with pytest.raises(OSError, match="write failed after another stage"):
+            commit_run(state)
+
+        pending = state.staged()["c"]
+        assert pending.assets == {"new.bin": replacement}
+        assert pending.removed == {"old.bin"}
+
 
 class TestCommitRunAmend:
     """A side step of the command that wrote the latest version folds into it."""
@@ -209,11 +266,14 @@ class TestOwnedRun:
             state.stage("c", assets={"a.bin": _asset(catalog, "c/a.bin", b"a")})
         assert (catalog / "c" / "versions.json").exists()
 
-    def test_exception_commits_nothing(self, catalog: Path) -> None:
+    def test_exception_commits_saved_stages(self, catalog: Path) -> None:
         with pytest.raises(RuntimeError), owned_run(catalog) as state:
             state.stage("c", assets={"a.bin": _asset(catalog, "c/a.bin", b"a")})
             raise RuntimeError("boom")
-        assert not (catalog / "c" / "versions.json").exists()
+        record = read_versions(catalog / "c" / "versions.json")
+        assert record.current_version == "1.0.0"
+        assert set(record.versions[-1].assets) == {"a.bin"}
+        assert _index(catalog)["collections"]["c"]["current_version"] == "1.0.0"
 
     def test_caller_state_is_not_committed(self, catalog: Path) -> None:
         mine = RunState.open(catalog)

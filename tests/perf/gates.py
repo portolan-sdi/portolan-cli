@@ -133,9 +133,12 @@ def _record(name: str, workdir: Path) -> tuple[list[str], list[Row]]:
     n = SCALE_SIZES[name]
     small = measure(scenario, workdir, n)
     large = measure(scenario, workdir, 2 * n)
+    for record in (small, large):
+        if record["exit_code"] != scenario.exit_code or record["network"]:
+            raise RuntimeError(
+                f"{name} failed: exit {record['exit_code']}, network {record['network']}"
+            )
     notes = [f"# {name}: exit {small['exit_code']}/{large['exit_code']}"]
-    if small["network"] or large["network"]:
-        notes.append(f"# {name}: NETWORK {small['network'] + large['network']}")
     rows: list[Row] = []
     for counter, pair in scale(small, large).items():
         if pair == (0, 0):

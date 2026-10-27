@@ -693,6 +693,28 @@ def _ignore_reason(
     return f"its output {output.name} matches ignored_files pattern {pattern!r}"
 
 
+def _unchanged_for_add(
+    file_path: Path, collection_dir: Path, catalog_root: Path, state: RunState | None
+) -> bool:
+    """Check a tabular item companion against its owner's record as well.
+
+    Format-based inference places a CSV at collection level. When it already
+    belongs to a raster item, the exact item-relative key in the parent's
+    version record supplies its baseline before any preparation or writes.
+    """
+    if is_current(file_path, collection_dir / "versions.json", state=state):
+        return True
+    owner = file_path.parent.parent
+    if (
+        state is None
+        or file_path.suffix.lower() not in TABULAR_EXTENSIONS
+        or owner.resolve() == catalog_root.resolve()
+    ):
+        return False
+    record = state.tracked_assets(owner).get(versions_asset_key(file_path, owner))
+    return record is not None and state.unchanged(file_path, record)
+
+
 def _collect_files_for_add(
     paths: list[Path],
     catalog_root: Path,
@@ -784,9 +806,9 @@ def _collect_files_for_add(
 
             # Check if unchanged (skip this check when force=True per Issue #386)
             if not force:
-                versions_path = catalog_root / Path(*coll_id.split("/")) / "versions.json"
+                collection_dir = catalog_root / Path(*coll_id.split("/"))
                 # The run state reads each versions.json once (issue #995).
-                if is_current(file_path, versions_path, state=state):
+                if _unchanged_for_add(file_path, collection_dir, catalog_root, state):
                     skip(file_path, SKIP_UNCHANGED)
                     continue
 

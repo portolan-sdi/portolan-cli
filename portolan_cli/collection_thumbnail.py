@@ -94,6 +94,7 @@ def register_collection_thumbnail(
     thumbnail_path: Path,
     *,
     title: str | None = None,
+    state: RunState | None = None,
 ) -> bool:
     """Register ``thumbnail_path`` as the collection's thumbnail asset.
 
@@ -106,6 +107,7 @@ def register_collection_thumbnail(
         thumbnail_path: Path to the image, inside the collection directory or one
             of its item directories.
         title: Optional human-facing title.
+        state: The run state, so STAC and version tracking share one checksum.
 
     Returns:
         True when collection.json was rewritten, False when nothing was written.
@@ -135,7 +137,8 @@ def register_collection_thumbnail(
         asset["title"] = title
     try:
         asset["file:size"] = thumbnail_path.stat().st_size
-        asset["file:checksum"] = multihash_sha256(compute_checksum(thumbnail_path))
+        checksum = state.checksum(thumbnail_path) if state else compute_checksum(thumbnail_path)
+        asset["file:checksum"] = multihash_sha256(checksum)
     except (OSError, ValueError) as exc:
         # Size and checksum are a PTL-AST-003 warning, not an error. Registering
         # the asset without them beats registering nothing.
@@ -451,7 +454,7 @@ def ensure_collection_thumbnail(
         return None
 
     thumbnail, was_rendered = resolved
-    if not register_collection_thumbnail(collection_path, thumbnail):
+    if not register_collection_thumbnail(collection_path, thumbnail, state=state):
         return None
 
     # Track every thumbnail we register, not only the ones we drew. An adopted

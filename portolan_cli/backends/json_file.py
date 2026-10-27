@@ -200,7 +200,11 @@ class JsonFileBackend:
             if asset_path.exists():
                 stat = asset_path.stat()
                 prior = previous.get(name)
-                if prior is not None and stat_matches(stat, prior.mtime, prior.size_bytes):
+                if (
+                    prior is not None
+                    and asset_path.resolve() == (self._catalog_root / prior.href).resolve()
+                    and stat_matches(stat, prior.mtime, prior.size_bytes)
+                ):
                     checksum = prior.sha256
                 else:
                     checksum = compute_checksum(asset_path)

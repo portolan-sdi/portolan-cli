@@ -1144,7 +1144,9 @@ def _compute_band_statistics(src: Any, *, approx: bool) -> None:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RasterioDeprecationWarning)
             with contextlib.suppress(StatisticsError):
-                src.statistics(bidx, approx=approx)
+                # Pixel edits need not invalidate a publisher's statistics tags.
+                # clear_cache clears every band, so do it only on the first.
+                src.statistics(bidx, approx=approx, clear_cache=bidx == src.indexes[0])
 
 
 #: Marks a scratch file that an in-place rewrite swaps in. ``add`` collects a
@@ -1178,8 +1180,8 @@ def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = Non
     at the nodata value of one band as valid when another band holds data
     there, and writes nodata + 1 into the first band.
 
-    The source opens once. That one read gives the dtype for the settings,
-    the band statistics, and the pixels.
+    The explicit source open gives the dtype and the band statistics. The
+    lossless writer's VRT opens the source again to read the pixels.
 
     Args:
         source: Source raster file.
@@ -1232,6 +1234,8 @@ def _cog_options(settings: CogSettings, width: int, height: int) -> dict[str, An
     levels = get_maximum_overview_level(width, height, minsize=settings.tile_size)
     if levels:
         options["overview_count"] = levels
+        # AUTO reuses source overviews, even when their resampling differs.
+        options["overviews"] = "IGNORE_EXISTING"
     else:
         options["overviews"] = "NONE"
     # GDAL ignores PREDICTOR for any other codec and logs a warning per file.
@@ -1267,6 +1271,9 @@ def copy_to_cog(src: Any, output: Path, options: dict[str, Any], tags: dict[str,
         gdal_copy(src, str(vrt), driver="VRT")
         if tags:
             _tag_vrt(vrt, tags)
+        # GDAL opens the VRT and its source internally. Neither goes through
+        # rasterio.open, so the Python open-site gate cannot see these reads.
+        count("raster.opens", 2)
         gdal_copy(str(vrt), str(scratch), driver="COG", **options)
     except Exception:
         scratch.unlink(missing_ok=True)
@@ -1615,17 +1622,33 @@ def _convert_files_serial(
 _WORKER_STATE: RunState | None = None
 
 
-def _init_worker_state(catalog_path: Path | None) -> None:
+def _init_worker_state(catalog_path: Path | None, tracing: bool = False) -> None:
     """Give this worker process one run state, so it parses the config once."""
     global _WORKER_STATE
+    from portolan_cli import trace
     from portolan_cli.run_state import RunState
 
     _WORKER_STATE = RunState.open(catalog_path) if catalog_path is not None else None
+    if tracing:
+        trace.enable()
 
 
-def _convert_in_worker(source: Path, **kwargs: Any) -> ConversionResult:
-    """Run :func:`convert_file` with the run state of this worker process."""
-    return convert_file(source, state=_WORKER_STATE, **kwargs)
+def _convert_in_worker(source: Path, **kwargs: Any) -> tuple[ConversionResult, dict[str, int]]:
+    """Return a conversion and its counters to the parent process.
+
+    Only this task's increments cross the boundary. Returning cumulative
+    counters would count the earlier tasks of a reused worker again.
+    """
+    from portolan_cli import trace
+
+    before = trace.counters() if trace.is_enabled() else {}
+    result = convert_file(source, state=_WORKER_STATE, **kwargs)
+    increments = (
+        {name: value - before.get(name, 0) for name, value in trace.counters().items()}
+        if trace.is_enabled()
+        else {}
+    )
+    return result, increments
 
 
 def _convert_files_parallel(
@@ -1662,6 +1685,8 @@ def _convert_files_parallel(
     from concurrent.futures import ProcessPoolExecutor, as_completed
     from concurrent.futures.process import BrokenProcessPool
 
+    from portolan_cli import trace
+
     # Use a "spawn" context, not fork. GDAL/rasterio run worker threads, and
     # fork()-ing a multi-threaded process can deadlock the child (and aborts on
     # macOS). Spawn re-imports this module cleanly in each worker.
@@ -1681,7 +1706,7 @@ def _convert_files_parallel(
             max_workers=workers,
             mp_context=mp_context,
             initializer=_init_worker_state,
-            initargs=(catalog_path,),
+            initargs=(catalog_path, trace.is_enabled()),
         ) as executor:
             future_to_file = {
                 executor.submit(
@@ -1698,7 +1723,10 @@ def _convert_files_parallel(
             for future in as_completed(future_to_file):
                 file_path = future_to_file[future]
                 try:
-                    result = future.result()
+                    result, increments = future.result()
+                    for name, value in increments.items():
+                        if value:
+                            count(name, value)
                 except BrokenProcessPool:
                     # The pool itself died; let the outer handler fall back to
                     # serial rather than marking this file FAILED.

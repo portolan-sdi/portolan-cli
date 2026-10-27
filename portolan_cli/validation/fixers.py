@@ -862,7 +862,7 @@ def _fix_markdown_requirement(
     return results
 
 
-def _fix_readme(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
+def _fix_readme(root: Path, dry_run: bool, state: RunState | None = None) -> list[FixResult]:
     """Scaffold README.md and its rel='describedby' link."""
     from portolan_cli.readme import ensure_readmes
 
@@ -870,7 +870,7 @@ def _fix_readme(root: Path, dry_run: bool, _state: RunState | None = None) -> li
         root,
         dry_run,
         gap=_readme_gap,
-        repair=ensure_readmes,
+        repair=lambda directory: ensure_readmes(directory, state=state),
         message="Scaffolded README.md and its rel='describedby' link",
     )
 
@@ -889,10 +889,10 @@ def _fix_agents(root: Path, dry_run: bool, _state: RunState | None = None) -> li
 
 
 def _fix_required_files(
-    root: Path, dry_run: bool, _state: RunState | None = None
+    root: Path, dry_run: bool, state: RunState | None = None
 ) -> list[FixResult]:
     """Every catalog and collection directory carries README.md and AGENTS.md."""
-    return [*_fix_agents(root, dry_run), *_fix_readme(root, dry_run)]
+    return [*_fix_agents(root, dry_run, state), *_fix_readme(root, dry_run, state)]
 
 
 def _fix_titles(root: Path, dry_run: bool, state: RunState | None = None) -> list[FixResult]:

@@ -85,12 +85,12 @@ class TestStatMatches:
         st = _stat_with_mtime(f, 1_700_000_000.251)
         assert stat_matches(st, 1_700_000_000.25, 3) is False
 
-    def test_whole_second_record_uses_coarse_window(self, tmp_path: Path) -> None:
+    def test_whole_second_record_requires_hash_when_time_differs(self, tmp_path: Path) -> None:
         f = tmp_path / "a.bin"
         f.write_bytes(b"abc")
         recorded = 1_700_000_000.0
         just_inside = recorded + MTIME_TOLERANCE_SECONDS - 0.001
-        assert stat_matches(_stat_with_mtime(f, just_inside), recorded, 3) is True
+        assert stat_matches(_stat_with_mtime(f, just_inside), recorded, 3) is False
 
     def test_whole_second_window_is_exactly_two_seconds(self) -> None:
         recorded = 1_700_000_000.0

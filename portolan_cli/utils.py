@@ -120,6 +120,7 @@ def get_list(data: dict[str, Any], key: str) -> list[Any]:
 CREDENTIAL_QUERY_PARAMS = frozenset(
     {
         "access_token",
+        "access-token",
         "api-key",
         "api_key",
         "apikey",
@@ -129,6 +130,7 @@ CREDENTIAL_QUERY_PARAMS = frozenset(
         "client_secret",
         "key",
         "password",
+        "rapidapi-key",
         "secret",
         "sig",
         "signature",
