@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        today = datetime.datetime.now(datetime.timezone.utc).date()
+        today = datetime.datetime.now(datetime.UTC).date()
         if args.json:
             active = [e for e in parse_entries(args.path) if today <= e.expires]
             payload = [

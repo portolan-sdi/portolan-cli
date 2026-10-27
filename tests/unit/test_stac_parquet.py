@@ -8,6 +8,7 @@ orchestration with no item-count threshold.
 from __future__ import annotations
 
 import json
+from datetime import UTC
 from typing import TYPE_CHECKING
 
 import pytest
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
 
 def _write_version_snapshot(collection_dir: Path, version: str) -> None:
     """Write a versions.json with one snapshot, as the add flow would."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from portolan_cli.versions import Asset, Version, VersionsFile, write_versions
 
@@ -34,7 +35,7 @@ def _write_version_snapshot(collection_dir: Path, version: str) -> None:
             versions=[
                 Version(
                     version=version,
-                    created=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 1, tzinfo=UTC),
                     message="add",
                     breaking=False,
                     assets={

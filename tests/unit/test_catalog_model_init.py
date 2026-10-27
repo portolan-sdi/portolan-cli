@@ -11,7 +11,7 @@ Tests cover:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -141,9 +141,9 @@ class TestCreateCatalogAutoExtraction:
         catalog_dir = tmp_path / "test-catalog"
         catalog_dir.mkdir()
 
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         catalog = create_catalog(catalog_dir)
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
 
         assert catalog.created is not None
         assert before <= catalog.created <= after

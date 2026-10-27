@@ -3,7 +3,7 @@
 Implements the VersioningBackend protocol from portolan-cli, storing actual
 data in Iceberg tables and version metadata in snapshot summary properties.
 
-``hooks.iceberg_backend`` checks for Python 3.11+ before it imports this module.
+``hooks.iceberg_backend`` imports this module on first use.
 """
 
 from __future__ import annotations

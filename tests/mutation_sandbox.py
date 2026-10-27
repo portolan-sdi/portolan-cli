@@ -28,13 +28,9 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pytest itself depends on tomli before 3.11
-    import tomli as tomllib
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping

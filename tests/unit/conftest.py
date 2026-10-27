@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -40,7 +40,7 @@ def write_snapshot() -> Callable[[Path, dict[str, Asset]], None]:
         collection_dir.mkdir(parents=True, exist_ok=True)
         version = Version(
             version="1.0.0",
-            created=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            created=datetime(2026, 1, 1, tzinfo=UTC),
             breaking=False,
             assets=assets,
             changes=list(assets),

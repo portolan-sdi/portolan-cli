@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -52,7 +52,7 @@ class TestVersionsFileModel:
         )
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"data.parquet": asset},
             changes=["data.parquet"],
@@ -169,7 +169,7 @@ class TestWriteVersions:
         asset = Asset(sha256="def456", size_bytes=2048, href="raster.tif")
         version = Version(
             version="2.0.0",
-            created=datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC),
             breaking=True,
             assets={"raster.tif": asset},
             changes=["raster.tif"],
@@ -195,7 +195,7 @@ class TestWriteVersions:
         asset = Asset(sha256="roundtrip", size_bytes=512, href="test.parquet")
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC),
             breaking=False,
             assets={"test.parquet": asset},
             changes=["test.parquet"],
@@ -234,7 +234,7 @@ class TestWriteVersions:
         )
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC),
             breaking=False,
             assets={"test.parquet": asset},
             changes=["test.parquet"],
@@ -255,7 +255,7 @@ class TestWriteVersions:
         asset = Asset(sha256="fp", size_bytes=1, href="c/items.parquet", source_fingerprint="ab12")
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC),
             breaking=False,
             assets={"items.parquet": asset},
             changes=["items.parquet"],
@@ -276,7 +276,7 @@ class TestWriteVersions:
         asset = Asset(sha256="none", size_bytes=1, href="d.parquet")
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC),
             breaking=False,
             assets={"d.parquet": asset},
             changes=["d.parquet"],
@@ -333,7 +333,7 @@ class TestAddVersion:
         existing_asset = Asset(sha256="old", size_bytes=500, href="old.parquet")
         existing_version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 1, tzinfo=UTC),
             breaking=False,
             assets={"old.parquet": existing_asset},
             changes=["old.parquet"],
@@ -358,9 +358,9 @@ class TestAddVersion:
         vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
         assets = {"f.parquet": Asset(sha256="x", size_bytes=1, href="f.parquet")}
 
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         updated = add_version(vf, version="1.0.0", assets=assets, breaking=False)
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
 
         created = updated.versions[0].created
         assert before <= created <= after
@@ -372,7 +372,7 @@ class TestAddVersion:
         old_asset = Asset(sha256="same", size_bytes=100, href="unchanged.parquet")
         existing_version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 1, tzinfo=UTC),
             breaking=False,
             assets={"unchanged.parquet": old_asset},
             changes=["unchanged.parquet"],
@@ -400,7 +400,7 @@ class TestAddVersion:
         old_asset = Asset(sha256="old_hash", size_bytes=100, href="data.parquet")
         existing_version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 1, tzinfo=UTC),
             breaking=False,
             assets={"data.parquet": old_asset},
             changes=["data.parquet"],
@@ -533,7 +533,7 @@ class TestVersionsSerializationSourceTracking:
         )
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"data.parquet": asset},
             changes=["data.parquet"],
@@ -563,7 +563,7 @@ class TestVersionsSerializationSourceTracking:
         )
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"data.parquet": asset},
             changes=["data.parquet"],
@@ -591,7 +591,7 @@ class TestVersionsSerializationSourceTracking:
         )
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"data.parquet": asset},
             changes=["data.parquet"],
@@ -619,7 +619,7 @@ class TestVersionsSerializationSourceTracking:
         )
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"data.parquet": asset},
             changes=["data.parquet"],
@@ -797,7 +797,7 @@ class TestVersionsParsingSourceTracking:
         )
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"data.parquet": original_asset},
             changes=["data.parquet"],
@@ -869,7 +869,7 @@ class TestSchemaFingerprintInVersion:
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"data.parquet": asset},
             changes=["data.parquet"],
@@ -884,7 +884,7 @@ class TestSchemaFingerprintInVersion:
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"data.parquet": asset},
             changes=["data.parquet"],
@@ -897,7 +897,7 @@ class TestSchemaFingerprintInVersion:
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"data.parquet": asset},
             changes=["data.parquet"],
@@ -911,7 +911,7 @@ class TestSchemaFingerprintInVersion:
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"data.parquet": asset},
             changes=["data.parquet"],
@@ -934,7 +934,7 @@ class TestSchemaFingerprintSerialization:
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"data.parquet": asset},
             changes=["data.parquet"],
@@ -959,7 +959,7 @@ class TestSchemaFingerprintSerialization:
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"data.parquet": asset},
             changes=["data.parquet"],
@@ -983,7 +983,7 @@ class TestSchemaFingerprintSerialization:
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"data.parquet": asset},
             changes=["data.parquet"],
@@ -1006,7 +1006,7 @@ class TestSchemaFingerprintSerialization:
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"data.parquet": asset},
             changes=["data.parquet"],
@@ -1306,7 +1306,7 @@ class TestEdgeCases:
         asset = Asset(sha256="abc123", size_bytes=1024, href="données.parquet")
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"données.parquet": asset},
             changes=["données.parquet"],
@@ -1319,7 +1319,7 @@ class TestEdgeCases:
         asset = Asset(sha256="abc123", size_bytes=1024, href="数据.parquet")
         version = Version(
             version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             breaking=False,
             assets={"数据.parquet": asset},
             changes=["数据.parquet"],

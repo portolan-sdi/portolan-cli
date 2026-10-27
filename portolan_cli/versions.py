@@ -37,7 +37,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.json_io import write_json_atomic
@@ -218,7 +218,7 @@ def _parse_versions_file(data: dict[str, Any]) -> VersionsFile:
 
             version = Version(
                 version=v["version"],
-                created=datetime.fromisoformat(v["created"].replace("Z", "+00:00")),
+                created=datetime.fromisoformat(v["created"]),
                 breaking=v["breaking"],
                 assets=assets,
                 changes=v["changes"],
@@ -394,7 +394,7 @@ def add_version(
 
     new_version = Version(
         version=version,
-        created=datetime.now(timezone.utc),
+        created=datetime.now(UTC),
         breaking=breaking,
         assets=merged_assets,
         changes=changes,

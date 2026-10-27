@@ -39,7 +39,7 @@ from __future__ import annotations
 import logging
 import math
 import re
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.config import load_merged_metadata
@@ -816,7 +816,7 @@ def apply_temporal_defaults(
     if year is not None:
         if not isinstance(year, int):
             raise ValueError(f"Year must be an integer, got {type(year).__name__}")
-        return datetime(year, 1, 1, tzinfo=timezone.utc)
+        return datetime(year, 1, 1, tzinfo=UTC)
 
     # Fall back to start date
     start = temporal.get("start")
@@ -828,7 +828,7 @@ def apply_temporal_defaults(
                 parsed_date.year,
                 parsed_date.month,
                 parsed_date.day,
-                tzinfo=timezone.utc,
+                tzinfo=UTC,
             )
         except ValueError as e:
             raise ValueError(f"Invalid date format for start: '{start}'. {e}") from e

@@ -19,7 +19,7 @@ The layout under test throughout:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -228,7 +228,7 @@ class TestRemoveOneFile:
                 versions=[
                     Version(
                         version="1.0.0",
-                        created=datetime.now(timezone.utc),
+                        created=datetime.now(UTC),
                         breaking=False,
                         assets={
                             "gone.pmtiles": Asset(
@@ -266,7 +266,7 @@ class TestRemoveOneFile:
                 versions=[
                     Version(
                         version="1.0.0",
-                        created=datetime.now(timezone.utc),
+                        created=datetime.now(UTC),
                         breaking=False,
                         assets={
                             "gone.pmtiles": Asset(
@@ -369,7 +369,7 @@ class TestRemoveOneFile:
                 versions=[
                     Version(
                         version="1.0.0",
-                        created=datetime.now(timezone.utc),
+                        created=datetime.now(UTC),
                         breaking=False,
                         assets={
                             "tunnels.parquet": Asset(
@@ -401,7 +401,7 @@ class TestRemoveOneFile:
                 versions=[
                     Version(
                         version="1.0.0",
-                        created=datetime.now(timezone.utc),
+                        created=datetime.now(UTC),
                         breaking=False,
                         assets={
                             "tunnels.parquet": Asset(

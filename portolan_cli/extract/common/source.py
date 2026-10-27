@@ -31,7 +31,7 @@ import time
 import uuid
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
@@ -418,7 +418,7 @@ def build_report(
         license_info_raw=None,
     )
     return ExtractionReport(
-        extraction_date=datetime.now(timezone.utc).isoformat(),
+        extraction_date=datetime.now(UTC).isoformat(),
         source_url=source_url,
         portolan_version=_package_version("portolan-cli"),
         gpio_version=_package_version("geoparquet-io"),

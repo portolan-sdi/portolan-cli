@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import shutil
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -38,7 +38,7 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 POINTS = FIXTURES / "vector" / "valid" / "points.parquet"
 # The attribute columns of points.parquet that a mutation may drop.
 COLUMNS = ("name", "category", "rating", "open", "visitors")
-START = datetime(2024, 1, 1, tzinfo=timezone.utc)
+START = datetime(2024, 1, 1, tzinfo=UTC)
 
 
 def _bbox_of(table: pa.Table) -> list[float]:

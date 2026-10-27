@@ -12,8 +12,7 @@ Install with: pip install portolan-cli[iceberg]
 
 ``hooks`` registers the backend and ``cli`` holds ``version rollback`` and
 ``version prune``. Both load without pyiceberg, so the package root imports
-nothing heavy. ``IcebergBackend`` loads on first access and needs Python 3.11+
-and the extra.
+nothing heavy. ``IcebergBackend`` loads on first access and needs the extra.
 
 Future: Icechunk support for array/raster data (COG, NetCDF, Zarr) is planned.
 """

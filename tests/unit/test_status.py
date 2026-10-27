@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -48,7 +48,7 @@ def _create_versions_file(
 
     ver = Version(
         version=version,
-        created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+        created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
         breaking=False,
         assets=asset_objs,
         changes=list(asset_objs.keys()),
@@ -84,7 +84,7 @@ class TestDetectModifiedFiles:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(
@@ -120,7 +120,7 @@ class TestDetectModifiedFiles:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(
@@ -153,7 +153,7 @@ class TestDetectModifiedFiles:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={
                         "missing.parquet": Asset(
@@ -188,7 +188,7 @@ class TestDetectDeletedFiles:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={
                         "deleted.parquet": Asset(
@@ -220,7 +220,7 @@ class TestDetectDeletedFiles:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(
@@ -256,7 +256,7 @@ class TestDetectUntrackedFiles:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={},
                     changes=[],
@@ -282,7 +282,7 @@ class TestDetectUntrackedFiles:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={
                         "data.parquet": Asset(
@@ -314,7 +314,7 @@ class TestDetectUntrackedFiles:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={},
                     changes=[],
@@ -340,7 +340,7 @@ class TestDetectUntrackedFiles:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={},
                     changes=[],
@@ -385,7 +385,7 @@ class TestDetectUntrackedFiles:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={},
                     changes=[],
@@ -411,7 +411,7 @@ class TestDetectUntrackedFiles:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={},
                     changes=[],
@@ -442,7 +442,7 @@ class TestDetectUntrackedFiles:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={},
                     changes=[],
@@ -469,7 +469,7 @@ class TestDetectUntrackedFiles:
             versions=[
                 Version(
                     version="1.0.0",
-                    created=datetime.now(timezone.utc),
+                    created=datetime.now(UTC),
                     breaking=False,
                     assets={},
                     changes=[],
@@ -622,7 +622,7 @@ class TestRemoteVersionFetcher:
             versions=[
                 Version(
                     version=version,
-                    created=datetime(2026, 10, 10, tzinfo=timezone.utc),
+                    created=datetime(2026, 10, 10, tzinfo=UTC),
                     breaking=False,
                     assets={},
                     changes=[],

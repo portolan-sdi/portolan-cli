@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -43,7 +43,7 @@ class _MemoryBackend:
         history = self.versions.setdefault(collection, [])
         created = Version(
             version=version or f"{len(history) + 1}.0.0",
-            created=datetime.now(timezone.utc),
+            created=datetime.now(UTC),
             breaking=breaking,
             assets={},
             changes=sorted(assets),

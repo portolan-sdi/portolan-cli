@@ -110,7 +110,7 @@ job. That single job covers:
 - **deptry** — dependency hygiene
 - **actionlint** / **zizmor** — GitHub Actions workflow linting + supply-chain audit
 
-Alongside `quality`, CI runs the **test matrix** (Python 3.10–3.13 × Linux/macOS/
+Alongside `quality`, CI runs the **test matrix** (Python 3.11–3.13 × Linux/macOS/
 Windows), **pip-audit** (dependency CVEs, ignores tracked in `.pip-audit-ignores`
 with expiry dates), the **docs build**, and the **package build**.
 

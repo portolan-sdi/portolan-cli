@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -242,7 +242,7 @@ class TestSitesAdoptedInIssue687:
         from portolan_cli.extract.arcgis.imageserver.resume import ImageServerResumeState
 
         target = tmp_path / "resume.json"
-        started = datetime(2026, 7, 30, 9, 0, tzinfo=timezone.utc)
+        started = datetime(2026, 7, 30, 9, 0, tzinfo=UTC)
         _save_resume_state(
             ImageServerResumeState(
                 succeeded_tiles={(0, 0)},

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
@@ -1466,14 +1467,14 @@ class _RecordingBackend:
     def publish(
         self, collection: str, assets: dict[str, str], *_args: object, **_kw: object
     ) -> Any:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from portolan_cli.versions import Version
 
         self.published.append((collection, sorted(assets)))
         return Version(
             version="1.0.0",
-            created=datetime.now(timezone.utc),
+            created=datetime.now(UTC),
             breaking=False,
             assets={},
             changes=[],

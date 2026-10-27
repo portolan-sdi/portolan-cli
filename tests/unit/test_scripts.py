@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -130,7 +130,7 @@ class TestUpdateFreshness:
 Some content here.
 <!-- /freshness -->"""
 
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
         updated = update_freshness_marker(content, "Standardized Terminal Output", today)
 
         assert f"last-verified: {today}" in updated

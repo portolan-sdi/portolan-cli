@@ -34,7 +34,7 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TextIO
 
 from portolan_cli import trace
@@ -116,7 +116,7 @@ class _JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         doc = {
-            "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "rel": round(record.relativeCreated / 1000, 3),
             "level": record.levelname,
             "logger": record.name,

@@ -7,7 +7,7 @@ listing, and removing items from a Portolan catalog.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -76,7 +76,7 @@ class TestItemInfo:
             asset_paths=["data.tif"],
             title="Test Dataset",
             description="A test dataset",
-            datetime=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            datetime=datetime(2024, 1, 1, tzinfo=UTC),
         )
         assert info.title == "Test Dataset"
         assert info.description == "A test dataset"

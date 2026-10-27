@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import pytest
-from typing_extensions import Self
 
 # =============================================================================
 # Phase 1: ConversionStatus Enum Tests

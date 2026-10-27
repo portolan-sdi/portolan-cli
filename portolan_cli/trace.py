@@ -45,8 +45,7 @@ if TYPE_CHECKING:
     from concurrent.futures import Executor, Future
     from pathlib import Path
     from types import ModuleType, TracebackType
-
-    from typing_extensions import Self
+    from typing import Self
 
 resource: ModuleType | None
 try:

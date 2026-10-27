@@ -58,6 +58,29 @@ _AWS_ISOLATION_KEYS = (
     "AWS_EC2_METADATA_DISABLED",
 )
 
+# Windows needs its system variables to run. CPython 3.12.15 cannot build an
+# SSL context without them, and botocore builds one while it resolves
+# credentials. A cleared environment keeps these on Windows. It never keeps
+# HOME, USERPROFILE, HOMEDRIVE, or HOMEPATH, because botocore finds ~/.aws
+# through them. tests/unit/test_cleared_environ.py checks both rules.
+_WINDOWS_SYSTEM_KEYS = (
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "COMMONPROGRAMFILES",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
+    "OS",
+)
+
 # The shell exports these on a developer machine. isolate_aws_config removes
 # them for every test.
 _AWS_SHELL_KEYS = ("AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION")
@@ -165,6 +188,8 @@ def cleared_environ(**overrides: str) -> Iterator[None]:
     variables into the otherwise-empty environment.
     """
     keep = (_MUTMUT_ENV_KEY, *_AWS_ISOLATION_KEYS, *PROXY_KEYS, *NO_PROXY_KEYS)
+    if sys.platform == "win32":
+        keep = (*keep, *_WINDOWS_SYSTEM_KEYS)
     preserved = {k: v for k, v in os.environ.items() if k in keep}
     preserved.update(overrides)
     with mock.patch.dict(os.environ, preserved, clear=True):

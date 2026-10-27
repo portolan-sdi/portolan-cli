@@ -15,17 +15,11 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import pytest
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    # tomli is not a project dependency. It arrives through pytest, which
-    # requires it on Python 3.10.
-    import tomli as tomllib
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -108,7 +102,7 @@ OBJECT_STORE_IMPORTERS = frozenset(
 
 # Delete only. Lower these numbers when a name or a clone goes away.
 VULTURE_WHITELIST_NAMES = 100
-JSCPD_BASELINE_FINGERPRINTS = 751
+JSCPD_BASELINE_FINGERPRINTS = 747
 
 
 def _pyproject() -> dict[str, Any]:

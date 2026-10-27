@@ -10,7 +10,7 @@ Tests cover:
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -39,7 +39,7 @@ class TestCatalogModelCreation:
     @pytest.mark.unit
     def test_create_catalog_with_all_fields(self) -> None:
         """CatalogModel can be created with all fields including optional."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         catalog = CatalogModel(
             id="full-catalog",
             description="Full test catalog",
@@ -131,7 +131,7 @@ class TestCatalogModelSerialization:
     @pytest.mark.unit
     def test_to_dict_includes_timestamps_when_set(self) -> None:
         """to_dict() should include timestamps in ISO format."""
-        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
         catalog = CatalogModel(id="test", description="Test", created=now, updated=now)
         data = catalog.to_dict()
 
@@ -174,7 +174,7 @@ class TestCatalogModelSerialization:
     @pytest.mark.unit
     def test_roundtrip_serialization(self) -> None:
         """to_dict -> from_dict should preserve all data."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         original = CatalogModel(
             id="roundtrip-test",
             description="Test roundtrip",

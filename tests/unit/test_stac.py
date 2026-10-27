@@ -7,7 +7,7 @@ collections, and items following Portolan's conventions.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pystac
@@ -45,8 +45,8 @@ class TestCreateCollection:
             description="Collection with extent",
             bbox=[-122.5, 37.5, -122.0, 38.0],
             temporal_extent=(
-                datetime(2024, 1, 1, tzinfo=timezone.utc),
-                datetime(2024, 12, 31, tzinfo=timezone.utc),
+                datetime(2024, 1, 1, tzinfo=UTC),
+                datetime(2024, 12, 31, tzinfo=UTC),
             ),
         )
 
@@ -54,8 +54,8 @@ class TestCreateCollection:
         assert spatial == [-122.5, 37.5, -122.0, 38.0]
 
         temporal = collection.extent.temporal.intervals[0]
-        assert temporal[0] == datetime(2024, 1, 1, tzinfo=timezone.utc)
-        assert temporal[1] == datetime(2024, 12, 31, tzinfo=timezone.utc)
+        assert temporal[0] == datetime(2024, 1, 1, tzinfo=UTC)
+        assert temporal[1] == datetime(2024, 12, 31, tzinfo=UTC)
 
     @pytest.mark.unit
     def test_create_collection_with_title(self) -> None:
@@ -129,7 +129,7 @@ class TestCreateItem:
     @pytest.mark.unit
     def test_create_item_with_datetime(self) -> None:
         """create_item accepts datetime."""
-        dt = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
         item = create_item(
             item_id="dated-item",
             bbox=[0, 0, 1, 1],

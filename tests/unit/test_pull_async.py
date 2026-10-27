@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
@@ -143,7 +143,7 @@ async def test_pull_async_downloads_concurrently(
             versions=[
                 Version(
                     version="2.0.0",
-                    created=datetime(2024, 1, 20, 10, 0, 0, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 20, 10, 0, 0, tzinfo=UTC),
                     breaking=False,
                     message="Added many files",
                     assets={
@@ -220,7 +220,7 @@ async def test_pull_async_respects_concurrency_limit(
             versions=[
                 Version(
                     version="2.0.0",
-                    created=datetime(2024, 1, 20, 10, 0, 0, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 20, 10, 0, 0, tzinfo=UTC),
                     breaking=False,
                     message="Many files",
                     assets={
@@ -287,7 +287,7 @@ async def test_pull_async_handles_rate_limit(
             versions=[
                 Version(
                     version="2.0.0",
-                    created=datetime(2024, 1, 20, 10, 0, 0, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 20, 10, 0, 0, tzinfo=UTC),
                     breaking=False,
                     message="Single file",
                     assets={
@@ -349,7 +349,7 @@ async def test_pull_async_circuit_breaker_on_failures(
             versions=[
                 Version(
                     version="2.0.0",
-                    created=datetime(2024, 1, 20, 10, 0, 0, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 20, 10, 0, 0, tzinfo=UTC),
                     breaking=False,
                     message="Many files",
                     assets={
@@ -454,7 +454,7 @@ async def test_pull_async_reports_progress(
             versions=[
                 Version(
                     version="2.0.0",
-                    created=datetime(2024, 1, 20, 10, 0, 0, tzinfo=timezone.utc),
+                    created=datetime(2024, 1, 20, 10, 0, 0, tzinfo=UTC),
                     breaking=False,
                     message="Files",
                     assets={

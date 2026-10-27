@@ -20,16 +20,12 @@ import fnmatch
 import importlib.util
 import re
 import sys
+import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pytest itself depends on tomli before 3.11
-    import tomli as tomllib
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -179,7 +175,7 @@ def test_diff_cover_reads_the_report_of_every_cell() -> None:
     ]
     run = _run_text(jobs["diff-cover"])
 
-    assert len(names) == 16
+    assert len(names) == 15
     assert len(set(names)) == len(names)
     assert [step["with"] for step in downloads] == [
         {"pattern": COVERAGE_PATTERN, "path": "coverage"}
