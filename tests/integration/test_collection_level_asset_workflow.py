@@ -15,6 +15,7 @@ import shutil
 from typing import TYPE_CHECKING
 
 import pytest
+from rashid import validate
 
 from portolan_cli.add import add
 
@@ -455,6 +456,77 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
         assert csv in skipped
         tracked = read_versions(catalog / "imagery" / "versions.json").versions[-1].assets
         assert tracked["scene/bands.csv"].size_bytes == csv.stat().st_size
+
+    def test_a_companion_in_an_item_directory_makes_no_catalog(
+        self, fresh_catalog_no_versions: Path, fixtures_dir: Path
+    ) -> None:
+        """A CSV beside a raster item joins the item. Its directory is no collection.
+
+        Phase 1 infers ``imagery/scene`` as the collection of the CSV. When that
+        phase wrote the intermediate catalogs, ``imagery/catalog.json`` landed
+        next to ``imagery/collection.json``, and check reported PTL-LNK-002 and
+        PTL-LNK-006.
+        """
+        from portolan_cli.add import add_files
+
+        catalog = fresh_catalog_no_versions
+        item_dir = catalog / "imagery" / "scene"
+        item_dir.mkdir(parents=True)
+        (item_dir / "scene.tif").write_bytes(
+            (fixtures_dir / "raster" / "valid" / "rgb.tif").read_bytes()
+        )
+        (item_dir / "bands.csv").write_text("band,name\n1,red\n")
+
+        _, _, failures = add_files(paths=[catalog / "imagery"], catalog_root=catalog)
+
+        assert failures == []
+        assert sorted(p.name for p in (catalog / "imagery").glob("*.json")) == [
+            "collection.json",
+            "versions.json",
+        ]
+        children = [
+            link["href"]
+            for link in json.loads((catalog / "catalog.json").read_text())["links"]
+            if link["rel"] == "child"
+        ]
+        assert children == ["./imagery/collection.json"]
+        link_rules = sorted(
+            f.rule_id
+            for f in validate(catalog, structural=True).findings
+            if f.rule_id in {"PTL-LNK-002", "PTL-LNK-006"}
+        )
+        assert link_rules == []
+
+    def test_a_failed_tabular_conversion_writes_no_collection(
+        self, fresh_catalog_no_versions: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A standalone CSV whose conversion fails is a failure and nothing more.
+
+        The plan registered the collection before the conversion ran. The add
+        then wrote an empty collection and an empty version 1.0.0.
+        """
+        from portolan_cli.add import add_files
+
+        catalog = fresh_catalog_no_versions
+        (catalog / ".portolan" / "config.yaml").write_text(
+            "tabular:\n  enabled: true\n  convert: true\n"
+        )
+        collection_dir = catalog / "records"
+        collection_dir.mkdir()
+        csv = collection_dir / "records.csv"
+        csv.write_text("id,name\n1,a\n")
+
+        def no_space(*_args: object, **_kwargs: object) -> Path:
+            raise OSError("No space left on device")
+
+        monkeypatch.setattr("portolan_cli.add.convert_tabular", no_space)
+
+        added, _skipped, failures = add_files(paths=[collection_dir], catalog_root=catalog)
+
+        assert added == []
+        assert [(f.path, f.error) for f in failures] == [(csv, "No space left on device")]
+        assert sorted(p.name for p in collection_dir.iterdir()) == ["records.csv"]
+        assert _index_entry(catalog, "records") is None
 
 
 def _init_catalog(root: Path) -> None:
