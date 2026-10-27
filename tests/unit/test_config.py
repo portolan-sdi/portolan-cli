@@ -1685,8 +1685,9 @@ class TestOneParsePerFile:
 
         with trace.tracing():
             assert state.setting("pmtiles.min_zoom", collection_dir=collection) == 3
-            # The same inode and the same size. Only st_mtime_ns moves, by 1 ns.
-            _rewrite_in_place(config_file, "pmtiles:\n  min_zoom: 4\n", before.st_mtime_ns + 1)
+            # The same inode and the same size. Only st_mtime_ns moves, by 1 µs.
+            # NTFS stores the mtime in 100 ns steps, so a 1 ns step is lost there.
+            _rewrite_in_place(config_file, "pmtiles:\n  min_zoom: 4\n", before.st_mtime_ns + 1_000)
             after = config_file.stat()
             assert (after.st_ino, after.st_size) == (before.st_ino, before.st_size)
 

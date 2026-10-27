@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -163,6 +164,10 @@ class TestChecksumMemo:
         assert state.checksum(f) == _sha(b"HELLO")
         assert counters("checksum.files") == 2
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Windows st_ctime_ns is the creation time, so no stat field shows the rewrite",
+    )
     def test_rewrite_that_restores_the_mtime_forces_rehash(self, tmp_path: Path) -> None:
         """A copy that keeps the source mtime (``cp -p``, ``rsync -t``) is new bytes.
 
