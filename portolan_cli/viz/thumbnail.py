@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import functools
 import gzip
-import json
 import logging
 import math
 import threading
@@ -1083,61 +1082,6 @@ def _bbox_from_geo(geo_meta: dict[str, Any]) -> tuple[float, float, float, float
     return None
 
 
-def _read_geoparquet_bounds(source: Path | Any) -> tuple[float, float, float, float] | None:
-    """Read bounding box from GeoParquet file metadata (O(1) operation).
-
-    Falls back to computing bounds from the geometry column when the metadata
-    has no bbox.
-
-    Args:
-        source: Path to a GeoParquet file, or an open ``pyarrow.parquet.ParquetFile``.
-
-    Returns:
-        Tuple of (minx, miny, maxx, maxy) or None if empty/unavailable.
-    """
-    from portolan_cli.formats import read_geo_metadata
-
-    # The read goes through the raw footer: the Arrow schema hides a ``geo``
-    # key the writer appended at close (issue #864).
-    geo_meta = read_geo_metadata(source) or {}
-    bbox = _bbox_from_geo(geo_meta)
-    if bbox is not None:
-        return bbox
-    logger.debug("No bbox in GeoParquet metadata, falling back to data read")
-    path = Path(source.reader.path) if hasattr(source, "reader") else Path(source)
-    return _read_geoparquet_bounds_from_data(path, geo_meta.get("primary_column"))
-
-
-def _read_geoparquet_bounds_from_data(
-    gpq_path: Path, geometry_column: str | None = None
-) -> tuple[float, float, float, float] | None:
-    """Fallback: compute bounds by reading the geometry column.
-
-    Validates bounds for inf/nan values (issue #516). CRS may not be WGS84.
-    """
-    try:
-        import geopandas as gpd
-    except ImportError:
-        return None
-
-    try:
-        from portolan_cli.bbox import is_finite_bbox
-
-        columns = [geometry_column] if geometry_column else None
-        gdf = gpd.read_parquet(gpq_path, columns=columns, partitioning=None)
-        if gdf.empty:
-            return None
-        bounds = gdf.total_bounds
-        bbox_list = [bounds[0], bounds[1], bounds[2], bounds[3]]
-        if is_finite_bbox(bbox_list):
-            return (bounds[0], bounds[1], bounds[2], bounds[3])
-        logger.warning("Invalid bounds from GeoParquet data (inf/nan): %s", bbox_list)
-        return None
-    except Exception as e:
-        logger.debug("Failed to read GeoParquet bounds from data: %s", e)
-        return None
-
-
 #: Rows per Arrow batch when the reader takes every n-th row. A multiple of the
 #: stride keeps the picks evenly spaced across batch boundaries.
 _SAMPLE_BATCH_ROWS = 65_536
@@ -1170,30 +1114,29 @@ def _sample_rows(parquet_file: Any, columns: list[str], max_features: int) -> An
     return pa.Table.from_batches(batches, schema=pa.schema([schema.field(c) for c in columns]))
 
 
-def _sample_geoparquet(
-    source: Path | Any, max_features: int, columns: list[str] | None = None
-) -> Any:
-    """Read a spread-out sample of a GeoParquet too large to render whole.
+def _encoding(geo_meta: dict[str, Any], primary: str) -> str:
+    """Return the GeoParquet encoding of ``primary`` in lower case. WKB is the default."""
+    return str(get_dict(get_dict(geo_meta, "columns"), primary).get("encoding", "WKB")).lower()
 
-    The frame is unaffected: the extent comes from file metadata in O(1), so a
-    sampled render still spans the whole bbox. Only feature density drops.
 
-    Args:
-        source: Path to the file, or an open ``pyarrow.parquet.ParquetFile``.
-        max_features: About how many rows to read.
-        columns: Columns to read. None reads the geometry column only.
+def _geo_frame(table: Any, primary: str, encoding: str, crs: Any) -> Any:
+    """Build a GeoDataFrame from an Arrow table read from a GeoParquet file.
 
-    Returns:
-        GeoDataFrame of the sampled rows.
+    A GeoArrow column (GeoParquet 1.1) gets the extension name of its
+    encoding, so that ``GeoDataFrame.from_arrow`` decodes it. A writer can
+    leave the name out of the Arrow schema. The table comes from the open
+    file, so the read opens the file once.
     """
-    import pyarrow.parquet as pq
+    import geopandas as gpd
 
-    count("parquet.opens", 0 if isinstance(source, pq.ParquetFile) else 1)
-    parquet_file = source if isinstance(source, pq.ParquetFile) else pq.ParquetFile(str(source))
-    geo_meta = json.loads((parquet_file.metadata.metadata or {})[b"geo"].decode("utf-8"))
-    primary = geo_meta["primary_column"]
-    table = _sample_rows(parquet_file, columns or [primary], max_features)
-    return _wkb_frame(table, primary, _declared_crs(geo_meta, primary))
+    if encoding == "wkb":
+        return _wkb_frame(table, primary, crs)
+    index = table.schema.get_field_index(primary)
+    field = table.schema.field(index).with_metadata(
+        {b"ARROW:extension:name": f"geoarrow.{encoding}".encode()}
+    )
+    table = table.set_column(index, field, table.column(index))
+    return gpd.GeoDataFrame.from_arrow(table, geometry=primary).set_crs(crs, allow_override=True)
 
 
 def _declared_crs(geo_meta: dict[str, Any], primary: str) -> Any:
@@ -1251,7 +1194,7 @@ def _read_geoparquet_for_thumbnail(
         - source_crs: CRS of the data, or None when unknown
     """
     try:
-        import geopandas as gpd
+        import geopandas  # noqa: F401 - the gate for the optional extra
         import pyarrow.parquet as pq
     except ImportError:
         logger.debug("geopandas not available")
@@ -1271,27 +1214,23 @@ def _read_geoparquet_for_thumbnail(
             if field is not None and field != primary:
                 columns.insert(0, field)
         full_bbox = _bbox_from_geo(geo_meta)
-        encoding = str(get_dict(get_dict(geo_meta, "columns"), primary).get("encoding", "WKB"))
+        encoding = _encoding(geo_meta, primary)
+        crs = _declared_crs(geo_meta, primary)
         sampled = max_features is not None and parquet_file.metadata.num_rows > max_features
 
-        if encoding.upper() != "WKB":
-            # A GeoArrow-encoded column: geopandas decodes it. Rare enough
-            # that the reader does not sample it.
-            gdf = gpd.read_parquet(gpq_path, columns=columns, partitioning=None)
-            sampled = False
-        elif sampled and max_features is not None:
-            gdf = _sample_geoparquet(parquet_file, max_features, columns)
+        if sampled and max_features is not None:
+            table = _sample_rows(parquet_file, columns, max_features)
         else:
             table = parquet_file.read(columns=columns)
-            gdf = _wkb_frame(table, primary, _declared_crs(geo_meta, primary))
+        gdf = _geo_frame(table, primary, encoding, crs)
         if gdf.empty:
             return None, None, None
 
         if full_bbox is None:
             # No bbox in the footer. A full read knows the exact extent. A
-            # sample does not, so read the geometry column for it.
+            # sample does not, so stream the geometry column of the open file.
             if sampled:
-                full_bbox = _read_geoparquet_bounds_from_data(gpq_path, primary)
+                full_bbox = _stream_bounds(parquet_file, primary, encoding, crs)
             else:
                 full_bbox = _finite_bounds(gdf)
             if full_bbox is None:
@@ -1302,6 +1241,41 @@ def _read_geoparquet_for_thumbnail(
     except Exception as e:
         logger.warning("Could not read %s for its thumbnail: %s", gpq_path.name, e)
         return None, None, None
+
+
+def _stream_bounds(
+    parquet_file: Any, primary: str, encoding: str, crs: Any
+) -> tuple[float, float, float, float] | None:
+    """Return the extent of every row, one batch of the geometry column at a time.
+
+    Memory stays bounded by one batch. The read uses the open file.
+    """
+    import numpy as np
+    import pyarrow as pa
+    import shapely
+
+    boxes = [
+        shapely.total_bounds(
+            _geo_frame(pa.Table.from_batches([batch]), primary, encoding, crs).geometry.array
+        )
+        for batch in parquet_file.iter_batches(batch_size=_SAMPLE_BATCH_ROWS, columns=[primary])
+    ]
+    if not boxes:
+        return None
+    stacked = np.array(boxes)
+    with np.errstate(invalid="ignore"):
+        bounds = (
+            np.nanmin(stacked[:, 0]),
+            np.nanmin(stacked[:, 1]),
+            np.nanmax(stacked[:, 2]),
+            np.nanmax(stacked[:, 3]),
+        )
+    from portolan_cli.bbox import is_finite_bbox
+
+    if not is_finite_bbox(list(bounds)):
+        logger.warning("Invalid bounds from GeoParquet data (inf/nan): %s", list(bounds))
+        return None
+    return (float(bounds[0]), float(bounds[1]), float(bounds[2]), float(bounds[3]))
 
 
 def _finite_bounds(gdf: Any) -> tuple[float, float, float, float] | None:

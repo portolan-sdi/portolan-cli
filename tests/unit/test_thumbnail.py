@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -686,37 +686,18 @@ class TestGeoparquetMetadataBounds:
         ],
     )
     def test_read_bounds_from_metadata(self, tmp_path: Path, bbox: list[float]) -> None:
-        """_read_geoparquet_bounds extracts the XY bbox from GeoParquet metadata (O(1))."""
-        from portolan_cli.viz.thumbnail import _read_geoparquet_bounds
+        """The thumbnail reader takes the XY bbox from GeoParquet metadata (O(1))."""
+        from portolan_cli.formats import read_geo_metadata
+        from portolan_cli.viz.thumbnail import _bbox_from_geo
 
         gpq_path = self._write_parquet_with_geo(
             tmp_path / "test.parquet",
             {"columns": {"geometry": {"bbox": bbox}}},
         )
 
-        assert _read_geoparquet_bounds(gpq_path) == (-60.5, -32.5, -60.0, -32.0)
-
-    @pytest.mark.unit
-    def test_read_bounds_fallback_when_no_metadata(self, tmp_path: Path) -> None:
-        """_read_geoparquet_bounds falls back to data read when no bbox in metadata."""
-        from unittest.mock import patch
-
-        from portolan_cli.viz.thumbnail import _read_geoparquet_bounds
-
-        gpq_path = self._write_parquet_with_geo(
-            tmp_path / "test.parquet",
-            {"columns": {"geometry": {}}},  # No bbox
-        )
-
-        # Mock fallback geopandas read
-        mock_gdf = MagicMock()
-        mock_gdf.empty = False
-        mock_gdf.total_bounds = [-61.0, -33.0, -59.0, -31.0]
-
-        with patch("geopandas.read_parquet", return_value=mock_gdf):
-            bounds = _read_geoparquet_bounds(gpq_path)
-
-        assert bounds == (-61.0, -33.0, -59.0, -31.0)
+        geo = read_geo_metadata(gpq_path)
+        assert geo is not None
+        assert _bbox_from_geo(geo) == (-60.5, -32.5, -60.0, -32.0)
 
 
 class TestGeoparquetThumbnailIntegration:
