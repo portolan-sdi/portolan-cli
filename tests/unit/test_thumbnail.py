@@ -5,14 +5,19 @@ Tests vector thumbnail generation from PMTiles and GeoParquet sources.
 
 from __future__ import annotations
 
+import io
 import json
-from typing import TYPE_CHECKING
+import threading
+from collections import OrderedDict
+from contextlib import contextmanager
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Iterator
 
 # =============================================================================
 # Phase 1: ThumbnailConfig Tests
@@ -31,9 +36,10 @@ class TestThumbnailConfig:
         assert config.enabled is True
         assert config.max_size == 512
         assert config.quality == 75
-        assert config.basemap_provider == "CartoDB.Positron"
+        assert config.basemap_provider == "Esri.WorldGrayCanvas"
         assert config.basemap_opacity == 1.0
         assert config.basemap_zoom_adjust == 0
+        assert config.basemap_api_key is None
 
     @pytest.mark.unit
     def test_custom_values(self) -> None:
@@ -169,24 +175,16 @@ class TestGenerateThumbnailFromPmtiles:
 
 
 class TestBasemapOrdering:
-    """Regression tests for basemap rendering order.
+    """The frame is set before the basemap reads it.
 
-    Issue: contextily computes zoom level from current axis extent. If basemap
-    is added BEFORE axis limits are set, it uses wrong bounds and renders the
-    map in the wrong location.
-
-    Fix (PR #468): Plot data first, set axis limits, THEN add basemap.
+    The basemap zoom and tile range come from the axes limits. If the basemap
+    ran before the limits were set it would fetch tiles for the default 0..1
+    extent (PR #468).
     """
 
     @pytest.mark.unit
     def test_render_geometries_sets_limits_before_basemap(self, tmp_path: Path) -> None:
-        """_render_geometries sets axis limits BEFORE calling add_basemap.
-
-        This is critical: contextily needs the axis extent to compute the
-        correct zoom level. If we add the basemap first, it uses default
-        limits and renders in the wrong location.
-        """
-        pytest.importorskip("matplotlib")
+        from pyproj import Transformer
 
         from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geometries
 
@@ -197,53 +195,41 @@ class TestBasemapOrdering:
                 "coordinates": [[[-122.4, 37.7], [-122.1, 37.7], [-122.1, 37.9], [-122.4, 37.7]]],
             }
         ]
-        config = ThumbnailConfig(basemap_provider="CartoDB.Positron")
         bounds = (-122.5, 37.5, -122.0, 38.0)  # SF Bay area
+        captured: list[tuple[tuple[float, float], tuple[float, float]]] = []
 
-        # Track axis state when add_basemap is called
-        captured_xlim: tuple[float, float] | None = None
-        captured_ylim: tuple[float, float] | None = None
-
-        def capture_axis_state(
-            ax: MagicMock,
-            *args: object,
-            **kwargs: object,
-        ) -> None:
-            nonlocal captured_xlim, captured_ylim
-            captured_xlim = ax.get_xlim()
-            captured_ylim = ax.get_ylim()
+        def capture_axis_state(ax: Any, *args: object, **kwargs: object) -> None:
+            captured.append((ax.get_xlim(), ax.get_ylim()))
 
         with patch("portolan_cli.viz.thumbnail.add_basemap", side_effect=capture_axis_state):
-            _render_geometries(geometries, output_path, config, bounds=bounds)
+            _render_geometries(geometries, output_path, ThumbnailConfig(), bounds=bounds)
 
-        # Verify axis limits were set BEFORE add_basemap was called
-        assert captured_xlim is not None, "add_basemap was never called"
-        assert captured_ylim is not None, "add_basemap was never called"
-
-        # Limits are the FRAMED bounds (aspect-cap + margin, #518): they must
-        # enclose the data bounds (not the matplotlib default 0..1), proving the
-        # extent was set from the data before the basemap zoom was derived.
-        assert captured_xlim[0] <= bounds[0]
-        assert captured_xlim[1] >= bounds[2]
-        assert captured_ylim[0] <= bounds[1]
-        assert captured_ylim[1] >= bounds[3]
+        ((xlim, ylim),) = captured
+        to_mercator = Transformer.from_crs("OGC:CRS84", "EPSG:3857", always_xy=True)
+        minx, miny, maxx, maxy = to_mercator.transform_bounds(*bounds)
+        # The framed limits enclose the projected data bounds, not 0..1.
+        assert xlim[0] < minx < maxx < xlim[1]
+        assert ylim[0] < miny < maxy < ylim[1]
 
     @pytest.mark.unit
-    def test_render_geometries_no_basemap_when_no_bounds(self, tmp_path: Path) -> None:
-        """_render_geometries skips basemap when bounds is None."""
-        pytest.importorskip("matplotlib")
-
+    def test_render_geometries_frames_the_geometries_without_bounds(
+        self, tmp_path: Path, saved_figures: list[Any]
+    ) -> None:
+        """With no bounds, the frame comes from the geometries themselves."""
         from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geometries
 
-        output_path = tmp_path / "test.jpg"
-        geometries = [{"type": "Point", "coordinates": [0, 0]}]
-        config = ThumbnailConfig(basemap_provider="CartoDB.Positron")
+        geometries = [
+            {"type": "Point", "coordinates": [10.0, 10.0]},
+            {"type": "Point", "coordinates": [20.0, 15.0]},
+        ]
+        config = ThumbnailConfig(basemap_provider="none")
 
-        with patch("portolan_cli.viz.thumbnail.add_basemap") as mock_basemap:
-            _render_geometries(geometries, output_path, config, bounds=None)
+        assert _render_geometries(geometries, tmp_path / "test.jpg", config, bounds=None)
 
-            # add_basemap should NOT be called when bounds is None
-            mock_basemap.assert_not_called()
+        (figure,) = saved_figures
+        xlim = figure.axes[0].get_xlim()
+        # 10 and 20 degrees east in EPSG:3857 metres, inside the framed limits.
+        assert xlim[0] < 1_113_194.9 < 2_226_389.8 < xlim[1]
 
 
 # =============================================================================
@@ -263,10 +249,8 @@ class TestGenerateThumbnailFromGeoparquet:
         gpq_path.touch()
 
         with (
-            patch("portolan_cli.viz.thumbnail._read_geoparquet_bounds") as mock_read,
             patch("portolan_cli.viz.thumbnail._render_geoparquet") as mock_render,
         ):
-            mock_read.return_value = (0.0, 0.0, 1.0, 1.0)  # minx, miny, maxx, maxy
             mock_render.return_value = True
 
             config = ThumbnailConfig()
@@ -283,13 +267,14 @@ class TestGenerateThumbnailFromGeoparquet:
         gpq_path = tmp_path / "empty.parquet"
         gpq_path.touch()
 
-        with patch("portolan_cli.viz.thumbnail._read_geoparquet_bounds") as mock_read:
-            mock_read.return_value = None
+        with patch(
+            "portolan_cli.viz.thumbnail._read_geoparquet_for_thumbnail",
+            return_value=(None, None, None),
+        ):
+            result = generate_thumbnail_from_geoparquet(gpq_path, ThumbnailConfig())
 
-            config = ThumbnailConfig()
-            result = generate_thumbnail_from_geoparquet(gpq_path, config)
-
-            assert result is None
+        assert result is None
+        assert not (tmp_path / "empty.thumb.jpg").exists()
 
     @pytest.mark.unit
     def test_output_path_convention(self, tmp_path: Path) -> None:
@@ -300,10 +285,8 @@ class TestGenerateThumbnailFromGeoparquet:
         gpq_path.touch()
 
         with (
-            patch("portolan_cli.viz.thumbnail._read_geoparquet_bounds") as mock_read,
             patch("portolan_cli.viz.thumbnail._render_geoparquet") as mock_render,
         ):
-            mock_read.return_value = (0.0, 0.0, 1.0, 1.0)
             mock_render.return_value = True
 
             config = ThumbnailConfig()
@@ -462,44 +445,58 @@ class TestGenerateVectorThumbnail:
 class TestAddBasemap:
     """Tests for add_basemap function."""
 
-    @pytest.mark.unit
-    def test_calls_contextily_with_provider(self) -> None:
-        """Calls contextily.add_basemap with correct provider."""
-        from portolan_cli.viz.thumbnail import add_basemap
+    @staticmethod
+    def _axes() -> Any:
+        from portolan_cli.viz.thumbnail import _new_figure
 
-        mock_ax = MagicMock()
-
-        mock_ctx = MagicMock()
-        with patch("portolan_cli.viz.thumbnail._ensure_contextily", return_value=mock_ctx):
-            add_basemap(mock_ax, "CartoDB.Positron", opacity=1.0, zoom_adjust=0)
-
-            mock_ctx.add_basemap.assert_called_once()
-            call_kwargs = mock_ctx.add_basemap.call_args[1]
-            assert call_kwargs["alpha"] == 1.0
+        _figure, ax = _new_figure((0.0, 6_000_000.0, 200_000.0, 6_200_000.0), 512)
+        return ax
 
     @pytest.mark.unit
-    def test_skips_when_provider_none(self) -> None:
-        """Does nothing when provider is 'none'."""
+    def test_draws_the_tiles_under_the_frame(self, stub_tiles: list[str]) -> None:
         from portolan_cli.viz.thumbnail import add_basemap
 
-        mock_ax = MagicMock()
+        ax = self._axes()
+        add_basemap(ax, "Esri.WorldGrayCanvas", opacity=0.5, zoom_adjust=0)
 
-        mock_ctx = MagicMock()
-        with patch("portolan_cli.viz.thumbnail._ensure_contextily", return_value=mock_ctx):
-            add_basemap(mock_ax, "none", opacity=1.0, zoom_adjust=0)
-
-            mock_ctx.add_basemap.assert_not_called()
+        (image,) = ax.images
+        assert image.get_alpha() == 0.5
+        assert image.get_zorder() == 0
+        assert ax.get_xlim() == (0.0, 200_000.0)
+        assert stub_tiles
 
     @pytest.mark.unit
-    def test_handles_import_error(self) -> None:
-        """Gracefully handles missing contextily."""
+    def test_skips_when_provider_none(self, stub_tiles: list[str]) -> None:
         from portolan_cli.viz.thumbnail import add_basemap
 
-        mock_ax = MagicMock()
+        ax = self._axes()
+        add_basemap(ax, "none", opacity=1.0, zoom_adjust=0)
 
-        with patch("portolan_cli.viz.thumbnail._ensure_contextily", return_value=None):
-            # Should not raise, just skip basemap
-            add_basemap(mock_ax, "CartoDB.Positron", opacity=1.0, zoom_adjust=0)
+        assert list(ax.images) == []
+        assert stub_tiles == []
+
+    @pytest.mark.unit
+    def test_handles_missing_contextily(self) -> None:
+        """The autouse fixture makes contextily unavailable here."""
+        from portolan_cli.viz.thumbnail import add_basemap
+
+        ax = self._axes()
+        add_basemap(ax, "Esri.WorldGrayCanvas", opacity=1.0, zoom_adjust=0)
+
+        assert list(ax.images) == []
+
+    @pytest.mark.unit
+    def test_unknown_provider_warns(
+        self, stub_tiles: list[str], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from portolan_cli.viz.thumbnail import add_basemap
+
+        ax = self._axes()
+        with caplog.at_level("WARNING", logger="portolan_cli.viz.thumbnail"):
+            add_basemap(ax, "No.SuchProvider")
+
+        assert list(ax.images) == []
+        assert "Unknown basemap provider 'No.SuchProvider'" in caplog.text
 
 
 # =============================================================================
@@ -706,7 +703,7 @@ class TestGeoparquetMetadataBounds:
     @pytest.mark.unit
     def test_read_bounds_fallback_when_no_metadata(self, tmp_path: Path) -> None:
         """_read_geoparquet_bounds falls back to data read when no bbox in metadata."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         from portolan_cli.viz.thumbnail import _read_geoparquet_bounds
 
@@ -724,190 +721,6 @@ class TestGeoparquetMetadataBounds:
             bounds = _read_geoparquet_bounds(gpq_path)
 
         assert bounds == (-61.0, -33.0, -59.0, -31.0)
-
-
-class TestGeoparquetFullReading:
-    """Tests for full file reading (Issue #423 - no sampling)."""
-
-    @pytest.mark.unit
-    def test_reads_all_features_without_sampling(self, tmp_path: Path) -> None:
-        """_read_geoparquet_for_thumbnail reads ALL features without sampling.
-
-        No .head(), .sample(), or row limiting — thumbnails must accurately
-        represent the full data. Contextily handles CRS reprojection of
-        basemap tiles, which is more efficient than reprojecting geometry data.
-        """
-        import json
-        from unittest.mock import MagicMock, patch
-
-        from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
-
-        gpq_path = tmp_path / "large.parquet"
-
-        # Mock a large GeoDataFrame (55,000 rows)
-        mock_gdf = MagicMock()
-        mock_gdf.empty = False
-        mock_gdf.crs = "EPSG:4326"
-        mock_gdf.total_bounds = [-60.5, -32.5, -60.0, -32.0]
-        mock_gdf.__len__ = lambda self: 55000
-
-        # Mock bbox from metadata
-        mock_pq_file = MagicMock()
-        geo_metadata = {"columns": {"geometry": {"bbox": [-60.5, -32.5, -60.0, -32.0]}}}
-        mock_pq_file.schema_arrow.metadata = {b"geo": json.dumps(geo_metadata).encode("utf-8")}
-
-        with (
-            patch("geopandas.read_parquet", return_value=mock_gdf),
-            patch("pyarrow.parquet.ParquetFile", return_value=mock_pq_file),
-        ):
-            gdf, bbox, crs = _read_geoparquet_for_thumbnail(gpq_path)
-
-        # Verify NO sampling methods were called
-        mock_gdf.head.assert_not_called()
-        mock_gdf.sample.assert_not_called()
-
-        # Full GDF is returned, not a subset
-        assert gdf is mock_gdf
-        assert bbox == (-60.5, -32.5, -60.0, -32.0)
-
-
-class TestGeoparquetCrsHandling:
-    """Tests for CRS handling via contextily (Issue #423 Bug 2)."""
-
-    @pytest.mark.unit
-    def test_render_does_not_reproject_data(self, tmp_path: Path) -> None:
-        """_render_geoparquet does NOT reproject geometry data.
-
-        Instead of reprojecting millions of geometry vertices to EPSG:3857,
-        we keep data in native CRS and let contextily reproject basemap tiles.
-        This is far more efficient for large data.
-        """
-        pytest.importorskip("matplotlib")
-
-        from unittest.mock import MagicMock, patch
-
-        from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geoparquet
-
-        gpq_path = tmp_path / "test.parquet"
-        output_path = tmp_path / "test.thumb.jpg"
-        config = ThumbnailConfig(basemap_provider="CartoDB.Positron")
-
-        mock_gdf = MagicMock()
-        mock_gdf.empty = False
-        mock_gdf.crs = "EPSG:4326"
-
-        full_bbox = (-60.5, -32.5, -60.0, -32.0)
-
-        with (
-            patch(
-                "portolan_cli.viz.thumbnail._read_geoparquet_for_thumbnail",
-                return_value=(mock_gdf, full_bbox, "EPSG:4326"),
-            ),
-            patch("matplotlib.pyplot.subplots") as mock_subplots,
-            patch("matplotlib.pyplot.savefig"),
-            patch("matplotlib.pyplot.close"),
-            patch("portolan_cli.viz.thumbnail.add_basemap"),
-        ):
-            mock_ax = MagicMock()
-            mock_subplots.return_value = (MagicMock(), mock_ax)
-            output_path.touch()
-
-            _render_geoparquet(gpq_path, output_path, config)
-
-            # Verify NO data reprojection (.to_crs should NOT be called)
-            mock_gdf.to_crs.assert_not_called()
-
-            # Verify original gdf was plotted (not a reprojected copy)
-            mock_gdf.plot.assert_called_once()
-
-    @pytest.mark.unit
-    def test_render_passes_crs_to_basemap(self, tmp_path: Path) -> None:
-        """_render_geoparquet passes data CRS to add_basemap for tile reprojection.
-
-        Contextily's `crs` parameter tells it to reproject basemap tiles to match
-        the data's CRS — this is more efficient than reprojecting geometry data.
-        """
-        pytest.importorskip("matplotlib")
-
-        from unittest.mock import MagicMock, patch
-
-        from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geoparquet
-
-        gpq_path = tmp_path / "test.parquet"
-        output_path = tmp_path / "test.thumb.jpg"
-        config = ThumbnailConfig(basemap_provider="CartoDB.Positron")
-
-        mock_gdf = MagicMock()
-        mock_gdf.empty = False
-        mock_gdf.crs = "EPSG:4326"
-
-        full_bbox = (-60.5, -32.5, -60.0, -32.0)
-
-        with (
-            patch(
-                "portolan_cli.viz.thumbnail._read_geoparquet_for_thumbnail",
-                return_value=(mock_gdf, full_bbox, "EPSG:4326"),
-            ),
-            patch("matplotlib.pyplot.subplots") as mock_subplots,
-            patch("matplotlib.pyplot.savefig"),
-            patch("matplotlib.pyplot.close"),
-            patch("portolan_cli.viz.thumbnail.add_basemap") as mock_add_basemap,
-        ):
-            mock_ax = MagicMock()
-            mock_subplots.return_value = (MagicMock(), mock_ax)
-            output_path.touch()
-
-            _render_geoparquet(gpq_path, output_path, config)
-
-            # Verify add_basemap was called with CRS parameter
-            mock_add_basemap.assert_called_once()
-            call_kwargs = mock_add_basemap.call_args
-            assert call_kwargs[1]["crs"] == "EPSG:4326"
-
-    @pytest.mark.unit
-    def test_render_uses_native_bounds(self, tmp_path: Path) -> None:
-        """Axis limits use native CRS bounds (no transformation needed)."""
-        pytest.importorskip("matplotlib")
-
-        from unittest.mock import MagicMock, patch
-
-        from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geoparquet
-
-        gpq_path = tmp_path / "test.parquet"
-        output_path = tmp_path / "test.thumb.jpg"
-        config = ThumbnailConfig(basemap_provider="none")
-
-        mock_gdf = MagicMock()
-        mock_gdf.empty = False
-        mock_gdf.crs = "EPSG:4326"
-
-        # Full bbox from metadata in native CRS
-        full_bbox = (-61.0, -33.0, -59.0, -31.0)
-
-        with (
-            patch(
-                "portolan_cli.viz.thumbnail._read_geoparquet_for_thumbnail",
-                return_value=(mock_gdf, full_bbox, "EPSG:4326"),
-            ),
-            patch("matplotlib.pyplot.subplots") as mock_subplots,
-            patch("matplotlib.pyplot.savefig"),
-            patch("matplotlib.pyplot.close"),
-        ):
-            mock_ax = MagicMock()
-            mock_subplots.return_value = (MagicMock(), mock_ax)
-            output_path.touch()
-
-            _render_geoparquet(gpq_path, output_path, config)
-
-            # Limits use NATIVE-CRS bounds (no reprojection), now framed with
-            # the aspect-cap + margin helper (#518). Values stay in native
-            # degrees (~ -61), nowhere near EPSG:3857 metres, confirming the
-            # data was not reprojected.
-            from portolan_cli.viz.thumbnail import _frame_bounds
-
-            framed = _frame_bounds(full_bbox)
-            mock_ax.set_xlim.assert_called_once_with(framed[0], framed[2])
-            mock_ax.set_ylim.assert_called_once_with(framed[1], framed[3])
 
 
 class TestGeoparquetThumbnailIntegration:
@@ -1084,46 +897,33 @@ class TestThumbnailIgnoresPaleStylePaint:
         path.write_text(json.dumps(style))
         return path
 
-    @pytest.mark.unit
+    @pytest.mark.integration
     def test_geoparquet_uses_punchy_paint_not_style(self, tmp_path: Path) -> None:
-        """_render_geoparquet ignores style opacity/edge, uses thumbnail preset."""
-        pytest.importorskip("matplotlib")
+        """_render_geoparquet ignores a pale fill-only style and draws the preset.
 
-        from portolan_cli.viz.thumbnail import (
-            THUMB_EDGE_COLOR,
-            ThumbnailConfig,
-            _render_geoparquet,
-        )
+        The pale style fill is #dadada. The preset fill #3388ff is blue.
+        """
+        gpd = pytest.importorskip("geopandas")
+        import numpy as np
+        from PIL import Image
+        from shapely.geometry import box
+
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geoparquet
 
         gpq_path = tmp_path / "test.parquet"
+        gpd.GeoDataFrame(geometry=[box(10, 10, 90, 90)], crs="OGC:CRS84").to_parquet(gpq_path)
         output_path = tmp_path / "test.thumb.jpg"
-        style_path = self._pale_style_file(tmp_path)
         config = ThumbnailConfig(basemap_provider="none")
 
-        mock_gdf = MagicMock()
-        mock_gdf.empty = False
-        mock_gdf.crs = "EPSG:4326"
-        full_bbox = (-60.5, -32.5, -60.0, -32.0)
+        assert _render_geoparquet(
+            gpq_path, output_path, config, style_path=self._pale_style_file(tmp_path)
+        )
 
-        with (
-            patch(
-                "portolan_cli.viz.thumbnail._read_geoparquet_for_thumbnail",
-                return_value=(mock_gdf, full_bbox, "EPSG:4326"),
-            ),
-            patch("matplotlib.pyplot.subplots") as mock_subplots,
-            patch("matplotlib.pyplot.savefig"),
-            patch("matplotlib.pyplot.close"),
-        ):
-            mock_subplots.return_value = (MagicMock(), MagicMock())
-            output_path.touch()
-
-            _render_geoparquet(gpq_path, output_path, config, style_path=style_path)
-
-        plot_kwargs = mock_gdf.plot.call_args.kwargs
-        # Pale style opacity (0.2) must NOT win — thumbnail preset is >= 0.5.
-        assert plot_kwargs["alpha"] >= 0.5
-        # Edge color is the bold thumbnail preset, not the style's hairline color.
-        assert plot_kwargs["edgecolor"] == THUMB_EDGE_COLOR
+        arr = np.asarray(Image.open(output_path).convert("RGB")).reshape(-1, 3)
+        fill = arr[(arr < 240).any(axis=1)]
+        assert len(fill) > 0, "no geometry rendered"
+        mean = fill.mean(axis=0)
+        assert mean[2] > mean[0] + 20, f"fill is not punchy blue (mean RGB={mean})"
 
     @pytest.mark.integration
     def test_pmtiles_path_uses_punchy_fill_not_pale_style(self, tmp_path: Path) -> None:
@@ -1391,17 +1191,24 @@ class TestGeoparquetSampling:
 
 
 @pytest.mark.unit
-def test_the_thumbnail_pyplot_draws_on_the_agg_backend() -> None:
-    """TkAgg, the Windows default, can abort the process from a thread."""
-    import matplotlib as mpl
+def test_the_render_leaves_the_global_backend_alone() -> None:
+    """The render draws on its own Agg canvas, so no pyplot state is involved.
 
-    from portolan_cli.viz.thumbnail import _pyplot
+    TkAgg, the Windows default, can abort the process from a thread. Before the
+    fix the render switched the process-wide backend to Agg through pyplot.
+    """
+    import matplotlib as mpl
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    from portolan_cli.viz.thumbnail import _new_figure
 
     previous = mpl.get_backend()
     mpl.use("svg")
     try:
-        _pyplot()
-        assert mpl.get_backend().lower() == "agg"
+        figure, _ax = _new_figure((0.0, 0.0, 2.0, 1.0), 512)
+        assert mpl.get_backend().lower() == "svg"
+        assert isinstance(figure.canvas, FigureCanvasAgg)
+        assert tuple(figure.get_size_inches() * figure.dpi) == pytest.approx((512, 256))
     finally:
         mpl.use(previous)
 
@@ -1433,3 +1240,619 @@ def test_thumbnails_quality_reaches_the_geoparquet_render(tmp_path: Path) -> Non
         sizes[quality] = thumbnail.stat().st_size
 
     assert sizes[5] < sizes[95] / 2
+
+
+# =============================================================================
+# Cheap basemap, one draw, bulk geometry (Issues #993 and #1007)
+# =============================================================================
+
+#: The stub tile colour. No thumbnail preset uses it, so a pixel of this colour
+#: in the output came from the basemap.
+_STUB_TILE_RGBA = (201, 74, 203, 255)
+
+_REALDATA = Path(__file__).parents[1] / "fixtures" / "realdata"
+
+
+@contextmanager
+def _tracing() -> Iterator[None]:
+    """Turn the trace counters on for one block."""
+    from portolan_cli import trace
+
+    trace.reset()
+    trace.enable()
+    try:
+        yield
+    finally:
+        trace.reset()
+
+
+def _counter(name: str) -> int:
+    from portolan_cli import trace
+
+    return trace.counters().get(name, 0)
+
+
+@pytest.fixture
+def stub_tiles(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Serve every basemap tile as one fixed PNG and record each tile URL.
+
+    The real contextily runs: it picks the tiles, fetches them through its
+    ``_fetch_tile``, and merges them. Only the HTTP request is replaced. The
+    autouse ``no_basemap_tiles`` fixture turns the basemap off. This fixture
+    turns it on again with the stub.
+    """
+    ctx = pytest.importorskip("contextily")
+    import contextily.tile
+    import numpy as np
+    from PIL import Image
+
+    from portolan_cli.viz import thumbnail
+
+    buffer = io.BytesIO()
+    Image.new("RGBA", (256, 256), _STUB_TILE_RGBA).save(buffer, "PNG")
+    png = buffer.getvalue()
+    urls: list[str] = []
+    lock = threading.Lock()
+
+    def fetch(tile_url: str, wait: int, max_retries: int, headers: dict[str, str]) -> Any:
+        with lock:
+            urls.append(tile_url)
+        return np.asarray(Image.open(io.BytesIO(png)).convert("RGBA"))
+
+    monkeypatch.setattr(contextily.tile, "_fetch_tile", fetch)
+    monkeypatch.setattr(thumbnail, "_ensure_contextily", lambda: ctx)
+    monkeypatch.setattr(thumbnail, "_tile_memo", OrderedDict())
+    monkeypatch.setattr(thumbnail, "_warned_keyless", set())
+    return urls
+
+
+@pytest.fixture
+def saved_figures(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Record each matplotlib Figure that a render saves."""
+    from matplotlib.figure import Figure
+
+    figures: list[Any] = []
+    original = Figure.savefig
+
+    def spy(self: Any, *args: Any, **kwargs: Any) -> Any:
+        figures.append(self)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", spy)
+    return figures
+
+
+def _copy_fixture(name: str, directory: Path) -> Path:
+    import shutil
+
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / name
+    shutil.copy(_REALDATA / name, target)
+    return target
+
+
+def _expected_frame(gpq_path: Path) -> tuple[float, float, float, float]:
+    """The framed EPSG:3857 extent of a CRS84 GeoParquet, from its footer bbox."""
+    import pyarrow.parquet as pq
+    from pyproj import Transformer
+
+    from portolan_cli.viz.thumbnail import _frame_bounds
+
+    geo = json.loads(pq.ParquetFile(gpq_path).metadata.metadata[b"geo"])
+    minx, miny, maxx, maxy = geo["columns"][geo["primary_column"]]["bbox"]
+    to_mercator = Transformer.from_crs("OGC:CRS84", "EPSG:3857", always_xy=True)
+    return _frame_bounds(to_mercator.transform_bounds(minx, miny, maxx, maxy, densify_pts=21))
+
+
+def _stub_pixels(image_path: Path) -> int:
+    """Count the output pixels that hold the stub tile colour."""
+    import numpy as np
+    from PIL import Image
+
+    rgb = np.asarray(Image.open(image_path).convert("RGB")).astype(int)
+    target = np.array(_STUB_TILE_RGBA[:3])
+    return int((np.abs(rgb - target).sum(axis=2) < 30).sum())
+
+
+class TestCheapBasemap:
+    """The basemap stays on by default and costs one draw and no warp (#993)."""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("name", ["fieldmaps-boundaries.parquet", "open-buildings.parquet"])
+    def test_one_draw_and_the_frame_on_realdata(
+        self,
+        name: str,
+        tmp_path: Path,
+        stub_tiles: list[str],
+        saved_figures: list[Any],
+    ) -> None:
+        """One draw, the tiles of one fetch, and an image that fills the frame.
+
+        Before the fix, savefig with bbox_inches="tight" and contextily's
+        attribution each forced a draw (3 draws), and the axes filled about
+        396 of the 512 px because the figure kept the default subplot margins.
+        """
+        from PIL import Image
+
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        gpq = _copy_fixture(name, tmp_path)
+        with _tracing():
+            result = generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig())
+            draws = _counter("thumbnail.draws")
+            fetched = _counter("tiles.fetched")
+
+        assert result is not None
+        assert draws == 1
+        assert fetched == len(stub_tiles)
+        assert fetched > 0
+        assert _stub_pixels(result) > 0, "the stub basemap is not in the image"
+
+        (figure,) = saved_figures
+        (ax,) = figure.axes
+        frame = _expected_frame(gpq)
+        assert ax.get_xlim() == pytest.approx((frame[0], frame[2]))
+        assert ax.get_ylim() == pytest.approx((frame[1], frame[3]))
+        assert tuple(ax.get_position().bounds) == (0.0, 0.0, 1.0, 1.0)
+
+        width, height = frame[2] - frame[0], frame[3] - frame[1]
+        with Image.open(result) as image:
+            if width >= height:
+                assert image.size == (512, round(512 * height / width))
+            else:
+                assert image.size == (round(512 * width / height), 512)
+
+    @pytest.mark.integration
+    def test_contextily_add_basemap_and_its_warp_never_run(
+        self, tmp_path: Path, stub_tiles: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The render draws in EPSG:3857, so no tile is reprojected.
+
+        Before the fix the data stayed in its CRS and contextily warped the
+        tiles into it, which took 17 s of a 36 s 100-collection add.
+        """
+        import contextily
+        import contextily.plotting
+        import contextily.tile
+
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        def forbidden(*_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("contextily warped or drew the basemap itself")
+
+        for module in (contextily, contextily.plotting):
+            monkeypatch.setattr(module, "add_basemap", forbidden)
+        for module in (contextily.plotting, contextily.tile):
+            monkeypatch.setattr(module, "warp_tiles", forbidden)
+
+        gpq = _copy_fixture("open-buildings.parquet", tmp_path)
+        result = generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig())
+
+        assert result is not None
+        assert _stub_pixels(result) > 0
+
+    @pytest.mark.integration
+    def test_tiles_are_fetched_in_parallel_without_the_disk_cache(
+        self, tmp_path: Path, stub_tiles: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """bounds2img gets several connections and threads, not processes.
+
+        contextily switches to worker processes when the joblib disk cache is
+        on and n_connections is above 1, so the render turns the cache off.
+        """
+        import contextily
+
+        from portolan_cli.viz import thumbnail
+
+        calls: list[dict[str, Any]] = []
+        original = contextily.bounds2img
+
+        def spy(*args: Any, **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(contextily, "bounds2img", spy)
+        gpq = _copy_fixture("open-buildings.parquet", tmp_path)
+        assert thumbnail.generate_thumbnail_from_geoparquet(gpq, thumbnail.ThumbnailConfig())
+
+        (kwargs,) = calls
+        assert kwargs["n_connections"] == 2
+        assert kwargs["use_cache"] is False
+
+    @pytest.mark.integration
+    def test_a_second_render_of_the_same_extent_fetches_no_tile(
+        self, tmp_path: Path, stub_tiles: list[str]
+    ) -> None:
+        """Many collections over one extent fetch its tiles once per run."""
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        first = _copy_fixture("open-buildings.parquet", tmp_path / "a")
+        second = _copy_fixture("open-buildings.parquet", tmp_path / "b")
+        with _tracing():
+            assert generate_thumbnail_from_geoparquet(first, ThumbnailConfig())
+            after_first = _counter("tiles.fetched")
+            assert generate_thumbnail_from_geoparquet(second, ThumbnailConfig())
+            after_second = _counter("tiles.fetched")
+
+        assert after_first == len(stub_tiles)
+        assert after_first > 0
+        assert after_second == after_first
+
+    @pytest.mark.integration
+    def test_the_zoom_fetches_no_more_than_the_image_needs(
+        self, tmp_path: Path, stub_tiles: list[str]
+    ) -> None:
+        """The merged tiles cover the frame at 1x to 2x the output resolution.
+
+        One zoom level lower would give less than one tile pixel per output
+        pixel, so the basemap would blur. One level higher would fetch about
+        four times the tiles.
+        """
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        gpq = _copy_fixture("open-buildings.parquet", tmp_path)
+        assert generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig())
+
+        (zoom,) = {int(url.split("/")[-3]) for url in stub_tiles}
+        frame = _expected_frame(gpq)
+        world = 2 * 20037508.342789244
+        span = max(frame[2] - frame[0], frame[3] - frame[1])
+        source_px = 256 * 2**zoom * span / world
+        assert 512 <= source_px < 1024
+
+    @pytest.mark.integration
+    def test_a_tiny_extent_clamps_to_the_provider_max_zoom(
+        self, tmp_path: Path, stub_tiles: list[str]
+    ) -> None:
+        """A 1 m polygon would need zoom 20 or more. Esri serves up to 16.
+
+        contextily raises for a zoom above the provider maximum, so an
+        unclamped zoom would leave the thumbnail with no basemap.
+        """
+        gpd = pytest.importorskip("geopandas")
+        from shapely.geometry import box
+
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        gpq = tmp_path / "tiny.parquet"
+        gpd.GeoDataFrame(geometry=[box(2.0, 41.0, 2.00001, 41.00001)], crs="OGC:CRS84").to_parquet(
+            gpq
+        )
+
+        result = generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig())
+
+        assert result is not None
+        assert {int(url.split("/")[-3]) for url in stub_tiles} == {16}
+        assert _stub_pixels(result) > 0
+
+    @pytest.mark.integration
+    def test_the_attribution_is_drawn_without_contextily(
+        self, tmp_path: Path, stub_tiles: list[str], saved_figures: list[Any]
+    ) -> None:
+        """The provider attribution stays on the image (Esri requires it)."""
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        gpq = _copy_fixture("open-buildings.parquet", tmp_path)
+        assert generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig())
+
+        (figure,) = saved_figures
+        texts = [text.get_text() for text in figure.axes[0].texts]
+        assert texts == ["Tiles (C) Esri -- Esri, DeLorme, NAVTEQ"]
+
+    @pytest.mark.integration
+    def test_pmtiles_path_draws_once_in_web_mercator(
+        self, tmp_path: Path, stub_tiles: list[str], saved_figures: list[Any]
+    ) -> None:
+        """The PMTiles twin uses the same render: one draw, frame in EPSG:3857."""
+        from pyproj import Transformer
+
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, _frame_bounds, _render_geometries
+
+        bounds = (-122.5, 37.5, -122.0, 38.0)
+        geometries = [
+            {
+                "type": "Polygon",
+                "coordinates": [[[-122.5, 37.5], [-122.0, 37.5], [-122.0, 38.0], [-122.5, 37.5]]],
+                "properties": {},
+            },
+            {"type": "Point", "coordinates": [-122.2, 37.8], "properties": {}},
+        ]
+        output = tmp_path / "data.thumb.jpg"
+        with _tracing():
+            assert _render_geometries(geometries, output, ThumbnailConfig(), bounds=bounds)
+            draws = _counter("thumbnail.draws")
+            fetched = _counter("tiles.fetched")
+
+        assert draws == 1
+        assert fetched == len(stub_tiles)
+        assert fetched > 0
+        to_mercator = Transformer.from_crs("OGC:CRS84", "EPSG:3857", always_xy=True)
+        frame = _frame_bounds(to_mercator.transform_bounds(*bounds, densify_pts=21))
+        (figure,) = saved_figures
+        assert figure.axes[0].get_xlim() == pytest.approx((frame[0], frame[2]))
+        assert figure.axes[0].get_ylim() == pytest.approx((frame[1], frame[3]))
+
+    @pytest.mark.integration
+    def test_polar_data_keeps_its_basemap(self, tmp_path: Path, stub_tiles: list[str]) -> None:
+        """Latitude 90 maps to infinity in EPSG:3857, so the render clips it."""
+        gpd = pytest.importorskip("geopandas")
+        from shapely.geometry import Polygon
+
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        gdf = gpd.GeoDataFrame(
+            geometry=[Polygon([(-65, -90), (-63, -90), (-63, -20), (-65, -20)])], crs="OGC:CRS84"
+        )
+        gpq = tmp_path / "polar.parquet"
+        gdf.to_parquet(gpq)
+
+        result = generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig())
+
+        assert result is not None
+        assert _stub_pixels(result) > 0
+
+    @pytest.mark.integration
+    def test_one_point_gets_a_one_degree_box(
+        self, tmp_path: Path, saved_figures: list[Any]
+    ) -> None:
+        """A single point is framed in degrees, then projected.
+
+        Framed after the projection, its nominal box would be 1 m wide.
+        """
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geometries
+
+        geometries = [{"type": "Point", "coordinates": [0.0, 0.0]}]
+        config = ThumbnailConfig(basemap_provider="none")
+
+        assert _render_geometries(geometries, tmp_path / "p.jpg", config)
+
+        (figure,) = saved_figures
+        left, right = figure.axes[0].get_xlim()
+        # One degree of longitude is 111,319.5 m, plus a 5% margin each side.
+        assert right - left == pytest.approx(111_319.49 * 1.1, rel=1e-3)
+
+    @pytest.mark.integration
+    def test_mislabeled_projected_coords_render_without_a_basemap(
+        self, tmp_path: Path, stub_tiles: list[str]
+    ) -> None:
+        """Coordinates that cannot be lon/lat get no basemap, but still a thumbnail."""
+        gpd = pytest.importorskip("geopandas")
+        from shapely.geometry import box
+
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        gdf = gpd.GeoDataFrame(
+            geometry=[box(1_611_000 + i, 1_910_000, 1_611_500 + i, 1_910_500) for i in range(5)],
+            crs="OGC:CRS84",
+        )
+        gpq = tmp_path / "mislabeled.parquet"
+        gdf.to_parquet(gpq)
+
+        with _tracing():
+            result = generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig())
+            draws = _counter("thumbnail.draws")
+
+        assert result is not None
+        assert draws == 1
+        assert stub_tiles == []
+
+
+class TestBasemapApiKey:
+    """CARTO serves a watermark tile to a request without a key."""
+
+    @pytest.mark.unit
+    def test_config_reads_the_key(self, tmp_path: Path) -> None:
+        from portolan_cli.viz.thumbnail import get_thumbnail_config
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text(
+            "thumbnails:\n  basemap:\n    api_key: abc123\n"
+        )
+
+        assert get_thumbnail_config(tmp_path).basemap_api_key == "abc123"
+
+    @pytest.mark.unit
+    def test_the_environment_sets_the_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli.viz.thumbnail import get_thumbnail_config
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text("thumbnails:\n  enabled: true\n")
+        monkeypatch.setenv("PORTOLAN_THUMBNAILS_BASEMAP_API_KEY", "fromenv")
+
+        assert get_thumbnail_config(tmp_path).basemap_api_key == "fromenv"
+
+    @pytest.mark.integration
+    def test_the_key_goes_on_each_tile_url(self, tmp_path: Path, stub_tiles: list[str]) -> None:
+        """CARTO reads the key from a ``key`` query parameter."""
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        gpq = _copy_fixture("open-buildings.parquet", tmp_path)
+        config = ThumbnailConfig(basemap_provider="CartoDB.Positron", basemap_api_key="abc123")
+        assert generate_thumbnail_from_geoparquet(gpq, config)
+
+        assert stub_tiles
+        assert all(url.endswith(".png?key=abc123") for url in stub_tiles), stub_tiles
+
+    @pytest.mark.integration
+    def test_keyless_carto_warns_once_and_draws_no_watermark(
+        self, tmp_path: Path, stub_tiles: list[str], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """CARTO without a key gives one warning per run and no basemap.
+
+        CARTO answers a keyless request with a tile that reads "API KEY
+        REQUIRED". Before the fix every thumbnail carried that watermark.
+        """
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        config = ThumbnailConfig(basemap_provider="CartoDB.Positron")
+        first = _copy_fixture("open-buildings.parquet", tmp_path / "a")
+        second = _copy_fixture("open-buildings.parquet", tmp_path / "b")
+        with caplog.at_level("WARNING", logger="portolan_cli.viz.thumbnail"):
+            assert generate_thumbnail_from_geoparquet(first, config)
+            assert generate_thumbnail_from_geoparquet(second, config)
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1, warnings
+        assert "thumbnails.basemap.api_key" in warnings[0]
+        assert "PORTOLAN_THUMBNAILS_BASEMAP_API_KEY" in warnings[0]
+        assert stub_tiles == []
+
+    @pytest.mark.integration
+    def test_the_key_fills_a_token_placeholder(self, tmp_path: Path, stub_tiles: list[str]) -> None:
+        """A provider with a token field in its URL gets the key there."""
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        gpq = _copy_fixture("open-buildings.parquet", tmp_path)
+        config = ThumbnailConfig(
+            basemap_provider="Thunderforest.OpenCycleMap", basemap_api_key="abc123"
+        )
+        assert generate_thumbnail_from_geoparquet(gpq, config)
+
+        assert stub_tiles
+        assert all(url.endswith("?apikey=abc123") for url in stub_tiles), stub_tiles
+
+
+class TestBulkGeometry:
+    """One path per colour, not one matplotlib object per feature (#993 part 4)."""
+
+    @pytest.mark.integration
+    def test_polygons_draw_as_one_path(self, tmp_path: Path, saved_figures: list[Any]) -> None:
+        """Before the fix geopandas built one PathPatch per polygon (2,000 here)."""
+        gpd = pytest.importorskip("geopandas")
+        from shapely.geometry import box
+
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        boxes = [
+            box(i * 0.01, j * 0.01, i * 0.01 + 0.008, j * 0.01 + 0.008)
+            for i in range(50)
+            for j in range(40)
+        ]
+        gpq = tmp_path / "boxes.parquet"
+        gpd.GeoDataFrame(geometry=boxes, crs="OGC:CRS84").to_parquet(gpq)
+
+        assert generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig(basemap_provider="none"))
+
+        (figure,) = saved_figures
+        ax = figure.axes[0]
+        assert len(ax.patches) == 1
+        assert list(ax.collections) == []
+        assert list(ax.lines) == []
+
+    @pytest.mark.integration
+    def test_pmtiles_points_and_lines_draw_in_bulk(
+        self, tmp_path: Path, saved_figures: list[Any]
+    ) -> None:
+        """Before the fix each PMTiles point and line was its own ax.plot line."""
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geometries
+
+        points: list[dict[str, Any]] = [
+            {"type": "Point", "coordinates": [i * 0.1, 1.0], "properties": {}} for i in range(30)
+        ]
+        lines: list[dict[str, Any]] = [
+            {"type": "LineString", "coordinates": [[i * 0.1, 0], [i * 0.1, 0.5]], "properties": {}}
+            for i in range(30)
+        ]
+        output = tmp_path / "pm.thumb.jpg"
+        config = ThumbnailConfig(basemap_provider="none")
+
+        assert _render_geometries(points + lines, output, config, bounds=(0.0, 0.0, 2.9, 1.0))
+
+        (figure,) = saved_figures
+        ax = figure.axes[0]
+        assert list(ax.lines) == []
+        assert len(ax.collections) == 1  # every point in one scatter
+        assert len(ax.collections[0].get_offsets()) == 30
+        assert len(ax.patches) == 1  # every line in one path
+
+    @pytest.mark.integration
+    def test_a_hole_stays_empty(self, tmp_path: Path) -> None:
+        """The interior ring of a polygon is not filled, whatever its winding."""
+        gpd = pytest.importorskip("geopandas")
+        import numpy as np
+        from PIL import Image
+        from shapely.geometry import Polygon
+
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        outer = [(0, 0), (10, 0), (10, 10), (0, 10)]
+        inner = [(3, 3), (7, 3), (7, 7), (3, 7)]  # the same winding as the shell, on purpose
+        gpq = tmp_path / "donut.parquet"
+        gpd.GeoDataFrame(geometry=[Polygon(outer, [inner])], crs="OGC:CRS84").to_parquet(gpq)
+
+        result = generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig(basemap_provider="none"))
+
+        assert result is not None
+        grey = np.asarray(Image.open(result).convert("L"))
+        h, w = grey.shape
+        assert grey[h // 2, w // 2] > 245, "the hole is filled"
+        assert grey[int(h * 0.2), w // 2] < 200, "the ring is not filled"
+
+
+class TestGeometryOnlyReads:
+    """The thumbnail reads the geometry column and nothing else (#993)."""
+
+    @staticmethod
+    def _wide_parquet(path: Path, rows: int) -> None:
+        gpd = pytest.importorskip("geopandas")
+        import shapely
+
+        gdf = gpd.GeoDataFrame(
+            {
+                "name": [f"feature-{i}" for i in range(rows)],
+                "kind": ["a" if i % 2 else "b" for i in range(rows)],
+            },
+            geometry=[shapely.Point(i / rows, 0.5) for i in range(rows)],
+            crs="EPSG:4326",
+        )
+        gdf.to_parquet(path, row_group_size=max(1, rows // 4))
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("max_features", [10_000, 50], ids=["full", "sampled"])
+    def test_only_the_geometry_column_is_read(self, tmp_path: Path, max_features: int) -> None:
+        from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
+
+        gpq = tmp_path / "wide.parquet"
+        self._wide_parquet(gpq, rows=400)
+
+        gdf, _bbox, _crs = _read_geoparquet_for_thumbnail(gpq, max_features=max_features)
+
+        assert list(gdf.columns) == ["geometry"]
+
+    @pytest.mark.unit
+    def test_a_categorical_style_adds_its_one_field(self, tmp_path: Path) -> None:
+        from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
+
+        gpq = tmp_path / "wide.parquet"
+        self._wide_parquet(gpq, rows=400)
+
+        gdf, _bbox, _crs = _read_geoparquet_for_thumbnail(
+            gpq, max_features=10_000, color_field="KIND"
+        )
+
+        assert list(gdf.columns) == ["kind", "geometry"]
+
+    @pytest.mark.unit
+    def test_no_duckdb_connection_reads_the_footer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The footer comes from the one open ParquetFile, not a DuckDB query."""
+        import duckdb
+
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        gpq = tmp_path / "wide.parquet"
+        self._wide_parquet(gpq, rows=400)
+        connects: list[object] = []
+        original = duckdb.connect
+
+        def spy(*args: Any, **kwargs: Any) -> Any:
+            connects.append(args)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(duckdb, "connect", spy)
+        assert generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig(basemap_provider="none"))
+
+        assert connects == []

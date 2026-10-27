@@ -160,6 +160,7 @@ KNOWN_SETTINGS: dict[str, str] = {
     "thumbnails.basemap.provider": "str",
     "thumbnails.basemap.opacity": "number",
     "thumbnails.basemap.zoom_adjust": "int",
+    "thumbnails.basemap.api_key": "str",
     "check.disabled": "list",
     "check.severity.*": "str",
     "publish.public_url": "str",

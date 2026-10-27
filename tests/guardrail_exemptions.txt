@@ -25,3 +25,4 @@ config-key	thumbnails.max_features: changes only which features the drawing samp
 config-key	thumbnails.basemap.provider: draws only with basemap tiles from the network, which tests block
 config-key	thumbnails.basemap.opacity: draws only with basemap tiles from the network, which tests block
 config-key	thumbnails.basemap.zoom_adjust: draws only with basemap tiles from the network, which tests block
+config-key	thumbnails.basemap.api_key: goes only into basemap tile URLs, which tests block
