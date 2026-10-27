@@ -1285,6 +1285,29 @@ _GTIFF_QUALITY_OPTION = {"JPEG": "jpeg_quality", "WEBP": "webp_level"}
 EXACT_STATISTICS_PIXELS = 4096 * 4096
 
 
+def _compute_band_statistics(src: Any, *, approx: bool) -> None:
+    """Make GDAL compute the statistics of each band and keep them as band tags.
+
+    ``DatasetReader.stats`` leaves the GDAL error of a band with no valid pixel
+    pending, and the next GDAL call in rio-cogeo raises it, so the write
+    fails. ``DatasetReader.statistics`` raises that error at once. Such a band
+    gets only ``STATISTICS_VALID_PERCENT=0``, and the write continues.
+    ``statistics`` is deprecated in rasterio 1.4, and the rasterio floor 1.3.0
+    has no ``stats``.
+
+    Args:
+        src: The source raster, open for reading.
+        approx: Sample a subset of the blocks.
+    """
+    from rasterio.errors import RasterioDeprecationWarning, StatisticsError
+
+    for bidx in src.indexes:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RasterioDeprecationWarning)
+            with contextlib.suppress(StatisticsError):
+                src.statistics(bidx, approx=approx)
+
+
 def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = None) -> Path:
     """Write a raster file as a COG with the given settings.
 
@@ -1372,7 +1395,7 @@ def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = Non
         with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:
             # Exact up to EXACT_STATISTICS_PIXELS. Above it, GDAL samples a
             # subset of the blocks and tags the result STATISTICS_APPROXIMATE.
-            src.stats(approx=src.width * src.height > EXACT_STATISTICS_PIXELS)
+            _compute_band_statistics(src, approx=src.width * src.height > EXACT_STATISTICS_PIXELS)
             cog_translate(
                 src,
                 str(temp_path),

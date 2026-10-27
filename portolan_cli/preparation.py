@@ -1801,7 +1801,9 @@ def convert_raster(
     """Convert a raster to a COG. ``add`` and ``check --fix`` both use this (#947).
 
     A source that is already a COG is kept, unless ``reoptimize`` asks to
-    rewrite it with the current settings (issue #530). Otherwise
+    rewrite it with the current settings (issue #530). A lossless COG with no
+    embedded band statistics gets them once, in place (:func:`_embed_statistics`).
+    Otherwise
     ``convert.write_cog`` writes the COG with the catalog's ``conversion.cog``
     settings: DEFLATE, 512x512 tiles, and a predictor and overview resampling
     derived from the source dtype by default (issue #690).
@@ -1824,9 +1826,7 @@ def convert_raster(
     if is_cog and not reoptimize:
         embedded = embedded_statistics(source)
         if embedded == "missing":
-            embedded_now = _embed_statistics(source, dest_dir, catalog_root)
-            if embedded_now is not None:
-                return embedded_now
+            _embed_statistics(source)
         elif embedded == "lossy":
             warn_output(
                 f"{source.name} has no band statistics in the file (PTL-DAT-009). "
@@ -1839,28 +1839,56 @@ def convert_raster(
     return write_cog(source, dest_dir, get_cog_settings(catalog_root))
 
 
-def _embed_statistics(source: Path, dest_dir: Path, catalog_root: Path | None) -> Path | None:
-    """Rewrite a lossless COG through ``write_cog`` so that it carries its statistics.
+#: The codecs that store each pixel exactly. The statistics rewrite keeps one.
+_LOSSLESS_COG_CODECS = frozenset({"DEFLATE", "LZW", "ZSTD", "LZMA", "PACKBITS", "NONE"})
+
+
+def _embed_statistics(source: Path) -> None:
+    """Write a lossless COG again in place, so that it carries its band statistics.
 
     PTL-DAT-009 and PTL-DAT-010 read the statistics from the COG itself with
     PAM off (issue #748). A tag update in place breaks the COG layout, so the
     COG is written again, once. The next add finds the statistics and keeps the
-    file. ``write_cog`` writes a scratch file and swaps it in, so a failure
-    keeps the operator's file.
+    file. The GDAL COG driver copies the file with ``STATISTICS=YES``. It keeps
+    the codec, the predictor, the block size, the overviews, the mask, and
+    every pixel. A codec outside ``_LOSSLESS_COG_CODECS`` becomes DEFLATE.
 
-    Returns:
-        The COG with its statistics, or None when the rewrite failed.
+    rio-cogeo (``write_cog``) is not used here. Its warp reads a pixel at the
+    nodata value of one band as valid when another band holds data there, and
+    it writes nodata + 1 into that band.
+
+    The copy goes to a scratch file that replaces ``source`` only when it holds
+    the statistics. On any failure the operator's file stays, with a warning.
+
+    Args:
+        source: A lossless COG with no embedded statistics.
     """
-    from portolan_cli.conversion_config import get_cog_settings
-    from portolan_cli.convert import write_cog
+    import rasterio
+    from rasterio.shutil import copy as gdal_copy
+
     from portolan_cli.output import warn as warn_output
 
+    scratch = source.with_name(f".{source.stem}{REWRITE_TEMP_INFIX}.tif")
     try:
         with span("convert.embed_statistics", file=source.name):
-            return write_cog(source, dest_dir, get_cog_settings(catalog_root))
+            with rasterio.Env(GDAL_PAM_ENABLED="NO"):
+                with rasterio.open(source) as src:
+                    structure = src.tags(ns="IMAGE_STRUCTURE")
+                    blocksize = src.block_shapes[0][1]
+                codec = structure.get("COMPRESSION", "NONE").upper()
+                options: dict[str, Any] = {"compress": "DEFLATE", "blocksize": blocksize}
+                if codec in _LOSSLESS_COG_CODECS:
+                    options["compress"] = codec
+                    if "PREDICTOR" in structure:
+                        options["predictor"] = structure["PREDICTOR"]
+                gdal_copy(source, scratch, driver="COG", statistics="YES", **options)
+            if embedded_statistics(scratch) != "present":
+                raise RuntimeError("GDAL wrote no statistics")
+            scratch.replace(source)
     except Exception as err:  # noqa: BLE001 - the original file stays usable
         warn_output(
             f"{source.name} has no band statistics in the file (PTL-DAT-009), "
             f"and the rewrite that adds them failed: {err}"
         )
-        return None
+    finally:
+        scratch.unlink(missing_ok=True)

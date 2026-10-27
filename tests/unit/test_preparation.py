@@ -970,17 +970,18 @@ class TestAnAddedCogCarriesItsStatistics:
         return tags
 
     @staticmethod
-    def _spy_write_cog(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
-        from portolan_cli import convert
+    def _spy_rewrite(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+        """Record each COG that the statistics rewrite gets."""
+        from portolan_cli import preparation
 
         calls: list[Path] = []
-        real = convert.write_cog
+        real = preparation._embed_statistics
 
-        def spy(source: Path, *args: Any, **kwargs: Any) -> Path:
+        def spy(source: Path) -> None:
             calls.append(source)
-            return real(source, *args, **kwargs)
+            real(source)
 
-        monkeypatch.setattr(convert, "write_cog", spy)
+        monkeypatch.setattr(preparation, "_embed_statistics", spy)
         return calls
 
     @pytest.mark.unit
@@ -994,7 +995,7 @@ class TestAnAddedCogCarriesItsStatistics:
         cog = tmp_path / "rgb.tif"
         shutil.copy(fixtures_dir / "raster" / "valid" / "rgb.tif", cog)
         assert "STATISTICS_MEAN" not in self._tags(cog)
-        calls = self._spy_write_cog(monkeypatch)
+        calls = self._spy_rewrite(monkeypatch)
 
         convert_raster(cog, tmp_path)
         first = cog.read_bytes()
@@ -1029,7 +1030,7 @@ class TestAnAddedCogCarriesItsStatistics:
             quiet=True,
         )
         before = cog.read_bytes()
-        calls = self._spy_write_cog(monkeypatch)
+        calls = self._spy_rewrite(monkeypatch)
 
         convert_raster(cog, tmp_path)
 
@@ -1081,7 +1082,7 @@ class TestAnAddedCogCarriesItsStatistics:
         with rasterio.Env(GDAL_PAM_ENABLED="NO"):
             copy(source, cog, driver="COG", compress="DEFLATE")
         source.unlink()
-        calls = self._spy_write_cog(monkeypatch)
+        calls = self._spy_rewrite(monkeypatch)
 
         convert_raster(cog, tmp_path)
         first = cog.read_bytes()

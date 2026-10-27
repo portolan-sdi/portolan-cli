@@ -181,6 +181,11 @@ EMBEDDED_STATISTICS_TAGS = frozenset(
 )
 
 
+def _has_statistics(tags: dict[str, str]) -> bool:
+    """Report whether band tags hold every statistic the band can have."""
+    return set(tags) >= EMBEDDED_STATISTICS_TAGS or tags.get("STATISTICS_VALID_PERCENT") == "0"
+
+
 def embedded_statistics(path: Path) -> Literal["present", "missing", "lossy"]:
     """Report whether a COG carries its band statistics in the file itself.
 
@@ -190,14 +195,16 @@ def embedded_statistics(path: Path) -> Literal["present", "missing", "lossy"]:
         path: A COG.
 
     Returns:
-        ``present`` when every band has the five statistics tags. ``lossy``
+        ``present`` when every band has the five statistics tags, or has no
+        valid pixel (``STATISTICS_VALID_PERCENT=0``), so that no statistics
+        exist to embed. ``lossy``
         when some are missing and the tiles use lossy compression, such as JPEG
         or lossy WEBP. A rewrite would re-encode those pixels. ``missing``
         otherwise.
     """
     count("raster.opens")
     with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(path) as src:
-        if all(set(src.tags(bidx=band)) >= EMBEDDED_STATISTICS_TAGS for band in src.indexes):
+        if all(_has_statistics(src.tags(bidx=band)) for band in src.indexes):
             return "present"
         structure = src.tags(ns="IMAGE_STRUCTURE")
     lossy = structure.get("COMPRESSION_REVERSIBILITY", "").upper() == "LOSSY"
