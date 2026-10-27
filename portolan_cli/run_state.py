@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import copy
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import yaml
@@ -246,15 +246,28 @@ class RunState:
         """
         disk_key, disk = self._disk_versions(collection_dir / "versions.json")
         coll_id = self._collection_id(collection_dir) if include_staged and self._staged else None
-        staged = self._staged.get(coll_id) if coll_id is not None else None
+        with self._lock:
+            # Read the stage and its generation together, and project a copy, so
+            # a stage call in another thread cannot change the projection.
+            generation = self._generation
+            staged = self._staged.get(coll_id) if coll_id is not None else None
+            hit = self._projected.get(coll_id) if coll_id is not None else None
+            if staged is not None:
+                staged = replace(
+                    staged,
+                    assets=dict(staged.assets),
+                    removed=set(staged.removed),
+                    messages=list(staged.messages),
+                )
         if staged is None or coll_id is None:
             return _copy(disk)
-        hit = self._projected.get(coll_id)
-        if hit is not None and hit[0] == disk_key and hit[1] == self._generation:
+        if hit is not None and hit[0] == disk_key and hit[1] == generation:
             return _copy(hit[2])
         projected = staged.apply(disk)
         with self._lock:
-            self._projected[coll_id] = (disk_key, self._generation, projected)
+            # A stage call since the read makes this projection old. Keep it out.
+            if generation == self._generation:
+                self._projected[coll_id] = (disk_key, generation, projected)
         return _copy(projected)
 
     def tracked_assets(self, collection_dir: Path) -> dict[str, Asset]:
