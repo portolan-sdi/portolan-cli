@@ -5,10 +5,13 @@ The state reads each ``versions.json`` once, hashes each file once, and parses
 each YAML file once. Every in-run reader asks the state, so a per-file loop
 costs a ``stat`` and a dict lookup, not a read (issue #995).
 
-Every memo entry is keyed on the file's inode, size, and ``st_mtime_ns``. A file
-that changes during the run gets a new key, and the next call reads it again.
-An atomic write replaces the inode, so a rewrite within the clock tick of the
-file system still misses the memo.
+Every memo entry is keyed on the file's inode, size, ``st_mtime_ns``, and
+``st_ctime_ns``. A file that changes during the run gets a new key, and the
+next call reads it again. A copy that restores the old mtime still moves the
+status-change time. One limit stays: on a file system with a coarse clock, a
+same-size rewrite in the same clock tick as the memo read can keep every field
+of the key. ext4 can also give the inode of a replaced file to the next atomic
+write. A writer in the run therefore calls :meth:`RunState.invalidate`.
 
 The state also holds the versions that a command stages. ``versions()`` returns
 the disk record with the staged assets applied, so a reader in the same run
@@ -61,7 +64,7 @@ T = TypeVar("T")
 #: system kept sub-second time, so only float rounding can move it.
 FINE_MTIME_TOLERANCE_SECONDS = 1e-6
 
-_StatKey = tuple[int, int, int]
+_StatKey = tuple[int, int, int, int]
 
 
 def mtime_matches(current: float, recorded: float) -> bool:
@@ -106,7 +109,7 @@ def stat_matches(st: os.stat_result, mtime: float | None, size: int | None) -> b
 
 
 def _stat_key(st: os.stat_result) -> _StatKey:
-    return (st.st_ino, st.st_size, st.st_mtime_ns)
+    return (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
 def _empty_versions() -> VersionsFile:
