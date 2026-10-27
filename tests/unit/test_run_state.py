@@ -163,6 +163,30 @@ class TestChecksumMemo:
         assert state.checksum(f) == _sha(b"HELLO")
         assert counters("checksum.files") == 2
 
+    def test_rewrite_that_restores_the_mtime_forces_rehash(self, tmp_path: Path) -> None:
+        """A copy that keeps the source mtime (``cp -p``, ``rsync -t``) is new bytes.
+
+        The inode, size, and mtime stay the same. The status-change time moves.
+        """
+        f = tmp_path / "a.bin"
+        f.write_bytes(b"hello")
+        _pin_mtime(f)
+        state = RunState.open(tmp_path)
+        assert state.checksum(f) == _sha(b"hello")
+        before = f.stat()
+
+        with f.open("r+b") as fh:
+            fh.write(b"HELLO")
+        _pin_mtime(f)
+        after = f.stat()
+        assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        )
+
+        assert state.checksum(f) == _sha(b"HELLO")
+
     def test_directory_asset_is_fingerprinted_each_call(self, tmp_path: Path) -> None:
         gdb = tmp_path / "data.gdb"
         gdb.mkdir()
