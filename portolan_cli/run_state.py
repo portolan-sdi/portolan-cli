@@ -47,6 +47,7 @@ from portolan_cli.versions import (
     add_version,
     amend_version,
     next_version,
+    parse_version,
     read_versions,
 )
 
@@ -113,6 +114,18 @@ def _empty_versions() -> VersionsFile:
     return VersionsFile(spec_version=SPEC_VERSION, current_version=None, versions=[])
 
 
+def _next(versions_file: VersionsFile, minor: bool) -> str:
+    """The version string of the next snapshot: a minor bump or a patch bump.
+
+    The minor bump is the rule of ``JsonFileBackend.publish``, which the
+    companion files of ``add`` went through before the run state staged them.
+    """
+    if minor and versions_file.current_version is not None:
+        major, minor_part, _patch = parse_version(versions_file.current_version)
+        return f"{major}.{minor_part + 1}.0"
+    return next_version(versions_file)
+
+
 def _copy(versions_file: VersionsFile) -> VersionsFile:
     """A copy whose version list a caller can edit without changing the memo."""
     return VersionsFile(
@@ -134,6 +147,8 @@ class StagedVersion:
         schema: The schema of the last stage call that gave one.
         amend: True when every stage call asked to fold the changes into the
             latest version on disk. One call without it makes a new version.
+        minor: True when any stage call asked for a minor bump. The version
+            bumps the patch otherwise.
     """
 
     assets: dict[str, Asset] = field(default_factory=dict)
@@ -142,6 +157,7 @@ class StagedVersion:
     breaking: bool = False
     schema: SchemaInfo | None = None
     amend: bool = True
+    minor: bool = False
 
     @property
     def message(self) -> str | None:
@@ -159,7 +175,7 @@ class StagedVersion:
             return amend_version(versions_file, self.assets, self.removed)
         return add_version(
             versions_file,
-            version=next_version(versions_file),
+            version=_next(versions_file, self.minor),
             assets=self.assets,
             breaking=self.breaking,
             schema=self.schema,
@@ -509,6 +525,7 @@ class RunState:
         breaking: bool = False,
         schema: SchemaInfo | None = None,
         amend: bool = False,
+        minor: bool = False,
     ) -> None:
         """Stage asset changes for a collection. The commit writes one version.
 
@@ -527,6 +544,8 @@ class RunState:
             amend: Fold the changes into the latest version on disk. Pass it
                 only when this command wrote that version, as a side step of
                 ``add`` does. A collection with no version gets a new one.
+            minor: Bump the minor of the version, not the patch. One call
+                with it makes the whole version a minor bump.
         """
         with self._lock:
             staged = self._staged.setdefault(collection_id, StagedVersion())
@@ -542,6 +561,7 @@ class RunState:
             if schema is not None:
                 staged.schema = schema
             staged.amend = staged.amend and amend
+            staged.minor = staged.minor or minor
             self._generation += 1
 
     def staged(self) -> dict[str, StagedVersion]:

@@ -1244,7 +1244,11 @@ def add_companion_assets(
 
 
 def stage_companions(state: RunState, collection_id: str, paths: list[Path]) -> None:
-    """Stage the version records of companion files, with the checksums of the run."""
+    """Stage the version records of companion files, with the checksums of the run.
+
+    A companion bumps the minor, as it did when ``add`` published it through
+    the backend.
+    """
     from portolan_cli.versions import generated_asset_record
 
     collection_dir = state.collection_dir(collection_id)
@@ -1252,7 +1256,7 @@ def stage_companions(state: RunState, collection_id: str, paths: list[Path]) -> 
         generated_asset_record(path, state.catalog_root, collection_dir, state.checksum(path))
         for path in paths
     )
-    state.stage(collection_id, assets=records)
+    state.stage(collection_id, assets=records, minor=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
