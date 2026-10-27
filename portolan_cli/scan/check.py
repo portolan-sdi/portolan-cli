@@ -383,7 +383,9 @@ def check_directory(
     for file_path in files:
         relative = _get_relative_path(file_path, path)
         if overrides is not None:
-            status_info = get_effective_status(file_path, overrides=overrides, root=catalog_path)
+            status_info = get_effective_status(
+                file_path, overrides=overrides, root=catalog_path, state=state
+            )
         else:
             status_info = get_cloud_native_status(file_path, catalog_path)
         file_statuses.append(
@@ -407,7 +409,7 @@ def check_directory(
             f.path for f in file_statuses if f.status == CloudNativeStatus.CONVERTIBLE
         ]
         if force:
-            files_to_convert.extend(_forced_raster_paths(file_statuses, catalog_path))
+            files_to_convert.extend(_forced_raster_paths(file_statuses, catalog_path, state))
         conversion_report = convert_directory(
             path,
             on_progress=on_progress,
@@ -432,7 +434,9 @@ def check_directory(
     elif fix and dry_run:
         # Preview mode - show what would be converted (no changes on disk).
         report.conversion_report = ConversionReport(
-            results=_build_preview_results(file_statuses, force=force, catalog_path=catalog_path)
+            results=_build_preview_results(
+                file_statuses, force=force, catalog_path=catalog_path, state=state
+            )
         )
         # Note: remove_legacy is ignored in dry_run mode (no actual removal)
 
@@ -440,7 +444,9 @@ def check_directory(
 
 
 def _forced_raster_paths(
-    file_statuses: list[FileStatus], catalog_path: Path | None = None
+    file_statuses: list[FileStatus],
+    catalog_path: Path | None = None,
+    state: RunState | None = None,
 ) -> list[Path]:
     """Paths of already-cloud-native files eligible for --force re-optimization.
 
@@ -454,19 +460,23 @@ def _forced_raster_paths(
         f.path
         for f in file_statuses
         if f.status == CloudNativeStatus.CLOUD_NATIVE
-        and hasattr(handler_for(f.path, catalog_path), "reoptimize")
+        and hasattr(handler_for(f.path, catalog_path, state=state), "reoptimize")
     ]
 
 
 def _build_preview_results(
-    file_statuses: list[FileStatus], *, force: bool, catalog_path: Path | None = None
+    file_statuses: list[FileStatus],
+    *,
+    force: bool,
+    catalog_path: Path | None = None,
+    state: RunState | None = None,
 ) -> list[ConversionResult]:
     """Build dry-run preview ConversionResults for --fix (and --force)."""
     from portolan_cli.plugins.formats import handler_for
 
     def predicted_output(f: FileStatus) -> Path:
         # The handler names its output. A plugin can write any file name.
-        handler = handler_for(f.path, catalog_path)
+        handler = handler_for(f.path, catalog_path, state=state)
         if handler is not None:
             return handler.output_path(f.path, f.path.parent)
         return f.path.parent / f"{f.path.stem}.tif"
@@ -486,7 +496,7 @@ def _build_preview_results(
     ]
     if force:
         # Forced rasters re-encode in place: COG -> COG, same path.
-        forced = set(_forced_raster_paths(file_statuses, catalog_path))
+        forced = set(_forced_raster_paths(file_statuses, catalog_path, state))
         previews.extend(
             ConversionResult(
                 source=f.path,

@@ -1998,6 +1998,26 @@ class TestCheckFixReadsTheState:
 
         assert (one, two) == (1, 1)
 
+    @pytest.mark.integration
+    def test_fix_on_a_subdirectory_converts_what_check_reports(self, tmp_path: Path) -> None:
+        """The status and the conversion read the same catalog overrides."""
+        from portolan_cli.convert import ConversionStatus
+        from portolan_cli.run_state import RunState
+        from portolan_cli.scan.check import check_directory
+
+        catalog = _geo_asset_catalog(tmp_path / "catalog", 1)
+        with (catalog / ".portolan" / "config.yaml").open("a", encoding="utf-8") as handle:
+            handle.write('conversion:\n  extensions:\n    convert: [".fgb"]\n')
+        sub = catalog / "v0"
+
+        report = check_directory(
+            sub, fix=True, catalog_path=sub, workers=1, state=RunState.open(catalog)
+        )
+
+        assert [f.status.value for f in report.files] == ["convertible"]
+        assert report.conversion_report is not None
+        assert [r.status for r in report.conversion_report.results] == [ConversionStatus.SUCCESS]
+
     @pytest.mark.unit
     def test_a_pool_worker_parses_the_config_once(self, tmp_path: Path) -> None:
         from portolan_cli import convert
@@ -2007,7 +2027,9 @@ class TestCheckFixReadsTheState:
         try:
             with trace.tracing():
                 for i in range(2):
-                    convert._convert_in_worker(catalog / f"v{i}" / "sample.fgb", catalog_path=catalog)
+                    convert._convert_in_worker(
+                        catalog / f"v{i}" / "sample.fgb", catalog_path=catalog
+                    )
 
                 assert _parses() == 1
         finally:
@@ -2047,6 +2069,30 @@ class TestYamlLoader:
         assert config.safe_load("[1, 2]") == [1, 2]
         expected = yaml.CSafeLoader if with_libyaml else yaml.SafeLoader
         assert loaders == [expected, expected]
+
+    @pytest.mark.unit
+    def test_both_loaders_build_the_same_dates_merges_and_anchors(self) -> None:
+        import datetime
+
+        import yaml
+
+        text = (
+            "day: 2024-01-02\n"
+            "stamp: 2024-01-02 03:04:05.5+02:00\n"
+            "base: &base {a: 1, b: [x, y]}\n"
+            "child:\n  <<: *base\n  b: [z]\n"
+            "multi:\n  <<: [*base, {c: 3}]\n"
+            "alias: *base\n"
+        )
+        python = yaml.load(text, Loader=yaml.SafeLoader)  # noqa: S506 (a safe loader)
+        libyaml = yaml.load(text, Loader=yaml.CSafeLoader)  # noqa: S506 (a safe loader)
+
+        assert python == libyaml
+        assert libyaml["day"] == datetime.date(2024, 1, 2)
+        assert libyaml["stamp"].utcoffset() == datetime.timedelta(hours=2)
+        assert libyaml["child"] == {"a": 1, "b": ["z"]}
+        assert libyaml["multi"] == {"a": 1, "b": ["x", "y"], "c": 3}
+        assert libyaml["alias"] == {"a": 1, "b": ["x", "y"]}
 
     @pytest.mark.unit
     def test_the_loader_refuses_python_tags(self) -> None:

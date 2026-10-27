@@ -510,6 +510,7 @@ def get_effective_status(
     overrides: ConversionOverrides | None = None,
     *,
     root: Path | None = None,
+    state: ConfigSource | None = None,
 ) -> FormatInfo:
     """Get cloud-native status with conversion overrides applied.
 
@@ -527,6 +528,7 @@ def get_effective_status(
         root: Catalog root for resolving relative paths in glob patterns
             and for a ``conversion.handlers`` pin. Required if using
             path-based overrides.
+        state: The run state, which parses the config once per run.
 
     Returns:
         FormatInfo with potentially modified status based on overrides.
@@ -540,7 +542,7 @@ def get_effective_status(
         >>> result = get_effective_status(Path("data.fgb"), overrides=overrides)
         >>> result.status  # CONVERTIBLE instead of CLOUD_NATIVE
     """
-    info = _default_status(path, root)
+    info = _default_status(path, root, state)
     if overrides is None:
         return info
     return _apply_overrides(path, info, overrides, root)
