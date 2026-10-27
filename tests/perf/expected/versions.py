@@ -1,9 +1,4 @@
-"""Scale-gate constants: versions.json reads and writes, published versions, checksums, items.parquet (#992).
-
-Each entry maps (scenario, counter) to (slope, intercept). The comment names
-the functions that made the counts at size 2n, with their number of calls.
-A pair that is absent is (0, 0). ``tests/perf/gates.py`` explains the values.
-"""
+"""Scale-gate constants of versions: versions.json reads and writes, published versions, checksums, items.parquet. See gates.py."""
 
 from __future__ import annotations
 
@@ -35,9 +30,9 @@ EXPECTED: dict[tuple[str, str], tuple[int, int]] = {
     ("add-with-companions", "versions_json.reads"): (6, 2),  # catalog:update_catalog_versions x7, versions:read_versions x7
     ("add-with-companions", "versions_json.writes"): (6, 2),  # versions:write_versions x7, catalog:update_catalog_versions x7
     ("check-metadata", "versions_json.reads"): (3, 0),  # metadata.detection:get_stored_metadata x6
-    ("readd-unchanged", "checksum.files"): (0, 2),  # sync.checksums:compute_checksum x1, stac_parquet:track_parquet_in_versions x1
-    ("readd-unchanged", "items_parquet.writes"): (0, 1),  # stac_parquet:generate_items_parquet x1
-    ("readd-unchanged", "versions_json.reads"): (3, 2),  # versions:read_versions x8
+    ("re-add-unchanged", "checksum.files"): (0, 2),  # sync.checksums:compute_checksum x1, stac_parquet:track_parquet_in_versions x1
+    ("re-add-unchanged", "items_parquet.writes"): (0, 1),  # stac_parquet:generate_items_parquet x1
+    ("re-add-unchanged", "versions_json.reads"): (3, 2),  # versions:read_versions x8
     ("status", "checksum.files"): (3, 0),  # sync.checksums:compute_checksum x6
     ("status", "versions_json.reads"): (0, 1),  # versions:read_versions x1
 }

@@ -7,7 +7,7 @@ a seed. The same size and seed give the same bytes, and
 group), copied and translated by a seeded offset. Raster files are small
 seeded GeoTIFFs.
 
-A scenario that needs a catalog first (``readd-unchanged``, ``check-metadata``,
+A scenario that needs a catalog first (``re-add-unchanged``, ``check-metadata``,
 ``status``) builds it with ``portolan`` itself, through ``runner.py``, so the
 catalog is what the code under test writes today.
 
@@ -194,7 +194,7 @@ def setup_add(root: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-#: History entries that ``readd-unchanged`` puts in front of the real version.
+#: History entries that ``re-add-unchanged`` puts in front of the real version.
 #: The nightly job passes 50.
 HISTORY_VERSIONS = 10
 
@@ -220,7 +220,7 @@ def _setup_add(root: Path, history: int) -> None:
     setup_add(root)
 
 
-def _setup_readd(root: Path, history: int) -> None:
+def _setup_re_add(root: Path, history: int) -> None:
     setup_add(root)
     pad_versions(root, history)
 
@@ -296,7 +296,7 @@ SCENARIOS: dict[str, Scenario] = {
         # S2 large: one GeoParquet file with n polygons.
         Scenario("add-large-vector", _large_vector, ADD),
         # S3: n raster items with history, then an add that changes nothing.
-        Scenario("readd-unchanged", _rasters, ADD, setup=_setup_readd),
+        Scenario("re-add-unchanged", _rasters, ADD, setup=_setup_re_add),
         # S4: check --metadata on an unchanged catalog of n raster items. The
         # catalog has no providers and no thumbnail, so check exits 1.
         Scenario(

@@ -1,9 +1,4 @@
-"""Scale-gate constants: YAML parses and merged-config builds (#992).
-
-Each entry maps (scenario, counter) to (slope, intercept). The comment names
-the functions that made the counts at size 2n, with their number of calls.
-A pair that is absent is (0, 0). ``tests/perf/gates.py`` explains the values.
-"""
+"""Scale-gate constants of config: YAML parses and merged-config builds. See gates.py."""
 
 from __future__ import annotations
 
@@ -22,8 +17,8 @@ EXPECTED: dict[tuple[str, str], tuple[int, int]] = {
     ("add-with-companions", "config.merges"): (15, 15),  # config:load_merged_config x23, config:load_merged_yaml x22
     ("add-with-companions", "config.yaml_parses"): (0, 2),  # config:_parse_yaml x2
     ("check-metadata", "config.yaml_parses"): (0, 1),  # config:_parse_yaml x1
-    ("readd-unchanged", "config.merges"): (0, 11),  # config:load_merged_config x11
-    ("readd-unchanged", "config.yaml_parses"): (0, 1),  # config:_parse_yaml x1
+    ("re-add-unchanged", "config.merges"): (0, 11),  # config:load_merged_config x11
+    ("re-add-unchanged", "config.yaml_parses"): (0, 1),  # config:_parse_yaml x1
     ("status", "config.yaml_parses"): (0, 1),  # config:_parse_yaml x1
 }
 # fmt: on

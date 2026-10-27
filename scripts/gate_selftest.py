@@ -312,7 +312,7 @@ def _apply_extra_thumbnail_draw(root: Path, faulty: bool) -> None:
         _replace_once(
             root / "portolan_cli/viz/thumbnail.py",
             "        # thumbnails.quality reaches both render paths",
-            "        fig.canvas.draw()\n        # thumbnails.quality reaches both render paths",
+            "        ax.figure.canvas.draw()\n        # thumbnails.quality reaches both render paths",
         )
 
 
@@ -431,7 +431,7 @@ FAULTS = (
     Fault(
         "versions-read-per-file",
         _apply_versions_read_per_file,
-        (_perf_gate(f"{SCALE}[readd-unchanged]"),),
+        (_perf_gate(f"{SCALE}[re-add-unchanged]"),),
     ),
     Fault(
         "yaml-parse-per-call",

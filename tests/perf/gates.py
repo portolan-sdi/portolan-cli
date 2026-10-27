@@ -13,7 +13,9 @@ because a counter does not depend on machine load.
 
 Each counter has one owner file in ``tests/perf/expected/``. A lane that
 removes work lowers only the constants in its own file, so the diff of that
-file records each improvement. A pair that no file holds is ``(0, 0)``.
+file records each improvement. A pair that no file holds is ``(0, 0)``. The
+comment on each pair names the functions that made the counts at size 2n,
+with their number of calls.
 
 ``checksum.bytes`` has no gate. It measures data volume, and the bytes of a
 converted file change with the geoparquet-io version.
@@ -78,7 +80,7 @@ SCALE_SIZES: dict[str, int] = {
     "add-one-collection": 3,
     "add-with-companions": 3,
     "add-large-vector": 1_000,
-    "readd-unchanged": 3,
+    "re-add-unchanged": 3,
     "check-metadata": 3,
     "status": 3,
     "add-rasters": 3,
@@ -160,10 +162,7 @@ def render(owner: str, lines: list[str], trailer: str = "") -> str:
     """
     body = "".join(sorted(lines))
     return (
-        f'"""Scale-gate constants: {OWNER_DOCS[owner]} (#992).\n\n'
-        "Each entry maps (scenario, counter) to (slope, intercept). The comment names\n"
-        "the functions that made the counts at size 2n, with their number of calls.\n"
-        'A pair that is absent is (0, 0). ``tests/perf/gates.py`` explains the values.\n"""\n\n'
+        f'"""Scale-gate constants of {owner}: {OWNER_DOCS[owner]}. See gates.py."""\n\n'
         "from __future__ import annotations\n\n"
         "# fmt: off\n"
         "EXPECTED: dict[tuple[str, str], tuple[int, int]] = {\n"

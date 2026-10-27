@@ -766,10 +766,7 @@ def _render_geometries(
     # Data-aware cosmetics scaled to geometry type and feature density.
     params = _compute_render_params(*_profile_geometries(geometries))
 
-    fig, ax = plt.subplots(figsize=(config.max_size / 100, config.max_size / 100), dpi=100)
-    fig.canvas.mpl_connect("draw_event", _count_draw)
-    ax.set_aspect("equal")
-    ax.axis("off")
+    ax = _new_axes(plt, config)
 
     # Plot data FIRST (establishes axes extent for basemap zoom calculation)
     patches: list[Any] = []
@@ -1109,10 +1106,7 @@ def _render_geoparquet(
             if style and style.color_map and style.color_field:
                 fill_color = resolve_colors_for_gdf(gdf, style, fallback=THUMB_FILL_COLOR)
 
-        fig, ax = plt.subplots(figsize=(config.max_size / 100, config.max_size / 100), dpi=100)
-        fig.canvas.mpl_connect("draw_event", _count_draw)
-        ax.set_aspect("equal")
-        ax.axis("off")
+        ax = _new_axes(plt, config)
 
         # Plot data first (establishes axes extent for basemap zoom calculation).
         # aspect="equal" stops geopandas from deriving a latitude-corrected
@@ -1171,6 +1165,18 @@ def _render_geoparquet(
 def _count_draw(_event: object) -> None:
     """Count one full figure draw. ``savefig`` and contextily can each draw."""
     count("thumbnail.draws")
+
+
+def _new_axes(plt: Any, config: ThumbnailConfig) -> Any:
+    """Return the axes of a new square thumbnail figure that counts its draws.
+
+    Both render paths draw on it, so ``thumbnail.draws`` sees every draw.
+    """
+    fig, ax = plt.subplots(figsize=(config.max_size / 100, config.max_size / 100), dpi=100)
+    fig.canvas.mpl_connect("draw_event", _count_draw)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    return ax
 
 
 def _pyplot() -> Any:

@@ -1,9 +1,4 @@
-"""Scale-gate constants: Parquet and raster opens, DuckDB connections (#992).
-
-Each entry maps (scenario, counter) to (slope, intercept). The comment names
-the functions that made the counts at size 2n, with their number of calls.
-A pair that is absent is (0, 0). ``tests/perf/gates.py`` explains the values.
-"""
+"""Scale-gate constants of parquet: Parquet and raster opens, DuckDB connections. See gates.py."""
 
 from __future__ import annotations
 

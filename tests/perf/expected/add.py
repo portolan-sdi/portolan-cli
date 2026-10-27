@@ -1,9 +1,4 @@
-"""Scale-gate constants: collection.json writes (#992).
-
-Each entry maps (scenario, counter) to (slope, intercept). The comment names
-the functions that made the counts at size 2n, with their number of calls.
-A pair that is absent is (0, 0). ``tests/perf/gates.py`` explains the values.
-"""
+"""Scale-gate constants of add: collection.json writes. See gates.py."""
 
 from __future__ import annotations
 

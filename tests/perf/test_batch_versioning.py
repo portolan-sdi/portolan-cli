@@ -10,10 +10,11 @@ measured the runner, so the counts below replace it.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
-from unittest.mock import patch
+from typing import TYPE_CHECKING
 
 import pytest
+
+from portolan_cli import trace
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -72,6 +73,10 @@ def create_geojson_files(directory: Path, count: int) -> list[Path]:
     return files
 
 
+def _version_work(counts: dict[str, int]) -> dict[str, int]:
+    return {name: counts[name] for name in ("versions_json.writes", "versions.published")}
+
+
 class TestBatchVersioning:
     """Each add API call writes versions.json once per collection."""
 
@@ -85,7 +90,6 @@ class TestBatchVersioning:
         write versions.json once per collection.
         """
         from portolan_cli.add import add_files
-        from portolan_cli.versions import write_versions
 
         collection_dir = benchmark_catalog / "test-collection"
         collection_dir.mkdir()
@@ -93,26 +97,17 @@ class TestBatchVersioning:
         # Create 20 files (enough to see the pattern)
         files = create_geojson_files(collection_dir, 20)
 
-        write_count = 0
-        original_write = write_versions
-
-        def counting_write(*args: Any, **kwargs: Any) -> None:
-            nonlocal write_count
-            write_count += 1
-            return original_write(*args, **kwargs)
-
-        with patch("portolan_cli.finalization.write_versions", side_effect=counting_write):
+        with trace.tracing():
             add_files(
                 paths=files,
                 catalog_root=benchmark_catalog,
                 collection_id="test-collection",
             )
+            counts = trace.counters()
 
-        # Should write versions.json exactly once (batch mode)
-        assert write_count == 1, (
-            f"Expected 1 write_versions call (batched), got {write_count}. "
-            f"With {len(files)} files, old O(n²) approach would have {len(files)} writes."
-        )
+        # One write of the collection versions.json for 20 files. The fixture
+        # catalog has no catalog-level versions.json to update.
+        assert _version_work(counts) == {"versions_json.writes": 1, "versions.published": 1}
 
     def test_add_directory_uses_batch_versioning(
         self,
@@ -120,7 +115,6 @@ class TestBatchVersioning:
     ) -> None:
         """Verify add_directory also uses batch versioning."""
         from portolan_cli.add import add_directory
-        from portolan_cli.versions import write_versions
 
         collection_dir = benchmark_catalog / "dir-collection"
         collection_dir.mkdir()
@@ -143,23 +137,13 @@ class TestBatchVersioning:
                 )
             )
 
-        write_count = 0
-        original_write = write_versions
-
-        def counting_write(*args: Any, **kwargs: Any) -> None:
-            nonlocal write_count
-            write_count += 1
-            return original_write(*args, **kwargs)
-
-        with patch("portolan_cli.finalization.write_versions", side_effect=counting_write):
+        with trace.tracing():
             add_directory(
                 path=collection_dir,
                 catalog_root=benchmark_catalog,
                 collection_id="dir-collection",
                 recursive=False,
             )
+            counts = trace.counters()
 
-        # Should write versions.json exactly once
-        assert write_count == 1, (
-            f"Expected 1 write_versions call from add_directory, got {write_count}"
-        )
+        assert _version_work(counts) == {"versions_json.writes": 1, "versions.published": 1}

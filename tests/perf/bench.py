@@ -34,11 +34,11 @@ from typing import Any
 from tests.perf.gates import measure
 from tests.perf.scenarios import REPO_ROOT, SCENARIOS
 
-#: Full sizes. The readd scenario also carries 50 history versions.
+#: Full sizes. The re-add scenario also carries 50 history versions.
 FULL_SIZES: dict[str, int] = {
     "add-many-collections": 100,  # S1: 100 collections, one file each
     "add-large-vector": 1_000_000,  # S2: one file of 1M polygons
-    "readd-unchanged": 5_000,  # S3: 5,000 raster items, 50 versions, no-op add
+    "re-add-unchanged": 5_000,  # S3: 5,000 raster items, 50 versions, no-op add
     "check-metadata": 25_000,  # S4: check --metadata on 25,000 raster items
     "add-rasters": 3_984,  # S8: the GHSL item count of #775
 }
