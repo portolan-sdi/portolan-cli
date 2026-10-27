@@ -37,7 +37,7 @@ def _catalog_with_assets(tmp_path: Path, asset_keys: list[str]) -> tuple[Path, P
     """Build a managed catalog whose one collection tracks the given assets.
 
     Each asset is keyed ``asset_key`` with an href of ``mycoll/{asset_key}``
-    (the shape ``add._batch_update_versions`` writes: catalog-root-relative,
+    (the shape that ``add`` stages: catalog-root-relative,
     including the collection dir). Returns ``(collection_dir, versions_path)``.
     """
     portolan_dir = tmp_path / ".portolan"

@@ -1224,7 +1224,7 @@ def _write_versions_json_mtime_only(
     Crucially this records ONLY the ``mtime`` field (the asset file's own
     mtime) — no ``source_mtime`` and no ``feature_count`` /
     ``schema_fingerprint`` heuristics. This is what
-    ``_batch_update_versions`` writes and what pre-fix / dogfooded catalogs
+    the version that ``add`` stages holds and what pre-fix / dogfooded catalogs
     (e.g. the IGN Argentina port) contain on disk.
     """
     import hashlib

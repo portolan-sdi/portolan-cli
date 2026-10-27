@@ -214,7 +214,28 @@ class SpatialLayout(NamedTuple):
     has_bbox_covering: bool
 
 
-def read_spatial_layout(path: Path) -> SpatialLayout:
+def open_footer(path: Path) -> pq.ParquetFile | None:
+    """Open a Parquet file for its footer, or None when it does not open.
+
+    The caller closes the file. :func:`read_spatial_layout` and
+    :func:`read_rewrite_fidelity` both take the open file, so a caller that
+    needs both answers reads the footer once.
+    """
+    try:
+        count("parquet.opens")
+        return pq.ParquetFile(path)
+    except Exception:  # noqa: BLE001 - an unreadable file has no footer to read
+        return None
+
+
+def _footer_or_open(source: Path | pq.ParquetFile) -> tuple[pq.ParquetFile | None, bool]:
+    """The open file, and True when this call opened it and must close it."""
+    if isinstance(source, pq.ParquetFile):
+        return source, False
+    return open_footer(source), True
+
+
+def read_spatial_layout(source: Path | pq.ParquetFile) -> SpatialLayout:
     """Read a Parquet footer once and report both spatial-layout answers.
 
     Reads only the footer, so the cost does not grow with the file. Callers
@@ -234,18 +255,26 @@ def read_spatial_layout(path: Path) -> SpatialLayout:
     --reconvert`` is what rewrites it.
 
     Args:
-        path: Path to a Parquet file.
+        source: Path to a Parquet file, or a file the caller opened with
+            :func:`open_footer`. A path is opened and closed here.
 
     Returns:
         The layout. Both fields are False for an unreadable file, and
         ``has_bbox_covering`` is False for a plain Parquet file.
     """
-    try:
-        count("parquet.opens")
-        parquet = pq.ParquetFile(path)
-    except Exception:  # noqa: BLE001 - an unreadable file is not a conformant one
+    parquet, owned = _footer_or_open(source)
+    if parquet is None:
+        # An unreadable file is not a conformant one.
         return SpatialLayout(is_geoparquet=False, has_bbox_covering=False)
+    try:
+        return _spatial_layout(parquet)
+    finally:
+        if owned:
+            parquet.close()
 
+
+def _spatial_layout(parquet: pq.ParquetFile) -> SpatialLayout:
+    """The spatial layout of an open Parquet file. See :func:`read_spatial_layout`."""
     geo = read_geo_metadata(parquet) or {}
     if not geo:
         return SpatialLayout(is_geoparquet=False, has_bbox_covering=False)
@@ -284,7 +313,7 @@ class RewriteFidelity(NamedTuple):
     extra_keys: frozenset[bytes] = frozenset()
 
 
-def read_rewrite_fidelity(path: Path) -> RewriteFidelity | None:
+def read_rewrite_fidelity(source: Path | pq.ParquetFile) -> RewriteFidelity | None:
     """Read what an in-place rewrite must carry over unchanged.
 
     The rewrite replaces the operator's own file, so it needs a before-and-after
@@ -293,17 +322,25 @@ def read_rewrite_fidelity(path: Path) -> RewriteFidelity | None:
     (issue #805). A malformed geometry makes it fail outright.
 
     Args:
-        path: Path to a Parquet file.
+        source: Path to a Parquet file, or a file the caller opened with
+            :func:`open_footer`. A path is opened and closed here.
 
     Returns:
         The fidelity fields, or None when the file cannot be read.
     """
-    try:
-        count("parquet.opens")
-        parquet = pq.ParquetFile(path)
-    except Exception:  # noqa: BLE001 - an unreadable file cannot be compared
+    parquet, owned = _footer_or_open(source)
+    if parquet is None:
+        # An unreadable file cannot be compared.
         return None
+    try:
+        return _rewrite_fidelity(parquet)
+    finally:
+        if owned:
+            parquet.close()
 
+
+def _rewrite_fidelity(parquet: pq.ParquetFile) -> RewriteFidelity:
+    """The fidelity fields of an open Parquet file. See :func:`read_rewrite_fidelity`."""
     geo = read_geo_metadata(parquet) or {}
     primary = geo.get("primary_column", "geometry")
     columns = geo.get("columns")

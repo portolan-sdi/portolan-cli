@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from portolan_cli.add import PreparedItem, _finalize_with_backend
+from portolan_cli.run_state import RunState
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -82,6 +83,7 @@ class TestFinalizeWithBackend:
                 collection=MagicMock(),
                 items=[item],
                 active_backend="iceberg",
+                state=RunState.open(tmp_path),
             )
 
         mock_publish.assert_called_once()
@@ -110,6 +112,7 @@ class TestFinalizeWithBackend:
                 collection=MagicMock(),
                 items=[item],
                 active_backend="iceberg",
+                state=RunState.open(tmp_path),
             )
 
         assets = mock_publish.call_args.kwargs["assets"]
@@ -135,6 +138,7 @@ class TestFinalizeWithBackend:
                 collection=MagicMock(),
                 items=[item],
                 active_backend="iceberg",
+                state=RunState.open(tmp_path),
             )
 
         assets = mock_publish.call_args.kwargs["assets"]
@@ -149,7 +153,7 @@ class TestFinalizeWithBackend:
         with (
             patch("portolan_cli.version_ops.publish_version"),
             patch("portolan_cli.backends.get_backend") as mock_get_backend,
-            patch("portolan_cli.config.get_setting", return_value="gs://bucket/catalog"),
+            patch.dict("os.environ", {"PORTOLAN_REMOTE": "gs://bucket/catalog"}),
         ):
             mock_backend = MagicMock()  # has on_post_add by default
             mock_get_backend.return_value = mock_backend
@@ -162,6 +166,7 @@ class TestFinalizeWithBackend:
                 collection=collection_mock,
                 items=[item],
                 active_backend="iceberg",
+                state=RunState.open(tmp_path),
             )
 
         mock_backend.on_post_add.assert_called_once()
@@ -192,6 +197,7 @@ class TestFinalizeWithBackend:
                 collection=MagicMock(),
                 items=[item],
                 active_backend="iceberg",
+                state=RunState.open(tmp_path),
             )
 
         mock_backend.on_post_add.assert_called_once()
@@ -224,6 +230,7 @@ class TestFinalizeWithBackend:
                 collection=MagicMock(),
                 items=[item],
                 active_backend="iceberg",
+                state=RunState.open(tmp_path),
             )
 
         assert mock_publish.call_args.kwargs["assets"] == {"rapidai4eo/rapidai4eo.tif": str(tif)}
@@ -251,6 +258,7 @@ class TestFinalizeWithBackend:
                 collection=MagicMock(),
                 items=items,
                 active_backend="iceberg",
+                state=RunState.open(tmp_path),
             )
 
         ctx = mock_backend.on_post_add.call_args.args[0]
@@ -297,8 +305,40 @@ class TestFinalizeWithBackend:
                 collection=MagicMock(),
                 items=[item],
                 active_backend="iceberg",
+                state=RunState.open(tmp_path),
             )
 
         assets = mock_publish.call_args.kwargs["assets"]
         assert "census/data.parquet" in assets
         assert "census/metadata.json" in assets
+
+    @pytest.mark.unit
+    def test_companions_join_the_one_published_version(self, tmp_path: Path) -> None:
+        """A plugin backend gets the companions in the finalize publish, not a second one."""
+        from portolan_cli.finalization import _publish_collection_version
+
+        item = _make_item(tmp_path, filename="roads.parquet", is_collection_level=True)
+        companion = tmp_path / "boundaries" / "roads.csv"
+        companion.write_text("id\n1\n")
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text("backend: iceberg\n")
+        state = RunState.open(tmp_path)
+
+        with (
+            patch("portolan_cli.version_ops.publish_version") as mock_publish,
+            patch("portolan_cli.backends.get_backend") as mock_get_backend,
+        ):
+            mock_get_backend.return_value = MagicMock(spec=[])
+            _publish_collection_version(
+                tmp_path,
+                "boundaries",
+                tmp_path / "boundaries",
+                MagicMock(),
+                [item],
+                state,
+                (companion,),
+            )
+
+        mock_publish.assert_called_once()
+        assert sorted(mock_publish.call_args.kwargs["assets"]) == ["roads.csv", "roads.parquet"]
+        assert state.staged() == {}

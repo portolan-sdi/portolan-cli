@@ -1187,6 +1187,20 @@ class TestALegacyOutputIsItsSourceOwn:
     def _parquets(collection_dir: Path) -> list[str]:
         return sorted(p.name for p in collection_dir.glob("*.parquet"))
 
+    @classmethod
+    def _added_with_companion(
+        cls, runner: CliRunner, catalog: Path, fixtures_dir: Path
+    ) -> tuple[Path, Path, Path]:
+        """Add a GeoParquet with a CSV companion. Return the collection, the file, the CSV."""
+        collection_dir = catalog / "buildings"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "b1.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
+        companion = collection_dir / "b1.csv"
+        companion.write_text("id,name\n1,a\n")
+        cls._add(runner, catalog, collection_dir)
+        return collection_dir, geoparquet, companion
+
     @pytest.mark.integration
     def test_an_edited_geojson_replaces_its_legacy_output(
         self, runner: CliRunner, initialized_catalog: Path
@@ -1225,44 +1239,25 @@ class TestALegacyOutputIsItsSourceOwn:
     def test_an_edited_companion_csv_leaves_the_geoparquet(
         self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
     ) -> None:
-        collection_dir = initialized_catalog / "buildings"
-        collection_dir.mkdir()
-        geoparquet = collection_dir / "b1.parquet"
-        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
-        companion = collection_dir / "b1.csv"
-        companion.write_text("id,name\n1,a\n")
-        self._add(runner, initialized_catalog, collection_dir)
+        collection_dir, geoparquet, companion = self._added_with_companion(
+            runner, initialized_catalog, fixtures_dir
+        )
         _make_legacy(collection_dir)
         before = _sha(geoparquet)
 
         companion.write_text("id,name\n1,a\n2,b\n")
-        # The add fails the CSV here. See test_an_edited_companion_csv_is_added_again.
         runner.invoke(cli, ["add", "--portolan-dir", str(initialized_catalog), str(collection_dir)])
 
         assert _sha(geoparquet) == before
         assert self._parquets(collection_dir) == ["b1.parquet"]
 
     @pytest.mark.integration
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "https://github.com/portolan-sdi/portolan-cli/pull/1066: phase 3 of add "
-            "counts only the geo files of this run as companions of a directory. "
-            "Lane D1 fixes it in add.py and removes this marker. "
-            "Repro: scratchpad/d2/repro2.sh of the perf run."
-        ),
-    )
     def test_an_edited_companion_csv_is_added_again(
         self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
     ) -> None:
-        collection_dir = initialized_catalog / "buildings"
-        collection_dir.mkdir()
-        shutil.copy(
-            fixtures_dir / "realdata" / "open-buildings.parquet", collection_dir / "b1.parquet"
+        collection_dir, _geoparquet, companion = self._added_with_companion(
+            runner, initialized_catalog, fixtures_dir
         )
-        companion = collection_dir / "b1.csv"
-        companion.write_text("id,name\n1,a\n")
-        self._add(runner, initialized_catalog, collection_dir)
 
         companion.write_text("id,name\n1,a\n2,b\n")
         self._add(runner, initialized_catalog, collection_dir)
@@ -1275,13 +1270,9 @@ class TestALegacyOutputIsItsSourceOwn:
         self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
     ) -> None:
         """The one ambiguous case. The add takes the path that destroys nothing."""
-        collection_dir = initialized_catalog / "buildings"
-        collection_dir.mkdir()
-        geoparquet = collection_dir / "b1.parquet"
-        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
-        companion = collection_dir / "b1.csv"
-        companion.write_text("id,name\n1,a\n")
-        self._add(runner, initialized_catalog, collection_dir)
+        collection_dir, geoparquet, companion = self._added_with_companion(
+            runner, initialized_catalog, fixtures_dir
+        )
         _make_legacy(collection_dir)
         before = _sha(geoparquet)
 

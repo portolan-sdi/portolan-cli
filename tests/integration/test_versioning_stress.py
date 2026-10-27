@@ -1070,12 +1070,12 @@ class TestCatalogVersionsEdgeCases:
 
     @pytest.mark.integration
     def test_iceberg_backend_no_versions_json(self, tmp_path: Path) -> None:
-        """update_catalog_versions silently returns when no versions.json exists.
+        """update_catalog_index silently returns when no versions.json exists.
 
         This handles Iceberg backend or other storage backends that don't use
         file-based versioning.
         """
-        from portolan_cli.catalog import update_catalog_versions
+        from portolan_cli.catalog import CollectionSummary, update_catalog_index
 
         # Create catalog without versions.json (simulates Iceberg backend)
         catalog_root = tmp_path / "iceberg-catalog"
@@ -1085,12 +1085,9 @@ class TestCatalogVersionsEdgeCases:
         (portolan_dir / "config.yaml").write_text("catalog_id: iceberg-test\n")
 
         # Should not raise - just silently return
-        update_catalog_versions(
-            catalog_root=catalog_root,
-            collection_id="test-collection",
-            current_version="1.0.0",
-            asset_count=5,
-            total_size_bytes=1024,
+        update_catalog_index(
+            catalog_root,
+            {"test-collection": CollectionSummary("1.0.0", 5, 1024)},
         )
 
         # Verify no versions.json was created
@@ -1101,7 +1098,8 @@ class TestCatalogVersionsEdgeCases:
         """Corrupted catalog versions.json raises CatalogVersionsCorruptedError."""
         from portolan_cli.catalog import (
             CatalogVersionsCorruptedError,
-            update_catalog_versions,
+            CollectionSummary,
+            update_catalog_index,
         )
 
         # Create catalog with corrupted versions.json
@@ -1114,12 +1112,9 @@ class TestCatalogVersionsEdgeCases:
         (catalog_root / "versions.json").write_text('{"schema_version": "1.0.0", ')
 
         with pytest.raises(CatalogVersionsCorruptedError) as exc_info:
-            update_catalog_versions(
-                catalog_root=catalog_root,
-                collection_id="test-collection",
-                current_version="1.0.0",
-                asset_count=5,
-                total_size_bytes=1024,
+            update_catalog_index(
+                catalog_root,
+                {"test-collection": CollectionSummary("1.0.0", 5, 1024)},
             )
 
         # Error message should be helpful
@@ -1135,7 +1130,7 @@ class TestCatalogVersionsEdgeCases:
         """
         import threading
 
-        from portolan_cli.catalog import update_catalog_versions
+        from portolan_cli.catalog import CollectionSummary, update_catalog_index
 
         # Create catalog with empty versions.json
         catalog_root = tmp_path / "concurrent-catalog"
@@ -1160,12 +1155,9 @@ class TestCatalogVersionsEdgeCases:
                 import time
 
                 time.sleep(0.01)
-                update_catalog_versions(
-                    catalog_root=catalog_root,
-                    collection_id=coll_id,
-                    current_version="1.0.0",
-                    asset_count=10,
-                    total_size_bytes=1000,
+                update_catalog_index(
+                    catalog_root,
+                    {coll_id: CollectionSummary("1.0.0", 10, 1000)},
                 )
                 results[coll_id] = None
             except Exception as e:

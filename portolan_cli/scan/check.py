@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from portolan_cli.metadata.fix import FixReport
+    from portolan_cli.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +313,7 @@ def check_directory(
     workers: int | None = None,
     on_progress: Callable[[ConversionResult], None] | None = None,
     catalog_path: Path | None = None,
+    state: RunState | None = None,
 ) -> CheckReport:
     """Check a directory for cloud-native status and optionally fix.
 
@@ -340,6 +342,7 @@ def check_directory(
         on_progress: Optional callback for conversion progress (--fix mode).
         catalog_path: Optional catalog root for loading conversion config.
             If provided, loads conversion overrides from .portolan/config.yaml.
+        state: The run state, which parses the config once per command.
 
     Returns:
         CheckReport with file statuses, conversion results, and removal results.
@@ -370,7 +373,7 @@ def check_directory(
     # Load conversion overrides from config (if catalog_path provided)
     overrides: ConversionOverrides | None = None
     if catalog_path is not None:
-        overrides = get_conversion_overrides(catalog_path)
+        overrides = get_conversion_overrides(catalog_path, state=state)
 
     # Scan for geospatial files
     files = _scan_for_files(path)
@@ -412,6 +415,7 @@ def check_directory(
             catalog_path=catalog_path,
             workers=workers,
             force=force,
+            state=state,
         )
         report.conversion_report = conversion_report
 
@@ -590,6 +594,7 @@ def run_fix_workflow(
     force: bool = False,
     workers: int | None = None,
     on_progress: Callable[[ConversionResult], None] | None = None,
+    state: RunState | None = None,
 ) -> FixWorkflowOutcome:
     """Run the metadata and/or geo-asset fix workflow and return the reports.
 
@@ -607,6 +612,7 @@ def run_fix_workflow(
         force: Re-optimize already-valid COGs (raster-scoped, issue #530).
         workers: Parallel worker processes for conversion.
         on_progress: Optional per-conversion progress callback.
+        state: The run state of the command. The fix stages its versions in it.
 
     Returns:
         A :class:`FixWorkflowOutcome` with the fix reports and status flags.
@@ -649,7 +655,9 @@ def run_fix_workflow(
             from portolan_cli.metadata.fix import strip_removed_fields
 
             metadata_check_report = scan_catalog_metadata(catalog_root)
-            metadata_fix_report = fix_metadata(catalog_root, metadata_check_report, dry_run=dry_run)
+            metadata_fix_report = fix_metadata(
+                catalog_root, metadata_check_report, dry_run=dry_run, state=state
+            )
             metadata_fix_report.results.extend(strip_removed_fields(catalog_root, dry_run=dry_run))
 
             outcome.metadata_fix_report = metadata_fix_report
@@ -667,6 +675,7 @@ def run_fix_workflow(
             workers=workers,
             on_progress=on_progress,
             catalog_path=path,
+            state=state,
         )
 
     return outcome

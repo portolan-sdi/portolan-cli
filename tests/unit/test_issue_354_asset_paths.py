@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from portolan_cli.preparation import PreparedItem
+
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("no_extract_side_requests")]
 
 
@@ -210,13 +212,22 @@ class TestAssetKeyGeneration:
         )
 
 
+def _stage_and_commit(collection_dir: Path, prepared: PreparedItem) -> None:
+    """Stage the item as add does, in a run on the catalog above the collection."""
+    from portolan_cli.finalization import _stage_items
+    from portolan_cli.run_state import RunState
+    from portolan_cli.version_ops import commit_run
+
+    state = RunState.open(collection_dir.parent)
+    _stage_items(state, collection_dir.name, collection_dir, [prepared])
+    commit_run(state)
+
+
 class TestBatchUpdateVersionsAssetKeys:
-    """Tests for _batch_update_versions asset key generation."""
+    """Tests for the asset keys of the version that add stages."""
 
     def test_batch_update_collection_level_asset_keys(self, tmp_path: Path) -> None:
-        """_batch_update_versions generates correct keys for collection-level assets."""
-        from portolan_cli.add import PreparedItem, _batch_update_versions
-
+        """The staged version keys a collection-level asset by its file name."""
         collection_dir = tmp_path / "my_collection"
         collection_dir.mkdir()
 
@@ -236,11 +247,7 @@ class TestBatchUpdateVersionsAssetKeys:
             is_collection_level_asset=True,
         )
 
-        _batch_update_versions(
-            collection_dir=collection_dir,
-            collection_id="my_collection",
-            items=[prepared],
-        )
+        _stage_and_commit(collection_dir, prepared)
 
         # Check versions.json
         versions_path = collection_dir / "versions.json"
@@ -252,9 +259,7 @@ class TestBatchUpdateVersionsAssetKeys:
         assert "my_collection/my_collection.parquet" not in latest["assets"]
 
     def test_batch_update_item_level_asset_keys(self, tmp_path: Path) -> None:
-        """_batch_update_versions generates correct keys for item-level assets."""
-        from portolan_cli.add import PreparedItem, _batch_update_versions
-
+        """The staged version keys an item-level asset by its item directory."""
         collection_dir = tmp_path / "my_collection"
         item_dir = collection_dir / "my_item"
         item_dir.mkdir(parents=True)
@@ -273,11 +278,7 @@ class TestBatchUpdateVersionsAssetKeys:
             is_collection_level_asset=False,
         )
 
-        _batch_update_versions(
-            collection_dir=collection_dir,
-            collection_id="my_collection",
-            items=[prepared],
-        )
+        _stage_and_commit(collection_dir, prepared)
 
         versions_path = collection_dir / "versions.json"
         versions_data = json.loads(versions_path.read_text())

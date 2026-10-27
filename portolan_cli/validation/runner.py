@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from rashid.model import Report
 
     from portolan_cli.config import ConfigSource
+    from portolan_cli.run_state import RunState
 
 #: A structural/schema validator maps one object's raw JSON to schema errors.
 #: Injected by tests to keep them offline and independent of schema churn.
@@ -236,6 +237,7 @@ def run_check(
     structural_validator: Validator | None = None,
     schema_validator: Validator | None = None,
     live_prober: Any = None,
+    state: RunState | None = None,
 ) -> CheckOutcome:
     """Validate the catalog containing ``path`` and check its source files.
 
@@ -259,6 +261,8 @@ def run_check(
         structural_validator: Injected structural validator (testing).
         schema_validator: Injected schema validator (testing).
         live_prober: Injected HTTP prober (testing).
+        state: The run state of the command. ``check --fix`` passes one state
+            to the check before the fix and to the check after it.
 
     Returns:
         A :class:`CheckOutcome`. With ``metadata=True`` it also carries a
@@ -270,7 +274,8 @@ def run_check(
 
     root = _resolve_root(path)
     # One run state, so the three config readers below parse config.yaml once.
-    state = RunState.open(root)
+    if state is None:
+        state = RunState.open(root)
 
     report: Report | None = None
     notice: WorkflowNotice | None = None
@@ -307,6 +312,7 @@ def run_check(
                 dry_run=False,
                 workers=workers,
                 catalog_path=path,
+                state=state,
             )
 
     return CheckOutcome(

@@ -153,7 +153,7 @@ ran *before* the freshness pass, so an item that pass writes never meets the
 registry. Two paths cover the items a pass writes. A missing item is prepared
 with `prepare_missing_item`, then one `finalize_items` call writes the batch,
 the mirror writer folds `items.parquet` into that version, and
-`sync_catalog_index` brings the root index in step. The result matches an item
+`commit_run` updates the root index. The result matches an item
 that `add` wrote, byte for byte. An item the freshness pass updated goes
 through `fixers.repair_written_items` afterwards: the `links` and `checksum`
 sweeps plus an `items.parquet` refresh for the collections it touched. Without

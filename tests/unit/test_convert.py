@@ -2821,7 +2821,7 @@ class TestPartitionedOutputWithGeoparquetIO:
         if existed:
             layer.write_bytes(b"PAR1")
 
-        def _convert(source: Path, out: Path, settings: Any = None) -> list[Any]:
+        def _convert(source: Path, out: Path, settings: Any = None, **_: Any) -> list[Any]:
             layer.write_bytes(b"PAR1")
             return [LayerConversionResult(source, "roads", layer, True)]
 

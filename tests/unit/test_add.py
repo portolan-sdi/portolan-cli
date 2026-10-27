@@ -18,13 +18,13 @@ from portolan_cli.add import (
     ItemInfo,
     _get_asset_role,
     _get_media_type,
-    _update_versions,
     add,
     get_item_info,
     list_items,
 )
 from portolan_cli.plugins.builtin.formats import COG, GEOPARQUET
-from portolan_cli.sync.checksums import compute_dir_size
+from portolan_cli.preparation import PreparedItem
+from portolan_cli.sync.checksums import compute_checksum, compute_dir_size
 from portolan_cli.versions import read_versions
 
 
@@ -113,7 +113,6 @@ class TestAdd:
             patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.api.convert_vector") as mock_convert,
             patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
@@ -126,7 +125,6 @@ class TestAdd:
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {"geoparquet:feature_count": 1},
             )
-            mock_checksum.return_value = "abc123"
 
             result = add(
                 path=geojson_path,
@@ -159,7 +157,6 @@ class TestAdd:
             patch("portolan_cli.api.extract_cog_metadata") as mock_metadata,
             patch("portolan_cli.api.validate_cog", return_value=None),
             patch("portolan_cli.api.write_raster_thumbnail"),
-            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = COG
             mock_convert.return_value = output_file
@@ -172,7 +169,6 @@ class TestAdd:
                 # STAC v1.1.0: unified bands array (not raster:bands)
                 to_stac_properties=lambda: {"bands": [{"data_type": "uint8"}]},
             )
-            mock_checksum.return_value = "def456"
 
             result = add(
                 path=tiff_path,
@@ -230,7 +226,6 @@ class TestAdd:
             patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.api.convert_vector") as mock_convert,
             patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
@@ -243,7 +238,6 @@ class TestAdd:
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=dict,
             )
-            mock_checksum.return_value = "xyz789"
 
             result = add(
                 path=geojson_path,
@@ -286,7 +280,6 @@ class TestAdd:
             patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.api.convert_vector") as mock_convert,
             patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
@@ -299,7 +292,6 @@ class TestAdd:
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=dict,
             )
-            mock_checksum.return_value = "new123"
 
             result = add(
                 path=geojson_path,
@@ -618,7 +610,6 @@ class TestAddMissingBbox:
             patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.api.convert_vector") as mock_convert,
             patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
@@ -632,7 +623,6 @@ class TestAddMissingBbox:
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=dict,
             )
-            mock_checksum.return_value = "xyz789"
 
             with pytest.raises(ValueError, match="missing bounding box"):
                 add(
@@ -688,7 +678,6 @@ class TestAddItemIdDerivation:
             patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.api.convert_vector") as mock_convert,
             patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
             # Simulate conversion output in the SAME directory (in-place). The
@@ -709,7 +698,6 @@ class TestAddItemIdDerivation:
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {"geoparquet:feature_count": 1},
             )
-            mock_checksum.return_value = "abc123"
 
             result = add(
                 path=geojson_path,
@@ -755,7 +743,6 @@ class TestAddItemIdDerivation:
             patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.api.convert_vector") as mock_convert,
             patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
             # Simulate conversion output in the SAME directory (in-place). The
@@ -776,7 +763,6 @@ class TestAddItemIdDerivation:
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {"geoparquet:feature_count": 1},
             )
-            mock_checksum.return_value = "abc123"
 
             add(
                 path=geojson_path,
@@ -925,8 +911,30 @@ class TestPathSegmentValidation:
             )
 
 
+def _stage_item_assets(
+    collection_dir: Path, collection_id: str, item_id: str, files: list[Path]
+) -> None:
+    """Stage the files of one item as add does, and commit the run."""
+    from portolan_cli.finalization import _stage_items
+    from portolan_cli.run_state import RunState
+    from portolan_cli.version_ops import commit_run
+
+    prepared = PreparedItem(
+        item_id=item_id,
+        collection_id=collection_id,
+        format_type="vector",
+        bbox=[0.0, 0.0, 1.0, 1.0],
+        asset_files={f.name: (f, compute_checksum(f), f.stat().st_size) for f in files},
+        item_json_path=collection_dir / item_id / f"{item_id}.json",
+        is_collection_level_asset=False,
+    )
+    state = RunState.open(collection_dir.parent)
+    _stage_items(state, collection_id, collection_dir, [prepared])
+    commit_run(state)
+
+
 class TestUpdateVersionsHref:
-    """Tests for _update_versions producing catalog-root-relative hrefs.
+    """Tests for staged versions with catalog-root-relative hrefs.
 
     The href in versions.json must be relative to catalog root so that
     push.py and pull.py can resolve it via `catalog_root / href`.
@@ -934,7 +942,7 @@ class TestUpdateVersionsHref:
 
     @pytest.mark.unit
     def test_href_is_catalog_root_relative(self, tmp_path: Path) -> None:
-        """_update_versions produces href as collection_id/item_id/filename."""
+        """The staged version gives the href as collection_id/item_id/filename."""
         catalog_root = tmp_path / "catalog"
         collection_dir = catalog_root / "agriculture"
         item_dir = collection_dir / "census-2020"
@@ -944,14 +952,7 @@ class TestUpdateVersionsHref:
         output_file = item_dir / "census-2020.parquet"
         output_file.write_bytes(b"fake parquet data")
 
-        _update_versions(
-            collection_dir=collection_dir,
-            item_id="census-2020",
-            collection_id="agriculture",
-            asset_files={
-                "census-2020.parquet": (output_file, "abc123", 17),
-            },
-        )
+        _stage_item_assets(collection_dir, "agriculture", "census-2020", [output_file])
 
         versions = read_versions(collection_dir / "versions.json")
         # Asset key uses item-scoped format: {item_id}/{filename}
@@ -970,14 +971,7 @@ class TestUpdateVersionsHref:
         output_file = item_dir / "pop-data.parquet"
         output_file.write_bytes(b"fake parquet data")
 
-        _update_versions(
-            collection_dir=collection_dir,
-            item_id="pop-data",
-            collection_id="demographics",
-            asset_files={
-                "pop-data.parquet": (output_file, "def456", 17),
-            },
-        )
+        _stage_item_assets(collection_dir, "demographics", "pop-data", [output_file])
 
         versions = read_versions(collection_dir / "versions.json")
         # Asset key uses item-scoped format: {item_id}/{filename}
@@ -1200,7 +1194,6 @@ class TestMultiAssetAdd:
             patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.api.convert_vector") as mock_convert,
             patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
@@ -1213,7 +1206,6 @@ class TestMultiAssetAdd:
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {"geoparquet:feature_count": 1},
             )
-            mock_checksum.return_value = "abc123"
 
             result = add(
                 path=geojson_path,
@@ -1247,7 +1239,6 @@ class TestMultiAssetAdd:
             patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.api.convert_vector") as mock_convert,
             patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
@@ -1260,7 +1251,6 @@ class TestMultiAssetAdd:
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=dict,
             )
-            mock_checksum.return_value = "xyz789"
 
             result = add(
                 path=geojson_path,
@@ -1295,7 +1285,6 @@ class TestMultiAssetAdd:
             patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.api.convert_vector") as mock_convert,
             patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
@@ -1308,7 +1297,6 @@ class TestMultiAssetAdd:
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=dict,
             )
-            mock_checksum.return_value = "xyz789"
 
             result = add(
                 path=geojson_path,
@@ -1342,7 +1330,6 @@ class TestMultiAssetAdd:
             patch("portolan_cli.preparation.handler_for") as mock_detect,
             patch("portolan_cli.api.convert_vector") as mock_convert,
             patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
@@ -1355,7 +1342,6 @@ class TestMultiAssetAdd:
                 schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=dict,
             )
-            mock_checksum.return_value = "xyz789"
 
             result = add(
                 path=geojson_path,
@@ -1371,11 +1357,11 @@ class TestMultiAssetAdd:
 
 
 class TestMultiAssetUpdateVersions:
-    """Tests for multi-asset _update_versions behavior."""
+    """Tests for a staged version with several assets of one item."""
 
     @pytest.mark.unit
     def test_update_versions_multiple_assets(self, tmp_path: Path) -> None:
-        """_update_versions creates version entries for ALL provided assets."""
+        """The staged version records every asset of the item."""
         catalog_root = tmp_path / "catalog"
         collection_dir = catalog_root / "my-collection"
         item_dir = collection_dir / "my-item"
@@ -1389,15 +1375,8 @@ class TestMultiAssetUpdateVersions:
         metadata = item_dir / "metadata.xml"
         metadata.write_bytes(b"<meta/>")
 
-        _update_versions(
-            collection_dir=collection_dir,
-            item_id="my-item",
-            collection_id="my-collection",
-            asset_files={
-                "my-item.parquet": (parquet_file, "hash1", 100),
-                "thumbnail.png": (thumbnail, "hash2", 200),
-                "metadata.xml": (metadata, "hash3", 50),
-            },
+        _stage_item_assets(
+            collection_dir, "my-collection", "my-item", [parquet_file, thumbnail, metadata]
         )
 
         versions = read_versions(collection_dir / "versions.json")
@@ -1414,14 +1393,14 @@ class TestMultiAssetUpdateVersions:
         assert assets["my-item/thumbnail.png"].href == "my-collection/my-item/thumbnail.png"
         assert assets["my-item/metadata.xml"].href == "my-collection/my-item/metadata.xml"
 
-        # Checksums are computed by the backend from actual file content
+        # The staged checksums are the SHA-256 of each file
         assert len(assets["my-item/my-item.parquet"].sha256) == 64  # SHA-256 hex
         assert len(assets["my-item/thumbnail.png"].sha256) == 64
         assert len(assets["my-item/metadata.xml"].sha256) == 64
 
     @pytest.mark.unit
     def test_update_versions_single_asset_backward_compat(self, tmp_path: Path) -> None:
-        """_update_versions still works with a single asset (backward compatibility)."""
+        """The staged version records a single asset with the item-scoped key."""
         catalog_root = tmp_path / "catalog"
         collection_dir = catalog_root / "agriculture"
         item_dir = collection_dir / "census-2020"
@@ -1430,20 +1409,13 @@ class TestMultiAssetUpdateVersions:
         output_file = item_dir / "census-2020.parquet"
         output_file.write_bytes(b"fake parquet data")
 
-        _update_versions(
-            collection_dir=collection_dir,
-            item_id="census-2020",
-            collection_id="agriculture",
-            asset_files={
-                "census-2020.parquet": (output_file, "abc123", 17),
-            },
-        )
+        _stage_item_assets(collection_dir, "agriculture", "census-2020", [output_file])
 
         versions = read_versions(collection_dir / "versions.json")
         # Single asset still uses item-scoped key format
         asset = versions.versions[0].assets["census-2020/census-2020.parquet"]
         assert asset.href == "agriculture/census-2020/census-2020.parquet"
-        assert len(asset.sha256) == 64  # SHA-256 hex computed by backend
+        assert asset.sha256 == compute_checksum(output_file)
 
 
 class TestMultiAssetListAndInfo:

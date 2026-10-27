@@ -1410,13 +1410,13 @@ def merge_metadata_files(
     from ``path`` itself drop out (#815).
 
     Args:
-        path: Path to collection or subcatalog directory.
-        catalog_root: Catalog root directory.
-        read: Parses one file. A run state passes its memo.
+        path: The collection or subcatalog directory to resolve for.
+        catalog_root: The root of the catalog that holds ``path``.
+        read: The YAML reader. A run state passes its memo here.
 
     Returns:
-        A new mapping that shares nested values with the parses. Do not mutate
-        it. ``load_merged_metadata`` returns a copy.
+        The merged metadata. Its nested values are the parsed objects, so the
+        caller must not edit it. ``load_merged_metadata`` gives a copy.
     """
     count("config.merges")
     merged = _merge_files(find_portolan_files(path, METADATA_FILENAME, catalog_root), read)

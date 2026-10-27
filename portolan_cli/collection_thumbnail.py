@@ -42,6 +42,7 @@ from portolan_cli.versions import track_generated_assets
 
 if TYPE_CHECKING:
     from portolan_cli.config import ConfigSource
+    from portolan_cli.run_state import RunState
 from portolan_cli.viz.thumbnail import (
     generate_vector_thumbnail,
     get_thumbnail_config,
@@ -376,13 +377,17 @@ def _thumbnails_wanted(
 
 
 def would_generate_thumbnail(
-    collection_path: Path, catalog_root: Path, *, generate: bool | None = None
+    collection_path: Path,
+    catalog_root: Path,
+    *,
+    generate: bool | None = None,
+    state: ConfigSource | None = None,
 ) -> bool:
     """True when :func:`ensure_collection_thumbnail` would register something.
 
     Runs every gate except the render itself, so a dry run and a real run agree.
     """
-    if not _thumbnails_wanted(catalog_root, generate):
+    if not _thumbnails_wanted(catalog_root, generate, state):
         return False
     data = _load_collection(collection_path)
     if data is None or _has_thumbnail_asset(data):
@@ -400,7 +405,7 @@ def ensure_collection_thumbnail(
     force: bool = False,
     amend_latest: bool = False,
     verbose: bool = False,
-    state: ConfigSource | None = None,
+    state: RunState | None = None,
 ) -> Path | None:
     """Give one collection a thumbnail asset, if it needs and can have one.
 
@@ -419,7 +424,8 @@ def ensure_collection_thumbnail(
             instead of bumping. ``add`` sets this for collections it versioned
             this run, so one add stays one version.
         verbose: Emit a line per collection touched.
-        state: The run state, which parses the config once per run.
+        state: The run state. It parses the config once per run and holds
+            the staged version that the thumbnail joins.
 
     Returns:
         The registered thumbnail path, or None when nothing was registered.
@@ -460,6 +466,7 @@ def ensure_collection_thumbnail(
             message=f"{'Generated' if was_rendered else 'Registered'} thumbnail: {thumbnail.name}",
             only_if_missing=not force,
             amend_latest=amend_latest,
+            state=state,
         )
     except Exception as exc:
         warn(f"Failed to track {thumbnail.name} in versions.json: {exc}")
@@ -478,7 +485,7 @@ def ensure_collection_thumbnails(
     force: bool = False,
     versioned_collections: set[str] | None = None,
     verbose: bool = False,
-    state: ConfigSource | None = None,
+    state: RunState | None = None,
 ) -> None:
     """Ensure every affected collection carries a thumbnail asset.
 

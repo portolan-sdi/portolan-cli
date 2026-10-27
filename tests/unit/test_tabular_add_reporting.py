@@ -1,7 +1,7 @@
 """Regression tests for standalone tabular add reporting (issue #712).
 
 A first, successful add of a standalone tabular file reported it as already
-tracked and unchanged, because `_process_deferred_non_geo_files` appended it to
+tracked and unchanged, because the deferred phase of `add` appended it to
 `skipped` rather than `added`. The add itself worked, only the reporting lied.
 
 The spec puts a tabular collection on "the single-file collection pattern, no
@@ -91,7 +91,8 @@ def test_a_companion_that_meets_an_asset_key_collision_is_a_skip(tmp_path: Path)
     A single file reports the same collision as a skip. The copy goes again,
     so the item directory and the item JSON stay as they were.
     """
-    from portolan_cli.add import _process_deferred_non_geo_files
+    from portolan_cli.add import _DeferredPlan, _write_deferred
+    from portolan_cli.run_state import RunState
     from portolan_cli.stac import MergeStrategy
 
     item_dir = tmp_path / "land" / "scene"
@@ -108,16 +109,18 @@ def test_a_companion_that_meets_an_asset_key_collision_is_a_skip(tmp_path: Path)
     failures: list[object] = []
     reasons: dict[Path, str] = {}
 
-    _process_deferred_non_geo_files(
-        deferred_non_geo=[(companion, source_dir, "land")],
-        source_to_item_dir={source_dir: (item_dir, "land", "scene")},
-        source_to_collection_dir={},
-        catalog_root=tmp_path,
+    plan = _DeferredPlan(item_companions=[(companion, (item_dir, "land", "scene"))])
+
+    _write_deferred(
+        plan,
+        set(),
+        tmp_path,
         added=[],
         skipped=skipped,
-        failures=failures,
         merge_strategy=MergeStrategy.SMART,
+        touched_items=[],
         skip_reasons=reasons,
+        state=RunState.open(tmp_path),
     )
 
     assert failures == []

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from portolan_cli.add import AddFailure
     from portolan_cli.convert import ConversionResult
-    from portolan_cli.metadata.fix import FixReport, FixResult
+    from portolan_cli.metadata.fix import FixReport
     from portolan_cli.query import ItemInfo
     from portolan_cli.run_state import RunState
     from portolan_cli.sync.pull import PullResult
@@ -29,7 +29,7 @@ from rashid.model import Severity as RashidSeverity
 
 from portolan_cli import trace
 from portolan_cli.add_progress import AddProgressReporter, count_files
-from portolan_cli.catalog import find_catalog_root, sync_catalog_index
+from portolan_cli.catalog import find_catalog_root
 from portolan_cli.catalog_list import (
     AssetInfo,
     AssetStatus,
@@ -1724,22 +1724,33 @@ def _execute_check_workflow(
     fix_data: dict[str, Any] | None = None
     fix_failed = False
     pre_outcome = None
+    state: RunState | None = None
     if fix:
-        with trace.span("check.pre"):
-            pre_outcome = run_check(path, live=False, geo_assets=False, **check_kwargs)
-        with trace.span("check.fix", dry_run=dry_run):
-            fix_data, fix_failed = _run_fix_and_repairs(
-                path=path,
-                findings=list(pre_outcome.report.findings) if pre_outcome.report else [],
-                run_metadata=run_metadata,
-                run_geo_assets=run_geo_assets,
-                dry_run=dry_run,
-                remove_legacy=remove_legacy,
-                use_json=use_json,
-                verbose=verbose,
-                force=force,
-                workers=workers,
-            )
+        from portolan_cli.scan.check import resolve_catalog_root_for_check
+        from portolan_cli.version_ops import owned_run
+
+        # One run state for the check, the fix, and the re-check. Each pass
+        # parses the config through it and stages its versions in it. The block
+        # commits once, before the re-check reads the result (issue #995).
+        with owned_run(resolve_catalog_root_for_check(path) or path) as state:
+            with trace.span("check.pre"):
+                pre_outcome = run_check(
+                    path, live=False, geo_assets=False, state=state, **check_kwargs
+                )
+            with trace.span("check.fix", dry_run=dry_run):
+                fix_data, fix_failed = _run_fix_and_repairs(
+                    path=path,
+                    findings=list(pre_outcome.report.findings) if pre_outcome.report else [],
+                    run_metadata=run_metadata,
+                    run_geo_assets=run_geo_assets,
+                    dry_run=dry_run,
+                    remove_legacy=remove_legacy,
+                    use_json=use_json,
+                    verbose=verbose,
+                    force=force,
+                    workers=workers,
+                    state=state,
+                )
 
     if fix and dry_run and pre_outcome is not None:
         outcome = pre_outcome
@@ -1750,6 +1761,7 @@ def _execute_check_workflow(
                 live=live,
                 # --fix already ran the geo-asset conversion; re-scanning would repeat it.
                 geo_assets=run_geo_assets and not fix,
+                state=state,
                 **check_kwargs,
             )
     payload = build_check_payload(outcome, mode=mode, fix_failed=fix_failed)
@@ -1956,6 +1968,7 @@ def _run_fix_and_repairs(
     verbose: bool,
     force: bool = False,
     workers: int | None = None,
+    state: RunState,
 ) -> tuple[dict[str, Any], bool]:
     """Apply the fixer registry, then the metadata/geo-asset fix workflow.
 
@@ -1978,51 +1991,22 @@ def _run_fix_and_repairs(
         verbose: Show detailed output.
         force: Re-optimize already-valid COGs (raster-scoped, issue #530).
         workers: Parallel worker processes for conversion.
+        state: The run state of the command. Every pass stages in it, and the
+            caller commits it once.
 
     Returns:
         The JSON ``fix`` section and whether a fix failed.
     """
-    from portolan_cli.catalog import apply_catalog_human_titles
-    from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
-    from portolan_cli.scan.check import resolve_catalog_root_for_check
+    from portolan_cli.metadata.fix import FixReport
     from portolan_cli.validation import build_fix_payload
-    from portolan_cli.validation.fixers import apply_fixers
 
-    fixer_report = FixReport()
-    applied: list[str] = []
-    selected: list[str] = []
-    skip_reasons: dict[str, list[str]] = {}
-    title_results: list[FixResult] = []
-    if run_metadata:
-        catalog_root = resolve_catalog_root_for_check(path) or path
-        # Issue #815: a catalog publishes the title and description a human wrote
-        # in its own metadata.yaml. No rashid rule reports the drift, because
-        # rashid grades catalog.json alone and never reads metadata.yaml. The
-        # sweep therefore runs on its own, like the item-freshness pass below,
-        # and not through the finding-driven registry.
-        with trace.span("check.fix.title_sweep"):
-            title_results = [
-                FixResult(
-                    file_path=catalog_path,
-                    action=FixAction.UPDATED,
-                    success=True,
-                    message="Applied the metadata.yaml title/description",
-                )
-                for catalog_path in apply_catalog_human_titles(catalog_root, dry_run=dry_run)
-            ]
-        if findings:
-            skip = {"convert"} if run_geo_assets else set()
-            with trace.span("check.fix.fixers", findings=len(findings)):
-                run = apply_fixers(catalog_root, findings, dry_run=dry_run, skip=skip)
-            fixer_report = run.report
-            # What the fixers *did*, not what the findings asked for: a fixer
-            # that ran and changed nothing is a skip with a reason, never an
-            # "Applied".
-            applied = run.applied
-            selected = run.selected
-            skip_reasons = run.skip_reasons
-        if title_results:
-            fixer_report = FixReport(results=[*title_results, *fixer_report.results])
+    fixer_report, applied, selected, skip_reasons = _run_fixer_registry(
+        findings=findings,
+        run_metadata=run_metadata,
+        run_geo_assets=run_geo_assets,
+        dry_run=dry_run,
+        state=state,
+    )
 
     with trace.span("check.fix.freshness"):
         legacy_data, legacy_failed, written_items = _run_legacy_fix_workflow(
@@ -2035,18 +2019,20 @@ def _run_fix_and_repairs(
             verbose=verbose,
             force=force,
             workers=workers,
+            state=state,
         )
 
-    # The registry above ran against findings from the pre-fix check, so it never
-    # saw an item the freshness pass has only just written. Repair those now, or
-    # `--fix` publishes an item with no links and no checksums and reports more
-    # defects than it started with (#709).
+    # The registry above ran against findings from the pre-fix check, so it
+    # never saw an item the freshness pass has only just written. Repair
+    # those now, or `--fix` publishes an item with no links and no checksums
+    # and reports more defects than it started with (#709).
     if run_metadata and written_items:
         from portolan_cli.validation.fixers import repair_written_items
 
-        catalog_root = resolve_catalog_root_for_check(path) or path
         with trace.span("check.fix.repair", items=len(written_items)):
-            repairs = repair_written_items(catalog_root, written_items, dry_run=dry_run)
+            repairs = repair_written_items(
+                state.catalog_root, written_items, dry_run=dry_run, state=state
+            )
         if repairs:
             fixer_report = FixReport(results=[*fixer_report.results, *repairs])
 
@@ -2070,6 +2056,55 @@ def _run_fix_and_repairs(
     return fix_data, legacy_failed or fixer_report.failure_count > 0
 
 
+def _run_fixer_registry(
+    *,
+    findings: list[Any],
+    run_metadata: bool,
+    run_geo_assets: bool,
+    dry_run: bool,
+    state: RunState,
+) -> tuple[FixReport, list[str], list[str], dict[str, list[str]]]:
+    """Run the title sweep and the fixers that the AUTO findings call for.
+
+    Returns:
+        The fixer report, the applied and selected fixer keys, and the reasons
+        that the fixers which changed nothing gave.
+    """
+    from portolan_cli.catalog import apply_catalog_human_titles
+    from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
+    from portolan_cli.validation.fixers import apply_fixers
+
+    if not run_metadata:
+        return FixReport(), [], [], {}
+    catalog_root = state.catalog_root
+    # Issue #815: a catalog publishes the title and description a human wrote
+    # in its own metadata.yaml. No rashid rule reports the drift, because
+    # rashid grades catalog.json alone and never reads metadata.yaml. The
+    # sweep therefore runs on its own, like the item-freshness pass, and not
+    # through the finding-driven registry.
+    with trace.span("check.fix.title_sweep"):
+        title_results = [
+            FixResult(
+                file_path=catalog_path,
+                action=FixAction.UPDATED,
+                success=True,
+                message="Applied the metadata.yaml title/description",
+            )
+            for catalog_path in apply_catalog_human_titles(
+                catalog_root, dry_run=dry_run, state=state
+            )
+        ]
+    if not findings:
+        return FixReport(results=title_results), [], [], {}
+    skip = {"convert"} if run_geo_assets else set()
+    with trace.span("check.fix.fixers", findings=len(findings)):
+        run = apply_fixers(catalog_root, findings, dry_run=dry_run, skip=skip, state=state)
+    # The report holds what the fixers did, not what the findings asked for. A
+    # fixer that ran and changed nothing is a skip with a reason.
+    report = FixReport(results=[*title_results, *run.report.results])
+    return report, run.applied, run.selected, run.skip_reasons
+
+
 def _run_legacy_fix_workflow(
     *,
     path: Path,
@@ -2081,6 +2116,7 @@ def _run_legacy_fix_workflow(
     verbose: bool,
     force: bool = False,
     workers: int | None = None,
+    state: RunState | None = None,
 ) -> tuple[dict[str, Any], bool, list[Path]]:
     """Run item-freshness and geo-asset conversion, and render their results.
 
@@ -2109,6 +2145,7 @@ def _run_legacy_fix_workflow(
         force=force,
         workers=workers,
         on_progress=show_conversion_progress,
+        state=state,
     )
 
     # Metadata-only fix that found no catalog root: surface and exit (issue #384).
@@ -3572,7 +3609,6 @@ def add_cmd(
     )
     # The mirrors stage their versions in the state, so the commit runs last.
     commit_run(state)
-    sync_catalog_index(catalog_root, affected)
 
     # Output combined results (after all processing complete)
     _output_add_results(all_added, skips, all_failures, verbose, use_json)
@@ -4974,7 +5010,9 @@ def config() -> None:
     """
 
 
-@config.command("set")
+# A negative number such as -1 is a VALUE. Click reads an unknown token that
+# starts with "-" as an option and fails, so the command passes it through.
+@config.command("set", context_settings={"ignore_unknown_options": True})
 @click.argument("key")
 @click.argument("value")
 @click.option(
