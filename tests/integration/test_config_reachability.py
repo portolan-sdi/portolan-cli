@@ -1101,7 +1101,7 @@ def test_thumbnails_basemap_opacity_fades_the_tiles(
 ) -> None:
     from PIL import Image
 
-    from tests.conftest import STUB_TILE_RGBA
+    from tests.perf.runner import STUB_TILE_RGBA
 
     source = _copy(POINTS_GEOJSON, catalog / "places" / "places.geojson")
     configure(run_cli, catalog, form, {"thumbnails.basemap.opacity": ("0.5", 0.5)})

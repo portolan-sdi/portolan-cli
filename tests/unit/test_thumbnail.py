@@ -6,17 +6,14 @@ Tests vector thumbnail generation from PMTiles and GeoParquet sources.
 from __future__ import annotations
 
 import json
-from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.conftest import STUB_TILE_RGBA
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
+from portolan_cli import trace
+from tests.perf.runner import STUB_TILE_RGBA
 
 # =============================================================================
 # Phase 1: ThumbnailConfig Tests
@@ -1250,22 +1247,7 @@ _STUB_TILE_RGBA = STUB_TILE_RGBA
 _REALDATA = Path(__file__).parents[1] / "fixtures" / "realdata"
 
 
-@contextmanager
-def _tracing() -> Iterator[None]:
-    """Turn the trace counters on for one block."""
-    from portolan_cli import trace
-
-    trace.reset()
-    trace.enable()
-    try:
-        yield
-    finally:
-        trace.reset()
-
-
 def _counter(name: str) -> int:
-    from portolan_cli import trace
-
     return trace.counters().get(name, 0)
 
 
@@ -1346,7 +1328,7 @@ class TestCheapBasemap:
         from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
 
         gpq = _copy_fixture(name, tmp_path)
-        with _tracing():
+        with trace.tracing():
             result = generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig())
             draws = _counter("thumbnail.draws")
             fetched = _counter("tiles.fetched")
@@ -1437,7 +1419,7 @@ class TestCheapBasemap:
 
         first = _copy_fixture("open-buildings.parquet", tmp_path / "a")
         second = _copy_fixture("open-buildings.parquet", tmp_path / "b")
-        with _tracing():
+        with trace.tracing():
             assert generate_thumbnail_from_geoparquet(first, ThumbnailConfig())
             after_first = _counter("tiles.fetched")
             assert generate_thumbnail_from_geoparquet(second, ThumbnailConfig())
@@ -1518,7 +1500,7 @@ class TestCheapBasemap:
         from portolan_cli.viz.thumbnail import ThumbnailConfig, _frame_bounds, _render_geometries
 
         bounds = (-122.5, 37.5, -122.0, 38.0)
-        geometries = [
+        geometries: list[dict[str, Any]] = [
             {
                 "type": "Polygon",
                 "coordinates": [[[-122.5, 37.5], [-122.0, 37.5], [-122.0, 38.0], [-122.5, 37.5]]],
@@ -1527,7 +1509,7 @@ class TestCheapBasemap:
             {"type": "Point", "coordinates": [-122.2, 37.8], "properties": {}},
         ]
         output = tmp_path / "data.thumb.jpg"
-        with _tracing():
+        with trace.tracing():
             assert _render_geometries(geometries, output, ThumbnailConfig(), bounds=bounds)
             draws = _counter("thumbnail.draws")
             fetched = _counter("tiles.fetched")
@@ -1597,7 +1579,7 @@ class TestCheapBasemap:
         gpq = tmp_path / "mislabeled.parquet"
         gdf.to_parquet(gpq)
 
-        with _tracing():
+        with trace.tracing():
             result = generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig())
             draws = _counter("thumbnail.draws")
 
