@@ -12,12 +12,14 @@ Additionally, it provides cloud-native status classification (see issue #10):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from portolan_cli import extension_registry as _reg
 
@@ -46,6 +48,8 @@ from portolan_cli.format_families import (
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
     import pyarrow.parquet as pq
 
     from portolan_cli.config import ConfigSource
@@ -53,6 +57,91 @@ if TYPE_CHECKING:
     from portolan_cli.plugins.formats import FormatHandler
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+
+class RunMemo(Protocol):
+    """The memo and checksum methods of ``run_state.RunState``.
+
+    This module does not import ``run_state``. The ``viz`` modules import
+    this module, and ``run_state`` reaches ``sync``, which ``viz`` must not
+    reach.
+    """
+
+    def memo(self, kind: str, path: Path, loader: Callable[[Path], _T]) -> _T:
+        """Load a value derived from one file once per run."""
+        ...
+
+    def checksum(self, path: Path) -> str:
+        """The SHA-256 of one file, hashed once per run."""
+        ...
+
+
+#: The run state of the command that runs. A format handler and a ``viz``
+#: function take no run state, so ``add`` and ``prepare_item`` set this. A
+#: footer read, the provenance record, and the COG reads then go through the
+#: run memo. The memo key holds the file's stat, so a rewrite reads again.
+_RUN: ContextVar[RunMemo | None] = ContextVar("portolan_run", default=None)
+
+
+@contextlib.contextmanager
+def in_run(state: RunMemo) -> Iterator[None]:
+    """Make the reads and the converters below go through the memo of ``state``."""
+    token = _RUN.set(state)
+    try:
+        yield
+    finally:
+        _RUN.reset(token)
+
+
+def run_scope(state: RunMemo | None) -> contextlib.AbstractContextManager[None]:
+    """:func:`in_run` for ``state``, or a scope that does nothing when it is None."""
+    return in_run(state) if state is not None else contextlib.nullcontext()
+
+
+def current_run() -> RunMemo | None:
+    """The run state that :func:`in_run` set, or None."""
+    return _RUN.get()
+
+
+def remember(kind: str, path: Path, value: Any) -> None:
+    """Put a value read from ``path`` in the memo of the current run, if one runs.
+
+    A writer that read its output before it moved the output into place gives
+    the value here. The next ``state.memo(kind, path, ...)`` returns it while
+    the file stays as it is.
+    """
+    state = _RUN.get()
+    if state is not None:
+        state.memo(kind, path, lambda _path: value)
+
+
+def parquet_footer(path: Path) -> pq.ParquetFile:
+    """Read the footer of a Parquet file, once per run.
+
+    The file closes before this returns. The closed file still answers
+    ``metadata`` and ``schema_arrow``, which is all a footer reader needs.
+    Inside :func:`in_run`, the run memo keeps the footer while the file
+    stays as it is, so each footer reader of one file shares one read.
+
+    Raises:
+        Exception: The error of pyarrow for a file that is not Parquet.
+    """
+    state = _RUN.get()
+    if state is not None and path.is_file():
+        return state.memo("parquet.footer", path, _read_footer)
+    return _read_footer(path)
+
+
+def _read_footer(path: Path) -> pq.ParquetFile:
+    import pyarrow.parquet as pq
+
+    count("parquet.opens")
+    footer = pq.ParquetFile(path)
+    footer.close()
+    return footer
+
 
 # =============================================================================
 # Cloud-Native Status Classification (Issue #10)
@@ -155,24 +244,17 @@ def read_geo_metadata(source: Path | pq.ParquetFile) -> dict[str, Any] | None:
 
     Args:
         source: Path to a Parquet file, or a file the caller already opened.
-            An open file gives its raw footer (``metadata.metadata``), so the
-            caller pays for one footer read, not two.
+            A path goes through :func:`parquet_footer`, so the readers of one
+            file in one run share one footer read.
 
     Returns:
         The parsed GeoParquet metadata object. None for a plain Parquet file,
         for a ``geo`` value that is not a JSON object, and for an unreadable
         file.
     """
-    from geoparquet_io.core.duckdb_metadata import (  # type: ignore[import-untyped]
-        get_geo_metadata,
-    )
-
     try:
-        if isinstance(source, Path):
-            count("parquet.opens")
-            geo = get_geo_metadata(str(source))
-        else:
-            geo = json.loads((source.metadata.metadata or {}).get(b"geo", b"null"))
+        footer = parquet_footer(source) if isinstance(source, Path) else source
+        geo = json.loads((footer.metadata.metadata or {}).get(b"geo", b"null"))
     except Exception:  # noqa: BLE001 - an unreadable file is not a GeoParquet
         logger.debug("Failed to read GeoParquet metadata from %s", source, exc_info=True)
         return None

@@ -96,6 +96,7 @@ from portolan_cli.finalization import (
 )
 from portolan_cli.format_families import VECTOR
 from portolan_cli.formats import (
+    in_run,
     is_geoparquet,
     is_multilayer,
     list_layers,
@@ -1282,7 +1283,8 @@ def add_files(
     """
     from portolan_cli.version_ops import owned_run
 
-    with owned_run(catalog_root, state) as state:
+    # Every footer read of the run goes through the run memo (formats.in_run).
+    with owned_run(catalog_root, state) as state, in_run(state):
         skipped: list[Path] = []
 
         # Track which nested collections have had their catalogs set up

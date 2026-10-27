@@ -15,7 +15,7 @@ import pyarrow.parquet as pq
 from pyproj import CRS
 from pyproj.exceptions import CRSError
 
-from portolan_cli.formats import read_geo_metadata
+from portolan_cli.formats import parquet_footer, read_geo_metadata
 from portolan_cli.models.schema import ColumnSchema, SchemaModel
 from portolan_cli.trace import count
 
@@ -164,10 +164,14 @@ def extract_geoparquet_metadata(path: Path, *, state: _Memo | None = None) -> Ge
 
 
 def _read_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
-    # Open parquet file (metadata only)
-    count("parquet.opens")
-    pf = pq.ParquetFile(path)
+    return geoparquet_metadata_of(parquet_footer(path))
 
+
+def geoparquet_metadata_of(pf: pq.ParquetFile) -> GeoParquetMetadata:
+    """Read the GeoParquet metadata from an open footer.
+
+    A caller that has the footer open for another reason reads it once.
+    """
     # Parse GeoParquet geo metadata
     geo_metadata = read_geo_metadata(pf) or {}
 
@@ -215,15 +219,15 @@ class SpatialLayout(NamedTuple):
 
 
 def open_footer(path: Path) -> pq.ParquetFile | None:
-    """Open a Parquet file for its footer, or None when it does not open.
+    """Read the footer of a Parquet file, or None when it does not open.
 
-    The caller closes the file. :func:`read_spatial_layout` and
-    :func:`read_rewrite_fidelity` both take the open file, so a caller that
-    needs both answers reads the footer once.
+    The file is closed, and it still answers the footer questions
+    (:func:`formats.parquet_footer`). :func:`read_spatial_layout` and
+    :func:`read_rewrite_fidelity` both take it, so a caller that needs both
+    answers reads the footer once.
     """
     try:
-        count("parquet.opens")
-        return pq.ParquetFile(path)
+        return parquet_footer(path)
     except Exception:  # noqa: BLE001 - an unreadable file has no footer to read
         return None
 
@@ -305,12 +309,26 @@ class RewriteFidelity(NamedTuple):
         columns: Every column name in the schema.
         extra_keys: The footer keys the writer does not own, such as a
             publisher's provenance key.
+        geo_columns: The publisher fields of each geometry column in ``geo``:
+            ``crs`` when the key is present, ``edges``, ``epoch``, and
+            ``orientation``. None when the gate has nothing to compare.
+        field_metadata: The field metadata of each column, without the keys
+            that Arrow and Parquet write. None when the gate has nothing to
+            compare.
     """
 
     row_count: int
     crs: Any
     columns: frozenset[str]
     extra_keys: frozenset[bytes] = frozenset()
+    geo_columns: dict[str, dict[str, Any]] | None = None
+    field_metadata: dict[str, dict[bytes, bytes]] | None = None
+
+
+#: The fields of a ``geo`` column entry that a publisher sets and a rewrite
+#: must keep. The writer recomputes ``bbox``, ``covering``, ``encoding``, and
+#: ``geometry_types``.
+_PUBLISHER_GEO_FIELDS = ("crs", "edges", "epoch", "orientation")
 
 
 def read_rewrite_fidelity(source: Path | pq.ParquetFile) -> RewriteFidelity | None:
@@ -347,11 +365,26 @@ def _rewrite_fidelity(parquet: pq.ParquetFile) -> RewriteFidelity:
     column_meta = columns.get(primary, {}) if isinstance(columns, dict) else {}
     crs = column_meta.get("crs") if isinstance(column_meta, dict) else None
     metadata = parquet.metadata.metadata or {}
+    geo_columns = {
+        name: {key: entry[key] for key in _PUBLISHER_GEO_FIELDS if key in entry}
+        for name, entry in (columns.items() if isinstance(columns, dict) else ())
+        if isinstance(entry, dict)
+    }
+    field_metadata = {
+        field.name: {
+            key: value
+            for key, value in (field.metadata or {}).items()
+            if not key.startswith((b"ARROW:", b"PARQUET:"))
+        }
+        for field in parquet.schema_arrow
+    }
     return RewriteFidelity(
         row_count=parquet.metadata.num_rows,
         crs=crs,
         columns=frozenset(parquet.schema_arrow.names),
         extra_keys=frozenset(metadata) - _WRITER_OWNED_KEYS,
+        geo_columns=geo_columns,
+        field_metadata={name: kept for name, kept in field_metadata.items() if kept},
     )
 
 

@@ -138,6 +138,7 @@ def init_extracted_catalog(
         then stops, because no catalog exists.
     """
     from portolan_cli.catalog import CatalogState, detect_state, init_catalog
+    from portolan_cli.formats import run_scope
     from portolan_cli.output import warn
 
     parquet_files = collect_successful_parquet_files(output_dir, report)
@@ -178,7 +179,9 @@ def init_extracted_catalog(
         )
 
     if post_init is not None:
-        post_init(output_dir, parquet_files, fresh)
+        # The hook reads footers. The add reads them again through the run memo.
+        with run_scope(state):
+            post_init(output_dir, parquet_files, fresh)
 
     added = add_extracted_files(parquet_files, output_dir, state=state)
     return parquet_files, {item.collection_id for item in added}

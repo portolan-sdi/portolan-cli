@@ -18,13 +18,12 @@ import json
 import logging
 import time
 import warnings
-from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
-from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
+from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
 from portolan_cli.conversion_config import (
     GDAL_COMPRESS_NAMES,
     PREDICTOR_COMPRESSIONS,
@@ -43,7 +42,11 @@ from portolan_cli.errors import (
 )
 from portolan_cli.formats import (
     CloudNativeStatus,
+    current_run,
     get_cloud_native_status,
+    in_run,
+    remember,
+    run_scope,
 )
 from portolan_cli.trace import count, current_span, span
 from portolan_cli.versions import read_versions, versions_asset_key
@@ -52,7 +55,7 @@ from portolan_cli.viz.thumbnail import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
 
     from portolan_cli.plugins.formats import FormatHandler
     from portolan_cli.run_state import RunState
@@ -417,7 +420,8 @@ def convert_file(
     Raises:
         FileNotFoundError: If the source file does not exist.
     """
-    with span("convert.file", file=source.name):
+    # Each footer read of the file goes through the run memo.
+    with span("convert.file", file=source.name), run_scope(state):
         start_time = time.perf_counter()
 
         if not source.exists():
@@ -575,8 +579,7 @@ def convert_with_handler(
         target = claim_output(source, expected, state=state)
     if target == expected:
         return handler.convert(source, output_dir, catalog_root)
-    written = _convert_to(handler, source, output_dir, catalog_root, target)
-    return settle_output(source, expected, written, state=state, geometry_required=True)
+    return _convert_to(handler, source, output_dir, catalog_root, target, expected, state)
 
 
 #: The Parquet footer key that names the source of a converted file. Its value
@@ -587,30 +590,13 @@ PROVENANCE_KEY = "portolan:source"
 COG_PROVENANCE_TAG = "PORTOLAN_SOURCE"
 
 
-#: The checksum function of the run that converts. A format handler takes no
-#: run state, so ``prepare_item`` sets this around the conversion, as
-#: ``conversion_config.settings_override`` does for the settings. The record
-#: then reuses the run's hash of the source, and the asset scan hits the same
-#: memo, so ``add`` hashes each source once.
-_RUN_CHECKSUM: ContextVar[Callable[[Path], str] | None] = ContextVar(
-    "portolan_run_checksum", default=None
-)
-
-
-@contextlib.contextmanager
-def run_checksums(checksum: Callable[[Path], str]) -> Iterator[None]:
-    """Make :func:`provenance_record` hash through ``checksum``, such as ``RunState.checksum``."""
-    token = _RUN_CHECKSUM.set(checksum)
-    try:
-        yield
-    finally:
-        _RUN_CHECKSUM.reset(token)
-
-
 def provenance_record(source: Path) -> str:
     """The provenance value a converter writes into the output of ``source``."""
-    checksum = _RUN_CHECKSUM.get()
-    if checksum is None:
+    state = current_run()
+    checksum: Callable[[Path], str]
+    if state is not None:
+        checksum = state.checksum
+    else:
         from portolan_cli.sync.checksums import compute_checksum, compute_dir_checksum
 
         # A FileGDB source is a directory.
@@ -715,12 +701,22 @@ def _collection_dir_of(path: Path) -> Path | None:
     return None
 
 
-def _legacy_output_of(output: Path, source: Path, state: RunState | None) -> bool:
+def _legacy_output_of(
+    output: Path, source: Path, state: RunState | None, *, layer: bool = False
+) -> bool:
     """Report whether versions.json shows that an add of ``source`` wrote ``output``.
 
     Portolan 0.8.0 wrote no provenance record. Its versions.json tracks the
     output and the source side by side, and the output entry has no
     ``source_path``. Every output entry that an add writes now has one.
+
+    Args:
+        output: The file at the output name.
+        source: The source file.
+        state: The run state, for one ``versions.json`` read per run.
+        layer: ``output`` is the layer output ``<stem>_<layer>.parquet`` of a
+            multi-layer file. 0.8.0 did not track a GeoPackage beside its
+            layer outputs, so the source need not be tracked.
     """
     if output.parent != source.parent:
         return False
@@ -742,12 +738,32 @@ def _legacy_output_of(output: Path, source: Path, state: RunState | None) -> boo
     return (
         tracked is not None
         and tracked.source_path is None
-        and versions_asset_key(source, collection_dir) in assets
+        and (layer or versions_asset_key(source, collection_dir) in assets)
     )
 
 
 def _footer_shape(path: Path) -> tuple[bool, frozenset[str]] | None:
-    """Whether a Parquet file is GeoParquet, and its column names. None when unreadable."""
+    """The kind and the layout of an output file. None when it does not open.
+
+    A Parquet file gives whether it is GeoParquet and its column names. A
+    GeoTIFF gives True and its grid: the size, the band types, and the CRS.
+    """
+    if path.suffix.lower() in (".tif", ".tiff"):
+        import rasterio
+
+        try:
+            count("raster.opens")
+            with rasterio.open(path) as dataset:
+                return True, frozenset(
+                    {
+                        f"size={dataset.width}x{dataset.height}",
+                        f"bands={','.join(dataset.dtypes)}",
+                        f"crs={dataset.crs}",
+                    }
+                )
+        except Exception:  # noqa: BLE001 - an unreadable file has no shape
+            return None
+
     import pyarrow.parquet as pq
 
     try:
@@ -766,40 +782,56 @@ def settle_output(
     *,
     state: RunState | None = None,
     geometry_required: bool = False,
+    layer: bool = False,
 ) -> Path:
-    """Move the distinct output of a tabular source over the output 0.8.0 wrote.
+    """Move the distinct output of a source over the output 0.8.0 wrote.
 
-    0.8.0 converted a CSV with geometry, and with ``tabular.convert`` any CSV,
-    over the Parquet file of its stem. It tracked a CSV with no geometry
-    beside a GeoParquet as a companion. The two pairs look the same in
-    versions.json, so :func:`claim_output` sends a tabular source to the
-    distinct name. This function then compares the file it wrote with the
-    tracked file of the stem. The written file replaces it only when both are
-    GeoParquet, or both are plain Parquet, and they have the same columns.
-    Any other file stays, so a companion CSV that gains geometry beside a
-    foreign GeoParquet keeps its distinct output.
+    0.8.0 converted a source over the file of its stem, and it wrote no
+    provenance record and no ``source_path``. It also tracked a same-stem
+    source beside the operator's own file as a companion, and an add of
+    another file tracks both files with no ``source_path`` today. The pairs
+    look the same in versions.json, so :func:`claim_output` sends the source
+    to the distinct name. This function then compares the file it wrote with
+    the tracked file of the stem. The written file replaces it only when both
+    are GeoParquet, or both are plain Parquet, with the same columns, or both
+    are rasters with the same grid. Any other file stays, so an edited
+    GeoJSON beside the operator's GeoParquet keeps its distinct output.
 
     Args:
-        source: The tabular source.
+        source: The source file.
         output: The path the converter names, ``<stem>.parquet``.
         written: The path the conversion wrote.
         state: The run state, for one ``versions.json`` read per run.
         geometry_required: Replace only with a GeoParquet file.
+        layer: ``output`` is the output of one layer of a multi-layer file.
 
     Returns:
         The path that holds the output now.
     """
-    if written == output or source.suffix.lower() not in TABULAR_EXTENSIONS:
-        return written
-    if not output.is_file() or _recorded_source(output) is not None:
-        return written
-    if not _legacy_output_of(output, source, state):
-        return written
-    shape = _footer_shape(written)
-    if shape is None or shape != _footer_shape(output) or (geometry_required and not shape[0]):
+    if not _settles(source, output, written, state, geometry_required, layer=layer):
         return written
     written.replace(output)
     return output
+
+
+def _settles(
+    source: Path,
+    output: Path,
+    written: Path,
+    state: RunState | None,
+    geometry_required: bool,
+    *,
+    layer: bool = False,
+) -> bool:
+    """Report whether ``written`` replaces the 0.8.0 output at ``output``. See :func:`settle_output`."""
+    if written == output or not output.is_file() or _recorded_source(output) is not None:
+        return False
+    if not _legacy_output_of(output, source, state, layer=layer):
+        return False
+    shape = _footer_shape(written)
+    if shape is None or shape != _footer_shape(output):
+        return False
+    return shape[0] or not geometry_required
 
 
 def distinct_output_path(source: Path, output: Path) -> Path:
@@ -813,11 +845,12 @@ def claim_output(source: Path, output: Path, *, state: RunState | None = None) -
 
     A converter names its output after the source stem, so ``b1.csv`` and a
     GeoParquet ``b1.parquet`` claim one name. A file at that name is the
-    source's to replace when its provenance record names the source, or when
-    it has no record and versions.json shows that an add of the source wrote
-    it (:func:`_legacy_output_of`). Any other file belongs to the operator. The
-    output then takes the name ``<stem>-<source extension>``, such as
-    ``b1-csv.parquet``, and the asset key follows the new stem.
+    source's to replace when its provenance record names the source. Any other
+    file can belong to the operator. The output then takes the name
+    ``<stem>-<source extension>``, such as ``b1-csv.parquet``, and the asset
+    key follows the new stem. A file with no record can be the output of a
+    0.8.0 add. :func:`settle_output` moves the new output over it after the
+    conversion, when the two files have the same layout.
 
     Args:
         source: The file to convert.
@@ -838,11 +871,6 @@ def claim_output(source: Path, output: Path, *, state: RunState | None = None) -
     distinct = distinct_output_path(source, output)
     if distinct.exists() and _produced_by(distinct, source, state):
         return distinct
-    # A tabular source goes to the distinct name. settle_output decides after
-    # the conversion, because only the output shows whether it has geometry.
-    tabular = source.suffix.lower() in TABULAR_EXTENSIONS
-    if owned is None and not tabular and _legacy_output_of(output, source, state):
-        return output
     if not distinct.exists():
         return distinct
     raise OutputExistsError(source.name, output.name)
@@ -854,6 +882,8 @@ def _convert_to(
     output_dir: Path,
     catalog_root: Path | None,
     target: Path,
+    expected: Path,
+    state: RunState | None,
 ) -> Path:
     """Convert ``source`` with its handler and store the output at ``target``.
 
@@ -861,6 +891,10 @@ def _convert_to(
     directory. Each file it writes moves to ``output_dir``, with the output
     stem changed to the stem of ``target``. A side file whose new name holds a
     file stays out, so the move replaces nothing but ``target``.
+
+    When the output replaces the 0.8.0 output at ``expected`` (see
+    :func:`settle_output`), every file keeps the name the handler gave it, and
+    each one replaces the file of that name, such as the old thumbnail.
     """
     import shutil
     import tempfile
@@ -871,13 +905,16 @@ def _convert_to(
         if produced.parent != Path(scratch):
             # The handler wrote outside the directory it was given.
             return produced
+        settles = _settles(source, expected, produced, state, geometry_required=True)
+        if settles:
+            target = expected
         for entry in sorted(Path(scratch).iterdir()):
             if entry.name == produced.name:
                 shutil.move(entry, target)
                 continue
             name = target.stem + entry.name[len(stem) :] if entry.name.startswith(stem) else ""
-            if name and not (output_dir / name).exists():
-                shutil.move(entry, output_dir / name)
+            if name and (settles or not (output_dir / name).exists()):
+                entry.replace(output_dir / name)
     return target
 
 
@@ -1244,6 +1281,42 @@ _GTIFF_QUALITY_OPTION = {"JPEG": "jpeg_quality", "WEBP": "webp_level"}
 EXACT_STATISTICS_PIXELS = 4096 * 4096
 
 
+def _compute_band_statistics(src: Any, *, approx: bool) -> None:
+    """Make GDAL compute the statistics of each band and keep them as band tags.
+
+    ``DatasetReader.stats`` leaves the GDAL error of a band with no valid pixel
+    pending, and the next GDAL call in rio-cogeo raises it, so the write
+    fails. ``DatasetReader.statistics`` raises that error at once. Such a band
+    gets only ``STATISTICS_VALID_PERCENT=0``, and the write continues.
+    ``statistics`` is deprecated in rasterio 1.4, and the rasterio floor 1.3.0
+    has no ``stats``.
+
+    Args:
+        src: The source raster, open for reading.
+        approx: Sample a subset of the blocks.
+    """
+    from rasterio.errors import RasterioDeprecationWarning, StatisticsError
+
+    for bidx in src.indexes:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RasterioDeprecationWarning)
+            with contextlib.suppress(StatisticsError):
+                src.statistics(bidx, approx=approx)
+
+
+#: Marks a scratch file that an in-place rewrite swaps in. ``add`` collects a
+#: directory before it converts anything, so the marker keeps a file left by a
+#: killed run out of the next run's source list (issue #805).
+REWRITE_TEMP_INFIX = ".portolan-rewrite"
+
+#: The ``conversion.cog.predictor`` values, as the GDAL COG driver names them.
+_COG_PREDICTOR = {1: "NO", 2: "STANDARD", 3: "FLOATING_POINT"}
+
+#: The codecs that rio-cogeo writes. The GDAL COG driver has no PACKBITS.
+#: rio-cogeo turns the nodata value into a mask for JPEG and WEBP.
+RIO_COGEO_CODECS = QUALITY_COMPRESSIONS | {"PACKBITS"}
+
+
 def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = None) -> Path:
     """Write a raster file as a COG with the given settings.
 
@@ -1255,6 +1328,15 @@ def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = Non
     - 512x512 tiles
     - Predictor and overview resampling derived from the source raster's dtype
       (see derive_cog_defaults)
+
+    The GDAL COG driver writes the codecs it has (:func:`copy_to_cog`). It
+    keeps every pixel. rio-cogeo writes the codecs in ``RIO_COGEO_CODECS``.
+    rio-cogeo reads the source through a WarpedVRT. The warper reads a pixel
+    at the nodata value of one band as valid when another band holds data
+    there, and writes nodata + 1 into the first band.
+
+    The source opens once. That one read gives the dtype for the settings,
+    the band statistics, and the pixels.
 
     Args:
         source: Source raster file.
@@ -1268,95 +1350,210 @@ def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = Non
         If output_dir is the same directory as source, the original file
         will be replaced with the COG. This is by design for raster conversion.
     """
-    import tempfile
-
     import rasterio
+
+    settings = settings or CogSettings()
+    output_path = output_dir / f"{source.stem}.tif"
+    # A COG written in place is its own source, so it needs no record.
+    record = output_path.resolve() != source.resolve()
+    count("raster.opens")
+    with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:
+        resolved = resolve_cog_settings(settings, src)
+        if resolved.compression in RIO_COGEO_CODECS:
+            scratch = _rio_cogeo_cog(src, source, output_path, resolved, record=record)
+        else:
+            options = _cog_options(resolved, src.width, src.height)
+            # rio-cogeo wrote this tag, so a COG from either writer carries it.
+            tags = {"OVERVIEW_RESAMPLING": resolved.resampling.upper()}
+            if record:
+                tags[COG_PROVENANCE_TAG] = provenance_record(source)
+            scratch = copy_to_cog(src, output_path, options, tags)
+    place_cog(scratch, output_path)
+    return output_path
+
+
+def _cog_options(settings: CogSettings, width: int, height: int) -> dict[str, Any]:
+    """Return the GDAL COG driver options for a lossless codec.
+
+    The overview count is the count rio-cogeo picks, so the output has the
+    same overviews as the rio-cogeo output had.
+    """
+    from rasterio.rio.overview import get_maximum_overview_level
+
+    options: dict[str, Any] = {
+        "compress": GDAL_COMPRESS_NAMES.get(settings.compression, settings.compression),
+        "blocksize": settings.tile_size,
+        "resampling": settings.resampling.replace("_", "").upper(),
+        "bigtiff": "IF_SAFER",
+    }
+    levels = get_maximum_overview_level(width, height, minsize=settings.tile_size)
+    if levels:
+        options["overview_count"] = levels
+    else:
+        options["overviews"] = "NONE"
+    # GDAL ignores PREDICTOR for any other codec and logs a warning per file.
+    if settings.compression in PREDICTOR_COMPRESSIONS:
+        options["predictor"] = _COG_PREDICTOR[int(settings.predictor)]
+    return options
+
+
+def copy_to_cog(src: Any, output: Path, options: dict[str, Any], tags: dict[str, str]) -> Path:
+    """Write the open raster ``src`` to a scratch COG beside ``output``.
+
+    GDAL computes the band statistics on ``src`` and keeps them as band tags
+    (issue #748, PTL-DAT-009 and PTL-DAT-010). A VRT of ``src`` carries the
+    band tags and ``tags`` into the one COG write. The COG driver
+    copies the pixels, the mask, and the nodata value as they are.
+    :func:`place_cog` moves the scratch file over ``output``.
+
+    Args:
+        src: The source, open for reading with PAM off.
+        output: The COG to write.
+        options: The GDAL COG driver options.
+        tags: Dataset tags to set in the COG, such as the provenance record.
+
+    Returns:
+        The scratch COG.
+    """
+    from rasterio.shutil import copy as gdal_copy
+
+    scratch = output.with_name(f".{output.stem}{REWRITE_TEMP_INFIX}.tif")
+    vrt = scratch.with_suffix(".vrt")
+    _compute_band_statistics(src, approx=src.width * src.height > EXACT_STATISTICS_PIXELS)
+    try:
+        gdal_copy(src, str(vrt), driver="VRT")
+        if tags:
+            _tag_vrt(vrt, tags)
+        gdal_copy(str(vrt), str(scratch), driver="COG", **options)
+    except Exception:
+        scratch.unlink(missing_ok=True)
+        raise
+    finally:
+        vrt.unlink(missing_ok=True)
+    return scratch
+
+
+def _tag_vrt(vrt: Path, tags: dict[str, str]) -> None:
+    """Set dataset metadata items in a VRT file. The COG copy keeps them."""
+    import xml.etree.ElementTree as ET  # noqa: N817 - the usual name
+
+    tree = ET.parse(vrt)  # noqa: S314 - GDAL wrote this file a moment ago
+    root = tree.getroot()
+    metadata = next((m for m in root.findall("Metadata") if not m.get("domain")), None)
+    if metadata is None:
+        metadata = ET.SubElement(root, "Metadata")
+    for item in [m for m in metadata.findall("MDI") if m.get("key") in tags]:
+        metadata.remove(item)
+    for key, value in tags.items():
+        ET.SubElement(metadata, "MDI", key=key).text = value
+    tree.write(vrt)
+
+
+def _rio_cogeo_cog(
+    src: Any, source: Path, output: Path, settings: CogSettings, *, record: bool
+) -> Path:
+    """Write the open raster ``src`` to a scratch COG with a codec of ``RIO_COGEO_CODECS``.
+
+    rio-cogeo forwards the band statistics that GDAL computes on ``src``.
+
+    Args:
+        src: The source, open for reading with PAM off.
+        source: The path of the source, for the provenance record.
+        output: The COG to write.
+        settings: The resolved COG settings.
+        record: Write the provenance record of ``source`` into the COG.
+
+    Returns:
+        The scratch COG.
+    """
     from rio_cogeo.cogeo import cog_translate
     from rio_cogeo.profiles import cog_profiles
 
-    # Use defaults if no settings provided
-    if settings is None:
-        settings = CogSettings()
-
-    # Fill in any "auto" field from the raster itself (Issue #690)
-    settings = resolve_cog_settings(settings, source)
-
-    output_path = output_dir / f"{source.stem}.tif"
-
-    # Warn if we're about to overwrite the source file
-    if output_path.resolve() == source.resolve():
-        logger.info(
-            "Source file will be replaced with COG (in-place conversion): %s",
-            source,
-        )
-
-    # Select profile based on compression type
-    compression_lower = settings.compression.lower()
-    if compression_lower in ("jpeg", "webp"):
-        profile = cog_profiles.get(compression_lower)  # type: ignore[no-untyped-call]
-    else:
-        # DEFLATE, LZW, ZSTD, etc. use the deflate profile as base
-        profile = cog_profiles.get("deflate")  # type: ignore[no-untyped-call]
-        profile["compress"] = GDAL_COMPRESS_NAMES.get(settings.compression, settings.compression)
-
-    # Apply tile size settings
+    profile = cog_profiles.get(settings.compression.lower())  # type: ignore[no-untyped-call]
     profile["blockxsize"] = settings.tile_size
     profile["blockysize"] = settings.tile_size
-
-    # GDAL ignores PREDICTOR for any other codec and logs a warning per file.
-    if settings.compression in PREDICTOR_COMPRESSIONS:
-        profile["predictor"] = settings.predictor
-
     # The GTiff driver has no QUALITY option. Each lossy codec takes its own.
     if settings.quality is not None and settings.compression in QUALITY_COMPRESSIONS:
         profile[_GTIFF_QUALITY_OPTION[settings.compression]] = settings.quality
 
-    # Write to temp file first to avoid corrupting source if output_path == source
-    # Use same directory as output for atomic rename across filesystems
-    temp_fd, temp_path_str = tempfile.mkstemp(
-        suffix=".tif", prefix=".portolan_cog_", dir=output_dir
-    )
-    temp_path = Path(temp_path_str)
+    scratch = output.with_name(f".{output.stem}{REWRITE_TEMP_INFIX}.tif")
+    _compute_band_statistics(src, approx=src.width * src.height > EXACT_STATISTICS_PIXELS)
+    try:
+        cog_translate(
+            src,
+            str(scratch),
+            profile,
+            quiet=True,
+            overview_resampling=cast("ResamplingMethod", settings.resampling),
+            forward_band_tags=True,
+            additional_cog_metadata=(
+                {COG_PROVENANCE_TAG: provenance_record(source)} if record else {}
+            ),
+        )
+    except Exception:
+        scratch.unlink(missing_ok=True)
+        raise
+    return scratch
+
+
+def place_cog(scratch: Path, output: Path) -> Path:
+    """Check a scratch COG, move it over ``output``, and give the run what it read.
+
+    One open of the scratch COG checks that each band carries its statistics,
+    and reads the item metadata and the band statistics. The file closes
+    before the replace, because an open handle blocks it on Windows. The run
+    memo then holds the values for ``output``, so the item metadata and the
+    band statistics need no further open (``formats.remember``).
+
+    Args:
+        scratch: The COG that :func:`copy_to_cog` or :func:`_rio_cogeo_cog` wrote.
+        output: The path the COG goes to.
+
+    Returns:
+        ``output``.
+
+    Raises:
+        InvalidOutputError: When a band has no statistics in the file.
+    """
+    import rasterio
+
+    from portolan_cli.metadata.statistics import embedded_statistics
 
     try:
-        # Close the file descriptor - rio-cogeo will open it
-        import os
-
-        os.close(temp_fd)
-
-        # The COG carries its band statistics, so a reader with PAM off sees
-        # them (issue #748, PTL-DAT-009 and PTL-DAT-010). GDAL computes them on
-        # the open source and keeps them as band tags, and rio-cogeo forwards
-        # the band tags into the one write. PAM is off, so no .aux.xml appears.
         count("raster.opens")
-        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:
-            # Exact up to EXACT_STATISTICS_PIXELS. Above it, GDAL samples a
-            # subset of the blocks and tags the result STATISTICS_APPROXIMATE.
-            src.stats(approx=src.width * src.height > EXACT_STATISTICS_PIXELS)
-            cog_translate(
-                src,
-                str(temp_path),
-                profile,
-                quiet=True,
-                overview_resampling=cast("ResamplingMethod", settings.resampling),
-                forward_band_tags=True,
-                # A COG written in place is its own source, so it needs no record.
-                additional_cog_metadata=(
-                    {}
-                    if output_path.resolve() == source.resolve()
-                    else {COG_PROVENANCE_TAG: provenance_record(source)}
-                ),
-            )
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(scratch) as cog:
+            if embedded_statistics(cog) != "present":
+                raise InvalidOutputError(str(output), "a band has no statistics in the file")
+            read = read_cog(cog)
+        scratch.replace(output)
+    finally:
+        scratch.unlink(missing_ok=True)
+    remember_cog(output, read)
+    return output
 
-        # Atomic replace
-        temp_path.replace(output_path)
-    except Exception:
-        # Clean up temp file on error
-        if temp_path.exists():
-            temp_path.unlink()
-        raise
 
-    return output_path
+def read_cog(src: Any) -> tuple[Any, list[Any] | None]:
+    """Read the item metadata and the embedded band statistics of an open COG.
+
+    Returns:
+        The ``COGMetadata``, and the statistics of each band. The statistics
+        are None when a band has none in the file.
+    """
+    from portolan_cli.metadata.cog import cog_metadata_of
+    from portolan_cli.metadata.statistics import band_statistics_of
+
+    statistics = band_statistics_of(src, mode="cached")
+    return cog_metadata_of(src), statistics if len(statistics) == src.count else None
+
+
+def remember_cog(output: Path, read: tuple[Any, list[Any] | None]) -> None:
+    """Give the run memo what :func:`read_cog` read, for the COG now at ``output``."""
+    metadata, statistics = read
+    remember("cog.metadata", output, metadata)
+    if statistics is not None:
+        # Both modes read the tags first, so both give these values.
+        remember("cog.statistics.cached", output, statistics)
+        remember("cog.statistics.approx", output, statistics)
 
 
 def validate_geoparquet(path: Path) -> str | None:
@@ -1776,15 +1973,22 @@ def convert_multilayer_file(
     results: list[LayerConversionResult] = []
 
     for layer_name in layers:
-        output_path = output_dir / f"{source.stem}_{layer_name}.parquet"
+        default_path = output_dir / f"{source.stem}_{layer_name}.parquet"
         try:
-            output_path = claim_output(source, output_path, state=state)
+            output_path = claim_output(source, default_path, state=state)
         except OutputExistsError as err:
             results.append(LayerConversionResult(source, layer_name, None, False, str(err)))
             continue
 
+        # The provenance record hashes the source through the run memo, so a
+        # file of N layers is hashed once, not N times.
+        hashing = in_run(state) if state is not None else contextlib.nullcontext()
         try:
-            _convert_vector_layer(source, layer_name, output_path, settings)
+            with hashing:
+                _convert_vector_layer(source, layer_name, output_path, settings)
+            output_path = settle_output(
+                source, default_path, output_path, state=state, geometry_required=True, layer=True
+            )
 
             # Validate output
             validation_error = validate_geoparquet(output_path)

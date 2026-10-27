@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import contextlib
 import fnmatch
+import functools
 import glob
 import logging
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pystac
 from pyproj import CRS
@@ -37,11 +38,11 @@ from portolan_cli.conversion_config import (
     settings_override,
 )
 from portolan_cli.convert import (
+    REWRITE_TEMP_INFIX,
     apply_vector_settings,
     claim_output,
     convert_with_handler,
     distinct_output_path,
-    run_checksums,
     run_with_transient_convert_retry,
     settle_output,
     with_provenance,
@@ -49,7 +50,7 @@ from portolan_cli.convert import (
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
 from portolan_cli.errors import AssetKeyCollisionError, NoGeometryError, RewriteFidelityError
 from portolan_cli.format_families import RASTER, VECTOR
-from portolan_cli.formats import is_cloud_optimized_geotiff, is_geoparquet
+from portolan_cli.formats import in_run, is_cloud_optimized_geotiff, is_geoparquet, remember
 from portolan_cli.metadata import (
     extract_band_statistics,
     extract_parquet_statistics,
@@ -58,7 +59,12 @@ from portolan_cli.metadata import (
 )
 from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.flatgeobuf import FlatGeobufMetadata
-from portolan_cli.metadata.geoparquet import GeoParquetMetadata, RewriteFidelity, open_footer
+from portolan_cli.metadata.geoparquet import (
+    GeoParquetMetadata,
+    RewriteFidelity,
+    geoparquet_metadata_of,
+    open_footer,
+)
 from portolan_cli.metadata.pmtiles import PMTilesMetadata
 from portolan_cli.metadata.statistics import embedded_statistics
 from portolan_cli.metadata_yaml import (
@@ -90,7 +96,7 @@ from portolan_cli.sync.checksums import (
     compute_dir_size,
     file_fields_from,
 )
-from portolan_cli.trace import span
+from portolan_cli.trace import count, span
 from portolan_cli.versions import versions_asset_key
 from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
 from portolan_cli.viz.style import enrich_cog_assets
@@ -883,7 +889,14 @@ def _convert_and_extract_metadata(
             output = convert_with_handler(
                 handler, path, item_dir, catalog_root, target=target, state=state
             )
-    return output, cast("AllMetadata", handler.read_metadata(output))
+    # A converter that read its output put the metadata in the run memo.
+    kind = f"{handler.name}.metadata"
+    metadata = (
+        state.memo(kind, output, handler.read_metadata)
+        if state is not None
+        else handler.read_metadata(output)
+    )
+    return output, cast("AllMetadata", metadata)
 
 
 def _extract_statistics_best_effort(
@@ -914,8 +927,18 @@ def _extract_statistics_best_effort(
     try:
         if format_type == RASTER:
             raster_mode = _setting("statistics.raster_mode", catalog_root, collection_path, state)
-            mode = raster_mode if raster_mode in ("cached", "approx", "exact") else "approx"
-            band_stats = extract_band_statistics(output_path, mode=mode)  # type: ignore[arg-type]
+            mode = cast(
+                "Literal['cached', 'approx', 'exact']",
+                raster_mode if raster_mode in ("cached", "approx", "exact") else "approx",
+            )
+            # The conversion put the embedded statistics in the run memo.
+            # ``exact`` computes them again, so it reads the file.
+            read = functools.partial(extract_band_statistics, mode=mode)
+            band_stats = (
+                state.memo(f"cog.statistics.{mode}", output_path, read)
+                if isinstance(state, RunState) and mode != "exact"
+                else read(output_path)
+            )
         else:
             parquet_stats = extract_parquet_statistics(output_path)
     except Exception:
@@ -1180,7 +1203,13 @@ def prepare_item(
         raise ValueError(f"Unsupported format: {path.suffix}")
     format_type = handler.family
 
-    _pre_validate_geometry(path)
+    # Every footer read of this item goes through the run memo (in_run). A
+    # caller with no state gets one for this item, so the source is hashed
+    # once (provenance and scan).
+    if state is None:
+        state = RunState.open(catalog_root)
+    with in_run(state):
+        _pre_validate_geometry(path)
 
     # Step 2: Set up paths
     collection_dir = catalog_root / Path(*collection_id.split("/"))
@@ -1201,13 +1230,10 @@ def prepare_item(
         ) from err
 
     # Step 3: Convert and extract metadata. The output never replaces a file
-    # that the source did not make (claim_output). A caller with no state gets
-    # one for this item, so the source is hashed once (provenance and scan).
-    if state is None:
-        state = RunState.open(catalog_root)
+    # that the source did not make (claim_output).
     target = claim_output(path, handler.output_path(path, item_dir), state=state)
     created_output = not target.exists()
-    with run_checksums(state.checksum):
+    with in_run(state):
         output_path, metadata = _convert_and_extract_metadata(
             path,
             item_dir,
@@ -1348,12 +1374,6 @@ def prepare_item(
         created_output=created_output,
         source_paths=source_paths,
     )
-
-
-# Marks the temporary file `_rewrite_parquet_in_place` swaps in. `add` collects
-# a directory before it converts anything, so the marker keeps a file left by a
-# killed run out of the next run's source list (issue #805).
-REWRITE_TEMP_INFIX = ".portolan-rewrite"
 
 
 def is_rewrite_temp(path: Path) -> bool:
@@ -1629,8 +1649,21 @@ def _rewrite_parquet_in_place(
 
     try:
         run_with_transient_convert_retry(_run, source_name=source.name)
-        _assert_rewrite_kept_everything(source, temp_path, before)
+        # One footer read gives the gate and the item metadata. The footer
+        # closes before the replace, because an open handle blocks it on
+        # Windows.
+        footer = open_footer(temp_path)
+        try:
+            rewritten = footer if footer is not None else temp_path
+            _assert_rewrite_kept_everything(source, rewritten, before)
+            metadata = geoparquet_metadata_of(footer) if footer is not None else None
+        finally:
+            if footer is not None:
+                footer.close()
         temp_path.replace(source)
+        if footer is not None and metadata is not None:
+            remember("parquet.footer", source, footer)
+            remember("geoparquet.metadata", source, metadata)
     finally:
         temp_path.unlink(missing_ok=True)
 
@@ -1681,7 +1714,7 @@ def _means_wgs84(crs: Any) -> bool:
 
 
 def _assert_rewrite_kept_everything(
-    source: Path, rewritten: Path, before: RewriteFidelity | None
+    source: Path, rewritten: Path | pq.ParquetFile, before: RewriteFidelity | None
 ) -> None:
     """Refuse a rewrite that would replace good data with worse data.
 
@@ -1701,12 +1734,13 @@ def _assert_rewrite_kept_everything(
 
     Args:
         source: The file the rewrite would replace.
-        rewritten: The candidate replacement.
+        rewritten: The candidate replacement, or its open footer.
         before: The source's fidelity fields, read before the rewrite ran.
 
     Raises:
         RewriteFidelityError: When the rewrite loses rows, columns, schema
-            metadata keys, or the CRS.
+            metadata keys, the CRS, a publisher field of a geometry column,
+            or the field metadata of a column.
     """
     if before is None:
         return
@@ -1736,6 +1770,49 @@ def _assert_rewrite_kept_everything(
     # PROJJSON text, because an equivalent CRS can serialize two ways.
     if before.crs is not None and after.crs is not None and not _same_crs(before.crs, after.crs):
         raise RewriteFidelityError(source.name, "its CRS, which the rewrite changed")
+
+    lost = _lost_geo_fields(before, after) or _lost_field_metadata(before, after)
+    if lost:
+        raise RewriteFidelityError(source.name, lost)
+
+
+def _lost_geo_fields(before: RewriteFidelity, after: RewriteFidelity) -> str | None:
+    """Name a publisher field of a geometry column that the rewrite lost, or None.
+
+    A ``crs`` key with a null value names an undefined CRS. A missing key
+    means OGC:CRS84. So the presence of the key counts, not only its value.
+    """
+    for name, fields in (before.geo_columns or {}).items():
+        kept = (after.geo_columns or {}).get(name)
+        if kept is None:
+            return f"the geometry column {name}"
+        for key in ("edges", "epoch", "orientation"):
+            if fields.get(key) != kept.get(key):
+                return f"the {key} of the geometry column {name}"
+        if not _crs_kept(fields, kept):
+            return f"the CRS of the geometry column {name}"
+    return None
+
+
+def _crs_kept(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    """Report whether two ``geo`` column entries declare the same CRS."""
+    if "crs" in before and before["crs"] is None:
+        return "crs" in after and after["crs"] is None
+    if "crs" not in after:
+        return "crs" not in before or _means_wgs84(before["crs"])
+    if after["crs"] is None:
+        return False
+    if "crs" not in before:
+        return _means_wgs84(after["crs"])
+    return _same_crs(before["crs"], after["crs"])
+
+
+def _lost_field_metadata(before: RewriteFidelity, after: RewriteFidelity) -> str | None:
+    """Name a column whose field metadata the rewrite lost or changed, or None."""
+    for name, metadata in (before.field_metadata or {}).items():
+        if (after.field_metadata or {}).get(name) != metadata:
+            return f"the field metadata of the column {name}"
+    return None
 
 
 def convert_tabular(source: Path, dest_dir: Path, *, state: RunState | None = None) -> Path:
@@ -1785,7 +1862,7 @@ def convert_tabular(source: Path, dest_dir: Path, *, state: RunState | None = No
     if state is None:
         run_with_transient_convert_retry(_run, source_name=source.name)
     else:
-        with run_checksums(state.checksum):
+        with in_run(state):
             run_with_transient_convert_retry(_run, source_name=source.name)
 
     return settle_output(source, default_path, output_path, state=state)
@@ -1801,10 +1878,16 @@ def convert_raster(
     """Convert a raster to a COG. ``add`` and ``check --fix`` both use this (#947).
 
     A source that is already a COG is kept, unless ``reoptimize`` asks to
-    rewrite it with the current settings (issue #530). Otherwise
+    rewrite it with the current settings (issue #530). A lossless COG with no
+    embedded band statistics gets them once in the output
+    (:func:`_embed_statistics`). Otherwise
     ``convert.write_cog`` writes the COG with the catalog's ``conversion.cog``
     settings: DEFLATE, 512x512 tiles, and a predictor and overview resampling
     derived from the source dtype by default (issue #690).
+
+    A COG source opens once. That read gives the statistics check, the item
+    metadata, and the band statistics. The run memo keeps the last two for the
+    output (``convert.remember_cog``).
 
     Args:
         source: Source raster file.
@@ -1815,49 +1898,103 @@ def convert_raster(
     Returns:
         Path to the output COG file.
     """
+    import rasterio
+
     from portolan_cli.conversion_config import get_cog_settings
-    from portolan_cli.convert import write_cog
+    from portolan_cli.convert import place_cog, read_cog, remember_cog, write_cog
     from portolan_cli.output import warn as warn_output
 
     output_path = dest_dir / f"{source.stem}.tif"
     is_cog = source.suffix.lower() in (".tif", ".tiff") and is_cloud_optimized_geotiff(source)
-    if is_cog and not reoptimize:
-        embedded = embedded_statistics(source)
+    if not is_cog or reoptimize:
+        return write_cog(source, dest_dir, get_cog_settings(catalog_root))
+
+    scratch = None
+    count("raster.opens")
+    with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:
+        embedded = embedded_statistics(src)
+        # Read before the rewrite. It computes statistics that src then holds.
+        read = read_cog(src)
         if embedded == "missing":
-            embedded_now = _embed_statistics(source, dest_dir, catalog_root)
-            if embedded_now is not None:
-                return embedded_now
-        elif embedded == "lossy":
-            warn_output(
-                f"{source.name} has no band statistics in the file (PTL-DAT-009). "
-                "Portolan keeps it as it is, because its tiles use lossy compression "
-                "and a rewrite would re-encode them."
-            )
-        if source.resolve() != output_path.resolve():
-            shutil.copy2(source, output_path)
+            scratch = _embed_statistics(src, source, output_path)
+    if scratch is not None and _warn_on_failure(source, lambda: place_cog(scratch, output_path)):
         return output_path
-    return write_cog(source, dest_dir, get_cog_settings(catalog_root))
+    if embedded == "lossy":
+        warn_output(
+            f"{source.name} has no band statistics in the file (PTL-DAT-009). "
+            "Portolan keeps it as it is, because its tiles use lossy compression "
+            "and a rewrite would re-encode them."
+        )
+    if source.resolve() != output_path.resolve():
+        shutil.copy2(source, output_path)
+    remember_cog(output_path, read)
+    return output_path
 
 
-def _embed_statistics(source: Path, dest_dir: Path, catalog_root: Path | None) -> Path | None:
-    """Rewrite a lossless COG through ``write_cog`` so that it carries its statistics.
+#: The codecs that store each pixel exactly and that the GDAL COG driver
+#: writes. The statistics rewrite keeps one. PACKBITS is lossless, but the COG
+#: driver has no PACKBITS, so the rewrite writes DEFLATE.
+_LOSSLESS_COG_CODECS = frozenset({"DEFLATE", "LZW", "ZSTD", "LZMA", "NONE"})
+
+#: The PREDICTOR tag values of a GeoTIFF, as the GDAL COG driver names them.
+_COG_PREDICTOR_NAMES = {"1": "NO", "2": "STANDARD", "3": "FLOATING_POINT"}
+
+
+def _embed_statistics(src: Any, source: Path, output: Path) -> Path | None:
+    """Write a lossless COG again beside ``output``, so that it carries its band statistics.
 
     PTL-DAT-009 and PTL-DAT-010 read the statistics from the COG itself with
     PAM off (issue #748). A tag update in place breaks the COG layout, so the
     COG is written again, once. The next add finds the statistics and keeps the
-    file. ``write_cog`` writes a scratch file and swaps it in, so a failure
-    keeps the operator's file.
+    file. The GDAL COG driver copies the file (``convert.copy_to_cog``). It
+    keeps the codec, the predictor, the block size, the overviews, the mask,
+    and every pixel. A codec outside ``_LOSSLESS_COG_CODECS`` becomes DEFLATE.
+
+    rio-cogeo is not used here. Its warp reads a pixel at the nodata value of
+    one band as valid when another band holds data there, and it writes
+    nodata + 1 into that band.
+
+    ``convert.place_cog`` moves the scratch file over ``output`` only when it
+    holds the statistics. A ``source`` in another directory stays as it is. On
+    any failure the operator's file stays, with a warning.
+
+    Args:
+        src: The COG, open for reading with PAM off.
+        source: The path of the COG.
+        output: The COG to write. It can be ``source``.
 
     Returns:
-        The COG with its statistics, or None when the rewrite failed.
+        The scratch COG, or None when the copy failed.
     """
-    from portolan_cli.conversion_config import get_cog_settings
-    from portolan_cli.convert import write_cog
+    from portolan_cli.convert import COG_PROVENANCE_TAG, copy_to_cog, provenance_record
+
+    structure = src.tags(ns="IMAGE_STRUCTURE")
+    codec = structure.get("COMPRESSION", "NONE").upper()
+    options: dict[str, Any] = {"compress": "DEFLATE", "blocksize": src.block_shapes[0][1]}
+    if codec in _LOSSLESS_COG_CODECS:
+        options["compress"] = codec
+        if structure.get("PREDICTOR") in _COG_PREDICTOR_NAMES:
+            options["predictor"] = _COG_PREDICTOR_NAMES[structure["PREDICTOR"]]
+    # A COG written in place is its own source, so it needs no record.
+    in_place = output.resolve() == source.resolve()
+    return _warn_on_failure(
+        source,
+        lambda: copy_to_cog(
+            src,
+            output,
+            options,
+            {} if in_place else {COG_PROVENANCE_TAG: provenance_record(source)},
+        ),
+    )
+
+
+def _warn_on_failure(source: Path, step: Callable[[], Path]) -> Path | None:
+    """Run one step of the statistics rewrite. On failure, warn and return None."""
     from portolan_cli.output import warn as warn_output
 
     try:
         with span("convert.embed_statistics", file=source.name):
-            return write_cog(source, dest_dir, get_cog_settings(catalog_root))
+            return step()
     except Exception as err:  # noqa: BLE001 - the original file stays usable
         warn_output(
             f"{source.name} has no band statistics in the file (PTL-DAT-009), "

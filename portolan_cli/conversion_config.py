@@ -30,6 +30,7 @@ from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
+from os import PathLike
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.config import ConfigSource, load_catalog_config
@@ -268,7 +269,7 @@ class CogSettings:
     thumbnail_quality: int = 75
 
 
-def derive_cog_defaults(source: Path) -> tuple[int, str]:
+def derive_cog_defaults(source: Path | Any) -> tuple[int, str]:
     """Pick a predictor and an overview resampling method for one raster.
 
     The spec's conversion defaults tie both settings to what the pixels mean
@@ -286,7 +287,8 @@ def derive_cog_defaults(source: Path) -> tuple[int, str]:
     ``conversion.cog`` in ``.portolan/config.yaml``.
 
     Args:
-        source: Raster to inspect.
+        source: Raster to inspect, or the raster open for reading. A caller
+            that has the raster open passes it, so the file opens once.
 
     Returns:
         A ``(predictor, resampling)`` pair. Unreadable rasters yield the
@@ -295,10 +297,13 @@ def derive_cog_defaults(source: Path) -> tuple[int, str]:
     import rasterio
 
     try:
-        count("raster.opens")
-        with rasterio.open(source) as src:
-            dtype = str(src.dtypes[0])
-            band_count = int(src.count)
+        if isinstance(source, PathLike):
+            count("raster.opens")
+            with rasterio.open(source) as src:
+                dtype = str(src.dtypes[0])
+                band_count = int(src.count)
+        else:
+            dtype, band_count = str(source.dtypes[0]), int(source.count)
     except Exception as exc:  # noqa: BLE001 - any read failure means "use fallback"
         logger.debug("Could not inspect %s for COG defaults (%s); using fallback", source, exc)
         return FALLBACK_PREDICTOR, FALLBACK_RESAMPLING
@@ -310,7 +315,7 @@ def derive_cog_defaults(source: Path) -> tuple[int, str]:
     return FALLBACK_PREDICTOR, FALLBACK_RESAMPLING
 
 
-def resolve_cog_settings(settings: CogSettings, source: Path) -> CogSettings:
+def resolve_cog_settings(settings: CogSettings, source: Path | Any) -> CogSettings:
     """Replace any "auto" field in ``settings`` with a value read off ``source``.
 
     Configured values pass through untouched. Call this immediately before
@@ -319,7 +324,7 @@ def resolve_cog_settings(settings: CogSettings, source: Path) -> CogSettings:
 
     Args:
         settings: Settings as loaded from config.
-        source: Raster about to be converted.
+        source: Raster about to be converted, or the raster open for reading.
 
     Returns:
         Settings with concrete ``predictor`` and ``resampling`` values.

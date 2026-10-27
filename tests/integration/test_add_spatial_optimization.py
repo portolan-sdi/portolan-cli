@@ -143,13 +143,59 @@ class TestTheSourceFooterIsReadOnce:
         # The replace of the source succeeded: it now carries the covering.
         assert output == source
         assert _covering(source) is not None
-        # One open of the source, one of the rewritten sibling.
+        # One open of the source, one of the rewritten sibling. Both close.
         assert opens == 2
-        assert len(opened) == 1
-        assert opened[0].closed
+        assert len(opened) == 2
+        assert all(parquet.closed for parquet in opened)
         # No handle holds the file, so it deletes on every platform.
         source.unlink()
         assert not source.exists()
+
+
+class TestAnAddReadsEachFooterOnce:
+    """Every footer reader of one add shares one footer read per file.
+
+    The file filter, the geometry check, the layout check, the handler, the
+    output check, and the PMTiles and thumbnail side steps each ask whether
+    the file is GeoParquet. The run memo answers all but the first.
+    """
+
+    @staticmethod
+    def _opens(root: Path, target: Path, monkeypatch: pytest.MonkeyPatch) -> int:
+        (root / ".portolan" / "config.yaml").write_text("thumbnails:\n  enabled: false\n")
+        monkeypatch.setenv("PORTOLAN_TIMINGS", "1")
+        result = CliRunner().invoke(
+            cli, ["--format", "json", "add", "--portolan-dir", str(root), str(target)]
+        )
+        assert result.exit_code == 0, result.output
+        opens: int = json.loads(result.stdout)["meta"]["counters"]["parquet.opens"]
+        return opens
+
+    def test_a_conformant_geoparquet_add_reads_its_footer_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import geoparquet_io as gpio  # type: ignore[import-untyped]
+
+        root = tmp_path / "catalog"
+        target = root / "roads" / "roads.parquet"
+        target.parent.mkdir(parents=True)
+        gpio.convert(str(POINTS)).add_bbox().sort_hilbert().write(str(target))
+        _init(root)
+
+        assert self._opens(root, target, monkeypatch) == 1
+
+    def test_a_rewritten_geoparquet_add_reads_two_footers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "catalog"
+        target = root / "roads" / "roads.parquet"
+        target.parent.mkdir(parents=True)
+        shutil.copy(POINTS, target)
+        _init(root)
+
+        # The source before the rewrite, and the rewritten file.
+        assert self._opens(root, target, monkeypatch) == 2
+        assert _covering(target) is not None
 
 
 class TestAddLeavesFilesAlone:

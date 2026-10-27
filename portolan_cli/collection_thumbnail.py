@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from portolan_cli import extension_registry as _reg
 from portolan_cli.constants import ROLE_THUMBNAIL
-from portolan_cli.formats import is_geoparquet
+from portolan_cli.formats import is_geoparquet, run_scope
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import detail, warn
 from portolan_cli.stac_parquet import sync_file_extension
@@ -506,7 +506,8 @@ def ensure_collection_thumbnails(
         verbose: Emit a line per collection touched.
         state: The run state, which parses the config once per run.
     """
-    with span("add.thumbnails", collections=len(affected_collections)):
+    # Each footer read goes through the run memo.
+    with span("add.thumbnails", collections=len(affected_collections)), run_scope(state):
         if not affected_collections:
             return
         # Resolve the flag against config once, then hand the answer down, so the

@@ -916,6 +916,185 @@ class TestAssertRewriteKeptEverything:
         read.assert_not_called()
 
 
+class TestTheGateSeesWhatTheRewriteDrops:
+    """geoparquet-io 1.7.0 drops some publisher metadata that the old gate did not read.
+
+    Each case writes a GeoParquet with no bbox covering column, so ``add``
+    rewrites it in place. The rewrite loses one field. The gate must keep the
+    operator's file as it is.
+    """
+
+    @staticmethod
+    def _geoparquet(path: Path, case: str) -> Path:
+        import json
+
+        import geopandas as gpd
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        from shapely.geometry import Point
+
+        frame = gpd.GeoDataFrame(
+            {"a": [1, 2, 3]}, geometry=[Point(0, 0), Point(1, 1), Point(2, 2)], crs=3857
+        )
+        frame["g2"] = gpd.GeoSeries([Point(0, 0)] * 3).to_wkb()
+        frame.to_parquet(path)
+        table = pq.read_table(path)
+        metadata = dict(table.schema.metadata or {})
+        geo = json.loads(metadata[b"geo"])
+        if case == "epoch":
+            geo["columns"]["geometry"]["epoch"] = 2015.5
+        elif case == "orientation":
+            geo["columns"]["geometry"]["orientation"] = "counterclockwise"
+        elif case == "undefined-crs":
+            # An explicit null names an undefined CRS. No key means OGC:CRS84.
+            geo["columns"]["g2"] = {"encoding": "WKB", "geometry_types": [], "crs": None}
+        metadata[b"geo"] = json.dumps(geo).encode()
+        fields = [
+            field.with_metadata({b"description": b"count"})
+            if case == "field-metadata" and field.name == "a"
+            else field
+            for field in table.schema
+        ]
+        pq.write_table(table.cast(pa.schema(fields, metadata=metadata)), path)
+        return path
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("case", ["epoch", "orientation", "undefined-crs", "field-metadata"])
+    def test_the_file_is_kept(
+        self, tmp_path: Path, case: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from portolan_cli.preparation import convert_vector
+
+        source = self._geoparquet(tmp_path / "f.parquet", case)
+        before = source.read_bytes()
+
+        convert_vector(source, tmp_path)
+
+        assert source.read_bytes() == before
+        captured = capsys.readouterr()
+        assert "Kept f.parquet as it is" in captured.out + captured.err
+
+    @pytest.mark.unit
+    def test_a_file_with_nothing_to_lose_is_rewritten(self, tmp_path: Path) -> None:
+        import pyarrow.parquet as pq
+
+        from portolan_cli.preparation import convert_vector
+
+        source = self._geoparquet(tmp_path / "f.parquet", "plain")
+
+        convert_vector(source, tmp_path)
+
+        assert "bbox" in pq.read_schema(source).names
+
+
+class TestTheRewrittenFooterIsReadOnce:
+    """The rewrite gate reads the footer of the new file. The metadata read reuses it.
+
+    The gate opens the scratch file, which then replaces the source. Its footer
+    holds the same bytes as the output, so a second open of the output reads
+    nothing new.
+    """
+
+    @pytest.mark.unit
+    def test_an_in_place_rewrite_opens_two_footers(self, tmp_path: Path) -> None:
+        import geopandas as gpd
+        from click.testing import CliRunner
+        from shapely.geometry import Point
+
+        from portolan_cli import trace
+        from portolan_cli.cli import cli
+        from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+        from portolan_cli.preparation import prepare_item
+        from portolan_cli.run_state import RunState
+
+        init = CliRunner().invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
+        assert init.exit_code == 0, init.output
+        (tmp_path / "c1").mkdir()
+        source = tmp_path / "c1" / "c1.parquet"
+        gpd.GeoDataFrame({"a": [1, 2]}, geometry=[Point(0, 0), Point(1, 1)], crs=4326).to_parquet(
+            source
+        )
+        state = RunState.open(tmp_path)
+
+        with trace.tracing():
+            prepared = prepare_item(
+                path=source, catalog_root=tmp_path, collection_id="c1", state=state
+            )
+            # Finalization reads the footer again through the run memo.
+            metadata = extract_geoparquet_metadata(source, state=state)
+            opens = trace.counters()["parquet.opens"]
+
+        assert prepared.created_output is False
+        assert "bbox" in metadata.schema
+        # One footer of the source, one of the rewritten file.
+        assert opens == 2
+
+
+class TestOneRasterAddOpensEachFileOnce:
+    """A raster add opens the source once and the COG once, plus the thumbnail read.
+
+    The conversion reads the dtype, the band count, and the statistics in one
+    open of the source. One open of the new COG gives the statistics check,
+    the item metadata, and the band statistics through the run memo.
+    """
+
+    @staticmethod
+    def _opens(catalog: Path, source: Path) -> int:
+        from click.testing import CliRunner
+
+        from portolan_cli import trace
+        from portolan_cli.cli import cli
+        from portolan_cli.metadata.cog import extract_cog_metadata
+        from portolan_cli.preparation import prepare_item
+        from portolan_cli.run_state import RunState
+
+        init = CliRunner().invoke(cli, ["init", str(catalog), "--auto", "--license", "CC-BY-4.0"])
+        assert init.exit_code == 0, init.output
+        state = RunState.open(catalog)
+        with trace.tracing():
+            prepared = prepare_item(
+                path=source, catalog_root=catalog, collection_id="scenes", state=state
+            )
+            # Finalization reads the item metadata again through the run memo.
+            state.memo("cog.metadata", source.with_suffix(".tif"), extract_cog_metadata)
+            opens: int = trace.counters()["raster.opens"]
+        assert prepared.item_json_path is not None
+        assert "STATISTICS_MEAN" in TestAnAddedCogCarriesItsStatistics._tags(
+            source.with_suffix(".tif")
+        )
+        return opens
+
+    @pytest.mark.unit
+    def test_a_gtiff_add_opens_the_source_once(self, tmp_path: Path) -> None:
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+
+        source = tmp_path / "scenes" / "s1" / "s1.tiff"
+        source.parent.mkdir(parents=True)
+        with rasterio.open(
+            source, "w", driver="GTiff", width=600, height=600, count=1, dtype="uint8",
+            crs="EPSG:4326", transform=from_origin(0, 1, 0.001, 0.001),
+        ) as dst:  # fmt: skip
+            dst.write(np.arange(600 * 600, dtype="uint32").reshape(1, 600, 600) % 251)
+
+        # The source, the new COG, and the thumbnail read of the COG.
+        assert self._opens(tmp_path, source) == 3
+
+    @pytest.mark.unit
+    def test_a_cog_with_no_statistics_opens_the_source_once(
+        self, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        import shutil
+
+        source = tmp_path / "scenes" / "s1" / "s1.tif"
+        source.parent.mkdir(parents=True)
+        shutil.copy(fixtures_dir / "raster" / "valid" / "rgb.tif", source)
+
+        # The source, the rewritten COG, and the thumbnail read of the COG.
+        assert self._opens(tmp_path, source) == 3
+
+
 class TestRewriteOrKeep:
     """A failed rewrite keeps the file. It never fails the whole `add`."""
 
@@ -970,17 +1149,18 @@ class TestAnAddedCogCarriesItsStatistics:
         return tags
 
     @staticmethod
-    def _spy_write_cog(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
-        from portolan_cli import convert
+    def _spy_rewrite(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+        """Record each COG that the statistics rewrite gets."""
+        from portolan_cli import preparation
 
         calls: list[Path] = []
-        real = convert.write_cog
+        real = preparation._embed_statistics
 
-        def spy(source: Path, *args: Any, **kwargs: Any) -> Path:
+        def spy(src: Any, source: Path, output: Path) -> Path | None:
             calls.append(source)
-            return real(source, *args, **kwargs)
+            return real(src, source, output)
 
-        monkeypatch.setattr(convert, "write_cog", spy)
+        monkeypatch.setattr(preparation, "_embed_statistics", spy)
         return calls
 
     @pytest.mark.unit
@@ -994,7 +1174,7 @@ class TestAnAddedCogCarriesItsStatistics:
         cog = tmp_path / "rgb.tif"
         shutil.copy(fixtures_dir / "raster" / "valid" / "rgb.tif", cog)
         assert "STATISTICS_MEAN" not in self._tags(cog)
-        calls = self._spy_write_cog(monkeypatch)
+        calls = self._spy_rewrite(monkeypatch)
 
         convert_raster(cog, tmp_path)
         first = cog.read_bytes()
@@ -1006,6 +1186,28 @@ class TestAnAddedCogCarriesItsStatistics:
         assert {"STATISTICS_MINIMUM", "STATISTICS_MAXIMUM", "STATISTICS_MEAN"} <= set(tags)
         assert {"STATISTICS_STDDEV", "STATISTICS_VALID_PERCENT"} <= set(tags)
         assert sorted(p.name for p in tmp_path.rglob("*.aux.xml")) == []
+
+    @pytest.mark.unit
+    def test_a_cog_converted_to_another_directory_keeps_its_source(
+        self, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        """The statistics go into the output. The source in another directory stays as it is."""
+        import shutil
+
+        from portolan_cli.preparation import convert_raster
+
+        (tmp_path / "in").mkdir()
+        (tmp_path / "out").mkdir()
+        cog = tmp_path / "in" / "rgb.tif"
+        shutil.copy(fixtures_dir / "raster" / "valid" / "rgb.tif", cog)
+        before = cog.read_bytes()
+
+        output = convert_raster(cog, tmp_path / "out")
+
+        assert cog.read_bytes() == before
+        assert output == tmp_path / "out" / "rgb.tif"
+        assert "STATISTICS_MEAN" in self._tags(output)
+        assert sorted(p.name for p in tmp_path.rglob(".*")) == []
 
     @pytest.mark.unit
     def test_a_lossy_cog_stays_and_the_add_says_why(
@@ -1029,7 +1231,7 @@ class TestAnAddedCogCarriesItsStatistics:
             quiet=True,
         )
         before = cog.read_bytes()
-        calls = self._spy_write_cog(monkeypatch)
+        calls = self._spy_rewrite(monkeypatch)
 
         convert_raster(cog, tmp_path)
 
@@ -1038,6 +1240,110 @@ class TestAnAddedCogCarriesItsStatistics:
         out = capsys.readouterr()
         assert "PTL-DAT-009" in out.out + out.err
         assert "photo.tif" in out.out + out.err
+
+    @pytest.mark.unit
+    def test_a_lossy_codec_setting_keeps_the_pixels_of_a_lossless_cog(
+        self, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        """The rewrite only adds statistics. It must not re-encode the pixels with JPEG."""
+        import shutil
+
+        import numpy as np
+        import rasterio
+
+        from portolan_cli.conversion_config import CogSettings, settings_override
+        from portolan_cli.preparation import convert_raster
+
+        cog = tmp_path / "rgb.tif"
+        shutil.copy(fixtures_dir / "raster" / "valid" / "rgb.tif", cog)
+        with rasterio.open(cog) as src:
+            before = src.read()
+
+        with settings_override(cog=CogSettings(compression="JPEG", quality=50)):
+            convert_raster(cog, tmp_path)
+
+        with rasterio.open(cog) as src:
+            assert np.array_equal(src.read(), before)
+            assert "JPEG" not in src.tags(ns="IMAGE_STRUCTURE").get("COMPRESSION", "")
+        assert "STATISTICS_MEAN" in self._tags(cog)
+
+    @pytest.mark.unit
+    def test_a_cog_with_an_empty_band_is_rewritten_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A band with no valid pixel has no statistics to embed. One rewrite is enough."""
+        import rasterio
+        from rasterio.shutil import copy
+
+        from portolan_cli.preparation import convert_raster
+
+        source = _two_bands_one_empty(tmp_path / "src.tif")
+        cog = tmp_path / "scene.tif"
+        # The GDAL COG driver keeps the empty band. rio-cogeo writes 1 into it.
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"):
+            copy(source, cog, driver="COG", compress="DEFLATE")
+        source.unlink()
+        calls = self._spy_rewrite(monkeypatch)
+
+        convert_raster(cog, tmp_path)
+        first = cog.read_bytes()
+        convert_raster(cog, tmp_path)
+
+        assert calls == [cog]
+        assert cog.read_bytes() == first
+
+
+class TestTheStatisticsRewriteKeepsEveryPixel:
+    """The rewrite adds statistics to a COG the operator made. It changes no pixel."""
+
+    @pytest.mark.unit
+    def test_a_nodata_pixel_of_one_band_stays_nodata(self, tmp_path: Path) -> None:
+        """Band 1 holds the nodata value 0 where bands 2 and 3 hold data.
+
+        A warp through rio-cogeo reads such a pixel as valid. It writes 1 into
+        band 1 so that the pixel does not read as nodata, and the data changes.
+        """
+        import numpy as np
+        import rasterio
+        from rasterio.shutil import copy
+        from rasterio.transform import from_origin
+
+        from portolan_cli.preparation import convert_raster
+
+        data = np.full((3, 64, 64), 50, "uint8")
+        data[0, :8, :] = 0
+        source = tmp_path / "src.tif"
+        with rasterio.open(
+            source, "w", driver="GTiff", width=64, height=64, count=3, dtype="uint8",
+            crs="EPSG:4326", transform=from_origin(0, 1, 0.01, 0.01), nodata=0,
+        ) as dst:  # fmt: skip
+            dst.write(data)
+        cog = tmp_path / "scene.tif"
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"):
+            copy(source, cog, driver="COG", compress="DEFLATE")
+        source.unlink()
+
+        convert_raster(cog, tmp_path)
+
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(cog) as out:
+            assert np.array_equal(out.read(), data)
+            assert "STATISTICS_MEAN" in out.tags(1)
+
+
+def _two_bands_one_empty(path: Path) -> Path:
+    """Write a striped GTiff whose band 1 is all nodata and band 2 holds 7."""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    data = np.zeros((2, 64, 64), "uint8")
+    data[1] = 7
+    with rasterio.open(
+        path, "w", driver="GTiff", width=64, height=64, count=2, dtype="uint8",
+        crs="EPSG:4326", transform=from_origin(0, 1, 0.01, 0.01), nodata=0,
+    ) as dst:  # fmt: skip
+        dst.write(data)
+    return path
 
 
 class TestBandStatisticsWriteNoSidecar:

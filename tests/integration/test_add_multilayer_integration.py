@@ -167,3 +167,35 @@ class TestAddMultilayerIntegration:
         # Verify STAC structure
         assert (collection_dir / "collection.json").exists(), "collection.json not created"
         assert (collection_dir / "versions.json").exists(), "versions.json not created"
+
+
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason=(
+        "geoparquet-io aborts on multilayer conversion on macOS, in "
+        "read_spatial_to_arrow (upstream bug)"
+    ),
+)
+class TestTheProvenanceHashGoesThroughTheRun:
+    """Each layer output records the hash of the GeoPackage. The run hashes it once."""
+
+    @pytest.mark.integration
+    def test_a_geopackage_of_three_layers_is_hashed_once(self, initialized_catalog: Path) -> None:
+        from portolan_cli import trace
+        from portolan_cli.convert import convert_multilayer_file
+        from portolan_cli.run_state import RunState
+
+        collection_dir = initialized_catalog / "geodata"
+        collection_dir.mkdir()
+        gpkg_file = collection_dir / "multilayer.gpkg"
+        shutil.copy(FIXTURES_DIR / "multilayer.gpkg", gpkg_file)
+        state = RunState.open(initialized_catalog)
+
+        with trace.tracing():
+            results = convert_multilayer_file(gpkg_file, collection_dir, state=state)
+            # The asset scan of the add hashes the GeoPackage through the same memo.
+            state.checksum(gpkg_file)
+            hashed = trace.counters()["checksum.files"]
+
+        assert [r.success for r in results] == [True, True, True]
+        assert hashed == 1

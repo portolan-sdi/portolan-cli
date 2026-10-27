@@ -1337,6 +1337,135 @@ class TestALegacyOutputIsItsSourceOwn:
         assert _sha(geoparquet) == before
         assert self._parquets(collection_dir) == ["points-geojson.parquet", "points.parquet"]
 
+    @pytest.mark.integration
+    def test_an_edited_geojson_leaves_a_legacy_companion_geoparquet(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        """0.8.0 tracked a same-stem GeoJSON beside the operator's GeoParquet.
+
+        versions.json then looks the same as for an output and its source. The
+        conversion must not write over the GeoParquet, whose columns differ.
+        """
+        collection_dir = initialized_catalog / "places"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "points.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
+        source = collection_dir / "points.geojson"
+        TestNoConversionReplacesAForeignFile._points(source, 1)
+        self._add(runner, initialized_catalog, geoparquet)
+        _make_legacy(collection_dir)
+        assert "points.geojson" in TestNoConversionReplacesAForeignFile._tracked(collection_dir)
+        before = _sha(geoparquet)
+
+        TestNoConversionReplacesAForeignFile._points(source, 2)
+        self._add(runner, initialized_catalog, collection_dir)
+
+        assert _sha(geoparquet) == before
+        assert self._parquets(collection_dir) == ["points-geojson.parquet", "points.parquet"]
+        assert pq.read_metadata(collection_dir / "points-geojson.parquet").num_rows == 2
+
+    @pytest.mark.integration
+    def test_an_edited_geojson_leaves_a_geoparquet_another_add_tracked(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        """The add of another file tracks both same-stem files with no source_path."""
+        collection_dir = initialized_catalog / "places"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "points.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
+        source = collection_dir / "points.geojson"
+        TestNoConversionReplacesAForeignFile._points(source, 1)
+        other = collection_dir / "other.geojson"
+        TestNoConversionReplacesAForeignFile._points(other, 1)
+        self._add(runner, initialized_catalog, other)
+        tracked = TestNoConversionReplacesAForeignFile._tracked(collection_dir)
+        assert tracked["points.parquet"].get("source_path") is None
+        assert "points.geojson" in tracked
+        rows = pq.read_metadata(geoparquet).num_rows
+
+        TestNoConversionReplacesAForeignFile._points(source, 2)
+        self._add(runner, initialized_catalog, collection_dir)
+
+        assert pq.read_metadata(geoparquet).num_rows == rows
+        assert "points-geojson.parquet" in self._parquets(collection_dir)
+
+    @pytest.mark.integration
+    def test_an_edited_geopackage_replaces_its_legacy_layer_outputs(
+        self, runner: CliRunner, initialized_catalog: Path
+    ) -> None:
+        """0.8.0 tracked the layer outputs of a GeoPackage, not the GeoPackage."""
+        import geopandas as gpd
+        from shapely.geometry import Point
+
+        def write(path: Path, count: int) -> None:
+            path.unlink(missing_ok=True)
+            frame = gpd.GeoDataFrame(
+                {"i": list(range(count))},
+                geometry=[Point(i, i) for i in range(count)],
+                crs=4326,
+            )
+            for layer in ("l1", "l2"):
+                frame.to_file(path, layer=layer, driver="GPKG")
+
+        collection_dir = initialized_catalog / "layers"
+        collection_dir.mkdir()
+        source = collection_dir / "m.gpkg"
+        write(source, 1)
+        self._add(runner, initialized_catalog, collection_dir)
+        _make_legacy(collection_dir)
+        assert "m.gpkg" not in TestNoConversionReplacesAForeignFile._tracked(collection_dir)
+
+        write(source, 3)
+        self._add(runner, initialized_catalog, collection_dir)
+
+        assert self._parquets(collection_dir) == ["m_l1.parquet", "m_l2.parquet"]
+        assert pq.read_metadata(collection_dir / "m_l1.parquet").num_rows == 3
+
+    @pytest.mark.integration
+    def test_an_edited_tiff_replaces_its_legacy_cog_and_thumbnail(
+        self, runner: CliRunner, initialized_catalog: Path
+    ) -> None:
+        """A 0.8.0 COG of ``a.tiff`` is ``a.tif``, with no provenance tag."""
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+        from rio_cogeo.cogeo import cog_translate
+        from rio_cogeo.profiles import cog_profiles
+
+        def write(path: Path, value: int) -> None:
+            # Striped and 600 pixels wide, so it is no COG and add converts it.
+            with rasterio.open(
+                path, "w", driver="GTiff", width=600, height=600, count=1, dtype="uint8",
+                crs="EPSG:4326", transform=from_origin(0, 10, 0.01, 0.01),
+            ) as dst:  # fmt: skip
+                dst.write(np.full((1, 600, 600), value, "uint8"))
+
+        item_dir = initialized_catalog / "scenes" / "a"
+        item_dir.mkdir(parents=True)
+        source = item_dir / "a.tiff"
+        write(source, 1)
+        self._add(runner, initialized_catalog, item_dir.parent)
+        # 0.8.0 wrote the same COG with no PORTOLAN_SOURCE tag.
+        legacy = item_dir / "a.tif"
+        cog_translate(str(source), str(legacy), cog_profiles.get("deflate"), quiet=True)
+        versions_path = item_dir.parent / "versions.json"
+        versions = json.loads(versions_path.read_text())
+        for entry in versions["versions"][-1]["assets"].values():
+            entry.pop("source_path", None)
+        versions_path.write_text(json.dumps(versions))
+
+        write(source, 2)
+        self._add(runner, initialized_catalog, item_dir.parent)
+
+        assert sorted(p.name for p in item_dir.iterdir()) == [
+            "a.json",
+            "a.thumb.jpg",
+            "a.tif",
+            "a.tiff",
+        ]
+        with rasterio.open(legacy) as cog:
+            assert int(cog.read(1)[0, 0]) == 2
+
 
 class TestAConvertedCogPassesItsOwnCheck:
     """A COG that add converts from a GTiff embeds its statistics (issue #748).

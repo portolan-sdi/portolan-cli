@@ -528,6 +528,42 @@ class TestConvertFileRaster:
         assert result.error is None
 
 
+class TestTheConversionKeepsEveryPixel:
+    """write_cog writes the pixels of the source as they are.
+
+    rio-cogeo wraps the source in a WarpedVRT. The warper reads a pixel at the
+    nodata value of one band as valid when another band holds data there, and
+    writes nodata + 1 into the first band.
+    """
+
+    @pytest.mark.unit
+    def test_a_nodata_pixel_under_valid_pixels_of_another_band_survives(
+        self, tmp_path: Path
+    ) -> None:
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+
+        from portolan_cli.convert import write_cog
+
+        data = np.full((2, 600, 600), 50, "uint8")
+        data[0, :8, :] = 0
+        source = tmp_path / "src" / "scene.tif"
+        source.parent.mkdir()
+        with rasterio.open(
+            source, "w", driver="GTiff", width=600, height=600, count=2, dtype="uint8",
+            crs="EPSG:4326", transform=from_origin(0, 1, 0.001, 0.001), nodata=0,
+        ) as dst:  # fmt: skip
+            dst.write(data)
+
+        output = write_cog(source, tmp_path)
+
+        with rasterio.open(output) as cog:
+            written = cog.read()
+            assert cog.nodata == 0
+        assert np.array_equal(written, data)
+
+
 class TestTheCogCarriesItsStatistics:
     """A converted COG embeds its band statistics (issue #748, PTL-DAT-009/010).
 
@@ -588,6 +624,24 @@ class TestTheCogCarriesItsStatistics:
         write_cog(source, tmp_path)
 
         assert sorted(p.name for p in tmp_path.rglob("*.aux.xml")) == []
+
+    @pytest.mark.unit
+    def test_a_band_with_no_valid_pixel_still_converts(self, tmp_path: Path) -> None:
+        """GDAL computes no statistics for an empty band. The COG is written anyway."""
+        import rasterio
+
+        from portolan_cli.convert import write_cog
+        from tests.unit.test_preparation import _two_bands_one_empty
+
+        (tmp_path / "src").mkdir()
+        source = _two_bands_one_empty(tmp_path / "src" / "scene.tif")
+
+        output = write_cog(source, tmp_path)
+
+        with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(output) as cog:
+            assert cog.tags(1).get("STATISTICS_VALID_PERCENT") == "0"
+            assert "STATISTICS_MINIMUM" not in cog.tags(1)
+            assert cog.tags(2)["STATISTICS_MEAN"] == "7"
 
 
 class TestTheCogProfileSuitsItsCompression:

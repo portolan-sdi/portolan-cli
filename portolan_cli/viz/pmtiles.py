@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 from portolan_cli.constants import ROLE_VISUAL
 from portolan_cli.errors import PortolanError
-from portolan_cli.formats import is_geoparquet
+from portolan_cli.formats import is_geoparquet, run_scope
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import error, info, success, warn
 from portolan_cli.stac_parquet import stamp_file_fields, sync_file_extension
@@ -805,9 +805,12 @@ def generate_pmtiles_for_collection(
         TippecanoeNotFoundError: If a tile must be built and tippecanoe is not
             in PATH.
     """
+    # The footer read of each asset goes through the run memo.
+    with run_scope(state):
+        assets = _find_geoparquet_assets(collection_path)
     plan = [
         (asset_key, parquet_path, parquet_path.with_suffix(PMTILES_SUFFIX))
-        for asset_key, parquet_path in _find_geoparquet_assets(collection_path)
+        for asset_key, parquet_path in assets
     ]
     if not generate:
         plan = [entry for entry in plan if entry[2].exists()]
