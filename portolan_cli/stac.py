@@ -404,6 +404,17 @@ def add_asset_to_collection(
     # Use the existing key if found (preserves human-authored keys like "census_2020")
     # Otherwise use the provided key (e.g., stem-based "data")
     final_key = existing_key_by_href if existing_key_by_href is not None else asset_key
+    if (
+        existing_key_by_href is not None
+        and asset_key not in collection.assets
+        and _gives_up_stem(existing_key_by_href, asset_key, asset)
+    ):
+        # The file held its stem key, and the add now keys it by its filename,
+        # because a same-stem file of a higher rank takes the stem. A companion
+        # CSV that gains geometry is the case: its GeoParquet takes the stem.
+        # The stem key was the add's own, not a human's, so the file moves.
+        collection.add_asset(asset_key, collection.assets.pop(existing_key_by_href))
+        final_key = asset_key
     existing_asset = collection.assets.get(final_key)
 
     if (
@@ -476,6 +487,17 @@ def _canonical_media_type(media_type: str) -> str:
 def _same_href(first: str, second: str) -> bool:
     """Report whether two collection-relative hrefs name one file."""
     return first.removeprefix("./") == second.removeprefix("./")
+
+
+def _gives_up_stem(stored_key: str, asset_key: str, asset: pystac.Asset) -> bool:
+    """Report whether a file stored under its stem key now takes its filename key.
+
+    ``preparation._resolve_assets`` keys a file by its filename only when a
+    same-stem file of a higher rank holds the stem. A human key is neither of
+    the two, so it stays.
+    """
+    path = PurePosixPath(asset.href)
+    return stored_key == path.stem and asset_key == path.name and stored_key != asset_key
 
 
 # Roles of the assets that #933 could replace: the data and its tile derivative.
