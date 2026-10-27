@@ -45,6 +45,7 @@ from portolan_cli.extract.common.source import (
     filter_refs,
     run_layer_extraction,
 )
+from portolan_cli.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -234,6 +235,7 @@ class CartoLayerSource:
             return 0
         import pyarrow.parquet as pq
 
+        count("parquet.opens")
         return int(pq.read_metadata(dest).num_rows)
 
     def layer_metadata(self, source: str, layer: LayerRef) -> LayerMetadata:

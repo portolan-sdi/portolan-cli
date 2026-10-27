@@ -240,6 +240,7 @@ def generate_cog_thumbnail(
     thumb_path = thumbnail_path_for(cog_path)
 
     try:
+        count("raster.opens")
         with rasterio.open(cog_path) as src:
             # Compute target shape preserving aspect ratio
             longest = max(src.width, src.height)
@@ -1319,6 +1320,7 @@ def write_cog(source: Path, output_dir: Path, settings: CogSettings | None = Non
         # them (issue #748, PTL-DAT-009 and PTL-DAT-010). GDAL computes them on
         # the open source and keeps them as band tags, and rio-cogeo forwards
         # the band tags into the one write. PAM is off, so no .aux.xml appears.
+        count("raster.opens")
         with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:
             # Exact up to EXACT_STATISTICS_PIXELS. Above it, GDAL samples a
             # subset of the blocks and tags the result STATISTICS_APPROXIMATE.

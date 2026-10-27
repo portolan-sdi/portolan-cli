@@ -33,6 +33,7 @@ from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.config import ConfigSource, load_catalog_config
+from portolan_cli.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -292,6 +293,7 @@ def derive_cog_defaults(source: Path) -> tuple[int, str]:
     import rasterio
 
     try:
+        count("raster.opens")
         with rasterio.open(source) as src:
             dtype = str(src.dtypes[0])
             band_count = int(src.count)

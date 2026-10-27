@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from portolan_cli.errors import PortolanError
 from portolan_cli.extract.common.urls import redact_credentials
-from portolan_cli.trace import span, submit
+from portolan_cli.trace import count, span, submit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -684,6 +684,7 @@ def _resumed_result(
     import pyarrow.parquet as pq
 
     try:
+        count("parquet.opens")
         rows = pq.ParquetFile(data_file).metadata.num_rows
     except (pa.ArrowInvalid, OSError):
         # An interrupted older run can leave a partial file. Fetch it again.

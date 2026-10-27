@@ -45,6 +45,7 @@ from portolan_cli.extract.common.styles import extract_wms_legend, extract_wms_s
 from portolan_cli.extract.common.urls import merge_query, redact_credentials
 from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult, discover_layers
 from portolan_cli.licensing import license_url_from_text
+from portolan_cli.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -239,6 +240,7 @@ class WFSLayerSource:
             return 0
         import pyarrow.parquet as pq
 
+        count("parquet.opens")
         return int(pq.read_metadata(dest).num_rows)
 
     def layer_metadata(self, source: str, layer: LayerRef) -> LayerMetadata:

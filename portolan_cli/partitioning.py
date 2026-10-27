@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from portolan_cli.trace import count
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -598,6 +600,7 @@ def validate_partition_schemas(directory: Path) -> SchemaValidationResult:
     # Read schema from first file as reference
     reference_file = parquet_files[0]
     try:
+        count("parquet.opens")
         reference_schema = pq.read_schema(reference_file)
     except Exception as e:
         return SchemaValidationResult(
@@ -610,6 +613,7 @@ def validate_partition_schemas(directory: Path) -> SchemaValidationResult:
     # Compare all other files against reference
     for pq_file in parquet_files[1:]:
         try:
+            count("parquet.opens")
             file_schema = pq.read_schema(pq_file)
         except Exception as e:
             return SchemaValidationResult(
