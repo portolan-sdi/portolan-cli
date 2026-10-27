@@ -688,6 +688,11 @@ _MERCATOR_LIMIT = 20037508.342789244
 _MERCATOR_MAX_LAT = 85.0511287798066
 
 
+def _count_draw(_event: object) -> None:
+    """Count one full figure draw."""
+    count("thumbnail.draws")
+
+
 def _new_figure(frame: tuple[float, float, float, float], max_size: int) -> tuple[Any, Any]:
     """Make a figure whose one axes fills it and shows ``frame`` at equal scale.
 
@@ -710,7 +715,7 @@ def _new_figure(frame: tuple[float, float, float, float], max_size: int) -> tupl
     # 476.99999999999994. The small bump keeps the pixel count exact.
     figure = Figure(figsize=((size_px[0] + 1e-6) / _DPI, (size_px[1] + 1e-6) / _DPI), dpi=_DPI)
     FigureCanvasAgg(figure)
-    figure.canvas.mpl_connect("draw_event", lambda _event: count("thumbnail.draws"))
+    figure.canvas.mpl_connect("draw_event", _count_draw)
     ax = figure.add_axes((0.0, 0.0, 1.0, 1.0))
     ax.set_axis_off()
     ax.set_xlim(minx, maxx)

@@ -317,8 +317,8 @@ def _apply_extra_thumbnail_draw(root: Path, faulty: bool) -> None:
     if faulty:
         _replace_once(
             root / "portolan_cli/viz/thumbnail.py",
-            "        # thumbnails.quality reaches both render paths",
-            "        ax.figure.canvas.draw()\n        # thumbnails.quality reaches both render paths",
+            '    # No bbox_inches="tight"',
+            '    figure.canvas.draw()\n    # No bbox_inches="tight"',
         )
 
 
