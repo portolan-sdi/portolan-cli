@@ -176,12 +176,14 @@ def run_portolan(
     child_env["PYTHONPATH"] = os.pathsep.join(
         filter(None, (str(REPO_ROOT), child_env.get("PYTHONPATH")))
     )
+    # A Windows pipe defaults to cp1252, which cannot encode the output marks.
+    child_env["PYTHONIOENCODING"] = "utf-8"
     proc = subprocess.run(
         [*command, "--", *args],
         cwd=cwd,
         env=child_env,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         check=False,
     )
     if proc.returncode != 0 or not out.exists():

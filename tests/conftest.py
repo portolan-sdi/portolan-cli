@@ -27,7 +27,13 @@ from tests.mutation_sandbox import (
     SandboxReadGuard,
     reset_stats_mode_in_children,
 )
-from tests.network_guard import NO_PROXY_KEYS, PROXY_KEYS, NetworkGuard, SentinelProxy
+from tests.network_guard import (
+    NO_PROXY_KEYS,
+    PROXY_KEYS,
+    NetworkGuard,
+    SentinelProxy,
+    install_duckdb_extensions,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
@@ -196,22 +202,6 @@ def cleared_environ(**overrides: str) -> Iterator[None]:
         yield
 
 
-# geoparquet-io installs DuckDB extensions on first use. The network guard
-# refuses that download, so a fresh CI runner could load none of them. Install
-# them once, before any test starts. Under xdist only the controller does it,
-# before it starts the workers. An installed extension costs no download.
-# Each entry is (name, repository). None is the core repository. geoparquet-io
-# loads h3, geography (s2), and a5 from the community repository.
-_DUCKDB_EXTENSIONS: tuple[tuple[str, str | None], ...] = (
-    ("spatial", None),
-    ("httpfs", None),
-    ("encodings", None),
-    ("h3", "community"),
-    ("geography", "community"),
-    ("a5", "community"),
-)
-
-
 # A test writes only under tmp_path. The session guard below lists the
 # untracked and ignored entries of the repository root before and after the
 # run, and fails the run when a new one appears. These entries are outputs of
@@ -288,19 +278,8 @@ def pytest_configure(config: pytest.Config) -> None:
         entries = _root_entries()
         if entries is not None:
             config.stash[_ROOT_ENTRIES_KEY] = entries
-    import duckdb
-
-    connection = duckdb.connect()
-    try:
-        for name, repository in _DUCKDB_EXTENSIONS:
-            try:
-                connection.install_extension(name, repository=repository)
-            except duckdb.Error as exc:
-                # Offline, or no build for this platform. A test that needs the
-                # extension then fails and names extensions.duckdb.org.
-                print(f"Could not install the DuckDB {name} extension: {exc}", file=sys.stderr)
-    finally:
-        connection.close()
+    # Under xdist only the controller installs them, before it starts the workers.
+    install_duckdb_extensions()
 
 
 # mutmut drives pytest in-process and runs the suite several times per

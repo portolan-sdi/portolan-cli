@@ -208,7 +208,10 @@ def test_raster_scratch_preserves_another_pending_conversion(
 
     from portolan_cli.convert import _rio_cogeo_cog
 
-    source = valid_singleband_cog
+    # A copy: GDAL writes the statistics of a shared fixture to its .aux.xml.
+    source = tmp_path / "source" / "scene.tif"
+    source.parent.mkdir()
+    shutil.copy2(valid_singleband_cog, source)
     with rasterio.open(source) as src:
         if compression == "DEFLATE":
             first = copy_to_cog(src, tmp_path / "scene.tif", {}, {})

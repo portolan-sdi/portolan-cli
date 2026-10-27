@@ -675,13 +675,18 @@ class TestTheCogProfileSuitsItsCompression:
 
     @staticmethod
     def _gdal_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+        import logging
+
         # rio-cogeo copies the profile into an uncompressed intermediate file.
         # GDAL warns about the PREDICTOR of that file with COMPRESS=NONE.
         # Portolan does not write that file, so these tests ignore it.
         return [
             r.getMessage()
             for r in caplog.records
-            if r.name.startswith("rasterio") and "COMPRESS=NONE" not in r.getMessage()
+            # Windows CI also captures the DEBUG records of the rasterio GDAL env.
+            if r.name.startswith("rasterio")
+            and r.levelno >= logging.WARNING
+            and "COMPRESS=NONE" not in r.getMessage()
         ]
 
     @staticmethod

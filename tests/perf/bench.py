@@ -31,6 +31,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from tests.network_guard import install_duckdb_extensions
 from tests.perf.gates import measure
 from tests.perf.scenarios import REPO_ROOT, SCENARIOS
 
@@ -109,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.compare is not None and not args.compare.is_file():
         print(f"No baseline at {args.compare}. Run the job with record-baseline first.")
         return 1
+    # The scenarios block the network, so a fresh runner installs the extensions first.
+    install_duckdb_extensions()
     with tempfile.TemporaryDirectory(prefix="perf-bench-") as tmp:
         results = run_all(args.scale, Path(tmp))
     args.out.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")

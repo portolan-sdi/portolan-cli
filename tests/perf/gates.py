@@ -35,6 +35,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from tests.network_guard import install_duckdb_extensions
 from tests.perf.expected import add, config, parquet, versions, viz
 from tests.perf.scenarios import HISTORY_VERSIONS, SCENARIOS, Scenario, run_portolan
 
@@ -185,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--write", action="store_true", help="Rewrite tests/perf/expected/.")
     parser.add_argument("scenarios", nargs="*", default=sorted(SCALE_SIZES))
     args = parser.parse_args(argv)
+    install_duckdb_extensions()
     rows: list[Row] = []
     with tempfile.TemporaryDirectory(prefix="perf-record-") as tmp, ThreadPoolExecutor(4) as pool:
         for notes, scenario_rows in pool.map(lambda name: _record(name, Path(tmp)), args.scenarios):
