@@ -107,7 +107,7 @@ OBJECT_STORE_IMPORTERS = frozenset(
 )
 
 # Delete only. Lower these numbers when a name or a clone goes away.
-VULTURE_WHITELIST_NAMES = 101
+VULTURE_WHITELIST_NAMES = 100
 JSCPD_BASELINE_FINGERPRINTS = 937
 
 
