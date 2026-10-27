@@ -21,9 +21,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Generic, TypeVar
-
-from typing_extensions import Self
+from typing import TYPE_CHECKING, Generic, Self, TypeVar
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

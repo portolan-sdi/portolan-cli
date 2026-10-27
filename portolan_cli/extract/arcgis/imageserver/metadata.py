@@ -18,7 +18,7 @@ References:
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.crs import transform_bbox_to_wgs84
@@ -183,7 +183,7 @@ def create_item_metadata(
     geometry = _bbox_to_polygon(wgs84_bbox)
 
     # Current timestamp for created field
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     item: dict[str, Any] = {
         "type": "Feature",

@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def ensure_utc_aware(dt: datetime | None) -> datetime | None:
@@ -28,7 +28,7 @@ def ensure_utc_aware(dt: datetime | None) -> datetime | None:
         return None
     if dt.tzinfo is None:
         # Naive datetime - assume UTC
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -73,7 +73,7 @@ def parse_flexible_datetime(value: str | None) -> datetime | None:
         "%Y-%m-%d",  # Date only
     ):
         try:
-            return datetime.strptime(value, fmt).replace(tzinfo=timezone.utc)
+            return datetime.strptime(value, fmt).replace(tzinfo=UTC)
         except ValueError:
             continue
 

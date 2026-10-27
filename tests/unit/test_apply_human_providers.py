@@ -8,7 +8,7 @@ whether a ``via`` link and an ``updated`` stamp belong on the collection.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pystac
 import pytest
@@ -18,7 +18,7 @@ from portolan_cli.stac import apply_human_providers, apply_provenance
 pytestmark = pytest.mark.unit
 
 
-SYNCED_AT = datetime(2026, 7, 30, 9, 15, 0, tzinfo=timezone.utc)
+SYNCED_AT = datetime(2026, 7, 30, 9, 15, 0, tzinfo=UTC)
 
 MIRROR = {
     "providers": [
@@ -41,7 +41,7 @@ def _collection() -> pystac.Collection:
         description="Roads",
         extent=pystac.Extent(
             spatial=pystac.SpatialExtent([[-1.0, -1.0, 1.0, 1.0]]),
-            temporal=pystac.TemporalExtent([[datetime.now(timezone.utc), None]]),
+            temporal=pystac.TemporalExtent([[datetime.now(UTC), None]]),
         ),
         license="CC-BY-4.0",
     )
@@ -132,7 +132,7 @@ class TestApplyProvenanceForAMirror:
         apply_human_providers(collection, MIRROR)
         apply_provenance(collection, MIRROR, synced_at=SYNCED_AT)
 
-        later = datetime(2026, 8, 1, 0, 0, 0, tzinfo=timezone.utc)
+        later = datetime(2026, 8, 1, 0, 0, 0, tzinfo=UTC)
         apply_provenance(collection, MIRROR, synced_at=later)
 
         assert collection.extra_fields["updated"] == "2026-08-01T00:00:00Z"

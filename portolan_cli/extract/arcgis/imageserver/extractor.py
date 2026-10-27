@@ -36,7 +36,7 @@ import math
 import re
 import time
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlencode
@@ -2001,6 +2001,6 @@ def _load_or_create_resume_state(
         succeeded_tiles=set(),
         failed_tiles=set(),
         service_url=url,
-        started_at=datetime.now(timezone.utc),
+        started_at=datetime.now(UTC),
         grid=grid,
     )

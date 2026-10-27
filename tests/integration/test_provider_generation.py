@@ -99,7 +99,7 @@ def _read(path: Path) -> dict[str, Any]:
 def _rfc3339(value: object) -> datetime:
     """Parse an offset-bearing RFC 3339 date-time, the shape PTL-PRO-003 accepts."""
     assert isinstance(value, str), f"expected an RFC 3339 string, got {value!r}"
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return datetime.fromisoformat(value)
 
 
 def _rel(collection: dict[str, Any], rel: str) -> list[dict[str, Any]]:

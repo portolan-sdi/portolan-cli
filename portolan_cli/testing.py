@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import re
+from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_type_hints
 
@@ -92,7 +93,7 @@ def _check_describe(
     handler: Any, sample: Path, output: Path, metadata: Any, output_dir: Path
 ) -> list[str]:
     """Run ``describe_item``, ``describe_collection``, and ``inspect`` on stand-in objects."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     import pystac
 
@@ -106,7 +107,7 @@ def _check_describe(
         id="conformance",
         geometry=None,
         bbox=bbox,
-        datetime=datetime.now(timezone.utc),
+        datetime=datetime.now(UTC),
         properties=dict(metadata.to_stac_properties()),
         assets={"data": pystac.Asset(href=f"./{output.name}", media_type=handler.media_type)},
     )
@@ -118,7 +119,7 @@ def _check_describe(
         description="Conformance check",
         extent=pystac.Extent(
             build_spatial_extent([bbox], wgs84_only=False),
-            pystac.TemporalExtent([[datetime.now(timezone.utc), None]]),
+            pystac.TemporalExtent([[datetime.now(UTC), None]]),
         ),
     )
     handler.describe_collection(collection, [metadata], context)

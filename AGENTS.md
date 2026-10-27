@@ -79,7 +79,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | **Real-world test fixtures** | `tests/fixtures/realdata/README.md` |
 | Maintainer rationale | Module docstrings and comments at the enforcing site |
 
-**Target Python version:** 3.10+ (matches geoparquet-io dependency)
+**Target Python version:** 3.11+
 
 **CLI entry point:** `portolan` → `portolan_cli:cli` (defined in pyproject.toml)
 

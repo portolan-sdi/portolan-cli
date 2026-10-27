@@ -7,7 +7,7 @@ enriches used to keep the ``other`` default — which rashid rejects unless a
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pystac
 import pytest
@@ -23,7 +23,7 @@ def _collection() -> pystac.Collection:
         description="Roads",
         extent=pystac.Extent(
             spatial=pystac.SpatialExtent([[-1.0, -1.0, 1.0, 1.0]]),
-            temporal=pystac.TemporalExtent([[datetime.now(timezone.utc), None]]),
+            temporal=pystac.TemporalExtent([[datetime.now(UTC), None]]),
         ),
         license="other",
     )

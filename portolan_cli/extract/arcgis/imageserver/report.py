@@ -15,7 +15,7 @@ and enable resume capabilities across both extraction types.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.json_io import write_json_atomic
@@ -422,7 +422,7 @@ def build_imageserver_report(
 
     return ImageServerExtractionReport(
         extraction_type="imageserver",
-        extraction_date=datetime.now(timezone.utc).isoformat(),
+        extraction_date=datetime.now(UTC).isoformat(),
         source_url=url,
         portolan_version=portolan_version,
         riocogeo_version=riocogeo_version,
