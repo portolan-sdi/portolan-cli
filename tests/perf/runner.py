@@ -41,6 +41,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from types import FrameType
 
+    import pytest
+
 TILE_SIZE = 256
 
 
@@ -92,7 +94,7 @@ def _install_duckdb_counter() -> None:
     duckdb.connect = counted_connect
 
 
-def _install_stub_tiles() -> None:
+def _install_stub_tiles(patch: pytest.MonkeyPatch) -> None:
     try:
         import contextily.tile
         import numpy as np
@@ -105,11 +107,11 @@ def _install_stub_tiles() -> None:
     tile = np.full((TILE_SIZE, TILE_SIZE, 4), 235, dtype=np.uint8)
     tile[..., 3] = 255
 
-    def stub_fetch_tile(tile_url: str, wait: int, max_retries: int, headers: dict[str, str]) -> Any:
+    def stub_fetch_tile(*_args: Any, **_kwargs: Any) -> Any:
         trace.count("tiles.fetched")
         return tile.copy()
 
-    contextily.tile._fetch_tile = stub_fetch_tile
+    patch.setattr(contextily.tile, "_fetch_tile", stub_fetch_tile)
 
 
 def _peak_rss_mb() -> float | None:
@@ -131,7 +133,6 @@ def run(argv: list[str], *, mem: bool) -> dict[str, Any]:
     sites: dict[str, Counter[str]] = {}
     _install_site_recorder(sites)
     _install_duckdb_counter()
-    _install_stub_tiles()
 
     from portolan_cli import trace
     from portolan_cli.cli import cli
@@ -140,7 +141,9 @@ def run(argv: list[str], *, mem: bool) -> dict[str, Any]:
     with contextlib.ExitStack() as stack:
         sentinel = stack.enter_context(contextlib.contextmanager(SentinelProxy().run)())
         guard = NetworkGuard(test=" ".join(argv), sentinel=sentinel)
-        guard.install(stack.enter_context(pytest.MonkeyPatch.context()))
+        patch = stack.enter_context(pytest.MonkeyPatch.context())
+        _install_stub_tiles(patch)
+        guard.install(patch)
         start = time.perf_counter()
         try:
             result = cli.main(args=argv, prog_name="portolan", standalone_mode=False)

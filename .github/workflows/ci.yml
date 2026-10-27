@@ -218,6 +218,7 @@ jobs:
         #   from tests/conftest.py. Nightly keeps the full default profile.
         # - --durations=25 records the slowest tests so a slow-test regression
         #   is visible in the log.
+        # - tests/perf runs once, in the perf-gates job.
         env:
           HYPOTHESIS_PROFILE: ci
           MATRIX_SUITE: ${{ matrix.suite }}
@@ -227,7 +228,7 @@ jobs:
           if [ "$MATRIX_SUITE" = "unit" ] && [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             marker="unit and not network and not slow and not benchmark"
           fi
-          uv run pytest tests/ --ignore=tests/iceberg/ --tb=short \
+          uv run pytest tests/ --ignore=tests/iceberg/ --ignore=tests/perf/ --tb=short \
             -m "$marker" \
             -n logical --dist loadscope \
             --durations=25 --durations-min=1.0 \
@@ -250,6 +251,90 @@ jobs:
           path: coverage.xml
           if-no-files-found: error
           retention-days: 7
+
+  perf-gates:
+    name: Perf Counter Gates
+    # tests/perf runs each scenario at n and 2n in cold child processes and
+    # compares the slope and intercept of each counter with the constants in
+    # tests/perf/expected. A count does not depend on machine load, so one
+    # Linux cell gates it, and the test matrix skips tests/perf. The slow
+    # memory ceilings run in the nightly slow job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AWS_EC2_METADATA_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.6.14"
+
+      - name: Set up Python
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: uv python install 3.12
+
+      - name: Install dependencies
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: uv sync --all-extras
+
+      - name: Run the counter gates
+        run: uv run pytest tests/perf -m "not slow" -n 4 --tb=short --durations=10
+
+  codspeed:
+    name: CodSpeed Benchmarks
+    # CodSpeed runs tests/benchmark under CPU simulation and counts
+    # instructions, so a CPU regression in a pure-Python hot path shows on a
+    # shared runner. It compares each pull request with the base branch. The
+    # upload uses OpenID Connect, which a public repository needs no token
+    # for. It needs the CodSpeed GitHub app on the repository.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.6.14"
+
+      - name: Set up Python
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: uv python install 3.12
+
+      - name: Install dependencies
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: uv sync --all-extras
+
+      - name: Run the benchmarks under CodSpeed
+        uses: CodSpeedHQ/action@f842b9a3ffe213dbb81768fd7f7eeb4dfcf1c369 # v5.4.2
+        with:
+          mode: simulation
+          run: uv run pytest tests/benchmark -m benchmark --codspeed
 
   plugin-test:
     # The example plugin uses the public plugin API alone (#947). A change to
@@ -599,7 +684,7 @@ jobs:
     # don't touch iceberg. needs lists every job but `changes`, and
     # tests/docs/test_ci_wiring.py fails when one is missing.
     if: always()
-    needs: [quality, security, test, plugin-test, iceberg-test, iceberg-e2e, diff-cover, docs, site-links, build]
+    needs: [quality, security, test, plugin-test, perf-gates, codspeed, iceberg-test, iceberg-e2e, diff-cover, docs, site-links, build]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

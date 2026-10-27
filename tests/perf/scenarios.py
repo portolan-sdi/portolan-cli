@@ -46,7 +46,7 @@ RASTER_SIZE = 64
 # ---------------------------------------------------------------------------
 
 
-def _rng(seed: int, salt: int) -> Any:
+def seeded_rng(seed: int, salt: int) -> Any:
     import numpy as np
 
     return np.random.default_rng([seed, salt])
@@ -256,28 +256,28 @@ class Scenario:
 
 def _many_collections(root: Path, n: int, seed: int) -> None:
     for i in range(n):
-        write_vector(root / f"c{i:04d}" / "buildings.parquet", SMALL_FILE_ROWS, _rng(seed, i))
+        write_vector(root / f"c{i:04d}" / "buildings.parquet", SMALL_FILE_ROWS, seeded_rng(seed, i))
 
 
 def _one_collection(root: Path, n: int, seed: int) -> None:
     for i in range(n):
-        write_vector(root / "buildings" / f"b{i:04d}.parquet", SMALL_FILE_ROWS, _rng(seed, i))
+        write_vector(root / "buildings" / f"b{i:04d}.parquet", SMALL_FILE_ROWS, seeded_rng(seed, i))
 
 
 def _one_collection_with_csv(root: Path, n: int, seed: int) -> None:
     _one_collection(root, n, seed)
     for i in range(n):
         # A distinct stem: a same-stem CSV overwrites the GeoParquet on add.
-        write_csv(root / "buildings" / f"b{i:04d}-attrs.csv", 20, _rng(seed, 100_000 + i))
+        write_csv(root / "buildings" / f"b{i:04d}-attrs.csv", 20, seeded_rng(seed, 100_000 + i))
 
 
 def _large_vector(root: Path, n: int, seed: int) -> None:
-    write_vector(root / "buildings" / "buildings.parquet", n, _rng(seed, 0))
+    write_vector(root / "buildings" / "buildings.parquet", n, seeded_rng(seed, 0))
 
 
 def _rasters(root: Path, n: int, seed: int) -> None:
     for i in range(n):
-        write_raster(root / "scenes" / f"s{i:04d}" / f"s{i:04d}.tif", _rng(seed, i))
+        write_raster(root / "scenes" / f"s{i:04d}" / f"s{i:04d}.tif", seeded_rng(seed, i))
 
 
 ADD = ("add", ".", "--workers", "1")
