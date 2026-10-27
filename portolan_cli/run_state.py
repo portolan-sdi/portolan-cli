@@ -226,7 +226,9 @@ class RunState:
                 it is the record on disk.
 
         Returns:
-            A copy that the caller may edit. A collection with no
+            A new record whose version list the caller may edit. The
+            ``Version`` objects are shared with the memo, so a caller replaces
+            a version and never edits its asset map. A collection with no
             ``versions.json`` gives an empty record.
 
         Raises:
