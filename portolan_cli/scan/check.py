@@ -684,7 +684,7 @@ def run_fix_workflow(
             force=force,
             workers=workers,
             on_progress=on_progress,
-            catalog_path=path,
+            catalog_path=resolve_catalog_root_for_check(path) or path,
             state=state,
         )
 

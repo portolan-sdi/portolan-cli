@@ -2074,6 +2074,31 @@ class TestCheckFixReadsTheState:
         assert report.conversion_report is not None
         assert report.conversion_report.results == []
 
+    @pytest.mark.integration
+    @pytest.mark.parametrize("target", [".", "sub"])
+    def test_check_fix_preserves_a_path_glob_from_any_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
+    ) -> None:
+        """``portolan check <target> --fix`` with a relative path keeps the preserved file."""
+        import json
+
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+
+        catalog = self._preserved_catalog(tmp_path / "catalog")
+        before = (catalog / "sub" / "a.tif").read_bytes()
+        monkeypatch.chdir(catalog)
+
+        result = CliRunner().invoke(
+            cli, ["check", target, "--geo-assets", "--fix", "--workers", "1", "--json"]
+        )
+
+        assert result.exit_code == 0, result.output
+        conversion = json.loads(result.stdout)["data"]["fix"]["conversion"]
+        assert [f["status"] for f in conversion["files"]] == ["cloud_native"]
+        assert (catalog / "sub" / "a.tif").read_bytes() == before
+
     @pytest.mark.unit
     def test_a_pool_worker_parses_the_config_once(self, tmp_path: Path) -> None:
         from portolan_cli import convert

@@ -311,7 +311,9 @@ def run_check(
                 fix=False,
                 dry_run=False,
                 workers=workers,
-                catalog_path=path,
+                # The config and its conversion.paths globs belong to the
+                # catalog root, also when the check covers a subdirectory.
+                catalog_path=root,
                 state=state,
             )
 
