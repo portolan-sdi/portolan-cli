@@ -762,3 +762,123 @@ class TestOneAddIsOneVersion:
         assert {asset["href"] for asset in stac.values()} <= tracked_hrefs
         assert records["roads.parquet"].sha256 == compute_checksum(collection_dir / "roads.parquet")
         assert _index_entry(root, "roads")["current_version"] == "1.0.0"  # type: ignore[index]
+
+
+@pytest.mark.integration
+class TestTheBumpOfAnAdd:
+    """One add writes one version, and its number bumps the part that main bumped.
+
+    On main the geo files of an add went through finalize, which bumped the
+    patch. A companion went through ``publish_version``, which bumped the
+    minor. ``rm`` bumps the minor. One staged version takes the larger bump,
+    so it ends on the number that the chain of versions on main ended on.
+    """
+
+    @staticmethod
+    def _collection(catalog: Path, fixtures_dir: Path) -> tuple[Path, Path, Path]:
+        """Add a GeoParquet with a CSV companion. Return the dir, the file, the CSV."""
+        from portolan_cli.add import add_files
+
+        collection_dir = catalog / "buildings"
+        collection_dir.mkdir()
+        geo = collection_dir / "b1.parquet"
+        geo.write_bytes((fixtures_dir / "simple.parquet").read_bytes())
+        csv = collection_dir / "a1.csv"
+        csv.write_text("id,name\n1,a\n")
+        _, _, failures = add_files(paths=[collection_dir], catalog_root=catalog)
+        assert failures == []
+        return collection_dir, geo, csv
+
+    @staticmethod
+    def _versions(collection_dir: Path) -> list[str]:
+        from portolan_cli.versions import read_versions
+
+        return [v.version for v in read_versions(collection_dir / "versions.json").versions]
+
+    @staticmethod
+    def _readd(catalog: Path, target: Path) -> None:
+        from portolan_cli.add import add_files
+
+        _, _, failures = add_files(paths=[target], catalog_root=catalog)
+        assert failures == []
+
+    def test_an_added_companion_bumps_the_minor(
+        self, fresh_catalog_no_versions: Path, fixtures_dir: Path
+    ) -> None:
+        catalog = fresh_catalog_no_versions
+        collection_dir, _geo, _csv = self._collection(catalog, fixtures_dir)
+        (collection_dir / "b2.csv").write_text("id\n1\n")
+
+        self._readd(catalog, collection_dir)
+
+        assert self._versions(collection_dir) == ["1.0.0", "1.1.0"]
+
+    def test_a_changed_companion_bumps_the_minor(
+        self, fresh_catalog_no_versions: Path, fixtures_dir: Path
+    ) -> None:
+        catalog = fresh_catalog_no_versions
+        collection_dir, _geo, csv = self._collection(catalog, fixtures_dir)
+        csv.write_text("id,name\n1,a\n2,b\n")
+
+        self._readd(catalog, collection_dir)
+
+        assert self._versions(collection_dir) == ["1.0.0", "1.1.0"]
+
+    def test_a_changed_item_companion_bumps_the_minor(
+        self, fresh_catalog_no_versions: Path, fixtures_dir: Path
+    ) -> None:
+        catalog = fresh_catalog_no_versions
+        item_dir = catalog / "imagery" / "scene"
+        item_dir.mkdir(parents=True)
+        (item_dir / "scene.tif").write_bytes(
+            (fixtures_dir / "raster" / "valid" / "rgb.tif").read_bytes()
+        )
+        csv = item_dir / "bands.csv"
+        csv.write_text("band,name\n1,red\n")
+        self._readd(catalog, catalog / "imagery")
+        csv.write_text("band,name\n1,red\n2,green\n")
+
+        self._readd(catalog, catalog / "imagery")
+
+        assert self._versions(catalog / "imagery") == ["1.0.0", "1.1.0"]
+
+    def test_a_changed_geo_file_bumps_the_patch(
+        self, fresh_catalog_no_versions: Path, fixtures_dir: Path
+    ) -> None:
+        catalog = fresh_catalog_no_versions
+        collection_dir, geo, _csv = self._collection(catalog, fixtures_dir)
+        geo.write_bytes((fixtures_dir / "realdata" / "open-buildings.parquet").read_bytes())
+
+        self._readd(catalog, collection_dir)
+
+        assert self._versions(collection_dir) == ["1.0.0", "1.0.1"]
+
+    def test_a_geo_file_and_a_companion_take_the_minor(
+        self, fresh_catalog_no_versions: Path, fixtures_dir: Path
+    ) -> None:
+        """Main wrote 1.0.1 for the geo file, then 1.1.0 for the companion."""
+        catalog = fresh_catalog_no_versions
+        collection_dir, geo, csv = self._collection(catalog, fixtures_dir)
+        geo.write_bytes((fixtures_dir / "realdata" / "open-buildings.parquet").read_bytes())
+        csv.write_text("id,name\n1,a\n2,b\n")
+
+        self._readd(catalog, collection_dir)
+
+        assert self._versions(collection_dir) == ["1.0.0", "1.1.0"]
+
+    def test_a_removal_bumps_the_minor(
+        self, fresh_catalog_no_versions: Path, fixtures_dir: Path
+    ) -> None:
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+
+        catalog = fresh_catalog_no_versions
+        collection_dir, _geo, csv = self._collection(catalog, fixtures_dir)
+
+        result = CliRunner().invoke(
+            cli, ["rm", "--keep", "--portolan-dir", str(catalog), str(csv)], catch_exceptions=False
+        )
+
+        assert result.exit_code == 0, result.output
+        assert self._versions(collection_dir) == ["1.0.0", "1.1.0"]
