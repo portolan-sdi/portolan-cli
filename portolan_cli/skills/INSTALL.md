@@ -4,7 +4,7 @@ Choose the instructions for your agent. Copy whole skill directories so the agen
 
 ### Claude CLI
 
-For Claude Code, use the plugin commands in the [quickstart](#quickstart), then start a new session. Skills use the `portolan:` prefix: `/portolan:portolan-bootstrap` builds a catalog, and `/portolan:reading-portolan` helps you use one.
+For Claude Code, use the plugin commands in the [quickstart](https://github.com/portolan-sdi/portolan-skills#quickstart), then start a new session. Skills use the `portolan:` prefix: `/portolan:portolan-bootstrap` builds a catalog, and `/portolan:reading-portolan` helps you use one.
 
 See [Claude Code plugin installation](https://code.claude.com/docs/en/discover-plugins) for installation scopes and updates.
 
@@ -38,7 +38,7 @@ gemini skills install https://github.com/portolan-sdi/portolan-skills.git \
   --path skills/portolan-bootstrap --consent
 ```
 
-Repeat the command with a directory from the [skills list](#skills) for each skill you need. For the quickstart, also install `git-backed-catalog`, `portolan-cli`, `portolan-thumbnails`, and `sourcecoop`. Add `--scope workspace` to install for the current project. See [Gemini CLI skills](https://geminicli.com/docs/cli/skills/) for discovery and management.
+Repeat the command with a directory from the [skills list](https://github.com/portolan-sdi/portolan-skills#skills) for each skill you need. For the quickstart, also install `git-backed-catalog`, `portolan-cli`, `portolan-thumbnails`, and `sourcecoop`. Add `--scope workspace` to install for the current project. See [Gemini CLI skills](https://geminicli.com/docs/cli/skills/) for discovery and management.
 
 ### Other agents
 
