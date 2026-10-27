@@ -1,4 +1,4 @@
-"""Scale-gate constants of parquet: Parquet and raster opens, DuckDB connections. See gates.py."""
+"""Scale-gate constants of parquet: Parquet, raster, and vector opens, DuckDB connections. See gates.py."""
 
 from __future__ import annotations
 

@@ -204,6 +204,7 @@ class TestCounters:
             "tiles.fetched",
             "raster.opens",
             "parquet.opens",
+            "vector.opens",
             "duckdb.connects",
         )
 

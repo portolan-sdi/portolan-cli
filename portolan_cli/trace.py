@@ -80,6 +80,7 @@ KNOWN_COUNTERS: tuple[str, ...] = (
     "tiles.fetched",
     "raster.opens",
     "parquet.opens",
+    "vector.opens",
     "duckdb.connects",
 )
 

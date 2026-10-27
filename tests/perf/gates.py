@@ -50,6 +50,7 @@ COUNTER_OWNER: dict[str, str] = {
     "collection_json.writes": "add",
     "parquet.opens": "parquet",
     "raster.opens": "parquet",
+    "vector.opens": "parquet",
     "duckdb.connects": "parquet",
     "thumbnail.draws": "viz",
     "tiles.fetched": "viz",
@@ -67,7 +68,7 @@ OWNER_DOCS: dict[str, str] = {
     "versions": "versions.json reads and writes, published versions, checksums, items.parquet",
     "config": "YAML parses and merged-config builds",
     "add": "collection.json writes",
-    "parquet": "Parquet and raster opens, DuckDB connections",
+    "parquet": "Parquet, raster, and vector opens, DuckDB connections",
     "viz": "thumbnail draws and basemap tiles",
 }
 
