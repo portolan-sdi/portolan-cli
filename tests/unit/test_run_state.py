@@ -6,7 +6,7 @@ import hashlib
 import os
 import threading
 import time
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import pytest
 
@@ -510,6 +510,35 @@ class TestConfigSeam:
         assert state.setting("backend", collection_dir=coll) == "coll"
         assert state.setting("backend", collection_dir=coll, cli_value="cli") == "cli"
         assert state.config(coll)["backend"] == "coll"
+
+    def test_threads_that_miss_one_directory_together_merge_it_once(
+        self, catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The workers of one collection share one merge of its config.
+
+        The ``--workers 4`` scale gate sees this race only when the threads
+        meet in it, so this test makes them meet.
+        """
+        from portolan_cli import config
+
+        (catalog / ".portolan" / "config.yaml").write_text("backend: root\n")
+        coll = catalog / "c"
+        coll.mkdir()
+        merge = config.merge_config_files
+        calls: list[int] = []
+
+        def slow_merge(*args: Any, **kwargs: Any) -> Any:
+            calls.append(1)
+            time.sleep(0.05)  # Keeps the other threads inside the miss.
+            return merge(*args, **kwargs)
+
+        monkeypatch.setattr(config, "merge_config_files", slow_merge)
+        state = RunState.open(catalog)
+
+        results = _together(4, lambda: state.config(coll)["backend"])
+
+        assert results == ["root"] * 4
+        assert len(calls) == 1
 
     def test_metadata_drops_inherited_title(self, catalog: Path) -> None:
         (catalog / ".portolan" / "metadata.yaml").write_text("title: Root\nlicense: MIT\n")
