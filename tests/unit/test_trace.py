@@ -141,6 +141,38 @@ class TestSpans:
         assert 5.9 <= parent["mem_growth_mb"] <= 6.5
         assert 1.9 <= child["mem_growth_mb"] <= 2.5
 
+    def test_mem_growth_keeps_a_peak_when_another_thread_opens_a_span(self) -> None:
+        """A span that opens in one thread does not erase the peak of an open span in another.
+
+        tracemalloc has one peak per process, and each span entry resets it.
+        The span in the first thread reaches its peak before the span in the
+        second thread opens, so only a fold into every open span keeps it.
+        """
+        trace.enable(mem=True)
+        freed = threading.Event()
+        second_open = threading.Event()
+
+        def first() -> None:
+            with trace.span("first"):
+                block = bytearray(6 * _MIB)
+                del block
+                freed.set()
+                second_open.wait(timeout=5)
+
+        def second() -> None:
+            freed.wait(timeout=5)
+            with trace.span("second"):
+                second_open.set()
+
+        with trace.span("pool"), ThreadPoolExecutor(max_workers=2) as pool:
+            for future in [trace.submit(pool, first), trace.submit(pool, second)]:
+                future.result()
+        meta = trace.meta()
+        assert meta is not None
+        growth = {node["name"]: node["mem_growth_mb"] for node in meta["timings"][0]["children"]}
+        assert 5.9 <= growth["first"] <= 6.5
+        assert growth["second"] < 0.5
+
     def test_mem_growth_absent_without_mem_mode(self) -> None:
         trace.enable()
         with trace.span("plain"):
