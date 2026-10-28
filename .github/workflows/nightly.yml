@@ -153,9 +153,10 @@ jobs:
           source = config.read_text()
           source = source.replace(
               'pytest_add_cli_args_test_selection = ["tests/"]',
-              'pytest_add_cli_args_test_selection = ["tests/unit/test_sync.py"]',
+              'pytest_add_cli_args_test_selection = ["tests/unit/test_sync.py", "tests/integration/test_sync_integration.py", "tests/integration/test_push_integration.py"]',
           )
           source = source.replace('    "--no-cov",', '    "--no-cov", "-o", "faulthandler_timeout=10",')
+          source = source.replace("[tool.mutmut]", "[tool.mutmut]\ndebug = true")
           config.write_text(source)
           PYCONFIG
           GLOBS=("portolan_cli.sync.core.x__step_init__mutmut_*")
