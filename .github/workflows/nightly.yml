@@ -242,7 +242,8 @@ jobs:
     name: Perf Scenarios (wall time and peak RSS)
     # Runs the S1, S2, S3, S4, and S8 scenarios of tests/perf at full size and
     # compares wall time and peak RSS with .benchmarks/scenarios.json.
-    # tests/perf/bench.py states the thresholds: +30% wall, +15% RSS. A
+    # tests/perf/bench.py states the thresholds: +30% wall, +15% RSS. The
+    # wall limit scales by the calibration ratio of the two runners. A
     # missing baseline fails the run. CPU regressions in pure-Python paths
     # are CodSpeed's job in ci.yml, and extra work is the counter gates' job.
     runs-on: ubuntu-latest

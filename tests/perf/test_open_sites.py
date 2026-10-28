@@ -30,7 +30,8 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.unit
+# The scan reads portolan_cli, which mutmut rewrites in its sandbox.
+pytestmark = [pytest.mark.unit, pytest.mark.source_scan]
 
 PACKAGE = Path(__file__).resolve().parents[2] / "portolan_cli"
 #: The package that cannot import trace, and so cannot count, under the package root.

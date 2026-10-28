@@ -136,7 +136,9 @@ your PR:
   "Tests and the mutation sandbox" under Testing gives the rules for its tests.
 - **Perf scenarios** — runs fixed `add`, re-add, and `check --metadata`
   scenarios at full size. The job fails when wall time grows by more than 30%
-  or peak RSS by more than 15% over `.benchmarks/scenarios.json`.
+  or peak RSS by more than 15% over `.benchmarks/scenarios.json`. A fixed
+  calibration workload measures the speed of the runner first. The wall-time
+  limit scales by the ratio of the two calibrations.
 - **Live-network tests** — hit real third-party services; because those can be
   flaky, this job is **non-blocking** and a failure opens a single self-closing
   tracking issue instead of turning the nightly red.

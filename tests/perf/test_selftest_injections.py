@@ -11,7 +11,8 @@ import pytest
 
 from scripts import gate_selftest as selftest
 
-pytestmark = pytest.mark.integration
+# The scan copies portolan_cli, which mutmut rewrites in its sandbox.
+pytestmark = [pytest.mark.integration, pytest.mark.source_scan]
 REPO = Path(__file__).resolve().parents[2]
 
 

@@ -23,11 +23,13 @@ the job itself.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import platform
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +63,7 @@ def run_all(scale: float, workdir: Path) -> dict[str, Any]:
         "machine": platform.machine(),
         "python": platform.python_version(),
         "commit": _commit(),
+        "calibration_s": calibrate(),
         "scenarios": {},
     }
     for name, full in FULL_SIZES.items():
@@ -80,18 +83,55 @@ def run_all(scale: float, workdir: Path) -> dict[str, Any]:
     return results
 
 
+def calibrate(rounds: int = 3) -> float:
+    """Time a fixed workload of Python, hashing, and file I/O. Return the fastest round.
+
+    Two runners of one type differ in speed. The nightly of 2026-10-28 ran the
+    baseline code 1.5x to 2x slower than the recording run. The compare scales
+    the baseline wall time by the ratio of the two calibrations, so it
+    measures the code and not the runner.
+    """
+    record = {f"key{i}": [i, str(i), {"value": float(i)}] for i in range(100_000)}
+    block = bytes(range(256)) * 4096
+    best = float("inf")
+    for _ in range(rounds):
+        start = time.perf_counter()
+        json.loads(json.dumps(record))
+        digest = hashlib.sha256()
+        for _ in range(256):
+            digest.update(block)
+        with tempfile.TemporaryDirectory(prefix="perf-calibrate-") as tmp:
+            for i in range(200):
+                path = Path(tmp) / f"{i}.bin"
+                path.write_bytes(block)
+                path.read_bytes()
+        best = min(best, time.perf_counter() - start)
+    return round(best, 4)
+
+
 def compare(results: dict[str, Any], baseline: dict[str, Any]) -> list[str]:
-    """Return one line per regression of ``results`` over ``baseline``."""
+    """Return one line per regression of ``results`` over ``baseline``.
+
+    The wall-time limit scales with the calibration ratio of the two runs.
+    The peak RSS limit does not scale, because a slower runner uses the same memory.
+    """
     if baseline["machine"] != results["machine"]:
         return [f"baseline machine {baseline['machine']} is not {results['machine']}"]
+    if "calibration_s" not in baseline:
+        return ["the baseline has no calibration_s. Record a new baseline."]
+    speed = results["calibration_s"] / baseline["calibration_s"]
+    print(f"runner speed: this run's calibration is {speed:.2f}x the baseline's")
     failures = []
     for name, now in results["scenarios"].items():
         before = baseline["scenarios"].get(name)
         if before is None or before["n"] != now["n"]:
             failures.append(f"{name}: the baseline has no run at n={now['n']}. Record one.")
             continue
-        for key, limit in (("wall_s", WALL_THRESHOLD), ("peak_rss_mb", RSS_THRESHOLD)):
-            ceiling = round(before[key] * (1 + limit), 3)
+        for key, limit, scale in (
+            ("wall_s", WALL_THRESHOLD, speed),
+            ("peak_rss_mb", RSS_THRESHOLD, 1.0),
+        ):
+            ceiling = round(before[key] * scale * (1 + limit), 3)
             verdict = "FAIL" if now[key] > ceiling else "ok"
             line = f"{name} {key}: {before[key]} -> {now[key]} (limit {ceiling:.1f}) {verdict}"
             print(line)

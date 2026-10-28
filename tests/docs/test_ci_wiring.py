@@ -330,7 +330,11 @@ def test_scenario_regressions_fail_the_nightly_run() -> None:
 
 def _scenario_results(wall_s: float, peak_rss_mb: float, n: int = 100) -> dict[str, Any]:
     scenario = {"n": n, "wall_s": wall_s, "peak_rss_mb": peak_rss_mb}
-    return {"machine": "x86_64", "scenarios": {"add-many-collections": scenario}}
+    return {
+        "machine": "x86_64",
+        "calibration_s": 1.0,
+        "scenarios": {"add-many-collections": scenario},
+    }
 
 
 @pytest.mark.parametrize(
