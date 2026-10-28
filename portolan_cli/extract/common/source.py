@@ -222,8 +222,9 @@ class LayerSourceOptions:
     license_url: str | None = None
 
 
+# Generated methods become extra protocol requirements: https://github.com/boxed/mutmut/issues/590
 @runtime_checkable
-class LayerSource(Protocol):
+class LayerSource(Protocol):  # pragma: no mutate block
     """A data source that serves named layers.
 
     Attributes:

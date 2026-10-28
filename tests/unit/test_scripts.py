@@ -10,6 +10,7 @@ These tests verify that the scripts in scripts/ work correctly:
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -313,6 +314,42 @@ class TestMutantGlobs:
         mutable = tmp_path / "mutable.py"
         mutable.write_text("def f(a: int, b: int) -> int:\n    return a + b\n", encoding="utf-8")
         assert real_has_mutants(mutable) is True
+
+    @pytest.mark.integration
+    @pytest.mark.source_scan
+    @requires_mutmut_import
+    def test_runtime_protocol_members_survive_instrumentation(self) -> None:
+        """Generated methods must not become new runtime protocol requirements."""
+        from mutmut.mutation.file_mutation import mutate_file_contents
+
+        root = Path(__file__).resolve().parents[2] / "portolan_cli"
+        for path in sorted(root.rglob("*.py")):
+            source = path.read_text(encoding="utf-8")
+            protocols = {
+                node.name: node
+                for node in ast.parse(source).body
+                if isinstance(node, ast.ClassDef)
+                and any(
+                    isinstance(decorator, ast.Name) and decorator.id == "runtime_checkable"
+                    for decorator in node.decorator_list
+                )
+            }
+            if not protocols:
+                continue
+            instrumented = mutate_file_contents(str(path), source)
+            classes = {
+                node.name: node
+                for node in ast.parse(instrumented.code).body
+                if isinstance(node, ast.ClassDef)
+            }
+            for name, protocol in protocols.items():
+                expected = {
+                    node.name for node in protocol.body if isinstance(node, ast.FunctionDef)
+                }
+                actual = {
+                    node.name for node in classes[name].body if isinstance(node, ast.FunctionDef)
+                }
+                assert actual == expected, f"{path.relative_to(root)}:{name}: {actual - expected}"
 
     @pytest.mark.integration  # Spawns an interpreter to import mutmut
     @requires_mutmut_import
