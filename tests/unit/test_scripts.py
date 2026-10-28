@@ -336,6 +336,10 @@ class TestMutantGlobs:
         (package / "thing.py").write_text(
             "def normalize(name: str) -> str:\n    return name.strip().lower()\n", encoding="utf-8"
         )
+        # mutmut 3.8 reads its project configuration when probing a file.
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.mutmut]\nsource_paths = ["pkg/"]\n', encoding="utf-8"
+        )
         result = subprocess.run(  # noqa: S603 - fixed argv, no shell, no user input
             [
                 sys.executable,
