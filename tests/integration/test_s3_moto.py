@@ -22,6 +22,8 @@ boto3 = pytest.importorskip("boto3")
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from tests.integration.conftest import Bucket, PutFaults
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -450,6 +452,125 @@ class TestPushS3Integration:
 
         assert remote_versions["current_version"] == "1.0.0"
         assert stored == bytes_a
+
+    @pytest.mark.integration
+    def test_verify_push_repairs_a_damaged_object_without_new_version(
+        self,
+        s3_bucket: tuple[str, str],
+        catalog_with_data: Path,
+        _aws_env: None,
+        fault_store: PutFaults,
+    ) -> None:
+        """Issue #966: `push --verify` repairs an object that disagrees with the manifest.
+
+        The store holds other bytes of another size under the asset key. The
+        manifests list the same versions, and no local version is new. A plain
+        push skips the asset. `push --verify` must upload it and must not write
+        versions.json. The remote manifest carries a marker key that the local
+        one lacks, so a write of the local manifest would drop it.
+        """
+        bucket_name, endpoint_url = s3_bucket
+
+        from portolan_cli.sync.push import push
+
+        data_file = catalog_with_data / "test-collection" / "data.parquet"
+        destination = f"s3://{bucket_name}/catalog"
+        data_key = "catalog/test-collection/data.parquet"
+        versions_key = "catalog/test-collection/versions.json"
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",
+            region_name="us-east-1",
+        )
+
+        assert push(catalog_with_data, "test-collection", destination).success is True
+        remote_manifest = json.loads(
+            client.get_object(Bucket=bucket_name, Key=versions_key)["Body"].read()
+        )
+        remote_manifest["x-remote-marker"] = "kept"
+        versions_before = json.dumps(remote_manifest).encode()
+        client.put_object(Bucket=bucket_name, Key=versions_key, Body=versions_before)
+
+        # Damage the store the way the #962 bug did. Other bytes, other size.
+        client.put_object(Bucket=bucket_name, Key=data_key, Body=b"stale bytes")
+
+        plain = push(catalog_with_data, "test-collection", destination)
+        assert plain.success is True
+        assert plain.verify is None
+        stored = client.get_object(Bucket=bucket_name, Key=data_key)["Body"].read()
+        assert stored == b"stale bytes"
+
+        result = push(catalog_with_data, "test-collection", destination, verify=True)
+        assert result.success is True, f"Verify push failed: {result.errors}"
+        assert result.versions_pushed == 0
+        assert result.verify is not None
+        assert (result.verify.checked, result.verify.mismatched) == (1, 1)
+
+        stored = client.get_object(Bucket=bucket_name, Key=data_key)["Body"].read()
+        versions_after = client.get_object(Bucket=bucket_name, Key=versions_key)["Body"].read()
+        assert stored == data_file.read_bytes()
+        assert versions_after == versions_before
+        assert json.loads(versions_after)["x-remote-marker"] == "kept"
+
+        # The store now agrees, so a second verify uploads no asset.
+        asset_puts = fault_store.keys().count(data_key)
+        again = push(catalog_with_data, "test-collection", destination, verify=True)
+        assert again.success is True, again.errors
+        assert fault_store.keys().count(data_key) == asset_puts
+        assert again.verify is not None
+        assert (again.verify.checked, again.verify.mismatched) == (1, 0)
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("missing", [False, True], ids=["existing", "missing"])
+    def test_verify_repair_preserves_a_concurrent_s3_publication(
+        self, catalog_with_data: Path, bucket: Bucket, fault_store: PutFaults, missing: bool
+    ) -> None:
+        """An S3 writer that lands between verify's HEAD and PUT keeps its publication."""
+        from portolan_cli.sync.push import push
+
+        root = catalog_with_data
+        assert push(root, "test-collection", bucket.url).success is True
+        key = bucket.key("test-collection/data.parquet")
+        manifest_key = bucket.key("test-collection/versions.json")
+        if missing:
+            bucket.client.delete_object(Bucket=bucket.name, Key=key)
+        else:
+            bucket.second_writer(key, b"damaged")
+        newer = b"another writer's asset bytes"
+        winner = json.loads((root / "test-collection" / "versions.json").read_text())
+        latest = winner["versions"][-1]
+        winner["versions"].append(
+            {
+                **latest,
+                "version": "1.0.1",
+                "assets": {
+                    name: {
+                        **entry,
+                        "sha256": hashlib.sha256(newer).hexdigest(),
+                        "size_bytes": len(newer),
+                    }
+                    for name, entry in latest["assets"].items()
+                },
+            }
+        )
+        winner["current_version"] = "1.0.1"
+        winner_bytes = json.dumps(winner).encode()
+
+        def publish() -> None:
+            bucket.second_writer(key, newer)
+            bucket.second_writer(manifest_key, winner_bytes)
+
+        fault_store.arm(1, when=lambda target: target == key, action=publish)
+        result = push(root, "test-collection", bucket.url, verify=True)
+
+        assert result.success is False, "repair overwrote a concurrent publication"
+        assert result.files_uploaded == 0
+        for target, expected in [(key, newer), (manifest_key, winner_bytes)]:
+            assert (
+                bucket.client.get_object(Bucket=bucket.name, Key=target)["Body"].read() == expected
+            )
 
     @pytest.mark.integration
     def test_push_uploads_intermediate_catalogs_to_s3(

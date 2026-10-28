@@ -42,9 +42,11 @@ from portolan_cli.async_utils import (
 from portolan_cli.catalog import intermediate_catalog_ids
 from portolan_cli.constants import LEGACY_GLOB_FIELD
 from portolan_cli.derived_assets import is_optional_derivative
+from portolan_cli.errors import PushVerifyError
 from portolan_cli.logo import LOGO_ASSETS_DIRNAME
 from portolan_cli.output import detail, error, info, output_section, success, warn
 from portolan_cli.stac_links import published_tree
+from portolan_cli.sync.checksums import compute_checksum
 from portolan_cli.sync.upload import (
     ObjectStore,
     multipart_chunk_size,
@@ -67,6 +69,7 @@ __all__ = [
     "format_file_size",
     "format_speed",
     "PushVersionDiff",
+    "VerifyReport",
     "VersionDiff",  # Deprecated alias
 ]
 
@@ -103,6 +106,25 @@ class PushConflictError(Exception):
 
 
 @dataclass
+class VerifyReport:
+    """Counts from ``push --verify`` (Issue #966).
+
+    Attributes:
+        checked: Number of skipped assets that got a HEAD request.
+        mismatched: Number of those objects that were missing or had another
+            size, whether or not their repair completed.
+    """
+
+    checked: int = 0
+    mismatched: int = 0
+
+    def merge(self, other: VerifyReport) -> None:
+        """Add the counts of another report to this one."""
+        self.checked += other.checked
+        self.mismatched += other.mismatched
+
+
+@dataclass
 class PushResult:
     """Result of a push operation.
 
@@ -120,6 +142,7 @@ class PushResult:
         would_push_files: In dry-run mode, max asset files that would be uploaded
             (upper bound; actual count depends on remote state).
         metrics: Upload performance metrics (bytes, duration, speed).
+        verify: Counts from ``--verify``. None when push did not verify.
     """
 
     success: bool
@@ -132,6 +155,7 @@ class PushResult:
     would_push_versions: int = 0
     would_push_files: int = 0
     metrics: UploadMetrics | None = None
+    verify: VerifyReport | None = None
 
     @property
     def has_metadata_errors(self) -> bool:
@@ -469,6 +493,28 @@ def _current_snapshot(versions_data: dict[str, Any] | None) -> dict[str, Any] | 
     return next((v for v in versions if v.get("version") == current_name), versions[-1])
 
 
+def _snapshot_entries(snapshot: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Map each href in a version snapshot to its asset entry.
+
+    This is the one per-href view of a snapshot. A malformed snapshot can
+    record two entries for the same href. The last entry then wins.
+
+    Args:
+        snapshot: One versions.json entry, or None.
+
+    Returns:
+        A dict from href to asset entry. The dict is empty when ``snapshot``
+        is None.
+    """
+    if snapshot is None:
+        return {}
+
+    entries: dict[str, dict[str, Any]] = {}
+    for asset_name, asset_data in snapshot.get("assets", {}).items():
+        entries[asset_data.get("href", asset_name)] = asset_data
+    return entries
+
+
 def _snapshot_hashes(snapshot: dict[str, Any] | None) -> dict[str, str | None]:
     """Map each href in a version snapshot to its sha256.
 
@@ -479,19 +525,181 @@ def _snapshot_hashes(snapshot: dict[str, Any] | None) -> dict[str, str | None]:
         A dict from href to sha256. A malformed asset without a sha256 maps
         to None. The dict is empty when ``snapshot`` is None.
     """
-    if snapshot is None:
-        return {}
+    return {href: entry.get("sha256") for href, entry in _snapshot_entries(snapshot).items()}
 
-    hashes: dict[str, str | None] = {}
-    for asset_name, asset_data in snapshot.get("assets", {}).items():
-        hashes[asset_data.get("href", asset_name)] = asset_data.get("sha256")
-    return hashes
+
+def _matches_remote(local_sha256: str | None, remote_sha256: str | None) -> bool:
+    """Return True when the remote current snapshot records the local bytes.
+
+    Push skips the upload of an asset only when this is True. A missing local
+    sha256 cannot prove a match.
+    """
+    return bool(local_sha256) and remote_sha256 == local_sha256
+
+
+def _skipped_entries(
+    versions_data: dict[str, Any],
+    remote_versions_data: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """Return the local current entries that the snapshot diff skips.
+
+    This is the one skip rule. ``_get_assets_to_upload`` skips exactly these
+    hrefs, and ``push --verify`` sends a HEAD for exactly these hrefs. Both
+    read the per-href view of ``_snapshot_entries``, so they cannot drift.
+
+    Args:
+        versions_data: Local versions.json data.
+        remote_versions_data: Remote versions.json data, or None.
+
+    Returns:
+        A dict from href to local asset entry, in local snapshot order.
+    """
+    remote_assets = _snapshot_hashes(_current_snapshot(remote_versions_data))
+    return {
+        href: entry
+        for href, entry in _snapshot_entries(_current_snapshot(versions_data)).items()
+        if _matches_remote(entry.get("sha256"), remote_assets.get(href))
+    }
+
+
+def _skipped_asset_sizes(
+    versions_data: dict[str, Any],
+    remote_versions_data: dict[str, Any] | None,
+) -> dict[str, int | None]:
+    """Map each href that the snapshot diff skips to its recorded size.
+
+    The size comes from ``size_bytes`` in the local current snapshot. That
+    snapshot describes the bytes that the store must hold after the push.
+
+    Args:
+        versions_data: Local versions.json data.
+        remote_versions_data: Remote versions.json data, or None.
+
+    Returns:
+        A dict from href to size in bytes. The size is None when the snapshot
+        records no integer ``size_bytes``.
+    """
+    sizes: dict[str, int | None] = {}
+    for href, entry in _skipped_entries(versions_data, remote_versions_data).items():
+        size = entry.get("size_bytes")
+        sizes[href] = size if isinstance(size, int) else None
+    return sizes
+
+
+async def _verify_skipped_assets_async(
+    store: ObjectStore,
+    prefix: str,
+    versions_data: dict[str, Any],
+    remote_versions_data: dict[str, Any] | None,
+    *,
+    concurrency: int,
+) -> tuple[dict[str, str | None], VerifyReport]:
+    """Find the skipped assets whose remote object disagrees with the manifest.
+
+    The snapshot diff skips an asset from versions.json alone. A store can
+    still hold other bytes at that key, for example after Issue #962. This
+    function sends one HEAD for each skipped asset (Issue #966). An object
+    disagrees when it is missing, or when its size differs from the
+    ``size_bytes`` of the local current snapshot.
+
+    A size check cannot see two different files of the same size. When the
+    snapshot records no size, only a missing object is found.
+
+    The HEAD requests run through ``AsyncIOExecutor`` with a fixed limit of
+    ``concurrency``. The work is one dict lookup per asset.
+
+    Args:
+        store: Object store instance.
+        prefix: Prefix in object storage.
+        versions_data: Local versions.json data.
+        remote_versions_data: Remote versions.json data, or None.
+        concurrency: Maximum number of HEAD requests at the same time.
+
+    Returns:
+        The flagged hrefs mapped to their HEAD ETags, and the report counts.
+        A missing object maps to None, for a create-only repair.
+
+    Raises:
+        PushVerifyError: If a HEAD fails for a reason other than a missing
+            object.
+    """
+    sizes = _skipped_asset_sizes(versions_data, remote_versions_data)
+    if not sizes:
+        return {}, VerifyReport()
+
+    async def disagrees(href: str) -> tuple[bool, str | None]:
+        key = f"{prefix}/{href}".lstrip("/")
+        try:
+            meta = await obs.head_async(store, key)
+        except FileNotFoundError:
+            return True, None
+        expected = sizes[href]
+        mismatched = expected is not None and meta["size"] != expected
+        etag = meta.get("e_tag")
+        if mismatched and not etag:
+            raise PushVerifyError([f"{href}: cannot safely repair an object without an ETag"])
+        return mismatched, etag
+
+    executor = AsyncIOExecutor[tuple[bool, str | None]](
+        concurrency=concurrency, circuit_breaker_threshold=5
+    )
+    try:
+        results = await executor.execute(items=list(sizes), operation=disagrees)
+    except CircuitBreakerError as e:
+        raise PushVerifyError([f"too many failed HEAD requests: {e}"]) from e
+
+    failures = [f"{r.item}: {r.error}" for r in results if r.error is not None]
+    if failures:
+        raise PushVerifyError(failures)
+
+    mismatched = {r.item: r.result[1] for r in results if r.result and r.result[0]}
+    report = VerifyReport(checked=len(sizes), mismatched=len(mismatched))
+    info(
+        f"Verified {report.checked} skipped asset(s) against the store, "
+        f"{report.mismatched} missing or with another size"
+    )
+    return mismatched, report
+
+
+def _resolve_local_asset(catalog_root: Path, href: str, version_str: str | None) -> Path | None:
+    """Return the local file of an asset to upload, or None to skip it.
+
+    A recorded asset that is absent from disk raises. One exception applies.
+    An optional derivative only warns, and the caller skips it (Issue #735).
+
+    Args:
+        catalog_root: Path to catalog root.
+        href: Catalog-root-relative asset href.
+        version_str: Version that records the asset, for the messages.
+
+    Returns:
+        The resolved absolute path, or None for an absent optional derivative.
+
+    Raises:
+        FileNotFoundError: If a ``data`` or ``source`` asset file is absent.
+    """
+    asset_path = catalog_root / href
+    if asset_path.exists():
+        return asset_path.resolve()
+    # The spec calls four roles optional derivatives, namely `visual`,
+    # `thumbnail`, `style` and `collection-mirror`. See portolan-spec
+    # specs/portolan/core.md, sections Assets and Single-File Collections.
+    # Portolan rebuilds each one from data the catalog still holds. An absent
+    # one must not fail a sound push (Issue #735). Conformance gaps belong to
+    # `portolan check`. Roles `data` and `source` stay a hard error, because
+    # nothing can reconstruct them.
+    if is_optional_derivative(catalog_root, href):
+        warn(f"Optional asset not found, skipped: {href} (version {version_str})")
+        return None
+    raise FileNotFoundError(f"Asset referenced in version {version_str} not found: {href}")
 
 
 def _get_assets_to_upload(
     catalog_root: Path,
     versions_data: dict[str, Any],
     remote_versions_data: dict[str, Any] | None = None,
+    *,
+    reupload: frozenset[str] = frozenset(),
 ) -> list[Path]:
     """Get list of asset files that need to be uploaded.
 
@@ -518,6 +726,9 @@ def _get_assets_to_upload(
         remote_versions_data: Remote versions.json data for sha256 comparison.
             If None, every asset of the local current snapshot is uploaded
             (first push).
+        reupload: Hrefs to upload although the snapshots match. These are
+            the objects that ``push --verify`` found missing or with another
+            size (Issue #966).
 
     Returns:
         List of absolute paths to asset files that need to be uploaded.
@@ -528,42 +739,93 @@ def _get_assets_to_upload(
     """
     local_current = _current_snapshot(versions_data)
     version_str = local_current.get("version") if local_current else None
-    remote_assets = _snapshot_hashes(_current_snapshot(remote_versions_data))
+    has_remote = bool(_snapshot_entries(_current_snapshot(remote_versions_data)))
+    # Skip the upload only if the remote current snapshot records the same
+    # sha256 for the same href. A renamed file (same sha256, new href) still
+    # uploads. ``push --verify`` checks the same set (Issue #966).
+    skipped = _skipped_entries(versions_data, remote_versions_data)
 
     assets_to_upload: list[Path] = []
     skipped_count = 0
 
-    for href, local_sha256 in _snapshot_hashes(local_current).items():
-        # Skip the upload only if the remote current snapshot records the same
-        # sha256 for the same href. A renamed file (same sha256, new href)
-        # still uploads.
-        if local_sha256 and remote_assets.get(href) == local_sha256:
+    for href in _snapshot_entries(local_current):
+        if href in skipped and href not in reupload:
             skipped_count += 1
             continue
-
-        # Resolve path relative to catalog root
-        asset_path = catalog_root / href
-        if not asset_path.exists():
-            # The spec calls four roles optional derivatives, namely
-            # `visual`, `thumbnail`, `style` and `collection-mirror`. See
-            # portolan-spec specs/portolan/core.md, sections Assets and
-            # Single-File Collections. Portolan rebuilds each one from data
-            # the catalog still holds. An absent one must not fail a sound
-            # push (Issue #735). Conformance gaps belong to `portolan check`.
-            # Roles `data` and `source` stay a hard error, because nothing
-            # can reconstruct them.
-            if is_optional_derivative(catalog_root, href):
-                warn(f"Optional asset not found, skipped: {href} (version {version_str})")
-                continue
-            raise FileNotFoundError(f"Asset referenced in version {version_str} not found: {href}")
-        assets_to_upload.append(asset_path.resolve())
+        asset_path = _resolve_local_asset(catalog_root, href, version_str)
+        if asset_path is not None:
+            assets_to_upload.append(asset_path)
 
     # Log diffing results for user feedback (Issue #329)
     new_count = len(assets_to_upload)
-    if skipped_count > 0 or (remote_assets and new_count > 0):
+    if skipped_count > 0 or (has_remote and new_count > 0):
         info(f"Uploading {new_count} new/changed asset(s), skipping {skipped_count} unchanged")
 
     return assets_to_upload
+
+
+def _get_reupload_assets(
+    catalog_root: Path,
+    versions_data: dict[str, Any],
+    reupload: frozenset[str],
+) -> list[Path]:
+    """Return the local files of the hrefs that ``push --verify`` flagged.
+
+    Only these assets upload in a repair without a new version (Issue #966).
+    Each flagged href has the same sha256 in the local and the remote current
+    snapshots. Check every selected local file against that hash before any
+    upload. An unversioned edit fails the repair before any write. An absent
+    optional derivative warns and is skipped, as in ``_get_assets_to_upload``.
+
+    Args:
+        catalog_root: Path to catalog root.
+        versions_data: Local versions.json data.
+        reupload: Hrefs that ``push --verify`` found wrong in the store.
+
+    Returns:
+        List of absolute paths to upload, in local snapshot order.
+
+    Raises:
+        FileNotFoundError: If a flagged ``data`` or ``source`` asset file is
+            absent.
+        PushVerifyError: If a local file no longer matches its recorded checksum.
+    """
+    local_current = _current_snapshot(versions_data)
+    version_str = local_current.get("version") if local_current else None
+    paths: list[Path] = []
+    for href, entry in _snapshot_entries(local_current).items():
+        if href in reupload:
+            asset_path = _resolve_local_asset(catalog_root, href, version_str)
+            if asset_path is not None:
+                if compute_checksum(asset_path) != entry.get("sha256"):
+                    raise PushVerifyError([f"{href}: local checksum differs from the manifest"])
+                paths.append(asset_path)
+    return paths
+
+
+def _repaired_count(prefix: str, reupload: frozenset[str], uploaded_keys: list[str]) -> int:
+    """Count the flagged hrefs that push uploaded.
+
+    A flagged optional derivative that is absent from disk does not upload.
+    So it does not count as repaired.
+
+    Args:
+        prefix: Prefix in object storage.
+        reupload: Hrefs that ``push --verify`` found wrong in the store.
+        uploaded_keys: Object keys that the asset upload wrote.
+
+    Returns:
+        Number of flagged hrefs whose object key push wrote.
+    """
+    written = set(uploaded_keys)
+    return sum(1 for href in reupload if f"{prefix}/{href}".lstrip("/") in written)
+
+
+def _with_metrics(msg: str, metrics: UploadMetrics) -> str:
+    """Append the upload size and speed to a summary line when push sent bytes."""
+    if metrics.total_bytes > 0:
+        msg += f" ({format_file_size(metrics.total_bytes)}, {format_speed(metrics.average_speed)})"
+    return msg
 
 
 # One push or push --all prints each of these notices once (#972). push --all
@@ -1323,6 +1585,8 @@ def _handle_push_dry_run(
     collection: str,
     local_data: dict[str, Any],
     local_versions: list[str],
+    *,
+    verify: bool = False,
 ) -> PushResult:
     """Handle push dry-run mode: show what would be pushed without network I/O.
 
@@ -1333,6 +1597,8 @@ def _handle_push_dry_run(
         collection: Collection identifier.
         local_data: Parsed versions.json data.
         local_versions: List of version strings from local data.
+        verify: If True, warn that the store check did not run. A HEAD is a
+            network request, so a dry run never sends one.
 
     Returns:
         PushResult with dry_run=True and simulated counts.
@@ -1375,6 +1641,9 @@ def _handle_push_dry_run(
             detail(f" {f.relative_to(catalog_root).as_posix()}")
 
     warn("[DRY RUN] Remote conflict detection skipped (requires network)")
+    if verify:
+        # A HEAD is a network request, so a dry run never sends one.
+        warn("[DRY RUN] --verify skipped (requires network)")
     warn("[DRY RUN] Actual versions pushed may be fewer if remote already has some")
 
     return PushResult(
@@ -1407,6 +1676,7 @@ def push(
     verbose: bool = False,
     json_mode: bool = False,
     suppress_progress: bool = False,
+    verify: bool = False,
 ) -> PushResult:
     """Push local catalog changes to cloud object storage (sync wrapper).
 
@@ -1425,6 +1695,8 @@ def push(
         verbose: If True, show per-file upload details.
         json_mode: If True, suppress progress bar (for --json output).
         suppress_progress: If True, suppress progress bar (for nested calls).
+        verify: If True, check each skipped asset against the store. A HEAD
+            that fails raises PushVerifyError. See ``push_async``.
 
     Returns:
         PushResult with upload statistics.
@@ -1450,6 +1722,7 @@ def push(
             json_mode=json_mode,
             suppress_progress=suppress_progress,
             verbose=verbose,
+            verify=verify,
         )
     )
 
@@ -1503,6 +1776,7 @@ async def _upload_assets_async(
     verbose: bool = False,
     adaptive: bool = True,
     written: dict[str, str | None] | None = None,
+    conditions: dict[str, str | None] | None = None,
 ) -> tuple[int, list[str], list[str], UploadMetrics]:
     """Upload asset files to object storage with async concurrent uploads.
 
@@ -1511,7 +1785,8 @@ async def _upload_assets_async(
     A file at or above MULTIPART_THRESHOLD goes through the sync put_object in
     a worker thread, with chunk_concurrency parts in flight. A smaller file goes
     through put_object_async. The function shuts the thread pool down before
-    it returns (#1008).
+    it returns (#1008). For conditional modes, obstore uses a single PUT even
+    for a large file; the repair cannot fall back to an unconditional write.
 
     Args:
         store: Object store instance.
@@ -1527,6 +1802,8 @@ async def _upload_assets_async(
         adaptive: If True, raise concurrency from a slow start while the store
             keeps up (issue #344). False holds ``concurrency`` fixed.
         written: A dict that receives the ETag of each put, by key.
+        conditions: Object keys mapped to the ETags captured by verify. None
+            overwrites normally; a None entry creates only if the key is absent.
 
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys, metrics).
@@ -1546,14 +1823,21 @@ async def _upload_assets_async(
     uploaded_keys: list[str] = []
     errors_list: list[str] = []
 
+    def put_options(key: str) -> dict[str, Any]:
+        return {} if conditions is None else {"mode": _manifest_mode(conditions[key], force=False)}
+
     def _upload_large_file_sync(
         file_path: Path, target_key: str, max_conc: int
     ) -> tuple[str, int, float]:
-        """Upload large file with multipart concurrency (sync, runs in thread)."""
+        """Upload a large file in the worker thread."""
         size_bytes = file_sizes[file_path]
         start = time.perf_counter()
-        with span("push.upload_file", key=target_key, bytes=size_bytes, multipart=True):
-            put = put_object(store, target_key, file_path, max_concurrency=max_conc)
+        with span(
+            "push.upload_file", key=target_key, bytes=size_bytes, multipart=conditions is None
+        ):
+            put = put_object(
+                store, target_key, file_path, max_concurrency=max_conc, **put_options(target_key)
+            )
         written[target_key] = put.get("e_tag")
         duration = time.perf_counter() - start
         return target_key, size_bytes, duration
@@ -1581,7 +1865,9 @@ async def _upload_assets_async(
         # Small file: use put_async (more efficient, no multipart needed)
         start = time.perf_counter()
         with span("push.upload_file", key=target_key, bytes=size_bytes, multipart=False):
-            put = await put_object_async(store, target_key, asset_path.read_bytes())
+            put = await put_object_async(
+                store, target_key, asset_path.read_bytes(), **put_options(target_key)
+            )
         written[target_key] = put.get("e_tag")
         duration = time.perf_counter() - start
         return target_key, size_bytes, duration
@@ -2033,6 +2319,7 @@ async def _execute_push_uploads_async(
     include_catalog: bool = True,
     remote_data: dict[str, Any] | None = None,
     adaptive: bool = True,
+    reupload: frozenset[str] = frozenset(),
 ) -> PushResult:
     """Execute the upload phase of push_async.
 
@@ -2060,12 +2347,16 @@ async def _execute_push_uploads_async(
         remote_data: Remote versions.json for sha256 diffing (Issue #329).
         adaptive: If True, raise concurrency from a slow start while the store
             keeps up (issue #344). False holds ``concurrency`` fixed.
+        reupload: Hrefs that ``--verify`` found wrong in the store. These
+            assets upload although the snapshots match (Issue #966).
 
     Returns:
         PushResult with success or failure status and metrics.
     """
     # Get assets to upload (only new/changed, per Issue #329)
-    assets = _get_assets_to_upload(catalog_root, local_data, remote_versions_data=remote_data)
+    assets = _get_assets_to_upload(
+        catalog_root, local_data, remote_versions_data=remote_data, reupload=reupload
+    )
     # include_catalog controls whether catalog.json and root README.md are included.
     # - True for standalone push() so remote is a complete clonable catalog
     # - False when called from push_all_collections() (uploads once at end)
@@ -2195,14 +2486,15 @@ async def _execute_push_uploads_async(
         await failed([])
         raise
     await _drop_backups(store, backups, sizes)
+    repaired = _repaired_count(prefix, reupload, list(written))
     if diff.local_only:
         msg = f"Pushed {len(diff.local_only)} version(s): {diff.local_only}"
+    elif repaired:
+        msg = f"Repaired {repaired} asset(s) (no new versions)"
     else:
         # Force re-push with no version delta refreshes metadata only (Issue #496)
         msg = "Refreshed metadata (no new versions)"
-    if metrics.total_bytes > 0:
-        msg += f" ({format_file_size(metrics.total_bytes)}, {format_speed(metrics.average_speed)})"
-    success(msg)
+    success(_with_metrics(msg, metrics))
 
     # Upload READMEs last (async, parallel)
     with span("push.readmes", collection=collection):
@@ -2292,6 +2584,85 @@ async def _sync_collection_metadata_only(
     )
 
 
+async def _repair_flagged_assets_async(
+    store: ObjectStore,
+    catalog_root: Path,
+    prefix: str,
+    collection: str,
+    local_data: dict[str, Any],
+    reupload: frozenset[str],
+    *,
+    include_catalog_root: bool,
+    concurrency: int,
+    chunk_concurrency: int,
+    json_mode: bool,
+    suppress_progress: bool,
+    verbose: bool,
+    adaptive: bool,
+    verified_etags: dict[str, str | None],
+) -> PushResult:
+    """Repair the flagged objects when no version is new and there is no force.
+
+    ``push --verify`` flagged each href in ``reupload`` (Issue #966). Each one
+    has the same sha256 in the local and the remote current snapshots. Check
+    the local bytes before any upload. Each write uses its verification HEAD
+    ETag, or create-only mode for a missing object, so a later writer wins.
+    Upload exactly those files. Then it syncs the non-versioned metadata, the
+    same as a plain push with no new version.
+
+    It does not write versions.json. The local manifest can differ from the
+    remote manifest with the same version list, for example in
+    ``current_version``. A plain push publishes none of that difference, so a
+    repair must not publish it either. Other assets that differ do not upload.
+
+    A failed upload reports failure and deletes nothing. A flagged key held
+    wrong bytes or no object before, so a rollback has nothing to restore.
+
+    Returns:
+        PushResult with the repair and metadata upload counts.
+    """
+    assets = _get_reupload_assets(catalog_root, local_data, reupload)
+    files_uploaded, upload_errors, uploaded_keys, metrics = await _upload_assets_async(
+        store,
+        catalog_root,
+        prefix,
+        assets,
+        concurrency=concurrency,
+        chunk_concurrency=chunk_concurrency,
+        json_mode=json_mode,
+        suppress_progress=suppress_progress,
+        verbose=verbose,
+        adaptive=adaptive,
+        conditions={f"{prefix}/{href}".lstrip("/"): etag for href, etag in verified_etags.items()},
+    )
+    if upload_errors:
+        error("Asset repair failed. The remote versions.json stays as is")
+        return PushResult(
+            success=False,
+            files_uploaded=files_uploaded,
+            versions_pushed=0,
+            conflicts=[],
+            errors=upload_errors,
+            metrics=metrics,
+        )
+
+    result = await _sync_collection_metadata_only(
+        store,
+        catalog_root,
+        prefix,
+        collection,
+        include_catalog_root=include_catalog_root,
+        concurrency=concurrency,
+        verbose=verbose,
+    )
+    repaired = _repaired_count(prefix, reupload, uploaded_keys)
+    if repaired:
+        success(_with_metrics(f"Repaired {repaired} asset(s) (no new versions)", metrics))
+    result.files_uploaded += files_uploaded
+    result.metrics = metrics
+    return result
+
+
 async def push_async(
     catalog_root: Path,
     collection: str,
@@ -2308,6 +2679,7 @@ async def push_async(
     suppress_progress: bool = False,
     verbose: bool = False,
     include_catalog: bool = True,
+    verify: bool = False,
 ) -> PushResult:
     """Push local catalog changes to cloud object storage (async version).
 
@@ -2331,6 +2703,15 @@ async def push_async(
         verbose: If True, print per-file upload details.
         include_catalog: If True, upload catalog.json and root README.md.
             Set to False when called from push_all_collections (uploads them once at end).
+        verify: If True, send a HEAD for each asset that the snapshot diff
+            skips (Issue #966). Push uploads an asset whose object is missing.
+            Push also uploads an asset whose object size differs from
+            ``size_bytes`` in the local current snapshot. The check runs also
+            when no version is new, so it can repair a damaged store. Without
+            a new version and without ``force``, push uploads only the flagged
+            assets and does not write versions.json. With a new version or
+            ``force``, the flagged assets join the normal upload set. A size
+            check cannot find a wrong object of the same size.
 
     Returns:
         PushResult with upload statistics.
@@ -2339,6 +2720,8 @@ async def push_async(
         FileNotFoundError: If catalog or versions.json doesn't exist.
         ValueError: If destination URL is invalid.
         PushConflictError: If remote diverged and force=False.
+        PushVerifyError: If ``verify`` is True and a HEAD fails for a reason
+            other than a missing object.
     """
     from portolan_cli.async_utils import get_default_chunk_concurrency
 
@@ -2359,7 +2742,9 @@ async def push_async(
 
     # Dry-run: return early without network I/O
     if dry_run:
-        return _handle_push_dry_run(catalog_root, collection, local_data, local_versions)
+        return _handle_push_dry_run(
+            catalog_root, collection, local_data, local_versions, verify=verify
+        )
 
     if _run_notices.get() is None:
         _run_notices.set(set())
@@ -2386,6 +2771,17 @@ async def push_async(
             "Pull changes first or use --force to overwrite."
         )
 
+    # With --verify, check each skipped asset against the store (Issue #966).
+    # Without the flag, push sends no request for a skipped asset.
+    verified_etags: dict[str, str | None] = {}
+    verify_report: VerifyReport | None = None
+    if verify:
+        verified_etags, verify_report = await _verify_skipped_assets_async(
+            store, prefix, local_data, remote_data, concurrency=concurrency
+        )
+
+    reupload = frozenset(verified_etags)
+
     # No new versions to push.
     # With --force, proceed even when the version list is unchanged so that
     # regenerated metadata (collection.json, catalog.json, styles) is re-uploaded
@@ -2395,18 +2791,45 @@ async def push_async(
     # also uploads an asset whose bytes differ from the remote current snapshot
     # (Issue #962).
     if not force and not diff.local_only:
-        return await _sync_collection_metadata_only(
-            store,
-            catalog_root,
-            prefix,
-            collection,
-            include_catalog_root=include_catalog,
-            concurrency=concurrency,
-            verbose=verbose,
-        )
+        if reupload:
+            # A mismatch that --verify finds, with no new version and no
+            # force. Push uploads the flagged assets only and does not write
+            # versions.json. So the remote manifest stays as is (Issue #966).
+            result = await _repair_flagged_assets_async(
+                store,
+                catalog_root,
+                prefix,
+                collection,
+                local_data,
+                reupload,
+                include_catalog_root=include_catalog,
+                concurrency=concurrency,
+                chunk_concurrency=chunk_concurrency,
+                json_mode=json_mode,
+                suppress_progress=suppress_progress,
+                verbose=verbose,
+                adaptive=adaptive,
+                verified_etags=verified_etags,
+            )
+        else:
+            result = await _sync_collection_metadata_only(
+                store,
+                catalog_root,
+                prefix,
+                collection,
+                include_catalog_root=include_catalog,
+                concurrency=concurrency,
+                verbose=verbose,
+            )
+        result.verify = verify_report
+        return result
+
+    # With a new version or --force, the hrefs that --verify flagged join the
+    # normal upload set. That path writes the local versions.json last, with
+    # the ETag precondition (Issue #966).
 
     # Execute uploads (with remote data for sha256 diffing, Issue #329)
-    return await _execute_push_uploads_async(
+    result = await _execute_push_uploads_async(
         store,
         catalog_root,
         prefix,
@@ -2424,7 +2847,10 @@ async def push_async(
         include_catalog=include_catalog,
         remote_data=remote_data,
         adaptive=adaptive,
+        reupload=reupload,
     )
+    result.verify = verify_report
+    return result
 
 
 # =============================================================================
@@ -2449,6 +2875,11 @@ class PushAllResult:
         total_would_push_versions: In dry-run mode, max versions that would be pushed
             (upper bound; actual count depends on remote state).
         collection_errors: Dict mapping collection name to error messages.
+        collection_exceptions: Original exceptions for failures that raised,
+            preserving their class and structured code for CLI reporting.
+        verify: Sum of the ``--verify`` counts of all collections that
+            returned a result. A collection that raised adds no counts. None
+            when push did not verify.
     """
 
     success: bool
@@ -2461,6 +2892,8 @@ class PushAllResult:
     total_would_push_files: int = 0
     total_would_push_versions: int = 0
     collection_errors: dict[str, list[str]] = field(default_factory=dict)
+    verify: VerifyReport | None = None
+    collection_exceptions: dict[str, BaseException] = field(default_factory=dict)
 
 
 def discover_collections(catalog_root: Path) -> list[str]:
@@ -2538,12 +2971,15 @@ def discover_collections(catalog_root: Path) -> list[str]:
 def _push_all_process_result(
     coll: str,
     result: PushResult | None,
-    err_msg: str | None,
+    err_msg: str | BaseException | None,
     current_completed: int,
     total: int,
     stats: dict[str, Any],
 ) -> None:
     """Process result of a single collection push (helper for push_all_collections)."""
+    if isinstance(err_msg, BaseException):
+        stats.setdefault("exceptions", {})[coll] = err_msg
+        err_msg = f"{type(err_msg).__name__}: {err_msg}"
     with output_section():
         if err_msg:
             error(f"[{current_completed}/{total}] Failed {coll}: {err_msg}")
@@ -2572,11 +3008,16 @@ def _push_all_process_result(
             stats["successful"] += 1
             if result.metrics:
                 stats["metrics"].merge(result.metrics)
+            if result.verify is not None and stats["verify"] is not None:
+                stats["verify"].merge(result.verify)
         elif result:
             errors_list = result.errors + result.conflicts
             error(f"[{current_completed}/{total}] Failed {coll}: {', '.join(errors_list)}")
             stats["failed"] += 1
             stats["errors"][coll] = errors_list
+            # A push can fail after verify. Its counts still describe the store.
+            if result.verify is not None and stats["verify"] is not None:
+                stats["verify"].merge(result.verify)
         else:
             error(f"[{current_completed}/{total}] Failed {coll}: Unknown error")
             stats["failed"] += 1
@@ -2847,6 +3288,7 @@ async def _push_all_upload_root_files(
     except Exception as e:
         error(f"Failed to upload root files: {e}")
         stats["errors"]["root_files"] = [str(e)]
+        stats.setdefault("exceptions", {})["root_files"] = e
         return False
 
 
@@ -2864,6 +3306,7 @@ async def push_all_collections_async(
     adaptive: bool = True,
     verbose: bool = False,
     json_mode: bool = False,
+    verify: bool = False,
 ) -> PushAllResult:
     """Push all collections in a catalog to cloud storage asynchronously.
 
@@ -2885,6 +3328,8 @@ async def push_all_collections_async(
         adaptive: If True, use slow-start ramp-up for network-safe uploads (default: True).
         verbose: If True, show per-file upload details.
         json_mode: If True, suppress progress bar (for --json output).
+        verify: If True, each collection checks its skipped assets against
+            the store. See ``push_async``.
 
     Returns:
         PushAllResult with aggregate statistics and per-collection errors.
@@ -2940,6 +3385,9 @@ async def push_all_collections_async(
         "total_would_push_versions": 0,
         "metrics": UploadMetrics(),
         "errors": {},
+        "exceptions": {},
+        # A dry run sends no HEAD, so it has no verify counts.
+        "verify": VerifyReport() if verify and not dry_run else None,
     }
 
     max_concurrent = (
@@ -2952,7 +3400,7 @@ async def push_all_collections_async(
     # Semaphore for collection-level concurrency control
     semaphore = asyncio.Semaphore(max_concurrent)
 
-    async def push_one(collection: str) -> tuple[str, PushResult | None, str | None]:
+    async def push_one(collection: str) -> tuple[str, PushResult | None, Exception | None]:
         """Push a single collection with semaphore control."""
         async with semaphore:
             try:
@@ -2971,10 +3419,11 @@ async def push_all_collections_async(
                     suppress_progress=True,
                     verbose=verbose,
                     include_catalog=False,  # Uploaded once at end by _push_all_upload_root_files
+                    verify=verify,
                 )
                 return (collection, result, None)
             except Exception as e:
-                return (collection, None, f"{type(e).__name__}: {e}")
+                return (collection, None, e)
 
     # Run all collection pushes concurrently
     tasks = [push_one(coll) for coll in collections]
@@ -2987,6 +3436,7 @@ async def push_all_collections_async(
             error(f"[{i + 1}/{total}] Failed {coll}: {result}")
             stats["failed"] += 1
             stats["errors"][coll] = [str(result)]
+            stats["exceptions"][coll] = result
         elif isinstance(result, tuple):
             coll, push_result, err_msg = result
             _push_all_process_result(coll, push_result, err_msg, i + 1, total, stats)
@@ -3038,6 +3488,8 @@ async def push_all_collections_async(
         total_would_push_files=stats["total_would_push_files"],
         total_would_push_versions=stats["total_would_push_versions"],
         collection_errors=stats["errors"],
+        verify=stats["verify"],
+        collection_exceptions=stats["exceptions"],
     )
 
 
@@ -3056,6 +3508,7 @@ def push_all_collections(
     verbose: bool = False,
     json_mode: bool = False,
     max_connections: int | None = None,
+    verify: bool = False,
 ) -> PushAllResult:
     """Push all collections in a catalog to cloud storage (sync wrapper).
 
@@ -3080,6 +3533,7 @@ def push_all_collections(
         json_mode: If True, suppress progress bar (for --json output).
         max_connections: Maximum total concurrent connections. If set, adjusts
             file_concurrency and chunk_concurrency to stay within limit.
+        verify: Passed to ``push_all_collections_async``.
 
     Returns:
         PushAllResult with aggregate statistics and per-collection errors.
@@ -3128,5 +3582,6 @@ def push_all_collections(
             adaptive=adaptive,
             verbose=verbose,
             json_mode=json_mode,
+            verify=verify,
         )
     )
