@@ -42,6 +42,7 @@ from rashid import RulesConfig, Severity, validate
 from rashid.data.reader import LocalOnlyReader
 
 from tests.catalog_invariants import check_catalog_invariants
+from tests.known_upstream import GPIO_WFS_OOM
 from tests.properties.test_rebuild_idempotence import shrink_geoparquet
 
 if TYPE_CHECKING:
@@ -614,6 +615,7 @@ SCENARIOS: dict[str, Scenario] = {
     "extract-wfs": Scenario(
         build_extract_wfs,
         known_errors=HOST_UNSET,
+        marks=(GPIO_WFS_OOM,),
     ),
     "extract-carto": Scenario(
         build_extract_carto,
