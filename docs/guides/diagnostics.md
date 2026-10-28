@@ -102,6 +102,7 @@ The counters are:
 | `config.yaml_parses` | Parses of a `config.yaml` or `metadata.yaml` file |
 | `config.merges` | Merges of the `config.yaml` or `metadata.yaml` hierarchy of a directory |
 | `versions.published` | Versions that the run publishes |
+| `versions.asset_maps` | Conversions of the current assets of a `versions.json` for lookup |
 | `thumbnail.draws` | Full draws of a vector thumbnail figure |
 | `tiles.fetched` | Basemap tiles that a vector thumbnail downloads |
 | `raster.opens` | Rasters opened for reading |

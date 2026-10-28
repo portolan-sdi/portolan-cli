@@ -171,6 +171,14 @@ def install_stub_tiles(patch: pytest.MonkeyPatch) -> list[str]:
 
 
 def _peak_rss_mb() -> float | None:
+    # Linux keeps the ru_maxrss of the parent across fork and exec, so a child
+    # of a large bench process reports the parent peak. VmHWM belongs to the
+    # memory map of this program alone.
+    status = Path("/proc/self/status")
+    if status.is_file():
+        for line in status.read_text(encoding="utf-8").splitlines():
+            if line.startswith("VmHWM:"):
+                return round(int(line.split()[1]) / 1024, 1)
     try:
         import resource
     except ImportError:  # Windows has no resource module

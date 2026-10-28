@@ -366,6 +366,16 @@ def _apply_heavy_cli_import(root: Path, faulty: bool) -> None:
         )
 
 
+def _apply_asset_map_per_item(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/metadata/detection.py",
+            "            return state.memo(\n",
+            "            current_assets(state.versions(collection_dir, include_staged=False))\n"
+            "            return state.memo(\n",
+        )
+
+
 # Each fault below opens a file again with no count() call. The scale gates
 # cannot see an open that nothing counts, so tests/perf/test_open_sites.py
 # reads the source and fails on it.
@@ -482,6 +492,11 @@ FAULTS = (
         "unreachable-branch",
         _apply_unreachable_branch,
         (Gate(("uv", "run", "mypy", UNREACHABLE_MODULE, "--warn-unreachable")),),
+    ),
+    Fault(
+        "asset-map-per-item",
+        _apply_asset_map_per_item,
+        (_perf_gate(f"{SCALE}[check-metadata]"),),
     ),
     Fault(
         "versions-read-per-file",

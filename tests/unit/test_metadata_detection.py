@@ -1105,3 +1105,36 @@ class TestPrepareHashesEachFileOnce:
 
         assert sorted(prepared.asset_files) == ["pts.geojson", "pts.parquet"]
         assert hashed == 2
+
+
+@pytest.mark.unit
+def test_a_run_converts_the_current_assets_once(tmp_path: Path) -> None:
+    """Each item check reads the asset map. A run must not rebuild it per item."""
+    from unittest.mock import patch
+
+    from portolan_cli.metadata import detection
+    from portolan_cli.run_state import RunState
+    from portolan_cli.versions import Asset, VersionsFile, add_version, write_versions
+
+    collection = tmp_path / "scenes"
+    collection.mkdir()
+    (tmp_path / ".portolan").mkdir()
+    (tmp_path / ".portolan" / "config.yaml").write_text("")
+    assets = {
+        f"item{i}/data.tif": Asset(sha256=f"{i:064x}", size_bytes=1, href=f"item{i}/data.tif")
+        for i in range(50)
+    }
+    empty = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
+    write_versions(
+        collection / "versions.json",
+        add_version(empty, version="1.0.0", assets=assets, breaking=False),
+    )
+    state = RunState.open(tmp_path)
+
+    with patch.object(detection, "asdict", wraps=detection.asdict) as converted:
+        for _ in range(10):
+            found = detection.load_current_assets(collection, state)
+            assert found is not None
+            assert found["item7/data.tif"]["sha256"] == f"{7:064x}"
+
+    assert converted.call_count == 50, "the asset map was rebuilt for each lookup"

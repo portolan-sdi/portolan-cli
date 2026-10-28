@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from portolan_cli.metadata.cog import extract_cog_metadata
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
 from portolan_cli.run_state import stat_matches
+from portolan_cli.trace import count
 from portolan_cli.versions import (
     VersionsFile,
     read_versions,
@@ -70,6 +71,7 @@ def current_assets(versions_file: VersionsFile) -> dict[str, dict[str, Any]]:
     """
     if not versions_file.versions:
         return {}
+    count("versions.asset_maps")
     current = next(
         (v for v in versions_file.versions if v.version == versions_file.current_version),
         versions_file.versions[-1],
@@ -85,14 +87,21 @@ def load_current_assets(
 ) -> dict[str, dict[str, Any]] | None:
     """The current assets of a collection's versions.json, or None without one.
 
-    With ``state``, the run reads each versions.json once. A file that does not
-    parse counts as absent, as before.
+    With ``state``, the run reads and converts each versions.json once. Every
+    item check reads the map, so a conversion per call made ``check`` cost
+    items x assets. The callers share the result and must not edit it. A file
+    that does not parse counts as absent, as before.
     """
     try:
         if state is not None:
-            if not (collection_dir / "versions.json").is_file():
+            versions_path = collection_dir / "versions.json"
+            if not versions_path.is_file():
                 return None
-            return current_assets(state.versions(collection_dir, include_staged=False))
+            return state.memo(
+                "versions.current_assets",
+                versions_path,
+                lambda _path: current_assets(state.versions(collection_dir, include_staged=False)),
+            )
         versions_path = collection_dir / "versions.json"
         if not versions_path.is_file():
             return None

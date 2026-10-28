@@ -44,6 +44,7 @@ COUNTER_OWNER: dict[str, str] = {
     "versions_json.reads": "versions",
     "versions_json.writes": "versions",
     "versions.published": "versions",
+    "versions.asset_maps": "versions",
     "checksum.files": "versions",
     "items_parquet.writes": "versions",
     "config.yaml_parses": "config",

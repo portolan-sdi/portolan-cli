@@ -75,6 +75,7 @@ KNOWN_COUNTERS: tuple[str, ...] = (
     "config.yaml_parses",
     "config.merges",
     "versions.published",
+    "versions.asset_maps",
     "thumbnail.draws",
     "tiles.fetched",
     "raster.opens",
