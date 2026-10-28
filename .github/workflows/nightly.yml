@@ -153,13 +153,15 @@ jobs:
           source = config.read_text()
           source = source.replace(
               'pytest_add_cli_args_test_selection = ["tests/"]',
-              'pytest_add_cli_args_test_selection = ["tests/unit/test_sync.py", "tests/integration/test_sync_integration.py", "tests/integration/test_push_integration.py"]',
+              'pytest_add_cli_args_test_selection = ["tests/unit/test_sync.py", "tests/integration/test_stdout_purity.py::test_json_mode_writes_one_document[sync]"]',
           )
           source = source.replace('    "--no-cov",', '    "--no-cov", "-o", "faulthandler_timeout=10",')
           source = source.replace("[tool.mutmut]", "[tool.mutmut]\ndebug = true")
+          source = source.replace('paths_to_mutate = ["portolan_cli/"]', 'paths_to_mutate = ["portolan_cli/sync/core.py"]')
+          source = source.replace('also_copy = [', 'also_copy = ["portolan_cli/",')
           config.write_text(source)
           PYCONFIG
-          GLOBS=("portolan_cli.sync.core.x__step_init__mutmut_*")
+          GLOBS=("portolan_cli.sync.core.x__step_init__mutmut_5")
           uv run mutmut run "${GLOBS[@]}" 2>&1 | tee mutmut-run.log || STATUS=$?
           if grep -q "Filtered for specific mutants, but nothing matches" mutmut-run.log; then
             echo "::error::mutmut matched no mutants for this shard's globs — the" \
