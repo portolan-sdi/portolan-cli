@@ -135,8 +135,8 @@ your PR:
 - **Mutation testing** (`mutmut`) — verifies tests actually catch injected bugs.
   "Tests and the mutation sandbox" under Testing gives the rules for its tests.
 - **Perf scenarios** — runs fixed `add`, re-add, and `check --metadata`
-  scenarios at full size. The job fails when wall time grows by more than 30%
-  or peak RSS by more than 15% over `.benchmarks/scenarios.json`. A fixed
+  scenarios at full size. The job fails when wall time doubles or peak RSS
+  grows by more than 15% over `.benchmarks/scenarios.json`. A fixed
   calibration workload measures the speed of the runner first. The wall-time
   limit scales by the ratio of the two calibrations.
 - **Live-network tests** — hit real third-party services; because those can be

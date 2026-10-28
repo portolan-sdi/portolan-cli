@@ -28,7 +28,7 @@ def test_a_slower_runner_does_not_fail_unchanged_code() -> None:
 
 def test_a_slower_scenario_on_the_same_runner_speed_fails() -> None:
     baseline = _results(wall=100.0, calibration=2.0)
-    failures = compare(_results(wall=140.0, calibration=2.0), baseline)
+    failures = compare(_results(wall=201.0, calibration=2.0), baseline)
     assert [line.split(":")[0] for line in failures] == ["check-metadata wall_s"]
 
 

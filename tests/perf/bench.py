@@ -7,9 +7,9 @@ of the process, the counters, and the stage times::
     uv run python -m tests.perf.bench --out scenario-results.json \\
         --compare .benchmarks/scenarios.json
 
-A scenario fails the run when its wall time grows by more than 30% or its
-peak RSS by more than 15% over the baseline. Shared runners vary by about 10%
-in wall time, and RSS varies less. A missing baseline, a baseline from another
+A scenario fails the run when its wall time doubles or its peak RSS grows by
+more than 15% over the baseline. The wall limit scales by the runner speed
+that ``calibrate`` measures. ``WALL_THRESHOLD`` gives the measured variance. A missing baseline, a baseline from another
 machine type, or a baseline at other sizes also fails the run, so the gate
 cannot pass without a comparison.
 
@@ -46,7 +46,12 @@ FULL_SIZES: dict[str, int] = {
     "add-rasters": 3_984,  # S8: the GHSL item count of #775
 }
 FULL_HISTORY = 50
-WALL_THRESHOLD = 0.30
+#: Shared runners of one type differ. After the calibration scale, the same code
+#: still ran up to 1.33x slower (2026-10-28 nightlies). add-rasters alone moved
+#: 37% between two fast runners. So the wall limit catches a doubling, such as
+#: the quadratic check of ca668f9 (35x), and the counter gates and CodSpeed
+#: catch the smaller costs. Peak RSS held within 1% on every runner.
+WALL_THRESHOLD = 1.00
 RSS_THRESHOLD = 0.15
 
 

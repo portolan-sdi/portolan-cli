@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import urllib.request
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -418,7 +419,6 @@ def build_extract_carto(root: Path, run: RunCli) -> None:
     )
 
 
-@contextmanager
 def _roads_catalog(local: Path, run: RunCli) -> None:
     roads = _copy(POINTS, local / "roads" / "roads.parquet")
     _init(local, run)
@@ -451,6 +451,11 @@ def _pushed(root: Path, run: RunCli, build: Builder = _roads_catalog) -> Iterato
             aws_secret_access_key="testing",
             region_name="us-east-1",
         )
+        # moto keeps its backends across servers in one process. A serial run,
+        # such as the mutmut sweep, otherwise clones the bucket of an earlier test.
+        urllib.request.urlopen(
+            urllib.request.Request(f"{endpoint}/moto-api/reset", method="POST"), timeout=30
+        ).close()
         client.create_bucket(Bucket="gate")
         with pytest.MonkeyPatch.context() as env:
             env.setenv("AWS_ENDPOINT_URL", endpoint)

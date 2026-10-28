@@ -340,8 +340,8 @@ def _scenario_results(wall_s: float, peak_rss_mb: float, n: int = 100) -> dict[s
 @pytest.mark.parametrize(
     ("wall_s", "peak_rss_mb", "n", "failed"),
     [
-        (13.0, 115.0, 100, False),  # +30% wall and +15% RSS are the limits
-        (13.1, 100.0, 100, True),
+        (20.0, 115.0, 100, False),  # +100% wall and +15% RSS are the limits
+        (20.1, 100.0, 100, True),
         (10.0, 115.1, 100, True),
         (10.0, 100.0, 50, True),  # a run at another size has no baseline
     ],
