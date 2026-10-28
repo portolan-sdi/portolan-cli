@@ -87,8 +87,8 @@ def has_mutants(path: str | Path) -> bool:
     from mutmut.__main__ import mutate_file_contents
 
     source = Path(path).read_text(encoding="utf-8")
-    _mutated, names = mutate_file_contents(str(path), source)
-    return bool(names)
+    mutated = mutate_file_contents(str(path), source)
+    return bool(mutated.mutant_names)
 
 
 def main(
