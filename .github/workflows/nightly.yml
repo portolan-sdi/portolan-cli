@@ -125,6 +125,8 @@ jobs:
         if: steps.shard.outputs.has_globs == 'true'
         env:
           GLOBS_RAW: ${{ steps.shard.outputs.globs }}
+          PYTHONUNBUFFERED: "1"
+          PYTEST_ADDOPTS: --junitxml=${{ github.workspace }}/mutation-pytest.xml
         run: |
           # mutmut still generates every mutant (~1 min) then tests only the
           # shard's. Surviving mutants do NOT fail mutmut — it exits 0 and the
@@ -201,6 +203,7 @@ jobs:
           name: mutation-report
           path: |
             mutmut-run.log
+            mutation-pytest.xml
             mutation-results.txt
             mutmut-cicd-stats.json
           retention-days: 30
