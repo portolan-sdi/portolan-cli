@@ -474,6 +474,8 @@ also_copy = [
 # - --tb=short: a stats-phase failure must show WHERE it broke.
 # - --ignore=tests/docs: the docs tests check docs/, mkdocs.yml, and README.md,
 # not portolan_cli behavior. The sandbox holds none of those files (#997).
+# - --ignore=tests/perf: subprocess performance checks cannot report stats to
+# mutmut and delay the sweep (#1081). Dedicated CI jobs verify these checks.
 # - marker filter: exclude network/slow/benchmark/e2e (mutation of portolan_cli
 # is validated by the fast, offline suite; e2e needs Docker, network needs a
 # live server).
@@ -489,6 +491,7 @@ pytest_add_cli_args = [
     "--no-cov",
     "--tb=short",
     "--ignore=tests/docs",
+    "--ignore=tests/perf",
     "-m", "not network and not slow and not benchmark and not e2e and not e2e_slow and not source_scan",
 ]
 
