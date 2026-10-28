@@ -40,16 +40,18 @@ if TYPE_CHECKING:
 
 MUTMUT_ENV_KEY = "MUTANT_UNDER_TEST"
 
-# mutmut 3.5 copies these into the sandbox whatever ``also_copy`` says
-# (``mutmut.__main__.load_config``). It also copies every ``test*.py`` file at
+# mutmut 3.8 copies these into the sandbox whatever ``also_copy`` says
+# (``mutmut.configuration._load_config``). It also copies every ``test*.py`` file at
 # the root, which ``MutationSandbox.from_pyproject`` adds by glob.
 MUTMUT_DEFAULT_COPIES = (
     "tests/",
     "test/",
     "setup.cfg",
     "pyproject.toml",
-    "pytest.ini",
-    ".gitignore",
+    "uv.lock",
+    "poetry.lock",
+    "Pipfile.lock",
+    "pdm.lock",
 )
 
 # Repo-root paths that are not in the sandbox but cause no failure there:

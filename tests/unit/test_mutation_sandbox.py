@@ -79,8 +79,10 @@ def test_the_sandbox_holds_mutmut_copies_and_defaults(
             "test",
             "setup.cfg",
             "pyproject.toml",
-            "pytest.ini",
-            ".gitignore",
+            "uv.lock",
+            "poetry.lock",
+            "Pipfile.lock",
+            "pdm.lock",
             "test_root_level.py",
         )
     )
