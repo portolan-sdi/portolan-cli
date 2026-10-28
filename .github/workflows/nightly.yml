@@ -30,6 +30,8 @@ jobs:
     # front of every merge. This sweep covers the tree a shard at a time
     # instead, and the shard rotates nightly.
     runs-on: ubuntu-latest
+    env:
+      UV_NO_SYNC: "1"
     # Hash-assigned shards hold 2-12 files rather than a uniform 6, so the
     # largest night runs roughly twice the mutants of the 6-file shard that took
     # 20 minutes. 90 leaves headroom without letting a hung run burn an hour.
@@ -159,8 +161,10 @@ jobs:
           source = source.replace("[tool.mutmut]", "[tool.mutmut]\ndebug = true")
           source = source.replace('paths_to_mutate = ["portolan_cli/"]', 'paths_to_mutate = ["portolan_cli/sync/core.py"]')
           source = source.replace('also_copy = [', 'also_copy = ["portolan_cli/",')
+          source = source.replace("[tool.mutmut]", '[tool.mutmut]\nprocess_isolation = "forkserver"')
           config.write_text(source)
           PYCONFIG
+          uv pip install "mutmut==3.8.0"
           GLOBS=("portolan_cli.sync.core.x__step_init__mutmut_5")
           uv run mutmut run "${GLOBS[@]}" 2>&1 | tee mutmut-run.log || STATUS=$?
           if grep -q "Filtered for specific mutants, but nothing matches" mutmut-run.log; then
