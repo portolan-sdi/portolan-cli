@@ -201,8 +201,9 @@ class BasemapRun:
 _T = TypeVar("_T")
 
 
+# Generated methods become extra protocol requirements: https://github.com/boxed/mutmut/issues/590
 @runtime_checkable
-class _RunMemo(Protocol):
+class _RunMemo(Protocol):  # pragma: no mutate block
     """The memo of ``run_state.RunState``. viz does not import run_state."""
 
     def memo(self, kind: str, path: Path, loader: Callable[[Path], _T]) -> _T:
