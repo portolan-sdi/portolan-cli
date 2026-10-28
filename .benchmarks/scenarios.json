@@ -1,0 +1,260 @@
+{
+  "machine": "x86_64",
+  "python": "3.12.16",
+  "commit": "ca668f9b3786bec5cfccf25dd38a876878b04bd2",
+  "scenarios": {
+    "add-many-collections": {
+      "n": 100,
+      "wall_s": 60.173,
+      "peak_rss_mb": 376.4,
+      "counters": {
+        "checksum.files": 100,
+        "checksum.bytes": 1323385,
+        "versions_json.reads": 1,
+        "versions_json.writes": 101,
+        "collection_json.writes": 100,
+        "items_parquet.writes": 0,
+        "config.yaml_parses": 2,
+        "config.merges": 202,
+        "versions.published": 100,
+        "versions.asset_maps": 0,
+        "thumbnail.draws": 0,
+        "tiles.fetched": 0,
+        "raster.opens": 0,
+        "parquet.opens": 800,
+        "vector.opens": 0,
+        "duckdb.connects": 500
+      },
+      "stages": [
+        [
+          "add.collect",
+          0.066053
+        ],
+        [
+          "add.licenses",
+          0.018734
+        ],
+        [
+          "add.process",
+          58.967601
+        ],
+        [
+          "add.finalize",
+          0.190129
+        ],
+        [
+          "add.deferred_non_geo",
+          3e-05
+        ],
+        [
+          "add.enrich",
+          4e-06
+        ],
+        [
+          "add.mirrors",
+          0.01997
+        ],
+        [
+          "add.pmtiles",
+          0.144876
+        ],
+        [
+          "add.thumbnails",
+          0.000281
+        ]
+      ]
+    },
+    "add-large-vector": {
+      "n": 1000000,
+      "wall_s": 3.607,
+      "peak_rss_mb": 858.3,
+      "counters": {
+        "checksum.files": 1,
+        "checksum.bytes": 46705061,
+        "versions_json.reads": 1,
+        "versions_json.writes": 2,
+        "collection_json.writes": 1,
+        "items_parquet.writes": 0,
+        "config.yaml_parses": 2,
+        "config.merges": 4,
+        "versions.published": 1,
+        "versions.asset_maps": 0,
+        "thumbnail.draws": 0,
+        "tiles.fetched": 0,
+        "raster.opens": 0,
+        "parquet.opens": 8,
+        "vector.opens": 0,
+        "duckdb.connects": 5
+      },
+      "stages": [
+        [
+          "add.collect",
+          0.010536
+        ],
+        [
+          "add.licenses",
+          0.000475
+        ],
+        [
+          "add.process",
+          3.225642
+        ],
+        [
+          "add.finalize",
+          0.006223
+        ],
+        [
+          "add.deferred_non_geo",
+          9e-06
+        ],
+        [
+          "add.enrich",
+          2e-06
+        ],
+        [
+          "add.mirrors",
+          0.000288
+        ],
+        [
+          "add.pmtiles",
+          0.001627
+        ],
+        [
+          "add.thumbnails",
+          0.000237
+        ]
+      ]
+    },
+    "re-add-unchanged": {
+      "n": 5000,
+      "wall_s": 4.575,
+      "peak_rss_mb": 655.1,
+      "counters": {
+        "checksum.files": 1,
+        "checksum.bytes": 1630009,
+        "versions_json.reads": 2,
+        "versions_json.writes": 0,
+        "collection_json.writes": 0,
+        "items_parquet.writes": 0,
+        "config.yaml_parses": 1,
+        "config.merges": 2,
+        "versions.published": 0,
+        "versions.asset_maps": 0,
+        "thumbnail.draws": 0,
+        "tiles.fetched": 0,
+        "raster.opens": 0,
+        "parquet.opens": 0,
+        "vector.opens": 0,
+        "duckdb.connects": 0
+      },
+      "stages": [
+        [
+          "add.collect",
+          3.751554
+        ],
+        [
+          "add.mirrors",
+          0.056398
+        ],
+        [
+          "add.pmtiles",
+          0.003227
+        ],
+        [
+          "add.thumbnails",
+          0.000239
+        ]
+      ]
+    },
+    "check-metadata": {
+      "n": 25000,
+      "wall_s": 108.051,
+      "peak_rss_mb": 606.4,
+      "counters": {
+        "checksum.files": 0,
+        "checksum.bytes": 0,
+        "versions_json.reads": 1,
+        "versions_json.writes": 0,
+        "collection_json.writes": 0,
+        "items_parquet.writes": 0,
+        "config.yaml_parses": 1,
+        "config.merges": 1,
+        "versions.published": 0,
+        "versions.asset_maps": 1,
+        "thumbnail.draws": 0,
+        "tiles.fetched": 0,
+        "raster.opens": 0,
+        "parquet.opens": 0,
+        "vector.opens": 0,
+        "duckdb.connects": 0
+      },
+      "stages": [
+        [
+          "check.run",
+          108.033161
+        ]
+      ]
+    },
+    "add-rasters": {
+      "n": 3984,
+      "wall_s": 46.667,
+      "peak_rss_mb": 506.8,
+      "counters": {
+        "checksum.files": 7969,
+        "checksum.bytes": 30733882,
+        "versions_json.reads": 1,
+        "versions_json.writes": 2,
+        "collection_json.writes": 3,
+        "items_parquet.writes": 1,
+        "config.yaml_parses": 2,
+        "config.merges": 4,
+        "versions.published": 1,
+        "versions.asset_maps": 0,
+        "thumbnail.draws": 0,
+        "tiles.fetched": 0,
+        "raster.opens": 19920,
+        "parquet.opens": 0,
+        "vector.opens": 0,
+        "duckdb.connects": 1
+      },
+      "stages": [
+        [
+          "add.collect",
+          2.09124
+        ],
+        [
+          "add.licenses",
+          0.000619
+        ],
+        [
+          "add.process",
+          38.064656
+        ],
+        [
+          "add.finalize",
+          4.378825
+        ],
+        [
+          "add.deferred_non_geo",
+          0.000313
+        ],
+        [
+          "add.enrich",
+          4e-06
+        ],
+        [
+          "add.mirrors",
+          1.337186
+        ],
+        [
+          "add.pmtiles",
+          0.005536
+        ],
+        [
+          "add.thumbnails",
+          0.000279
+        ]
+      ]
+    }
+  }
+}
