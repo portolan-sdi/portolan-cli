@@ -153,6 +153,35 @@ jobs:
             --requirement /tmp/runtime-deps.txt \
             $(uv run python scripts/pip_audit_ignores.py)
 
+  # macos-latest uses Apple Silicon and cannot catch missing Intel wheels
+  # such as onnxruntime 1.24.4 (#859). Keep this a clean installation check.
+  intel-macos-install:
+    name: Intel macOS install (Python 3.12)
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install all extras
+        run: uv sync --all-extras --locked --python 3.12
+
+      - name: Verify Intel macOS interpreter
+        run: |
+          uv run --no-sync python -c "import platform; print(platform.platform()); assert (platform.system(), platform.machine()) == ('Darwin', 'x86_64')"
+
+      - name: Check CLI starts
+        run: uv run --no-sync portolan --help
+
   test:
     name: Test (Python ${{ matrix.python-version }} / ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -699,7 +728,7 @@ jobs:
     # don't touch iceberg. needs lists every job but `changes`, and
     # tests/docs/test_ci_wiring.py fails when one is missing.
     if: always()
-    needs: [quality, security, test, plugin-test, perf-gates, codspeed, iceberg-test, iceberg-e2e, diff-cover, docs, site-links, build]
+    needs: [quality, security, intel-macos-install, test, plugin-test, perf-gates, codspeed, iceberg-test, iceberg-e2e, diff-cover, docs, site-links, build]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
