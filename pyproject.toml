@@ -99,7 +99,7 @@ dev = [
     "import-linter>=2.0", # Architecture enforcement via import contracts
     "commitizen>=4.13.4",
     "hypothesis>=6.151.5",
-    "mutmut>=3.4.0",
+    "mutmut>=3.8.0",
     "mypy>=1.19.1",
     "pip-audit>=2.10.0",
     "pytest>=9.0.3",
@@ -446,6 +446,9 @@ verbose = false
 
 [tool.mutmut]
 paths_to_mutate = ["portolan_cli/"]
+# Keep workers clear of async runtimes started by the baseline tests (#1081).
+# https://github.com/boxed/mutmut/issues/578
+process_isolation = "forkserver"
 pytest_add_cli_args_test_selection = ["tests/"]
 # The `scripts/` package is imported by a few tests (test_scripts,
 # test_pip_audit_ignores, test_fetch_lib_docs_integration). mutmut runs the
