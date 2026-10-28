@@ -733,10 +733,10 @@ class SyncError(PortolanError):
 
 
 class PushVerifyError(SyncError):
-    """Raised when ``push --verify`` cannot read the state of a remote object.
+    """Raised when ``push --verify`` cannot safely check or repair an object.
 
-    A HEAD request that fails for a reason other than a missing object gives no
-    answer. Push stops, because a guess can hide a damaged object.
+    A failed HEAD, missing ETag, or local checksum mismatch prevents a safe
+    repair. Push stops to keep the bytes consistent with the manifest.
 
     Error code: PRTLN-SYN001
     """

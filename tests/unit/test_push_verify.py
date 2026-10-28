@@ -118,7 +118,7 @@ class TestVerifySkippedAssets:
     @staticmethod
     def _run(
         store: MemoryStore, local: dict[str, Any], remote: dict[str, Any] | None
-    ) -> tuple[frozenset[str], VerifyReport]:
+    ) -> tuple[dict[str, str | None], VerifyReport]:
         from portolan_cli.sync.push import _verify_skipped_assets_async
 
         return asyncio.run(
@@ -135,7 +135,7 @@ class TestVerifySkippedAssets:
 
         reupload, report = self._run(store, data, data)
 
-        assert reupload == frozenset()
+        assert reupload == {}
         assert report == VerifyReport(checked=1, mismatched=0)
 
     @pytest.mark.unit
@@ -148,7 +148,7 @@ class TestVerifySkippedAssets:
 
         reupload, report = self._run(store, data, data)
 
-        assert reupload == frozenset({"test/a.parquet"})
+        assert reupload == {"test/a.parquet": obs.head(store, f"{PREFIX}/test/a.parquet")["e_tag"]}
         assert report == VerifyReport(checked=1, mismatched=1)
 
     @pytest.mark.unit
@@ -160,7 +160,7 @@ class TestVerifySkippedAssets:
 
         reupload, report = self._run(store, data, data)
 
-        assert reupload == frozenset({"test/b.parquet"})
+        assert reupload == {"test/b.parquet": None}
         assert report == VerifyReport(checked=2, mismatched=1)
 
     @pytest.mark.unit
@@ -176,7 +176,7 @@ class TestVerifySkippedAssets:
             reupload, report = self._run(store, local, remote)
 
         assert calls == [f"{PREFIX}/test/a.parquet"]
-        assert reupload == frozenset()
+        assert reupload == {}
         assert report == VerifyReport(checked=1, mismatched=0)
 
     @pytest.mark.unit
@@ -189,7 +189,7 @@ class TestVerifySkippedAssets:
             reupload, report = self._run(MemoryStore(), data, None)
 
         assert calls == []
-        assert reupload == frozenset()
+        assert reupload == {}
         assert report == VerifyReport(checked=0, mismatched=0)
 
     @pytest.mark.unit
@@ -203,7 +203,7 @@ class TestVerifySkippedAssets:
 
         reupload, report = self._run(store, data, data)
 
-        assert reupload == frozenset({"test/b.parquet"})
+        assert reupload == {"test/b.parquet": None}
         assert report == VerifyReport(checked=2, mismatched=1)
 
     @pytest.mark.unit
@@ -230,8 +230,24 @@ class TestVerifySkippedAssets:
             )
 
         assert peak == 3
-        assert reupload == frozenset()
+        assert reupload == {}
         assert report == VerifyReport(checked=20, mismatched=0)
+
+    @pytest.mark.unit
+    def test_mismatched_object_without_etag_fails_closed(self) -> None:
+        """An existing object without an ETag cannot be safely repaired."""
+        from portolan_cli.errors import PushVerifyError
+
+        data = _versions("1.0.0", _snapshot("1.0.0", {"a.parquet": b"good"}))
+
+        async def no_etag(store: Any, key: str) -> dict[str, Any]:
+            return {"size": 0, "e_tag": None}
+
+        with (
+            patch("portolan_cli.sync.push.obs.head_async", no_etag),
+            pytest.raises(PushVerifyError, match="without an ETag"),
+        ):
+            self._run(MemoryStore(), data, data)
 
     @pytest.mark.unit
     def test_head_error_other_than_not_found_fails_the_verify(self) -> None:
@@ -319,9 +335,13 @@ class TestPushAsyncVerify:
             puts.append(key)
             return await real_put(s, key, *args, **kwargs)
 
-        with patch("portolan_cli.sync.push.obs.put_async", counting_put):
+        with (
+            patch("portolan_cli.sync.push.obs.put_async", counting_put),
+            patch("portolan_cli.sync.push.compute_checksum") as checksum,
+        ):
             result = self._push(root, store, verify=True)
 
+        checksum.assert_not_called()
         assert result.success is True, result.errors
         assert result.verify == VerifyReport(checked=1, mismatched=0)
         assert f"{PREFIX}/test/a.parquet" not in puts
@@ -639,16 +659,18 @@ class TestCliVerifyFlag:
 
     @pytest.mark.unit
     @pytest.mark.parametrize("flag", [[], ["--verify"]], ids=["default", "verify"])
+    @pytest.mark.parametrize("succeeded", [True, False], ids=["success", "failure"])
     @patch("portolan_cli.sync.push.push_async")
     def test_single_collection_passes_verify(
-        self, mock_push: MagicMock, tmp_path: Path, flag: list[str]
+        self, mock_push: MagicMock, tmp_path: Path, flag: list[str], succeeded: bool
     ) -> None:
         """The flag reaches push_async, and it defaults to False."""
 
         async def fake(**kwargs: Any) -> PushResult:
             return PushResult(
-                success=True,
+                success=succeeded,
                 files_uploaded=1,
+                errors=[] if succeeded else ["injected upload failure"],
                 versions_pushed=0,
                 verify=VerifyReport(checked=3, mismatched=1) if kwargs["verify"] else None,
             )
@@ -656,7 +678,7 @@ class TestCliVerifyFlag:
         mock_push.side_effect = fake
         result = _invoke_push(tmp_path, ["-c", "col1", *flag])
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == (0 if succeeded else 1), result.output
         assert mock_push.call_args.kwargs["verify"] is bool(flag)
         envelope = json.loads(result.output)
         if flag:
@@ -691,3 +713,95 @@ class TestCliVerifyFlag:
         assert envelope.get("errors", []) == (
             [] if succeeded else [{"type": "PushError", "message": "col1: injected upload failure"}]
         )
+
+    @pytest.mark.unit
+    def test_catalog_verification_error_keeps_type_and_code(self, tmp_path: Path) -> None:
+        """An exception from a collection retains its identity through aggregation."""
+        from portolan_cli.errors import PushVerifyError
+
+        failure = PushVerifyError(["test/a.parquet: HEAD denied"])
+        with patch("portolan_cli.sync.push.push_async", side_effect=failure):
+            result = _invoke_push(tmp_path, ["--verify"])
+
+        assert result.exit_code == 1, result.output
+        envelope = json.loads(result.stdout)
+        assert envelope["success"] is False
+        assert envelope["errors"] == [
+            {
+                "type": "PushVerifyError",
+                "code": "PRTLN-SYN001",
+                "message": f"col1: PushVerifyError: {failure}",
+            }
+        ]
+
+
+class TestRepairSafety:
+    """Repair must keep both the manifest's bytes and another writer's objects safe."""
+
+    @pytest.mark.unit
+    def test_edited_local_file_aborts_before_any_upload(self, tmp_path: Path) -> None:
+        """Preflight checks every flagged file, including a same-size local edit."""
+        from portolan_cli.errors import PushVerifyError
+
+        data = _versions("1.0.0", _snapshot("1.0.0", {"a.parquet": b"one", "b.parquet": b"two"}))
+        root = tmp_path / "catalog"
+        _write_catalog(root, data, {"a.parquet": b"one", "b.parquet": b"new"})
+        store = MemoryStore()
+        manifest = json.dumps(data).encode()
+        obs.put(store, f"{PREFIX}/test/versions.json", manifest)
+
+        with (
+            patch("portolan_cli.sync.push.put_object_async") as upload,
+            pytest.raises(PushVerifyError, match="b.parquet.*checksum"),
+        ):
+            TestPushAsyncVerify._push(root, store, verify=True)
+
+        upload.assert_not_called()
+        assert bytes(obs.get(store, f"{PREFIX}/test/versions.json").bytes()) == manifest
+        with pytest.raises(FileNotFoundError):
+            obs.head(store, f"{PREFIX}/test/a.parquet")
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("stored", [None, b"stale"], ids=["missing", "existing"])
+    @pytest.mark.parametrize("multipart", [False, True], ids=["small", "multipart"])
+    def test_repair_preserves_a_concurrent_publication(
+        self, tmp_path: Path, stored: bytes | None, multipart: bool
+    ) -> None:
+        """A writer publishes B after HEAD of A; neither B's asset nor manifest changes."""
+        good, newer = b"version A bytes", b"version B bytes"
+        data = _versions("1.0.0", _snapshot("1.0.0", {"a.parquet": good}))
+        root = tmp_path / "catalog"
+        _write_catalog(root, data, {"a.parquet": good})
+        store = MemoryStore()
+        key = f"{PREFIX}/test/a.parquet"
+        manifest_key = f"{PREFIX}/test/versions.json"
+        obs.put(store, manifest_key, json.dumps(data).encode())
+        if stored is not None:
+            obs.put(store, key, stored)
+        winner = json.dumps(_versions("1.0.1", _snapshot("1.0.1", {"a.parquet": newer}))).encode()
+        real_head = obs.head_async
+
+        async def racing_head(s: Any, target: str) -> Any:
+            if target != key:
+                return await real_head(s, target)
+            try:
+                meta = await real_head(s, target)
+            except FileNotFoundError:
+                obs.put(s, key, newer)
+                obs.put(s, manifest_key, winner)
+                raise
+            obs.put(s, key, newer)
+            obs.put(s, manifest_key, winner)
+            return meta
+
+        with (
+            patch("portolan_cli.sync.push.obs.head_async", racing_head),
+            patch("portolan_cli.sync.push.MULTIPART_THRESHOLD", 1 if multipart else 5 * 1024**2),
+        ):
+            result = TestPushAsyncVerify._push(root, store, verify=True)
+
+        assert result.success is False, "repair overwrote a concurrent writer"
+        assert result.files_uploaded == 0
+        assert result.verify == VerifyReport(checked=1, mismatched=1)
+        assert bytes(obs.get(store, key).bytes()) == newer
+        assert bytes(obs.get(store, manifest_key).bytes()) == winner

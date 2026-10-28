@@ -114,15 +114,17 @@ that field is missing or names no entry, push uses the last entry.
   concurrency. Without the flag, push sends no HEAD for a skipped asset. A dry
   run never sends one.
 - With no new version and no `--force`, a verify mismatch uploads only the
-  flagged assets. Each one has the same sha256 in the local and remote current
-  snapshots, so the local bytes are the bytes the remote manifest records. Push
-  then syncs the non-versioned metadata. It does not write `versions.json`.
+  flagged assets. Push hashes each selected local file and requires its
+  recorded sha256 before any asset upload. Each repair write uses the ETag
+  captured by its verification HEAD. A missing object uses create-only mode.
+  A concurrent change fails that upload. Push then syncs the non-versioned
+  metadata. It does not write `versions.json`.
   The local manifest can differ from the remote one with the same version
   list, for example in `current_version`. A plain push publishes none of that,
   so a repair must not either. A failed repair upload deletes nothing.
 - With a new version or `--force`, the flagged assets join the normal upload
-  set. That path writes the local `versions.json` last, with the ETag
-  precondition.
+  set. That path writes the local `versions.json` last. Without `--force`,
+  the write uses the ETag precondition. With `--force`, it has no precondition.
 - `_skipped_entries` is the one skip rule. The upload set and the verify set
   both read it, so they cannot drift. The repair count counts the flagged
   assets that uploaded, not the flagged set. The size check cannot find a

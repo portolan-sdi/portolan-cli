@@ -46,6 +46,7 @@ from portolan_cli.errors import PushVerifyError
 from portolan_cli.logo import LOGO_ASSETS_DIRNAME
 from portolan_cli.output import detail, error, info, output_section, success, warn
 from portolan_cli.stac_links import published_tree
+from portolan_cli.sync.checksums import compute_checksum
 from portolan_cli.sync.upload import (
     ObjectStore,
     multipart_chunk_size,
@@ -111,7 +112,7 @@ class VerifyReport:
     Attributes:
         checked: Number of skipped assets that got a HEAD request.
         mismatched: Number of those objects that were missing or had another
-            size. Push uploads each of them.
+            size, whether or not their repair completed.
     """
 
     checked: int = 0
@@ -592,7 +593,7 @@ async def _verify_skipped_assets_async(
     remote_versions_data: dict[str, Any] | None,
     *,
     concurrency: int,
-) -> tuple[frozenset[str], VerifyReport]:
+) -> tuple[dict[str, str | None], VerifyReport]:
     """Find the skipped assets whose remote object disagrees with the manifest.
 
     The snapshot diff skips an asset from versions.json alone. A store can
@@ -615,7 +616,8 @@ async def _verify_skipped_assets_async(
         concurrency: Maximum number of HEAD requests at the same time.
 
     Returns:
-        The hrefs to upload again, and the counts for the report.
+        The flagged hrefs mapped to their HEAD ETags, and the report counts.
+        A missing object maps to None, for a create-only repair.
 
     Raises:
         PushVerifyError: If a HEAD fails for a reason other than a missing
@@ -623,18 +625,24 @@ async def _verify_skipped_assets_async(
     """
     sizes = _skipped_asset_sizes(versions_data, remote_versions_data)
     if not sizes:
-        return frozenset(), VerifyReport()
+        return {}, VerifyReport()
 
-    async def disagrees(href: str) -> bool:
+    async def disagrees(href: str) -> tuple[bool, str | None]:
         key = f"{prefix}/{href}".lstrip("/")
         try:
             meta = await obs.head_async(store, key)
         except FileNotFoundError:
-            return True
+            return True, None
         expected = sizes[href]
-        return expected is not None and meta["size"] != expected
+        mismatched = expected is not None and meta["size"] != expected
+        etag = meta.get("e_tag")
+        if mismatched and not etag:
+            raise PushVerifyError([f"{href}: cannot safely repair an object without an ETag"])
+        return mismatched, etag
 
-    executor = AsyncIOExecutor[bool](concurrency=concurrency, circuit_breaker_threshold=5)
+    executor = AsyncIOExecutor[tuple[bool, str | None]](
+        concurrency=concurrency, circuit_breaker_threshold=5
+    )
     try:
         results = await executor.execute(items=list(sizes), operation=disagrees)
     except CircuitBreakerError as e:
@@ -644,7 +652,7 @@ async def _verify_skipped_assets_async(
     if failures:
         raise PushVerifyError(failures)
 
-    mismatched = frozenset(r.item for r in results if r.result)
+    mismatched = {r.item: r.result[1] for r in results if r.result and r.result[0]}
     report = VerifyReport(checked=len(sizes), mismatched=len(mismatched))
     info(
         f"Verified {report.checked} skipped asset(s) against the store, "
@@ -765,9 +773,9 @@ def _get_reupload_assets(
 
     Only these assets upload in a repair without a new version (Issue #966).
     Each flagged href has the same sha256 in the local and the remote current
-    snapshots. So the local file holds the bytes that the remote manifest
-    records. An absent optional derivative warns and is skipped, the same as
-    in ``_get_assets_to_upload``.
+    snapshots. Check every selected local file against that hash before any
+    upload. An unversioned edit fails the repair before any write. An absent
+    optional derivative warns and is skipped, as in ``_get_assets_to_upload``.
 
     Args:
         catalog_root: Path to catalog root.
@@ -780,14 +788,17 @@ def _get_reupload_assets(
     Raises:
         FileNotFoundError: If a flagged ``data`` or ``source`` asset file is
             absent.
+        PushVerifyError: If a local file no longer matches its recorded checksum.
     """
     local_current = _current_snapshot(versions_data)
     version_str = local_current.get("version") if local_current else None
     paths: list[Path] = []
-    for href in _snapshot_entries(local_current):
+    for href, entry in _snapshot_entries(local_current).items():
         if href in reupload:
             asset_path = _resolve_local_asset(catalog_root, href, version_str)
             if asset_path is not None:
+                if compute_checksum(asset_path) != entry.get("sha256"):
+                    raise PushVerifyError([f"{href}: local checksum differs from the manifest"])
                 paths.append(asset_path)
     return paths
 
@@ -1765,6 +1776,7 @@ async def _upload_assets_async(
     verbose: bool = False,
     adaptive: bool = True,
     written: dict[str, str | None] | None = None,
+    conditions: dict[str, str | None] | None = None,
 ) -> tuple[int, list[str], list[str], UploadMetrics]:
     """Upload asset files to object storage with async concurrent uploads.
 
@@ -1773,7 +1785,8 @@ async def _upload_assets_async(
     A file at or above MULTIPART_THRESHOLD goes through the sync put_object in
     a worker thread, with chunk_concurrency parts in flight. A smaller file goes
     through put_object_async. The function shuts the thread pool down before
-    it returns (#1008).
+    it returns (#1008). For conditional modes, obstore uses a single PUT even
+    for a large file; the repair cannot fall back to an unconditional write.
 
     Args:
         store: Object store instance.
@@ -1789,6 +1802,8 @@ async def _upload_assets_async(
         adaptive: If True, raise concurrency from a slow start while the store
             keeps up (issue #344). False holds ``concurrency`` fixed.
         written: A dict that receives the ETag of each put, by key.
+        conditions: Object keys mapped to the ETags captured by verify. None
+            overwrites normally; a None entry creates only if the key is absent.
 
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys, metrics).
@@ -1808,14 +1823,21 @@ async def _upload_assets_async(
     uploaded_keys: list[str] = []
     errors_list: list[str] = []
 
+    def put_options(key: str) -> dict[str, Any]:
+        return {} if conditions is None else {"mode": _manifest_mode(conditions[key], force=False)}
+
     def _upload_large_file_sync(
         file_path: Path, target_key: str, max_conc: int
     ) -> tuple[str, int, float]:
-        """Upload large file with multipart concurrency (sync, runs in thread)."""
+        """Upload a large file in the worker thread."""
         size_bytes = file_sizes[file_path]
         start = time.perf_counter()
-        with span("push.upload_file", key=target_key, bytes=size_bytes, multipart=True):
-            put = put_object(store, target_key, file_path, max_concurrency=max_conc)
+        with span(
+            "push.upload_file", key=target_key, bytes=size_bytes, multipart=conditions is None
+        ):
+            put = put_object(
+                store, target_key, file_path, max_concurrency=max_conc, **put_options(target_key)
+            )
         written[target_key] = put.get("e_tag")
         duration = time.perf_counter() - start
         return target_key, size_bytes, duration
@@ -1843,7 +1865,9 @@ async def _upload_assets_async(
         # Small file: use put_async (more efficient, no multipart needed)
         start = time.perf_counter()
         with span("push.upload_file", key=target_key, bytes=size_bytes, multipart=False):
-            put = await put_object_async(store, target_key, asset_path.read_bytes())
+            put = await put_object_async(
+                store, target_key, asset_path.read_bytes(), **put_options(target_key)
+            )
         written[target_key] = put.get("e_tag")
         duration = time.perf_counter() - start
         return target_key, size_bytes, duration
@@ -2575,13 +2599,15 @@ async def _repair_flagged_assets_async(
     suppress_progress: bool,
     verbose: bool,
     adaptive: bool,
+    verified_etags: dict[str, str | None],
 ) -> PushResult:
     """Repair the flagged objects when no version is new and there is no force.
 
     ``push --verify`` flagged each href in ``reupload`` (Issue #966). Each one
-    has the same sha256 in the local and the remote current snapshots. So the
-    local file holds the bytes that the remote manifest records. This function
-    uploads exactly those files. Then it syncs the non-versioned metadata, the
+    has the same sha256 in the local and the remote current snapshots. Check
+    the local bytes before any upload. Each write uses its verification HEAD
+    ETag, or create-only mode for a missing object, so a later writer wins.
+    Upload exactly those files. Then it syncs the non-versioned metadata, the
     same as a plain push with no new version.
 
     It does not write versions.json. The local manifest can differ from the
@@ -2607,6 +2633,7 @@ async def _repair_flagged_assets_async(
         suppress_progress=suppress_progress,
         verbose=verbose,
         adaptive=adaptive,
+        conditions={f"{prefix}/{href}".lstrip("/"): etag for href, etag in verified_etags.items()},
     )
     if upload_errors:
         error("Asset repair failed. The remote versions.json stays as is")
@@ -2746,12 +2773,14 @@ async def push_async(
 
     # With --verify, check each skipped asset against the store (Issue #966).
     # Without the flag, push sends no request for a skipped asset.
-    reupload: frozenset[str] = frozenset()
+    verified_etags: dict[str, str | None] = {}
     verify_report: VerifyReport | None = None
     if verify:
-        reupload, verify_report = await _verify_skipped_assets_async(
+        verified_etags, verify_report = await _verify_skipped_assets_async(
             store, prefix, local_data, remote_data, concurrency=concurrency
         )
+
+    reupload = frozenset(verified_etags)
 
     # No new versions to push.
     # With --force, proceed even when the version list is unchanged so that
@@ -2780,6 +2809,7 @@ async def push_async(
                 suppress_progress=suppress_progress,
                 verbose=verbose,
                 adaptive=adaptive,
+                verified_etags=verified_etags,
             )
         else:
             result = await _sync_collection_metadata_only(
@@ -2845,6 +2875,8 @@ class PushAllResult:
         total_would_push_versions: In dry-run mode, max versions that would be pushed
             (upper bound; actual count depends on remote state).
         collection_errors: Dict mapping collection name to error messages.
+        collection_exceptions: Original exceptions for failures that raised,
+            preserving their class and structured code for CLI reporting.
         verify: Sum of the ``--verify`` counts of all collections that
             returned a result. A collection that raised adds no counts. None
             when push did not verify.
@@ -2861,6 +2893,7 @@ class PushAllResult:
     total_would_push_versions: int = 0
     collection_errors: dict[str, list[str]] = field(default_factory=dict)
     verify: VerifyReport | None = None
+    collection_exceptions: dict[str, BaseException] = field(default_factory=dict)
 
 
 def discover_collections(catalog_root: Path) -> list[str]:
@@ -2938,12 +2971,15 @@ def discover_collections(catalog_root: Path) -> list[str]:
 def _push_all_process_result(
     coll: str,
     result: PushResult | None,
-    err_msg: str | None,
+    err_msg: str | BaseException | None,
     current_completed: int,
     total: int,
     stats: dict[str, Any],
 ) -> None:
     """Process result of a single collection push (helper for push_all_collections)."""
+    if isinstance(err_msg, BaseException):
+        stats.setdefault("exceptions", {})[coll] = err_msg
+        err_msg = f"{type(err_msg).__name__}: {err_msg}"
     with output_section():
         if err_msg:
             error(f"[{current_completed}/{total}] Failed {coll}: {err_msg}")
@@ -3252,6 +3288,7 @@ async def _push_all_upload_root_files(
     except Exception as e:
         error(f"Failed to upload root files: {e}")
         stats["errors"]["root_files"] = [str(e)]
+        stats.setdefault("exceptions", {})["root_files"] = e
         return False
 
 
@@ -3348,6 +3385,7 @@ async def push_all_collections_async(
         "total_would_push_versions": 0,
         "metrics": UploadMetrics(),
         "errors": {},
+        "exceptions": {},
         # A dry run sends no HEAD, so it has no verify counts.
         "verify": VerifyReport() if verify and not dry_run else None,
     }
@@ -3362,7 +3400,7 @@ async def push_all_collections_async(
     # Semaphore for collection-level concurrency control
     semaphore = asyncio.Semaphore(max_concurrent)
 
-    async def push_one(collection: str) -> tuple[str, PushResult | None, str | None]:
+    async def push_one(collection: str) -> tuple[str, PushResult | None, Exception | None]:
         """Push a single collection with semaphore control."""
         async with semaphore:
             try:
@@ -3385,7 +3423,7 @@ async def push_all_collections_async(
                 )
                 return (collection, result, None)
             except Exception as e:
-                return (collection, None, f"{type(e).__name__}: {e}")
+                return (collection, None, e)
 
     # Run all collection pushes concurrently
     tasks = [push_one(coll) for coll in collections]
@@ -3398,6 +3436,7 @@ async def push_all_collections_async(
             error(f"[{i + 1}/{total}] Failed {coll}: {result}")
             stats["failed"] += 1
             stats["errors"][coll] = [str(result)]
+            stats["exceptions"][coll] = result
         elif isinstance(result, tuple):
             coll, push_result, err_msg = result
             _push_all_process_result(coll, push_result, err_msg, i + 1, total, stats)
@@ -3450,6 +3489,7 @@ async def push_all_collections_async(
         total_would_push_versions=stats["total_would_push_versions"],
         collection_errors=stats["errors"],
         verify=stats["verify"],
+        collection_exceptions=stats["exceptions"],
     )
 
 

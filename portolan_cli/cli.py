@@ -4090,11 +4090,17 @@ def _report_push_all_result(all_result: Any, *, use_json: bool) -> None:
             **_verify_payload(all_result),
         }
         # A failed push returns success=false, with one error per message.
-        errors = [
-            ErrorDetail(type="PushError", message=f"{name}: {message}")
-            for name, messages in all_result.collection_errors.items()
-            for message in messages
-        ]
+        errors: list[ErrorDetail] = []
+        for name, messages in all_result.collection_errors.items():
+            exc = all_result.collection_exceptions.get(name)
+            errors.extend(
+                ErrorDetail(
+                    type=type(exc).__name__ if exc is not None else "PushError",
+                    message=f"{name}: {message}",
+                    code=getattr(exc, "code", None),
+                )
+                for message in messages
+            )
         envelope = (
             success_envelope("push", data)
             if all_result.success
@@ -4127,6 +4133,7 @@ def _report_push_result(result: Any, *, dry_run: bool, use_json: bool) -> None:
             envelope = error_envelope(
                 "push",
                 [ErrorDetail(type="PushError", message=msg) for msg in err_msgs],
+                data=_verify_payload(result),
             )
             output_json_envelope(envelope)
         else:

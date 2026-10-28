@@ -22,6 +22,8 @@ boto3 = pytest.importorskip("boto3")
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from tests.integration.conftest import Bucket, PutFaults
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -457,6 +459,7 @@ class TestPushS3Integration:
         s3_bucket: tuple[str, str],
         catalog_with_data: Path,
         _aws_env: None,
+        fault_store: PutFaults,
     ) -> None:
         """Issue #966: `push --verify` repairs an object that disagrees with the manifest.
 
@@ -512,9 +515,62 @@ class TestPushS3Integration:
         assert json.loads(versions_after)["x-remote-marker"] == "kept"
 
         # The store now agrees, so a second verify uploads no asset.
+        asset_puts = fault_store.keys().count(data_key)
         again = push(catalog_with_data, "test-collection", destination, verify=True)
+        assert again.success is True, again.errors
+        assert fault_store.keys().count(data_key) == asset_puts
         assert again.verify is not None
         assert (again.verify.checked, again.verify.mismatched) == (1, 0)
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("missing", [False, True], ids=["existing", "missing"])
+    def test_verify_repair_preserves_a_concurrent_s3_publication(
+        self, catalog_with_data: Path, bucket: Bucket, fault_store: PutFaults, missing: bool
+    ) -> None:
+        """An S3 writer that lands between verify's HEAD and PUT keeps its publication."""
+        from portolan_cli.sync.push import push
+
+        root = catalog_with_data
+        assert push(root, "test-collection", bucket.url).success is True
+        key = bucket.key("test-collection/data.parquet")
+        manifest_key = bucket.key("test-collection/versions.json")
+        if missing:
+            bucket.client.delete_object(Bucket=bucket.name, Key=key)
+        else:
+            bucket.second_writer(key, b"damaged")
+        newer = b"another writer's asset bytes"
+        winner = json.loads((root / "test-collection" / "versions.json").read_text())
+        latest = winner["versions"][-1]
+        winner["versions"].append(
+            {
+                **latest,
+                "version": "1.0.1",
+                "assets": {
+                    name: {
+                        **entry,
+                        "sha256": hashlib.sha256(newer).hexdigest(),
+                        "size_bytes": len(newer),
+                    }
+                    for name, entry in latest["assets"].items()
+                },
+            }
+        )
+        winner["current_version"] = "1.0.1"
+        winner_bytes = json.dumps(winner).encode()
+
+        def publish() -> None:
+            bucket.second_writer(key, newer)
+            bucket.second_writer(manifest_key, winner_bytes)
+
+        fault_store.arm(1, when=lambda target: target == key, action=publish)
+        result = push(root, "test-collection", bucket.url, verify=True)
+
+        assert result.success is False, "repair overwrote a concurrent publication"
+        assert result.files_uploaded == 0
+        for target, expected in [(key, newer), (manifest_key, winner_bytes)]:
+            assert (
+                bucket.client.get_object(Bucket=bucket.name, Key=target)["Body"].read() == expected
+            )
 
     @pytest.mark.integration
     def test_push_uploads_intermediate_catalogs_to_s3(
