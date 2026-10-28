@@ -65,9 +65,6 @@ FILEGDB_INTERNAL_EXTENSIONS  # unused variable (portolan_cli/scan/detect.py:35)
 ProgressCallback  # unused variable (portolan_cli/scan/core.py:42)
 SPECIAL_DIRECTORY  # unused variable (portolan_cli/scan/classify.py:134)
 
-# --- portolan_cli/viz ---
-fig  # unused variable (portolan_cli/viz/thumbnail.py:772, 1 more)
-
 # --- tests ---
 _.exitstatus  # pytest calls it by name (tests/conftest.py:230)
 _mutmut_stats_children  # unused function (tests/conftest.py:263)

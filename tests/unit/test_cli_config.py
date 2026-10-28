@@ -92,6 +92,41 @@ class TestConfigSet:
             assert "demographics:" in content
 
     @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("key", "value", "stored"),
+        [
+            ("thumbnails.basemap.zoom_adjust", "-1", -1),
+            ("partitioning.threshold_gb", "-0.5", -0.5),
+        ],
+    )
+    def test_set_takes_a_negative_number(
+        self, runner: CliRunner, tmp_path: Path, key: str, value: str, stored: float
+    ) -> None:
+        """A negative VALUE is a value, not an option, with no ``--`` before it."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
+
+            result = runner.invoke(cli, ["--format", "json", "config", "set", key, value])
+
+            assert result.exit_code == 0, result.output
+            assert json.loads(result.output)["data"]["value"] == stored
+
+    @pytest.mark.unit
+    def test_set_takes_a_negative_number_before_an_option(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """An option after a negative VALUE still parses as an option."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
+
+            result = runner.invoke(
+                cli, ["config", "set", "thumbnails.basemap.zoom_adjust", "-2", "--json"]
+            )
+
+            assert result.exit_code == 0, result.output
+            assert json.loads(result.output)["data"]["value"] == -2
+
+    @pytest.mark.unit
     def test_set_fails_outside_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
         """config set should fail outside a Portolan catalog."""
         with runner.isolated_filesystem(temp_dir=tmp_path):

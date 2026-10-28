@@ -16,15 +16,20 @@ Spans nest through a ``ContextVar``. Asyncio tasks inherit the current span.
 A thread pool worker does not, so submit work through ``submit``.
 
 ``PORTOLAN_TIMINGS=1`` or ``--timings`` turns tracing on.
-``PORTOLAN_TIMINGS=mem`` also records the ``tracemalloc`` peak of each span.
+``PORTOLAN_TIMINGS=mem`` also records the ``tracemalloc`` growth of each span: its
+peak traced memory less the traced memory at span entry. Memory that an
+earlier stage holds, such as a module imported before the span, does not count.
+tracemalloc traces the whole process, so the growth of a span also holds the
+memory that other threads allocate while it is open.
 ``PORTOLAN_TRACE_FILE=<path>`` turns tracing on and names the Chrome trace file.
 
-This module imports only the standard library and ``json_io``, so any layer
-may import it.
+This module imports only the standard library, so any layer may import it.
+``json_io`` imports it to count the JSON writes.
 """
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import os
 import sys
@@ -35,10 +40,8 @@ import uuid
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
-from portolan_cli.json_io import write_json_atomic
-
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from concurrent.futures import Executor, Future
     from pathlib import Path
     from types import ModuleType, TracebackType
@@ -57,14 +60,28 @@ TIMINGS_ENV = "PORTOLAN_TIMINGS"
 TRACE_FILE_ENV = "PORTOLAN_TRACE_FILE"
 
 # Counter names that ``meta.counters`` always holds, at 0 when nothing counted.
+# Each one counts at the single choke point of its work, so the scale gates in
+# tests/perf see every call site. One has no product choke point.
+# ``duckdb.connects`` counts through a patch of ``duckdb.connect`` that
+# tests/perf/runner.py installs, because geoparquet-io calls it by attribute
+# lookup.
 KNOWN_COUNTERS: tuple[str, ...] = (
     "checksum.files",
     "checksum.bytes",
     "versions_json.reads",
+    "versions_json.writes",
+    "collection_json.writes",
+    "items_parquet.writes",
     "config.yaml_parses",
+    "config.merges",
+    "versions.published",
+    "versions.asset_maps",
     "thumbnail.draws",
+    "tiles.fetched",
     "raster.opens",
     "parquet.opens",
+    "vector.opens",
+    "duckdb.connects",
 )
 
 _MB = 1024 * 1024
@@ -73,6 +90,9 @@ _enabled = False
 _mem = False
 _lock = threading.Lock()
 _roots: list[_Span] = []
+# The spans open now, when mem mode is on. Each reset of the tracemalloc peak
+# first folds the peak into all of them, so no open span loses its peak.
+_open: list[_Span] = []
 _counters: dict[str, int] = {}
 _current: contextvars.ContextVar[_Span | None] = contextvars.ContextVar(
     "portolan_trace_span", default=None
@@ -139,6 +159,7 @@ class _Span:
         self.cpu_end: float | None = None
         self.rss_peak_mb: float | None = None
         self.mem_peak = 0
+        self.mem_base = 0
         self._parent: _Span | None = None
         self._token: contextvars.Token[_Span | None] | None = None
 
@@ -159,8 +180,11 @@ class _Span:
             else:
                 self._parent.children.append(self)
         if _mem and tracemalloc.is_tracing():
-            _propagate_mem_peak(self._parent)
-            tracemalloc.reset_peak()
+            with _lock:
+                _fold_mem_peak()
+                tracemalloc.reset_peak()
+                self.mem_base = tracemalloc.get_traced_memory()[0]
+                _open.append(self)
         self._token = _current.set(self)
         self.cpu_start = time.process_time()
         self.start = time.perf_counter()
@@ -177,9 +201,10 @@ class _Span:
         self.cpu_end = time.process_time()
         self.rss_peak_mb = _rss_peak_mb()
         if _mem and tracemalloc.is_tracing():
-            _propagate_mem_peak(self)
-            if self._parent is not None:
-                self._parent.mem_peak = max(self._parent.mem_peak, self.mem_peak)
+            with _lock:
+                _fold_mem_peak()
+                if self in _open:
+                    _open.remove(self)
         if exc_type is not None:
             self.attrs.setdefault("error", exc_type.__name__)
         if self._token is not None:
@@ -203,18 +228,22 @@ class _Span:
             "children": [c.to_dict(now) for c in list(self.children)],
         }
         if _mem:
-            node["mem_peak_mb"] = round(self.mem_peak / _MB, 3)
+            node["mem_growth_mb"] = round(max(self.mem_peak - self.mem_base, 0) / _MB, 3)
         if self.end is None:
             node["open"] = True
         return node
 
 
-def _propagate_mem_peak(target: _Span | None) -> None:
-    """Fold the tracemalloc peak since the last reset into ``target``."""
-    if target is None:
-        return
+def _fold_mem_peak() -> None:
+    """Fold the tracemalloc peak since the last reset into every open span.
+
+    The caller holds ``_lock``. A span that opens in one thread resets the
+    peak of the whole process, so the fold must reach the open spans of every
+    thread, not only the parent of the new span.
+    """
     _, peak = tracemalloc.get_traced_memory()
-    target.mem_peak = max(target.mem_peak, peak)
+    for open_span in _open:
+        open_span.mem_peak = max(open_span.mem_peak, peak)
 
 
 def enable(*, mem: bool = False) -> None:
@@ -246,11 +275,22 @@ def reset() -> None:
         _enabled = False
         _mem = False
         _roots.clear()
+        _open.clear()
         _counters.clear()
         _run_id = uuid.uuid4().hex
     _current.set(None)
     if tracemalloc.is_tracing():
         tracemalloc.stop()
+
+
+@contextlib.contextmanager
+def tracing(*, mem: bool = False) -> Iterator[None]:
+    """Turn tracing on for one block, then reset it. Tests and the perf harness use it."""
+    enable(mem=mem)
+    try:
+        yield
+    finally:
+        reset()
 
 
 def is_enabled() -> bool:
@@ -390,6 +430,8 @@ def chrome_trace_events() -> list[dict[str, Any]]:
 
 def write_chrome_trace(path: Path) -> None:
     """Write the spans to ``path`` as a Chrome trace file. Perfetto opens it."""
+    from portolan_cli.json_io import write_json_atomic  # json_io imports this module
+
     write_json_atomic(path, {"traceEvents": chrome_trace_events(), "displayTimeUnit": "ms"})
 
 

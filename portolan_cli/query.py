@@ -7,19 +7,15 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.constants import (
-    MTIME_TOLERANCE_SECONDS,
-)
 from portolan_cli.format_families import family_of_asset
+from portolan_cli.run_state import RunState
 from portolan_cli.stac_links import catalog_collections, owned_item_hrefs
-from portolan_cli.sync.checksums import compute_checksum, compute_dir_checksum
-from portolan_cli.versions import (
-    read_versions,
-)
 
 if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
+
+    from portolan_cli.versions import Asset
 
 logger = logging.getLogger(__name__)
 
@@ -147,90 +143,51 @@ def is_current(
     versions_path: Path,
     *,
     asset_key: str | None = None,
+    state: RunState | None = None,
 ) -> bool:
     """Check if a file is unchanged compared to versions.json.
 
-    Uses mtime as fast-path, falls back to sha256 if mtime changed.
+    The run state reads ``versions.json`` once per run, so a loop over many
+    candidate files costs one read (issue #995). ``RunState.unchanged`` checks
+    the size and mtime first and hashes only a same-size file with a new mtime.
 
     Args:
         path: Path to the file to check.
         versions_path: Path to versions.json for this collection.
         asset_key: Optional explicit key to look up in versions.json.
             If not provided, looks up by filename alone (legacy behavior).
+        state: The run state. Without one, the call opens its own.
 
     Returns:
         True if file is unchanged (already tracked at current state),
         False if new or modified.
     """
-    if not versions_path.exists():
-        return False
-
-    versions_file = read_versions(versions_path)
+    collection_dir = versions_path.parent
+    if state is None:
+        state = RunState.open(collection_dir.parent)
+    versions_file = state.versions(collection_dir)
     if not versions_file.versions:
         return False
 
-    current_version = versions_file.versions[-1]
-
-    # Look for this file in current version assets
-    # Try explicit key first, then item-scoped key, then filename, then converted name
-    asset = None
-    filename = path.name
-
-    if asset_key is not None:
-        asset = current_version.assets.get(asset_key)
-
-    if asset is None:
-        # Try item-scoped key format: {item_id}/{filename}
-        # This is how _update_versions stores multi-asset items
-        item_id = path.parent.name
-        item_scoped_key = f"{item_id}/{filename}"
-        asset = current_version.assets.get(item_scoped_key)
-
-    if asset is None:
-        # Try bare filename (legacy format)
-        asset = current_version.assets.get(filename)
-
-    if asset is None:
-        # Also check for stem.parquet (converted name)
-        parquet_name = f"{path.stem}.parquet"
-        asset = current_version.assets.get(parquet_name)
-
-    if asset is None:
-        # Try item-scoped with converted name
-        item_id = path.parent.name
-        item_scoped_parquet = f"{item_id}/{parquet_name}"
-        asset = current_version.assets.get(item_scoped_parquet)
-
+    asset = _find_asset(versions_file.versions[-1].assets, path, asset_key)
     if asset is None:
         return False
+    return state.unchanged(path, asset)
 
-    # Get file stats once (used for both mtime and size checks)
-    file_stat = path.stat()
 
-    # For directory-format assets (e.g., FileGDB), skip the mtime fast-path and
-    # size comparison — neither is reliable for directories. A directory's mtime
-    # changes when its children change, but MTIME_TOLERANCE_SECONDS (2s, for
-    # NFS/CIFS compatibility) would mask rapid modifications. Instead, go
-    # directly to the content fingerprint (compute_dir_checksum), which hashes
-    # the sorted (path, size, mtime) tuples of all files inside the directory.
-    if path.is_dir():
-        current_checksum = compute_dir_checksum(path)
-        return current_checksum == asset.sha256
+def _find_asset(assets: dict[str, Asset], path: Path, asset_key: str | None) -> Asset | None:
+    """Find the record of ``path`` under each key shape that ``add`` writes.
 
-    # Fast path: mtime unchanged AND size unchanged → file is current
-    # Both conditions must hold; size check catches fast overwrites within mtime tolerance
-    mtime_unchanged = (
-        asset.mtime is not None and abs(file_stat.st_mtime - asset.mtime) < MTIME_TOLERANCE_SECONDS
+    The order is the explicit key, ``{item_id}/{filename}``, the bare filename,
+    the converted ``{stem}.parquet``, and ``{item_id}/{stem}.parquet``.
+    """
+    item_id = path.parent.name
+    parquet_name = f"{path.stem}.parquet"
+    keys = (
+        asset_key,
+        f"{item_id}/{path.name}",
+        path.name,
+        parquet_name,
+        f"{item_id}/{parquet_name}",
     )
-    size_unchanged = asset.size_bytes is not None and file_stat.st_size == asset.size_bytes
-
-    if mtime_unchanged and size_unchanged:
-        return True
-
-    # Medium path: size differs → definitely changed
-    if asset.size_bytes is not None and file_stat.st_size != asset.size_bytes:
-        return False
-
-    # Slow path: mtime changed but size matches → check sha256
-    current_checksum = compute_checksum(path)
-    return current_checksum == asset.sha256
+    return next((assets[k] for k in keys if k is not None and k in assets), None)

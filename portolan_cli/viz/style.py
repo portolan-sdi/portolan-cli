@@ -28,7 +28,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.config import load_catalog_config
+from portolan_cli.config import ConfigSource, load_catalog_config
 from portolan_cli.constants import (
     LEGACY_LEGEND_MANIFEST_FIELD,
     LEGACY_STYLE_MANIFEST_FIELD,
@@ -450,43 +450,35 @@ _COG_MEDIA_TYPES = (
 )
 
 
-def enrich_cog_asset_with_style(
-    asset: Any,
-    catalog_path: Path | None = None,
-) -> None:
-    """Add render extension properties to a COG asset in-place.
-
-    Modifies the asset's extra_fields to include render:colormap_name and
-    optionally render:rescale based on catalog style config.
-
-    Args:
-        asset: A pystac.Asset object for a COG file.
-        catalog_path: Optional catalog path for loading style config.
-    """
-    config = get_raster_style_config(catalog_path) if catalog_path else RasterStyleConfig()
-
-    style_props = build_raster_style(config)
-
-    # pystac.Asset stores extra properties in extra_fields dict
-    if not hasattr(asset, "extra_fields") or asset.extra_fields is None:
-        asset.extra_fields = {}
-
-    asset.extra_fields.update(style_props)
-
-
 def enrich_cog_assets(
     assets: dict[str, Any],
     catalog_path: Path | None = None,
+    *,
+    state: ConfigSource | None = None,
 ) -> None:
-    """Enrich all COG assets in a dict with render extension properties.
+    """Add render extension properties to each COG asset in a dict, in place.
+
+    Each COG asset gets render:colormap_name and optionally render:rescale from
+    the catalog style config. The config loads once per call, and only when a
+    COG asset is present.
 
     Args:
         assets: Dict of asset_key -> pystac.Asset.
         catalog_path: Catalog root for loading style config.
+        state: The run state, which parses the config once per run.
     """
-    for asset in assets.values():
-        if getattr(asset, "media_type", None) in _COG_MEDIA_TYPES:
-            enrich_cog_asset_with_style(asset, catalog_path)
+    cogs = [a for a in assets.values() if getattr(a, "media_type", None) in _COG_MEDIA_TYPES]
+    if not cogs:
+        return
+    config = (
+        get_raster_style_config(catalog_path, state=state) if catalog_path else RasterStyleConfig()
+    )
+    for asset in cogs:
+        # pystac.Asset stores extra properties in extra_fields dict
+        if not hasattr(asset, "extra_fields") or asset.extra_fields is None:
+            asset.extra_fields = {}
+        # A new dict per asset, so no two assets share the rescale list.
+        asset.extra_fields.update(build_raster_style(config))
 
 
 # =============================================================================
@@ -816,18 +808,21 @@ def register_legend_assets(
 # =============================================================================
 
 
-def get_vector_style_config(catalog_path: Path) -> VectorStyleConfig:
+def get_vector_style_config(
+    catalog_path: Path, *, state: ConfigSource | None = None
+) -> VectorStyleConfig:
     """Load vector style config from catalog's config.yaml.
 
     Reads the 'styles.vector' section and returns a VectorStyleConfig instance.
 
     Args:
         catalog_path: Root path of the catalog.
+        state: The run state, which parses the config once per run.
 
     Returns:
         VectorStyleConfig instance. Returns defaults if no config exists.
     """
-    config = load_catalog_config(catalog_path).data
+    config = load_catalog_config(catalog_path, state=state).data
     styles = get_dict(config, "styles")
     if not styles:
         return VectorStyleConfig()
@@ -868,7 +863,9 @@ def get_vector_style_config(catalog_path: Path) -> VectorStyleConfig:
     )
 
 
-def get_raster_style_config(catalog_path: Path) -> RasterStyleConfig:
+def get_raster_style_config(
+    catalog_path: Path, *, state: ConfigSource | None = None
+) -> RasterStyleConfig:
     """Load raster style config from catalog's config.yaml.
 
     Reads the 'styles.raster' section and returns a RasterStyleConfig instance.
@@ -881,11 +878,12 @@ def get_raster_style_config(catalog_path: Path) -> RasterStyleConfig:
 
     Args:
         catalog_path: Root path of the catalog.
+        state: The run state, which parses the config once per run.
 
     Returns:
         RasterStyleConfig instance. Returns defaults if no config exists.
     """
-    config = load_catalog_config(catalog_path).data
+    config = load_catalog_config(catalog_path, state=state).data
 
     styles = get_dict(config, "styles")
     if not styles:

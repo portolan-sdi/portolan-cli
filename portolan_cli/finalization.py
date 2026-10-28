@@ -24,11 +24,13 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
 import pystac
 from pystac.layout import AsIsLayoutStrategy
+from pystac.stac_io import DefaultStacIO
 
 from portolan_cli.config import load_merged_metadata, load_own_metadata
 from portolan_cli.hookspecs import EnrichContext
@@ -65,17 +67,16 @@ from portolan_cli.stac_links import in_link_order, iter_links
 from portolan_cli.utils import href_root, relative_href
 from portolan_cli.versions import (
     Asset,
-    VersionsFile,
-    _increment_version,
-    add_version,
-    read_versions,
     versions_asset_key,
-    write_versions,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
+    from portolan_cli.backends.protocol import PostAddItemContext
     from portolan_cli.plugins.formats import FormatContext
     from portolan_cli.preparation import PreparedItem
+    from portolan_cli.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -148,12 +149,12 @@ def _set_structural_link(
     links.append({"rel": rel, "href": href, "type": media_type})
 
 
-def _fix_collection_links(
-    collection_json_path: Path,
+def _set_collection_links(
+    collection_data: dict[str, Any],
     catalog_root: Path,
     collection_dir: Path,
 ) -> None:
-    """Fix root/parent links and deduplicate item links in collection JSON.
+    """Fix the root and parent links and drop duplicate item links, in memory.
 
     PySTAC sets root to self by default, so both structural links need
     repointing: ``root`` at the catalog root, and ``parent`` at whatever catalog
@@ -165,10 +166,6 @@ def _fix_collection_links(
     Also deduplicates item links that can occur when add is called
     multiple times on the same collection.
     """
-    if not collection_json_path.exists():
-        return
-
-    collection_data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     links: list[dict[str, Any]] = collection_data.setdefault("links", [])
 
     _set_structural_link(links, "root", relative_root_href(catalog_root, collection_dir))
@@ -188,6 +185,18 @@ def _fix_collection_links(
         deduped_links.append(link)
     collection_data["links"] = in_link_order(deduped_links)
 
+
+def _fix_collection_links(
+    collection_json_path: Path,
+    catalog_root: Path,
+    collection_dir: Path,
+) -> None:
+    """Apply :func:`_set_collection_links` to a ``collection.json`` on disk."""
+    if not collection_json_path.exists():
+        return
+
+    collection_data = json.loads(collection_json_path.read_text(encoding="utf-8"))
+    _set_collection_links(collection_data, catalog_root, collection_dir)
     write_json_atomic(collection_json_path, collection_data)
 
 
@@ -195,6 +204,7 @@ def _fix_item_links(
     collection_json_path: Path,
     catalog_root: Path,
     collection_dir: Path,
+    collection_data: dict[str, Any] | None = None,
 ) -> None:
     """Repoint the structural links of every item this collection owns.
 
@@ -210,14 +220,16 @@ def _fix_item_links(
     written item ends up complete.
 
     Args:
-        collection_json_path: The saved ``collection.json``, read for item links.
+        collection_json_path: The ``collection.json`` whose item links to follow.
         catalog_root: Directory holding the root ``catalog.json``.
         collection_dir: Directory holding ``collection.json``.
+        collection_data: The collection in memory. None reads
+            ``collection_json_path``.
     """
-    if not collection_json_path.exists():
-        return
-
-    collection_data = json.loads(collection_json_path.read_text(encoding="utf-8"))
+    if collection_data is None:
+        if not collection_json_path.exists():
+            return
+        collection_data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     for _link, _href, linked_path in iter_links(collection_data, collection_dir, ("item",)):
         item_path = linked_path.resolve()
         if not item_path.exists():
@@ -260,33 +272,102 @@ def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
     update_catalog_links_for_nested(catalog_root, collection_id)
 
 
+class _HoldCollectionIO(DefaultStacIO):
+    """Write each item that PySTAC saves, and hold the collection dict.
+
+    ``Collection.save`` writes the items and then the collection. The caller
+    finishes the held dict and writes it once.
+    """
+
+    def __init__(self, collection_json_path: Path) -> None:
+        super().__init__()
+        self._target = collection_json_path.resolve()
+        self.held: dict[str, Any] | None = None
+
+    def save_json(self, dest: Any, json_dict: dict[str, Any], *args: Any, **kwargs: Any) -> None:
+        href = dest.get_absolute_href() if isinstance(dest, pystac.Link) else str(dest)
+        if href is not None and Path(href).resolve() == self._target:
+            self.held = json_dict
+            return
+        super().save_json(dest, json_dict, *args, **kwargs)
+
+
+def _declare_conformance_links(
+    collection_data: dict[str, Any], collection_dir: Path, *, readme_link: bool
+) -> None:
+    """Add the profile schema URI and the AGENTS.md and README.md links in memory.
+
+    The tree sweeps of ``finalize_items`` add them too. A collection written
+    here already carries them, so the sweeps only create the two files and do
+    not write ``collection.json`` again. With ``readme_link`` False, the
+    README.md link stays out, because no sweep writes the README.md file.
+    """
+    from portolan_cli.agents_md import (
+        agents_link_is_wellformed,
+        build_agents_link,
+        find_agents_link,
+    )
+    from portolan_cli.readme import _ensure_readme_link
+    from portolan_cli.stac import ensure_portolan_schema_uri
+
+    ensure_portolan_schema_uri(collection_data)
+    links = collection_data.setdefault("links", [])
+    link = find_agents_link(links)
+    if link is None:
+        links.append(build_agents_link())
+    elif not agents_link_is_wellformed(link):
+        link.update(build_agents_link())
+    if readme_link:
+        _ensure_readme_link(collection_dir, collection_data)
+
+
 def _save_collection_with_links(
     collection: pystac.Collection,
     collection_dir: Path,
     catalog_root: Path,
     collection_id: str,
+    finish: Callable[[dict[str, Any]], None] | None = None,
+    *,
+    readme_link: bool = True,
 ) -> None:
-    """Save collection and fix links.
+    """Write ``collection.json`` once, with its links and conformance links.
+
+    PySTAC writes the items. The collection dict stays in memory until its
+    links, the conformance links, and ``finish`` apply, and then one write
+    puts it on disk (issue #995).
 
     Args:
         collection: PySTAC collection to save.
         collection_dir: Collection directory path.
         catalog_root: Catalog root path.
         collection_id: Collection identifier.
+        finish: Edits the collection dict before the write, such as the
+            companion assets of ``add``.
+        readme_link: Add the README.md link. A caller that runs no README
+            sweep, such as ``add-external``, passes False, so no link dangles.
     """
-    _deduplicate_collection_item_links(collection)
-    collection.set_self_href(str(collection_dir / "collection.json"))
-    collection.normalize_hrefs(href_root(collection_dir), strategy=AsIsLayoutStrategy())
-    collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
-
     collection_json_path = collection_dir / "collection.json"
-    _fix_collection_links(collection_json_path, catalog_root, collection_dir)
-    _fix_item_links(collection_json_path, catalog_root, collection_dir)
+    _deduplicate_collection_item_links(collection)
+    collection.set_self_href(str(collection_json_path))
+    collection.normalize_hrefs(href_root(collection_dir), strategy=AsIsLayoutStrategy())
+    stac_io = _HoldCollectionIO(collection_json_path)
+    collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED, stac_io=stac_io)
+    data = stac_io.held
+    if data is None:
+        raise RuntimeError(f"PySTAC did not save {collection_json_path}")
+
+    _set_collection_links(data, catalog_root, collection_dir)
+    if finish is not None:
+        finish(data)
+    _declare_conformance_links(data, collection_dir, readme_link=readme_link)
+    write_json_atomic(collection_json_path, data)
+
+    _fix_item_links(collection_json_path, catalog_root, collection_dir, data)
     _update_catalog_links(catalog_root, collection_id)
 
-    # Scaffold AGENTS.md and add the rel="agents" link (rashid PTL-FIL-002).
-    # Idempotent and merge-safe: never overwrites an existing AGENTS.md, only
-    # adds the link when absent, so re-running `add` preserves human edits.
+    # Scaffold AGENTS.md next to the collection. The link is already in the
+    # file, so this writes no JSON. It never overwrites an existing AGENTS.md,
+    # so re-running `add` preserves human edits.
     from portolan_cli.agents_md import ensure_agents_md
 
     ensure_agents_md(collection_json_path)
@@ -331,23 +412,29 @@ def _asset_member_path(collection_dir: Path, asset: pystac.Asset) -> Path | None
     return path if path.is_absolute() else collection_dir / href.removeprefix("./")
 
 
-def _read_wgs84_bbox(path: Path, catalog_root: Path | None) -> list[float] | None:
+def _read_wgs84_bbox(
+    path: Path, catalog_root: Path | None, state: RunState | None = None
+) -> list[float] | None:
     """The WGS84 footprint of a data file, measured the way ``add`` measures it.
 
     None when no handler reads the file, so a table or a remote asset adds no
-    footprint, and the extent is never invented.
+    footprint, and the extent is never invented. With ``state``, the run reads
+    the footprint of each unchanged file once.
     """
     from portolan_cli.plugins.formats import handler_for
     from portolan_cli.preparation import _extract_bbox_wgs84
 
-    try:
-        handler = handler_for(path, catalog_root)
+    def _load(file_path: Path) -> list[float] | None:
+        handler = handler_for(file_path, catalog_root, state=state)
         if handler is None:
             return None
-        metadata = handler.read_metadata(path)
+        metadata = handler.read_metadata(file_path)
         if not getattr(metadata, "bbox", None):
             return None
-        return _extract_bbox_wgs84(metadata, path)  # type: ignore[arg-type]
+        return _extract_bbox_wgs84(metadata, file_path)  # type: ignore[arg-type]
+
+    try:
+        return state.memo("wgs84_bbox", path, _load) if state is not None else _load(path)
     except Exception:  # noqa: BLE001 - an unreadable file contributes no footprint
         logger.debug("Cannot read the footprint of %s", path, exc_info=True)
         return None
@@ -381,6 +468,7 @@ def collection_members(
     *,
     catalog_root: Path | None = None,
     known_bboxes: dict[str, list[float]] | None = None,
+    state: RunState | None = None,
 ) -> list[CollectionMember]:
     """Every item and collection-level data asset of a collection, from disk.
 
@@ -394,6 +482,7 @@ def collection_members(
         collection_dir: Directory holding collection.json.
         catalog_root: Catalog root, for the format handler pins.
         known_bboxes: WGS84 bbox per resolved asset path, measured in this run.
+        state: The run state, which parses the config once per run.
 
     Returns:
         One member per item and per collection-level data asset.
@@ -406,7 +495,7 @@ def collection_members(
             continue
         bbox = known.get(str(path.resolve()))
         if bbox is None:
-            bbox = _read_wgs84_bbox(path, catalog_root)
+            bbox = _read_wgs84_bbox(path, catalog_root, state)
         members.append(CollectionMember(bbox=bbox))
     return members
 
@@ -417,17 +506,27 @@ def derive_and_apply_fields(
     *,
     catalog_root: Path | None = None,
     known_bboxes: dict[str, list[float]] | None = None,
+    state: RunState | None = None,
 ) -> None:
     """Replace the derived fields of an in-memory collection from its members."""
     members = collection_members(
-        collection, collection_dir, catalog_root=catalog_root, known_bboxes=known_bboxes
+        collection,
+        collection_dir,
+        catalog_root=catalog_root,
+        known_bboxes=known_bboxes,
+        state=state,
     )
-    apply_collection_fields(
-        collection, derive_collection_fields(members, load_own_metadata(collection_dir))
+    own = (
+        state.metadata(collection_dir, inherit=False)
+        if state is not None
+        else load_own_metadata(collection_dir)
     )
+    apply_collection_fields(collection, derive_collection_fields(members, own))
 
 
-def refresh_collection_fields(catalog_root: Path, collection_dir: Path) -> bool:
+def refresh_collection_fields(
+    catalog_root: Path, collection_dir: Path, *, state: RunState | None = None
+) -> bool:
     """Derive the fields of a saved collection again, after its members changed.
 
     ``rm`` and ``check --fix --metadata`` change the members without passing
@@ -438,6 +537,7 @@ def refresh_collection_fields(catalog_root: Path, collection_dir: Path) -> bool:
     Args:
         catalog_root: Root directory of the catalog.
         collection_dir: Directory holding collection.json.
+        state: The run state, which reads metadata.yaml once per command.
 
     Returns:
         True when collection.json changed.
@@ -453,7 +553,12 @@ def refresh_collection_fields(catalog_root: Path, collection_dir: Path) -> bool:
         logger.warning("Cannot read %s; its extent is not derived", path)
         return False
     members = collection_members(collection, collection_dir, catalog_root=catalog_root)
-    fields = derive_collection_fields(members, load_own_metadata(collection_dir))
+    own = (
+        state.metadata(collection_dir, inherit=False)
+        if state is not None
+        else load_own_metadata(collection_dir)
+    )
+    fields = derive_collection_fields(members, own)
     data = json.loads(path.read_text(encoding="utf-8"))
     before = json.dumps(data, sort_keys=True)
     apply_collection_fields_to_dict(data, fields)
@@ -522,6 +627,7 @@ def apply_human_metadata(
     collection: pystac.Collection,
     collection_dir: Path,
     catalog_root: Path,
+    state: RunState | None = None,
 ) -> None:
     """Write human-authored metadata onto a collection, own value over inherited.
 
@@ -541,9 +647,14 @@ def apply_human_metadata(
         collection: The collection to update in place.
         collection_dir: The collection's directory under the catalog root.
         catalog_root: Root directory of the catalog.
+        state: The run state, which parses each metadata.yaml once per run.
     """
-    own = load_own_metadata(collection_dir)
-    merged = load_merged_metadata(collection_dir, catalog_root)
+    if state is not None:
+        own = state.metadata(collection_dir, inherit=False)
+        merged = state.metadata(collection_dir)
+    else:
+        own = load_own_metadata(collection_dir)
+        merged = load_merged_metadata(collection_dir, catalog_root)
 
     # Title and description: only the collection's own declaration applies. An
     # ancestor title names the catalog, not this collection, so it never inherits.
@@ -575,7 +686,10 @@ _HUMAN_METADATA_KEYS = ("title", "description", "license", "providers", "links",
 
 
 def apply_human_metadata_to_dict(
-    data: dict[str, Any], collection_dir: Path, catalog_root: Path
+    data: dict[str, Any],
+    collection_dir: Path,
+    catalog_root: Path,
+    state: RunState | None = None,
 ) -> None:
     """Apply :func:`apply_human_metadata` to a parsed ``collection.json`` in place.
 
@@ -587,9 +701,10 @@ def apply_human_metadata_to_dict(
         data: Parsed ``collection.json``, mutated in place.
         collection_dir: The collection's directory under the catalog root.
         catalog_root: Root directory of the catalog.
+        state: The run state, which parses each metadata.yaml once per run.
     """
     collection = pystac.Collection.from_dict(data, migrate=False)
-    apply_human_metadata(collection, collection_dir, catalog_root)
+    apply_human_metadata(collection, collection_dir, catalog_root, state)
     applied = collection.to_dict(include_self_link=False, transform_hrefs=False)
     for key in _HUMAN_METADATA_KEYS:
         if key in applied:
@@ -659,6 +774,7 @@ def _add_prepared_items_to_collection(
 def _collect_parquet_metadata_from_disk(
     collection_dir: Path,
     collection: pystac.Collection,
+    state: RunState | None = None,
 ) -> list[GeoParquetMetadata]:
     """Scan collection directory and extract metadata from tracked parquet assets.
 
@@ -675,6 +791,8 @@ def _collect_parquet_metadata_from_disk(
     Args:
         collection_dir: Path to the collection directory.
         collection: The collection to check tracked assets against.
+        state: The run state. Its memo holds the footer that preparation read,
+            so a file of this run opens once (issue #995).
 
     Returns:
         List of GeoParquetMetadata for tracked parquet assets found on disk.
@@ -700,21 +818,23 @@ def _collect_parquet_metadata_from_disk(
 
     metadata_list: list[GeoParquetMetadata] = []
 
-    for parquet_file in collection_dir.glob("**/*.parquet"):
-        # Skip files in .portolan directory (internal state)
-        if ".portolan" in parquet_file.parts:
+    # Walk the tracked hrefs, not the directory: a glob of a large collection
+    # costs a directory walk per finalize (issue #995). A glob href, an href
+    # outside the collection, and the .portolan directory hold no table.
+    root = collection_dir.resolve()
+    for href in sorted(tracked_hrefs):
+        parquet_file = collection_dir / href
+        if "*" in href or parquet_file.suffix.lower() != ".parquet":
             continue
-
-        # Only include files that are tracked as assets
-        # Use as_posix() for cross-platform consistency (Windows uses backslashes,
-        # but STAC asset hrefs always use forward slashes)
-        relative_path = parquet_file.relative_to(collection_dir).as_posix()
-        if relative_path not in tracked_hrefs:
-            logger.debug("Skipping untracked parquet file: %s", relative_path)
+        try:
+            inside = parquet_file.resolve().relative_to(root)
+        except ValueError:
+            continue
+        if ".portolan" in inside.parts or not parquet_file.is_file():
             continue
 
         try:
-            meta = extract_geoparquet_metadata(parquet_file)
+            meta = extract_geoparquet_metadata(parquet_file, state=state)
             metadata_list.append(meta)
         except Exception as e:
             # Log but don't fail - file might be corrupted or not a valid parquet
@@ -865,6 +985,7 @@ def _asset_freshness_fields(
     file_path: Path,
     *,
     is_collection_level: bool,
+    state: RunState | None = None,
 ) -> tuple[float | None, int | None, str | None]:
     """Compute (source_mtime, feature_count, schema_fingerprint) for tracking.
 
@@ -877,6 +998,7 @@ def _asset_freshness_fields(
     tracking never blocks an otherwise successful ``add``. The asset's own mtime
     doubles as ``source_mtime`` — mirroring ``update_versions_tracking`` — since
     the freshness fast path compares the asset file's current mtime to it.
+    With ``state``, the read reuses the footer that preparation read.
     """
     if not is_collection_level:
         return (None, None, None)
@@ -886,7 +1008,7 @@ def _asset_freshness_fields(
     from portolan_cli.metadata.detection import get_current_metadata
 
     try:
-        current = get_current_metadata(file_path)
+        current = get_current_metadata(file_path, state=state)
         return (
             file_path.stat().st_mtime,
             current.current_feature_count,
@@ -897,54 +1019,31 @@ def _asset_freshness_fields(
         return (None, None, None)
 
 
-def _batch_update_versions(
-    collection_dir: Path,
+def _stage_items(
+    state: RunState,
     collection_id: str,
+    collection_dir: Path,
     items: list[PreparedItem],
-) -> tuple[str, int, int]:
-    """Batch update versions.json for multiple items in a single read-modify-write.
+) -> None:
+    """Stage one version of the collection with the assets of every item.
 
-    This is the key optimization for Issue #281: instead of O(n) writes
-    (one per item), we do O(1) writes per collection.
+    The commit at the end of the run writes it (issue #281, issue #995). Each
+    record carries the checksum that preparation computed, so the commit hashes
+    nothing again.
 
     Args:
-        collection_dir: Path to collection directory.
+        state: The run state that holds the staged versions.
         collection_id: Collection identifier.
+        collection_dir: Path to collection directory.
         items: List of PreparedItem objects to add versions for.
-
-    Returns:
-        Tuple of (current_version, asset_count, total_size_bytes) for catalog-level
-        versioning updates.
     """
-    versions_path = collection_dir / "versions.json"
-
-    # Read existing versions (or create new)
-    if versions_path.exists():
-        versions_file = read_versions(versions_path)
-    else:
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version=None,
-            versions=[],
-        )
-
-    # Compute new version string using the helper (handles prerelease versions)
-    if versions_file.current_version is None:
-        new_version = "1.0.0"
-    else:
-        new_version = _increment_version(versions_file.current_version)
-
-    # Build assets dict from ALL items (batch)
-    all_assets: dict[str, Asset] = {}
+    assets: dict[str, Asset] = {}
     for p in items:
         for file_path, file_checksum, file_size in p.asset_files.values():
             # The key is the path of the file under the collection, and the href
             # adds the collection id. Both follow where the file is, never the
             # item id: --item-id names the item, not a directory (issue #840).
             asset_key = versions_asset_key(file_path, collection_dir)
-            href = f"{collection_id}/{asset_key}"
-
-            stat = file_path.stat()
             # Collection-level assets have no companion item.json, so
             # the freshness check reads their baseline straight from
             # versions.json. Persist source_mtime + heuristics here so a plain
@@ -952,35 +1051,20 @@ def _batch_update_versions(
             # and so a touched-but-identical asset stays FRESH via the
             # heuristic fallback rather than flipping to STALE/BREAKING.
             source_mtime, feature_count, schema_fingerprint = _asset_freshness_fields(
-                file_path, is_collection_level=p.is_collection_level_asset
+                file_path, is_collection_level=p.is_collection_level_asset, state=state
             )
             # Use pre-computed file_size (handles directories like FileGDB correctly)
-            all_assets[asset_key] = Asset(
+            assets[asset_key] = Asset(
                 sha256=file_checksum,
                 size_bytes=file_size,
-                href=href,
-                mtime=stat.st_mtime,
+                href=f"{collection_id}/{asset_key}",
+                mtime=file_path.stat().st_mtime,
                 source_mtime=source_mtime,
+                source_path=p.source_paths.get(file_path),
                 feature_count=feature_count,
                 schema_fingerprint=schema_fingerprint,
             )
-
-    # Add single version with all assets
-    updated = add_version(
-        versions_file,
-        version=new_version,
-        assets=all_assets,
-        breaking=False,
-    )
-
-    # Single write for all items
-    write_versions(versions_path, updated)
-
-    # Return info for catalog-level versioning. add_version always leaves at
-    # least one version, so the latest one exists.
-    latest = updated.versions[-1]
-    total_size = sum(a.size_bytes for a in latest.assets.values())
-    return (updated.current_version or new_version, len(latest.assets), total_size)
+    state.stage(collection_id, assets=assets)
 
 
 def _finalize_with_backend(
@@ -990,45 +1074,27 @@ def _finalize_with_backend(
     collection: object,
     items: list[PreparedItem],
     active_backend: str,
+    state: RunState,
+    companions: tuple[Path, ...] = (),
 ) -> None:
     """Run backend versioning and post-add hooks for a non-file backend.
 
-    Handles both publish_version() and on_post_add() calls so that
-    finalize_items() stays within complexity rank C.
-
-    This is backend routing logic added by the iceberg-backend-integration
-    branch.
+    Stage the version and its post-add hook together. Deferred companions
+    join this stage before commit, so the plugin ingests each asset once and
+    the hook sees the final, enriched documents after publication.
     """
-    from portolan_cli.backends import get_backend
-    from portolan_cli.backends.protocol import PostAddContext, PostAddItemContext
-    from portolan_cli.config import get_setting
-    from portolan_cli.version_ops import publish_version
+    from portolan_cli.backends.protocol import PostAddItemContext
 
-    # Publish version snapshot via the plugin backend
-    assets = {
-        versions_asset_key(file_path, collection_dir): str(file_path)
-        for p in items
-        for file_path, _checksum, _size in p.asset_files.values()
-    }
-    publish_version(collection_id, assets=assets, catalog_root=catalog_root)
+    _stage_items(state, collection_id, collection_dir, items)
+    if companions:
+        stage_companions(state, collection_id, list(companions))
 
-    # NOTE: Plugin backends (e.g. Iceberg) may override table:* STAC extension
-    # fields in collection.json via on_post_add, since the backend's table state
-    # (actual row counts, schema excluding derived columns) is authoritative.
-    backend = get_backend(active_backend, catalog_root=catalog_root)
-    remote = get_setting("remote", catalog_path=catalog_root, collection=collection_id)
-    first = items[0]
-    # For collection-level assets, item_json_path is None; use collection_dir
-    first_item_dir = first.item_json_path.parent if first.item_json_path else collection_dir
-    context = PostAddContext(
-        catalog_root=catalog_root,
-        collection_id=collection_id,
-        collection_dir=collection_dir,
-        collection=collection,
-        item_id=first.item_id,
-        item_dir=first_item_dir,
-        asset_files=first.asset_files,
-        items=[
+    _stage_backend_hook(
+        catalog_root,
+        state,
+        collection_id,
+        collection,
+        [
             PostAddItemContext(
                 item_id=p.item_id,
                 item_dir=p.item_json_path.parent if p.item_json_path else collection_dir,
@@ -1036,64 +1102,89 @@ def _finalize_with_backend(
             )
             for p in items
         ],
-        remote=remote,
+        active_backend,
     )
-    try:
-        backend.on_post_add(context)
-    except Exception:
-        # Version was already published successfully. Log warning but don't fail
-        # the entire add operation. The backend hook is for optional enrichment
-        # (e.g., uploading STAC metadata to remote).
-        logger.warning(
-            "Backend on_post_add hook failed for collection '%s'. "
-            "Version was published but post-add actions may be incomplete.",
-            collection_id,
-            exc_info=True,
-        )
 
 
-def _finalize_with_file_backend(
+def _stage_backend_hook(
     catalog_root: Path,
+    state: RunState,
     collection_id: str,
-    collection_dir: Path,
-    items: list[PreparedItem],
+    collection: object,
+    items: list[PostAddItemContext],
+    active_backend: str,
 ) -> None:
-    """Update versions.json and catalog-level versions via the file backend.
+    """Attach the post-add hook to the collection's one pending publish."""
+    from portolan_cli.backends import get_backend
+    from portolan_cli.backends.protocol import PostAddContext
 
-    File backend fast path (O(1) write per collection). Updates the
-    collection-level versions.json first, then mirrors the summary into the
-    catalog-level versions.json. A catalog-level failure is logged
-    but never fails the add: the collection version was already published.
-    """
-    from portolan_cli.catalog import update_catalog_versions
-
-    current_version, asset_count, total_size = _batch_update_versions(
-        collection_dir=collection_dir,
+    collection_dir = state.collection_dir(collection_id)
+    backend = get_backend(active_backend, catalog_root=catalog_root)
+    first = items[0]
+    context = PostAddContext(
+        catalog_root=catalog_root,
         collection_id=collection_id,
+        collection_dir=collection_dir,
+        collection=collection,
+        item_id=first["item_id"],
+        item_dir=first["item_dir"],
+        asset_files=first["asset_files"],
         items=items,
+        remote=state.setting("remote", collection_dir=collection_dir),
     )
 
-    # Update catalog-level versions.json
-    # This keeps the catalog-level view in sync with collection state.
-    # Wrap in try/except to avoid failing the add if catalog update fails
-    # (collection-level versions.json was already written successfully).
-    try:
-        update_catalog_versions(
-            catalog_root=catalog_root,
-            collection_id=collection_id,
-            current_version=current_version,
-            asset_count=asset_count,
-            total_size_bytes=total_size,
-        )
-    except Exception:
-        # Collection-level versions.json was written successfully.
-        # Log warning but don't fail the add operation.
-        logger.warning(
-            "Failed to update catalog-level versions.json for collection '%s'. "
-            "Collection version was published but catalog-level view may be stale.",
-            collection_id,
-            exc_info=True,
-        )
+    def post_add() -> None:
+        try:
+            backend.on_post_add(context)
+        except Exception:
+            # The version is already published. Optional backend enrichment
+            # must not turn a successful publish into retryable staged work.
+            logger.warning(
+                "Backend on_post_add hook failed for collection '%s'. "
+                "Version was published but post-add actions may be incomplete.",
+                collection_id,
+                exc_info=True,
+            )
+
+    state.stage(collection_id, on_publish=post_add)
+
+
+def stage_deferred_post_add(
+    state: RunState,
+    collection_id: str,
+    assets: Mapping[str, Asset],
+    item_ids: Mapping[Path, str],
+) -> None:
+    """Register the plugin hook when an add changed only deferred assets.
+
+    Build the context from the staged records, so item companions and standalone
+    tabular collections both get a hook without another asset scan or hash.
+    """
+    from portolan_cli.backends.protocol import PostAddItemContext
+
+    directory = state.collection_dir(collection_id)
+    backend = state.backend(directory)
+    if backend == "file":
+        return
+    groups: dict[Path, dict[str, tuple[Path, str, int]]] = {}
+    for asset in assets.values():
+        path = state.catalog_root / asset.href
+        groups.setdefault(path.parent, {})[path.name] = (path, asset.sha256, asset.size_bytes)
+    _stage_backend_hook(
+        state.catalog_root,
+        state,
+        collection_id,
+        pystac.Collection.from_file(str(directory / "collection.json")),
+        [
+            PostAddItemContext(
+                item_id=item_ids.get(parent, next(iter(files.values()))[0].stem),
+                item_dir=parent,
+                asset_files=files,
+            )
+            for parent, files in sorted(groups.items())
+        ],
+        backend,
+    )
 
 
 def _publish_collection_version(
@@ -1102,18 +1193,17 @@ def _publish_collection_version(
     collection_dir: Path,
     collection: pystac.Collection,
     items: list[PreparedItem],
+    state: RunState,
+    companions: tuple[Path, ...] = (),
 ) -> None:
     """Route the collection's version snapshot to the active backend.
 
-    Plugin backends (e.g. Iceberg) publish + run post-add hooks; the default
-    file backend uses the optimized batch write. Backend selection follows the
-    resolved ``backend`` setting.
+    Both backends stage the version until ``version_ops.commit_run``. A plugin
+    stage also holds its post-add hook. Deferred companions join that one
+    version before the backend publishes.
     """
-    from portolan_cli.config import get_setting
-
-    active_backend = get_setting("backend", catalog_path=catalog_root)
-
-    if active_backend is not None and active_backend != "file":
+    active_backend = state.backend(collection_dir)
+    if active_backend != "file":
         _finalize_with_backend(
             catalog_root=catalog_root,
             collection_id=collection_id,
@@ -1121,14 +1211,103 @@ def _publish_collection_version(
             collection=collection,
             items=items,
             active_backend=active_backend,
+            state=state,
+            companions=companions,
         )
     else:
-        _finalize_with_file_backend(
-            catalog_root=catalog_root,
-            collection_id=collection_id,
-            collection_dir=collection_dir,
-            items=items,
-        )
+        _stage_items(state, collection_id, collection_dir, items)
+        if companions:
+            stage_companions(state, collection_id, list(companions))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Companion assets: collection-level files without geometry (issue #383)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class CompanionAsset:
+    """A collection-level file without geometry that ``add`` tracks as an asset.
+
+    Attributes:
+        path: The file in the collection directory.
+        role: The asset role. None takes the role of the file extension.
+    """
+
+    path: Path
+    role: str | None = None
+
+
+def _companion_key(assets: dict[str, Any], path: Path) -> str:
+    """The asset key of a companion: its stem, or its name when another file has the stem."""
+    key = path.stem
+    if key in assets and assets[key].get("href", "") != f"./{path.name}":
+        return path.name
+    return key
+
+
+def add_companion_assets(
+    collection_data: dict[str, Any],
+    collection_dir: Path,
+    companions: list[CompanionAsset],
+    merge_strategy: MergeStrategy,
+    state: RunState,
+) -> None:
+    """Put each companion in the collection dict, with its table fields.
+
+    The spec asks a tabular collection to document its columns with the table
+    extension, and to populate ``extent.temporal`` when the data carries a time
+    dimension (issue #749). Both come from the Parquet footer.
+    :func:`extract_tabular_metadata` returns None for a non-Parquet file and
+    for GeoParquet, so those get no table fields. The caller applies
+    metadata.yaml to the collection before this call.
+
+    Args:
+        collection_data: Parsed ``collection.json``, mutated in place.
+        collection_dir: The collection directory.
+        companions: The files to add.
+        merge_strategy: Decides only the column descriptions (issue #931).
+        state: The run state, which hashes each file once per run.
+    """
+    from portolan_cli.metadata.tabular import extract_tabular_metadata
+    from portolan_cli.preparation import _get_asset_role, _get_media_type
+    from portolan_cli.stac import document_tabular_table, set_temporal_extent
+    from portolan_cli.stac_parquet import sync_file_extension
+    from portolan_cli.sync.checksums import file_fields_from
+
+    assets = collection_data.setdefault("assets", {})
+    for companion in companions:
+        path = companion.path
+        key = _companion_key(assets, path)
+        assets[key] = {
+            "href": f"./{path.name}",
+            "type": _get_media_type(path),
+            "roles": [companion.role or _get_asset_role(path)],
+            **file_fields_from(state.checksum(path), path.stat().st_size),
+        }
+        metadata = extract_tabular_metadata(path)
+        if metadata is None:
+            continue
+        document_tabular_table(collection_data, key, metadata, merge_strategy)
+        if metadata.temporal_interval is not None:
+            set_temporal_extent(collection_data, metadata.temporal_interval)
+    sync_file_extension(collection_data, assets, collection_dir / "collection.json")
+
+
+def stage_companions(state: RunState, collection_id: str, paths: list[Path]) -> None:
+    """Stage the version records of companion files, with the checksums of the run.
+
+    A companion bumps the minor, as it did when ``add`` published it through
+    the backend.
+    """
+    from portolan_cli.versions import generated_asset_record
+
+    collection_dir = state.collection_dir(collection_id)
+    records = dict(
+        generated_asset_record(path, state.catalog_root, collection_dir, state.checksum(path))
+        for path in paths
+    )
+    state.stage(collection_id, assets=records, minor=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1164,6 +1343,7 @@ def _describe_collection(
     collection_dir: Path,
     items: list[PreparedItem],
     merge_strategy: MergeStrategy,
+    state: RunState | None = None,
 ) -> None:
     """Let each format handler in this batch add its collection fields (#947).
 
@@ -1175,6 +1355,7 @@ def _describe_collection(
         collection_dir: Directory holding collection.json.
         items: Prepared items of this batch.
         merge_strategy: How to merge detected values into existing ones.
+        state: The run state, which parses the config once per run.
     """
     from portolan_cli.plugins.formats import FormatContext, handler_named
 
@@ -1183,7 +1364,10 @@ def _describe_collection(
         if prepared.format_name and prepared.metadata is not None:
             by_handler.setdefault(prepared.format_name, []).append(prepared.metadata)
     context = FormatContext(
-        catalog_root=catalog_root, collection_dir=collection_dir, merge_strategy=merge_strategy
+        catalog_root=catalog_root,
+        collection_dir=collection_dir,
+        merge_strategy=merge_strategy,
+        state=state,
     )
     for name, metadata in by_handler.items():
         handler = handler_named(name)
@@ -1209,7 +1393,14 @@ def aggregate_table_extension(
     """
     if not any(isinstance(m, GeoParquetMetadata) for m in metadata):
         return
-    all_parquet_metadata = _collect_parquet_metadata_from_disk(context.collection_dir, collection)
+    from portolan_cli.run_state import RunState
+
+    # FormatContext types its state as a config source for plugins. The run
+    # passes a RunState, whose memo holds the footers.
+    state = context.state if isinstance(context.state, RunState) else None
+    all_parquet_metadata = _collect_parquet_metadata_from_disk(
+        context.collection_dir, collection, state
+    )
     if all_parquet_metadata:
         aggregated = aggregate_table_metadata(all_parquet_metadata)
         add_table_extension(collection, aggregated, merge_strategy=context.merge_strategy)
@@ -1276,6 +1467,8 @@ def _finalize_collection(
     collection_id: str,
     items: list[PreparedItem],
     merge_strategy: MergeStrategy,
+    state: RunState,
+    companions: list[CompanionAsset] | None = None,
 ) -> list[ItemInfo]:
     """Assemble and persist a single collection from its prepared items.
 
@@ -1288,6 +1481,9 @@ def _finalize_collection(
         collection_id: Collection identifier (may be nested).
         items: Prepared items belonging to this collection.
         merge_strategy: How to merge auto-detected metadata with existing values.
+        state: The run state, which holds the staged version.
+        companions: Collection-level files without geometry that go in the
+            same write and the same version.
 
     Returns:
         List of ItemInfo for each finalized item in this collection.
@@ -1305,7 +1501,7 @@ def _finalize_collection(
     # Issue #502/#654/#684/#755: apply human title/description/license/providers
     # from metadata.yaml. The collection's own metadata.yaml wins; inherited
     # ancestor metadata only fills fields the collection still lacks.
-    apply_human_metadata(collection, collection_dir, catalog_root)
+    apply_human_metadata(collection, collection_dir, catalog_root, state)
 
     # Add items or collection-level assets to collection (in memory)
     _add_prepared_items_to_collection(collection, items, merge_strategy)
@@ -1314,7 +1510,7 @@ def _finalize_collection(
     _emit_stale_asset_warnings(collection, collection_dir)
 
     # Add table extension if any items are GeoParquet format (Issue #304/#447)
-    _describe_collection(collection, catalog_root, collection_dir, items, merge_strategy)
+    _describe_collection(collection, catalog_root, collection_dir, items, merge_strategy, state)
 
     # Add partition extension if any items have partition metadata (Issue #232/#443)
     _emit_partition_warnings(collection, collection_dir, items)
@@ -1329,17 +1525,30 @@ def _finalize_collection(
         collection_dir,
         catalog_root=catalog_root,
         known_bboxes=_batch_bboxes(items),
+        state=state,
     )
 
     # Save collection.json ONCE for all items in this collection
-    _save_collection_with_links(collection, collection_dir, catalog_root, collection_id)
+    def finish(data: dict[str, Any]) -> None:
+        if companions:
+            add_companion_assets(data, collection_dir, companions, merge_strategy, state)
+
+    _save_collection_with_links(collection, collection_dir, catalog_root, collection_id, finish)
 
     # Run the enrichment hooks on the saved files. A backend may upload the
     # STAC JSON when it publishes, so the hooks run first (#947).
     _enrich_saved_documents(catalog_root, collection_id, collection_dir, items)
 
     # Route version snapshot to the active backend (plugin or file)
-    _publish_collection_version(catalog_root, collection_id, collection_dir, collection, items)
+    _publish_collection_version(
+        catalog_root,
+        collection_id,
+        collection_dir,
+        collection,
+        items,
+        state,
+        tuple(c.path for c in companions or ()),
+    )
 
     # Build results
     return [
@@ -1358,6 +1567,9 @@ def finalize_items(
     catalog_root: Path,
     prepared: list[PreparedItem],
     merge_strategy: MergeStrategy = MergeStrategy.SMART,
+    *,
+    state: RunState | None = None,
+    companions: Mapping[str, list[CompanionAsset]] | None = None,
 ) -> list[ItemInfo]:
     """Finalize prepared items by writing versions.json and collection.json.
 
@@ -1368,6 +1580,11 @@ def finalize_items(
         catalog_root: Root directory of the catalog.
         prepared: List of PreparedItem objects from prepare_item().
         merge_strategy: How to merge auto-detected metadata with existing values.
+        state: The run state, which holds the staged versions. Without one,
+            this opens a state and commits it before it returns.
+        companions: Collection id to the collection-level files without
+            geometry that ``add`` tracks beside the data. A collection of the
+            batch writes them in its one ``collection.json`` write.
 
     Returns:
         List of ItemInfo for each finalized item.
@@ -1379,6 +1596,20 @@ def finalize_items(
     if not prepared:
         return []
 
+    from portolan_cli.version_ops import owned_run
+
+    with owned_run(catalog_root, state) as run:
+        return _finalize_batch(catalog_root, prepared, merge_strategy, run, companions or {})
+
+
+def _finalize_batch(
+    catalog_root: Path,
+    prepared: list[PreparedItem],
+    merge_strategy: MergeStrategy,
+    state: RunState,
+    companions: Mapping[str, list[CompanionAsset]],
+) -> list[ItemInfo]:
+    """Write the collections of ``prepared`` and stage their versions."""
     # Group by collection for efficient batch writes
     from collections import defaultdict
 
@@ -1390,7 +1621,16 @@ def finalize_items(
 
     results: list[ItemInfo] = []
     for collection_id, items in by_collection.items():
-        results.extend(_finalize_collection(catalog_root, collection_id, items, merge_strategy))
+        results.extend(
+            _finalize_collection(
+                catalog_root,
+                collection_id,
+                items,
+                merge_strategy,
+                state,
+                companions.get(collection_id),
+            )
+        )
 
     from portolan_cli.catalog import (
         apply_catalog_human_titles,
@@ -1401,7 +1641,7 @@ def finalize_items(
     # Issue #815: the root catalog takes its title and description from the root
     # metadata.yaml, as every collection already does. It runs before the README
     # sweep below, which reads catalog.json.
-    apply_catalog_human_titles(catalog_root)
+    apply_catalog_human_titles(catalog_root, state=state)
 
     # Issue #502: backfill human-readable titles onto child/item links so STAC
     # Browser renders names without fetching every child. Done once per batch
@@ -1417,7 +1657,7 @@ def finalize_items(
 
     ensure_schema_uris(catalog_root)
     ensure_agents_md_tree(catalog_root)
-    ensure_readmes(catalog_root)
+    ensure_readmes(catalog_root, state=state)
 
     # Issue #684: a catalog whose every collection is a mirror carries the sync
     # time itself. Needs the whole tree, so it runs after the last collection.

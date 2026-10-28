@@ -270,16 +270,16 @@ def ensure_agents_md(stac_json: Path) -> bool:
     link = find_agents_link(links)
     if link is None:
         links.append(build_agents_link())
-        changed = True
     elif not agents_link_is_wellformed(link):
         # Normalize a hand-edited / malformed link in place.
         link.update(build_agents_link())
-        changed = True
+    else:
+        # The link is right, so the JSON stays as it is. A new AGENTS.md file
+        # does not change it (issue #995).
+        return changed
 
-    if changed:
-        write_json_atomic(stac_json, data)
-
-    return changed
+    write_json_atomic(stac_json, data)
+    return True
 
 
 def ensure_agents_md_tree(catalog_root: Path) -> bool:

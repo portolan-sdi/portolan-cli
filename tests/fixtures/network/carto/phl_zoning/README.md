@@ -13,4 +13,6 @@ The run is `extract carto <base_url>/api/v2/sql --tables zoning_basedistricts
   uses the table that `--tables` gives.
 - The GeoJSON response contains the 3 rows of `LIMIT 3`. The count response
   is the real count of 29208.
+- geoparquet-io 1.7.0 reads the SRID of `the_geom` before it reads the rows.
+  The SRID response dates from 2026-10-27.
 - The responses contain no credential.

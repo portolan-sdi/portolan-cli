@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tests.perf.expected.imports import HEAVY_MODULES
 from tests.support.fake_dist import write_fake_dist
 
 if TYPE_CHECKING:
@@ -91,6 +92,48 @@ def test_api_import_loads_no_heavy_dependency() -> None:
     )
 
     assert _run(code).strip() == "[]"
+
+
+def test_metadata_package_import_loads_no_heavy_dependency() -> None:
+    """`import portolan_cli.metadata` loads no format extractor (#994).
+
+    Python runs the package `__init__` before any submodule, so an eager
+    re-export there loads rasterio and pyogrio for `metadata.models` too.
+    `tests/perf/test_cold_imports.py` checks the help commands themselves.
+    """
+    code = (
+        "import sys, portolan_cli.metadata.models\n"
+        f"print(sorted(m for m in {list(HEAVY_MODULES)!r} if m in sys.modules))\n"
+    )
+
+    assert _run(code).strip() == "[]"
+
+
+def test_validation_import_loads_no_heavy_dependency() -> None:
+    """`import portolan_cli.validation` loads no format extractor (#994).
+
+    `portolan check` imports the package before it reads a file. Its chain
+    runs through `validation.fixers`, `metadata.fix`, and `metadata.update`.
+    A module-level rasterio import on that chain loads rasterio and boto3
+    for every check, also when the catalog holds no raster.
+    """
+    code = (
+        "import sys, portolan_cli.validation\n"
+        f"print(sorted(m for m in {list(HEAVY_MODULES)!r} if m in sys.modules))\n"
+    )
+
+    assert _run(code).strip() == "[]"
+
+
+def test_metadata_package_resolves_every_public_name() -> None:
+    """Each name in `portolan_cli.metadata.__all__` resolves to its definition."""
+    import portolan_cli.metadata as metadata
+
+    for name in metadata.__all__:
+        value = getattr(metadata, name)
+        assert value.__module__.startswith("portolan_cli.metadata."), name
+        assert value.__name__ == name
+    assert set(metadata.__all__) <= set(dir(metadata))
 
 
 _EXTRACT_HELP_PROBE = """

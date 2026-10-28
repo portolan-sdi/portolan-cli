@@ -27,22 +27,25 @@ from rashid.config import RulesConfig
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from portolan_cli.config import ConfigSource
+
 #: Config block replaced by ``check:``. Its keys named native ``RULE-*`` rules
 #: that no longer exist, so there is nothing to translate —.
 LEGACY_BLOCK = "stac_lint"
 
 
-def _load(root: Path) -> dict[str, Any]:
+def _load(root: Path, state: ConfigSource | None) -> dict[str, Any]:
     from portolan_cli.config import load_catalog_config
 
-    return load_catalog_config(root).data
+    return load_catalog_config(root, state=state).data
 
 
-def load_rules_config(root: Path) -> RulesConfig:
+def load_rules_config(root: Path, *, state: ConfigSource | None = None) -> RulesConfig:
     """Build rashid's ``RulesConfig`` from the catalog's ``check:`` block.
 
     Args:
         root: Catalog root (the directory holding ``.portolan/``).
+        state: The run state, which parses config.yaml once per run.
 
     Returns:
         The configured rule set; an empty ``RulesConfig`` when unconfigured.
@@ -50,7 +53,7 @@ def load_rules_config(root: Path) -> RulesConfig:
     Raises:
         ValueError: A ``severity`` value is not one of error/warning/info.
     """
-    config = _load(root)
+    config = _load(root, state)
 
     if LEGACY_BLOCK in config:
         warnings.warn(
@@ -77,9 +80,14 @@ def load_rules_config(root: Path) -> RulesConfig:
     return RulesConfig.from_dict(raw)
 
 
-def load_public_url(root: Path) -> str | None:
-    """Return the URL the catalog is published under, when configured."""
-    publish = _load(root).get("publish")
+def load_public_url(root: Path, *, state: ConfigSource | None = None) -> str | None:
+    """Return the URL the catalog is published under, when configured.
+
+    Args:
+        root: Catalog root (the directory holding ``.portolan/``).
+        state: The run state, which parses config.yaml once per run.
+    """
+    publish = _load(root, state).get("publish")
     if not isinstance(publish, dict):
         return None
     url = publish.get("public_url")

@@ -9,9 +9,10 @@ the gate to go red.
 For each fault the script:
 
 1. Copies ``HEAD`` to a temporary directory with ``git archive`` and applies
-   the fault. A fault that does not apply is an ERROR.
+   the fault. A fault that does not apply is an ERROR. Changed Python files
+   must compile; a syntax error is BROKEN and no gate runs.
 2. Copies ``HEAD`` again, applies the clean variant of the fault, and runs
-   each gate. The gate must pass. A gate that fails on a clean tree proves
+   each gate after compiling changed Python files. The gate must pass. A gate that fails on a clean tree proves
    nothing, so the row is BROKEN.
 3. Runs each gate on the faulty copy. Each gate must fail. A gate that stays
    green is MISSED.
@@ -158,6 +159,16 @@ def copy_head(repo: Path, dest: Path) -> Path:
     return dest
 
 
+def _apply_compiled(fault: Fault, root: Path, faulty: bool) -> None:
+    """Compile each changed Python file before attributing a failure to a gate."""
+    before = {path: path.read_bytes() for path in root.rglob("*.py")}
+    fault.apply(root, faulty)
+    for path in root.rglob("*.py"):
+        source = path.read_bytes()
+        if source != before.get(path):
+            compile(source, str(path), "exec")
+
+
 # ---------------------------------------------------------------------------
 # Faults
 # ---------------------------------------------------------------------------
@@ -287,6 +298,126 @@ def _apply_unreachable_branch(root: Path, faulty: bool) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Perf faults: each adds work that the scale gates in tests/perf must catch
+# ---------------------------------------------------------------------------
+
+
+def _apply_versions_read_per_file(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/query.py",
+            "    versions_file = state.versions(collection_dir)\n",
+            "    RunState.open(collection_dir.parent).versions(collection_dir)\n"
+            "    versions_file = state.versions(collection_dir)\n",
+        )
+
+
+def _apply_yaml_parse_per_call(root: Path, faulty: bool) -> None:
+    if faulty:
+        # The fault parses the file again on each read, beside the RunState memo.
+        _replace_once(
+            root / "portolan_cli/run_state.py",
+            '        return self.memo("config.yaml", path, _config.parse_yaml)',
+            "        _config.parse_yaml(path)\n"
+            '        return self.memo("config.yaml", path, _config.parse_yaml)',
+        )
+
+
+def _apply_extra_thumbnail_draw(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/viz/thumbnail.py",
+            '    # No bbox_inches="tight"',
+            '    figure.canvas.draw()\n    # No bbox_inches="tight"',
+        )
+
+
+def _apply_extra_duckdb_connect(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/convert.py",
+            "    if not has_geometry(table):\n        return table\n\n    # Add bbox column",
+            "    if not has_geometry(table):\n        return table\n\n"
+            "    import duckdb\n\n    duckdb.connect().close()\n\n    # Add bbox column",
+        )
+
+
+def _apply_publish_per_companion(root: Path, faulty: bool) -> None:
+    # stage_companions commits each companion on its own. Each commit writes
+    # a version, so the versions of one add grow with the companions.
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/finalization.py",
+            "    state.stage(collection_id, assets=records, minor=True)\n",
+            "    from portolan_cli.version_ops import commit_run\n\n"
+            "    for key, record in records.items():\n"
+            "        state.stage(collection_id, assets={key: record}, message=key, minor=True)\n"
+            "        commit_run(state)\n",
+        )
+
+
+def _apply_heavy_cli_import(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/cli.py",
+            "import click\n",
+            "import click\nimport duckdb  # noqa: F401\n",
+        )
+
+
+def _apply_asset_map_per_item(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/metadata/detection.py",
+            "            return state.memo(\n",
+            "            current_assets(state.versions(collection_dir, include_staged=False))\n"
+            "            return state.memo(\n",
+        )
+
+
+# Each fault below opens a file again with no count() call. The scale gates
+# cannot see an open that nothing counts, so tests/perf/test_open_sites.py
+# reads the source and fails on it.
+
+
+def _apply_thumbnail_parquet_reopen(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/viz/thumbnail.py",
+            "        parquet_file = pq.ParquetFile(str(gpq_path))\n",
+            "        pq.ParquetFile(str(gpq_path)).close()\n"
+            "        parquet_file = pq.ParquetFile(str(gpq_path))\n",
+        )
+
+
+def _apply_cog_defaults_reopen(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/conversion_config.py",
+            "            with rasterio.open(source) as src:\n",
+            "            rasterio.open(source).close()\n"
+            "            with rasterio.open(source) as src:\n",
+        )
+
+
+def _apply_cog_write_reopen(root: Path, faulty: bool) -> None:
+    if faulty:
+        _replace_once(
+            root / "portolan_cli/convert.py",
+            '    with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:\n',
+            "    rasterio.open(source).close()\n"
+            '    with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:\n',
+        )
+
+
+def _perf_gate(test_id: str) -> Gate:
+    return Gate(("uv", "run", "pytest", test_id, "-q", "-p", "no:cacheprovider"))
+
+
+SCALE = "tests/perf/test_scale_invariance.py::test_counters_scale_as_recorded"
+OPEN_SITES = "tests/perf/test_open_sites.py::test_every_open_site_counts"
+
 FAULTS = (
     Fault(
         "mutant",
@@ -362,6 +493,56 @@ FAULTS = (
         _apply_unreachable_branch,
         (Gate(("uv", "run", "mypy", UNREACHABLE_MODULE, "--warn-unreachable")),),
     ),
+    Fault(
+        "asset-map-per-item",
+        _apply_asset_map_per_item,
+        (_perf_gate(f"{SCALE}[check-metadata]"),),
+    ),
+    Fault(
+        "versions-read-per-file",
+        _apply_versions_read_per_file,
+        (_perf_gate(f"{SCALE}[re-add-unchanged]"),),
+    ),
+    Fault(
+        "yaml-parse-per-call",
+        _apply_yaml_parse_per_call,
+        (_perf_gate(f"{SCALE}[add-many-collections]"),),
+    ),
+    Fault(
+        "extra-thumbnail-draw",
+        _apply_extra_thumbnail_draw,
+        (_perf_gate(f"{SCALE}[add-many-collections-thumbs]"),),
+    ),
+    Fault(
+        "extra-duckdb-connect",
+        _apply_extra_duckdb_connect,
+        (_perf_gate(f"{SCALE}[add-one-collection]"),),
+    ),
+    Fault(
+        "publish-per-companion",
+        _apply_publish_per_companion,
+        (_perf_gate(f"{SCALE}[add-with-companions]"),),
+    ),
+    Fault(
+        "heavy-cli-import",
+        _apply_heavy_cli_import,
+        (_perf_gate("tests/perf/test_cold_imports.py"),),
+    ),
+    Fault(
+        "thumbnail-parquet-reopen",
+        _apply_thumbnail_parquet_reopen,
+        (_perf_gate(OPEN_SITES),),
+    ),
+    Fault(
+        "cog-defaults-reopen",
+        _apply_cog_defaults_reopen,
+        (_perf_gate(OPEN_SITES),),
+    ),
+    Fault(
+        "cog-write-reopen",
+        _apply_cog_write_reopen,
+        (_perf_gate(OPEN_SITES),),
+    ),
 )
 FAULTS_BY_NAME = {fault.name: fault for fault in FAULTS}
 
@@ -375,10 +556,10 @@ def run_fault(fault: Fault, repo: Path, workdir: Path) -> Result:
     """Test one fault against copies of ``repo`` under ``workdir``."""
     try:
         faulty_root = copy_head(repo, workdir / f"{fault.name}-faulty")
-        fault.apply(faulty_root, True)
+        _apply_compiled(fault, faulty_root, True)
         if fault.control:
             clean_root = copy_head(repo, workdir / f"{fault.name}-clean")
-            fault.apply(clean_root, False)
+            _apply_compiled(fault, clean_root, False)
             for gate in fault.gates:
                 proc = run(clean_root, gate.command)
                 if gate.caught(proc):
@@ -393,6 +574,8 @@ def run_fault(fault: Fault, repo: Path, workdir: Path) -> Result:
                 return Result(
                     fault.name, "MISSED", f"{' '.join(gate.command)} stayed green: {_tail(proc)}"
                 )
+    except SyntaxError as error:
+        return Result(fault.name, "BROKEN", f"patch does not compile: {error}")
     except (FaultError, subprocess.SubprocessError, OSError) as error:
         return Result(fault.name, "ERROR", str(error))
     return Result(fault.name, "CAUGHT", "")

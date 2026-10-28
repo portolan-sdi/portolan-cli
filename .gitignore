@@ -232,3 +232,7 @@ claude.local.md
 .grepai/
 .serena/
 mutants/
+
+# Perf outputs: scripts/profile.py reports and the pytest-codspeed local results
+.perf/
+.codspeed/

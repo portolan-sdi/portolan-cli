@@ -114,6 +114,90 @@ class TestDefaultAddWritesACoveringColumn:
         assert "no bbox covering column" in output
 
 
+class TestTheSourceFooterIsReadOnce:
+    """convert_vector reads the source footer once, and closes it before the swap."""
+
+    def test_the_in_place_rewrite_opens_the_source_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli import preparation, trace
+        from portolan_cli.conversion_config import VectorSettings
+
+        source = tmp_path / "roads.parquet"
+        shutil.copy(POINTS, source)
+        opened: list[pq.ParquetFile] = []
+        open_footer = preparation.open_footer
+
+        def recorded(path: Path) -> pq.ParquetFile | None:
+            parquet = open_footer(path)
+            if parquet is not None:
+                opened.append(parquet)
+            return parquet
+
+        monkeypatch.setattr(preparation, "open_footer", recorded)
+
+        with trace.tracing():
+            output = preparation.convert_vector(source, tmp_path, settings=VectorSettings())
+            opens = trace.counters().get("parquet.opens", 0)
+
+        # The replace of the source succeeded: it now carries the covering.
+        assert output == source
+        assert _covering(source) is not None
+        # One open of the source, one of the rewritten sibling. Both close.
+        assert opens == 2
+        assert len(opened) == 2
+        assert all(parquet.closed for parquet in opened)
+        # No handle holds the file, so it deletes on every platform.
+        source.unlink()
+        assert not source.exists()
+
+
+class TestAnAddReadsEachFooterOnce:
+    """Every footer reader of one add shares one footer read per file.
+
+    The file filter, the geometry check, the layout check, the handler, the
+    output check, and the PMTiles and thumbnail side steps each ask whether
+    the file is GeoParquet. The run memo answers all but the first.
+    """
+
+    @staticmethod
+    def _opens(root: Path, target: Path, monkeypatch: pytest.MonkeyPatch) -> int:
+        (root / ".portolan" / "config.yaml").write_text("thumbnails:\n  enabled: false\n")
+        monkeypatch.setenv("PORTOLAN_TIMINGS", "1")
+        result = CliRunner().invoke(
+            cli, ["--format", "json", "add", "--portolan-dir", str(root), str(target)]
+        )
+        assert result.exit_code == 0, result.output
+        opens: int = json.loads(result.stdout)["meta"]["counters"]["parquet.opens"]
+        return opens
+
+    def test_a_conformant_geoparquet_add_reads_its_footer_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import geoparquet_io as gpio  # type: ignore[import-untyped]
+
+        root = tmp_path / "catalog"
+        target = root / "roads" / "roads.parquet"
+        target.parent.mkdir(parents=True)
+        gpio.convert(str(POINTS)).add_bbox().sort_hilbert().write(str(target))
+        _init(root)
+
+        assert self._opens(root, target, monkeypatch) == 1
+
+    def test_a_rewritten_geoparquet_add_reads_two_footers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "catalog"
+        target = root / "roads" / "roads.parquet"
+        target.parent.mkdir(parents=True)
+        shutil.copy(POINTS, target)
+        _init(root)
+
+        # The source before the rewrite, and the rewritten file.
+        assert self._opens(root, target, monkeypatch) == 2
+        assert _covering(target) is not None
+
+
 class TestAddLeavesFilesAlone:
     def test_conformant_geoparquet_is_copied_untouched(self, tmp_path: Path) -> None:
         """A file that already carries the column costs nothing to add."""
@@ -301,11 +385,12 @@ class TestRewriteScratchFileIsNeverIngested:
 
 
 class TestRewritePreservesPublisherMetadata:
-    """geoparquet-io writes a fresh `geo` key and drops every other one.
+    """geoparquet-io writes a fresh `geo` key and keeps a publisher's keys.
 
-    Publishers do set other keys. geopandas writes `pandas`, which carries the
-    index and dtype information `pd.read_parquet` restores. The rewrite mutates
-    the operator's own file, so it must put those keys back.
+    Publishers set other keys, such as provenance. The rewrite mutates the
+    operator's own file, so those keys must survive it. geoparquet-io 1.7.0
+    keeps them (gpio#1280). It drops `pandas` on purpose, because that key
+    names the columns of the input (gpio#1268).
     """
 
     def test_extra_schema_metadata_survives_the_rewrite(self, tmp_path: Path) -> None:
@@ -327,6 +412,54 @@ class TestRewritePreservesPublisherMetadata:
         assert after[b"publisher:provenance"] == b"national cadastre 2024"
         # The writer still owns `geo`: the rewrite added the covering column.
         assert _covering(target) is not None
+
+    def test_a_geopandas_file_is_rewritten_with_one_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """geoparquet-io 1.7.0 keeps publisher keys (gpio#1280), so the rewrite writes once.
+
+        Before the bump, a second full read and write put the keys back. The
+        ``pandas`` key is the one key gpio drops on purpose: it names the columns
+        of the input, and the rewrite adds a column (gpio#1268).
+        """
+        import geopandas as gpd
+        from geoparquet_io.api.table import Table
+
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.metadata.geoparquet import read_rewrite_fidelity
+        from portolan_cli.preparation import _rewrite_parquet_in_place
+
+        target = tmp_path / "buildings.parquet"
+        frame = gpd.read_parquet(FIXTURES / "realdata" / "open-buildings.parquet")
+        frame.to_parquet(target)
+        table = pq.read_table(target)
+        metadata = {**(table.schema.metadata or {}), b"publisher:provenance": b"cadastre"}
+        pq.write_table(table.replace_schema_metadata(metadata), target)
+        assert b"pandas" in metadata
+        writes: list[str] = []
+        table_write = Table.write
+        parquet_writer = pq.ParquetWriter
+
+        def counted_write(self: Table, path: str, *args: object, **kwargs: object) -> Path:
+            writes.append(str(path))
+            return table_write(self, path, *args, **kwargs)  # type: ignore[arg-type]
+
+        class CountedWriter(parquet_writer):  # type: ignore[misc, valid-type]
+            def __init__(self, where: object, *args: object, **kwargs: object) -> None:
+                writes.append(str(where))
+                super().__init__(where, *args, **kwargs)
+
+        monkeypatch.setattr(Table, "write", counted_write)
+        monkeypatch.setattr(pq, "ParquetWriter", CountedWriter)
+
+        _rewrite_parquet_in_place(target, VectorSettings(), read_rewrite_fidelity(target))
+
+        assert len(writes) == 1, writes
+        after = pq.read_metadata(target).metadata
+        assert after[b"publisher:provenance"] == b"cadastre"
+        assert b"pandas" not in after
+        assert _covering(target) is not None
+        assert len(gpd.read_parquet(target)) == len(frame)
 
     def test_the_geo_key_is_not_restored_from_the_source(self, tmp_path: Path) -> None:
         """Restoring the old `geo` would contradict the column just added."""
@@ -599,22 +732,6 @@ class TestTheGuardsCoverEveryRewritePath:
 
         before = read_rewrite_fidelity(source)
         _assert_rewrite_kept_everything(source, rewritten, before)
-
-    def test_an_uncompressed_file_can_be_rewritten(self, tmp_path: Path) -> None:
-        """`ParquetFile` says UNCOMPRESSED; `ParquetWriter` only accepts none."""
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-
-        from portolan_cli.preparation import _restore_schema_metadata
-
-        target = tmp_path / "plain.parquet"
-        table = pa.table({"n": [1, 2, 3]})
-        pq.write_table(table, target, compression="NONE")
-
-        _restore_schema_metadata(target, {b"pandas": b"{}"})
-
-        assert pq.ParquetFile(target).schema_arrow.metadata[b"pandas"] == b"{}"
-        assert pq.ParquetFile(target).metadata.num_rows == 3
 
     def test_a_misspelled_setting_warns_once_per_catalog(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

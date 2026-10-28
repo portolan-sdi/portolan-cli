@@ -9,11 +9,11 @@ on:
   workflow_dispatch:  # Allow manual triggering
     inputs:
       record-baseline:
-        # Run the benchmarks without the regression check and upload the
+        # Run the perf scenarios without the regression check and upload the
         # results. A maintainer commits the artifact as
-        # .benchmarks/baseline.json, so the baseline comes from this runner
+        # .benchmarks/scenarios.json, so the baseline comes from this runner
         # type and never from a dev machine.
-        description: Record a benchmark baseline instead of comparing with one
+        description: Record a scenario baseline instead of comparing with one
         type: boolean
         default: false
 
@@ -32,6 +32,8 @@ jobs:
     name: Conformance vs rashid main
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # A baseline-recording dispatch needs only the scenarios job.
+    if: ${{ !inputs.record-baseline }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -71,6 +73,8 @@ jobs:
     # largest night runs roughly twice the mutants of the 6-file shard that took
     # 20 minutes. 90 leaves headroom without letting a hung run burn an hour.
     timeout-minutes: 90
+    # A baseline-recording dispatch skips the mutation shard, the costliest job.
+    if: ${{ !inputs.record-baseline }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -234,10 +238,16 @@ jobs:
           retention-days: 30
         if: always()
 
-  benchmark:
-    name: Performance Benchmarks
+  scenarios:
+    name: Perf Scenarios (wall time and peak RSS)
+    # Runs the S1, S2, S3, S4, and S8 scenarios of tests/perf at full size and
+    # compares wall time and peak RSS with .benchmarks/scenarios.json.
+    # tests/perf/bench.py states the thresholds: +100% wall, +15% RSS. The
+    # wall limit scales by the calibration ratio of the two runners. A
+    # missing baseline fails the run. CPU regressions in pure-Python paths
+    # are CodSpeed's job in ci.yml, and extra work is the counter gates' job.
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -257,41 +267,24 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Run benchmarks against the committed baseline
+      - name: Run the scenarios against the committed baseline
         env:
           RECORD_BASELINE: ${{ inputs.record-baseline }}
         run: |
-          # The old step passed --fail-on=20 to the compare subcommand. That
-          # command has no --fail-on flag, and git never held the baseline,
-          # so the step copied each run over a missing file and passed.
-          # --benchmark-compare reads the committed baseline by path. A
-          # benchmark whose minimum time grows by more than 20% fails the run.
-          # A missing baseline fails it too: --benchmark-compare-fail needs a
-          # file to compare with.
-          compare=(
-            --benchmark-compare=.benchmarks/baseline.json
-            --benchmark-compare-fail=min:20%
-          )
+          # A record-baseline run writes the results without the compare. A
+          # maintainer commits the artifact as .benchmarks/scenarios.json, so
+          # the baseline comes from this runner type and never a dev machine.
+          compare=(--compare .benchmarks/scenarios.json)
           if [ "$RECORD_BASELINE" = "true" ]; then
             compare=()
           fi
-          uv run pytest tests/ \
-            -m benchmark \
-            --benchmark-json=benchmark-results.json \
-            "${compare[@]}" \
-            -v
-          if [ "$RECORD_BASELINE" = "true" ]; then
-            # The compare reads only each benchmark's summary stats. The raw
-            # per-round timings in stats.data are 90% of the file, so a
-            # recorded baseline drops them.
-            uv run python -c "import json, pathlib; p = pathlib.Path('benchmark-results.json'); d = json.loads(p.read_text()); [b['stats'].pop('data', None) for b in d['benchmarks']]; p.write_text(json.dumps(d, indent=4) + '\n')"
-          fi
+          uv run python -m tests.perf.bench --out scenario-results.json "${compare[@]}"
 
-      - name: Upload benchmark results
+      - name: Upload scenario results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: benchmark-results
-          path: benchmark-results.json
+          name: scenario-results
+          path: scenario-results.json
           retention-days: 90
         if: always()
 

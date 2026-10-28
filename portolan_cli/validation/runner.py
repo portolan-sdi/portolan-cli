@@ -52,6 +52,9 @@ from portolan_cli.validation.legacy import detect_legacy_notes
 if TYPE_CHECKING:
     from rashid.model import Report
 
+    from portolan_cli.config import ConfigSource
+    from portolan_cli.run_state import RunState
+
 #: A structural/schema validator maps one object's raw JSON to schema errors.
 #: Injected by tests to keep them offline and independent of schema churn.
 Validator = Callable[[dict[str, Any]], list[Any]]
@@ -121,7 +124,9 @@ def _resolve_root(path: Path) -> Path:
     return resolve_catalog_root_for_check(path) or path
 
 
-def validate_live_base_url(path: Path, public_url: str | None) -> None:
+def validate_live_base_url(
+    path: Path, public_url: str | None, *, state: ConfigSource | None = None
+) -> None:
     """Reject invalid live URLs before validation or any requested repair.
 
     Match rashid's HTTPS-only policy. Also require a host and a valid port.
@@ -129,7 +134,7 @@ def validate_live_base_url(path: Path, public_url: str | None) -> None:
     The error names the URL's source and does not expose the URL, which can
     contain credentials.
     """
-    base_url = public_url or load_public_url(_resolve_root(path))
+    base_url = public_url or load_public_url(_resolve_root(path), state=state)
     if base_url is None:
         return
     source = "--url" if public_url else "publish.public_url"
@@ -143,8 +148,10 @@ def validate_live_base_url(path: Path, public_url: str | None) -> None:
         raise InvalidLiveUrlError(source)
 
 
-def _live_hint(root: Path, public_url: str | None, *, live: bool) -> LiveHint | None:
-    base_url = public_url or load_public_url(root)
+def _live_hint(
+    root: Path, public_url: str | None, *, live: bool, state: ConfigSource
+) -> LiveHint | None:
+    base_url = public_url or load_public_url(root, state=state)
     if live or base_url is None:
         return None
     return LiveHint(
@@ -179,7 +186,7 @@ def _notice_message(unregistered: list[str], missing: list[str]) -> str:
     return f"{'. '.join(parts)}."
 
 
-def _workflow_notice(root: Path) -> WorkflowNotice | None:
+def _workflow_notice(root: Path, *, state: RunState) -> WorkflowNotice | None:
     """Account for data files the manifest and the filesystem disagree about.
 
     Deliberately kept off the findings list — see :class:`WorkflowNotice`. Only
@@ -191,7 +198,7 @@ def _workflow_notice(root: Path) -> WorkflowNotice | None:
     from portolan_cli.metadata.scan import scan_catalog_metadata
 
     try:
-        report = scan_catalog_metadata(root)
+        report = scan_catalog_metadata(root, state=state)
     except FileNotFoundError:
         return None
 
@@ -230,6 +237,7 @@ def run_check(
     structural_validator: Validator | None = None,
     schema_validator: Validator | None = None,
     live_prober: Any = None,
+    state: RunState | None = None,
 ) -> CheckOutcome:
     """Validate the catalog containing ``path`` and check its source files.
 
@@ -253,6 +261,8 @@ def run_check(
         structural_validator: Injected structural validator (testing).
         schema_validator: Injected schema validator (testing).
         live_prober: Injected HTTP prober (testing).
+        state: The run state of the command. ``check --fix`` passes one state
+            to the check before the fix and to the check after it.
 
     Returns:
         A :class:`CheckOutcome`. With ``metadata=True`` it also carries a
@@ -260,21 +270,26 @@ def run_check(
         about which files exist — a workflow channel, never a conformance
         finding.
     """
+    from portolan_cli.run_state import RunState
+
     root = _resolve_root(path)
+    # One run state, so the three config readers below parse config.yaml once.
+    if state is None:
+        state = RunState.open(root)
 
     report: Report | None = None
     notice: WorkflowNotice | None = None
     if metadata:
         if live:
-            validate_live_base_url(root, public_url)
+            validate_live_base_url(root, public_url, state=state)
         # One extra manifest walk per run. `run_fix_workflow` walks separately
         # under --fix; deduping the two is a later refactor, not this change.
-        notice = _workflow_notice(root)
+        notice = _workflow_notice(root, state=state)
         # rashid runs every rule in one call, so the span covers all validators.
         with span("check.validate", structural=structural, schema=schema, data=data, live=live):
             report = validate(
                 root,
-                config=load_rules_config(root),
+                config=load_rules_config(root, state=state),
                 structural=structural,
                 structural_validator=structural_validator,
                 schema=schema,
@@ -283,7 +298,7 @@ def run_check(
                 data_reader_factory=LocalOnlyReader if data_scope == "local" else None,
                 live=live,
                 live_prober=live_prober,
-                live_base_url=public_url or load_public_url(root),
+                live_base_url=public_url or load_public_url(root, state=state),
             )
 
     format_report = None
@@ -296,13 +311,16 @@ def run_check(
                 fix=False,
                 dry_run=False,
                 workers=workers,
-                catalog_path=path,
+                # The config and its conversion.paths globs belong to the
+                # catalog root, also when the check covers a subdirectory.
+                catalog_path=root,
+                state=state,
             )
 
     return CheckOutcome(
         report=report,
         format_report=format_report,
         legacy_note=detect_legacy_notes(root),
-        live_hint=_live_hint(root, public_url, live=live),
+        live_hint=_live_hint(root, public_url, live=live, state=state),
         workflow_notice=notice,
     )

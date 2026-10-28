@@ -170,7 +170,7 @@ class TestApplyFixers:
         calls: list[str] = []
 
         def make(name: str) -> Any:
-            def fixer(root: Path, dry_run: bool) -> list[FixResult]:
+            def fixer(root: Path, dry_run: bool, _state: object = None) -> list[FixResult]:
                 calls.append(name)
                 return [
                     FixResult(
@@ -199,7 +199,7 @@ class TestApplyFixers:
     def test_skip_excludes_a_key(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         calls: list[str] = []
 
-        def fixer(root: Path, dry_run: bool) -> list[FixResult]:
+        def fixer(root: Path, dry_run: bool, _state: object = None) -> list[FixResult]:
             calls.append("convert")
             return []
 
@@ -214,7 +214,7 @@ class TestApplyFixers:
     ) -> None:
         seen: list[bool] = []
 
-        def fixer(root: Path, dry_run: bool) -> list[FixResult]:
+        def fixer(root: Path, dry_run: bool, _state: object = None) -> list[FixResult]:
             seen.append(dry_run)
             return []
 
@@ -226,7 +226,7 @@ class TestApplyFixers:
     def test_a_raising_fixer_becomes_a_failed_result(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def boom(root: Path, dry_run: bool) -> list[FixResult]:
+        def boom(root: Path, dry_run: bool, _state: object = None) -> list[FixResult]:
             raise OSError("disk went away")
 
         monkeypatch.setattr(fixers_module, "FIXERS", {"titles": boom})
@@ -266,11 +266,11 @@ class TestFixerRun:
     """The run tells the caller which fixers were asked for, which acted, and why not."""
 
     @staticmethod
-    def _acting(root: Path, dry_run: bool) -> list[FixResult]:
+    def _acting(root: Path, dry_run: bool, _state: object = None) -> list[FixResult]:
         return [FixResult(root / "acted", FixAction.UPDATED, True, "acted")]
 
     @staticmethod
-    def _skipping(root: Path, dry_run: bool) -> list[FixResult]:
+    def _skipping(root: Path, dry_run: bool, _state: object = None) -> list[FixResult]:
         return [
             FixResult(root / "a.json", FixAction.SKIPPED, True, "nothing to derive it from"),
             FixResult(root / "b.json", FixAction.SKIPPED, True, "nothing to derive it from"),
@@ -326,7 +326,7 @@ class TestFixerRun:
     def test_a_raising_fixer_is_selected_but_not_applied(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def boom(root: Path, dry_run: bool) -> list[FixResult]:
+        def boom(root: Path, dry_run: bool, _state: object = None) -> list[FixResult]:
             raise OSError("disk went away")
 
         self._patch(monkeypatch, {"titles": boom})
@@ -1381,8 +1381,8 @@ class TestItemMirrorCogPredicate:
     ) -> None:
         from portolan_cli import stac_parquet
 
-        monkeypatch.setattr(stac_parquet, "generate_items_parquet", lambda directory: None)
-        monkeypatch.setattr(stac_parquet, "register_mirror_asset", lambda directory: None)
+        monkeypatch.setattr(stac_parquet, "generate_items_parquet", lambda directory, state: None)
+        monkeypatch.setattr(stac_parquet, "register_mirror_asset", lambda directory, state: None)
         self._collection_with_raster_item(
             tmp_path, "image/tiff; application=geotiff; profile=cloud-optimized"
         )

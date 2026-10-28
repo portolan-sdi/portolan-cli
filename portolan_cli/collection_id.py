@@ -23,6 +23,8 @@ from portolan_cli.scan.detect import is_filegdb
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from portolan_cli.config import ConfigSource
+
 # Pattern for valid collection IDs (supports path syntax):
 # - Start with lowercase letter or number (year-based organization like 2020/)
 # - Followed by lowercase letters, numbers, hyphens, underscores, or forward slashes
@@ -208,7 +210,9 @@ def resolve_collection_id(path: Path, catalog_root: Path) -> str:
     return parts[0]
 
 
-def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
+def infer_nested_collection_id(
+    path: Path, catalog_root: Path, *, state: ConfigSource | None = None
+) -> str:
     """Infer nested collection ID from a file or directory-based data asset.
 
     Collection depth depends on the format type, because vector data is a
@@ -244,6 +248,7 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
     Args:
         path: Path to the file or directory-based data asset (e.g., FileGDB).
         catalog_root: Root directory of the catalog.
+        state: The run state, which parses the config once per run.
 
     Returns:
         Collection ID (nested path relative to catalog root, excluding Hive partitions).
@@ -284,7 +289,7 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
     # - asset_level "item" (raster): grandparent = collection, parent = item
     from portolan_cli.plugins.formats import handler_for
 
-    handler = handler_for(path, catalog_root)
+    handler = handler_for(path, catalog_root, state=state)
     is_raster = handler is not None and handler.asset_level == "item"
 
     if is_raster:

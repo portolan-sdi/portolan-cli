@@ -9,18 +9,17 @@ Tests the configuration system including:
 from __future__ import annotations
 
 import os
-from contextlib import contextmanager
-from typing import TYPE_CHECKING
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 from unittest import mock
 
 import pytest
 
+from portolan_cli import trace
 from portolan_cli.errors import ConfigError
 from tests.conftest import cleared_environ
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-    from pathlib import Path
 
 
 class TestLoadConfig:
@@ -187,13 +186,47 @@ class TestSaveConfig:
         assert "demographics:" in content
 
 
+Resolver = Callable[..., Any]
+
+
+def _setting_through_state(
+    key: str,
+    cli_value: Any | None = None,
+    catalog_path: Path | None = None,
+    collection: str | None = None,
+    collection_path: Path | None = None,
+) -> Any | None:
+    """Call ``RunState.setting`` with the arguments of ``get_setting``.
+
+    A legacy ``collection`` name becomes the directory of that collection. With
+    no catalog, the state opens on an empty directory, which holds no config.
+    """
+    from portolan_cli.run_state import RunState
+
+    with tempfile.TemporaryDirectory() as empty:
+        root = catalog_path if catalog_path is not None else Path(empty)
+        if collection_path is None and collection is not None:
+            collection_path = root / collection
+        return RunState.open(root).setting(key, collection_dir=collection_path, cli_value=cli_value)
+
+
 class TestGetSetting:
-    """Tests for get_setting function with precedence."""
+    """Tests for get_setting function with precedence.
+
+    Each test runs twice: through ``config.get_setting`` and through
+    ``RunState.setting``, which must keep the same precedence.
+    """
+
+    @pytest.fixture(params=["get_setting", "run_state"])
+    def resolve(self, request: pytest.FixtureRequest) -> Resolver:
+        from portolan_cli.config import get_setting
+
+        return get_setting if request.param == "get_setting" else _setting_through_state
 
     @pytest.mark.unit
-    def test_cli_value_takes_highest_precedence(self, tmp_path: Path) -> None:
+    def test_cli_value_takes_highest_precedence(self, tmp_path: Path, resolve: Resolver) -> None:
         """CLI value should override all other sources."""
-        from portolan_cli.config import get_setting, save_config
+        from portolan_cli.config import save_config
 
         # Set up catalog config
         (tmp_path / ".portolan").mkdir()
@@ -201,7 +234,7 @@ class TestGetSetting:
 
         # Set up env var
         with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://env-value/"}):
-            result = get_setting(
+            result = resolve(
                 "remote",
                 cli_value="s3://cli-value/",
                 catalog_path=tmp_path,
@@ -210,22 +243,24 @@ class TestGetSetting:
         assert result == "s3://cli-value/"
 
     @pytest.mark.unit
-    def test_env_var_overrides_config_file(self, tmp_path: Path) -> None:
+    def test_env_var_overrides_config_file(self, tmp_path: Path, resolve: Resolver) -> None:
         """Environment variable should override catalog config."""
-        from portolan_cli.config import get_setting, save_config
+        from portolan_cli.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"remote": "s3://config-value/"})
 
         with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://env-value/"}):
-            result = get_setting("remote", catalog_path=tmp_path)
+            result = resolve("remote", catalog_path=tmp_path)
 
         assert result == "s3://env-value/"
 
     @pytest.mark.unit
-    def test_collection_config_overrides_catalog_config(self, tmp_path: Path) -> None:
+    def test_collection_config_overrides_catalog_config(
+        self, tmp_path: Path, resolve: Resolver
+    ) -> None:
         """Collection-level config should override catalog-level."""
-        from portolan_cli.config import get_setting, save_config
+        from portolan_cli.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         # Use non-sensitive key to test precedence without triggering security check
@@ -239,14 +274,14 @@ class TestGetSetting:
             },
         )
 
-        result = get_setting("backend", catalog_path=tmp_path, collection="demographics")
+        result = resolve("backend", catalog_path=tmp_path, collection="demographics")
 
         assert result == "iceberg"
 
     @pytest.mark.unit
-    def test_env_var_overrides_collection_config(self, tmp_path: Path) -> None:
+    def test_env_var_overrides_collection_config(self, tmp_path: Path, resolve: Resolver) -> None:
         """Environment variable should override collection config."""
-        from portolan_cli.config import get_setting, save_config
+        from portolan_cli.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(
@@ -260,60 +295,54 @@ class TestGetSetting:
         )
 
         with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://env/"}):
-            result = get_setting("remote", catalog_path=tmp_path, collection="demographics")
+            result = resolve("remote", catalog_path=tmp_path, collection="demographics")
 
         assert result == "s3://env/"
 
     @pytest.mark.unit
-    def test_catalog_config_used_when_no_override(self, tmp_path: Path) -> None:
+    def test_catalog_config_used_when_no_override(self, tmp_path: Path, resolve: Resolver) -> None:
         """Catalog config should be used when no CLI or env override."""
-        from portolan_cli.config import get_setting, save_config
+        from portolan_cli.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         # Use non-sensitive key to test precedence without triggering security check
         save_config(tmp_path, {"backend": "iceberg"})
 
-        result = get_setting("backend", catalog_path=tmp_path)
+        result = resolve("backend", catalog_path=tmp_path)
 
         assert result == "iceberg"
 
     @pytest.mark.unit
-    def test_returns_none_when_setting_not_found(self, tmp_path: Path) -> None:
+    def test_returns_none_when_setting_not_found(self, tmp_path: Path, resolve: Resolver) -> None:
         """get_setting should return None when setting not found anywhere."""
-        from portolan_cli.config import get_setting
-
         (tmp_path / ".portolan").mkdir()
 
-        result = get_setting("nonexistent_key", catalog_path=tmp_path)
+        result = resolve("nonexistent_key", catalog_path=tmp_path)
 
         assert result is None
 
     @pytest.mark.unit
-    def test_env_var_naming_convention(self, tmp_path: Path) -> None:
+    def test_env_var_naming_convention(self, tmp_path: Path, resolve: Resolver) -> None:
         """Environment variables should use PORTOLAN_<UPPER_KEY> naming."""
-        from portolan_cli.config import get_setting
-
         # aws_profile -> PORTOLAN_AWS_PROFILE
         with mock.patch.dict(os.environ, {"PORTOLAN_AWS_PROFILE": "test-profile"}):
-            result = get_setting("aws_profile", catalog_path=tmp_path)
+            result = resolve("aws_profile", catalog_path=tmp_path)
 
         assert result == "test-profile"
 
     @pytest.mark.unit
-    def test_env_var_handles_hyphenated_keys(self, tmp_path: Path) -> None:
+    def test_env_var_handles_hyphenated_keys(self, tmp_path: Path, resolve: Resolver) -> None:
         """Environment variables should normalize hyphens to underscores."""
-        from portolan_cli.config import get_setting
-
         # max-depth -> PORTOLAN_MAX_DEPTH
         with mock.patch.dict(os.environ, {"PORTOLAN_MAX_DEPTH": "10"}):
-            result = get_setting("max-depth", catalog_path=tmp_path)
+            result = resolve("max-depth", catalog_path=tmp_path)
 
         assert result == "10"
 
     @pytest.mark.unit
-    def test_empty_env_var_does_not_override(self, tmp_path: Path) -> None:
+    def test_empty_env_var_does_not_override(self, tmp_path: Path, resolve: Resolver) -> None:
         """Empty environment variable should not override config file value."""
-        from portolan_cli.config import get_setting, save_config
+        from portolan_cli.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         # Use non-sensitive key to test empty env var behavior
@@ -321,38 +350,36 @@ class TestGetSetting:
 
         # Empty env var should be ignored
         with mock.patch.dict(os.environ, {"PORTOLAN_BACKEND": ""}):
-            result = get_setting("backend", catalog_path=tmp_path)
+            result = resolve("backend", catalog_path=tmp_path)
 
         assert result == "iceberg"
 
     @pytest.mark.unit
-    def test_works_without_catalog_path(self) -> None:
+    def test_works_without_catalog_path(self, resolve: Resolver) -> None:
         """get_setting should work with just env vars if no catalog_path."""
-        from portolan_cli.config import get_setting
-
         with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://env-only/"}):
-            result = get_setting("remote")
+            result = resolve("remote")
 
         assert result == "s3://env-only/"
 
     @pytest.mark.unit
-    def test_returns_none_without_catalog_path_or_env(self) -> None:
+    def test_returns_none_without_catalog_path_or_env(self, resolve: Resolver) -> None:
         """get_setting should return None when no catalog_path and no env var."""
-        from portolan_cli.config import get_setting
-
         # Ensure no relevant env vars are set
         with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": ""}, clear=False):
             # Clear the env var if it exists
             if "PORTOLAN_REMOTE" in os.environ:
                 del os.environ["PORTOLAN_REMOTE"]
-            result = get_setting("remote")
+            result = resolve("remote")
 
         assert result is None
 
     @pytest.mark.unit
-    def test_collection_falls_back_to_catalog_config(self, tmp_path: Path) -> None:
+    def test_collection_falls_back_to_catalog_config(
+        self, tmp_path: Path, resolve: Resolver
+    ) -> None:
         """Collection should inherit catalog config for unset keys."""
-        from portolan_cli.config import get_setting, save_config
+        from portolan_cli.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         # Use non-sensitive keys to test fallback behavior
@@ -368,15 +395,15 @@ class TestGetSetting:
             },
         )
 
-        result = get_setting("statistics.enabled", catalog_path=tmp_path, collection="demographics")
+        result = resolve("statistics.enabled", catalog_path=tmp_path, collection="demographics")
 
         # Should fall back to catalog-level statistics.enabled
         assert result is True
 
     @pytest.mark.unit
-    def test_dotted_key_resolves_nested_yaml(self, tmp_path: Path) -> None:
+    def test_dotted_key_resolves_nested_yaml(self, tmp_path: Path, resolve: Resolver) -> None:
         """Dotted keys like 'pmtiles.src_crs' should traverse nested YAML."""
-        from portolan_cli.config import get_setting, save_config
+        from portolan_cli.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"pmtiles": {"src_crs": "EPSG:3035"}})
@@ -384,7 +411,7 @@ class TestGetSetting:
         coll_path = tmp_path / "my_collection"
         coll_path.mkdir()
 
-        result = get_setting(
+        result = resolve(
             "pmtiles.src_crs",
             catalog_path=tmp_path,
             collection="my_collection",
@@ -394,9 +421,11 @@ class TestGetSetting:
         assert result == "EPSG:3035"
 
     @pytest.mark.unit
-    def test_dotted_key_resolves_deeply_nested_yaml(self, tmp_path: Path) -> None:
+    def test_dotted_key_resolves_deeply_nested_yaml(
+        self, tmp_path: Path, resolve: Resolver
+    ) -> None:
         """Dotted keys should work at arbitrary depth."""
-        from portolan_cli.config import get_setting, save_config
+        from portolan_cli.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"a": {"b": {"c": "deep_value"}}})
@@ -404,7 +433,7 @@ class TestGetSetting:
         coll_path = tmp_path / "coll"
         coll_path.mkdir()
 
-        result = get_setting(
+        result = resolve(
             "a.b.c",
             catalog_path=tmp_path,
             collection="coll",
@@ -414,9 +443,11 @@ class TestGetSetting:
         assert result == "deep_value"
 
     @pytest.mark.unit
-    def test_dotted_key_returns_none_for_missing_path(self, tmp_path: Path) -> None:
+    def test_dotted_key_returns_none_for_missing_path(
+        self, tmp_path: Path, resolve: Resolver
+    ) -> None:
         """Dotted key should return None if any part of path is missing."""
-        from portolan_cli.config import get_setting, save_config
+        from portolan_cli.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"pmtiles": {"min_zoom": 4}})
@@ -424,7 +455,7 @@ class TestGetSetting:
         coll_path = tmp_path / "coll"
         coll_path.mkdir()
 
-        result = get_setting(
+        result = resolve(
             "pmtiles.src_crs",
             catalog_path=tmp_path,
             collection="coll",
@@ -434,9 +465,11 @@ class TestGetSetting:
         assert result is None
 
     @pytest.mark.unit
-    def test_dotted_key_returns_none_for_nonexistent_parent(self, tmp_path: Path) -> None:
+    def test_dotted_key_returns_none_for_nonexistent_parent(
+        self, tmp_path: Path, resolve: Resolver
+    ) -> None:
         """Dotted key should return None if parent key doesn't exist."""
-        from portolan_cli.config import get_setting, save_config
+        from portolan_cli.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"remote": "s3://bucket/"})
@@ -444,7 +477,7 @@ class TestGetSetting:
         coll_path = tmp_path / "coll"
         coll_path.mkdir()
 
-        result = get_setting(
+        result = resolve(
             "pmtiles.src_crs",
             catalog_path=tmp_path,
             collection="coll",
@@ -454,9 +487,9 @@ class TestGetSetting:
         assert result is None
 
     @pytest.mark.unit
-    def test_dotted_key_returns_false_boolean(self, tmp_path: Path) -> None:
+    def test_dotted_key_returns_false_boolean(self, tmp_path: Path, resolve: Resolver) -> None:
         """Dotted key should correctly return False (not None) for disabled settings."""
-        from portolan_cli.config import get_setting, save_config
+        from portolan_cli.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"pmtiles": {"enabled": False}})
@@ -464,7 +497,7 @@ class TestGetSetting:
         coll_path = tmp_path / "coll"
         coll_path.mkdir()
 
-        result = get_setting(
+        result = resolve(
             "pmtiles.enabled",
             catalog_path=tmp_path,
             collection="coll",
@@ -474,9 +507,9 @@ class TestGetSetting:
         assert result is False
 
     @pytest.mark.unit
-    def test_dotted_key_returns_zero_integer(self, tmp_path: Path) -> None:
+    def test_dotted_key_returns_zero_integer(self, tmp_path: Path, resolve: Resolver) -> None:
         """Dotted key should correctly return 0 (not None) for zero values."""
-        from portolan_cli.config import get_setting, save_config
+        from portolan_cli.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"pmtiles": {"min_zoom": 0}})
@@ -484,7 +517,7 @@ class TestGetSetting:
         coll_path = tmp_path / "coll"
         coll_path.mkdir()
 
-        result = get_setting(
+        result = resolve(
             "pmtiles.min_zoom",
             catalog_path=tmp_path,
             collection="coll",
@@ -1512,82 +1545,752 @@ class TestLegacyFlatKeys:
         }
 
 
-@contextmanager
-def _tracing() -> Iterator[None]:
-    """Turn the trace counters on for one block."""
-    from portolan_cli import trace
-
-    trace.enable()
-    try:
-        yield
-    finally:
-        trace.reset()
-
-
 def _parses() -> int:
-    from portolan_cli import trace
-
     return trace.counters().get("config.yaml_parses", 0)
 
 
+def _merges() -> int:
+    return trace.counters().get("config.merges", 0)
+
+
+def _hierarchy(root: Path) -> Path:
+    """Write a catalog with a config and a metadata file at the root and in ``demo``."""
+    _write_config(root, "backend: file\npmtiles:\n  min_zoom: 1\n")
+    _write_config(root / "demo", "pmtiles:\n  min_zoom: 3\n")
+    (root / ".portolan" / "metadata.yaml").write_text("license: CC-BY-4.0\n", encoding="utf-8")
+    (root / "demo" / ".portolan" / "metadata.yaml").write_text(
+        "title: Demo\ncontact:\n  name: Ana\n", encoding="utf-8"
+    )
+    return root / "demo"
+
+
+def _rewrite_in_place(path: Path, text: str, mtime_ns: int) -> None:
+    """Write ``text`` into the same inode and pin its mtime to ``mtime_ns``."""
+    with path.open("r+", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.truncate()
+    os.utime(path, ns=(mtime_ns, mtime_ns))
+
+
 class TestOneParsePerFile:
-    """Readers share one parse of each YAML file until it changes (issue #1006)."""
+    """One run parses each YAML file once while it stays the same (issues #1006, #994)."""
 
     @pytest.mark.unit
-    def test_repeated_reads_parse_once(self, tmp_path: Path) -> None:
-        from portolan_cli.config import get_setting, load_merged_config, set_setting
+    def test_threads_that_miss_together_merge_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import threading
+        import time
+
+        from portolan_cli import config
+        from portolan_cli.run_state import RunState
+
+        collection = _hierarchy(tmp_path)
+        state = RunState.open(tmp_path)
+        real_parse, real_merge = config.parse_yaml, config.merge_config_files
+
+        def slow_parse(path: Path) -> Any:
+            time.sleep(0.02)  # Keeps the other threads inside the miss.
+            return real_parse(path)
+
+        def slow_merge(*args: Any) -> dict[str, Any]:
+            time.sleep(0.02)
+            return real_merge(*args)
+
+        monkeypatch.setattr(config, "parse_yaml", slow_parse)
+        monkeypatch.setattr(config, "merge_config_files", slow_merge)
+        start = threading.Barrier(4)
+
+        def read() -> None:
+            start.wait()
+            state.config(collection)
+
+        with trace.tracing():
+            threads = [threading.Thread(target=read) for _ in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+            # The config of demo and of the root.
+            assert (_parses(), _merges()) == (2, 1)
+
+    @pytest.mark.unit
+    def test_a_run_parses_each_distinct_file_once(self, tmp_path: Path) -> None:
         from portolan_cli.conversion_config import (
             get_cog_settings,
             get_conversion_overrides,
             get_handler_pins,
             get_vector_settings,
         )
+        from portolan_cli.run_state import RunState
 
-        set_setting(tmp_path, "conversion.vector.sort", "none")
-        collection = tmp_path / "demo"
-        collection.mkdir()
+        collection = _hierarchy(tmp_path)
+        state = RunState.open(tmp_path)
 
-        with _tracing():
+        with trace.tracing():
             for _ in range(5):
-                get_setting("statistics.enabled", catalog_path=tmp_path)
-                get_setting("pmtiles.enabled", catalog_path=tmp_path, collection_path=collection)
-                load_merged_config(collection, tmp_path)
-                get_vector_settings(tmp_path)
-                get_cog_settings(tmp_path)
-                get_conversion_overrides(tmp_path)
-                get_handler_pins(tmp_path)
+                state.setting("statistics.enabled")
+                state.setting("pmtiles.min_zoom", collection_dir=collection)
+                state.config(collection)
+                state.config(tmp_path)
+                state.metadata(collection)
+                state.metadata(collection, inherit=False)
+                get_vector_settings(tmp_path, state=state)
+                get_cog_settings(tmp_path, state=state)
+                get_conversion_overrides(tmp_path, state=state)
+                get_handler_pins(tmp_path, state=state)
 
-            assert _parses() == 1
+            # Two config.yaml files and two metadata.yaml files.
+            assert _parses() == 4
+            # The config of demo and of the root, and the metadata of demo.
+            assert _merges() == 3
 
     @pytest.mark.unit
-    def test_changed_file_is_parsed_again(self, tmp_path: Path) -> None:
-        from portolan_cli.conversion_config import get_vector_settings
+    def test_a_call_without_a_state_parses_again(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting, set_setting
 
-        config_file = tmp_path / ".portolan" / "config.yaml"
-        config_file.parent.mkdir()
-        config_file.write_text("conversion:\n  vector:\n    sort: hilbert\n")
-        with _tracing():
-            assert get_vector_settings(tmp_path).sort == "hilbert"
+        set_setting(tmp_path, "backend", "file")
 
-            # Same size and the same mtime window: only the content differs.
-            config_file.write_text("conversion:\n  vector:\n    sort: quadkey\n")
+        with trace.tracing():
+            get_setting("backend", catalog_path=tmp_path)
+            get_setting("backend", catalog_path=tmp_path)
 
-            assert get_vector_settings(tmp_path).sort == "quadkey"
             assert _parses() == 2
 
     @pytest.mark.unit
-    def test_caller_mutation_does_not_reach_the_next_read(self, tmp_path: Path) -> None:
-        from portolan_cli.config import get_setting, load_config, load_merged_config, set_setting
+    def test_a_file_rewritten_mid_run_is_parsed_again(self, tmp_path: Path) -> None:
+        from portolan_cli.run_state import RunState
 
+        collection = _hierarchy(tmp_path)
+        config_file = collection / ".portolan" / "config.yaml"
+        state = RunState.open(tmp_path)
+
+        with trace.tracing():
+            assert state.setting("pmtiles.min_zoom", collection_dir=collection) == 3
+            config_file.write_text("pmtiles:\n  min_zoom: 12\n", encoding="utf-8")
+
+            assert state.setting("pmtiles.min_zoom", collection_dir=collection) == 12
+            assert state.config(collection)["pmtiles"] == {"min_zoom": 12}
+            assert _parses() == 3
+
+    @pytest.mark.unit
+    def test_a_same_size_rewrite_with_a_new_mtime_ns_is_parsed_again(self, tmp_path: Path) -> None:
+        from portolan_cli.run_state import RunState
+
+        collection = _hierarchy(tmp_path)
+        config_file = collection / ".portolan" / "config.yaml"
+        before = config_file.stat()
+        state = RunState.open(tmp_path)
+
+        with trace.tracing():
+            assert state.setting("pmtiles.min_zoom", collection_dir=collection) == 3
+            # The same inode and the same size. Only st_mtime_ns moves, by 1 µs.
+            # NTFS stores the mtime in 100 ns steps, so a 1 ns step is lost there.
+            _rewrite_in_place(config_file, "pmtiles:\n  min_zoom: 4\n", before.st_mtime_ns + 1_000)
+            after = config_file.stat()
+            assert (after.st_ino, after.st_size) == (before.st_ino, before.st_size)
+
+            assert state.setting("pmtiles.min_zoom", collection_dir=collection) == 4
+            assert _parses() == 3
+
+    @pytest.mark.unit
+    def test_invalidate_drops_a_file_whose_stat_did_not_change(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli import run_state
+        from portolan_cli.run_state import RunState
+
+        # A coarse clock gives the rewrite the same status-change time too.
+        def coarse_key(st: os.stat_result) -> tuple[int, int, int, int]:
+            return (st.st_ino, st.st_size, st.st_mtime_ns, 0)
+
+        monkeypatch.setattr(run_state, "_stat_key", coarse_key)
+        collection = _hierarchy(tmp_path)
+        metadata_file = collection / ".portolan" / "metadata.yaml"
+        before = metadata_file.stat()
+        state = RunState.open(tmp_path)
+        assert state.metadata(collection)["title"] == "Demo"
+
+        # A coarse clock leaves the stat equal after an in-place write.
+        _rewrite_in_place(metadata_file, "title: Ommo\ncontact:\n  name: Ana\n", before.st_mtime_ns)
+        assert state.metadata(collection)["title"] == "Demo"
+        state.invalidate(metadata_file)
+
+        assert state.metadata(collection)["title"] == "Ommo"
+        assert state.metadata(collection, inherit=False)["title"] == "Ommo"
+
+    @pytest.mark.unit
+    def test_caller_edits_do_not_reach_the_memo(self, tmp_path: Path) -> None:
+        from portolan_cli.config import set_setting
+        from portolan_cli.run_state import RunState
+
+        collection = _hierarchy(tmp_path)
         set_setting(tmp_path, "push.exclude", "*.tmp")
+        state = RunState.open(tmp_path)
 
-        load_config(tmp_path)["push"]["exclude"].append("mutated")
-        load_merged_config(tmp_path, tmp_path)["push"]["exclude"].append("mutated")
-        patterns = get_setting("push.exclude", catalog_path=tmp_path)
+        state.config(collection)["push"]["exclude"].append("mutated")
+        state.config(tmp_path)["pmtiles"]["min_zoom"] = 99
+        state.metadata(collection)["contact"]["name"] = "edited"
+        state.metadata(collection, inherit=False)["contact"]["name"] = "edited"
+        patterns = state.setting("push.exclude")
         assert isinstance(patterns, list)
         patterns.append("mutated")
+        merged_patterns = state.setting("push.exclude", collection_dir=collection)
+        assert isinstance(merged_patterns, list)
+        merged_patterns.append("mutated")
 
-        assert get_setting("push.exclude", catalog_path=tmp_path) == ["*.tmp"]
+        assert state.setting("push.exclude") == ["*.tmp"]
+        assert state.config(collection)["push"]["exclude"] == ["*.tmp"]
+        assert state.config(tmp_path)["pmtiles"]["min_zoom"] == 1
+        assert state.metadata(collection)["contact"] == {"name": "Ana"}
+        assert state.metadata(collection, inherit=False)["contact"] == {"name": "Ana"}
+
+    @pytest.mark.unit
+    def test_the_environment_applies_on_each_call(self, tmp_path: Path) -> None:
+        from portolan_cli.run_state import RunState
+
+        collection = _hierarchy(tmp_path)
+        state = RunState.open(tmp_path)
+        assert state.config(collection)["pmtiles"]["min_zoom"] == 3
+
+        with mock.patch.dict(os.environ, {"PORTOLAN_PMTILES_MIN_ZOOM": "7"}):
+            assert state.config(collection)["pmtiles"]["min_zoom"] == 7
+            assert state.setting("pmtiles.min_zoom", collection_dir=collection) == 7
+
+        assert state.config(collection)["pmtiles"]["min_zoom"] == 3
+
+    @pytest.mark.unit
+    def test_the_root_config_raises_as_load_catalog_config_does(self, tmp_path: Path) -> None:
+        from portolan_cli.errors import ConfigParseError
+        from portolan_cli.run_state import RunState
+
+        _write_config(tmp_path, "backend: [unclosed\n")
+
+        with pytest.raises(ConfigParseError):
+            RunState.open(tmp_path).config(tmp_path)
+
+
+def _read_through_state(name: str, root: Path, collection: Path, state: Any) -> object:
+    """Call one config reader of a per-file or per-collection path with ``state``."""
+    from types import SimpleNamespace
+
+    from portolan_cli import (
+        add,
+        catalog_list,
+        config,
+        conversion_config,
+        finalization,
+        formats,
+        metadata_yaml,
+        partitioning,
+        readme,
+    )
+    from portolan_cli.plugins.formats import handler_for
+    from portolan_cli.stac import MergeStrategy
+    from portolan_cli.validation import config as validation_config
+    from portolan_cli.viz import pmtiles, style
+
+    data = collection / "data.parquet"
+    calls: dict[str, Callable[[], object]] = {
+        "get_ignored_files": lambda: config.get_ignored_files(root, state=state),
+        "load_catalog_config": lambda: config.load_catalog_config(root, state=state),
+        "get_vector_settings": lambda: conversion_config.get_vector_settings(root, state=state),
+        "handler_for": lambda: handler_for(data, root, state=state),
+        "get_cloud_native_status": lambda: formats.get_cloud_native_status(data, root, state=state),
+        "partition_strategy": lambda: partitioning.partition_strategy(data, root, state=state),
+        "find_large_partition_candidates": lambda: partitioning.find_large_partition_candidates(
+            [], root, state=state
+        ),
+        "get_pmtiles_settings": lambda: pmtiles.get_pmtiles_settings(
+            root, "demo", collection, state=state
+        ),
+        "get_vector_style_config": lambda: style.get_vector_style_config(root, state=state),
+        "enrich_cog_assets": lambda: style.enrich_cog_assets(
+            {"cog": SimpleNamespace(media_type="image/tiff", extra_fields={})}, root, state=state
+        ),
+        "load_and_validate_metadata": lambda: metadata_yaml.load_and_validate_metadata(
+            collection, root, state=state
+        ),
+        "generate_readme_for_collection": lambda: readme.generate_readme_for_collection(
+            collection, root, state=state
+        ),
+        "generate_catalog_readme": lambda: readme.generate_catalog_readme(root, state=state),
+        "list_catalog_contents": lambda: catalog_list.list_catalog_contents(root, state=state),
+        "write_companion_collection": lambda: add._write_companion_collection(
+            root,
+            collection.relative_to(root).as_posix(),
+            [finalization.CompanionAsset(data)],
+            MergeStrategy.SMART,
+            False,
+            state,
+        ),
+        "load_rules_config": lambda: validation_config.load_rules_config(root, state=state),
+        "load_public_url": lambda: validation_config.load_public_url(root, state=state),
+        "plan_tabular": lambda: add._plan_tabular(
+            add._DeferredPlan(), data, collection.relative_to(root).as_posix(), root, [], state
+        ),
+    }
+    return calls[name]()
+
+
+class TestReadersTakeTheState:
+    """Each reader on a per-file or per-collection path reads through the state (#994)."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "get_ignored_files",
+            "load_catalog_config",
+            "get_vector_settings",
+            "handler_for",
+            "get_cloud_native_status",
+            "partition_strategy",
+            "find_large_partition_candidates",
+            "get_pmtiles_settings",
+            "get_vector_style_config",
+            "enrich_cog_assets",
+            "load_and_validate_metadata",
+            "generate_readme_for_collection",
+            "generate_catalog_readme",
+            "list_catalog_contents",
+            "write_companion_collection",
+            "plan_tabular",
+            "load_rules_config",
+            "load_public_url",
+        ],
+    )
+    def test_a_repeated_call_parses_nothing(self, tmp_path: Path, name: str) -> None:
+        import json
+
+        from portolan_cli.run_state import RunState
+
+        collection = _hierarchy(tmp_path)
+        (tmp_path / "catalog.json").write_text(json.dumps({"id": "root"}), encoding="utf-8")
+        (collection / "collection.json").write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "stac_version": "1.1.0",
+                    "id": "demo",
+                    "description": "Demo",
+                    "license": "other",
+                    "extent": {
+                        "spatial": {"bbox": [[0, 0, 1, 1]]},
+                        "temporal": {"interval": [[None, None]]},
+                    },
+                    "links": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (collection / "data.parquet").write_bytes(b"PAR1")
+        state = RunState.open(tmp_path)
+
+        with trace.tracing():
+            _read_through_state(name, tmp_path, collection, state)
+            first = _parses()
+            _read_through_state(name, tmp_path, collection, state)
+            _read_through_state(name, tmp_path, collection, state)
+
+            assert first > 0, "the reader must read a YAML file"
+            assert _parses() == first
+
+
+class TestCheckReadsTheConfigOnce:
+    """check reads the catalog config.yaml through one run state (issue #994)."""
+
+    @pytest.mark.integration
+    def test_run_check_parses_the_catalog_config_once(self, tmp_path: Path) -> None:
+        from portolan_cli.validation.runner import run_check
+
+        _write_config(tmp_path, "publish:\n  public_url: https://data.example.org/\n")
+
+        with trace.tracing():
+            outcome = run_check(tmp_path, data=False, structural=False, geo_assets=False)
+
+            assert outcome.live_hint is not None
+            assert _parses() == 1
+
+
+class TestHandlersReadTheState:
+    """A format handler takes no state. add hands it the settings (issue #994)."""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("workers", [1, 4])
+    def test_partition_settings_reach_the_handler_in_each_worker(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workers: int
+    ) -> None:
+        import shutil
+        import threading
+
+        from portolan_cli import conversion_config
+        from portolan_cli.add import add_files
+        from tests.conftest import _init_catalog
+
+        root = _init_catalog(tmp_path / "catalog")
+        source = (
+            Path(__file__).parent.parent
+            / "fixtures"
+            / "realdata"
+            / "philadelphia-housing"
+            / "council_districts_2024.parquet"
+        )
+        for name in ("a", "b", "c", "d"):
+            (root / name).mkdir()
+            shutil.copy(source, root / name / "districts.parquet")
+        seen: list[tuple[str, bool]] = []
+        real = conversion_config.partition_override
+
+        def spy(directory: Path) -> conversion_config.PartitionSettings | None:
+            found = real(directory)
+            seen.append((threading.current_thread().name, found is not None))
+            return found
+
+        monkeypatch.setattr(conversion_config, "partition_override", spy)
+
+        with trace.tracing():
+            added, _skipped, failures = add_files(paths=[root], catalog_root=root, workers=workers)
+
+        assert failures == []
+        assert len(added) == 4
+        # partition_strategy reads partitioning.enabled and threshold_gb per file.
+        assert len(seen) == 8
+        assert all(found for _thread, found in seen)
+        workers_used = {thread for thread, _found in seen}
+        assert (workers_used == {"MainThread"}) is (workers == 1)
+
+
+def _geo_asset_catalog(root: Path, n: int) -> Path:
+    """A catalog with ``n`` valid COGs and ``n`` FlatGeobuf files, one per directory."""
+    import shutil
+
+    from tests.conftest import _init_catalog
+
+    fixtures = Path(__file__).parent.parent / "fixtures"
+    catalog = _init_catalog(root)
+    for i in range(n):
+        (catalog / f"r{i}").mkdir()
+        shutil.copy(fixtures / "raster" / "valid" / "rgb.tif", catalog / f"r{i}" / "rgb.tif")
+        (catalog / f"v{i}").mkdir()
+        shutil.copy(fixtures / "cloud_native" / "sample.fgb", catalog / f"v{i}" / "sample.fgb")
+    return catalog
+
+
+class _NoPushBackend:
+    """A backend that blocks push and names the remote it was given."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def supports_push(self) -> bool:
+        return False
+
+    def push_blocked_message(self, remote: str | None) -> str:
+        return f"{self.name} blocks push to {remote}"
+
+
+class TestCollectionBackendAndRemote:
+    """``backend`` and ``remote`` resolve through the collection hierarchy.
+
+    On ``main`` the push check read only the legacy ``collections:`` section.
+    A collection's own ``.portolan/config.yaml`` now applies, as for every
+    other setting.
+    """
+
+    @staticmethod
+    def _catalog(root: Path, *, own: str = "", legacy: str = "") -> Path:
+        from tests.conftest import _init_catalog
+
+        catalog = _init_catalog(root)
+        if legacy:
+            with (catalog / ".portolan" / "config.yaml").open("a", encoding="utf-8") as handle:
+                handle.write(f"collections:\n  demo:\n    {legacy}\n")
+        (catalog / "demo").mkdir()
+        if own:
+            _write_config(catalog / "demo", own)
+        return catalog
+
+    @staticmethod
+    def _no_push(monkeypatch: pytest.MonkeyPatch) -> None:
+        from portolan_cli import backends
+
+        monkeypatch.setattr(
+            backends, "get_backend", lambda name, catalog_root=None: _NoPushBackend(name)
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("own", "legacy"),
+        [("backend: lakehouse\n", ""), ("", "backend: lakehouse")],
+        ids=["collection-config", "legacy-section"],
+    )
+    def test_the_collection_backend_drives_the_push_block(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, own: str, legacy: str
+    ) -> None:
+        from portolan_cli.run_state import RunState
+        from portolan_cli.version_ops import check_backend_supports_push
+
+        self._no_push(monkeypatch)
+        catalog = self._catalog(tmp_path / "catalog", own=own, legacy=legacy)
+
+        with cleared_environ(PORTOLAN_REMOTE="s3://bucket/catalog"):
+            for state in (None, RunState.open(catalog)):
+                blocked = check_backend_supports_push(catalog, "demo", state=state)
+
+                assert blocked is not None
+                assert blocked.message == "lakehouse blocks push to s3://bucket/catalog"
+                assert check_backend_supports_push(catalog, None, state=state) is None
+
+    @pytest.mark.unit
+    def test_a_collection_config_remote_is_rejected_as_sensitive(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from portolan_cli.run_state import RunState
+        from portolan_cli.version_ops import check_backend_supports_push
+
+        self._no_push(monkeypatch)
+        catalog = self._catalog(
+            tmp_path / "catalog", own="backend: lakehouse\nremote: s3://bucket/demo\n"
+        )
+        state = RunState.open(catalog)
+
+        with cleared_environ():
+            # The iceberg add path reads the remote this way (finalization).
+            with pytest.raises(ValueError, match="'remote' found in config.yaml"):
+                state.setting("remote", collection_dir=catalog / "demo")
+            with pytest.raises(ValueError, match="'remote' found in config.yaml"):
+                check_backend_supports_push(catalog, "demo", state=state)
+
+    @pytest.mark.unit
+    def test_the_environment_remote_reaches_a_collection(self, tmp_path: Path) -> None:
+        from portolan_cli.run_state import RunState
+
+        catalog = self._catalog(tmp_path / "catalog", own="backend: lakehouse\n")
+        state = RunState.open(catalog)
+
+        with cleared_environ(PORTOLAN_REMOTE="s3://bucket/catalog"):
+            assert state.setting("remote", collection_dir=catalog / "demo") == (
+                "s3://bucket/catalog"
+            )
+            assert state.setting("backend", collection_dir=catalog / "demo") == "lakehouse"
+
+
+class TestCheckFixReadsTheState:
+    """The geo-asset pass of ``check --fix`` reads config.yaml once per run (#994)."""
+
+    @staticmethod
+    def _parses_at(root: Path, n: int, *, dry_run: bool) -> int:
+        from portolan_cli.run_state import RunState
+        from portolan_cli.scan.check import check_directory
+
+        catalog = _geo_asset_catalog(root, n)
+        with trace.tracing():
+            check_directory(
+                catalog,
+                fix=True,
+                dry_run=dry_run,
+                force=True,
+                catalog_path=catalog,
+                workers=1,
+                state=RunState.open(catalog),
+            )
+            return _parses()
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "fix"])
+    def test_force_parses_the_config_once(self, tmp_path: Path, dry_run: bool) -> None:
+        one = self._parses_at(tmp_path / "one", 1, dry_run=dry_run)
+        two = self._parses_at(tmp_path / "two", 2, dry_run=dry_run)
+
+        assert (one, two) == (1, 1)
+
+    @pytest.mark.integration
+    def test_fix_on_a_subdirectory_converts_what_check_reports(self, tmp_path: Path) -> None:
+        """The status and the conversion read the same catalog overrides."""
+        from portolan_cli.convert import ConversionStatus
+        from portolan_cli.run_state import RunState
+        from portolan_cli.scan.check import check_directory
+
+        catalog = _geo_asset_catalog(tmp_path / "catalog", 1)
+        with (catalog / ".portolan" / "config.yaml").open("a", encoding="utf-8") as handle:
+            handle.write('conversion:\n  extensions:\n    convert: [".fgb"]\n')
+        sub = catalog / "v0"
+
+        report = check_directory(
+            sub, fix=True, catalog_path=sub, workers=1, state=RunState.open(catalog)
+        )
+
+        assert [f.status.value for f in report.files] == ["convertible"]
+        assert report.conversion_report is not None
+        assert [r.status for r in report.conversion_report.results] == [ConversionStatus.SUCCESS]
+
+    @staticmethod
+    def _preserved_catalog(root: Path) -> Path:
+        """A catalog whose config preserves ``sub/a.tif``, a GeoTIFF that is not a COG."""
+        import shutil
+
+        from tests.conftest import _init_catalog
+
+        catalog = _init_catalog(root)
+        with (catalog / ".portolan" / "config.yaml").open("a", encoding="utf-8") as handle:
+            handle.write('conversion:\n  paths:\n    preserve: ["sub/a.tif"]\n')
+        (catalog / "sub").mkdir()
+        source = Path(__file__).parent.parent / "fixtures" / "raster" / "natural-earth-non-cog.tif"
+        shutil.copy(source, catalog / "sub" / "a.tif")
+        return catalog
+
+    @pytest.mark.integration
+    def test_a_path_glob_matches_from_the_catalog_root_in_a_subdirectory_check(
+        self, tmp_path: Path
+    ) -> None:
+        from portolan_cli.validation import run_check
+
+        catalog = self._preserved_catalog(tmp_path / "catalog")
+
+        statuses = []
+        for target in (catalog, catalog / "sub"):
+            report = run_check(target, metadata=False, geo_assets=True).format_report
+            assert report is not None
+            statuses.append({f.path.name: f.status.value for f in report.files})
+
+        assert statuses == [{"a.tif": "cloud_native"}, {"a.tif": "cloud_native"}]
+
+    @pytest.mark.integration
+    def test_a_path_glob_matches_from_the_catalog_root_in_a_subdirectory_fix(
+        self, tmp_path: Path
+    ) -> None:
+        from portolan_cli.run_state import RunState
+        from portolan_cli.scan.check import run_fix_workflow
+
+        catalog = self._preserved_catalog(tmp_path / "catalog")
+
+        outcome = run_fix_workflow(
+            path=catalog / "sub",
+            run_metadata=False,
+            run_geo_assets=True,
+            dry_run=True,
+            remove_legacy=False,
+            workers=1,
+            state=RunState.open(catalog),
+        )
+
+        report = outcome.format_fix_report
+        assert report is not None
+        assert [f.status.value for f in report.files] == ["cloud_native"]
+        assert report.conversion_report is not None
+        assert report.conversion_report.results == []
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("target", [".", "sub"])
+    def test_check_fix_preserves_a_path_glob_from_any_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
+    ) -> None:
+        """``portolan check <target> --fix`` with a relative path keeps the preserved file."""
+        import json
+
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+
+        catalog = self._preserved_catalog(tmp_path / "catalog")
+        before = (catalog / "sub" / "a.tif").read_bytes()
+        monkeypatch.chdir(catalog)
+
+        result = CliRunner().invoke(
+            cli, ["check", target, "--geo-assets", "--fix", "--workers", "1", "--json"]
+        )
+
+        assert result.exit_code == 0, result.output
+        conversion = json.loads(result.stdout)["data"]["fix"]["conversion"]
+        assert [f["status"] for f in conversion["files"]] == ["cloud_native"]
+        assert (catalog / "sub" / "a.tif").read_bytes() == before
+
+    @pytest.mark.unit
+    def test_a_pool_worker_parses_the_config_once(self, tmp_path: Path) -> None:
+        from portolan_cli import convert
+
+        catalog = _geo_asset_catalog(tmp_path / "catalog", 2)
+        convert._init_worker_state(catalog)
+        try:
+            with trace.tracing():
+                for i in range(2):
+                    convert._convert_in_worker(
+                        catalog / f"v{i}" / "sample.fgb", catalog_path=catalog
+                    )
+
+                assert _parses() == 1
+        finally:
+            convert._init_worker_state(None)
+
+
+class TestYamlLoader:
+    """Every YAML load uses libyaml when PyYAML has it (issue #994)."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("with_libyaml", [True, False])
+    def test_both_loaders_read_the_same_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_libyaml: bool
+    ) -> None:
+        import yaml
+
+        from portolan_cli import config
+
+        if with_libyaml:
+            assert hasattr(yaml, "CSafeLoader"), "this test needs PyYAML built with libyaml"
+        else:
+            monkeypatch.delattr(yaml, "CSafeLoader")
+        loaders: list[type] = []
+        real_load = yaml.load
+
+        def spy(stream: str, Loader: type) -> object:  # noqa: N803 (the PyYAML name)
+            loaders.append(Loader)
+            return real_load(stream, Loader=Loader)
+
+        monkeypatch.setattr(yaml, "load", spy)
+        _write_config(tmp_path, "pmtiles:\n  min_zoom: 2\nconversion.vector.sort: none\n")
+
+        assert config.load_config(tmp_path) == {
+            "pmtiles": {"min_zoom": 2},
+            "conversion": {"vector": {"sort": "none"}},
+        }
+        assert config.safe_load("[1, 2]") == [1, 2]
+        expected = yaml.CSafeLoader if with_libyaml else yaml.SafeLoader
+        assert loaders == [expected, expected]
+
+    @pytest.mark.unit
+    def test_both_loaders_build_the_same_dates_merges_and_anchors(self) -> None:
+        import datetime
+
+        import yaml
+
+        text = (
+            "day: 2024-01-02\n"
+            "stamp: 2024-01-02 03:04:05.5+02:00\n"
+            "base: &base {a: 1, b: [x, y]}\n"
+            "child:\n  <<: *base\n  b: [z]\n"
+            "multi:\n  <<: [*base, {c: 3}]\n"
+            "alias: *base\n"
+        )
+        python = yaml.load(text, Loader=yaml.SafeLoader)  # noqa: S506 (a safe loader)
+        libyaml = yaml.load(text, Loader=yaml.CSafeLoader)  # noqa: S506 (a safe loader)
+
+        assert python == libyaml
+        assert libyaml["day"] == datetime.date(2024, 1, 2)
+        assert libyaml["stamp"].utcoffset() == datetime.timedelta(hours=2)
+        assert libyaml["child"] == {"a": 1, "b": ["z"]}
+        assert libyaml["multi"] == {"a": 1, "b": ["x", "y"], "c": 3}
+        assert libyaml["alias"] == {"a": 1, "b": ["x", "y"]}
+
+    @pytest.mark.unit
+    def test_the_loader_refuses_python_tags(self) -> None:
+        import yaml
+
+        from portolan_cli.config import safe_load
+
+        with pytest.raises(yaml.YAMLError):
+            safe_load("!!python/object/apply:os.system ['true']\n")
 
 
 def _write_config(directory: Path, text: str) -> None:
@@ -1616,6 +2319,37 @@ class TestTypedValues:
 
         with pytest.raises(ConfigError, match="takes an integer or 'auto'"):
             set_setting(tmp_path, "conversion.vector.resolution", value)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("text", "stored"),
+        [("1e-3", 0.001), ("-1e-3", -0.001), ("2E3", 2000.0), ("-.5", -0.5), ("+.25", 0.25)],
+    )
+    def test_a_number_takes_the_float_spellings_that_yaml_reads_as_text(
+        self, tmp_path: Path, text: str, stored: float
+    ) -> None:
+        from portolan_cli.config import set_setting
+
+        set_setting(tmp_path, "partitioning.threshold_gb", text)
+
+        assert _read_yaml(tmp_path) == {"partitioning": {"threshold_gb": stored}}
+
+    @pytest.mark.unit
+    def test_an_environment_number_takes_an_exponent(self, tmp_path: Path) -> None:
+        from portolan_cli.config import get_setting
+
+        with cleared_environ(PORTOLAN_PARTITIONING_THRESHOLD_GB="5e-1"):
+            assert get_setting("partitioning.threshold_gb", catalog_path=tmp_path) == 0.5
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("text", ["1e3", "-x", "e5", "1e", "nan"])
+    def test_an_int_still_rejects_text_that_is_not_an_integer(
+        self, tmp_path: Path, text: str
+    ) -> None:
+        from portolan_cli.config import set_setting
+
+        with pytest.raises(ConfigError, match="takes an integer"):
+            set_setting(tmp_path, "thumbnails.basemap.zoom_adjust", text)
 
     @pytest.mark.unit
     def test_a_string_setting_keeps_yaml_like_text_as_text(self, tmp_path: Path) -> None:

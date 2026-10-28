@@ -66,7 +66,7 @@ class TestAddAtCatalogRoot:
             (temp_path / "imagery").mkdir()
             (temp_path / "imagery" / "satellite.tif").write_bytes(b"GeoTIFF")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
@@ -90,7 +90,7 @@ class TestAddAtCatalogRoot:
             (temp_path / "vectors").mkdir()
             (temp_path / "vectors" / "data.geojson").write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 runner.invoke(
@@ -117,7 +117,7 @@ class TestAddAtCatalogRoot:
             (temp_path / "col").mkdir()
             (temp_path / "col" / "data.geojson").write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 runner.invoke(
@@ -163,7 +163,7 @@ class TestAddAtCatalogRoot:
                 ),
             ]
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = (added_items, [], [])
 
                 result = runner.invoke(
@@ -191,7 +191,7 @@ class TestAddAtCatalogRoot:
             setup_catalog(temp_path)
             # No geo files
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
@@ -234,7 +234,7 @@ class TestAddAtCatalogRoot:
             test_file = collection_dir / "census.geojson"
             test_file.write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 runner.invoke(
@@ -262,7 +262,7 @@ class TestAddAtCatalogRoot:
             test_file = temp_path / "stray.geojson"
             test_file.write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 # add_files raises ValueError when a file has no collection (at root level)
                 mock_add.side_effect = ValueError(
                     "Cannot add file at catalog root: no collection directory"
@@ -290,7 +290,7 @@ class TestAddCatalogRootCollectionInference:
             (temp_path / "rivers").mkdir()
             (temp_path / "rivers" / "amazon.geojson").write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
@@ -319,7 +319,7 @@ class TestAddCatalogRootCollectionInference:
             (temp_path / "col").mkdir()
             (temp_path / "col" / "f.geojson").write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = ([], [], [])
 
                 # Use the absolute path (same as catalog root)

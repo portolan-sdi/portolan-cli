@@ -152,7 +152,7 @@ class TestTryBackendPull:
             _pull_result(downloaded=3, version="2.0.0"),
         ]
         with (
-            patch("portolan_cli.config.get_setting", return_value="iceberg"),
+            patch("portolan_cli.run_state.RunState.setting", return_value="iceberg"),
             patch("portolan_cli.backends.get_backend", return_value=backend),
         ):
             result = try_backend_pull(root, "s3://example-bucket/catalog", None, dry_run=False)
@@ -170,7 +170,7 @@ class TestTryBackendPull:
 
         backend = MagicMock()
         with (
-            patch("portolan_cli.config.get_setting", return_value="iceberg"),
+            patch("portolan_cli.run_state.RunState.setting", return_value="iceberg"),
             patch("portolan_cli.backends.get_backend", return_value=backend),
         ):
             result = try_backend_pull(tmp_path, "s3://example-bucket/catalog", None, dry_run=False)
@@ -189,7 +189,7 @@ class TestTryBackendPull:
             _pull_result(downloaded=0, version="1.0.0", success=False),
         ]
         with (
-            patch("portolan_cli.config.get_setting", return_value="iceberg"),
+            patch("portolan_cli.run_state.RunState.setting", return_value="iceberg"),
             patch("portolan_cli.backends.get_backend", return_value=backend),
         ):
             result = try_backend_pull(root, "s3://example-bucket/catalog", None, dry_run=False)

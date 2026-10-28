@@ -12,12 +12,14 @@ Additionally, it provides cloud-native status classification (see issue #10):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from portolan_cli import extension_registry as _reg
 
@@ -43,14 +45,122 @@ from portolan_cli.format_families import (
     detect_family,
     is_geojson,
 )
+from portolan_cli.trace import count
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
     import pyarrow.parquet as pq
 
+    from portolan_cli.config import ConfigSource
     from portolan_cli.conversion_config import ConversionOverrides
     from portolan_cli.plugins.formats import FormatHandler
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+
+class RunMemo(Protocol):
+    """The memo and checksum methods of ``run_state.RunState``.
+
+    This module does not import ``run_state``. The ``viz`` modules import
+    this module, and ``run_state`` reaches ``sync``, which ``viz`` must not
+    reach.
+    """
+
+    def memo(self, kind: str, path: Path, loader: Callable[[Path], _T]) -> _T:
+        """Load a value derived from one file once per run."""
+        ...
+
+    def checksum(self, path: Path) -> str:
+        """The SHA-256 of one file, hashed once per run."""
+        ...
+
+    def invalidate(self, path: Path) -> None:
+        """Drop values derived from a file after a writer replaces it."""
+        ...
+
+    def remember(self, kind: str, path: Path, value: Any) -> None:
+        """Replace one cached value with a writer's read of the current file."""
+        ...
+
+
+#: The run state of the command that runs. A format handler and a ``viz``
+#: function take no run state, so ``add`` and ``prepare_item`` set this. A
+#: footer read, the provenance record, and the COG reads then go through the
+#: run memo. The memo key holds the file's stat, so a rewrite reads again.
+_RUN: ContextVar[RunMemo | None] = ContextVar("portolan_run", default=None)
+
+
+@contextlib.contextmanager
+def in_run(state: RunMemo) -> Iterator[None]:
+    """Make the reads and the converters below go through the memo of ``state``."""
+    token = _RUN.set(state)
+    try:
+        yield
+    finally:
+        _RUN.reset(token)
+
+
+def run_scope(state: RunMemo | None) -> contextlib.AbstractContextManager[None]:
+    """:func:`in_run` for ``state``, or a scope that does nothing when it is None."""
+    return in_run(state) if state is not None else contextlib.nullcontext()
+
+
+def current_run() -> RunMemo | None:
+    """The run state that :func:`in_run` set, or None."""
+    return _RUN.get()
+
+
+def invalidate(path: Path) -> None:
+    """Drop the current run's cached reads after writing ``path``.
+
+    A filesystem can reuse a stat key, so writers cannot rely on stat changes
+    alone to invalidate a footer or checksum.
+    """
+    state = _RUN.get()
+    if state is not None:
+        state.invalidate(path)
+
+
+def remember(kind: str, path: Path, value: Any) -> None:
+    """Put a value read from ``path`` in the memo of the current run, if one runs.
+
+    A writer that read its output before it moved the output into place gives
+    the value here. The next ``state.memo(kind, path, ...)`` returns it while
+    the file stays as it is.
+    """
+    state = _RUN.get()
+    if state is not None:
+        state.remember(kind, path, value)
+
+
+def parquet_footer(path: Path) -> pq.ParquetFile:
+    """Read the footer of a Parquet file, once per run.
+
+    The file closes before this returns. The closed file still answers
+    ``metadata`` and ``schema_arrow``, which is all a footer reader needs.
+    Inside :func:`in_run`, the run memo keeps the footer while the file
+    stays as it is, so each footer reader of one file shares one read.
+
+    Raises:
+        Exception: The error of pyarrow for a file that is not Parquet.
+    """
+    state = _RUN.get()
+    if state is not None and path.is_file():
+        return state.memo("parquet.footer", path, _read_footer)
+    return _read_footer(path)
+
+
+def _read_footer(path: Path) -> pq.ParquetFile:
+    import pyarrow.parquet as pq
+
+    count("parquet.opens")
+    footer = pq.ParquetFile(path)
+    footer.close()
+    return footer
+
 
 # =============================================================================
 # Cloud-Native Status Classification (Issue #10)
@@ -140,6 +250,7 @@ def is_valid_parquet(path: Path) -> bool:
 
     try:
         # Just read metadata - fast and validates the file structure
+        count("parquet.opens")
         pq.read_metadata(str(path))
         return True
     except Exception:
@@ -147,55 +258,22 @@ def is_valid_parquet(path: Path) -> bool:
         return False
 
 
-def read_kv_metadata(path: Path) -> dict[bytes, bytes]:
-    """Read every key-value pair in a Parquet file's raw footer.
-
-    pyarrow rebuilds the Arrow schema metadata from the ``ARROW:schema`` footer
-    blob and drops every other key. A writer that appends ``geo`` at close, the
-    normal pattern because bbox and geometry_types are known only then, writes
-    a GeoParquet whose ``geo`` key ``schema_arrow.metadata``,
-    ``pq.read_schema()`` and ``to_arrow_schema()`` never show (issue #864).
-    geoparquet-io reads the raw footer, so this and :func:`read_geo_metadata`
-    are the only supported ways to read a footer key in this codebase.
-
-    Args:
-        path: Path to a Parquet file.
-
-    Returns:
-        The footer key-value metadata, ``ARROW:schema`` included when pyarrow
-        wrote the file. Empty for a file that declares none or cannot be read.
-    """
-    from geoparquet_io.core.duckdb_metadata import (  # type: ignore[import-untyped]
-        get_kv_metadata,
-    )
-
-    try:
-        return dict(get_kv_metadata(str(path)) or {})
-    except Exception:  # noqa: BLE001 - an unreadable file carries no metadata
-        logger.debug("Failed to read Parquet footer metadata from %s", path, exc_info=True)
-        return {}
-
-
 def read_geo_metadata(source: Path | pq.ParquetFile) -> dict[str, Any] | None:
     """Read and parse the ``geo`` footer key of a GeoParquet file.
 
     Args:
         source: Path to a Parquet file, or a file the caller already opened.
-            An open file gives its raw footer (``metadata.metadata``), so the
-            caller pays for one footer read, not two.
+            A path goes through :func:`parquet_footer`, so the readers of one
+            file in one run share one footer read.
 
     Returns:
         The parsed GeoParquet metadata object. None for a plain Parquet file,
         for a ``geo`` value that is not a JSON object, and for an unreadable
         file.
     """
-    from geoparquet_io.core.duckdb_metadata import get_geo_metadata
-
     try:
-        if isinstance(source, Path):
-            geo = get_geo_metadata(str(source))
-        else:
-            geo = json.loads((source.metadata.metadata or {}).get(b"geo", b"null"))
+        footer = parquet_footer(source) if isinstance(source, Path) else source
+        geo = json.loads((footer.metadata.metadata or {}).get(b"geo", b"null"))
     except Exception:  # noqa: BLE001 - an unreadable file is not a GeoParquet
         logger.debug("Failed to read GeoParquet metadata from %s", source, exc_info=True)
         return None
@@ -327,12 +405,15 @@ def _status_by_content(path: Path, extension: str) -> FormatInfo | None:
     return None
 
 
-def detect_format(path: Path, catalog_root: Path | None = None) -> str | None:
+def detect_format(
+    path: Path, catalog_root: Path | None = None, *, state: ConfigSource | None = None
+) -> str | None:
     """Return the format family of a file, asking the plugin format handlers first.
 
     Args:
         path: Path to the file or directory to detect.
         catalog_root: Catalog root, for a ``conversion.handlers`` pin.
+        state: The run state, which parses the config once per run.
 
     Returns:
         The family of the handler that claims the file, for example
@@ -347,14 +428,14 @@ def detect_format(path: Path, catalog_root: Path | None = None) -> str | None:
     if extension_of(path) in plugin_extensions():
         if not path.exists():
             raise FileNotFoundError(f"File not found: {path}")
-        handler = handler_for(path, catalog_root)
+        handler = handler_for(path, catalog_root, state=state)
         if handler is not None:
             return handler.family
     return detect_family(path)
 
 
 def _plugin_handler(
-    path: Path, catalog_root: Path | None = None
+    path: Path, catalog_root: Path | None = None, state: ConfigSource | None = None
 ) -> tuple[FormatHandler | None, bool]:
     """Return the plugin handler for ``path``, and whether only plugins register its extension.
 
@@ -377,10 +458,13 @@ def _plugin_handler(
     extension = extension_of(path)
     if extension not in plugin_extensions():
         return None, False
-    return plugin_handler_for(path, catalog_root), extension not in builtin_extensions()
+    handler = plugin_handler_for(path, catalog_root, state=state)
+    return handler, extension not in builtin_extensions()
 
 
-def get_cloud_native_status(path: Path, catalog_root: Path | None = None) -> FormatInfo:
+def get_cloud_native_status(
+    path: Path, catalog_root: Path | None = None, *, state: ConfigSource | None = None
+) -> FormatInfo:
     """Determine cloud-native status and format info for a file.
 
     Classifies a file as CLOUD_NATIVE, CONVERTIBLE, or UNSUPPORTED based on
@@ -390,6 +474,7 @@ def get_cloud_native_status(path: Path, catalog_root: Path | None = None) -> For
     Args:
         path: Path to the file to classify.
         catalog_root: Catalog root, for a ``conversion.handlers`` pin.
+        state: The run state, which parses the config once per run.
 
     Returns:
         FormatInfo with status, display name, target format, and error message.
@@ -397,17 +482,20 @@ def get_cloud_native_status(path: Path, catalog_root: Path | None = None) -> For
     Raises:
         FileNotFoundError: If the file does not exist.
     """
-    info = _default_status(path, catalog_root)
+    info = _default_status(path, catalog_root, state)
     if catalog_root is None:
         return info
     # The catalog's conversion.extensions and conversion.paths lists win over
     # the default status, so convert and check agree on a file (#1020).
     from portolan_cli.conversion_config import get_conversion_overrides
 
-    return _apply_overrides(path, info, get_conversion_overrides(catalog_root), catalog_root)
+    overrides = get_conversion_overrides(catalog_root, state=state)
+    return _apply_overrides(path, info, overrides, catalog_root)
 
 
-def _default_status(path: Path, catalog_root: Path | None) -> FormatInfo:
+def _default_status(
+    path: Path, catalog_root: Path | None, state: ConfigSource | None = None
+) -> FormatInfo:
     """The status of a file by format alone. See ``get_cloud_native_status``."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
@@ -427,7 +515,7 @@ def _default_status(path: Path, catalog_root: Path | None) -> FormatInfo:
     # extension that a built-in handler also registers, the built-in checks
     # decide the status, so a valid COG stays CLOUD_NATIVE when a plugin
     # claims .tif. The plugin still names the target format.
-    handler, plugin_only = _plugin_handler(path, catalog_root)
+    handler, plugin_only = _plugin_handler(path, catalog_root, state)
     if handler is not None and plugin_only:
         return FormatInfo(
             status=CloudNativeStatus.CONVERTIBLE,
@@ -526,6 +614,7 @@ def get_effective_status(
     overrides: ConversionOverrides | None = None,
     *,
     root: Path | None = None,
+    state: ConfigSource | None = None,
 ) -> FormatInfo:
     """Get cloud-native status with conversion overrides applied.
 
@@ -543,6 +632,7 @@ def get_effective_status(
         root: Catalog root for resolving relative paths in glob patterns
             and for a ``conversion.handlers`` pin. Required if using
             path-based overrides.
+        state: The run state, which parses the config once per run.
 
     Returns:
         FormatInfo with potentially modified status based on overrides.
@@ -556,7 +646,7 @@ def get_effective_status(
         >>> result = get_effective_status(Path("data.fgb"), overrides=overrides)
         >>> result.status  # CONVERTIBLE instead of CLOUD_NATIVE
     """
-    info = _default_status(path, root)
+    info = _default_status(path, root, state)
     if overrides is None:
         return info
     return _apply_overrides(path, info, overrides, root)

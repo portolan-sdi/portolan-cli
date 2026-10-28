@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from portolan_cli.licensing import ResolvedLicense
     from portolan_cli.metadata_extraction import ExtractedMetadata
     from portolan_cli.query import ItemInfo
+    from portolan_cli.run_state import RunState
     from portolan_cli.viz.style import LegendInfo
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,27 @@ def collect_successful_parquet_files(
     ]
 
 
+def parquet_row_count(path: Path) -> int:
+    """Return the row count of an extracted Parquet file, or 0 when the file is missing.
+
+    The footer read counts as one ``parquet.opens``.
+
+    Args:
+        path: The Parquet file that a source wrote.
+
+    Returns:
+        The number of rows in the file.
+    """
+    if not path.exists():
+        return 0
+    import pyarrow.parquet as pq
+
+    from portolan_cli.trace import count
+
+    count("parquet.opens")
+    return int(pq.read_metadata(path).num_rows)
+
+
 def init_extracted_catalog(
     output_dir: Path,
     report: ExtractionReport,
@@ -78,6 +100,7 @@ def init_extracted_catalog(
     title: str | None,
     description: str | None,
     post_init: Callable[[Path, list[Path], bool], None] | None = None,
+    state: RunState | None = None,
 ) -> tuple[list[Path], set[str]] | None:
     """Initialize a catalog and add the extracted assets.
 
@@ -106,6 +129,8 @@ def init_extracted_catalog(
             catalog. A hook must not overwrite root catalog metadata when ``fresh``
             is False, because the catalog already belongs to an earlier extraction
             (issue #832).
+        state: The run state of the extraction. The add stages its versions
+            in it, and the caller commits them. None commits the add at once.
 
     Returns:
         The added parquet files and the collections that this add wrote a
@@ -113,6 +138,7 @@ def init_extracted_catalog(
         then stops, because no catalog exists.
     """
     from portolan_cli.catalog import CatalogState, detect_state, init_catalog
+    from portolan_cli.formats import run_scope
     from portolan_cli.output import warn
 
     parquet_files = collect_successful_parquet_files(output_dir, report)
@@ -153,17 +179,23 @@ def init_extracted_catalog(
         )
 
     if post_init is not None:
-        post_init(output_dir, parquet_files, fresh)
+        # The hook reads footers. The add reads them again through the run memo.
+        with run_scope(state):
+            post_init(output_dir, parquet_files, fresh)
 
-    added = add_extracted_files(parquet_files, output_dir)
+    added = add_extracted_files(parquet_files, output_dir, state=state)
     return parquet_files, {item.collection_id for item in added}
 
 
-def add_extracted_files(paths: list[Path], catalog_root: Path) -> list[ItemInfo]:
+def add_extracted_files(
+    paths: list[Path], catalog_root: Path, *, state: RunState | None = None
+) -> list[ItemInfo]:
     """Run ``add_files`` and log each file that it leaves out of the catalog.
 
     ``add_files`` prints nothing itself. A file that ``ignored_files`` matches,
     or that has no valid collection id, would otherwise vanish in silence.
+    With ``state``, the add stages its versions there and the caller commits
+    them. Without it, the add commits its own.
 
     Returns:
         The items that the add wrote.
@@ -172,7 +204,7 @@ def add_extracted_files(paths: list[Path], catalog_root: Path) -> list[ItemInfo]
 
     reasons: dict[Path, str] = {}
     added, _skipped, failures = add_files(
-        paths=paths, catalog_root=catalog_root, skip_reasons=reasons
+        paths=paths, catalog_root=catalog_root, skip_reasons=reasons, state=state
     )
     for path, reason in reasons.items():
         if reason not in SKIPS_THAT_TRACK:

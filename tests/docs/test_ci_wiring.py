@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import fnmatch
 import importlib.util
-import json
 import re
 import sys
 import tomllib
@@ -35,7 +34,6 @@ pytestmark = [pytest.mark.unit, pytest.mark.source_scan]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
-BENCHMARK_BASELINE = REPO_ROOT / ".benchmarks" / "baseline.json"
 SELFTEST_SCRIPT = REPO_ROOT / "scripts" / "gate_selftest.py"
 
 # Jobs that cannot feed CI Success: the change filter it does not gate on, and
@@ -319,27 +317,86 @@ def test_nightly_runs_the_gate_selftest() -> None:
     assert "uv run python scripts/gate_selftest.py" in _run_text(job)
 
 
-def test_benchmark_regressions_fail_the_nightly_run() -> None:
-    """The old step compared each run with a baseline that git never held."""
-    run = _run_text(_jobs("nightly.yml")["benchmark"])
+def test_scenario_regressions_fail_the_nightly_run() -> None:
+    """The nightly job compares wall time and peak RSS with the committed baseline (#992)."""
+    jobs = _jobs("nightly.yml")
+    run = _run_text(jobs["scenarios"])
 
-    assert "--benchmark-compare=.benchmarks/baseline.json" in run
-    assert "--benchmark-compare-fail=min:20%" in run
-    assert "pytest-benchmark compare" not in run
-    assert "cp benchmark-results.json" not in run
-    # A recorded baseline drops the raw per-round timings.
-    assert "b['stats'].pop('data', None)" in run
+    assert "benchmark" not in jobs
+    assert "compare=(--compare .benchmarks/scenarios.json)" in run
+    assert 'uv run python -m tests.perf.bench --out scenario-results.json "${compare[@]}"' in run
+    assert 'if [ "$RECORD_BASELINE" = "true" ]; then\n  compare=()' in run
 
 
-def test_benchmark_baseline_exists_and_parses() -> None:
-    """The baseline comes from a nightly run on an x86_64 runner, never a dev machine."""
-    baseline = json.loads(BENCHMARK_BASELINE.read_text(encoding="utf-8"))
+def _scenario_results(wall_s: float, peak_rss_mb: float, n: int = 100) -> dict[str, Any]:
+    scenario = {"n": n, "wall_s": wall_s, "peak_rss_mb": peak_rss_mb}
+    return {
+        "machine": "x86_64",
+        "calibration_s": 1.0,
+        "scenarios": {"add-many-collections": scenario},
+    }
 
-    assert baseline["benchmarks"]
-    assert baseline["machine_info"]["machine"] == "x86_64"
-    assert baseline["commit_info"]["id"]
-    assert all("min" in bench["stats"] for bench in baseline["benchmarks"])
-    assert not [bench["name"] for bench in baseline["benchmarks"] if "data" in bench["stats"]]
+
+@pytest.mark.parametrize(
+    ("wall_s", "peak_rss_mb", "n", "failed"),
+    [
+        (20.0, 115.0, 100, False),  # +100% wall and +15% RSS are the limits
+        (20.1, 100.0, 100, True),
+        (10.0, 115.1, 100, True),
+        (10.0, 100.0, 50, True),  # a run at another size has no baseline
+    ],
+)
+def test_the_scenario_compare_fails_past_its_thresholds(
+    wall_s: float, peak_rss_mb: float, n: int, failed: bool
+) -> None:
+    from tests.perf import bench
+
+    failures = bench.compare(_scenario_results(wall_s, peak_rss_mb, n), _scenario_results(10, 100))
+
+    assert bool(failures) is failed
+
+
+def test_the_scenario_compare_refuses_another_machine() -> None:
+    from tests.perf import bench
+
+    baseline = {**_scenario_results(10, 100), "machine": "arm64"}
+
+    assert bench.compare(_scenario_results(10, 100), baseline) == [
+        "baseline machine arm64 is not x86_64"
+    ]
+
+
+def test_the_scenario_job_fails_without_a_baseline(tmp_path: Path) -> None:
+    from tests.perf import bench
+
+    missing = tmp_path / "scenarios.json"
+
+    assert bench.main(["--out", str(tmp_path / "out.json"), "--compare", str(missing)]) == 1
+
+
+def test_the_counter_gates_run_once_per_pull_request() -> None:
+    """tests/perf runs in its own job, and the test matrix skips it."""
+    jobs = _jobs("ci.yml")
+    test_run = _run_text(jobs["test"])
+
+    assert "--ignore=tests/perf/" in test_run
+    assert 'uv run pytest tests/perf -m "not slow" -n 4' in _run_text(jobs["perf-gates"])
+    assert jobs["perf-gates"]["runs-on"] == "ubuntu-latest"
+
+
+def test_codspeed_measures_the_benchmarks() -> None:
+    """CodSpeed replaces the wall-time compare of pytest-benchmark (#992)."""
+    job = _jobs("ci.yml")["codspeed"]
+    (step,) = [s for s in job["steps"] if str(s.get("uses", "")).startswith("CodSpeedHQ/action@")]
+
+    assert re.fullmatch(r"CodSpeedHQ/action@[0-9a-f]{40}", step["uses"])
+    assert step["with"] == {
+        "mode": "simulation",
+        "run": "uv run pytest tests/benchmark -m benchmark --codspeed",
+    }
+    assert job["permissions"] == {"contents": "read", "id-token": "write"}
+    assert "continue-on-error" not in job
+    assert not [s for s in job["steps"] if s.get("continue-on-error")]
 
 
 # ---------------------------------------------------------------------------

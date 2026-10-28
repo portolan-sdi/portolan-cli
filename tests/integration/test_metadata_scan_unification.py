@@ -578,15 +578,23 @@ def _write_versions_json_for(
 
     sha = hashlib.sha256(file_path.read_bytes()).hexdigest()
     current = get_current_metadata(file_path)
+    # The full schema that `add` writes. The scan reads versions.json through
+    # read_versions, which refuses a file without the required fields.
     versions = {
+        "spec_version": "1.0.0",
         "current_version": "1.0.0",
         "versions": [
             {
                 "version": "1.0.0",
+                "created": "2024-01-01T00:00:00Z",
+                "breaking": False,
+                "changes": [asset_filename],
                 "assets": {
                     asset_filename: {
                         "source_mtime": file_path.stat().st_mtime,
                         "sha256": sha,
+                        "size_bytes": file_path.stat().st_size,
+                        "href": f"{collection_dir.name}/{asset_filename}",
                         "feature_count": current.current_feature_count,
                         "schema_fingerprint": compute_schema_fingerprint(file_path),
                     }
@@ -1216,7 +1224,7 @@ def _write_versions_json_mtime_only(
     Crucially this records ONLY the ``mtime`` field (the asset file's own
     mtime) — no ``source_mtime`` and no ``feature_count`` /
     ``schema_fingerprint`` heuristics. This is what
-    ``_batch_update_versions`` writes and what pre-fix / dogfooded catalogs
+    the version that ``add`` stages holds and what pre-fix / dogfooded catalogs
     (e.g. the IGN Argentina port) contain on disk.
     """
     import hashlib

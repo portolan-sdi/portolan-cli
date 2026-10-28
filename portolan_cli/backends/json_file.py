@@ -171,6 +171,7 @@ class JsonFileBackend:
         Returns:
             The newly created Version object.
         """
+        from portolan_cli.run_state import stat_matches
         from portolan_cli.sync.checksums import compute_checksum
         from portolan_cli.versions import SPEC_VERSION
 
@@ -189,13 +190,24 @@ class JsonFileBackend:
         # Use explicit version if provided, otherwise auto-compute
         next_version = version or self._compute_next_version(versions_file, breaking)
 
-        # Build asset objects with checksums
+        # Build asset objects with checksums. A file whose size and mtime match
+        # its record in the latest version keeps the recorded checksum, so an
+        # unchanged asset is not hashed again (issue #995).
+        previous = versions_file.versions[-1].assets if versions_file.versions else {}
         asset_objects: dict[str, Asset] = {}
         for name, path_str in assets.items():
             asset_path = Path(path_str)
             if asset_path.exists():
-                checksum = compute_checksum(asset_path)
                 stat = asset_path.stat()
+                prior = previous.get(name)
+                if (
+                    prior is not None
+                    and asset_path.resolve() == (self._catalog_root / prior.href).resolve()
+                    and stat_matches(stat, prior.mtime, prior.size_bytes)
+                ):
+                    checksum = prior.sha256
+                else:
+                    checksum = compute_checksum(asset_path)
                 size_bytes = stat.st_size if asset_path.is_file() else 0
                 mtime = stat.st_mtime
             else:

@@ -39,12 +39,12 @@ from portolan_cli.extract.common.converters.sld import (
     convert_sld,
 )
 from portolan_cli.extract.common.urls import (
-    CREDENTIAL_QUERY_PARAMS,
     WFS_REQUEST_PARAMS,
     merge_query,
     redact_credentials,
 )
 from portolan_cli.json_io import write_json_atomic
+from portolan_cli.utils import CREDENTIAL_QUERY_PARAMS
 
 if TYPE_CHECKING:
     from collections.abc import Callable

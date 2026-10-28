@@ -13,19 +13,25 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.metadata.cog import extract_cog_metadata
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+from portolan_cli.run_state import stat_matches
 from portolan_cli.trace import count
-from portolan_cli.versions import versions_asset_key
+from portolan_cli.versions import (
+    VersionsFile,
+    read_versions,
+    versions_asset_key,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from portolan_cli.metadata.cog import COGMetadata
+    from portolan_cli.run_state import RunState
 from portolan_cli.metadata.models import (
     FileMetadataState,
     MetadataCheckResult,
@@ -46,6 +52,7 @@ class StoredMetadata:
         sha256: File checksum from versions.json.
         feature_count: Number of features/pixels.
         schema_fingerprint: Hash of the schema.
+        size_bytes: File size from versions.json, for the stat check.
     """
 
     item_id: str
@@ -54,6 +61,53 @@ class StoredMetadata:
     sha256: str | None
     feature_count: int | None
     schema_fingerprint: str | None
+    size_bytes: int | None = None
+
+
+def current_assets(versions_file: VersionsFile) -> dict[str, dict[str, Any]]:
+    """The assets of the current version, as the dicts versions.json holds.
+
+    The version that ``current_version`` names wins, then the last version.
+    """
+    if not versions_file.versions:
+        return {}
+    count("versions.asset_maps")
+    current = next(
+        (v for v in versions_file.versions if v.version == versions_file.current_version),
+        versions_file.versions[-1],
+    )
+    return {
+        key: {name: value for name, value in asdict(asset).items() if value is not None}
+        for key, asset in current.assets.items()
+    }
+
+
+def load_current_assets(
+    collection_dir: Path, state: RunState | None = None
+) -> dict[str, dict[str, Any]] | None:
+    """The current assets of a collection's versions.json, or None without one.
+
+    With ``state``, the run reads and converts each versions.json once. Every
+    item check reads the map, so a conversion per call made ``check`` cost
+    items x assets. The callers share the result and must not edit it. A file
+    that does not parse counts as absent, as before.
+    """
+    try:
+        if state is not None:
+            versions_path = collection_dir / "versions.json"
+            if not versions_path.is_file():
+                return None
+            return state.memo(
+                "versions.current_assets",
+                versions_path,
+                lambda _path: current_assets(state.versions(collection_dir, include_staged=False)),
+            )
+        versions_path = collection_dir / "versions.json"
+        if not versions_path.is_file():
+            return None
+        return current_assets(read_versions(versions_path))
+    except (ValueError, OSError, KeyError):
+        return None
 
 
 def versions_asset_lookup_keys(file_path: Path, collection_dir: Path) -> tuple[str, ...]:
@@ -157,6 +211,8 @@ def _item_registering(file_path: Path) -> dict[str, Any] | None:
 def get_stored_metadata(
     file_path: Path,
     collection_dir: Path,
+    *,
+    state: RunState | None = None,
 ) -> StoredMetadata | None:
     """Read existing STAC item and versions.json metadata.
 
@@ -166,6 +222,7 @@ def get_stored_metadata(
     Args:
         file_path: Path to the geo-asset file.
         collection_dir: Directory containing STAC item and versions.json.
+        state: The run state, for one versions.json read per collection.
 
     Returns:
         StoredMetadata if found, None if no metadata exists.
@@ -188,39 +245,16 @@ def get_stored_metadata(
     sha256: str | None = None
     feature_count: int | None = None
     schema_fingerprint: str | None = None
+    size_bytes: int | None = None
 
-    # Try to read versions.json for tracking data
-    versions_path = collection_dir / "versions.json"
-    if versions_path.exists():
-        try:
-            count("versions_json.reads")
-            with Path(versions_path).open(encoding="utf-8") as f:
-                versions_data = json.load(f)
-
-            # Find asset entry in current version (use current_version field)
-            versions = versions_data.get("versions", [])
-            current_version_id = versions_data.get("current_version")
-
-            # Find the version matching current_version, fallback to last in list
-            current_version = None
-            if current_version_id:
-                for v in versions:
-                    if v.get("version") == current_version_id:
-                        current_version = v
-                        break
-            if current_version is None and versions:
-                current_version = versions[-1]  # Fallback: last is most recent
-
-            if current_version:
-                assets = current_version.get("assets", {})
-                asset_data = find_versions_asset(assets, file_path, collection_dir)
-                if asset_data is not None:
-                    source_mtime = stored_baseline_mtime(asset_data)
-                    sha256 = asset_data.get("sha256")
-                    feature_count = asset_data.get("feature_count")
-                    schema_fingerprint = asset_data.get("schema_fingerprint")
-        except (json.JSONDecodeError, OSError, KeyError):
-            pass
+    assets = load_current_assets(collection_dir, state)
+    asset_data = find_versions_asset(assets, file_path, collection_dir) if assets else None
+    if asset_data is not None:
+        source_mtime = stored_baseline_mtime(asset_data)
+        sha256 = asset_data.get("sha256")
+        feature_count = asset_data.get("feature_count")
+        schema_fingerprint = asset_data.get("schema_fingerprint")
+        size_bytes = asset_data.get("size_bytes")
 
     return StoredMetadata(
         item_id=item_data.get("id", file_path.stem),
@@ -229,16 +263,19 @@ def get_stored_metadata(
         sha256=sha256,
         feature_count=feature_count,
         schema_fingerprint=schema_fingerprint,
+        size_bytes=size_bytes,
     )
 
 
-def get_current_metadata(file_path: Path) -> FileMetadataState:
+def get_current_metadata(file_path: Path, *, state: RunState | None = None) -> FileMetadataState:
     """Extract fresh metadata from a geo-asset file.
 
-    Supports GeoParquet (.parquet) and COG (.tif, .tiff) formats.
+    Supports GeoParquet (.parquet) and COG (.tif, .tiff) formats. One read of
+    the file gives every field. With ``state``, the run reads each file once.
 
     Args:
         file_path: Path to the geo-asset file.
+        state: The run state, for one read per file and run.
 
     Returns:
         FileMetadataState with current file metadata.
@@ -254,8 +291,7 @@ def get_current_metadata(file_path: Path) -> FileMetadataState:
     current_mtime = file_path.stat().st_mtime
 
     if suffix == ".parquet":
-        # Extract GeoParquet metadata
-        gp_metadata = extract_geoparquet_metadata(file_path)
+        gp_metadata = extract_geoparquet_metadata(file_path, state=state)
         return FileMetadataState(
             file_path=file_path,
             current_mtime=current_mtime,
@@ -264,13 +300,16 @@ def get_current_metadata(file_path: Path) -> FileMetadataState:
             stored_bbox=None,
             current_feature_count=gp_metadata.feature_count,
             stored_feature_count=None,
-            current_schema_fingerprint=compute_schema_fingerprint(file_path),
+            current_schema_fingerprint=gp_metadata.schema_fingerprint,
             stored_schema_fingerprint=None,
         )
 
     if suffix in (".tif", ".tiff"):
-        # Extract COG metadata
-        cog_metadata = extract_cog_metadata(file_path)
+        cog_metadata = (
+            state.memo("cog.metadata", file_path, extract_cog_metadata)
+            if state is not None
+            else extract_cog_metadata(file_path)
+        )
         pixel_count = (
             cog_metadata.width * cog_metadata.height
             if cog_metadata.width and cog_metadata.height
@@ -351,13 +390,9 @@ def compute_schema_fingerprint(
     suffix = file_path.suffix.lower()
 
     if suffix == ".parquet":
-        import pyarrow.parquet as pq
-
-        # Use ParquetFile to read only schema, not the full table (O(1) vs O(n))
-        count("parquet.opens")
-        pf = pq.ParquetFile(file_path)
-        schema_str = str(pf.schema_arrow)
-        return hashlib.sha256(schema_str.encode()).hexdigest()[:16]
+        fingerprint = extract_geoparquet_metadata(file_path).schema_fingerprint
+        assert fingerprint is not None  # noqa: S101 - the extractor always sets it
+        return fingerprint
 
     if suffix in (".tif", ".tiff"):
         # Use provided metadata if available, otherwise extract
@@ -398,8 +433,9 @@ def is_stale(state: FileMetadataState) -> tuple[bool, str]:
     if state.stored_mtime is None:
         return (True, "new_file")
 
-    # Fast path: mtime unchanged means file hasn't been touched
-    if state.current_mtime == state.stored_mtime:
+    # Fast path: mtime unchanged means file hasn't been touched. The one mtime
+    # predicate of the code base decides (run_state.file_mtime_matches).
+    if not state.mtime_changed:
         return (False, "mtime_unchanged")
 
     # MTIME changed - check if schema changed (breaking change)
@@ -412,6 +448,28 @@ def is_stale(state: FileMetadataState) -> tuple[bool, str]:
 
     # MTIME changed but content appears unchanged (file touched but not modified)
     return (False, "touched_unchanged")
+
+
+def judge_staleness(state: FileMetadataState, *, resized: bool) -> tuple[bool, str]:
+    """Run :func:`is_stale`, except that a new size is a change whatever the mtime.
+
+    ``run_state.stat_matches`` needs the size and the mtime to match.
+    ``FileMetadataState`` holds no size, so the caller passes the comparison.
+
+    Args:
+        state: The current and stored values.
+        resized: True when the file size differs from the size versions.json holds.
+
+    Returns:
+        ``(is_stale, reason)`` with the reasons of :func:`is_stale`.
+    """
+    if not resized:
+        return is_stale(state)
+    if state.stored_mtime is None:
+        return (True, "new_file")
+    if state.schema_changed:
+        return (True, "schema_changed")
+    return (True, "content_changed")
 
 
 def detect_changes(state: FileMetadataState) -> list[str]:
@@ -459,15 +517,20 @@ def detect_changes(state: FileMetadataState) -> list[str]:
 def check_file_metadata(
     file_path: Path,
     collection_dir: Path,
+    *,
+    state: RunState | None = None,
 ) -> MetadataCheckResult:
     """Check metadata status for a single geo-asset file.
 
     Combines get_stored_metadata and get_current_metadata to determine
-    if the file's STAC metadata is up to date.
+    if the file's STAC metadata is up to date. A stat that matches the stored
+    size and mtime proves the file unchanged, so the file is not opened
+    (issue #995).
 
     Args:
         file_path: Path to the geo-asset file.
         collection_dir: Directory containing STAC metadata.
+        state: The run state, for one versions.json read per collection.
 
     Returns:
         MetadataCheckResult with status and details.
@@ -479,7 +542,7 @@ def check_file_metadata(
         raise FileNotFoundError(f"File not found: {file_path}")
 
     # Get stored metadata
-    stored = get_stored_metadata(file_path, collection_dir)
+    stored = get_stored_metadata(file_path, collection_dir, state=state)
 
     if stored is None:
         return MetadataCheckResult(
@@ -489,11 +552,19 @@ def check_file_metadata(
             fix_hint="Run 'portolan fix' to create STAC item",
         )
 
-    # Get current metadata
-    current = get_current_metadata(file_path)
+    st = file_path.stat()
+    if stat_matches(st, stored.source_mtime, stored.size_bytes):
+        return MetadataCheckResult(
+            file_path=file_path,
+            status=MetadataStatus.FRESH,
+            message="Metadata is up to date (mtime_unchanged)",
+        )
+    resized = stored.size_bytes is not None and st.st_size != stored.size_bytes
+
+    current = get_current_metadata(file_path, state=state)
 
     # Update current state with stored values
-    state = FileMetadataState(
+    file_state = FileMetadataState(
         file_path=file_path,
         current_mtime=current.current_mtime,
         stored_mtime=stored.source_mtime,
@@ -506,7 +577,7 @@ def check_file_metadata(
     )
 
     # Check staleness
-    stale, reason = is_stale(state)
+    stale, reason = judge_staleness(file_state, resized=resized)
 
     if not stale:
         return MetadataCheckResult(
@@ -523,7 +594,7 @@ def check_file_metadata(
     if (
         stored.schema_fingerprint is None
         and stored.sha256
-        and _content_matches(file_path, stored.sha256)
+        and _content_matches(file_path, stored.sha256, state=state)
     ):
         return MetadataCheckResult(
             file_path=file_path,
@@ -532,7 +603,7 @@ def check_file_metadata(
         )
 
     # Determine what changed
-    changes = detect_changes(state)
+    changes = detect_changes(file_state)
 
     # BREAKING needs a fingerprint to compare against. Without a baseline the
     # mtime change is unexplained, not proof of a schema break, so it reports
@@ -555,13 +626,14 @@ def check_file_metadata(
     )
 
 
-def _content_matches(file_path: Path, stored_sha256: str) -> bool:
+def _content_matches(file_path: Path, stored_sha256: str, *, state: RunState | None = None) -> bool:
     """True when the file's SHA-256 equals the checksum versions.json recorded."""
     from portolan_cli.sync.checksums import compute_checksum
 
     if not file_path.is_file():
         return False
     try:
-        return compute_checksum(file_path) == stored_sha256
+        checksum = state.checksum(file_path) if state is not None else compute_checksum(file_path)
+        return checksum == stored_sha256
     except (ValueError, OSError):
         return False

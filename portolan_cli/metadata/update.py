@@ -13,27 +13,24 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import replace
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
-import rasterio
-
 from portolan_cli.formats import RASTER, RASTER_EXTENSIONS
 from portolan_cli.json_io import write_json_atomic
-from portolan_cli.metadata.cog import extract_cog_metadata
-from portolan_cli.metadata.detection import versions_asset_lookup_keys
 from portolan_cli.models.item import ItemModel
 from portolan_cli.versions import (
     Asset,
-    Version,
-    VersionsFile,
     read_versions,
     versions_asset_key,
     write_versions,
 )
 
 if TYPE_CHECKING:
+    from portolan_cli.config import ConfigSource
     from portolan_cli.preparation import PreparedItem
+    from portolan_cli.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +40,9 @@ logger = logging.getLogger(__name__)
 _GENERATED_BAND_NAME = re.compile(r"^band_\d+$")
 
 
-def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
+def update_item_metadata(
+    item_path: Path, file_path: Path, *, state: ConfigSource | None = None
+) -> ItemModel:
     """Re-extract metadata from file and update existing STAC item.
 
     Refreshes only the fields this metadata pass owns, the item's bbox,
@@ -71,6 +70,7 @@ def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
     Args:
         item_path: Path to existing item JSON file.
         file_path: Path to the data file (GeoParquet or COG).
+        state: The run state, which parses the config once per command.
 
     Returns:
         Updated ItemModel (a lossy view, the on-disk JSON is the full record).
@@ -123,7 +123,7 @@ def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
     if not data_asset.get("type"):
         data_asset["type"] = _get_media_type(file_path)
     data_asset.setdefault("roles", ["data"])
-    _refresh_raster_bands(data_asset, file_path)
+    _refresh_raster_bands(data_asset, file_path, state)
 
     # Write the full record back to disk. Atomic, so a kill mid-write cannot
     # leave a truncated item.json where a valid one used to be (issue #687).
@@ -132,7 +132,9 @@ def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
     return ItemModel.from_dict(item_data)
 
 
-def _refresh_raster_bands(data_asset: dict[str, Any], file_path: Path) -> None:
+def _refresh_raster_bands(
+    data_asset: dict[str, Any], file_path: Path, state: ConfigSource | None
+) -> None:
     """Re-extract a raster data asset's ``bands`` array in place (#737).
 
     A non-raster asset is untouched, so a GeoParquet asset's array still survives
@@ -149,7 +151,7 @@ def _refresh_raster_bands(data_asset: dict[str, Any], file_path: Path) -> None:
     if file_path.suffix.lower() not in RASTER_EXTENSIONS:
         return
 
-    fresh = _extract_raster_bands(file_path)
+    fresh = _extract_raster_bands(file_path, state)
     if not fresh:
         logger.warning(
             "Could not re-extract bands from '%s'; keeping the recorded array",
@@ -167,7 +169,7 @@ def _refresh_raster_bands(data_asset: dict[str, Any], file_path: Path) -> None:
     data_asset["bands"] = fresh
 
 
-def _extract_raster_bands(file_path: Path) -> list[dict[str, Any]]:
+def _extract_raster_bands(file_path: Path, state: ConfigSource | None) -> list[dict[str, Any]]:
     """The ``bands`` array ``portolan add`` would write for this raster.
 
     Orchestrates the extractors the add path uses, ``extract_cog_metadata`` for
@@ -185,9 +187,15 @@ def _extract_raster_bands(file_path: Path) -> list[dict[str, Any]]:
     copy the old raster's numbers onto the new bands. It is also how rashid reads
     a COG for PTL-DAT-009.
     """
-    # Imported inside the function on purpose: `preparation` imports the
+    # Imported inside the function on purpose. `preparation` imports the
     # `metadata` package this module belongs to, so a module-level import would
-    # close an import cycle.
+    # close an import cycle. rasterio and the COG extractor load here and not
+    # at the top, because `portolan check` imports this module through
+    # `validation.fixers` and must not pay for rasterio before it reads a
+    # raster (#994).
+    import rasterio
+
+    from portolan_cli.metadata.cog import extract_cog_metadata
     from portolan_cli.preparation import (
         _add_statistics_to_properties,
         _extract_statistics_best_effort,
@@ -205,7 +213,7 @@ def _extract_raster_bands(file_path: Path) -> list[dict[str, Any]]:
         catalog_root, collection_dir = _statistics_scope(file_path)
         if catalog_root is not None:
             band_stats, parquet_stats = _extract_statistics_best_effort(
-                file_path, RASTER, catalog_root, collection_path=collection_dir
+                file_path, RASTER, catalog_root, collection_path=collection_dir, state=state
             )
             # `_extract_statistics_best_effort` already applied the
             # `statistics.enabled` gate, returning nothing when the setting is
@@ -277,6 +285,10 @@ def _tracked_asset_key(
     collection-level file with the same name owns the bare key, so an item-level
     asset skips the bare name and never binds to a foreign baseline (issue #709).
     """
+    # `detection` imports the COG extractor, which loads rasterio. `portolan
+    # check` imports this module through `validation.fixers` (#994).
+    from portolan_cli.metadata.detection import versions_asset_lookup_keys
+
     relative = versions_asset_key(file_path, collection_dir)
     for key in versions_asset_lookup_keys(file_path, collection_dir):
         if key in assets:
@@ -313,7 +325,9 @@ def _find_data_asset_key(assets: dict[str, Any]) -> str:
     return "data"
 
 
-def prepare_missing_item(file_path: Path, collection_path: Path) -> tuple[Path, PreparedItem]:
+def prepare_missing_item(
+    file_path: Path, collection_path: Path, *, state: RunState | None = None
+) -> tuple[Path, PreparedItem]:
     """Prepare a new STAC item for a file without metadata, as ``add`` does.
 
     The item comes from ``preparation.prepare_item``, the code ``add`` uses. The
@@ -326,6 +340,7 @@ def prepare_missing_item(file_path: Path, collection_path: Path) -> tuple[Path, 
     Args:
         file_path: Path to the data file (GeoParquet or COG).
         collection_path: Path to the parent collection directory.
+        state: The caller's run state, shared by every missing item.
 
     Returns:
         The catalog root and the prepared item, ready for ``finalize_items``.
@@ -352,22 +367,26 @@ def prepare_missing_item(file_path: Path, collection_path: Path) -> tuple[Path, 
         catalog_root=catalog_root,
         collection_id=collection_path_id,
         item_id=file_path.stem if in_collection_dir else None,
+        state=state,
     )
     if prepared.item_json_path is None:
         raise FileNotFoundError(f"add writes no item for {file_path}; run portolan add")
     return catalog_root, prepared
 
 
-def update_versions_tracking(file_path: Path, versions_path: Path) -> None:
-    """Update source_mtime in versions.json for a file.
+def update_versions_tracking(
+    file_path: Path, versions_path: Path, *, state: RunState | None = None
+) -> None:
+    """Refresh the file's checksum, size, and mtimes together in versions.json.
 
     Reads versions.json, finds the asset entry for the file,
-    updates the source_mtime to the current file modification time,
+    refreshes its content record to match the current file,
     and writes the updated versions.json.
 
     Args:
         file_path: Path to the data file.
         versions_path: Path to the versions.json file.
+        state: The run state, which shares the checksum with other readers.
 
     Raises:
         FileNotFoundError: If file_path or versions_path doesn't exist.
@@ -376,6 +395,10 @@ def update_versions_tracking(file_path: Path, versions_path: Path) -> None:
     # Validate file exists
     if not file_path.exists():
         raise FileNotFoundError(f"Data file not found: {file_path}")
+
+    from portolan_cli.run_state import RunState
+
+    run = state if state is not None else RunState.open(versions_path.parent.parent)
 
     # Read versions.json
     versions_file = read_versions(versions_path)
@@ -397,8 +420,11 @@ def update_versions_tracking(file_path: Path, versions_path: Path) -> None:
             f"Asset not found in versions.json: {versions_asset_key(file_path, collection_dir)}"
         )
 
-    # Get current mtime from file
-    current_mtime = file_path.stat().st_mtime
+    # A refreshed mtime certifies these bytes. Keeping the old hash or size
+    # would make add/pull's stat fast path trust a false content record.
+    checksum = run.checksum(file_path)
+    current_stat = file_path.stat()
+    current_mtime = current_stat.st_mtime
 
     # Refresh both mtime fields to the current file so the entry stays
     # internally consistent — carrying the current `source_mtime` next to a
@@ -406,15 +432,12 @@ def update_versions_tracking(file_path: Path, versions_path: Path) -> None:
     # states. Preserve the freshness heuristics (feature_count,
     # schema_fingerprint) so refreshing mtime does not wipe them (#512).
     old_asset = current_version.assets[asset_name]
-    updated_asset = Asset(
-        sha256=old_asset.sha256,
-        size_bytes=old_asset.size_bytes,
-        href=old_asset.href,
-        source_path=old_asset.source_path,
+    updated_asset = replace(
+        old_asset,
+        sha256=checksum,
+        size_bytes=current_stat.st_size,
         source_mtime=current_mtime,
         mtime=current_mtime,
-        feature_count=old_asset.feature_count,
-        schema_fingerprint=old_asset.schema_fingerprint,
     )
 
     # Create updated assets dict
@@ -422,24 +445,15 @@ def update_versions_tracking(file_path: Path, versions_path: Path) -> None:
     updated_assets[asset_name] = updated_asset
 
     # Create updated version
-    updated_version = Version(
-        version=current_version.version,
-        created=current_version.created,
-        breaking=current_version.breaking,
-        assets=updated_assets,
-        changes=current_version.changes,
-    )
+    updated_version = replace(current_version, assets=updated_assets)
 
     # Create updated versions list
     updated_versions = list(versions_file.versions[:-1])
     updated_versions.append(updated_version)
 
     # Create updated versions file
-    updated_versions_file = VersionsFile(
-        spec_version=versions_file.spec_version,
-        current_version=versions_file.current_version,
-        versions=updated_versions,
-    )
+    updated_versions_file = replace(versions_file, versions=updated_versions)
 
     # Write updated versions.json
     write_versions(versions_path, updated_versions_file)
+    run.invalidate(versions_path)

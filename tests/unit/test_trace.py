@@ -15,6 +15,8 @@ from portolan_cli import trace
 
 pytestmark = pytest.mark.unit
 
+_MIB = 1024 * 1024
+
 
 def _names(nodes: list[dict[str, Any]]) -> list[str]:
     return [node["name"] for node in nodes]
@@ -92,25 +94,92 @@ class TestSpans:
         assert meta["timings"][0]["rss_peak_mb"] is None
         assert meta["peak_rss_mb"] is None
 
-    def test_mem_mode_records_tracemalloc_peak(self) -> None:
+    def test_mem_mode_records_tracemalloc_growth(self) -> None:
         trace.enable(mem=True)
         with trace.span("outer"), trace.span("alloc"):
-            block = bytearray(4 * 1024 * 1024)
+            block = bytearray(4 * _MIB)
             del block
         meta = trace.meta()
         assert meta is not None
         outer = meta["timings"][0]
         inner = outer["children"][0]
-        assert inner["mem_peak_mb"] >= 3.9
-        assert outer["mem_peak_mb"] >= inner["mem_peak_mb"]
+        assert inner["mem_growth_mb"] >= 3.9
+        assert outer["mem_growth_mb"] >= inner["mem_growth_mb"]
 
-    def test_mem_peak_absent_without_mem_mode(self) -> None:
+    def test_mem_growth_leaves_out_memory_held_before_the_span(self) -> None:
+        """Memory held at span entry is not the span's own cost.
+
+        A module imported before the span and one imported inside the
+        previous span must give the same number for the span.
+        """
+        trace.enable(mem=True)
+        held = bytearray(8 * _MIB)
+        with trace.span("alloc"):
+            block = bytearray(4 * _MIB)
+            del block
+        del held
+        meta = trace.meta()
+        assert meta is not None
+        growth = meta["timings"][0]["mem_growth_mb"]
+        assert 3.9 <= growth <= 4.5
+
+    def test_mem_growth_of_a_parent_keeps_its_peak_before_a_child(self) -> None:
+        """A child span resets the tracemalloc peak. The parent keeps its own."""
+        trace.enable(mem=True)
+        held = bytearray(8 * _MIB)
+        with trace.span("parent"):
+            first = bytearray(6 * _MIB)
+            del first
+            with trace.span("child"):
+                second = bytearray(2 * _MIB)
+                del second
+        del held
+        meta = trace.meta()
+        assert meta is not None
+        parent = meta["timings"][0]
+        child = parent["children"][0]
+        assert 5.9 <= parent["mem_growth_mb"] <= 6.5
+        assert 1.9 <= child["mem_growth_mb"] <= 2.5
+
+    def test_mem_growth_keeps_a_peak_when_another_thread_opens_a_span(self) -> None:
+        """A span that opens in one thread does not erase the peak of an open span in another.
+
+        tracemalloc has one peak per process, and each span entry resets it.
+        The span in the first thread reaches its peak before the span in the
+        second thread opens, so only a fold into every open span keeps it.
+        """
+        trace.enable(mem=True)
+        freed = threading.Event()
+        second_open = threading.Event()
+
+        def first() -> None:
+            with trace.span("first"):
+                block = bytearray(6 * _MIB)
+                del block
+                freed.set()
+                second_open.wait(timeout=5)
+
+        def second() -> None:
+            freed.wait(timeout=5)
+            with trace.span("second"):
+                second_open.set()
+
+        with trace.span("pool"), ThreadPoolExecutor(max_workers=2) as pool:
+            for future in [trace.submit(pool, first), trace.submit(pool, second)]:
+                future.result()
+        meta = trace.meta()
+        assert meta is not None
+        growth = {node["name"]: node["mem_growth_mb"] for node in meta["timings"][0]["children"]}
+        assert 5.9 <= growth["first"] <= 6.5
+        assert growth["second"] < 0.5
+
+    def test_mem_growth_absent_without_mem_mode(self) -> None:
         trace.enable()
         with trace.span("plain"):
             pass
         meta = trace.meta()
         assert meta is not None
-        assert "mem_peak_mb" not in meta["timings"][0]
+        assert "mem_growth_mb" not in meta["timings"][0]
 
 
 class TestCounters:
@@ -118,6 +187,42 @@ class TestCounters:
         trace.enable()
         assert set(trace.KNOWN_COUNTERS) <= set(trace.counters())
         assert all(v == 0 for v in trace.counters().values())
+
+    def test_known_counters_name_every_write_choke_point(self) -> None:
+        """The perf gates in tests/perf read these names (#992)."""
+        assert trace.KNOWN_COUNTERS == (
+            "checksum.files",
+            "checksum.bytes",
+            "versions_json.reads",
+            "versions_json.writes",
+            "collection_json.writes",
+            "items_parquet.writes",
+            "config.yaml_parses",
+            "config.merges",
+            "versions.published",
+            "versions.asset_maps",
+            "thumbnail.draws",
+            "tiles.fetched",
+            "raster.opens",
+            "parquet.opens",
+            "vector.opens",
+            "duckdb.connects",
+        )
+
+    def test_tracing_enables_then_resets(self) -> None:
+        with trace.tracing():
+            assert trace.is_enabled()
+            trace.count("config.merges", 2)
+            assert trace.counters()["config.merges"] == 2
+        assert not trace.is_enabled()
+        assert trace.counters() == {}
+
+    def test_tracing_resets_after_an_error(self) -> None:
+        with pytest.raises(KeyError), trace.tracing():
+            trace.count("config.merges")
+            raise KeyError("boom")
+        assert not trace.is_enabled()
+        assert trace.counters() == {}
 
     def test_count_adds(self) -> None:
         trace.enable()

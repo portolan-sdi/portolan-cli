@@ -16,6 +16,7 @@ import json
 import shutil
 from pathlib import Path
 
+import pyarrow.parquet as pq
 import pytest
 from click.testing import CliRunner
 
@@ -1003,3 +1004,550 @@ class TestRasterRebuild:
             "mean": 460.38215,
             "stddev": 51.769646139195,
         }
+
+
+def _sha(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+class TestNoConversionReplacesAForeignFile:
+    """A conversion never writes over a file that its source did not make.
+
+    The output of ``b1.csv`` is ``b1.parquet``. The add converted the CSV into
+    that name over the operator's GeoParquet, and then deleted the result,
+    because the CSV holds no geometry. Only ``b1.csv`` stayed on disk.
+    """
+
+    @staticmethod
+    def _points(path: Path, count: int) -> None:
+        features = [
+            {
+                "type": "Feature",
+                "properties": {"i": i},
+                "geometry": {"type": "Point", "coordinates": [i + 0.5, 10.5]},
+            }
+            for i in range(count)
+        ]
+        path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+
+    @staticmethod
+    def _tracked(collection_dir: Path) -> dict[str, dict[str, object]]:
+        versions = json.loads((collection_dir / "versions.json").read_text())
+        assets: dict[str, dict[str, object]] = versions["versions"][-1]["assets"]
+        return assets
+
+    @pytest.mark.integration
+    def test_a_same_stem_csv_is_a_companion_of_the_geoparquet(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        collection_dir = initialized_catalog / "buildings"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "b1.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
+        (collection_dir / "b1.csv").write_text("id,name\n1,a\n2,b\n")
+        rows = pq.read_metadata(geoparquet).num_rows
+
+        result = runner.invoke(
+            cli, ["add", "--portolan-dir", str(initialized_catalog), str(collection_dir)]
+        )
+
+        assert result.exit_code == 0, result.output
+        # The add rewrites the GeoParquet in place to add a bbox column (#805),
+        # so the bytes change. The rows stay, and versions.json tracks them.
+        assert pq.read_metadata(geoparquet).num_rows == rows
+        assert (collection_dir / "b1.csv").read_text() == "id,name\n1,a\n2,b\n"
+        tracked = self._tracked(collection_dir)
+        assert tracked["b1.parquet"]["sha256"] == _sha(geoparquet)
+        assert tracked["b1.csv"]["sha256"] == _sha(collection_dir / "b1.csv")
+        assert sorted(p.name for p in collection_dir.glob("*.parquet")) == ["b1.parquet"]
+
+    @pytest.mark.integration
+    def test_a_companion_csv_that_gains_geometry_keeps_its_own_asset(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        """The converted Parquet takes the stem. The CSV keeps an asset as its source.
+
+        The first add keys the companion ``attrs.csv`` by its stem. The re-add
+        converts it to ``attrs.parquet``. The source asset reused the stem key
+        by its href, and the Parquet then wrote over it. collection.json lost
+        the CSV that versions.json still tracked.
+        """
+        collection_dir = initialized_catalog / "roads"
+        collection_dir.mkdir()
+        shutil.copy(
+            fixtures_dir / "realdata" / "road-detections.parquet", collection_dir / "roads.parquet"
+        )
+        csv = collection_dir / "attrs.csv"
+        csv.write_text("id,name\n1,a\n")
+        args = ["add", "--no-thumbnails", "--portolan-dir", str(initialized_catalog)]
+        first = runner.invoke(cli, [*args, str(collection_dir)], catch_exceptions=False)
+        assert first.exit_code == 0, first.output
+
+        csv.write_text("id,name,lon,lat\n1,a,1.0,2.0\n2,b,1.5,2.5\n")
+        second = runner.invoke(cli, [*args, str(collection_dir)], catch_exceptions=False)
+
+        assert second.exit_code == 0, second.output
+        assets = json.loads((collection_dir / "collection.json").read_text())["assets"]
+        assert {key: (a["href"], a["roles"]) for key, a in assets.items()} == {
+            "roads": ("./roads.parquet", ["data"]),
+            "attrs": ("./attrs.parquet", ["data"]),
+            "attrs.csv": ("./attrs.csv", ["source"]),
+        }
+        assert sorted(f"./{key}" for key in self._tracked(collection_dir)) == sorted(
+            a["href"] for a in assets.values()
+        )
+
+    @pytest.mark.integration
+    def test_a_geojson_beside_a_foreign_parquet_converts_to_a_distinct_name(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        collection_dir = initialized_catalog / "places"
+        collection_dir.mkdir()
+        foreign = collection_dir / "points.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", foreign)
+        source = collection_dir / "points.geojson"
+        self._points(source, 1)
+        before = _sha(foreign)
+        args = ["add", "--portolan-dir", str(initialized_catalog), str(source)]
+
+        first = runner.invoke(cli, args, catch_exceptions=False)
+        self._points(source, 2)
+        second = runner.invoke(cli, args, catch_exceptions=False)
+
+        assert first.exit_code == 0, first.output
+        assert second.exit_code == 0, second.output
+        assert _sha(foreign) == before
+        output = collection_dir / "points-geojson.parquet"
+        assert pq.read_metadata(output).num_rows == 2
+        assert sorted(p.name for p in collection_dir.glob("*.parquet")) == [
+            "points-geojson.parquet",
+            "points.parquet",
+        ]
+        collection = json.loads((collection_dir / "collection.json").read_text())
+        assert collection["assets"]["points-geojson"]["href"] == "./points-geojson.parquet"
+        assert collection["assets"]["points.geojson"]["roles"] == ["source"]
+        assert "points.parquet" not in self._tracked(collection_dir)
+
+    @pytest.mark.integration
+    def test_a_changed_source_converts_again_into_its_own_output(
+        self, runner: CliRunner, initialized_catalog: Path
+    ) -> None:
+        collection_dir = initialized_catalog / "pts"
+        collection_dir.mkdir()
+        source = collection_dir / "pts.geojson"
+        args = ["add", "--portolan-dir", str(initialized_catalog), str(source)]
+
+        self._points(source, 1)
+        assert runner.invoke(cli, args, catch_exceptions=False).exit_code == 0
+        self._points(source, 2)
+        result = runner.invoke(cli, args, catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        assert pq.read_metadata(collection_dir / "pts.parquet").num_rows == 2
+        assert sorted(p.name for p in collection_dir.glob("*.parquet")) == ["pts.parquet"]
+
+    @pytest.mark.integration
+    def test_an_add_after_a_crash_before_the_commit_reuses_the_output(
+        self, runner: CliRunner, initialized_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The output of a killed run carries its source, so the next add replaces it."""
+        from portolan_cli import add
+
+        collection_dir = initialized_catalog / "pts"
+        collection_dir.mkdir()
+        source = collection_dir / "pts.geojson"
+        self._points(source, 1)
+        args = ["add", "--portolan-dir", str(initialized_catalog), str(source)]
+
+        def killed(*_args: object, **_kwargs: object) -> None:
+            raise KeyboardInterrupt
+
+        with monkeypatch.context() as patch:
+            patch.setattr(add, "finalize_items", killed)
+            crashed = runner.invoke(cli, args)
+        assert (collection_dir / "pts.parquet").is_file()
+        assert not (collection_dir / "versions.json").exists(), crashed.output
+
+        result = runner.invoke(cli, args, catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        assert sorted(p.name for p in collection_dir.glob("*.parquet")) == ["pts.parquet"]
+        assert self._tracked(collection_dir)["pts.parquet"]["sha256"] == _sha(
+            collection_dir / "pts.parquet"
+        )
+
+
+def _make_legacy(collection_dir: Path) -> None:
+    """Give a collection the shape that Portolan 0.8.0 wrote.
+
+    0.8.0 wrote no ``portolan:source`` footer key and no ``source_path`` in
+    versions.json. The output entry has ``source_mtime`` and the source entry
+    has only ``mtime``, as in a catalog that 0.8.0 built.
+    """
+    import os
+
+    from portolan_cli.convert import PROVENANCE_KEY
+
+    versions_path = collection_dir / "versions.json"
+    versions = json.loads(versions_path.read_text())
+    assets = versions["versions"][-1]["assets"]
+    for parquet in collection_dir.glob("*.parquet"):
+        table = pq.read_table(parquet)
+        metadata = dict(table.schema.metadata or {})
+        if metadata.pop(PROVENANCE_KEY.encode(), None) is None:
+            continue
+        mtime = parquet.stat().st_mtime
+        pq.write_table(table.replace_schema_metadata(metadata), parquet)
+        os.utime(parquet, (mtime, mtime))
+        entry = assets[parquet.name]
+        entry["sha256"] = _sha(parquet)
+        entry["size_bytes"] = parquet.stat().st_size
+    for entry in assets.values():
+        entry.pop("source_path", None)
+    versions_path.write_text(json.dumps(versions))
+
+
+class TestALegacyOutputIsItsSourceOwn:
+    """An output that 0.8.0 wrote has no record, so an add never replaces it.
+
+    versions.json shows the same entries for a 0.8.0 output and for a file of
+    the operator that an add tracked. An equal layout does not prove which one
+    it is. So the new output takes the distinct name and the old file stays.
+    """
+
+    @staticmethod
+    def _add(runner: CliRunner, catalog: Path, target: Path) -> None:
+        result = runner.invoke(
+            cli, ["add", "--portolan-dir", str(catalog), str(target)], catch_exceptions=False
+        )
+        assert result.exit_code == 0, result.output
+
+    @staticmethod
+    def _parquets(collection_dir: Path) -> list[str]:
+        return sorted(p.name for p in collection_dir.glob("*.parquet"))
+
+    @classmethod
+    def _added_with_companion(
+        cls, runner: CliRunner, catalog: Path, fixtures_dir: Path
+    ) -> tuple[Path, Path, Path]:
+        """Add a GeoParquet with a CSV companion. Return the collection, the file, the CSV."""
+        collection_dir = catalog / "buildings"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "b1.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
+        companion = collection_dir / "b1.csv"
+        companion.write_text("id,name\n1,a\n")
+        cls._add(runner, catalog, collection_dir)
+        return collection_dir, geoparquet, companion
+
+    @pytest.mark.integration
+    def test_an_edited_geojson_leaves_its_legacy_output(
+        self, runner: CliRunner, initialized_catalog: Path
+    ) -> None:
+        collection_dir = initialized_catalog / "pts"
+        collection_dir.mkdir()
+        source = collection_dir / "pts.geojson"
+        TestNoConversionReplacesAForeignFile._points(source, 1)
+        self._add(runner, initialized_catalog, source)
+        _make_legacy(collection_dir)
+
+        TestNoConversionReplacesAForeignFile._points(source, 2)
+        self._add(runner, initialized_catalog, source)
+
+        assert self._parquets(collection_dir) == ["pts-geojson.parquet", "pts.parquet"]
+        assert pq.read_metadata(collection_dir / "pts.parquet").num_rows == 1
+        assert pq.read_metadata(collection_dir / "pts-geojson.parquet").num_rows == 2
+
+    @pytest.mark.integration
+    def test_an_edited_geo_csv_leaves_its_legacy_output(
+        self, runner: CliRunner, initialized_catalog: Path
+    ) -> None:
+        collection_dir = initialized_catalog / "sites"
+        collection_dir.mkdir()
+        source = collection_dir / "sites.csv"
+        source.write_text("id,lat,lon\n1,10.5,1.5\n")
+        self._add(runner, initialized_catalog, source)
+        _make_legacy(collection_dir)
+
+        source.write_text("id,lat,lon\n1,10.5,1.5\n2,11.5,2.5\n")
+        self._add(runner, initialized_catalog, source)
+
+        assert self._parquets(collection_dir) == ["sites-csv.parquet", "sites.parquet"]
+        assert pq.read_metadata(collection_dir / "sites.parquet").num_rows == 1
+        assert pq.read_metadata(collection_dir / "sites-csv.parquet").num_rows == 2
+
+    @pytest.mark.integration
+    def test_an_edited_companion_csv_leaves_the_geoparquet(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        collection_dir, geoparquet, companion = self._added_with_companion(
+            runner, initialized_catalog, fixtures_dir
+        )
+        _make_legacy(collection_dir)
+        before = _sha(geoparquet)
+
+        companion.write_text("id,name\n1,a\n2,b\n")
+        runner.invoke(cli, ["add", "--portolan-dir", str(initialized_catalog), str(collection_dir)])
+
+        assert _sha(geoparquet) == before
+        assert self._parquets(collection_dir) == ["b1.parquet"]
+
+    @pytest.mark.integration
+    def test_an_edited_companion_csv_is_added_again(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        collection_dir, _geoparquet, companion = self._added_with_companion(
+            runner, initialized_catalog, fixtures_dir
+        )
+
+        companion.write_text("id,name\n1,a\n2,b\n")
+        self._add(runner, initialized_catalog, collection_dir)
+
+        tracked = TestNoConversionReplacesAForeignFile._tracked(collection_dir)
+        assert tracked["b1.csv"]["sha256"] == _sha(companion)
+
+    @pytest.mark.integration
+    def test_a_companion_csv_that_gains_geometry_converts_to_a_distinct_name(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        """The one ambiguous case. The add takes the path that destroys nothing."""
+        collection_dir, geoparquet, companion = self._added_with_companion(
+            runner, initialized_catalog, fixtures_dir
+        )
+        _make_legacy(collection_dir)
+        before = _sha(geoparquet)
+
+        companion.write_text("id,name,lat,lon\n1,a,10.5,1.5\n")
+        self._add(runner, initialized_catalog, collection_dir)
+
+        assert _sha(geoparquet) == before
+        assert self._parquets(collection_dir) == ["b1-csv.parquet", "b1.parquet"]
+
+    @pytest.mark.integration
+    def test_a_new_geojson_leaves_a_legacy_geoparquet_of_its_stem(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        collection_dir = initialized_catalog / "places"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "points.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
+        self._add(runner, initialized_catalog, geoparquet)
+        _make_legacy(collection_dir)
+        before = _sha(geoparquet)
+        source = collection_dir / "points.geojson"
+        TestNoConversionReplacesAForeignFile._points(source, 1)
+
+        self._add(runner, initialized_catalog, source)
+
+        assert _sha(geoparquet) == before
+        assert self._parquets(collection_dir) == ["points-geojson.parquet", "points.parquet"]
+
+    @pytest.mark.integration
+    def test_an_edited_geojson_leaves_a_legacy_companion_geoparquet(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        """0.8.0 tracked a same-stem GeoJSON beside the operator's GeoParquet.
+
+        versions.json then looks the same as for an output and its source. The
+        conversion must not write over the GeoParquet, whose columns differ.
+        """
+        collection_dir = initialized_catalog / "places"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "points.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
+        source = collection_dir / "points.geojson"
+        TestNoConversionReplacesAForeignFile._points(source, 1)
+        self._add(runner, initialized_catalog, geoparquet)
+        _make_legacy(collection_dir)
+        assert "points.geojson" in TestNoConversionReplacesAForeignFile._tracked(collection_dir)
+        before = _sha(geoparquet)
+
+        TestNoConversionReplacesAForeignFile._points(source, 2)
+        self._add(runner, initialized_catalog, collection_dir)
+
+        assert _sha(geoparquet) == before
+        assert self._parquets(collection_dir) == ["points-geojson.parquet", "points.parquet"]
+        assert pq.read_metadata(collection_dir / "points-geojson.parquet").num_rows == 2
+
+    @pytest.mark.integration
+    def test_an_edited_geojson_leaves_a_geoparquet_another_add_tracked(
+        self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
+    ) -> None:
+        """The add of another file tracks both same-stem files with no source_path."""
+        collection_dir = initialized_catalog / "places"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "points.parquet"
+        shutil.copy(fixtures_dir / "realdata" / "open-buildings.parquet", geoparquet)
+        source = collection_dir / "points.geojson"
+        TestNoConversionReplacesAForeignFile._points(source, 1)
+        other = collection_dir / "other.geojson"
+        TestNoConversionReplacesAForeignFile._points(other, 1)
+        self._add(runner, initialized_catalog, other)
+        tracked = TestNoConversionReplacesAForeignFile._tracked(collection_dir)
+        assert tracked["points.parquet"].get("source_path") is None
+        assert "points.geojson" in tracked
+        rows = pq.read_metadata(geoparquet).num_rows
+
+        TestNoConversionReplacesAForeignFile._points(source, 2)
+        self._add(runner, initialized_catalog, collection_dir)
+
+        assert pq.read_metadata(geoparquet).num_rows == rows
+        assert "points-geojson.parquet" in self._parquets(collection_dir)
+
+    @pytest.mark.integration
+    def test_an_edited_geojson_leaves_a_tracked_geoparquet_with_its_columns(
+        self, runner: CliRunner, initialized_catalog: Path, tmp_path: Path
+    ) -> None:
+        """Equal columns do not prove that the GeoJSON wrote the GeoParquet."""
+        from portolan_cli.convert import PROVENANCE_KEY, convert_file
+
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        TestNoConversionReplacesAForeignFile._points(scratch / "points.geojson", 5)
+        convert_file(scratch / "points.geojson", output_dir=scratch)
+        table = pq.read_table(scratch / "points.parquet")
+        metadata = dict(table.schema.metadata or {})
+        metadata.pop(PROVENANCE_KEY.encode(), None)
+        collection_dir = initialized_catalog / "places"
+        collection_dir.mkdir()
+        geoparquet = collection_dir / "points.parquet"
+        pq.write_table(table.replace_schema_metadata(metadata), geoparquet)
+        source = collection_dir / "points.geojson"
+        TestNoConversionReplacesAForeignFile._points(source, 1)
+        other = collection_dir / "other.geojson"
+        TestNoConversionReplacesAForeignFile._points(other, 1)
+        self._add(runner, initialized_catalog, other)
+        before = _sha(geoparquet)
+
+        TestNoConversionReplacesAForeignFile._points(source, 2)
+        self._add(runner, initialized_catalog, collection_dir)
+
+        assert _sha(geoparquet) == before
+        assert pq.read_metadata(collection_dir / "points-geojson.parquet").num_rows == 2
+
+    @pytest.mark.integration
+    def test_an_edited_geopackage_leaves_its_legacy_layer_outputs(
+        self, runner: CliRunner, initialized_catalog: Path
+    ) -> None:
+        """0.8.0 tracked the layer outputs of a GeoPackage, not the GeoPackage."""
+        import geopandas as gpd
+        from shapely.geometry import Point
+
+        def write(path: Path, count: int) -> None:
+            path.unlink(missing_ok=True)
+            frame = gpd.GeoDataFrame(
+                {"i": list(range(count))},
+                geometry=[Point(i, i) for i in range(count)],
+                crs=4326,
+            )
+            for layer in ("l1", "l2"):
+                frame.to_file(path, layer=layer, driver="GPKG")
+
+        collection_dir = initialized_catalog / "layers"
+        collection_dir.mkdir()
+        source = collection_dir / "m.gpkg"
+        write(source, 1)
+        self._add(runner, initialized_catalog, collection_dir)
+        _make_legacy(collection_dir)
+        assert "m.gpkg" not in TestNoConversionReplacesAForeignFile._tracked(collection_dir)
+
+        write(source, 3)
+        self._add(runner, initialized_catalog, collection_dir)
+
+        assert self._parquets(collection_dir) == [
+            "m_l1-gpkg.parquet",
+            "m_l1.parquet",
+            "m_l2-gpkg.parquet",
+            "m_l2.parquet",
+        ]
+        assert pq.read_metadata(collection_dir / "m_l1.parquet").num_rows == 1
+        assert pq.read_metadata(collection_dir / "m_l1-gpkg.parquet").num_rows == 3
+
+    @pytest.mark.integration
+    def test_an_edited_tiff_leaves_its_legacy_cog(
+        self, runner: CliRunner, initialized_catalog: Path
+    ) -> None:
+        """A 0.8.0 COG of ``a.tiff`` is ``a.tif``, with no provenance tag."""
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+        from rio_cogeo.cogeo import cog_translate
+        from rio_cogeo.profiles import cog_profiles
+
+        def write(path: Path, value: int) -> None:
+            # Striped and 600 pixels wide, so it is no COG and add converts it.
+            with rasterio.open(
+                path, "w", driver="GTiff", width=600, height=600, count=1, dtype="uint8",
+                crs="EPSG:4326", transform=from_origin(0, 10, 0.01, 0.01),
+            ) as dst:  # fmt: skip
+                dst.write(np.full((1, 600, 600), value, "uint8"))
+
+        item_dir = initialized_catalog / "scenes" / "a"
+        item_dir.mkdir(parents=True)
+        source = item_dir / "a.tiff"
+        write(source, 1)
+        self._add(runner, initialized_catalog, item_dir.parent)
+        # 0.8.0 wrote the same COG with no PORTOLAN_SOURCE tag.
+        legacy = item_dir / "a.tif"
+        cog_translate(str(source), str(legacy), cog_profiles.get("deflate"), quiet=True)
+        versions_path = item_dir.parent / "versions.json"
+        versions = json.loads(versions_path.read_text())
+        for entry in versions["versions"][-1]["assets"].values():
+            entry.pop("source_path", None)
+        versions_path.write_text(json.dumps(versions))
+
+        write(source, 2)
+        self._add(runner, initialized_catalog, item_dir.parent)
+
+        assert sorted(p.name for p in item_dir.glob("*.tif*")) == ["a-tiff.tif", "a.tif", "a.tiff"]
+        with rasterio.open(legacy) as cog:
+            assert int(cog.read(1)[0, 0]) == 1
+        with rasterio.open(item_dir / "a-tiff.tif") as cog:
+            assert int(cog.read(1)[0, 0]) == 2
+
+
+class TestAConvertedCogPassesItsOwnCheck:
+    """A COG that add converts from a GTiff embeds its statistics (issue #748).
+
+    A striped 600 x 600 GTiff is no COG, so add converts it. A GTiff under
+    512 pixels already validates as a COG, and add keeps it as it is.
+    """
+
+    @pytest.mark.integration
+    def test_check_metadata_reports_no_missing_statistics(
+        self, runner: CliRunner, initialized_catalog: Path
+    ) -> None:
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+
+        rng = np.random.default_rng(7)
+        for i in range(3):
+            path = initialized_catalog / "scenes" / f"s{i}" / f"s{i}.tif"
+            path.parent.mkdir(parents=True)
+            with rasterio.open(
+                path,
+                "w",
+                driver="GTiff",
+                width=600,
+                height=600,
+                count=1,
+                dtype="uint8",
+                crs="EPSG:4326",
+                transform=from_origin(10.0 + i, 50.0, 0.001, 0.001),
+            ) as dst:
+                dst.write(rng.integers(0, 255, size=(1, 600, 600), dtype="uint8"))
+        added = runner.invoke(
+            cli, ["add", "--portolan-dir", str(initialized_catalog), str(initialized_catalog)]
+        )
+        assert added.exit_code == 0, added.output
+
+        result = runner.invoke(
+            cli, ["--format", "json", "check", "--metadata", str(initialized_catalog)]
+        )
+
+        assert "PTL-DAT-009" not in result.output
+        assert "PTL-DAT-010" not in result.output
+        assert sorted(p.name for p in initialized_catalog.rglob("*.aux.xml")) == []

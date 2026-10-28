@@ -218,7 +218,8 @@ class TestRemovedColumns:
         )
 
         columns = _load(collection_dir / "collection.json")["table:columns"]
-        assert [column["name"] for column in columns] == ["a", "bbox", "geometry"]
+        # geoparquet-io 1.7.0 appends the bbox column after the geometry.
+        assert [column["name"] for column in columns] == ["a", "geometry", "bbox"]
 
 
 _PROVIDERS_YAML = """providers:

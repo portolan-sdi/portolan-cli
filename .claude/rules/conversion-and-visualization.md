@@ -6,7 +6,7 @@ paths:
   - "portolan_cli/crs.py"
   - "portolan_cli/pmtiles.py"
   - "portolan_cli/partitioning.py"
-  - "portolan_cli/thumbnail.py"
+  - "portolan_cli/viz/thumbnail.py"
   - "portolan_cli/style.py"
   - "portolan_cli/metadata/cog.py"
   - "portolan_cli/metadata/geoparquet.py"
@@ -79,10 +79,11 @@ early return there, keep that call.
 
 When the source is its own destination, `_rewrite_parquet_in_place` writes a
 sibling and swaps it in with `Path.replace`, so a failed write cannot destroy
-the operator's data. Two consequences to preserve: geoparquet-io writes a fresh
-`geo` key and **drops every other schema metadata key**, so the helper restores
-them (geopandas writes `pandas`, publishers write provenance keys); and the
-scratch file carries `REWRITE_TEMP_INFIX`, because `add` reads the collection
+the operator's data. Two consequences to preserve: geoparquet-io 1.7.0 writes a
+fresh `geo` key, keeps every other publisher key (gpio#1280), and drops `pandas`,
+`ARROW:schema` and `geo:overviews` on purpose (gpio#1268). The rewrite writes
+once. `_assert_rewrite_kept_everything` refuses a rewrite that drops a publisher
+key. And the scratch file carries `REWRITE_TEMP_INFIX`, because `add` reads the collection
 directory before conversion starts and a killed run leaves one behind. Both
 `add._collect_files_for_add` and `preparation._scan_item_assets` skip it via
 `is_rewrite_temp` — a leftover that gets tracked as an asset makes every later
@@ -130,28 +131,60 @@ drop layers (that is data loss).
   after an external reprojection.
 - A CRS change is a **breaking** version bump (major), per `spec/versions.md`.
 
-## Thumbnails: plot data first, basemap LAST, and fix BOTH render paths
+## Thumbnails: one render in EPSG:3857, one draw, both paths
 
-This is the most-reverted logic in the repo. `contextily` derives its tile zoom
-from the **current axes extent**, so order matters and there are two separate
-render paths.
+This is the most-reverted logic in the repo. Two render paths exist
+(GeoParquet and PMTiles). Both end in `_render` in `viz/thumbnail.py`, so a
+change there reaches both paths. Do not add a second render function.
 
-- Order is strict: plot the geometry, then `ax.set_xlim/set_ylim` from the data
-  bounds, then `add_basemap` **last**. Adding the basemap first makes contextily
-  read an empty/default extent and pick an absurd zoom (blank thumbnail).
-- Compute the extent from **actual geometry bounds**, not tile bounds. PMTiles
-  tile bounds at z=0 are the whole world. Read the GeoParquet bbox from file
-  metadata (O(1)), for very large files sample features, never scan all rows.
-- Let `contextily` reproject the few basemap tiles via its `crs=` param. Do not
-  `.to_crs()` millions of geometry vertices for alignment. PMTiles coordinates
-  are always EPSG:4326.
-- **There are two render paths** (GeoParquet and PMTiles). The basemap-ordering
-  fix shipped for the GeoParquet path and a later regression fix had to apply it
-  to the PMTiles path (commit `c41da07`, #468). When you change rendering or CRS
-  logic here, grep for every `add_basemap(` call and apply the change to **both**
-  paths, then assert parity. Basemaps are for **vector** thumbnails only, raster
-  thumbnails get no basemap.
-- `contextily` is an optional lazy import, guard for its absence.
+- **Draw in EPSG:3857.** `_to_web_mercator` projects the sampled geometry and
+  its bounds before the draw. Basemap tiles are in EPSG:3857, so no tile is
+  warped. Do not pass `crs=` to contextily: its tile warp took 17 s of a 36 s
+  100-collection add (#993). PMTiles coordinates are always EPSG:4326 (CRS84).
+  The projection clips a valid latitude to the Web Mercator limit (85.05), so
+  polar data keeps its basemap. When the coordinates do not fit the CRS (#516
+  family) or the CRS is unknown, the render draws in the source CRS with no
+  basemap. Every collection still gets a thumbnail.
+- **Frame before the basemap.** The frame comes from the **actual geometry
+  bounds**: the GeoParquet footer bbox (O(1)), or the decoded PMTiles
+  geometry. Never use tile bounds; PMTiles tile bounds at z=0 are the world.
+  `_new_figure` sets the limits, and `add_basemap` reads them to pick the
+  zoom and the tiles. A single point gets a one-unit box in the source CRS
+  before the projection, so it does not become a 1 m box.
+- **One draw per figure.** `_new_figure` makes a `Figure` with its own Agg
+  canvas (no pyplot) and one axes that fills it. The long edge is
+  `thumbnails.max_size`. Do not use `bbox_inches="tight"`: it forces a second
+  draw. Do not call contextily `add_basemap` or `add_attribution`: the
+  attribution forces a draw. The attribution is an `ax.text`. A `draw_event`
+  hook counts each real draw in `thumbnail.draws`, and a test asserts 1.
+- **Tiles.** `add_basemap` fetches with `contextily.bounds2img` on
+  `_TILE_CONNECTIONS` (2) threads and `use_cache=False`. With the joblib cache
+  and more than one connection, contextily starts worker processes. The zoom
+  gives one tile pixel per output pixel and clamps to the provider
+  `max_zoom`. `_fetch_basemap` cuts and resizes the mosaic to the output once
+  and keeps it in a run memo of 8 frames. `tiles.fetched` counts the tiles.
+  Tests use the `stub_basemap_tiles` fixture, which patches
+  `contextily.tile._fetch_tile`. The autouse `no_basemap_tiles` stays the
+  default.
+- **Provider and key.** The default provider is `Esri.WorldGrayCanvas`
+  (`DEFAULT_BASEMAP_PROVIDER`). CARTO serves an "API KEY REQUIRED" watermark
+  tile to a request without a key. `thumbnails.basemap.api_key` (env
+  `PORTOLAN_THUMBNAILS_BASEMAP_API_KEY`) goes on each tile URL: as `?key=`
+  for CARTO, or in the token field of a provider that has one. A keyless
+  CARTO provider logs one warning per run and gets no basemap.
+- **Bulk geometry.** `_draw_features` draws polygons as one compound path per
+  colour, lines as one path, and points as one scatter. It adds the paths
+  with `add_artist`, because `add_patch` walks every Bezier segment for the
+  data limits (14 s at 100,000 polygons). Do not go back to `gdf.plot` or to
+  one artist per feature. `shapely.orient_polygons` makes holes render under
+  the nonzero fill rule.
+- **Geometry-only reads.** `_read_geoparquet_for_thumbnail` opens one
+  `ParquetFile` and reads the geometry column, plus the colour field of a
+  categorical style. Above `max_features` (100,000) it takes every n-th row of
+  every row group. Spatially sorted files put one patch of the extent in each
+  row group, so a subset of groups draws strips.
+- `contextily` is an optional lazy import, guard for its absence. Basemaps are
+  for **vector** thumbnails only; raster thumbnails get no basemap.
 - **The matplotlib floor is a punchy data-aware preset, NOT the extracted style**
   (#518, Track 1). The WFS/Mapbox style is pale by design (`fill-opacity 0.2`,
   hairline outline) and washes out at 512 px, so do **not** read `fill_opacity`
@@ -167,24 +200,20 @@ render paths.
   aspect-cap). Its real jobs are (1) adding a margin so geometry isn't flush to
   the edge and (2) giving degenerate extents — a single point, or a perfectly
   vertical/horizontal line — a finite box so `set_xlim`/`set_ylim` don't collapse
-  and contextily can still derive a zoom. It is O(1) on the bbox — do not reach
-  for per-vertex percentile cropping. Note what it does **not** do: under
-  `set_aspect('equal')` it cannot de-elongate the *geometry* — a hemisphere-
-  spanning sliver still renders as a thin strip (~11px vs ~14px wide at 512px,
-  measured), because the longer axis fixes the scale and widening the short
-  axis's limits only adds whitespace. If elongated geometry must read wider,
-  that's a Track-2 (MapLibre) concern, not something `max_aspect` delivers here.
-- **Mixed-geometry layers**: one `RenderParams` is applied to every feature
-  (the GeoParquet path issues a single `gdf.plot`), so `_compute_render_params`
-  floors the off-axis dimensions (`_MIN_VISIBLE_MARKER` / `_MIN_VISIBLE_STROKE`)
-  rather than zeroing them — otherwise points vanish in a polygon-dominant layer
-  and lines/edges vanish in a point-dominant one. Keep the floors non-zero.
-- Pass `aspect="equal"` to `gdf.plot()`. Without it geopandas derives a
-  latitude-corrected aspect and raises "aspect must be finite and positive" when
-  a layer declares a geographic CRS but holds projected-magnitude coords (#516
-  family) — that would leave the collection with no thumbnail at all.
+  and the basemap can still derive a zoom. It is O(1) on the bbox — do not reach
+  for per-vertex percentile cropping. Note what it does **not** do: at equal
+  scale it cannot de-elongate the *geometry* — a hemisphere-spanning sliver
+  still renders as a thin strip, because the longer axis fixes the scale and
+  widening the short axis's limits only adds whitespace. If elongated geometry
+  must read wider, that's a Track-2 (MapLibre) concern, not something
+  `max_aspect` delivers here.
+- **Mixed-geometry layers**: one `RenderParams` is applied to every feature,
+  so `_compute_render_params` floors the off-axis dimensions
+  (`_MIN_VISIBLE_MARKER` / `_MIN_VISIBLE_STROKE`) rather than zeroing them —
+  otherwise points vanish in a polygon-dominant layer and lines/edges vanish in
+  a point-dominant one. Keep the floors non-zero.
 - The render presets and helpers (`_compute_render_params`, `_frame_bounds`,
-  `_geom_category`, `_profile_*`) are **shared by both paths** — that *is* the
+  `_profile`, `_draw_features`) are **shared by both paths** — that *is* the
   parity mechanism. Change them once, both paths follow.
 
 ## PMTiles: thread src_crs through, register at collection level

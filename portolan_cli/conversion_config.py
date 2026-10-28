@@ -30,9 +30,11 @@ from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
+from os import PathLike
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.config import load_catalog_config
+from portolan_cli.config import ConfigSource, load_catalog_config
+from portolan_cli.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -86,7 +88,9 @@ class ConversionOverrides:
         # Check path patterns first (higher precedence)
         if self.paths_preserve and root is not None:
             try:
-                relative = path.relative_to(root)
+                # Normalize the directory, keeping a symlinked asset's own
+                # name: preserve globs name catalog entries, not their targets.
+                relative = (path.parent.resolve() / path.name).relative_to(root.resolve())
                 # Use POSIX-style paths for consistent matching across platforms
                 relative_str = relative.as_posix()
                 for pattern in self.paths_preserve:
@@ -131,7 +135,9 @@ def _parse_paths(items: list[Any]) -> tuple[str, ...]:
     return tuple(p for p in items if isinstance(p, str))
 
 
-def get_conversion_overrides(catalog_path: Path) -> ConversionOverrides:
+def get_conversion_overrides(
+    catalog_path: Path, *, state: ConfigSource | None = None
+) -> ConversionOverrides:
     """Load conversion overrides from catalog config.
 
     Reads the 'conversion' section from .portolan/config.yaml and returns
@@ -139,11 +145,12 @@ def get_conversion_overrides(catalog_path: Path) -> ConversionOverrides:
 
     Args:
         catalog_path: Root path of the catalog.
+        state: The run state, which parses the config once per run.
 
     Returns:
         ConversionOverrides instance. Returns empty overrides if no config exists.
     """
-    config = load_catalog_config(catalog_path)
+    config = load_catalog_config(catalog_path, state=state)
     extensions = config.section("conversion", "extensions")
     paths = config.section("conversion", "paths")
 
@@ -154,7 +161,7 @@ def get_conversion_overrides(catalog_path: Path) -> ConversionOverrides:
     )
 
 
-def get_handler_pins(catalog_path: Path) -> dict[str, str]:
+def get_handler_pins(catalog_path: Path, *, state: ConfigSource | None = None) -> dict[str, str]:
     """Load ``conversion.handlers``: the format handler to use per extension (#947).
 
     A pin decides between format handlers that claim the same extension::
@@ -165,11 +172,12 @@ def get_handler_pins(catalog_path: Path) -> dict[str, str]:
 
     Args:
         catalog_path: Root path of the catalog.
+        state: The run state, which parses the config once per run.
 
     Returns:
         Lowercase extension with a leading dot, to handler name.
     """
-    handlers = load_catalog_config(catalog_path).section("conversion", "handlers")
+    handlers = load_catalog_config(catalog_path, state=state).section("conversion", "handlers")
     pins: dict[str, str] = {}
     for extension, name in handlers.items():
         ext = str(extension).strip().lower()
@@ -199,8 +207,13 @@ VALID_COG_COMPRESSIONS: frozenset[str] = frozenset(
     }
 )
 
-# Lossy compression methods (predictor doesn't apply)
-LOSSY_COMPRESSIONS: frozenset[str] = frozenset({"JPEG", "WEBP"})
+# The compressions that take a predictor. GDAL ignores PREDICTOR for any other
+# codec and logs a warning for each file.
+PREDICTOR_COMPRESSIONS: frozenset[str] = frozenset({"DEFLATE", "LZW", "LZMA", "ZSTD"})
+
+# The GTiff COMPRESS value for each name that GDAL spells differently. RAW is
+# the rio-cogeo profile name for no compression, and GDAL calls it NONE.
+GDAL_COMPRESS_NAMES: dict[str, str] = {"RAW": "NONE"}
 
 # Compression methods that support quality setting
 QUALITY_COMPRESSIONS: frozenset[str] = frozenset({"JPEG", "WEBP"})
@@ -256,7 +269,7 @@ class CogSettings:
     thumbnail_quality: int = 75
 
 
-def derive_cog_defaults(source: Path) -> tuple[int, str]:
+def derive_cog_defaults(source: Path | Any) -> tuple[int, str]:
     """Pick a predictor and an overview resampling method for one raster.
 
     The spec's conversion defaults tie both settings to what the pixels mean
@@ -274,7 +287,8 @@ def derive_cog_defaults(source: Path) -> tuple[int, str]:
     ``conversion.cog`` in ``.portolan/config.yaml``.
 
     Args:
-        source: Raster to inspect.
+        source: Raster to inspect, or the raster open for reading. A caller
+            that has the raster open passes it, so the file opens once.
 
     Returns:
         A ``(predictor, resampling)`` pair. Unreadable rasters yield the
@@ -283,9 +297,13 @@ def derive_cog_defaults(source: Path) -> tuple[int, str]:
     import rasterio
 
     try:
-        with rasterio.open(source) as src:
-            dtype = str(src.dtypes[0])
-            band_count = int(src.count)
+        if isinstance(source, PathLike):
+            count("raster.opens")
+            with rasterio.open(source) as src:
+                dtype = str(src.dtypes[0])
+                band_count = int(src.count)
+        else:
+            dtype, band_count = str(source.dtypes[0]), int(source.count)
     except Exception as exc:  # noqa: BLE001 - any read failure means "use fallback"
         logger.debug("Could not inspect %s for COG defaults (%s); using fallback", source, exc)
         return FALLBACK_PREDICTOR, FALLBACK_RESAMPLING
@@ -297,7 +315,7 @@ def derive_cog_defaults(source: Path) -> tuple[int, str]:
     return FALLBACK_PREDICTOR, FALLBACK_RESAMPLING
 
 
-def resolve_cog_settings(settings: CogSettings, source: Path) -> CogSettings:
+def resolve_cog_settings(settings: CogSettings, source: Path | Any) -> CogSettings:
     """Replace any "auto" field in ``settings`` with a value read off ``source``.
 
     Configured values pass through untouched. Call this immediately before
@@ -306,7 +324,7 @@ def resolve_cog_settings(settings: CogSettings, source: Path) -> CogSettings:
 
     Args:
         settings: Settings as loaded from config.
-        source: Raster about to be converted.
+        source: Raster about to be converted, or the raster open for reading.
 
     Returns:
         Settings with concrete ``predictor`` and ``resampling`` values.
@@ -395,15 +413,16 @@ def validate_cog_settings(settings: CogSettings) -> list[str]:
             "or 'auto' to derive from the source raster. Using predictor=2."
         )
 
-    # Warn about predictor with lossy compression
+    # Warn about a predictor that the compression does not use
     if (
-        settings.compression in LOSSY_COMPRESSIONS
+        settings.compression not in PREDICTOR_COMPRESSIONS
         and settings.predictor != AUTO
         and settings.predictor != 1
     ):
         warnings.append(
-            f"Predictor={settings.predictor} is ignored for lossy compression "
-            f"'{settings.compression}'. Consider setting predictor=1 to avoid confusion."
+            f"Predictor={settings.predictor} is ignored for compression "
+            f"'{settings.compression}'. "
+            f"A predictor applies only to: {', '.join(sorted(PREDICTOR_COMPRESSIONS))}."
         )
 
     # Validate thumbnail_max_size (Issue #372)
@@ -428,36 +447,82 @@ def validate_cog_settings(settings: CogSettings) -> list[str]:
     return warnings
 
 
-_SETTINGS_OVERRIDE: ContextVar[tuple[CogSettings | None, VectorSettings | None]] = ContextVar(
-    "portolan_conversion_settings_override", default=(None, None)
+#: The ``partitioning.*`` keys that ``partitioning`` reads for one directory.
+PARTITION_KEYS: tuple[str, ...] = (
+    "partitioning.enabled",
+    "partitioning.threshold_gb",
+    "partitioning.strategy",
+    "partitioning.target_rows",
 )
+
+
+@dataclass(frozen=True)
+class PartitionSettings:
+    """The resolved ``partitioning.*`` settings of one directory.
+
+    Attributes:
+        directory: The directory whose config hierarchy gave the values.
+        values: Each key of ``PARTITION_KEYS`` to its value, None when unset.
+    """
+
+    directory: Path
+    values: dict[str, Any]
+
+
+def resolve_partition_settings(directory: Path, state: ConfigSource) -> PartitionSettings:
+    """Resolve the ``partitioning.*`` settings of ``directory`` through the run state."""
+    return PartitionSettings(
+        directory, {key: state.setting(key, collection_dir=directory) for key in PARTITION_KEYS}
+    )
+
+
+_SETTINGS_OVERRIDE: ContextVar[
+    tuple[CogSettings | None, VectorSettings | None, PartitionSettings | None]
+] = ContextVar("portolan_conversion_settings_override", default=(None, None, None))
 
 
 @contextmanager
 def settings_override(
-    cog: CogSettings | None = None, vector: VectorSettings | None = None
+    cog: CogSettings | None = None,
+    vector: VectorSettings | None = None,
+    partition: PartitionSettings | None = None,
 ) -> Iterator[None]:
-    """Make ``get_cog_settings`` and ``get_vector_settings`` return these values.
+    """Make the settings loaders return these values.
 
     ``convert_file`` takes explicit settings, and a format handler loads its
     settings by catalog root (#947). The override carries the explicit
-    settings to the handler. A None value leaves that loader unchanged.
+    settings to the handler. ``add`` also carries the settings it resolved
+    through its run state, because a handler method takes no state. A None
+    value leaves that loader unchanged.
+
+    The override is a context variable. ``add`` sets it in the worker thread
+    that calls the handler, so it reaches the handler in that thread.
 
     Args:
-        cog: COG settings to return, or None.
-        vector: Vector settings to return, or None.
+        cog: COG settings for ``get_cog_settings``, or None.
+        vector: Vector settings for ``get_vector_settings``, or None.
+        partition: Partition settings for ``partitioning.partition_strategy``
+            in their directory, or None.
 
     Yields:
         Nothing. The override ends with the block.
     """
-    token = _SETTINGS_OVERRIDE.set((cog, vector))
+    token = _SETTINGS_OVERRIDE.set((cog, vector, partition))
     try:
         yield
     finally:
         _SETTINGS_OVERRIDE.reset(token)
 
 
-def get_cog_settings(catalog_path: Path | None) -> CogSettings:
+def partition_override(directory: Path) -> PartitionSettings | None:
+    """The partition settings of ``settings_override`` when they are for ``directory``."""
+    partition = _SETTINGS_OVERRIDE.get()[2]
+    return partition if partition is not None and partition.directory == directory else None
+
+
+def get_cog_settings(
+    catalog_path: Path | None, *, state: ConfigSource | None = None
+) -> CogSettings:
     """Load COG conversion settings from catalog config.
 
     Reads the 'conversion.cog' section from .portolan/config.yaml and returns
@@ -469,6 +534,7 @@ def get_cog_settings(catalog_path: Path | None) -> CogSettings:
 
     Args:
         catalog_path: Root path of the catalog.
+        state: The run state, which parses the config once per run.
 
     Returns:
         CogSettings instance. Returns defaults if no config exists.
@@ -478,7 +544,7 @@ def get_cog_settings(catalog_path: Path | None) -> CogSettings:
         return override
     if catalog_path is None:
         return CogSettings()
-    cog = load_catalog_config(catalog_path).section("conversion", "cog")
+    cog = load_catalog_config(catalog_path, state=state).section("conversion", "cog")
     if not cog:
         return CogSettings()
 
@@ -684,7 +750,9 @@ def _warn_once(catalog_path: Path, message: str) -> None:
     logger.warning(message)
 
 
-def get_vector_settings(catalog_path: Path | None) -> VectorSettings:
+def get_vector_settings(
+    catalog_path: Path | None, *, state: ConfigSource | None = None
+) -> VectorSettings:
     """Load vector conversion settings from catalog config.
 
     Reads the 'conversion.vector' section from .portolan/config.yaml and returns
@@ -692,6 +760,7 @@ def get_vector_settings(catalog_path: Path | None) -> VectorSettings:
 
     Args:
         catalog_path: Root path of the catalog.
+        state: The run state, which parses the config once per run.
 
     Returns:
         VectorSettings instance. Returns defaults if no config exists.
@@ -701,7 +770,7 @@ def get_vector_settings(catalog_path: Path | None) -> VectorSettings:
         return override
     if catalog_path is None:
         return VectorSettings()
-    vector = load_catalog_config(catalog_path).section("conversion", "vector")
+    vector = load_catalog_config(catalog_path, state=state).section("conversion", "vector")
     if not vector:
         return VectorSettings()
 

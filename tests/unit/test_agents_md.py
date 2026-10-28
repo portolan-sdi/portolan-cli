@@ -156,6 +156,41 @@ class TestEnsureAgentsMd:
         assert changed is False
         assert agents.read_text(encoding="utf-8") == "# Hand-authored, do not clobber"
 
+    def test_a_new_file_beside_a_right_link_writes_no_json(self, tmp_path: Path) -> None:
+        """Only the link lives in the JSON, so scaffolding the file leaves it alone."""
+        from portolan_cli import trace
+
+        coll = {"type": "Collection", "id": "roads", "links": [build_agents_link()]}
+        cj = _write(tmp_path / "collection.json", coll)
+        before = cj.read_text(encoding="utf-8")
+        with trace.tracing():
+            changed = ensure_agents_md(cj)
+            writes = trace.counters()["collection_json.writes"]
+
+        assert changed is True
+        assert (tmp_path / AGENTS_MD_FILENAME).exists()
+        assert writes == 0
+        assert cj.read_text(encoding="utf-8") == before
+
+    @pytest.mark.parametrize(
+        "links",
+        [[], [{"rel": "agents", "href": "./llms.txt", "type": "text/plain"}]],
+        ids=["absent", "malformed"],
+    )
+    def test_a_new_or_changed_link_writes_the_json_once(
+        self, tmp_path: Path, links: list[dict[str, str]]
+    ) -> None:
+        from portolan_cli import trace
+
+        cj = _write(tmp_path / "collection.json", {"type": "Collection", "id": "r", "links": links})
+        with trace.tracing():
+            ensure_agents_md(cj)
+            writes = trace.counters()["collection_json.writes"]
+
+        assert writes == 1
+        data = json.loads(cj.read_text(encoding="utf-8"))
+        assert [link for link in data["links"] if link["rel"] == "agents"] == [build_agents_link()]
+
     def test_normalizes_malformed_link_without_duplicating(self, tmp_path: Path) -> None:
         (tmp_path / AGENTS_MD_FILENAME).write_text("# hi", encoding="utf-8")
         bad = {"rel": "agents", "href": "./llms.txt", "type": "text/plain"}

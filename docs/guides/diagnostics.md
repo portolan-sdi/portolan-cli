@@ -63,8 +63,10 @@ worker threads included.
 `rss MB` is the resident memory high-water mark of the process at the end of
 the stage.
 
-`PORTOLAN_TIMINGS=mem` also records the peak Python allocation of each stage
-with `tracemalloc`. This mode makes the run slower.
+`PORTOLAN_TIMINGS=mem` also records the Python memory growth of each stage
+with `tracemalloc`. The growth is the peak traced memory of the stage less the
+traced memory when the stage starts. Memory that an earlier stage holds does
+not count. This mode makes the run slower.
 
 ### The meta block
 
@@ -85,7 +87,8 @@ PORTOLAN_TIMINGS=1 portolan --format json add demographics/
 
 The envelope prints before the command span closes, so that span has
 `"open": true` and its duration stops at the print. In `mem` mode, each span
-also has `mem_peak_mb`.
+also has `mem_growth_mb`. tracemalloc traces the whole process, so this value
+also holds the memory that other threads allocate while the span is open.
 
 The counters are:
 
@@ -93,10 +96,19 @@ The counters are:
 |---|---|
 | `checksum.files`, `checksum.bytes` | Files and bytes hashed with SHA-256 |
 | `versions_json.reads` | Reads of a local or remote `versions.json` |
+| `versions_json.writes` | Writes of a `versions.json` file |
+| `collection_json.writes` | Writes of a `collection.json` file |
+| `items_parquet.writes` | Builds of a collection `items.parquet` |
 | `config.yaml_parses` | Parses of a `config.yaml` or `metadata.yaml` file |
-| `thumbnail.draws` | Thumbnail images drawn |
-| `raster.opens` | Rasters opened by the metadata readers |
-| `parquet.opens` | Parquet files opened by the metadata readers |
+| `config.merges` | Merges of the `config.yaml` or `metadata.yaml` hierarchy of a directory |
+| `versions.published` | Versions that the run publishes |
+| `versions.asset_maps` | Conversions of the current assets of a `versions.json` for lookup |
+| `thumbnail.draws` | Full draws of a vector thumbnail figure |
+| `tiles.fetched` | Basemap tiles that a vector thumbnail downloads |
+| `raster.opens` | Rasters opened for reading |
+| `parquet.opens` | Parquet files opened for reading |
+| `vector.opens` | Other vector files opened for reading, such as FlatGeobuf |
+| `duckdb.connects` | DuckDB connections. Only the perf harness in `tests/perf` counts them |
 
 ### Trace files
 

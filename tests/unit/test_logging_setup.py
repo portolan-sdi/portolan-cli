@@ -17,7 +17,7 @@ import pytest
 from portolan_cli import logging_setup, trace
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
@@ -176,6 +176,126 @@ class TestUserFormat:
         logging_setup.configure_logging(verbosity=0, quiet=False)
         logging.getLogger("urllib3").warning("retrying")
         assert re.fullmatch(r"\+\d+\.\d{3}s WARNING urllib3: retrying\n", capsys.readouterr().err)
+
+
+class TestCredentialsStayOutOfTheLog:
+    """No handler of the run writes a URL credential (basemap key, #1067 review).
+
+    The tile URL of a keyed basemap holds ``?key=``. urllib3 logs each request
+    line at DEBUG, and an HTTP error quotes the URL.
+    """
+
+    SECRET = "SECRET123"
+    TILE = "https://a.basemaps.cartocdn.com/light_all/8/135/95.png?key=SECRET123"
+
+    def _run(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        *,
+        verbosity: int,
+        log: Callable[[], None],
+    ) -> tuple[str, str]:
+        path = tmp_path / "log.jsonl"
+        monkeypatch.setenv("PORTOLAN_LOG_FILE", str(path))
+        logging_setup.configure_logging(verbosity=verbosity, quiet=False)
+        log()
+        logging_setup.reset_logging()
+        return capsys.readouterr().err, path.read_text(encoding="utf-8")
+
+    def test_vv_redacts_the_urllib3_request_line(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        def log() -> None:
+            # The format of urllib3.connectionpool for each request.
+            logging.getLogger("urllib3.connectionpool").debug(
+                '%s://%s:%s "%s %s %s" %s %s',
+                "https",
+                "a.basemaps.cartocdn.com",
+                443,
+                "GET",
+                "/light_all/8/135/95.png?key=SECRET123",
+                "HTTP/1.1",
+                200,
+                1234,
+            )
+
+        err, file_text = self._run(tmp_path, monkeypatch, capsys, verbosity=2, log=log)
+
+        assert "/light_all/8/135/95.png" in err
+        assert "/light_all/8/135/95.png" in file_text
+        assert self.SECRET not in err
+        assert self.SECRET not in file_text
+
+    @pytest.mark.parametrize("verbosity", [2, 0], ids=["vv", "PORTOLAN_LOG=debug"])
+    def test_a_traceback_that_quotes_the_url_is_redacted(
+        self,
+        verbosity: int,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("PORTOLAN_LOG", "debug")
+
+        def log() -> None:
+            try:
+                raise OSError(f"Tile URL resulted in a 404 error:\n{self.TILE}")
+            except OSError as error:
+                logging.getLogger("portolan_cli.viz.thumbnail").debug(
+                    "Failed to add basemap: %s", error, exc_info=True
+                )
+
+        err, file_text = self._run(tmp_path, monkeypatch, capsys, verbosity=verbosity, log=log)
+
+        assert "Failed to add basemap" in err
+        assert "OSError" in err
+        assert "basemaps.cartocdn.com/light_all/8/135/95.png" in err
+        assert self.SECRET not in err
+        record = json.loads(file_text)
+        assert "basemaps.cartocdn.com" in record["msg"]
+        assert "OSError" in record["exc"]
+        assert self.SECRET not in file_text
+
+    @pytest.mark.parametrize(
+        ("text", "secret"),
+        [
+            ("GET /t.png?api_key=S1 200", "S1"),
+            ("GET /t.png?x=1&APIKEY=S2 200", "S2"),
+            ("GET /t.png?access_token=S3", "S3"),
+            ("GET /t.png?Token=S4", "S4"),
+            ("GET https://h.example/t.png?a=1&sig=S5 failed", "S5"),
+            ("no route to https://user:S6@h.example/t.png", "S6"),
+        ],
+    )
+    def test_each_credential_form_is_redacted(
+        self,
+        text: str,
+        secret: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        def log() -> None:
+            logging.getLogger("portolan_cli.sync").warning("%s", text)
+
+        err, file_text = self._run(tmp_path, monkeypatch, capsys, verbosity=0, log=log)
+
+        assert secret not in err
+        assert secret not in file_text
+
+    def test_prose_about_a_key_stays(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        message = "Set thumbnails.basemap.api_key or the key=value pair in config.yaml."
+
+        def log() -> None:
+            logging.getLogger("portolan_cli.viz.thumbnail").warning(message)
+
+        err, file_text = self._run(tmp_path, monkeypatch, capsys, verbosity=0, log=log)
+
+        assert err == f"\u26a0 {message}\n"
+        assert json.loads(file_text)["msg"] == message
 
 
 class TestGdalDebug:

@@ -25,6 +25,8 @@ from portolan_cli.errors import AmbiguousFormatError, UnknownFormatHandlerError
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from portolan_cli.config import ConfigSource
+
 BUILTIN_PREFIX = "builtin:"
 
 # The manager the handler list came from, and the list.
@@ -41,6 +43,8 @@ class FormatContext:
         source: The file the operator added. None for a collection.
         defaults: The ``defaults`` section of the merged ``metadata.yaml``.
         merge_strategy: How ``add`` merges detected values into existing ones.
+        state: The run state of the command, or None. A handler passes it to
+            the ``api`` helpers that read config, so each file is read once.
     """
 
     catalog_root: Path
@@ -48,6 +52,7 @@ class FormatContext:
     source: Path | None = None
     defaults: dict[str, Any] = field(default_factory=dict)
     merge_strategy: Any = None
+    state: ConfigSource | None = None
 
 
 @runtime_checkable
@@ -217,13 +222,16 @@ def extension_of(path: Path) -> str:
     return ".copc.laz" if name.endswith(".copc.laz") else path.suffix.lower()
 
 
-def handler_for(path: Path, catalog_root: Path | None = None) -> FormatHandler | None:
+def handler_for(
+    path: Path, catalog_root: Path | None = None, *, state: ConfigSource | None = None
+) -> FormatHandler | None:
     """Pick the format handler for ``path``.
 
     Args:
         path: Source file or FileGDB directory.
         catalog_root: Catalog root, to read ``conversion.handlers``. None reads
             no pin.
+        state: The run state, which parses the config once per run.
 
     Returns:
         The handler, or None when no handler claims the file.
@@ -232,18 +240,20 @@ def handler_for(path: Path, catalog_root: Path | None = None) -> FormatHandler |
         AmbiguousFormatError: Two plugin handlers claim the file and no pin decides.
         UnknownFormatHandlerError: A pin names a handler that does not exist.
     """
-    selected = select_handler(path, catalog_root)
+    selected = select_handler(path, catalog_root, state=state)
     return selected[1] if selected else None
 
 
-def plugin_handler_for(path: Path, catalog_root: Path | None = None) -> FormatHandler | None:
+def plugin_handler_for(
+    path: Path, catalog_root: Path | None = None, *, state: ConfigSource | None = None
+) -> FormatHandler | None:
     """Like ``handler_for``, but return only a handler from an outside plugin."""
-    selected = select_handler(path, catalog_root)
+    selected = select_handler(path, catalog_root, state=state)
     return selected[1] if selected and not is_builtin(selected[0]) else None
 
 
 def select_handler(
-    path: Path, catalog_root: Path | None = None
+    path: Path, catalog_root: Path | None = None, *, state: ConfigSource | None = None
 ) -> tuple[str, FormatHandler] | None:
     """Pick the format handler for ``path`` and the plugin that gives it.
 
@@ -255,7 +265,7 @@ def select_handler(
     if catalog_root is not None:
         from portolan_cli.conversion_config import get_conversion_overrides, get_handler_pins
 
-        pinned = get_handler_pins(catalog_root).get(extension)
+        pinned = get_handler_pins(catalog_root, state=state).get(extension)
         # conversion.extensions.convert sends a cloud-native vector, such as a
         # FlatGeobuf, to GeoParquet. Its own handler only copies it (#1020). A
         # listed raster keeps the COG handler, which converts it again. A
@@ -263,7 +273,7 @@ def select_handler(
         if (
             pinned is None
             and extension in _reg.convert_on_request_extensions("GeoParquet")
-            and extension in get_conversion_overrides(catalog_root).extensions_convert
+            and extension in get_conversion_overrides(catalog_root, state=state).extensions_convert
         ):
             pinned = "geoparquet"
         if pinned is not None:

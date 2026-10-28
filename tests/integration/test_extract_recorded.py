@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from tests.known_upstream import GPIO_WFS_OOM
 from tests.replay_server import ReplayServer
 
 if TYPE_CHECKING:
@@ -293,6 +294,7 @@ def test_permanent_error_is_not_retried(
     assert failures[0].endswith(f"{status} A retry cannot fix this failure."), failures
 
 
+@GPIO_WFS_OOM
 def test_wfs_exclude_layers_matches_the_leaf_name(tmp_path: Path, run_cli: RunCli) -> None:
     """``--exclude-layers states`` excludes ``topp:states``."""
     result, server, out = _run("workspace_layer-exclude", tmp_path, run_cli)
@@ -302,6 +304,7 @@ def test_wfs_exclude_layers_matches_the_leaf_name(tmp_path: Path, run_cli: RunCl
     assert _wfs_layers(out) == [("topp:tasmania_roads", "success", 2)]
 
 
+@GPIO_WFS_OOM
 def test_wfs_layers_matches_the_qualified_name(tmp_path: Path, run_cli: RunCli) -> None:
     """``--layers topp:states`` extracts that layer only. This is the control for #768."""
     result, server, out = _run("workspace_layer-layers", tmp_path, run_cli)
@@ -332,6 +335,7 @@ def _index_mismatches(out: Path) -> dict[str, tuple[Any, Any]]:
     return mismatches
 
 
+@GPIO_WFS_OOM
 def test_wfs_extraction_keeps_the_root_index_in_step(tmp_path: Path, run_cli: RunCli) -> None:
     """The root versions.json counts the assets the side steps add after ``add_files``."""
     result, server, out = _run("workspace_layer-layers", tmp_path, run_cli)
@@ -350,6 +354,7 @@ def test_wfs_named_layer_with_no_features_fails(tmp_path: Path, run_cli: RunCli)
     assert _wfs_layers(out) == [("N2000_WFS:N2000", "failed", 0)]
 
 
+@GPIO_WFS_OOM
 def test_wfs_api_key_stays_out_of_the_catalog(tmp_path: Path, run_cli: RunCli) -> None:
     """No file under the output root holds the API key of the service URL."""
     result, server, out = _run("geodata_gov_md", tmp_path, run_cli)
@@ -401,6 +406,7 @@ def test_discovery_failure_names_the_host_and_not_the_credential(
     assert re.match(failure, envelope["errors"][0]["message"]), envelope
 
 
+@GPIO_WFS_OOM
 def test_wfs_layer_that_add_skips_is_named(tmp_path: Path, run_cli: RunCli) -> None:
     """A layer file that ``ignored_files`` matches is skipped with a warning, not in silence."""
     from portolan_cli.catalog import init_catalog

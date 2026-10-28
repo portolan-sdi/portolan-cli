@@ -16,7 +16,7 @@ import sys
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Self, overload
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Self, overload
 
 from portolan_cli.errors import CatalogAlreadyExistsError
 from portolan_cli.humanize import humanize_slug
@@ -35,6 +35,9 @@ from portolan_cli.utils import href_root, relative_href
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from portolan_cli.run_state import RunState
     from portolan_cli.versions import Version
 
 # Cross-platform file locking (fcntl on Unix, msvcrt on Windows)
@@ -1104,7 +1107,9 @@ def _apply_human_fields(
     return changed
 
 
-def apply_catalog_human_titles(catalog_root: Path, *, dry_run: bool = False) -> list[Path]:
+def apply_catalog_human_titles(
+    catalog_root: Path, *, dry_run: bool = False, state: RunState | None = None
+) -> list[Path]:
     """Apply each metadata.yaml title/description to its catalog.json (issue #815).
 
     A collection takes its human-authored title and description from
@@ -1126,17 +1131,19 @@ def apply_catalog_human_titles(catalog_root: Path, *, dry_run: bool = False) -> 
     Args:
         catalog_root: Root directory of the catalog.
         dry_run: If True, report what would change without writing.
+        state: The run state, which parses each ``metadata.yaml`` once per run.
 
     Returns:
         The catalog.json paths that were modified, in sweep order.
     """
-    from portolan_cli.config import load_merged_metadata
+    from portolan_cli.run_state import RunState
 
+    state = state or RunState.open(catalog_root)
     changed: list[Path] = []
     for catalog_path in visible_stac_files(catalog_root):
         if catalog_path.name != "catalog.json":
             continue
-        metadata = load_merged_metadata(catalog_path.parent, catalog_root)
+        metadata = state.metadata(catalog_path.parent)
         if _apply_human_fields(catalog_path, metadata, dry_run=dry_run):
             changed.append(catalog_path)
     return changed
@@ -1171,200 +1178,155 @@ def ensure_schema_uris(catalog_root: Path) -> bool:
     return changed_any
 
 
-def update_catalog_versions(
+class CollectionSummary(NamedTuple):
+    """The entry of one collection in the catalog-level ``versions.json``."""
+
+    current_version: str
+    asset_count: int
+    total_size_bytes: int
+
+    @classmethod
+    def of(cls, version: Version) -> CollectionSummary:
+        """Summarize a published collection version."""
+        return cls(
+            version.version,
+            len(version.assets),
+            sum(a.size_bytes for a in version.assets.values()),
+        )
+
+
+def _read_catalog_index(versions_path: Path) -> dict[str, Any]:
+    """Read the catalog-level ``versions.json`` and check its shape.
+
+    Raises:
+        CatalogVersionsCorruptedError: If the file is not JSON, is not an
+            object, or holds a ``collections`` value that is not an object.
+    """
+    from portolan_cli.output import warn
+
+    try:
+        count("versions_json.reads")
+        content = json.loads(versions_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        msg = (
+            f"Catalog versions.json is corrupted: {e}. "
+            f"File: {versions_path}. "
+            "Fix manually or delete to reinitialize."
+        )
+        warn(msg)
+        raise CatalogVersionsCorruptedError(msg) from e
+
+    if not isinstance(content, dict):
+        msg = (
+            f"Catalog versions.json has invalid structure: expected dict, "
+            f"got {type(content).__name__}. File: {versions_path}. "
+            "Fix manually or delete to reinitialize."
+        )
+        warn(msg)
+        raise CatalogVersionsCorruptedError(msg)
+
+    collections_value = content.get("collections")
+    if collections_value is not None and not isinstance(collections_value, dict):
+        msg = (
+            f"Catalog versions.json 'collections' has invalid type: "
+            f"expected dict or null, got {type(collections_value).__name__}. "
+            f"File: {versions_path}. Fix manually or delete to reinitialize."
+        )
+        warn(msg)
+        raise CatalogVersionsCorruptedError(msg)
+    return content
+
+
+def collection_summaries(state: RunState) -> dict[str, CollectionSummary]:
+    """Read file-backed collection summaries for recovery on an unchanged run.
+
+    Collection records may have committed while the root index write failed.
+    The next run must reconcile them even when it stages no new version. The
+    state's memo reuses records the unchanged-file checks already read.
+    """
+    from portolan_cli.stac_links import versioned_collections
+
+    summaries: dict[str, CollectionSummary] = {}
+    if not (state.catalog_root / "versions.json").exists():
+        return summaries
+    for collection_id in versioned_collections(state.catalog_root):
+        directory = state.collection_dir(collection_id)
+        if state.backend(directory) != "file":
+            continue
+        versions = state.versions(directory, include_staged=False)
+        if versions.versions:
+            summaries[collection_id] = CollectionSummary.of(versions.versions[-1])
+    return summaries
+
+
+def update_catalog_index(
     catalog_root: Path,
-    collection_id: str,
-    current_version: str,
-    asset_count: int,
-    total_size_bytes: int,
-) -> None:
-    """Update catalog-level versions.json with collection state.
+    summaries: dict[str, CollectionSummary] | Callable[[], dict[str, CollectionSummary]],
+) -> bool:
+    """Write the entries of several collections into the catalog-level versions.json.
 
-    The catalog-level versions.json tracks aggregate state of all collections,
-    providing a quick overview without needing to read each collection's
-    versions.json individually.
-
-    This function is called after each successful collection update to keep
-    the catalog-level view in sync.
-
-    Uses file locking to prevent race conditions when multiple `add` commands
-    run concurrently (e.g., CI parallelism, adding to multiple collections).
+    The catalog-level versions.json summarizes each collection, so a reader
+    does not open every collection's versions.json. One call does one
+    read-modify-write under the catalog lock, for every collection of a run.
+    The read happens inside the lock, so a concurrent ``add`` that wrote first
+    keeps its entries. An entry that already holds the same version, asset
+    count, and size is left alone. When every entry matches, the file and its
+    ``updated`` time do not change.
 
     Args:
         catalog_root: Root directory of the catalog.
-        collection_id: The collection that was updated (e.g., "demographics").
-        current_version: The new current version of the collection.
-        asset_count: Number of assets in the current version.
-        total_size_bytes: Total size of all assets in bytes.
+        summaries: Collection id to its new entry. A callable is called under
+            the lock, so a summary it reads from disk cannot be older than an
+            entry that another command wrote first.
+
+    Returns:
+        True when the file was written.
 
     Raises:
         CatalogVersionsCorruptedError: If catalog versions.json is invalid JSON
             or has invalid structure.
     """
-    from portolan_cli.output import warn
-
     versions_path = catalog_root / "versions.json"
-
-    if not versions_path.exists():
-        # Not a file-backend catalog (e.g., Iceberg backend)
-        return
+    if (isinstance(summaries, dict) and not summaries) or not versions_path.exists():
+        # No catalog-level versions.json: not a file-backend catalog (Iceberg).
+        return False
 
     lock_path = catalog_root / ".portolan" / ".versions.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Use file locking to prevent concurrent read-modify-write races
-    with lock_path.open("w") as lock_file:
+    with lock_path.open("a") as lock_file:
         _lock_file(lock_file)
         try:
-            # Read existing catalog versions.json with error handling
-            try:
-                count("versions_json.reads")
-                content = json.loads(versions_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as e:
-                # Clear error message for corrupted file
-                msg = (
-                    f"Catalog versions.json is corrupted: {e}. "
-                    f"File: {versions_path}. "
-                    "Fix manually or delete to reinitialize."
-                )
-                warn(msg)
-                raise CatalogVersionsCorruptedError(msg) from e
-
-            # Validate structure before mutating
-            if not isinstance(content, dict):
-                msg = (
-                    f"Catalog versions.json has invalid structure: expected dict, "
-                    f"got {type(content).__name__}. File: {versions_path}. "
-                    "Fix manually or delete to reinitialize."
-                )
-                warn(msg)
-                raise CatalogVersionsCorruptedError(msg)
-
-            collections_value = content.get("collections")
-            if collections_value is not None and not isinstance(collections_value, dict):
-                msg = (
-                    f"Catalog versions.json 'collections' has invalid type: "
-                    f"expected dict or null, got {type(collections_value).__name__}. "
-                    f"File: {versions_path}. Fix manually or delete to reinitialize."
-                )
-                warn(msg)
-                raise CatalogVersionsCorruptedError(msg)
-
-            # Update the collections entry
+            if callable(summaries):
+                summaries = summaries()
+            if not summaries:
+                return False
+            content = _read_catalog_index(versions_path)
+            collections = content.get("collections") or {}
             now = datetime.now(UTC).isoformat()
-            if "collections" not in content:
-                content["collections"] = {}
-
-            content["collections"][collection_id] = {
-                "current_version": current_version,
-                "updated": now,
-                "asset_count": asset_count,
-                "total_size_bytes": total_size_bytes,
-            }
-
-            # Update catalog-level updated timestamp
+            changed = False
+            for collection_id, summary in sorted(summaries.items()):
+                entry = collections.get(collection_id)
+                if isinstance(entry, dict) and summary == (
+                    entry.get("current_version"),
+                    entry.get("asset_count"),
+                    entry.get("total_size_bytes"),
+                ):
+                    continue
+                collections[collection_id] = {"updated": now, **summary._asdict()}
+                changed = True
+            if not changed:
+                return False
+            content["collections"] = collections
             content["updated"] = now
-
             write_json_atomic(versions_path, content)
+            return True
         finally:
             _unlock_file(lock_file)
 
 
 class CatalogVersionsCorruptedError(Exception):
     """Raised when catalog-level versions.json is corrupted."""
-
-
-def mirror_into_catalog_index(
-    catalog_root: Path,
-    collection_id: str,
-    published: Version,
-) -> None:
-    """Mirror a published collection version into the catalog-level versions.json.
-
-    Kept separate from :func:`_update_versions` so the error branch does not push
-    that function past the rank-C complexity ceiling CI enforces.
-    ``update_catalog_versions`` no-ops when the catalog has no catalog-level
-    versions.json, which is the case for non-file backends.
-
-    A catalog-level failure is logged and swallowed, never raised. The
-    collection-level version is already on disk at this point, so failing the
-    add here would report an error for work that succeeded. This mirrors
-    ``finalization._finalize_with_file_backend``.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        collection_id: Collection identifier, "climate/hittekaart" for nested.
-        published: The Version just written by ``publish_version``.
-    """
-    try:
-        update_catalog_versions(
-            catalog_root=catalog_root,
-            collection_id=collection_id,
-            current_version=published.version,
-            asset_count=len(published.assets),
-            total_size_bytes=sum(a.size_bytes for a in published.assets.values()),
-        )
-    except Exception:
-        logger.warning(
-            "Failed to update catalog-level versions.json for collection '%s'. "
-            "Collection version was published but catalog-level view may be stale.",
-            collection_id,
-            exc_info=True,
-        )
-
-
-def sync_catalog_index(catalog_root: Path, collection_ids: set[str]) -> None:
-    """Copy the current version of each collection into the catalog-level versions.json.
-
-    ``finalize_items`` writes the index before the side steps of ``add`` run.
-    The item mirror, the PMTiles, and the thumbnails then add assets to the
-    collection's version, so the index lags one run behind without this call.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        collection_ids: Collections the add touched. One without a
-            versions.json, or with no current version, is left alone. A
-            versions.json that does not parse is logged and left alone, as in
-            :func:`mirror_into_catalog_index`. A collection whose index entry
-            already matches is not written, so a no-op re-add leaves the
-            index bytes and its ``updated`` time alone.
-    """
-    from portolan_cli.versions import read_versions
-
-    index_path = catalog_root / "versions.json"
-    try:
-        indexed = json.loads(index_path.read_text(encoding="utf-8")).get("collections") or {}
-    except (OSError, ValueError, AttributeError):
-        indexed = {}
-    for collection_id in sorted(collection_ids):
-        versions_path = catalog_root / Path(*collection_id.split("/")) / "versions.json"
-        if not versions_path.exists():
-            continue
-        try:
-            versions = read_versions(versions_path)
-        except ValueError as err:
-            logger.warning(
-                "Catalog-level versions.json not updated for '%s': %s", collection_id, err
-            )
-            continue
-        current = next(
-            (v for v in versions.versions if v.version == versions.current_version), None
-        )
-        if current is None:
-            continue
-        entry = indexed.get(collection_id) if isinstance(indexed, dict) else None
-        summary = (
-            current.version,
-            len(current.assets),
-            sum(a.size_bytes for a in current.assets.values()),
-        )
-        if isinstance(entry, dict) and summary == (
-            entry.get("current_version"),
-            entry.get("asset_count"),
-            entry.get("total_size_bytes"),
-        ):
-            continue
-        mirror_into_catalog_index(catalog_root, collection_id, current)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

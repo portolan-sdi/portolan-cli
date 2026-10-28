@@ -63,6 +63,7 @@ from portolan_cli.extract.common.source import (
 )
 from portolan_cli.extract.common.styles import extract_esri_style
 from portolan_cli.licensing import license_url_from_text
+from portolan_cli.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -296,6 +297,7 @@ def _ensure_geoparquet_crs(output_path: Path, source_crs: dict[str, object] | No
     import pyarrow.parquet as pq
 
     temp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    count("parquet.opens")
     with pq.ParquetFile(output_path) as parquet_file:
         schema = parquet_file.schema_arrow
         metadata = schema.metadata or {}

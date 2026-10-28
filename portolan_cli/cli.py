@@ -17,22 +17,19 @@ from typing import TYPE_CHECKING, Any, NoReturn, TextIO
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from portolan_cli.add import AddFailure
     from portolan_cli.convert import ConversionResult
+    from portolan_cli.metadata.fix import FixReport
     from portolan_cli.query import ItemInfo
+    from portolan_cli.run_state import RunState
     from portolan_cli.sync.pull import PullResult
 
 import click
 from rashid.model import Severity as RashidSeverity
 
 from portolan_cli import trace
-from portolan_cli.add import (
-    SKIP_UNCHANGED,
-    SKIPS_THAT_TRACK,
-    AddFailure,
-    add_files,
-)
 from portolan_cli.add_progress import AddProgressReporter, count_files
-from portolan_cli.catalog import find_catalog_root, sync_catalog_index
+from portolan_cli.catalog import find_catalog_root
 from portolan_cli.catalog_list import (
     AssetInfo,
     AssetStatus,
@@ -51,6 +48,7 @@ from portolan_cli.errors import (
     PortolanError,
     UnknownFormatHandlerError,
 )
+from portolan_cli.input_hardening import InputValidationError, validate_safe_path
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.licensing import (
     CLI_LICENSE_REMEDIATION,
@@ -59,7 +57,6 @@ from portolan_cli.licensing import (
     license_gap,
 )
 from portolan_cli.logging_setup import configure_logging
-from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.output import detail, error, set_writer, stdout_to_stderr, success, warn
 from portolan_cli.output import info as info_output
 from portolan_cli.plugins.commands import ExtractGroup, PluginGroup
@@ -87,19 +84,8 @@ from portolan_cli.scan.output import (
     render_tree_view,
 )
 from portolan_cli.scan.progress import ScanProgressReporter, count_directories
-from portolan_cli.stac import MergeStrategy
 from portolan_cli.status import CollectionStatus, get_collection_status
 from portolan_cli.utils import format_size
-from portolan_cli.validation import (
-    InputValidationError,
-    annotate_survivors,
-    build_check_payload,
-    build_fix_payload,
-    remediation_for,
-    run_check,
-    validate_safe_path,
-)
-from portolan_cli.validation.runner import validate_live_base_url
 
 
 def click_writer(
@@ -273,7 +259,7 @@ def output_json_envelope(envelope: Any) -> None:
     click.echo(envelope.to_json())
 
 
-def load_dotenv_and_warn_sensitive(catalog_path: Path) -> None:
+def load_dotenv_and_warn_sensitive(catalog_path: Path, *, state: RunState | None = None) -> None:
     """Load .env from catalog and warn if config.yaml has sensitive settings.
 
     This should be called after the actual catalog path is resolved (not in
@@ -282,12 +268,13 @@ def load_dotenv_and_warn_sensitive(catalog_path: Path) -> None:
 
     Args:
         catalog_path: Resolved catalog root path.
+        state: The run state, which parses config.yaml once per run.
     """
     from portolan_cli.config import check_sensitive_settings_in_config, load_dotenv_from_catalog
 
     load_dotenv_from_catalog(catalog_path)
 
-    sensitive_in_config = check_sensitive_settings_in_config(catalog_path)
+    sensitive_in_config = check_sensitive_settings_in_config(catalog_path, state=state)
     if sensitive_in_config:
         settings_str = ", ".join(sensitive_in_config)
         warn(
@@ -1244,6 +1231,8 @@ def _print_finding(finding: Any, requirement: str) -> None:
 
 def _print_findings(report: Any, *, verbose: bool) -> None:
     """Print findings grouped by severity, worst first."""
+    from portolan_cli.validation import remediation_for
+
     groups = (
         ("Errors", report.errors),
         ("Warnings", report.warnings),
@@ -1569,6 +1558,8 @@ def _fix_json_section(
     Returns:
         The fix results, keyed by which repair produced them.
     """
+    from portolan_cli.metadata.fix import FixReport
+
     data: dict[str, Any] = {}
 
     if metadata_fix_report is not None:
@@ -1598,6 +1589,8 @@ def _output_fix_human(
         verbose: Show detailed output.
         dry_run: Whether this was a dry run.
     """
+    from portolan_cli.metadata.fix import FixReport
+
     # Output metadata fix results
     if metadata_fix_report is not None:
         if not isinstance(metadata_fix_report, FixReport):
@@ -1708,6 +1701,9 @@ def _execute_check_workflow(
     ``--dry-run`` reports what the fixers would change, writes nothing, and
     skips the re-check: with no writes there is nothing new to find.
     """
+    from portolan_cli.validation import annotate_survivors, build_check_payload, run_check
+    from portolan_cli.validation.runner import validate_live_base_url
+
     validate_metadata = _should_validate(path, run_metadata=run_metadata, fix=fix)
     if live and validate_metadata:
         try:
@@ -1728,22 +1724,33 @@ def _execute_check_workflow(
     fix_data: dict[str, Any] | None = None
     fix_failed = False
     pre_outcome = None
+    state: RunState | None = None
     if fix:
-        with trace.span("check.pre"):
-            pre_outcome = run_check(path, live=False, geo_assets=False, **check_kwargs)
-        with trace.span("check.fix", dry_run=dry_run):
-            fix_data, fix_failed = _run_fix_and_repairs(
-                path=path,
-                findings=list(pre_outcome.report.findings) if pre_outcome.report else [],
-                run_metadata=run_metadata,
-                run_geo_assets=run_geo_assets,
-                dry_run=dry_run,
-                remove_legacy=remove_legacy,
-                use_json=use_json,
-                verbose=verbose,
-                force=force,
-                workers=workers,
-            )
+        from portolan_cli.scan.check import resolve_catalog_root_for_check
+        from portolan_cli.version_ops import owned_run
+
+        # One run state for the check, the fix, and the re-check. Each pass
+        # parses the config through it and stages its versions in it. The block
+        # commits once, before the re-check reads the result (issue #995).
+        with owned_run(resolve_catalog_root_for_check(path) or path) as state:
+            with trace.span("check.pre"):
+                pre_outcome = run_check(
+                    path, live=False, geo_assets=False, state=state, **check_kwargs
+                )
+            with trace.span("check.fix", dry_run=dry_run):
+                fix_data, fix_failed = _run_fix_and_repairs(
+                    path=path,
+                    findings=list(pre_outcome.report.findings) if pre_outcome.report else [],
+                    run_metadata=run_metadata,
+                    run_geo_assets=run_geo_assets,
+                    dry_run=dry_run,
+                    remove_legacy=remove_legacy,
+                    use_json=use_json,
+                    verbose=verbose,
+                    force=force,
+                    workers=workers,
+                    state=state,
+                )
 
     if fix and dry_run and pre_outcome is not None:
         outcome = pre_outcome
@@ -1754,6 +1761,7 @@ def _execute_check_workflow(
                 live=live,
                 # --fix already ran the geo-asset conversion; re-scanning would repeat it.
                 geo_assets=run_geo_assets and not fix,
+                state=state,
                 **check_kwargs,
             )
     payload = build_check_payload(outcome, mode=mode, fix_failed=fix_failed)
@@ -1960,6 +1968,7 @@ def _run_fix_and_repairs(
     verbose: bool,
     force: bool = False,
     workers: int | None = None,
+    state: RunState,
 ) -> tuple[dict[str, Any], bool]:
     """Apply the fixer registry, then the metadata/geo-asset fix workflow.
 
@@ -1982,49 +1991,22 @@ def _run_fix_and_repairs(
         verbose: Show detailed output.
         force: Re-optimize already-valid COGs (raster-scoped, issue #530).
         workers: Parallel worker processes for conversion.
+        state: The run state of the command. Every pass stages in it, and the
+            caller commits it once.
 
     Returns:
         The JSON ``fix`` section and whether a fix failed.
     """
-    from portolan_cli.catalog import apply_catalog_human_titles
-    from portolan_cli.scan.check import resolve_catalog_root_for_check
-    from portolan_cli.validation.fixers import apply_fixers
+    from portolan_cli.metadata.fix import FixReport
+    from portolan_cli.validation import build_fix_payload
 
-    fixer_report = FixReport()
-    applied: list[str] = []
-    selected: list[str] = []
-    skip_reasons: dict[str, list[str]] = {}
-    title_results: list[FixResult] = []
-    if run_metadata:
-        catalog_root = resolve_catalog_root_for_check(path) or path
-        # Issue #815: a catalog publishes the title and description a human wrote
-        # in its own metadata.yaml. No rashid rule reports the drift, because
-        # rashid grades catalog.json alone and never reads metadata.yaml. The
-        # sweep therefore runs on its own, like the item-freshness pass below,
-        # and not through the finding-driven registry.
-        with trace.span("check.fix.title_sweep"):
-            title_results = [
-                FixResult(
-                    file_path=catalog_path,
-                    action=FixAction.UPDATED,
-                    success=True,
-                    message="Applied the metadata.yaml title/description",
-                )
-                for catalog_path in apply_catalog_human_titles(catalog_root, dry_run=dry_run)
-            ]
-        if findings:
-            skip = {"convert"} if run_geo_assets else set()
-            with trace.span("check.fix.fixers", findings=len(findings)):
-                run = apply_fixers(catalog_root, findings, dry_run=dry_run, skip=skip)
-            fixer_report = run.report
-            # What the fixers *did*, not what the findings asked for: a fixer
-            # that ran and changed nothing is a skip with a reason, never an
-            # "Applied".
-            applied = run.applied
-            selected = run.selected
-            skip_reasons = run.skip_reasons
-        if title_results:
-            fixer_report = FixReport(results=[*title_results, *fixer_report.results])
+    fixer_report, applied, selected, skip_reasons = _run_fixer_registry(
+        findings=findings,
+        run_metadata=run_metadata,
+        run_geo_assets=run_geo_assets,
+        dry_run=dry_run,
+        state=state,
+    )
 
     with trace.span("check.fix.freshness"):
         legacy_data, legacy_failed, written_items = _run_legacy_fix_workflow(
@@ -2037,18 +2019,20 @@ def _run_fix_and_repairs(
             verbose=verbose,
             force=force,
             workers=workers,
+            state=state,
         )
 
-    # The registry above ran against findings from the pre-fix check, so it never
-    # saw an item the freshness pass has only just written. Repair those now, or
-    # `--fix` publishes an item with no links and no checksums and reports more
-    # defects than it started with (#709).
+    # The registry above ran against findings from the pre-fix check, so it
+    # never saw an item the freshness pass has only just written. Repair
+    # those now, or `--fix` publishes an item with no links and no checksums
+    # and reports more defects than it started with (#709).
     if run_metadata and written_items:
         from portolan_cli.validation.fixers import repair_written_items
 
-        catalog_root = resolve_catalog_root_for_check(path) or path
         with trace.span("check.fix.repair", items=len(written_items)):
-            repairs = repair_written_items(catalog_root, written_items, dry_run=dry_run)
+            repairs = repair_written_items(
+                state.catalog_root, written_items, dry_run=dry_run, state=state
+            )
         if repairs:
             fixer_report = FixReport(results=[*fixer_report.results, *repairs])
 
@@ -2072,6 +2056,55 @@ def _run_fix_and_repairs(
     return fix_data, legacy_failed or fixer_report.failure_count > 0
 
 
+def _run_fixer_registry(
+    *,
+    findings: list[Any],
+    run_metadata: bool,
+    run_geo_assets: bool,
+    dry_run: bool,
+    state: RunState,
+) -> tuple[FixReport, list[str], list[str], dict[str, list[str]]]:
+    """Run the title sweep and the fixers that the AUTO findings call for.
+
+    Returns:
+        The fixer report, the applied and selected fixer keys, and the reasons
+        that the fixers which changed nothing gave.
+    """
+    from portolan_cli.catalog import apply_catalog_human_titles
+    from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
+    from portolan_cli.validation.fixers import apply_fixers
+
+    if not run_metadata:
+        return FixReport(), [], [], {}
+    catalog_root = state.catalog_root
+    # Issue #815: a catalog publishes the title and description a human wrote
+    # in its own metadata.yaml. No rashid rule reports the drift, because
+    # rashid grades catalog.json alone and never reads metadata.yaml. The
+    # sweep therefore runs on its own, like the item-freshness pass, and not
+    # through the finding-driven registry.
+    with trace.span("check.fix.title_sweep"):
+        title_results = [
+            FixResult(
+                file_path=catalog_path,
+                action=FixAction.UPDATED,
+                success=True,
+                message="Applied the metadata.yaml title/description",
+            )
+            for catalog_path in apply_catalog_human_titles(
+                catalog_root, dry_run=dry_run, state=state
+            )
+        ]
+    if not findings:
+        return FixReport(results=title_results), [], [], {}
+    skip = {"convert"} if run_geo_assets else set()
+    with trace.span("check.fix.fixers", findings=len(findings)):
+        run = apply_fixers(catalog_root, findings, dry_run=dry_run, skip=skip, state=state)
+    # The report holds what the fixers did, not what the findings asked for. A
+    # fixer that ran and changed nothing is a skip with a reason.
+    report = FixReport(results=[*title_results, *run.report.results])
+    return report, run.applied, run.selected, run.skip_reasons
+
+
 def _run_legacy_fix_workflow(
     *,
     path: Path,
@@ -2083,6 +2116,7 @@ def _run_legacy_fix_workflow(
     verbose: bool,
     force: bool = False,
     workers: int | None = None,
+    state: RunState | None = None,
 ) -> tuple[dict[str, Any], bool, list[Path]]:
     """Run item-freshness and geo-asset conversion, and render their results.
 
@@ -2094,6 +2128,7 @@ def _run_legacy_fix_workflow(
         whose items the freshness pass updated. The caller repairs those items,
         which the finding-driven registry ran too early to see (#709).
     """
+    from portolan_cli.metadata.fix import FixAction
     from portolan_cli.scan.check import run_fix_workflow
 
     # Progress callback for conversion (skip for JSON mode: per-file only in verbose)
@@ -2110,6 +2145,7 @@ def _run_legacy_fix_workflow(
         force=force,
         workers=workers,
         on_progress=show_conversion_progress,
+        state=state,
     )
 
     # Metadata-only fix that found no catalog root: surface and exit (issue #384).
@@ -2952,6 +2988,8 @@ def _print_add_failures_batched(failures: list[AddFailure]) -> None:
 
 def _output_add_unchanged(skipped: list[tuple[Path, str]], verbose: bool) -> None:
     """Say that the add changed nothing, and why each file was skipped."""
+    from portolan_cli.add import SKIPS_THAT_TRACK
+
     skip_count = len(skipped)
     noun = "file" if skip_count == 1 else "files"
     if all(reason in SKIPS_THAT_TRACK for _, reason in skipped):
@@ -3040,6 +3078,8 @@ def _report_skips_and_find_collections(
     absent, so its backfill gets a version of its own rather than editing a
     published snapshot.
     """
+    from portolan_cli.add import SKIPS_THAT_TRACK
+
     affected: set[str] = set()
     versioned: set[str] = set()
     for a in added:
@@ -3160,6 +3200,7 @@ def _validate_item_id_usage(
 def _check_partition_prompt(
     resolved_paths: list[Path],
     catalog_root: Path,
+    state: RunState | None = None,
 ) -> bool:
     """Check if user wants to skip partitioning for large files.
 
@@ -3169,6 +3210,7 @@ def _check_partition_prompt(
     Args:
         resolved_paths: List of resolved paths to check.
         catalog_root: Path to catalog root for config lookup.
+        state: The run state, which parses the config once per run.
 
     Returns:
         True if user declined partitioning, False otherwise.
@@ -3180,7 +3222,7 @@ def _check_partition_prompt(
     if not sys.stderr.isatty():
         return False
 
-    decision = find_large_partition_candidates(resolved_paths, catalog_root)
+    decision = find_large_partition_candidates(resolved_paths, catalog_root, state=state)
     large_files = decision.large_files
     if not large_files:
         return False
@@ -3205,6 +3247,7 @@ def _generate_add_mirrors(
     generate_parquet: bool,
     verbose: bool,
     versioned_collections: set[str],
+    state: RunState | None = None,
 ) -> None:
     """Generate the item mirrors after ``add`` and report the outcome."""
     from portolan_cli.stac_parquet import generate_parquet_mirrors
@@ -3214,6 +3257,7 @@ def _generate_add_mirrors(
         affected,
         generate_parquet=generate_parquet,
         versioned_collections=versioned_collections,
+        state=state,
     )
     if verbose:
         for coll_id in mirrors.generated:
@@ -3404,6 +3448,9 @@ def add_cmd(
             partitioning.prompt: true/false (default: true)
             partitioning.threshold_gb: size in GB (default: 2.0)
     """
+    from portolan_cli.add import SKIP_UNCHANGED, add_files
+    from portolan_cli.stac import MergeStrategy
+
     use_json = should_output_json(ctx, json_output)
 
     # Validate --reconvert requires --force
@@ -3414,9 +3461,15 @@ def add_cmd(
     # Resolve and validate catalog root (git-style auto-detection)
     catalog_root = _resolve_catalog_root_for_add(catalog_path, use_json)
 
+    from portolan_cli.run_state import RunState
+    from portolan_cli.version_ops import commit_run
+
+    # One state for the whole command: each YAML file parses once (issue #994).
+    state = RunState.open(catalog_root)
+
     # Load .env so PORTOLAN_REMOTE (and other sensitive settings) reach the
     # versioning backend's post-add hooks (e.g. iceberg STAC upload).
-    load_dotenv_and_warn_sensitive(catalog_root)
+    load_dotenv_and_warn_sensitive(catalog_root, state=state)
 
     # Validate --item-id usage (only valid with single file, not directory)
     _validate_item_id_usage(item_id, paths, use_json)
@@ -3470,7 +3523,7 @@ def add_cmd(
 
     # Check if user wants to skip partitioning for large files (Phase 5: auto-partition UX)
     skip_partitioning = (
-        _check_partition_prompt(resolved_paths, catalog_root) if not use_json else False
+        _check_partition_prompt(resolved_paths, catalog_root, state) if not use_json else False
     )
 
     # item_datetime is parsed by Click via FLEXIBLE_DATETIME type
@@ -3490,6 +3543,7 @@ def add_cmd(
                 skip_partitioning=skip_partitioning,
                 merge_strategy=MergeStrategy(merge_strategy),
                 skip_reasons=skip_reasons,
+                state=state,
             )
     except MissingLicenseError as err:
         # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
@@ -3513,44 +3567,52 @@ def add_cmd(
     skips = [(p, skip_reasons.get(p, SKIP_UNCHANGED)) for p in all_skipped]
     affected, versioned = _report_skips_and_find_collections(all_added, skips, catalog_root)
 
-    # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state)
-    # Always run parquet generation if --stac-geoparquet flag was passed, regardless of output mode
-    with trace.span("add.mirrors"):
-        _generate_add_mirrors(
+    # The side steps may exit, as --pmtiles does without tippecanoe. The files
+    # that add_files finalized keep their version, so the commit runs in any case.
+    # A side step stages an asset only after it writes the file.
+    try:
+        # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state).
+        # Always run it when --stac-geoparquet was passed, in every output mode.
+        with trace.span("add.mirrors"):
+            _generate_add_mirrors(
+                catalog_root,
+                affected,
+                generate_parquet=generate_parquet,
+                verbose=verbose,
+                versioned_collections=versioned,
+                state=state,
+            )
+
+        # Handle PMTiles generation BEFORE output (so JSON reflects final state)
+        from portolan_cli.viz.pmtiles import generate_or_suggest_pmtiles
+
+        with trace.span("add.pmtiles"):
+            generate_or_suggest_pmtiles(
+                catalog_root,
+                affected,
+                generate_pmtiles=generate_pmtiles,
+                force=force_pmtiles,
+                verbose=verbose,
+                use_json=use_json,
+                state=state,
+            )
+
+        # Thumbnails last, so a higher-fidelity render from the PMTiles above is
+        # adopted rather than replaced. Every geospatial collection needs a
+        # thumbnail asset to satisfy PTL-VIZ-001 (Issue #683).
+        from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
+
+        ensure_collection_thumbnails(
             catalog_root,
             affected,
-            generate_parquet=generate_parquet,
-            verbose=verbose,
+            generate=generate_thumbnails,
+            force=force_thumbnails,
             versioned_collections=versioned,
-        )
-
-    # Handle PMTiles generation BEFORE output (so JSON reflects final state)
-    from portolan_cli.viz.pmtiles import generate_or_suggest_pmtiles
-
-    with trace.span("add.pmtiles"):
-        generate_or_suggest_pmtiles(
-            catalog_root,
-            affected,
-            generate_pmtiles=generate_pmtiles,
-            force=force_pmtiles,
             verbose=verbose,
-            use_json=use_json,
+            state=state,
         )
-
-    # Thumbnails last, so a higher-fidelity render from the PMTiles above is
-    # adopted rather than replaced. Every geospatial collection needs a
-    # thumbnail asset to satisfy PTL-VIZ-001 (Issue #683).
-    from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
-
-    ensure_collection_thumbnails(
-        catalog_root,
-        affected,
-        generate=generate_thumbnails,
-        force=force_thumbnails,
-        versioned_collections=versioned,
-        verbose=verbose,
-    )
-    sync_catalog_index(catalog_root, affected)
+    finally:
+        commit_run(state)
 
     # Output combined results (after all processing complete)
     _output_add_results(all_added, skips, all_failures, verbose, use_json)
@@ -4526,7 +4588,9 @@ def pull_command(
         raise SystemExit(1) from None
 
     # Route to backend-specific pull if using non-file backend
-    if _try_backend_pull(catalog_path, remote_url, collection, dry_run, use_json):
+    if collection is not None and _try_backend_pull(
+        catalog_path, remote_url, collection, dry_run, use_json
+    ):
         return
 
     # Catalog-wide pull (no --collection specified)
@@ -4952,7 +5016,9 @@ def config() -> None:
     """
 
 
-@config.command("set")
+# A negative number such as -1 is a VALUE. Click reads an unknown token that
+# starts with "-" as an option and fails, so the command passes it through.
+@config.command("set", context_settings={"ignore_unknown_options": True})
 @click.argument("key")
 @click.argument("value")
 @click.option(
@@ -5030,6 +5096,23 @@ def config_set(
         raise SystemExit(1) from e
 
 
+def _config_catalog_root(command: str, *, use_json: bool) -> Path:
+    """Return the catalog root of a config read command, or exit 1 outside a catalog."""
+    catalog_path = find_catalog_root()
+    if catalog_path is None:
+        if use_json:
+            envelope = error_envelope(
+                command,
+                [ErrorDetail(type="CatalogNotFoundError", message="Not in a Portolan catalog")],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("Not in a Portolan catalog")
+            info_output("Run 'portolan init' to create one")
+        raise SystemExit(1)
+    return catalog_path
+
+
 @config.command("get")
 @click.argument("key")
 @click.option(
@@ -5054,28 +5137,18 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
         portolan config get aws_profile --collection restricted
     """
     from portolan_cli.config import _get_env_var_name, get_setting, get_setting_source
+    from portolan_cli.run_state import RunState
 
     use_json = should_output_json(ctx, json_output)
 
-    # Find catalog root
-    catalog_path = find_catalog_root()
-    if catalog_path is None:
-        if use_json:
-            envelope = error_envelope(
-                "config get",
-                [ErrorDetail(type="CatalogNotFoundError", message="Not in a Portolan catalog")],
-            )
-            output_json_envelope(envelope)
-        else:
-            error("Not in a Portolan catalog")
-            info_output("Run 'portolan init' to create one")
-        raise SystemExit(1)
+    catalog_path = _config_catalog_root("config get", use_json=use_json)
 
     try:
         # Load .env for credential precedence
-        load_dotenv_and_warn_sensitive(catalog_path)
-        value = get_setting(key, catalog_path=catalog_path, collection=collection)
-        source = get_setting_source(key, catalog_path, collection)
+        state = RunState.open(catalog_path)
+        load_dotenv_and_warn_sensitive(catalog_path, state=state)
+        value = get_setting(key, catalog_path=catalog_path, collection=collection, state=state)
+        source = get_setting_source(key, catalog_path, collection, state=state)
     except (ConfigError, ValueError) as e:
         error_type = type(e).__name__ if isinstance(e, ConfigError) else "ConfigError"
         emit_error("config get", error_type, str(e), use_json=use_json)
@@ -5122,27 +5195,17 @@ def config_list(ctx: click.Context, json_output: bool, collection: str | None) -
         portolan config list --collection demographics
     """
     from portolan_cli.config import list_settings
+    from portolan_cli.run_state import RunState
 
     use_json = should_output_json(ctx, json_output)
 
-    # Find catalog root
-    catalog_path = find_catalog_root()
-    if catalog_path is None:
-        if use_json:
-            envelope = error_envelope(
-                "config list",
-                [ErrorDetail(type="CatalogNotFoundError", message="Not in a Portolan catalog")],
-            )
-            output_json_envelope(envelope)
-        else:
-            error("Not in a Portolan catalog")
-            info_output("Run 'portolan init' to create one")
-        raise SystemExit(1)
+    catalog_path = _config_catalog_root("config list", use_json=use_json)
 
     try:
         # Load .env for credential precedence
-        load_dotenv_and_warn_sensitive(catalog_path)
-        settings = list_settings(catalog_path, collection=collection)
+        state = RunState.open(catalog_path)
+        load_dotenv_and_warn_sensitive(catalog_path, state=state)
+        settings = list_settings(catalog_path, collection=collection, state=state)
     except ConfigError as e:
         emit_error("config list", type(e).__name__, str(e), use_json=use_json)
         raise SystemExit(1) from None
@@ -6964,6 +7027,7 @@ def _process_collection_for_parquet(
         register_mirror_asset,
         track_parquet_in_versions,
     )
+    from portolan_cli.version_ops import owned_run
 
     collection_path = catalog_path / coll_id
 
@@ -7008,9 +7072,10 @@ def _process_collection_for_parquet(
 
     # Generate parquet
     try:
-        parquet_path = generate_items_parquet(collection_path)
-        register_mirror_asset(collection_path)
-        track_parquet_in_versions(collection_path, catalog_path)
+        with owned_run(catalog_path) as run:
+            parquet_path = generate_items_parquet(collection_path, state=run)
+            register_mirror_asset(collection_path, state=run)
+            track_parquet_in_versions(collection_path, catalog_path, state=run)
         if not use_json and not is_bulk:
             success(f"Generated items.parquet for '{coll_id}'")
             detail(f"    Items: {item_count}")

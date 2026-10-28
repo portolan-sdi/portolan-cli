@@ -116,6 +116,7 @@ class TestAddFilesContinuesOnErrors:
             force: bool = False,
             reconvert: bool = False,
             exclude_sibling_names: frozenset[str] = frozenset(),
+            state: object = None,
         ) -> MagicMock:
             nonlocal call_count
             call_count += 1
@@ -178,6 +179,7 @@ class TestAddFilesContinuesOnErrors:
             force: bool = False,
             reconvert: bool = False,
             exclude_sibling_names: frozenset[str] = frozenset(),
+            state: object = None,
         ) -> MagicMock:
             if "file1" in path.name:
                 raise FileNotFoundError("Source file disappeared")
@@ -230,6 +232,7 @@ class TestAddFilesContinuesOnErrors:
             force: bool = False,
             reconvert: bool = False,
             exclude_sibling_names: frozenset[str] = frozenset(),
+            state: object = None,
         ) -> ItemInfo:
             raise ValueError(f"Error processing {path.name}")
 
@@ -266,7 +269,7 @@ class TestCliOutputWithFailures:
             test_file = collection_dir / "test.geojson"
             test_file.write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 # Return: 2 added, 0 skipped, 1 failure
                 mock_add.return_value = (
                     [
@@ -317,7 +320,7 @@ class TestCliOutputWithFailures:
             test_file = collection_dir / "test.geojson"
             test_file.write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = (
                     [],  # no successful adds
                     [],  # skipped
@@ -360,7 +363,7 @@ class TestCliOutputWithFailures:
             test_file = collection_dir / "test.geojson"
             test_file.write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = (
                     [
                         ItemInfo(
@@ -454,7 +457,7 @@ class TestOutputEdgeCases:
             test_file = collection_dir / "test.geojson"
             test_file.write_text("{}")
 
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = (
                     [],  # no added
                     [
@@ -495,7 +498,7 @@ class TestOutputEdgeCases:
             test_file.write_text("{}")
 
             err_path = Path("census/data.parquet")
-            with patch("portolan_cli.cli.add_files") as mock_add:
+            with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = (
                     [],
                     [],

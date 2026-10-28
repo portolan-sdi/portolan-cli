@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import sys
 import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -173,3 +174,39 @@ class NetworkGuard:
             monkeypatch.setenv(key, self.sentinel.url)
         for key in NO_PROXY_KEYS:
             monkeypatch.setenv(key, NO_PROXY)
+
+
+# geoparquet-io installs DuckDB extensions on first use. The network guard
+# refuses that download, so a fresh CI runner could load none of them. Install
+# them once, before the guard starts. An installed extension costs no download.
+# Each entry is (name, repository). None is the core repository. geoparquet-io
+# loads h3, geography (s2), and a5 from the community repository.
+_DUCKDB_EXTENSIONS: tuple[tuple[str, str | None], ...] = (
+    ("spatial", None),
+    ("httpfs", None),
+    ("encodings", None),
+    ("h3", "community"),
+    ("geography", "community"),
+    ("a5", "community"),
+)
+
+
+def install_duckdb_extensions() -> None:
+    """Install the DuckDB extensions that geoparquet-io loads, before the guard starts.
+
+    pytest calls this from tests/conftest.py. The perf scripts run outside
+    pytest, so ``tests.perf.bench`` and ``tests.perf.gates`` call it too.
+    """
+    import duckdb
+
+    connection = duckdb.connect()
+    try:
+        for name, repository in _DUCKDB_EXTENSIONS:
+            try:
+                connection.install_extension(name, repository=repository)
+            except duckdb.Error as exc:
+                # Offline, or no build for this platform. A run that needs the
+                # extension then fails and names extensions.duckdb.org.
+                print(f"Could not install the DuckDB {name} extension: {exc}", file=sys.stderr)
+    finally:
+        connection.close()

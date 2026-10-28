@@ -440,3 +440,63 @@ class TestRecreatedItemEqualsAddedItem:
         root = _added_raster_catalog(run_cli, tmp_path / "cat", valid_rgb_cog)
 
         assert FIXERS["links"](root, True) == []
+
+
+class TestOneFixIsOneRun:
+    """`check --fix` shares one run state and commits it once (#995)."""
+
+    def test_three_mirrored_collections_write_the_index_once(
+        self, tmp_path: Path, fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each mirror refresh opened its own run, and each run wrote the index.
+
+        Each run also parsed config.yaml again. Three collections gave three
+        index writes and many parses.
+        """
+        from click.testing import CliRunner
+
+        from portolan_cli import config, json_io
+        from portolan_cli.cli import cli
+
+        root = tmp_path / "catalog"
+        runner = CliRunner()
+        result = runner.invoke(cli, ["init", str(root), "--auto", "--license", "CC-BY-4.0"])
+        assert result.exit_code == 0, result.output
+        marker = "# one fix, one run\n"
+        (root / ".portolan" / "config.yaml").write_text(f"{marker}thumbnails:\n  enabled: false\n")
+        rasters = fixtures_dir / "raster" / "valid"
+        for name in ("a", "b", "c"):
+            (root / name / "scene").mkdir(parents=True)
+            shutil.copy(rasters / "rgb.tif", root / name / "scene" / "scene.tif")
+        result = runner.invoke(cli, ["add", "--portolan-dir", str(root), str(root)])
+        assert result.exit_code == 0, result.output
+        assert all((root / name / "items.parquet").exists() for name in ("a", "b", "c"))
+        # A new raster makes each item STALE. The fix rewrites the items and
+        # then refreshes the mirror of each collection.
+        for name in ("a", "b", "c"):
+            shutil.copy(rasters / "singleband.tif", root / name / "scene" / "scene.tif")
+
+        written: list[Path] = []
+        write_text_atomic = json_io.write_text_atomic
+
+        def recorded(path: Path, content: str) -> None:
+            written.append(path)
+            write_text_atomic(path, content)
+
+        parsed: list[str] = []
+        safe_load = config.safe_load
+
+        def counted(content: str) -> object:
+            parsed.append(content)
+            return safe_load(content)
+
+        monkeypatch.setattr(json_io, "write_text_atomic", recorded)
+        monkeypatch.setattr(config, "safe_load", counted)
+
+        runner.invoke(cli, ["check", str(root), "--fix", "--metadata"])
+
+        assert written.count(root / "versions.json") == 1
+        assert sum(marker in content for content in parsed) == 1
+        for name in ("a", "b", "c"):
+            stac = json.loads((root / name / "scene" / "scene.json").read_text())
+            assert len(stac["assets"]["data"]["bands"]) == 1

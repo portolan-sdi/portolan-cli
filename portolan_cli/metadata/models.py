@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from portolan_cli.run_state import file_mtime_matches
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -120,12 +122,15 @@ class FileMetadataState:
     def mtime_changed(self) -> bool:
         """Check if file modification time has changed.
 
+        Uses ``run_state.file_mtime_matches``, so only two whole-second
+        timestamps get the coarse file system's 2.0 s window.
+
         Returns:
             True if mtime differs or no stored mtime exists.
         """
         if self.stored_mtime is None:
             return True
-        return self.current_mtime != self.stored_mtime
+        return not file_mtime_matches(self.current_mtime, self.stored_mtime)
 
     @property
     def heuristics_changed(self) -> bool:

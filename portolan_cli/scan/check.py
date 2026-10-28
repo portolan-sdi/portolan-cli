@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from portolan_cli.metadata.fix import FixReport
+    from portolan_cli.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +313,7 @@ def check_directory(
     workers: int | None = None,
     on_progress: Callable[[ConversionResult], None] | None = None,
     catalog_path: Path | None = None,
+    state: RunState | None = None,
 ) -> CheckReport:
     """Check a directory for cloud-native status and optionally fix.
 
@@ -340,6 +342,7 @@ def check_directory(
         on_progress: Optional callback for conversion progress (--fix mode).
         catalog_path: Optional catalog root for loading conversion config.
             If provided, loads conversion overrides from .portolan/config.yaml.
+        state: The run state, which parses the config once per command.
 
     Returns:
         CheckReport with file statuses, conversion results, and removal results.
@@ -370,7 +373,7 @@ def check_directory(
     # Load conversion overrides from config (if catalog_path provided)
     overrides: ConversionOverrides | None = None
     if catalog_path is not None:
-        overrides = get_conversion_overrides(catalog_path)
+        overrides = get_conversion_overrides(catalog_path, state=state)
 
     # Scan for geospatial files
     files = _scan_for_files(path)
@@ -380,7 +383,9 @@ def check_directory(
     for file_path in files:
         relative = _get_relative_path(file_path, path)
         if overrides is not None:
-            status_info = get_effective_status(file_path, overrides=overrides, root=catalog_path)
+            status_info = get_effective_status(
+                file_path, overrides=overrides, root=catalog_path, state=state
+            )
         else:
             status_info = get_cloud_native_status(file_path, catalog_path)
         file_statuses.append(
@@ -404,7 +409,7 @@ def check_directory(
             f.path for f in file_statuses if f.status == CloudNativeStatus.CONVERTIBLE
         ]
         if force:
-            files_to_convert.extend(_forced_raster_paths(file_statuses, catalog_path))
+            files_to_convert.extend(_forced_raster_paths(file_statuses, catalog_path, state))
         conversion_report = convert_directory(
             path,
             on_progress=on_progress,
@@ -412,6 +417,7 @@ def check_directory(
             catalog_path=catalog_path,
             workers=workers,
             force=force,
+            state=state,
         )
         report.conversion_report = conversion_report
 
@@ -428,7 +434,9 @@ def check_directory(
     elif fix and dry_run:
         # Preview mode - show what would be converted (no changes on disk).
         report.conversion_report = ConversionReport(
-            results=_build_preview_results(file_statuses, force=force, catalog_path=catalog_path)
+            results=_build_preview_results(
+                file_statuses, force=force, catalog_path=catalog_path, state=state
+            )
         )
         # Note: remove_legacy is ignored in dry_run mode (no actual removal)
 
@@ -436,7 +444,9 @@ def check_directory(
 
 
 def _forced_raster_paths(
-    file_statuses: list[FileStatus], catalog_path: Path | None = None
+    file_statuses: list[FileStatus],
+    catalog_path: Path | None = None,
+    state: RunState | None = None,
 ) -> list[Path]:
     """Paths of already-cloud-native files eligible for --force re-optimization.
 
@@ -450,19 +460,23 @@ def _forced_raster_paths(
         f.path
         for f in file_statuses
         if f.status == CloudNativeStatus.CLOUD_NATIVE
-        and hasattr(handler_for(f.path, catalog_path), "reoptimize")
+        and hasattr(handler_for(f.path, catalog_path, state=state), "reoptimize")
     ]
 
 
 def _build_preview_results(
-    file_statuses: list[FileStatus], *, force: bool, catalog_path: Path | None = None
+    file_statuses: list[FileStatus],
+    *,
+    force: bool,
+    catalog_path: Path | None = None,
+    state: RunState | None = None,
 ) -> list[ConversionResult]:
     """Build dry-run preview ConversionResults for --fix (and --force)."""
     from portolan_cli.plugins.formats import handler_for
 
     def predicted_output(f: FileStatus) -> Path:
         # The handler names its output. A plugin can write any file name.
-        handler = handler_for(f.path, catalog_path)
+        handler = handler_for(f.path, catalog_path, state=state)
         if handler is not None:
             return handler.output_path(f.path, f.path.parent)
         return f.path.parent / f"{f.path.stem}.tif"
@@ -482,7 +496,7 @@ def _build_preview_results(
     ]
     if force:
         # Forced rasters re-encode in place: COG -> COG, same path.
-        forced = set(_forced_raster_paths(file_statuses, catalog_path))
+        forced = set(_forced_raster_paths(file_statuses, catalog_path, state))
         previews.extend(
             ConversionResult(
                 source=f.path,
@@ -590,6 +604,7 @@ def run_fix_workflow(
     force: bool = False,
     workers: int | None = None,
     on_progress: Callable[[ConversionResult], None] | None = None,
+    state: RunState | None = None,
 ) -> FixWorkflowOutcome:
     """Run the metadata and/or geo-asset fix workflow and return the reports.
 
@@ -607,6 +622,7 @@ def run_fix_workflow(
         force: Re-optimize already-valid COGs (raster-scoped, issue #530).
         workers: Parallel worker processes for conversion.
         on_progress: Optional per-conversion progress callback.
+        state: The run state of the command. The fix stages its versions in it.
 
     Returns:
         A :class:`FixWorkflowOutcome` with the fix reports and status flags.
@@ -648,8 +664,10 @@ def run_fix_workflow(
             # spec does not define is something a requirement can name (issue #654).
             from portolan_cli.metadata.fix import strip_removed_fields
 
-            metadata_check_report = scan_catalog_metadata(catalog_root)
-            metadata_fix_report = fix_metadata(catalog_root, metadata_check_report, dry_run=dry_run)
+            metadata_check_report = scan_catalog_metadata(catalog_root, state=state)
+            metadata_fix_report = fix_metadata(
+                catalog_root, metadata_check_report, dry_run=dry_run, state=state
+            )
             metadata_fix_report.results.extend(strip_removed_fields(catalog_root, dry_run=dry_run))
 
             outcome.metadata_fix_report = metadata_fix_report
@@ -666,7 +684,8 @@ def run_fix_workflow(
             force=force,
             workers=workers,
             on_progress=on_progress,
-            catalog_path=path,
+            catalog_path=resolve_catalog_root_for_check(path) or path,
+            state=state,
         )
 
     return outcome

@@ -29,6 +29,7 @@ VECTOR_EXTENSIONS
 Version
 VersioningBackend
 aggregate_table_extension
+compute_checksum
 convert_raster
 convert_vector
 describe_raster_item

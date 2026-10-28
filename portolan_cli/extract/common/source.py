@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from portolan_cli.errors import PortolanError
 from portolan_cli.extract.common.urls import redact_credentials
-from portolan_cli.trace import span, submit
+from portolan_cli.trace import count, span, submit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -684,6 +684,7 @@ def _resumed_result(
     import pyarrow.parquet as pq
 
     try:
+        count("parquet.opens")
         rows = pq.ParquetFile(data_file).metadata.num_rows
     except (pa.ArrowInvalid, OSError):
         # An interrupted older run can leave a partial file. Fetch it again.
@@ -957,7 +958,12 @@ def build_catalog(
         init_extracted_catalog,
         register_collection_styles,
     )
+    from portolan_cli.run_state import RunState
+    from portolan_cli.version_ops import commit_run
 
+    # One run state holds the add and the thumbnails. The commit at the end
+    # writes one version per collection and the catalog index once.
+    state = RunState.open(output_dir)
     added = init_extracted_catalog(
         output_dir,
         report,
@@ -965,34 +971,37 @@ def build_catalog(
         title=discovery.catalog_title,
         description=discovery.catalog_description,
         post_init=_post_init(layer_source.name, discovery, resolved_license),
+        state=state,
     )
     if added is None:
         return
-    register_collection_styles(output_dir, report, include_legends=True)
-    by_path = {layer_path(layer): layer for layer in discovery.layers}
+    # A step after the add may raise. The files that the add finalized keep
+    # their version, so the commit runs in any case.
+    try:
+        register_collection_styles(output_dir, report, include_legends=True)
+        by_path = {layer_path(layer): layer for layer in discovery.layers}
 
-    def link(result: LayerResult) -> SourceLink | None:
-        layer = by_path.get(result.output_path or "")
-        return layer_source.source_link(discovery.source_url, layer) if layer else None
+        def link(result: LayerResult) -> SourceLink | None:
+            layer = by_path.get(result.output_path or "")
+            return layer_source.source_link(discovery.source_url, layer) if layer else None
 
-    add_source_links(
-        output_dir,
-        report,
-        url_builder=lambda source, result: found.href if (found := link(result)) else source,
-        title_builder=lambda result: found.title if (found := link(result)) else result.name,
-    )
-    seed_collections(layer_source, discovery, output_dir, report)
-    # Thumbnails come last, as in `add`. The renderer's GUI objects then never
-    # meet the metadata thread pool above. A Tk object that a worker thread
-    # frees aborts the process on Windows.
-    files, versioned = added
-    collection_ids = {path.parent.relative_to(output_dir).as_posix() for path in files}
-    ensure_collection_thumbnails(output_dir, collection_ids, versioned_collections=versioned)
-    # The styles and the thumbnails add assets after add_files wrote the root
-    # index, so the root counts lag without this call, as in `add`.
-    from portolan_cli.catalog import sync_catalog_index
-
-    sync_catalog_index(output_dir, collection_ids)
+        add_source_links(
+            output_dir,
+            report,
+            url_builder=lambda source, result: found.href if (found := link(result)) else source,
+            title_builder=lambda result: found.title if (found := link(result)) else result.name,
+        )
+        seed_collections(layer_source, discovery, output_dir, report)
+        # Thumbnails come last, as in `add`. The renderer's GUI objects then never
+        # meet the metadata thread pool above. A Tk object that a worker thread
+        # frees aborts the process on Windows.
+        files, versioned = added
+        collection_ids = {path.parent.relative_to(output_dir).as_posix() for path in files}
+        ensure_collection_thumbnails(
+            output_dir, collection_ids, versioned_collections=versioned, state=state
+        )
+    finally:
+        commit_run(state)
 
 
 def run_layer_extraction(

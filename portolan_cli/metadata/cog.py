@@ -121,51 +121,59 @@ def extract_cog_metadata(path: Path) -> COGMetadata:
 
     count("raster.opens")
     with rasterio.open(path) as src:
-        # Extract CRS
-        crs = None
-        if src.crs:
-            epsg = src.crs.to_epsg()
-            crs = f"EPSG:{epsg}" if epsg else src.crs.to_wkt()
+        return cog_metadata_of(src)
 
-        # Extract bbox from bounds
-        bbox = (
-            src.bounds.left,
-            src.bounds.bottom,
-            src.bounds.right,
-            src.bounds.top,
-        )
 
-        # Extract resolution from transform
-        resolution = (abs(src.transform.a), abs(src.transform.e))
+def cog_metadata_of(src: Any) -> COGMetadata:
+    """Read the COG metadata from an open dataset.
 
-        # Extract per-band nodata values
-        # src.nodatavals returns a tuple with one value per band
-        nodatavals = src.nodatavals or None
+    A caller that has the COG open for another reason reads it once.
+    """
+    # Extract CRS
+    crs = None
+    if src.crs:
+        epsg = src.crs.to_epsg()
+        crs = f"EPSG:{epsg}" if epsg else src.crs.to_wkt()
 
-        # Extract affine transform as GDAL GeoTransform format
-        # GDAL format: (origin_x, pixel_width, rotation_x, origin_y, rotation_y, pixel_height)
-        gdal_transform = src.transform.to_gdal()
-        transform = (
-            gdal_transform[0],
-            gdal_transform[1],
-            gdal_transform[2],
-            gdal_transform[3],
-            gdal_transform[4],
-            gdal_transform[5],
-        )
+    # Extract bbox from bounds
+    bbox = (
+        src.bounds.left,
+        src.bounds.bottom,
+        src.bounds.right,
+        src.bounds.top,
+    )
 
-        return COGMetadata(
-            bbox=bbox,
-            crs=crs,
-            width=src.width,
-            height=src.height,
-            band_count=src.count,
-            dtype=str(src.dtypes[0]),
-            nodata=src.nodata,  # Keep for backward compatibility
-            resolution=resolution,
-            nodatavals=nodatavals,
-            transform=transform,
-        )
+    # Extract resolution from transform
+    resolution = (abs(src.transform.a), abs(src.transform.e))
+
+    # Extract per-band nodata values
+    # src.nodatavals returns a tuple with one value per band
+    nodatavals = src.nodatavals or None
+
+    # Extract affine transform as GDAL GeoTransform format
+    # GDAL format: (origin_x, pixel_width, rotation_x, origin_y, rotation_y, pixel_height)
+    gdal_transform = src.transform.to_gdal()
+    transform = (
+        gdal_transform[0],
+        gdal_transform[1],
+        gdal_transform[2],
+        gdal_transform[3],
+        gdal_transform[4],
+        gdal_transform[5],
+    )
+
+    return COGMetadata(
+        bbox=bbox,
+        crs=crs,
+        width=src.width,
+        height=src.height,
+        band_count=src.count,
+        dtype=str(src.dtypes[0]),
+        nodata=src.nodata,  # Keep for backward compatibility
+        resolution=resolution,
+        nodatavals=nodatavals,
+        transform=transform,
+    )
 
 
 # Overloaded signatures for extract_schema_from_cog

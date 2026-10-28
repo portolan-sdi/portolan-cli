@@ -8,7 +8,13 @@ both directions, so a rule can never claim a fixer that does not exist.
 
 The signature is deliberately narrow::
 
-    Fixer = Callable[[Path, bool], list[FixResult]]  # (catalog_root, dry_run)
+    Fixer = Callable[[Path, bool, RunState | None], list[FixResult]]
+    # (catalog_root, dry_run, state)
+
+``check --fix`` passes one run state to every fixer. A fixer that reads the
+config or records a version uses it, so the command parses each YAML file
+once and commits once (issue #995). A fixer called with no state opens its
+own run.
 
 A fixer takes the catalog root and sweeps it whole. It is not handed the
 findings that triggered it, because every repairer here is already a
@@ -41,7 +47,7 @@ import posixpath
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rashid.api import STRUCTURAL_RELS, has_cog, links_of, roles_of
 from rashid.catalog import CatalogGraph, Node, is_absolute_href
@@ -49,8 +55,12 @@ from rashid.catalog import CatalogGraph, Node, is_absolute_href
 from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.validation.remediation import Bucket, remediation_for
 
-#: A fixer sweeps ``catalog_root``; ``dry_run`` means report but do not write.
-Fixer = Callable[[Path, bool], list[FixResult]]
+if TYPE_CHECKING:
+    from portolan_cli.run_state import RunState
+
+#: A fixer sweeps ``catalog_root``. ``dry_run`` means report but do not write.
+#: The run state is the one of the command, or None outside ``check --fix``.
+Fixer = Callable[[Path, bool, "RunState | None"], list[FixResult]]
 
 
 @dataclass(frozen=True)
@@ -255,7 +265,7 @@ def _rebuild_links(node: Node, graph: CatalogGraph) -> list[dict[str, Any]]:
     return rebuilt
 
 
-def _fix_links(root: Path, dry_run: bool) -> list[FixResult]:
+def _fix_links(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
     """Drop self links, backfill and repoint the structural block, relativize hrefs."""
     results: list[FixResult] = []
     graph = _graph(root)
@@ -413,7 +423,7 @@ def _fix_container_bbox(node: Node, graph: CatalogGraph, *, dry_run: bool) -> Fi
     return _updated(node, "Recomputed the spatial extent from contained bboxes")
 
 
-def _fix_bbox(root: Path, dry_run: bool) -> list[FixResult]:
+def _fix_bbox(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
     """Recompute broken bboxes: items from their assets, containers from children.
 
     Items go first so a container can union the values they just gained. Asset
@@ -463,7 +473,7 @@ def _backfill_asset(asset: dict[str, Any], href: str) -> bool | None:
     return True
 
 
-def _fix_assets(root: Path, dry_run: bool) -> list[FixResult]:
+def _fix_assets(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
     """Backfill asset media type and roles from the extension registry."""
     results: list[FixResult] = []
     for node in _graph(root).iter("collection", "item"):
@@ -496,7 +506,7 @@ def _fix_assets(root: Path, dry_run: bool) -> list[FixResult]:
 # --------------------------------------------------------------------------
 
 
-def _fix_checksums(root: Path, dry_run: bool) -> list[FixResult]:
+def _fix_checksums(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
     """Recompute file:size and the file:checksum multihash from the asset bytes.
 
     Streams through ``sync.checksums.compute_checksum`` rather than reading each
@@ -537,7 +547,7 @@ def _provides_pmtiles(node: Node) -> bool:
     return any(link.get("rel") == "pmtiles" for link in links_of(node))
 
 
-def _fix_styles(root: Path, dry_run: bool) -> list[FixResult]:
+def _fix_styles(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
     """Type a PMTiles collection's style assets as MapLibre GL styles."""
     results: list[FixResult] = []
     for node in _graph(root).iter("collection"):
@@ -592,7 +602,7 @@ def _retype_thumbnails(node: Node, dry_run: bool) -> FixResult | None:
     return _updated(node, "Retyped the thumbnail asset from the file it points at")
 
 
-def _fix_thumbnail(root: Path, dry_run: bool) -> list[FixResult]:
+def _fix_thumbnail(root: Path, dry_run: bool, state: RunState | None = None) -> list[FixResult]:
     """Give every geospatial collection a correctly typed thumbnail asset.
 
     Two repairs behind one rule id. A mistyped thumbnail is retyped in place.
@@ -619,10 +629,10 @@ def _fix_thumbnail(root: Path, dry_run: bool) -> list[FixResult]:
             # have one. A tabular collection and a collection with no drawable
             # source both decline, and a dry run that claimed otherwise promised
             # work the real run would not do.
-            if would_generate_thumbnail(collection_dir, root):
+            if would_generate_thumbnail(collection_dir, root, state=state):
                 results.append(_skipped(node.abs_path, "Would generate a collection thumbnail"))
             continue
-        thumbnail = ensure_collection_thumbnail(collection_dir, root)
+        thumbnail = ensure_collection_thumbnail(collection_dir, root, state=state)
         if thumbnail is not None:
             results.append(_updated(node, f"Generated the collection thumbnail {thumbnail.name}"))
     return results
@@ -668,25 +678,28 @@ def _has_cog_items(node: Node, graph: CatalogGraph) -> bool:
     return any(has_cog(item) for item in _owned_items(node, graph))
 
 
-def _write_mirror(collection_dir: Path, root: Path) -> None:
+def _write_mirror(collection_dir: Path, root: Path, state: RunState | None) -> None:
     """Write items.parquet, register it, and record its bytes in versions.json.
 
     The snapshot records the new bytes through the writer ``add`` uses, so
-    ``push`` sees the change (issue #1046).
+    ``push`` sees the change (issue #1046). One run state carries the item
+    fingerprint from the build to the record.
     """
     from portolan_cli.stac_parquet import (
         generate_items_parquet,
         register_mirror_asset,
         track_parquet_in_versions,
     )
+    from portolan_cli.version_ops import owned_run
 
-    generate_items_parquet(collection_dir)
-    register_mirror_asset(collection_dir)
-    if (collection_dir / "versions.json").exists():
-        track_parquet_in_versions(collection_dir, root)
+    with owned_run(root, state) as run:
+        generate_items_parquet(collection_dir, state=run)
+        register_mirror_asset(collection_dir, state=run)
+        if (collection_dir / "versions.json").exists():
+            track_parquet_in_versions(collection_dir, root, state=run)
 
 
-def _generate_mirror(node: Node, root: Path, *, dry_run: bool) -> FixResult:
+def _generate_mirror(node: Node, root: Path, *, dry_run: bool, state: RunState | None) -> FixResult:
     """Write items.parquet for a scene collection and register it."""
     collection_dir = node.abs_path.parent
     if dry_run:
@@ -699,7 +712,7 @@ def _generate_mirror(node: Node, root: Path, *, dry_run: bool) -> FixResult:
             "Would generate items.parquet and register the mirror",
         )
     try:
-        _write_mirror(collection_dir, root)
+        _write_mirror(collection_dir, root, state)
     except (ImportError, ValueError, OSError) as exc:
         return FixResult(
             node.abs_path, FixAction.SKIPPED, True, f"Cannot generate the mirror: {exc}"
@@ -707,7 +720,7 @@ def _generate_mirror(node: Node, root: Path, *, dry_run: bool) -> FixResult:
     return FixResult(node.abs_path, FixAction.CREATED, True, "Generated the items.parquet mirror")
 
 
-def _fix_item_mirror(root: Path, dry_run: bool) -> list[FixResult]:
+def _fix_item_mirror(root: Path, dry_run: bool, state: RunState | None = None) -> list[FixResult]:
     """Publish and register the stac-geoparquet item mirror."""
     results: list[FixResult] = []
     graph = _graph(root)
@@ -718,7 +731,7 @@ def _fix_item_mirror(root: Path, dry_run: bool) -> list[FixResult]:
                 results.append(_updated(node, "Registered items.parquet as the collection mirror"))
             continue
         if _has_cog_items(node, graph):
-            results.append(_generate_mirror(node, root, dry_run=dry_run))
+            results.append(_generate_mirror(node, root, dry_run=dry_run, state=state))
     return results
 
 
@@ -736,7 +749,7 @@ def _is_partitioned(node: Node) -> bool:
     return isinstance(extensions, list) and PARTITION_EXTENSION_URI in extensions
 
 
-def _fix_partition(root: Path, dry_run: bool) -> list[FixResult]:
+def _fix_partition(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
     """Populate the partition: block from the Hive layout on disk."""
     from portolan_cli.constants import PARTITION_EXTENSION_URI
     from portolan_cli.partitioning import build_glob_pattern, detect_partitioning
@@ -780,7 +793,7 @@ def _fix_partition(root: Path, dry_run: bool) -> list[FixResult]:
 # --------------------------------------------------------------------------
 
 
-def _fix_schema_uri(root: Path, dry_run: bool) -> list[FixResult]:
+def _fix_schema_uri(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
     """Declare the versioned Portolan profile URI on catalogs and collections."""
     from portolan_cli.catalog import ensure_schema_uris
     from portolan_cli.stac import ensure_portolan_schema_uri
@@ -849,7 +862,7 @@ def _fix_markdown_requirement(
     return results
 
 
-def _fix_readme(root: Path, dry_run: bool) -> list[FixResult]:
+def _fix_readme(root: Path, dry_run: bool, state: RunState | None = None) -> list[FixResult]:
     """Scaffold README.md and its rel='describedby' link."""
     from portolan_cli.readme import ensure_readmes
 
@@ -857,12 +870,12 @@ def _fix_readme(root: Path, dry_run: bool) -> list[FixResult]:
         root,
         dry_run,
         gap=_readme_gap,
-        repair=ensure_readmes,
+        repair=lambda directory: ensure_readmes(directory, state=state),
         message="Scaffolded README.md and its rel='describedby' link",
     )
 
 
-def _fix_agents(root: Path, dry_run: bool) -> list[FixResult]:
+def _fix_agents(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
     """Scaffold AGENTS.md and its rel='agents' link."""
     from portolan_cli.agents_md import ensure_agents_md_tree
 
@@ -875,26 +888,28 @@ def _fix_agents(root: Path, dry_run: bool) -> list[FixResult]:
     )
 
 
-def _fix_required_files(root: Path, dry_run: bool) -> list[FixResult]:
+def _fix_required_files(
+    root: Path, dry_run: bool, state: RunState | None = None
+) -> list[FixResult]:
     """Every catalog and collection directory carries README.md and AGENTS.md."""
-    return [*_fix_agents(root, dry_run), *_fix_readme(root, dry_run)]
+    return [*_fix_agents(root, dry_run, state), *_fix_readme(root, dry_run, state)]
 
 
-def _fix_titles(root: Path, dry_run: bool) -> list[FixResult]:
+def _fix_titles(root: Path, dry_run: bool, state: RunState | None = None) -> list[FixResult]:
     """Derive titles and descriptions, and backfill child/item link titles."""
     from portolan_cli.metadata.fix import repair_titles_and_links
 
-    return repair_titles_and_links(root, dry_run=dry_run)
+    return repair_titles_and_links(root, dry_run=dry_run, state=state)
 
 
-def _fix_pmtiles(root: Path, dry_run: bool) -> list[FixResult]:
+def _fix_pmtiles(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
     """Register the rel='pmtiles' web-map-links link on PMTiles collections."""
     from portolan_cli.metadata.fix import repair_pmtiles_links
 
     return repair_pmtiles_links(root, dry_run=dry_run)
 
 
-def _fix_convert(root: Path, _dry_run: bool) -> list[FixResult]:
+def _fix_convert(root: Path, _dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
     """Registered but deliberately inert: conversion belongs to the geo-asset pass.
 
     PTL-DAT-003 names this key, so the registry must carry it. Running a
@@ -967,7 +982,9 @@ def _collection_dir_of(path: Path, root: Path) -> Path | None:
     return None
 
 
-def _refresh_mirrors(root: Path, changed: Iterable[Path], *, dry_run: bool) -> list[FixResult]:
+def _refresh_mirrors(
+    root: Path, changed: Iterable[Path], *, dry_run: bool, state: RunState | None
+) -> list[FixResult]:
     """Rewrite ``items.parquet`` for every collection whose items just changed.
 
     The mirror is a copy of the items, so a pass that rewrites an item and
@@ -990,7 +1007,7 @@ def _refresh_mirrors(root: Path, changed: Iterable[Path], *, dry_run: bool) -> l
             )
             continue
         try:
-            _write_mirror(collection, root)
+            _write_mirror(collection, root, state)
         except (ImportError, ValueError, OSError) as exc:
             results.append(
                 FixResult(target, FixAction.SKIPPED, True, f"Cannot refresh the mirror: {exc}")
@@ -1007,6 +1024,7 @@ def repair_written_items(
     changed: Iterable[Path],
     *,
     dry_run: bool,
+    state: RunState | None = None,
 ) -> list[FixResult]:
     """Bring items a freshness pass just wrote up to the same standard as the rest.
 
@@ -1015,6 +1033,7 @@ def repair_written_items(
         changed: Paths the freshness pass created or updated. Only their
             enclosing collections have their mirror refreshed.
         dry_run: Report what would change and write nothing.
+        state: The run state of the command. None opens one run per mirror.
 
     Returns:
         One :class:`~portolan_cli.metadata.fix.FixResult` per repaired object. A
@@ -1025,18 +1044,18 @@ def repair_written_items(
     results: list[FixResult] = []
     for key in POST_ITEM_WRITE_FIXERS:
         try:
-            results.extend(FIXERS[key](root, dry_run))
+            results.extend(FIXERS[key](root, dry_run, state))
         except Exception as exc:  # noqa: BLE001 - one bad fixer must not strand the rest
             results.append(
                 FixResult(root, FixAction.SKIPPED, False, f"Fixer '{key}' failed: {exc}")
             )
-    results.extend(_refresh_collection_fields(root, changed, dry_run=dry_run))
-    results.extend(_refresh_mirrors(root, changed, dry_run=dry_run))
+    results.extend(_refresh_collection_fields(root, changed, dry_run=dry_run, state=state))
+    results.extend(_refresh_mirrors(root, changed, dry_run=dry_run, state=state))
     return results
 
 
 def _refresh_collection_fields(
-    root: Path, changed: Iterable[Path], *, dry_run: bool
+    root: Path, changed: Iterable[Path], *, dry_run: bool, state: RunState | None
 ) -> list[FixResult]:
     """Derive the extent and summaries again for each collection whose items changed.
 
@@ -1054,7 +1073,7 @@ def _refresh_collection_fields(
         if dry_run:
             continue
         try:
-            changed_file = refresh_collection_fields(root, collection)
+            changed_file = refresh_collection_fields(root, collection, state=state)
         except (ValueError, OSError) as exc:
             results.append(
                 FixResult(target, FixAction.SKIPPED, True, f"Cannot derive the extent: {exc}")
@@ -1094,6 +1113,7 @@ def apply_fixers(
     *,
     dry_run: bool,
     skip: Sequence[str] | set[str] = (),
+    state: RunState | None = None,
 ) -> FixerRun:
     """Run every fixer the AUTO findings call for, once each, over ``root``.
 
@@ -1104,6 +1124,7 @@ def apply_fixers(
         skip: Fixer keys the caller already covers, so no repair runs twice.
             ``check --fix`` passes ``convert`` when its geo-asset pass is in
             scope, since that pass is the same conversion sweep.
+        state: The run state of the command, passed to every fixer.
 
     Returns:
         A :class:`FixerRun`: the merged report plus which fixers were selected,
@@ -1118,7 +1139,7 @@ def apply_fixers(
     skip_reasons: dict[str, list[str]] = {}
     for key in selected:
         try:
-            outcome = FIXERS[key](root, dry_run)
+            outcome = FIXERS[key](root, dry_run, state)
         except Exception as exc:  # noqa: BLE001 - one bad fixer must not strand the rest
             outcome = [FixResult(root, FixAction.SKIPPED, False, f"Fixer '{key}' failed: {exc}")]
         results.extend(outcome)

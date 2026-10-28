@@ -31,6 +31,7 @@ from portolan_cli.add import (
     iter_files_with_sidecars,
 )
 from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
+from portolan_cli.run_state import RunState
 from tests.unit.add_stubs import add_mixed_directory_without_raising, write_point_geojson
 
 
@@ -975,6 +976,7 @@ class TestUpdateItemWithAsset:
             catalog_root=catalog_root,
             collection_id=collection_id,
             item_id=item_id,
+            state=RunState.open(catalog_root),
         )
 
         # Verify item.json was updated
@@ -1004,6 +1006,7 @@ class TestUpdateItemWithAsset:
                 catalog_root=catalog_root,
                 collection_id=collection_id,
                 item_id=item_id,
+                state=RunState.open(catalog_root),
             )
 
         # Should log warning about missing item.json
@@ -1043,6 +1046,7 @@ class TestUpdateItemWithAsset:
                 catalog_root=catalog_root,
                 collection_id=collection_id,
                 item_id=item_id,
+                state=RunState.open(catalog_root),
             )
 
         # Should log warning about no primary file
@@ -1342,6 +1346,7 @@ class TestAddFilesCodePaths:
             force=False,
             reconvert=False,
             exclude_sibling_names=frozenset(),
+            state=None,
         ):
             """Simulate add: success for geojson, geometry error for csv."""
             if path.suffix.lower() == ".geojson":

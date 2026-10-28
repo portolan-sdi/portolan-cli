@@ -49,21 +49,32 @@ def _run_deferred(
     source_to_collection_dir: dict[Any, Any],
 ) -> tuple[list[Any], list[Any], list[Any]]:
     """Run phase 3 of add on the deferred files, and return added, skipped, failures."""
-    from portolan_cli.add import _process_deferred_non_geo_files
+    from portolan_cli.add import _plan_deferred, _ProcessResult, _write_deferred
+    from portolan_cli.run_state import RunState
+    from portolan_cli.version_ops import commit_run
 
     added: list[Any] = []
     skipped: list[Any] = []
     failures: list[Any] = []
-    _process_deferred_non_geo_files(
-        merge_strategy=MergeStrategy.SMART,
+    state = RunState.open(catalog_root)
+    proc = _ProcessResult(
         deferred_non_geo=deferred_non_geo,
         source_to_item_dir=source_to_item_dir,
         source_to_collection_dir=source_to_collection_dir,
-        catalog_root=catalog_root,
+    )
+    plan = _plan_deferred(proc, catalog_root, failures, state)
+    _write_deferred(
+        plan,
+        set(),
+        catalog_root,
         added=added,
         skipped=skipped,
-        failures=failures,
+        merge_strategy=MergeStrategy.SMART,
+        touched_items=[],
+        skip_reasons={},
+        state=state,
     )
+    commit_run(state)
     return added, skipped, failures
 
 
@@ -311,21 +322,6 @@ class TestCollectionLevelNonGeoCompanions:
 
     Fix: Add `source_to_collection_dir` mapping for collection-level sources.
     """
-
-    def test_process_deferred_accepts_collection_dir_mapping(
-        self, initialized_catalog, fixtures_dir
-    ):
-        """_process_deferred_non_geo_files accepts source_to_collection_dir parameter.
-
-        TDD: Verify the function signature includes the new parameter.
-        """
-        # Set up minimal arguments
-        deferred_non_geo: list = []
-        source_to_item_dir: dict = {}
-        source_to_collection_dir: dict = {}  # NEW parameter
-        added, skipped, failures = _run_deferred(
-            initialized_catalog, deferred_non_geo, source_to_item_dir, source_to_collection_dir
-        )
 
     def test_non_geo_with_collection_level_geo_is_tracked(self, initialized_catalog, fixtures_dir):
         """Non-geo parquet tracks when geo companion is collection-level (fix #383).

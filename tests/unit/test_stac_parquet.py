@@ -21,6 +21,41 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
+@pytest.mark.unit
+def test_mirror_refreshes_after_item_edit_with_restored_mtime(collection_with_items: Path) -> None:
+    """A same-length edit must not keep the old mirror when POSIX ctime moves."""
+    import os
+
+    import pyarrow.parquet as pq
+
+    from portolan_cli.run_state import RunState
+    from portolan_cli.stac_parquet import generate_items_parquet, track_parquet_in_versions
+    from portolan_cli.version_ops import commit_run
+
+    if os.name != "posix":
+        pytest.skip("Windows ctime is creation time, not a content-change signal")
+    collection = collection_with_items
+    state = RunState.open(collection.parent)
+    output = generate_items_parquet(collection, state=state)
+    track_parquet_in_versions(collection, collection.parent, state=state)
+    commit_run(state)
+    item = collection / "scene-000/scene-000.json"
+    before = item.stat()
+    item.write_text(item.read_text().replace("Landsat Scene 0", "Changed Scene 0"))
+    os.utime(item, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert item.stat().st_size == before.st_size
+    assert item.stat().st_mtime_ns == before.st_mtime_ns
+    assert item.stat().st_ctime_ns != before.st_ctime_ns
+
+    generate_items_parquet(collection, state=RunState.open(collection.parent))
+
+    table = pq.read_table(output)
+    titles = dict(
+        zip(table.column("id").to_pylist(), table.column("title").to_pylist(), strict=True)
+    )
+    assert titles["scene-000"] == "Changed Scene 0"
+
+
 def _write_version_snapshot(collection_dir: Path, version: str) -> None:
     """Write a versions.json with one snapshot, as the add flow would."""
     from datetime import datetime
@@ -577,6 +612,64 @@ class TestGenerateItemsParquet:
 # =============================================================================
 # Test: Collection Link Management
 # =============================================================================
+
+
+def _scattered_collection(root: Path, side: int) -> Path:
+    """Write a collection of side x side grid items, linked in a shuffled order."""
+    import random
+
+    collection_dir = root / "grid"
+    collection_dir.mkdir(parents=True)
+    cells = [(x, y) for x in range(side) for y in range(side)]
+    random.Random(7).shuffle(cells)
+    links = []
+    for x, y in cells:
+        item_id = f"cell-{x:02d}-{y:02d}"
+        ring = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1], [x, y]]
+        item = {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": item_id,
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+            "bbox": [x, y, x + 1, y + 1],
+            "properties": {"datetime": "2024-01-01T00:00:00Z"},
+            "assets": {"data": {"href": f"./{item_id}.tif", "roles": ["data"]}},
+            "links": [],
+            "collection": "grid",
+        }
+        (collection_dir / f"{item_id}.json").write_text(json.dumps(item))
+        links.append({"rel": "item", "href": f"./{item_id}.json"})
+    collection = {
+        "type": "Collection",
+        "stac_version": "1.0.0",
+        "id": "grid",
+        "description": "Grid",
+        "license": "CC-BY-4.0",
+        "extent": {
+            "spatial": {"bbox": [[0, 0, side, side]]},
+            "temporal": {"interval": [["2024-01-01T00:00:00Z", None]]},
+        },
+        "links": [{"rel": "self", "href": "./collection.json"}, *links],
+    }
+    (collection_dir / "collection.json").write_text(json.dumps(collection))
+    return collection_dir
+
+
+@pytest.mark.unit
+def test_the_items_mirror_orders_its_rows_spatially(tmp_path: Path) -> None:
+    """PTL-DAT-006 needs ordered rows. Link order is not spatial, so the writer sorts."""
+    import pyarrow.parquet as pq
+    from geoparquet_io.api.table import Table
+
+    from portolan_cli.stac_parquet import generate_items_parquet
+
+    collection_dir = _scattered_collection(tmp_path, 20)
+    table = pq.read_table(generate_items_parquet(collection_dir))
+
+    ids = table.column("id").to_pylist()
+    assert len(ids) == len(set(ids)) == 400
+    resorted = Table(table, geometry_column="geometry").sort_hilbert().to_arrow()
+    assert resorted.column("id").to_pylist() == ids, "items.parquet rows are not in Hilbert order"
 
 
 class TestMirrorRegistration:
@@ -1776,3 +1869,43 @@ class TestWriteReadme:
         asset = json.loads(collection_json.read_text())["assets"]["documentation"]
         fields = file_fields(collection_dir / "README.md")
         assert {key: asset[key] for key in fields} == fields
+
+
+class TestMirrorOnPluginBackend:
+    """A plugin backend never receives the item mirror as a data asset.
+
+    The Iceberg backend reads each ``.parquet`` asset that it gets and appends
+    the rows to the collection table. ``items.parquet`` holds STAC items, not
+    data rows. The mirror record stays in the local ``versions.json``.
+    """
+
+    @pytest.mark.unit
+    def test_mirror_is_not_published_to_the_plugin(
+        self, collection_with_items: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from typing import Any
+
+        import portolan_cli.version_ops as version_ops
+        from portolan_cli.stac_parquet import generate_parquet_mirrors
+        from portolan_cli.versions import read_versions
+
+        catalog_root = collection_with_items.parent
+        (catalog_root / ".portolan").mkdir(exist_ok=True)
+        (catalog_root / ".portolan" / "config.yaml").write_text("backend: fake\n")
+        _write_version_snapshot(collection_with_items, "1.0.0")
+        published: list[Any] = []
+
+        def fake_publish(collection: str, **kwargs: Any) -> Any:
+            published.append((collection, kwargs["assets"]))
+            return object()
+
+        monkeypatch.setattr(version_ops, "publish_version", fake_publish)
+
+        generate_parquet_mirrors(
+            catalog_root, {"landsat"}, generate_parquet=False, versioned_collections={"landsat"}
+        )
+
+        assert published == []
+        latest = read_versions(collection_with_items / "versions.json").versions[-1]
+        assert latest.version == "1.0.0"
+        assert sorted(latest.assets) == ["items.parquet", "scene-000.tif"]

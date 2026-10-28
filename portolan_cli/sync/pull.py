@@ -44,6 +44,7 @@ from portolan_cli.async_utils import (
 from portolan_cli.catalog import intermediate_catalog_ids
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import detail, error, info, output_section, success, warn
+from portolan_cli.run_state import stat_matches
 from portolan_cli.stac_links import SIDE_FILES, published_files
 from portolan_cli.sync.checksums import compute_checksum
 from portolan_cli.sync.download import (
@@ -220,16 +221,8 @@ def detect_uncommitted_changes(
             uncommitted.append(asset_name)
             continue
 
-        # Fast path: check mtime and size first
-        # Only works if we have recorded mtime; otherwise fall through to checksum
-        stat = local_path.stat()
-        # Compare with small tolerance for floating point mtime
-        if (
-            asset.mtime is not None
-            and abs(stat.st_mtime - asset.mtime) < 0.001
-            and stat.st_size == asset.size_bytes
-        ):
-            # Fast path: mtime and size match, file unchanged
+        # Fast path: the size and mtime match the record, so the file is unchanged.
+        if stat_matches(local_path.stat(), asset.mtime, asset.size_bytes):
             continue
 
         # Slow path: compute checksum (either mtime not recorded or mtime/size changed)
@@ -1508,7 +1501,10 @@ async def pull_all_collections_async(
         ValueError: If local_root is not a valid catalog.
     """
     # Import here to avoid circular dependency
+    from portolan_cli.run_state import RunState
+    from portolan_cli.stac_links import catalog_collections
     from portolan_cli.sync.push import discover_collections
+    from portolan_cli.version_ops import try_backend_pull
 
     # Validate URL and create shared store (connection pooling)
     try:
@@ -1516,10 +1512,21 @@ async def pull_all_collections_async(
     except ValueError as e:
         raise ValueError(f"Invalid remote URL: {e}") from e
 
-    shared_store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=4)
+    shared_store: ObjectStore | None = None
 
     # discover_collections validates catalog and raises ValueError if invalid
     collections = discover_collections(local_root)
+    state = RunState.open(local_root)
+    # Plugin history need not have a local versions.json. Keep file discovery
+    # intact and include plugin collections from the STAC tree as well.
+    collections = sorted(
+        set(collections)
+        | {
+            c
+            for c in catalog_collections(local_root)
+            if state.backend(state.collection_dir(c)) != "file"
+        }
+    )
     total = len(collections)
 
     if total == 0:
@@ -1552,8 +1559,32 @@ async def pull_all_collections_async(
 
     async def pull_one(collection: str) -> tuple[str, PullResult | None, str | None]:
         """Pull a single collection with semaphore control."""
+        nonlocal shared_store
         async with semaphore:
             try:
+                # A plugin pull is synchronous. A thread keeps the other
+                # collections downloading while it runs.
+                backend_result = await asyncio.to_thread(
+                    try_backend_pull, local_root, remote_url, collection, dry_run, state=state
+                )
+                if backend_result.handled:
+                    return (
+                        collection,
+                        PullResult(
+                            success=backend_result.success,
+                            files_downloaded=backend_result.files_downloaded,
+                            files_skipped=backend_result.files_skipped,
+                            local_version=backend_result.local_version,
+                            remote_version=backend_result.remote_version,
+                            up_to_date=backend_result.up_to_date,
+                            dry_run=dry_run,
+                        ),
+                        None,
+                    )
+                if shared_store is None and not dry_run:
+                    shared_store, _kwargs = _setup_store_and_kwargs(
+                        bucket_url, profile, chunk_concurrency=4
+                    )
                 # Build kwargs, only including concurrency if explicitly set
                 pull_kwargs: dict[str, Any] = {
                     "remote_url": remote_url,

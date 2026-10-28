@@ -29,6 +29,7 @@ from collections import Counter
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
+from portolan_cli.extract.common.orchestrator_base import parquet_row_count
 from portolan_cli.extract.common.report import MetadataExtracted
 from portolan_cli.extract.common.source import (
     Discovery,
@@ -235,11 +236,7 @@ class WFSLayerSource:
             if _is_empty_layer_error(str(err)):
                 raise EmptyLayerError(str(err)) from err
             raise
-        if not dest.exists():
-            return 0
-        import pyarrow.parquet as pq
-
-        return int(pq.read_metadata(dest).num_rows)
+        return parquet_row_count(dest)
 
     def layer_metadata(self, source: str, layer: LayerRef) -> LayerMetadata:
         """Prefer the layer's ISO 19139 record. Fall back to GetCapabilities."""

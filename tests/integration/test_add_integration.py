@@ -19,12 +19,12 @@ import pytest
 
 from portolan_cli.add import (
     add,
-    compute_checksum,
     convert_raster,
     convert_vector,
     get_item_info,
     list_items,
 )
+from portolan_cli.sync.checksums import compute_checksum
 
 if TYPE_CHECKING:
     from pathlib import Path

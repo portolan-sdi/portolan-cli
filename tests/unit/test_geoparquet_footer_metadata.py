@@ -152,28 +152,20 @@ def test_rewrite_fidelity_reads_the_crs(tmp_path: Path) -> None:
     assert fidelity.columns == frozenset({"name", "geometry"})
 
 
-def test_extra_schema_metadata_keeps_publisher_keys(tmp_path: Path) -> None:
-    """A publisher key in the footer survives. It was invisible before the fix."""
-    from portolan_cli.metadata.geoparquet import read_extra_schema_metadata
+def test_rewrite_fidelity_keeps_publisher_keys(tmp_path: Path) -> None:
+    """A publisher key in the footer counts. ``geo`` and ``ARROW:schema`` do not.
+
+    geoparquet-io writes a fresh ``geo`` key, and ``ARROW:schema`` describes the
+    columns the source had, not the ones the rewrite produced.
+    """
+    from portolan_cli.metadata.geoparquet import read_rewrite_fidelity
 
     path = _write_appended_geo_parquet(tmp_path / "extra.parquet", extra={"source": "kiln"})
-    preserved = read_extra_schema_metadata(path)
-    assert preserved[b"source"] == b"kiln"
-
-
-def test_extra_schema_metadata_drops_geo_and_arrow_schema(tmp_path: Path) -> None:
-    """``geo`` and ``ARROW:schema`` never come back onto a rewritten file.
-
-    geoparquet-io writes a fresh ``geo`` key, and a restored ``ARROW:schema``
-    blob would describe the columns the source had, not the ones the rewrite
-    produced.
-    """
-    from portolan_cli.metadata.geoparquet import read_extra_schema_metadata
-
-    path = _write_appended_geo_parquet(tmp_path / "reserved.parquet", extra={"source": "kiln"})
-    preserved = read_extra_schema_metadata(path)
-    assert b"geo" not in preserved
-    assert b"ARROW:schema" not in preserved
+    fidelity = read_rewrite_fidelity(path)
+    assert fidelity is not None
+    assert b"source" in fidelity.extra_keys
+    assert b"geo" not in fidelity.extra_keys
+    assert b"ARROW:schema" not in fidelity.extra_keys
 
 
 def test_tabular_metadata_skips_the_file(appended_geo_parquet: Path) -> None:
@@ -191,13 +183,16 @@ def test_thumbnail_bounds_come_from_the_declared_bbox(
     The fallback is replaced by a raiser. Before the fix the metadata lookup
     found no ``geo`` key and the fallback ran, so this test failed.
     """
+    pytest.importorskip("geopandas")
     from portolan_cli.viz import thumbnail
 
-    def _no_fallback(_: Path) -> None:
+    def _no_fallback(*_args: object) -> None:
         raise AssertionError("bounds fell back to a data read")
 
-    monkeypatch.setattr(thumbnail, "_read_geoparquet_bounds_from_data", _no_fallback)
-    assert thumbnail._read_geoparquet_bounds(appended_geo_parquet) == (1.0, 2.0, 3.0, 4.0)
+    monkeypatch.setattr(thumbnail, "_stream_bounds", _no_fallback)
+    monkeypatch.setattr(thumbnail, "_finite_bounds", _no_fallback)
+    _gdf, bbox, _crs = thumbnail._read_geoparquet_for_thumbnail(appended_geo_parquet)
+    assert bbox == (1.0, 2.0, 3.0, 4.0)
 
 
 def test_thumbnail_sample_reads_the_crs(appended_geo_parquet: Path) -> None:
@@ -208,9 +203,9 @@ def test_thumbnail_sample_reads_the_crs(appended_geo_parquet: Path) -> None:
     pins that difference so a later refactor does not lose it.
     """
     pytest.importorskip("geopandas")
-    from portolan_cli.viz.thumbnail import _sample_geoparquet
+    from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
 
-    frame = _sample_geoparquet(appended_geo_parquet, max_features=2)
+    frame, _bbox, _crs = _read_geoparquet_for_thumbnail(appended_geo_parquet, max_features=2)
     assert frame is not None
     assert len(frame) == 2
 

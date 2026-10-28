@@ -234,14 +234,14 @@ class TestCheckPassFlags:
 
     @pytest.mark.unit
     def test_no_data_disables_the_data_pass(self, runner: CliRunner, valid_catalog: Path) -> None:
-        with patch("portolan_cli.cli.run_check") as mock_run:
+        with patch("portolan_cli.validation.run_check") as mock_run:
             mock_run.return_value = _empty_outcome()
             runner.invoke(cli, ["check", str(valid_catalog), "--no-data"])
         assert mock_run.call_args.kwargs["data"] is False
 
     @pytest.mark.unit
     def test_data_pass_is_on_by_default(self, runner: CliRunner, valid_catalog: Path) -> None:
-        with patch("portolan_cli.cli.run_check") as mock_run:
+        with patch("portolan_cli.validation.run_check") as mock_run:
             mock_run.return_value = _empty_outcome()
             runner.invoke(cli, ["check", str(valid_catalog)])
         assert mock_run.call_args.kwargs["data"] is True
@@ -250,7 +250,7 @@ class TestCheckPassFlags:
     def test_structural_is_on_by_default_and_disablable(
         self, runner: CliRunner, valid_catalog: Path
     ) -> None:
-        with patch("portolan_cli.cli.run_check") as mock_run:
+        with patch("portolan_cli.validation.run_check") as mock_run:
             mock_run.return_value = _empty_outcome()
             runner.invoke(cli, ["check", str(valid_catalog)])
             assert mock_run.call_args.kwargs["structural"] is True
@@ -262,7 +262,7 @@ class TestCheckPassFlags:
         self, runner: CliRunner, valid_catalog: Path
     ) -> None:
         """The profile schema pass restates hand-rule findings, so it is opt-in."""
-        with patch("portolan_cli.cli.run_check") as mock_run:
+        with patch("portolan_cli.validation.run_check") as mock_run:
             mock_run.return_value = _empty_outcome()
             runner.invoke(cli, ["check", str(valid_catalog)])
             assert mock_run.call_args.kwargs["schema"] is False
@@ -273,7 +273,7 @@ class TestCheckPassFlags:
     def test_live_is_off_by_default_and_enablable(
         self, runner: CliRunner, valid_catalog: Path
     ) -> None:
-        with patch("portolan_cli.cli.run_check") as mock_run:
+        with patch("portolan_cli.validation.run_check") as mock_run:
             mock_run.return_value = _empty_outcome()
             runner.invoke(cli, ["check", str(valid_catalog)])
             assert mock_run.call_args.kwargs["live"] is False
@@ -282,7 +282,7 @@ class TestCheckPassFlags:
 
     @pytest.mark.unit
     def test_url_is_threaded_through(self, runner: CliRunner, valid_catalog: Path) -> None:
-        with patch("portolan_cli.cli.run_check") as mock_run:
+        with patch("portolan_cli.validation.run_check") as mock_run:
             mock_run.return_value = _empty_outcome()
             runner.invoke(
                 cli, ["check", str(valid_catalog), "--url", "https://data.example.org/c/"]
@@ -306,14 +306,14 @@ class TestCheckDataScope:
 
     @pytest.mark.unit
     def test_scope_defaults_to_all(self, runner: CliRunner, valid_catalog: Path) -> None:
-        with patch("portolan_cli.cli.run_check") as mock_run:
+        with patch("portolan_cli.validation.run_check") as mock_run:
             mock_run.return_value = _empty_outcome()
             runner.invoke(cli, ["check", str(valid_catalog)])
         assert mock_run.call_args.kwargs["data_scope"] == "all"
 
     @pytest.mark.unit
     def test_scope_local_is_threaded_through(self, runner: CliRunner, valid_catalog: Path) -> None:
-        with patch("portolan_cli.cli.run_check") as mock_run:
+        with patch("portolan_cli.validation.run_check") as mock_run:
             mock_run.return_value = _empty_outcome()
             runner.invoke(cli, ["check", str(valid_catalog), "--data-scope", "local"])
         assert mock_run.call_args.kwargs["data_scope"] == "local"
@@ -325,7 +325,7 @@ class TestCheckDataScope:
 
     @pytest.mark.unit
     def test_scope_with_no_data_warns(self, runner: CliRunner, valid_catalog: Path) -> None:
-        with patch("portolan_cli.cli.run_check") as mock_run:
+        with patch("portolan_cli.validation.run_check") as mock_run:
             mock_run.return_value = _empty_outcome()
             result = runner.invoke(
                 cli, ["check", str(valid_catalog), "--data-scope", "local", "--no-data"]
@@ -998,7 +998,7 @@ class TestExitCodePerMode:
         from portolan_cli.validation import fixers
 
         root = _mirror_catalog_with_a_lost_child_link(valid_catalog)
-        monkeypatch.setitem(fixers.FIXERS, "links", lambda _root, _dry_run: [])
+        monkeypatch.setitem(fixers.FIXERS, "links", lambda _root, _dry_run, _state=None: [])
 
         result = runner.invoke(cli, ["check", str(root), "--json", "--fix", "--metadata"])
 
@@ -1015,7 +1015,7 @@ class TestExitCodePerMode:
 
         root = _mirror_catalog_with_a_lost_child_link(valid_catalog)
 
-        def _failing(fix_root: Path, _dry_run: bool) -> list[FixResult]:
+        def _failing(fix_root: Path, _dry_run: bool, _state: object = None) -> list[FixResult]:
             target = fix_root / "catalog.json"
             return [FixResult(target, FixAction.UPDATED, success=False, message="injected")]
 

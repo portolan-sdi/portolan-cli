@@ -13,16 +13,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from pathlib import Path
+from typing import Any, Literal
 
 import pyarrow.parquet as pq
 import rasterio
 from rasterio import Statistics as RasterioStats
 
 from portolan_cli.trace import count
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def _serialize_stat_value(value: Any) -> Any:
@@ -127,44 +125,101 @@ def extract_band_statistics(
         List of BandStatistics, one per band.
     """
     count("raster.opens")
-    with rasterio.open(path) as src:
-        results: list[BandStatistics] = []
-        computed_stats: list[RasterioStats] | None = None  # Lazy-computed via stats()
+    # PAM off: GDAL would write the statistics it computes to a .aux.xml
+    # sidecar, which is no part of the published COG (issue #748).
+    with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(path) as src:
+        return band_statistics_of(src, mode=mode)
 
-        for band_idx in range(1, src.count + 1):
-            # Try cached stats first (GDAL metadata tags) - but not if exact mode requested
-            tags = src.tags(bidx=band_idx)
-            if mode != "exact" and "STATISTICS_MINIMUM" in tags:
-                results.append(
-                    BandStatistics(
-                        minimum=float(tags["STATISTICS_MINIMUM"]),
-                        maximum=float(tags["STATISTICS_MAXIMUM"]),
-                        mean=float(tags["STATISTICS_MEAN"]),
-                        stddev=float(tags["STATISTICS_STDDEV"]),
-                        valid_percent=float(tags.get("STATISTICS_VALID_PERCENT", 100)),
-                    )
-                )
-                continue
 
-            if mode == "cached":
-                continue  # No cached stats and cached-only mode, skip this band
+def band_statistics_of(
+    src: Any, *, mode: Literal["cached", "approx", "exact"] = "approx"
+) -> list[BandStatistics]:
+    """Read the band statistics of an open dataset. See :func:`extract_band_statistics`."""
+    results: list[BandStatistics] = []
+    computed_stats: list[RasterioStats] | None = None  # Lazy-computed via stats()
 
-            # Compute using GDAL's stats() (rasterio 2.0+ compatible)
-            # Lazy-compute once for all bands that need it
-            if computed_stats is None:
-                computed_stats = src.stats(approx=(mode == "approx"))
-
-            stat = computed_stats[band_idx - 1]  # stats() returns 0-indexed list
+    for band_idx in range(1, src.count + 1):
+        # Try cached stats first (GDAL metadata tags) - but not if exact mode requested
+        tags = src.tags(bidx=band_idx)
+        if mode != "exact" and "STATISTICS_MINIMUM" in tags:
             results.append(
                 BandStatistics(
-                    minimum=_as_gdal_stores(stat.min),
-                    maximum=_as_gdal_stores(stat.max),
-                    mean=_as_gdal_stores(stat.mean),
-                    stddev=_as_gdal_stores(stat.std),
+                    minimum=float(tags["STATISTICS_MINIMUM"]),
+                    maximum=float(tags["STATISTICS_MAXIMUM"]),
+                    mean=float(tags["STATISTICS_MEAN"]),
+                    stddev=float(tags["STATISTICS_STDDEV"]),
+                    valid_percent=float(tags.get("STATISTICS_VALID_PERCENT", 100)),
                 )
             )
+            continue
 
-        return results
+        if mode == "cached":
+            continue  # No cached stats and cached-only mode, skip this band
+
+        # Compute using GDAL's stats() (rasterio 2.0+ compatible)
+        # Lazy-compute once for all bands that need it
+        if computed_stats is None:
+            computed_stats = src.stats(approx=(mode == "approx"))
+
+        stat = computed_stats[band_idx - 1]  # stats() returns 0-indexed list
+        results.append(
+            BandStatistics(
+                minimum=_as_gdal_stores(stat.min),
+                maximum=_as_gdal_stores(stat.max),
+                mean=_as_gdal_stores(stat.mean),
+                stddev=_as_gdal_stores(stat.std),
+            )
+        )
+
+    return results
+
+
+#: The band tags that PTL-DAT-009 and PTL-DAT-010 read from a COG.
+EMBEDDED_STATISTICS_TAGS = frozenset(
+    {
+        "STATISTICS_MINIMUM",
+        "STATISTICS_MAXIMUM",
+        "STATISTICS_MEAN",
+        "STATISTICS_STDDEV",
+        "STATISTICS_VALID_PERCENT",
+    }
+)
+
+
+def _has_statistics(tags: dict[str, str]) -> bool:
+    """Report whether band tags hold every statistic the band can have."""
+    return set(tags) >= EMBEDDED_STATISTICS_TAGS or tags.get("STATISTICS_VALID_PERCENT") == "0"
+
+
+def embedded_statistics(source: Path | Any) -> Literal["present", "missing", "lossy"]:
+    """Report whether a COG carries its band statistics in the file itself.
+
+    The read has PAM off, as rashid reads, so a ``.aux.xml`` does not count.
+
+    Args:
+        source: A COG, or a COG open with PAM off. A path is opened and closed here.
+
+    Returns:
+        ``present`` when every band has the five statistics tags, or has no
+        valid pixel (``STATISTICS_VALID_PERCENT=0``), so that no statistics
+        exist to embed. ``lossy``
+        when some are missing and the tiles use lossy compression, such as JPEG
+        or lossy WEBP. A rewrite would re-encode those pixels. ``missing``
+        otherwise.
+    """
+    if not isinstance(source, Path):
+        return _embedded_statistics_of(source)
+    count("raster.opens")
+    with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(source) as src:
+        return _embedded_statistics_of(src)
+
+
+def _embedded_statistics_of(src: Any) -> Literal["present", "missing", "lossy"]:
+    if all(_has_statistics(src.tags(bidx=band)) for band in src.indexes):
+        return "present"
+    structure = src.tags(ns="IMAGE_STRUCTURE")
+    lossy = structure.get("COMPRESSION_REVERSIBILITY", "").upper() == "LOSSY"
+    return "lossy" if lossy or "JPEG" in structure.get("COMPRESSION", "").upper() else "missing"
 
 
 def _as_gdal_stores(value: float) -> float:

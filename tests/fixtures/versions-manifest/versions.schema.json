@@ -125,6 +125,11 @@
           "type": "string",
           "minLength": 1,
           "description": "Optional hash of the asset schema captured when the asset was tracked. Freshness heuristic: a change indicates a breaking schema change."
+        },
+        "source_fingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional hash of the input files of a generated asset, captured when it was built. items.parquet records the href, size, and mtime of each item file. The CLI rebuilds the asset only when this hash or the asset bytes differ."
         }
       }
     },
