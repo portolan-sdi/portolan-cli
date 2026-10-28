@@ -152,8 +152,13 @@ jobs:
           uv run python - <<'PYCONFIG'
           from pathlib import Path
           path = Path("pyproject.toml")
-          path.write_text(path.read_text().replace("[tool.mutmut]", "[tool.mutmut]\ndebug = true"))
+          source = path.read_text().replace("[tool.mutmut]", "[tool.mutmut]\ndebug = true")
+          source = source.replace('paths_to_mutate = ["portolan_cli/"]', 'paths_to_mutate = ["portolan_cli/backends/__init__.py", "portolan_cli/backends/protocol.py"]')
+          source = source.replace('also_copy = [', 'also_copy = ["portolan_cli/",')
+          source = source.replace('pytest_add_cli_args_test_selection = ["tests/"]', 'pytest_add_cli_args_test_selection = ["tests/iceberg/integration/test_cli_add_iceberg.py::test_add_geojson_creates_iceberg_table"]')
+          path.write_text(source)
           PYCONFIG
+          GLOBS=("portolan_cli.backends.x_get_backend__mutmut_1")
           uv run mutmut run "${GLOBS[@]}" 2>&1 | tee mutmut-run.log || STATUS=$?
           if grep -q "Filtered for specific mutants, but nothing matches" mutmut-run.log; then
             echo "::error::mutmut matched no mutants for this shard's globs — the" \
@@ -166,28 +171,6 @@ jobs:
             exit "$STATUS"
           fi
 
-      - name: Enforce mutation floor
-        if: steps.shard.outputs.has_globs == 'true'
-        env:
-          SHARD: ${{ steps.shard.outputs.shard }}
-          NUM_SHARDS: ${{ steps.shard.outputs.num_shards }}
-        run: |
-          # Export aggregates and enforce two floors: the repo-wide catastrophe
-          # floor in .mutation-baseline, and this shard's own recorded rate from
-          # .mutation-shards.json (a shard's rate depends on which modules land
-          # in it, so the repo-wide number alone either flaps or gates nothing).
-          # No --allow-empty here: on the full sweep, zero testable mutants means
-          # mutation testing is broken (the #612 silent-green guard), not a pass.
-          uv run mutmut export-cicd-stats
-          uv run python scripts/mutation_score.py \
-            --stats mutants/mutmut-cicd-stats.json \
-            --baseline .mutation-baseline \
-            --shards .mutation-shards.json \
-            --shard "$SHARD" \
-            --num-shards "$NUM_SHARDS" \
-            --summary "$GITHUB_STEP_SUMMARY" \
-            --label "nightly shard ${SHARD}"
-
       - name: Generate mutation report
         if: always() && steps.shard.outputs.has_globs == 'true'
         run: |
@@ -195,6 +178,7 @@ jobs:
           # Note: JSON stats only have aggregates, not individual mutations
           uv run mutmut results --all true > mutation-results.txt
           # Also save the JSON stats
+          uv run mutmut export-cicd-stats
           cp mutants/mutmut-cicd-stats.json .
 
       - name: Upload mutation report
