@@ -2,8 +2,7 @@
   "minTokens": 50,
   "ignore": [
     "**/tests/fixtures/**",
-    "**/.venv/**",
-    "**/mutants/**"
+    "**/.venv/**"
   ],
   "reporters": ["console"],
   "absolute": true,

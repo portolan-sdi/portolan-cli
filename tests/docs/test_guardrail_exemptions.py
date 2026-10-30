@@ -13,9 +13,6 @@ The file holds three kinds of line. This module keeps it equal to the code:
 
 The count of each kind is pinned. A change to a count is a reviewed change to
 this module.
-
-The scan reads the test sources with ``ast``, so it runs under the
-``source_scan`` marker, outside the mutation sandbox.
 """
 
 from __future__ import annotations
@@ -28,7 +25,7 @@ import pytest
 
 from tests.catalog_invariants import EXEMPTIONS_FILE, KNOWN_INVARIANT_GAPS, load_exemptions
 
-pytestmark = [pytest.mark.unit, pytest.mark.source_scan]
+pytestmark = pytest.mark.unit
 
 TESTS = Path(__file__).resolve().parents[1]
 ISSUE_REASON = re.compile(r"^#(\d+): \S")

@@ -649,9 +649,8 @@ class TestEmptySectionFormatting:
             directories_scanned=1,
         )
 
-        # Legacy paths are still counted as unknown, so may not be empty
-        # But the function should handle gracefully without raising
-        _format_skipped(result)  # Should not raise
+        # group_skipped_files drops legacy Paths, so the section is empty
+        assert _format_skipped(result) == []
 
 
 @pytest.mark.unit

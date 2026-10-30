@@ -46,11 +46,18 @@ These test Portolan's **orchestration** with production data, they do NOT test g
 
 ## Defending Against Tautological Tests
 
-Three layers of defense:
+Two defenses:
 
-1. **Mutation testing**, Nightly `mutmut` runs verify tests catch real bugs
-2. **Property-based testing**, Use `hypothesis` for invariant verification
-3. **Human test specs**, `tests/specs/` defines what matters, AI implements
+1. **The per-assertion checklist below**, Each regression test must go red on
+   the pre-fix code. Revert the fix, or inject the wrong result, and confirm
+   that the test fails before you commit it.
+2. **Ruff assertion rules**, The `B` and `F` rule sets in `[tool.ruff.lint]`
+   flag `assert False` (B011), a comparison with no effect (B015), a test that
+   expects a bare `Exception` (B017), and an assert on a tuple (F631). The
+   `PT` (flake8-pytest-style) rules are not selected.
+
+Property tests (`hypothesis`) check invariants, and `tests/specs/` holds the
+human specs that the tests implement.
 
 ### Per-assertion checklist (this is the most-flagged review issue)
 

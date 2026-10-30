@@ -7,8 +7,10 @@ listing, and removing items from a Portolan catalog.
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -26,6 +28,106 @@ from portolan_cli.plugins.builtin.formats import COG, GEOPARQUET
 from portolan_cli.preparation import PreparedItem
 from portolan_cli.sync.checksums import compute_checksum, compute_dir_size
 from portolan_cli.versions import read_versions
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
+
+def _point_geojson(coordinates: list[float], properties: dict[str, Any]) -> str:
+    """Return a GeoJSON FeatureCollection with one Point feature."""
+    return json.dumps(
+        {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": coordinates},
+                    "properties": properties,
+                }
+            ],
+        }
+    )
+
+
+def _vector_metadata(
+    bbox: tuple[float, ...] | None,
+    feature_count: int,
+    to_stac_properties: Callable[[], dict[str, Any]],
+) -> MagicMock:
+    """Return mock GeoParquet metadata in EPSG:4326 with a Point geometry column."""
+    return MagicMock(
+        bbox=bbox,
+        crs="EPSG:4326",
+        feature_count=feature_count,
+        geometry_type="Point",
+        geometry_column="geometry",  # Required for table extension
+        schema={"id": "int64", "geometry": "binary"},  # Required for table extension
+        to_stac_properties=to_stac_properties,
+    )
+
+
+@contextmanager
+def _patch_vector_add() -> Iterator[tuple[MagicMock, MagicMock, MagicMock]]:
+    """Patch format detection, vector conversion, and metadata extraction for add."""
+    with (
+        patch("portolan_cli.preparation.handler_for") as mock_detect,
+        patch("portolan_cli.api.convert_vector") as mock_convert,
+        patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
+    ):
+        yield mock_detect, mock_convert, mock_metadata
+
+
+def _add_with_vector_mocks(
+    geojson_path: Path,
+    output_file: Path,
+    bbox: tuple[float, ...],
+    to_stac_properties: Callable[[], dict[str, Any]],
+    **add_kwargs: Any,
+) -> ItemInfo:
+    """Run add on geojson_path with mocks that convert it to output_file with one feature."""
+    with _patch_vector_add() as (mock_detect, mock_convert, mock_metadata):
+        mock_detect.return_value = GEOPARQUET
+        mock_convert.return_value = output_file
+        mock_metadata.return_value = _vector_metadata(
+            bbox=bbox, feature_count=1, to_stac_properties=to_stac_properties
+        )
+        return add(path=geojson_path, **add_kwargs)
+
+
+def _write_collection(col_dir: Path, description: str, bbox: list[float], item_href: str) -> None:
+    """Write collection.json in col_dir with the directory name as id and one item link."""
+    collection_data = {
+        "type": "Collection",
+        "stac_version": "1.0.0",
+        "id": col_dir.name,
+        "description": description,
+        "license": "proprietary",
+        "extent": {
+            "spatial": {"bbox": [bbox]},
+            "temporal": {"interval": [[None, None]]},
+        },
+        "links": [{"rel": "item", "href": item_href}],
+    }
+    (col_dir / "collection.json").write_text(json.dumps(collection_data))
+
+
+def _write_item(item_dir: Path, bbox: list[float], assets: dict[str, Any]) -> None:
+    """Make item_dir and write <name>.json in it, with a unit square geometry."""
+    item_dir.mkdir()
+    item_data = {
+        "type": "Feature",
+        "stac_version": "1.0.0",
+        "id": item_dir.name,
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
+        },
+        "bbox": bbox,
+        "properties": {"datetime": "2024-01-01T00:00:00Z"},
+        "links": [],
+        "assets": assets,
+    }
+    (item_dir / f"{item_dir.name}.json").write_text(json.dumps(item_data))
 
 
 @pytest.fixture
@@ -93,36 +195,18 @@ class TestAdd:
         item_dir.mkdir(parents=True, exist_ok=True)
 
         geojson_path = item_dir / "data.geojson"
-        geojson_data = {
-            "type": "FeatureCollection",
-            "features": [
-                {
-                    "type": "Feature",
-                    "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                    "properties": {"name": "test"},
-                }
-            ],
-        }
-        geojson_path.write_text(json.dumps(geojson_data))
+        geojson_path.write_text(_point_geojson([-122.4, 37.8], {"name": "test"}))
 
         # Create the output file that convert_vector would create (in same dir)
         output_file = item_dir / "data.parquet"
         output_file.write_bytes(b"fake parquet data")
 
-        with (
-            patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.api.convert_vector") as mock_convert,
-            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-        ):
+        with _patch_vector_add() as (mock_detect, mock_convert, mock_metadata):
             mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
-            mock_metadata.return_value = MagicMock(
+            mock_metadata.return_value = _vector_metadata(
                 bbox=(-122.5, 37.5, -122.0, 38.0),
-                crs="EPSG:4326",
                 feature_count=1,
-                geometry_type="Point",
-                geometry_column="geometry",  # Required for table extension
-                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {"geoparquet:feature_count": 1},
             )
 
@@ -207,48 +291,24 @@ class TestAdd:
 
         geojson_path = item_dir / "data.geojson"
         # Must have valid features for pre-validation
-        geojson_data = {
-            "type": "FeatureCollection",
-            "features": [
-                {
-                    "type": "Feature",
-                    "geometry": {"type": "Point", "coordinates": [0, 0]},
-                    "properties": {},
-                }
-            ],
-        }
-        geojson_path.write_text(json.dumps(geojson_data))
+        geojson_path.write_text(_point_geojson([0, 0], {}))
 
         output_file = item_dir / "data.parquet"
         output_file.write_bytes(b"fake data")
 
-        with (
-            patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.api.convert_vector") as mock_convert,
-            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-        ):
-            mock_detect.return_value = GEOPARQUET
-            mock_convert.return_value = output_file
-            mock_metadata.return_value = MagicMock(
-                bbox=(-1, -1, 1, 1),
-                crs="EPSG:4326",
-                feature_count=1,
-                geometry_type="Point",
-                geometry_column="geometry",  # Required for table extension
-                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=dict,
-            )
+        result = _add_with_vector_mocks(
+            geojson_path,
+            output_file,
+            bbox=(-1, -1, 1, 1),
+            to_stac_properties=dict,
+            catalog_root=initialized_catalog,
+            collection_id="test",
+            title="My Dataset",
+            description="A detailed description",
+        )
 
-            result = add(
-                path=geojson_path,
-                catalog_root=initialized_catalog,
-                collection_id="test",
-                title="My Dataset",
-                description="A detailed description",
-            )
-
-            assert result.title == "My Dataset"
-            assert result.description == "A detailed description"
+        assert result.title == "My Dataset"
+        assert result.description == "A detailed description"
 
     @pytest.mark.unit
     def test_add_creates_collection_if_not_exists(
@@ -261,50 +321,24 @@ class TestAdd:
 
         geojson_path = item_dir / "data.geojson"
         # Must have valid features for pre-validation
-        geojson_data = {
-            "type": "FeatureCollection",
-            "features": [
-                {
-                    "type": "Feature",
-                    "geometry": {"type": "Point", "coordinates": [0, 0]},
-                    "properties": {},
-                }
-            ],
-        }
-        geojson_path.write_text(json.dumps(geojson_data))
+        geojson_path.write_text(_point_geojson([0, 0], {}))
 
         output_file = item_dir / "data.parquet"
         output_file.write_bytes(b"fake data")
 
-        with (
-            patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.api.convert_vector") as mock_convert,
-            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-        ):
-            mock_detect.return_value = GEOPARQUET
-            mock_convert.return_value = output_file
-            mock_metadata.return_value = MagicMock(
-                bbox=(0, 0, 1, 1),
-                crs="EPSG:4326",
-                feature_count=1,
-                geometry_type="Point",
-                geometry_column="geometry",  # Required for table extension
-                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=dict,
-            )
+        result = _add_with_vector_mocks(
+            geojson_path,
+            output_file,
+            bbox=(0, 0, 1, 1),
+            to_stac_properties=dict,
+            catalog_root=initialized_catalog,
+            collection_id="new-collection",
+        )
 
-            result = add(
-                path=geojson_path,
-                catalog_root=initialized_catalog,
-                collection_id="new-collection",
-            )
-
-            # Collection should have been created
-            collection_dir = initialized_catalog / "new-collection"
-            assert collection_dir.exists(), "Collection directory should exist"
-            assert result.collection_id == "new-collection", (
-                "Result should have correct collection_id"
-            )
+        # Collection should have been created
+        collection_dir = initialized_catalog / "new-collection"
+        assert collection_dir.exists(), "Collection directory should exist"
+        assert result.collection_id == "new-collection", "Result should have correct collection_id"
 
 
 class TestListItems:
@@ -357,21 +391,10 @@ class TestListItems:
         # Create collection at root
         col_dir = initialized_catalog / "col"
         col_dir.mkdir(parents=True)
-
         # Collection references an item that doesn't exist
-        collection_data = {
-            "type": "Collection",
-            "stac_version": "1.0.0",
-            "id": "col",
-            "description": "Test",
-            "license": "proprietary",
-            "extent": {
-                "spatial": {"bbox": [[0, 0, 1, 1]]},
-                "temporal": {"interval": [[None, None]]},
-            },
-            "links": [{"rel": "item", "href": "./missing/missing.json"}],
-        }
-        (col_dir / "collection.json").write_text(json.dumps(collection_data))
+        _write_collection(
+            col_dir, description="Test", bbox=[0, 0, 1, 1], item_href="./missing/missing.json"
+        )
 
         items = list_items(initialized_catalog)
         assert items == []
@@ -385,37 +408,15 @@ class TestListItems:
         # Create collection directory at root
         col_dir = initialized_catalog / "imagery"
         col_dir.mkdir(parents=True)
-
-        collection_data = {
-            "type": "Collection",
-            "stac_version": "1.0.0",
-            "id": "imagery",
-            "description": "Raster imagery",
-            "license": "proprietary",
-            "extent": {
-                "spatial": {"bbox": [[0, 0, 1, 1]]},
-                "temporal": {"interval": [[None, None]]},
-            },
-            "links": [{"rel": "item", "href": "./raster/raster.json"}],
-        }
-        (col_dir / "collection.json").write_text(json.dumps(collection_data))
+        _write_collection(
+            col_dir,
+            description="Raster imagery",
+            bbox=[0, 0, 1, 1],
+            item_href="./raster/raster.json",
+        )
 
         item_dir = col_dir / "raster"
-        item_dir.mkdir()
-        item_data = {
-            "type": "Feature",
-            "stac_version": "1.0.0",
-            "id": "raster",
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
-            },
-            "bbox": [0, 0, 1, 1],
-            "properties": {"datetime": "2024-01-01T00:00:00Z"},
-            "links": [],
-            "assets": {"data": {"href": "image.tif"}},
-        }
-        (item_dir / "raster.json").write_text(json.dumps(item_data))
+        _write_item(item_dir, bbox=[0, 0, 1, 1], assets={"data": {"href": "image.tif"}})
 
         items = list_items(initialized_catalog)
 
@@ -431,39 +432,17 @@ class TestListItems:
         # Create collection directory at root
         col1_dir = initialized_catalog / "col1"
         col1_dir.mkdir(parents=True)
-
         # Create a minimal collection.json
-        collection_data = {
-            "type": "Collection",
-            "stac_version": "1.0.0",
-            "id": "col1",
-            "description": "Test collection",
-            "license": "proprietary",
-            "extent": {
-                "spatial": {"bbox": [[-180, -90, 180, 90]]},
-                "temporal": {"interval": [[None, None]]},
-            },
-            "links": [{"rel": "item", "href": "./item1/item1.json"}],
-        }
-        (col1_dir / "collection.json").write_text(json.dumps(collection_data))
+        _write_collection(
+            col1_dir,
+            description="Test collection",
+            bbox=[-180, -90, 180, 90],
+            item_href="./item1/item1.json",
+        )
 
         # Create item directory with item.json
         item_dir = col1_dir / "item1"
-        item_dir.mkdir()
-        item_data = {
-            "type": "Feature",
-            "stac_version": "1.0.0",
-            "id": "item1",
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
-            },
-            "bbox": [0, 0, 1, 1],
-            "properties": {"datetime": "2024-01-01T00:00:00Z"},
-            "links": [],
-            "assets": {"data": {"href": "data.parquet"}},
-        }
-        (item_dir / "item1.json").write_text(json.dumps(item_data))
+        _write_item(item_dir, bbox=[0, 0, 1, 1], assets={"data": {"href": "data.parquet"}})
 
         # Update catalog to link to collection (catalog.json is at root)
         catalog_data = json.loads((initialized_catalog / "catalog.json").read_text())
@@ -486,36 +465,15 @@ class TestListItems:
         for col_id in ["col1", "col2"]:
             col_dir = initialized_catalog / col_id
             col_dir.mkdir(parents=True)
-            collection_data = {
-                "type": "Collection",
-                "stac_version": "1.0.0",
-                "id": col_id,
-                "description": f"Collection {col_id}",
-                "license": "proprietary",
-                "extent": {
-                    "spatial": {"bbox": [[-180, -90, 180, 90]]},
-                    "temporal": {"interval": [[None, None]]},
-                },
-                "links": [{"rel": "item", "href": f"./item-{col_id}/item-{col_id}.json"}],
-            }
-            (col_dir / "collection.json").write_text(json.dumps(collection_data))
+            _write_collection(
+                col_dir,
+                description=f"Collection {col_id}",
+                bbox=[-180, -90, 180, 90],
+                item_href=f"./item-{col_id}/item-{col_id}.json",
+            )
 
             item_dir = col_dir / f"item-{col_id}"
-            item_dir.mkdir()
-            item_data = {
-                "type": "Feature",
-                "stac_version": "1.0.0",
-                "id": f"item-{col_id}",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
-                },
-                "bbox": [0, 0, 1, 1],
-                "properties": {"datetime": "2024-01-01T00:00:00Z"},
-                "links": [],
-                "assets": {},
-            }
-            (item_dir / f"item-{col_id}.json").write_text(json.dumps(item_data))
+            _write_item(item_dir, bbox=[0, 0, 1, 1], assets={})
 
         # Update catalog links (catalog.json is at root)
         catalog_data = json.loads((initialized_catalog / "catalog.json").read_text())
@@ -544,20 +502,12 @@ class TestGetItemInfo:
         # Create collection at root
         col_dir = initialized_catalog / "test-col"
         col_dir.mkdir(parents=True)
-
-        collection_data = {
-            "type": "Collection",
-            "stac_version": "1.0.0",
-            "id": "test-col",
-            "description": "Test",
-            "license": "proprietary",
-            "extent": {
-                "spatial": {"bbox": [[-122.5, 37.5, -122.0, 38.0]]},
-                "temporal": {"interval": [[None, None]]},
-            },
-            "links": [{"rel": "item", "href": "./my-item/my-item.json"}],
-        }
-        (col_dir / "collection.json").write_text(json.dumps(collection_data))
+        _write_collection(
+            col_dir,
+            description="Test",
+            bbox=[-122.5, 37.5, -122.0, 38.0],
+            item_href="./my-item/my-item.json",
+        )
 
         item_dir = col_dir / "my-item"
         item_dir.mkdir()
@@ -606,22 +556,12 @@ class TestAddMissingBbox:
         output_file = output_dir / "data.parquet"
         output_file.write_bytes(b"fake data")
 
-        with (
-            patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.api.convert_vector") as mock_convert,
-            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-        ):
+        with _patch_vector_add() as (mock_detect, mock_convert, mock_metadata):
             mock_detect.return_value = GEOPARQUET
             mock_convert.return_value = output_file
             # Simulate missing bbox (None or empty tuple)
-            mock_metadata.return_value = MagicMock(
-                bbox=None,  # Missing bbox!
-                crs="EPSG:4326",
-                feature_count=0,
-                geometry_type="Point",
-                geometry_column="geometry",  # Required for table extension
-                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=dict,
+            mock_metadata.return_value = _vector_metadata(
+                bbox=None, feature_count=0, to_stac_properties=dict
             )
 
             with pytest.raises(ValueError, match="missing bounding box"):
@@ -662,23 +602,9 @@ class TestAddItemIdDerivation:
         item_dir.mkdir(parents=True)
 
         geojson_path = item_dir / "radios.geojson"
-        geojson_data = {
-            "type": "FeatureCollection",
-            "features": [
-                {
-                    "type": "Feature",
-                    "geometry": {"type": "Point", "coordinates": [-58.4, -34.6]},
-                    "properties": {"name": "Buenos Aires"},
-                }
-            ],
-        }
-        geojson_path.write_text(json.dumps(geojson_data))
+        geojson_path.write_text(_point_geojson([-58.4, -34.6], {"name": "Buenos Aires"}))
 
-        with (
-            patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.api.convert_vector") as mock_convert,
-            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-        ):
+        with _patch_vector_add() as (mock_detect, mock_convert, mock_metadata):
             mock_detect.return_value = GEOPARQUET
             # Simulate conversion output in the SAME directory (in-place). The
             # converter writes it, so no file of another source holds the name.
@@ -689,13 +615,9 @@ class TestAddItemIdDerivation:
                 return output_file
 
             mock_convert.side_effect = convert
-            mock_metadata.return_value = MagicMock(
+            mock_metadata.return_value = _vector_metadata(
                 bbox=(-58.5, -34.7, -58.3, -34.5),
-                crs="EPSG:4326",
                 feature_count=1,
-                geometry_type="Point",
-                geometry_column="geometry",  # Required for table extension
-                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {"geoparquet:feature_count": 1},
             )
 
@@ -727,23 +649,9 @@ class TestAddItemIdDerivation:
         item_dir.mkdir(parents=True)
 
         geojson_path = item_dir / "radios.geojson"
-        geojson_data = {
-            "type": "FeatureCollection",
-            "features": [
-                {
-                    "type": "Feature",
-                    "geometry": {"type": "Point", "coordinates": [-58.4, -34.6]},
-                    "properties": {"name": "Buenos Aires"},
-                }
-            ],
-        }
-        geojson_path.write_text(json.dumps(geojson_data))
+        geojson_path.write_text(_point_geojson([-58.4, -34.6], {"name": "Buenos Aires"}))
 
-        with (
-            patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.api.convert_vector") as mock_convert,
-            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-        ):
+        with _patch_vector_add() as (mock_detect, mock_convert, mock_metadata):
             mock_detect.return_value = GEOPARQUET
             # Simulate conversion output in the SAME directory (in-place). The
             # converter writes it, so no file of another source holds the name.
@@ -754,13 +662,9 @@ class TestAddItemIdDerivation:
                 return output_file
 
             mock_convert.side_effect = convert
-            mock_metadata.return_value = MagicMock(
+            mock_metadata.return_value = _vector_metadata(
                 bbox=(-58.5, -34.7, -58.3, -34.5),
-                crs="EPSG:4326",
                 feature_count=1,
-                geometry_type="Point",
-                geometry_column="geometry",  # Required for table extension
-                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {"geoparquet:feature_count": 1},
             )
 
@@ -1156,18 +1060,7 @@ class TestMultiAssetAdd:
     """Tests for multi-asset behavior in add."""
 
     # Helper to create valid GeoJSON data
-    VALID_GEOJSON = json.dumps(
-        {
-            "type": "FeatureCollection",
-            "features": [
-                {
-                    "type": "Feature",
-                    "geometry": {"type": "Point", "coordinates": [0, 0]},
-                    "properties": {},
-                }
-            ],
-        }
-    )
+    VALID_GEOJSON = _point_geojson([0, 0], {})
 
     @pytest.mark.unit
     def test_add_tracks_multiple_files_in_item_dir(
@@ -1190,35 +1083,21 @@ class TestMultiAssetAdd:
         metadata_file = item_dir / "metadata.xml"
         metadata_file.write_bytes(b"<metadata/>")
 
-        with (
-            patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.api.convert_vector") as mock_convert,
-            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-        ):
-            mock_detect.return_value = GEOPARQUET
-            mock_convert.return_value = output_file
-            mock_metadata.return_value = MagicMock(
-                bbox=(-122.5, 37.5, -122.0, 38.0),
-                crs="EPSG:4326",
-                feature_count=1,
-                geometry_type="Point",
-                geometry_column="geometry",  # Required for table extension
-                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=lambda: {"geoparquet:feature_count": 1},
-            )
+        result = _add_with_vector_mocks(
+            geojson_path,
+            output_file,
+            bbox=(-122.5, 37.5, -122.0, 38.0),
+            to_stac_properties=lambda: {"geoparquet:feature_count": 1},
+            catalog_root=initialized_catalog,
+            collection_id="test-collection",
+        )
 
-            result = add(
-                path=geojson_path,
-                catalog_root=initialized_catalog,
-                collection_id="test-collection",
-            )
-
-            # Should have all non-ignored files as asset paths
-            # Note: includes geojson now that it's in item_dir
-            assert len(result.asset_paths) >= 3
-            assert str(output_file) in result.asset_paths
-            assert str(thumbnail) in result.asset_paths
-            assert str(metadata_file) in result.asset_paths
+        # Should have all non-ignored files as asset paths
+        # Note: includes geojson now that it's in item_dir
+        assert len(result.asset_paths) >= 3
+        assert str(output_file) in result.asset_paths
+        assert str(thumbnail) in result.asset_paths
+        assert str(metadata_file) in result.asset_paths
 
     @pytest.mark.unit
     def test_add_ignores_stac_files_in_item_dir(
@@ -1235,35 +1114,21 @@ class TestMultiAssetAdd:
         output_file = item_dir / "data.parquet"
         output_file.write_bytes(b"fake parquet data")
 
-        with (
-            patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.api.convert_vector") as mock_convert,
-            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-        ):
-            mock_detect.return_value = GEOPARQUET
-            mock_convert.return_value = output_file
-            mock_metadata.return_value = MagicMock(
-                bbox=(-1, -1, 1, 1),
-                crs="EPSG:4326",
-                feature_count=1,
-                geometry_type="Point",
-                geometry_column="geometry",  # Required for table extension
-                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=dict,
-            )
+        result = _add_with_vector_mocks(
+            geojson_path,
+            output_file,
+            bbox=(-1, -1, 1, 1),
+            to_stac_properties=dict,
+            catalog_root=initialized_catalog,
+            collection_id="test-collection",
+        )
 
-            result = add(
-                path=geojson_path,
-                catalog_root=initialized_catalog,
-                collection_id="test-collection",
-            )
-
-            # The item.json file is written by pystac after we scan, so it won't
-            # be in the scanned assets. But the data file should be there.
-            # Verify no STAC files appear in asset_paths
-            for asset_path in result.asset_paths:
-                basename = Path(asset_path).name
-                assert basename not in IGNORED_FILES, f"STAC file {basename} should not be an asset"
+        # The item.json file is written by pystac after we scan, so it won't
+        # be in the scanned assets. But the data file should be there.
+        # Verify no STAC files appear in asset_paths
+        for asset_path in result.asset_paths:
+            basename = Path(asset_path).name
+            assert basename not in IGNORED_FILES, f"STAC file {basename} should not be an asset"
 
     @pytest.mark.unit
     def test_add_skips_hidden_files(self, initialized_catalog: Path, tmp_path: Path) -> None:
@@ -1281,34 +1146,20 @@ class TestMultiAssetAdd:
         hidden_file = item_dir / ".hidden"
         hidden_file.write_bytes(b"hidden data")
 
-        with (
-            patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.api.convert_vector") as mock_convert,
-            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-        ):
-            mock_detect.return_value = GEOPARQUET
-            mock_convert.return_value = output_file
-            mock_metadata.return_value = MagicMock(
-                bbox=(-1, -1, 1, 1),
-                crs="EPSG:4326",
-                feature_count=1,
-                geometry_type="Point",
-                geometry_column="geometry",  # Required for table extension
-                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=dict,
-            )
+        result = _add_with_vector_mocks(
+            geojson_path,
+            output_file,
+            bbox=(-1, -1, 1, 1),
+            to_stac_properties=dict,
+            catalog_root=initialized_catalog,
+            collection_id="test-collection",
+        )
 
-            result = add(
-                path=geojson_path,
-                catalog_root=initialized_catalog,
-                collection_id="test-collection",
+        # Hidden file should not appear in assets
+        for asset_path in result.asset_paths:
+            assert not Path(asset_path).name.startswith("."), (
+                f"Hidden file should not be an asset: {asset_path}"
             )
-
-            # Hidden file should not appear in assets
-            for asset_path in result.asset_paths:
-                assert not Path(asset_path).name.startswith("."), (
-                    f"Hidden file should not be an asset: {asset_path}"
-                )
 
     @pytest.mark.unit
     def test_add_skips_symlinks(self, initialized_catalog: Path, tmp_path: Path) -> None:
@@ -1326,34 +1177,18 @@ class TestMultiAssetAdd:
         symlink = item_dir / "link.txt"
         symlink.symlink_to(output_file)
 
-        with (
-            patch("portolan_cli.preparation.handler_for") as mock_detect,
-            patch("portolan_cli.api.convert_vector") as mock_convert,
-            patch("portolan_cli.api.extract_geoparquet_metadata") as mock_metadata,
-        ):
-            mock_detect.return_value = GEOPARQUET
-            mock_convert.return_value = output_file
-            mock_metadata.return_value = MagicMock(
-                bbox=(-1, -1, 1, 1),
-                crs="EPSG:4326",
-                feature_count=1,
-                geometry_type="Point",
-                geometry_column="geometry",  # Required for table extension
-                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
-                to_stac_properties=dict,
-            )
+        result = _add_with_vector_mocks(
+            geojson_path,
+            output_file,
+            bbox=(-1, -1, 1, 1),
+            to_stac_properties=dict,
+            catalog_root=initialized_catalog,
+            collection_id="test-collection",
+        )
 
-            result = add(
-                path=geojson_path,
-                catalog_root=initialized_catalog,
-                collection_id="test-collection",
-            )
-
-            # Symlink should not appear in assets
-            for asset_path in result.asset_paths:
-                assert Path(asset_path).name != "link.txt", (
-                    "Symlinks should not be tracked as assets"
-                )
+        # Symlink should not appear in assets
+        for asset_path in result.asset_paths:
+            assert Path(asset_path).name != "link.txt", "Symlinks should not be tracked as assets"
 
 
 class TestMultiAssetUpdateVersions:
@@ -1426,41 +1261,23 @@ class TestMultiAssetListAndInfo:
         """list_items returns all assets, not just the data asset."""
         col_dir = initialized_catalog / "col1"
         col_dir.mkdir(parents=True)
-
-        collection_data = {
-            "type": "Collection",
-            "stac_version": "1.0.0",
-            "id": "col1",
-            "description": "Test collection",
-            "license": "proprietary",
-            "extent": {
-                "spatial": {"bbox": [[-180, -90, 180, 90]]},
-                "temporal": {"interval": [[None, None]]},
-            },
-            "links": [{"rel": "item", "href": "./item1/item1.json"}],
-        }
-        (col_dir / "collection.json").write_text(json.dumps(collection_data))
+        _write_collection(
+            col_dir,
+            description="Test collection",
+            bbox=[-180, -90, 180, 90],
+            item_href="./item1/item1.json",
+        )
 
         item_dir = col_dir / "item1"
-        item_dir.mkdir()
-        item_data = {
-            "type": "Feature",
-            "stac_version": "1.0.0",
-            "id": "item1",
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
-            },
-            "bbox": [0, 0, 1, 1],
-            "properties": {"datetime": "2024-01-01T00:00:00Z"},
-            "links": [],
-            "assets": {
+        _write_item(
+            item_dir,
+            bbox=[0, 0, 1, 1],
+            assets={
                 "data": {"href": "data.parquet", "type": "application/vnd.apache.parquet"},
                 "thumbnail": {"href": "thumb.png", "type": "image/png"},
                 "metadata": {"href": "extra.xml", "type": "application/xml"},
             },
-        }
-        (item_dir / "item1.json").write_text(json.dumps(item_data))
+        )
 
         items = list_items(initialized_catalog)
 
@@ -1475,40 +1292,19 @@ class TestMultiAssetListAndInfo:
         """get_item_info returns all assets for a multi-asset item."""
         col_dir = initialized_catalog / "test-col"
         col_dir.mkdir(parents=True)
-
-        collection_data = {
-            "type": "Collection",
-            "stac_version": "1.0.0",
-            "id": "test-col",
-            "description": "Test",
-            "license": "proprietary",
-            "extent": {
-                "spatial": {"bbox": [[-1, -1, 1, 1]]},
-                "temporal": {"interval": [[None, None]]},
-            },
-            "links": [{"rel": "item", "href": "./my-item/my-item.json"}],
-        }
-        (col_dir / "collection.json").write_text(json.dumps(collection_data))
+        _write_collection(
+            col_dir, description="Test", bbox=[-1, -1, 1, 1], item_href="./my-item/my-item.json"
+        )
 
         item_dir = col_dir / "my-item"
-        item_dir.mkdir()
-        item_data = {
-            "type": "Feature",
-            "stac_version": "1.0.0",
-            "id": "my-item",
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
-            },
-            "bbox": [-1, -1, 1, 1],
-            "properties": {"datetime": "2024-01-01T00:00:00Z"},
-            "links": [],
-            "assets": {
+        _write_item(
+            item_dir,
+            bbox=[-1, -1, 1, 1],
+            assets={
                 "data": {"href": "data.parquet"},
                 "thumbnail": {"href": "thumb.png"},
             },
-        }
-        (item_dir / "my-item.json").write_text(json.dumps(item_data))
+        )
 
         info = get_item_info(initialized_catalog, "test-col/my-item")
 

@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from click.testing import CliRunner
+from click.testing import CliRunner, Result
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
@@ -29,6 +30,79 @@ from portolan_cli.cli import cli
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+# =============================================================================
+# Test helpers
+# =============================================================================
+
+
+def _write_catalog(
+    catalog_dir: Path,
+    *,
+    catalog_id: str,
+    collection: str,
+    config_text: str,
+    versions: list[dict[str, Any]],
+) -> None:
+    """Write catalog.json, .portolan/config.yaml, and one collection versions.json."""
+    catalog_dir.mkdir(exist_ok=True)
+    (catalog_dir / "catalog.json").write_text(
+        json.dumps({"type": "Catalog", "id": catalog_id, "description": "Test"})
+    )
+    portolan_dir = catalog_dir / ".portolan"
+    portolan_dir.mkdir(exist_ok=True)
+    (portolan_dir / "config.yaml").write_text(config_text)
+    collection_dir = catalog_dir / collection
+    collection_dir.mkdir(exist_ok=True)
+    (collection_dir / "versions.json").write_text(
+        json.dumps({"spec_version": "1.0.0", "current_version": "1.0.0", "versions": versions})
+    )
+
+
+@contextmanager
+def _patched_push() -> Iterator[AsyncMock]:
+    """Patch push_async so that it returns a successful empty PushResult."""
+    from portolan_cli.sync.push import PushResult
+
+    with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
+        mock_push.return_value = PushResult(
+            success=True,
+            files_uploaded=0,
+            versions_pushed=0,
+            conflicts=[],
+            errors=[],
+        )
+        yield mock_push
+
+
+@contextmanager
+def _patched_sync() -> Iterator[MagicMock]:
+    """Patch sync so that it returns a successful empty SyncResult."""
+    from portolan_cli.sync.core import SyncResult
+
+    with patch("portolan_cli.sync.core.sync") as mock_sync:
+        mock_sync.return_value = SyncResult(
+            success=True,
+            init_performed=False,
+            pull_result=None,
+            scan_result=None,
+            check_result=None,
+            push_result=None,
+            errors=[],
+        )
+        yield mock_sync
+
+
+def _invoke(
+    runner: CliRunner, command: list[str], catalog: Path, *, catch_exceptions: bool = True
+) -> Result:
+    """Run COMMAND on test-collection in the catalog at CATALOG."""
+    return runner.invoke(
+        cli,
+        [*command, "--collection", "test-collection", "--catalog", str(catalog)],
+        catch_exceptions=catch_exceptions,
+    )
+
 
 # =============================================================================
 # Test fixtures
@@ -45,29 +119,12 @@ def runner() -> CliRunner:
 def catalog_with_remote_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Create a catalog with remote configured via env var (Issue #356: sensitive settings)."""
     catalog_dir = tmp_path / "catalog"
-    catalog_dir.mkdir()
-
-    # Create catalog.json
-    (catalog_dir / "catalog.json").write_text(
-        json.dumps({"type": "Catalog", "id": "test-catalog", "description": "Test"})
-    )
-
-    # Create .portolan directory (no sensitive settings in config.yaml)
-    portolan_dir = catalog_dir / ".portolan"
-    portolan_dir.mkdir()
-    (portolan_dir / "config.yaml").write_text("# No sensitive settings here\n")
-
-    # Set remote via env var (Issue #356: sensitive settings via env vars only)
-    monkeypatch.setenv("PORTOLAN_REMOTE", "s3://configured-bucket/catalog")
-
-    # Create a test collection with versions.json
-    collection_dir = catalog_dir / "test-collection"
-    collection_dir.mkdir()
-
-    versions_data = {
-        "spec_version": "1.0.0",
-        "current_version": "1.0.0",
-        "versions": [
+    _write_catalog(
+        catalog_dir,
+        catalog_id="test-catalog",
+        collection="test-collection",
+        config_text="# No sensitive settings here\n",
+        versions=[
             {
                 "version": "1.0.0",
                 "created": "2024-01-01T00:00:00Z",
@@ -77,8 +134,10 @@ def catalog_with_remote_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
                 "changes": [],
             }
         ],
-    }
-    (collection_dir / "versions.json").write_text(json.dumps(versions_data))
+    )
+
+    # Set remote via env var (Issue #356: sensitive settings via env vars only)
+    monkeypatch.setenv("PORTOLAN_REMOTE", "s3://configured-bucket/catalog")
 
     return catalog_dir
 
@@ -87,29 +146,13 @@ def catalog_with_remote_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 def catalog_without_remote_config(tmp_path: Path) -> Path:
     """Create a catalog without remote configured."""
     catalog_dir = tmp_path / "catalog"
-    catalog_dir.mkdir()
-
-    # Create catalog.json
-    (catalog_dir / "catalog.json").write_text(
-        json.dumps({"type": "Catalog", "id": "test-catalog", "description": "Test"})
+    _write_catalog(
+        catalog_dir,
+        catalog_id="test-catalog",
+        collection="test-collection",
+        config_text="# No remote configured\n",
+        versions=[],
     )
-
-    # Create .portolan directory without remote
-    portolan_dir = catalog_dir / ".portolan"
-    portolan_dir.mkdir()
-    (portolan_dir / "config.yaml").write_text("# No remote configured\n")
-
-    # Create a test collection
-    collection_dir = catalog_dir / "test-collection"
-    collection_dir.mkdir()
-
-    versions_data = {
-        "spec_version": "1.0.0",
-        "current_version": "1.0.0",
-        "versions": [],
-    }
-    (collection_dir / "versions.json").write_text(json.dumps(versions_data))
-
     return catalog_dir
 
 
@@ -126,28 +169,8 @@ class TestPushDefaultRemote:
         self, runner: CliRunner, catalog_with_remote_config: Path
     ) -> None:
         """Push should use configured remote when no DESTINATION provided."""
-        from portolan_cli.sync.push import PushResult
-
-        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
-                files_uploaded=0,
-                versions_pushed=0,
-                conflicts=[],
-                errors=[],
-            )
-
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "--collection",
-                    "test-collection",
-                    "--catalog",
-                    str(catalog_with_remote_config),
-                ],
-                catch_exceptions=False,
-            )
+        with _patched_push() as mock_push:
+            result = _invoke(runner, ["push"], catalog_with_remote_config, catch_exceptions=False)
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             # Verify the configured remote was used
@@ -159,27 +182,11 @@ class TestPushDefaultRemote:
         self, runner: CliRunner, catalog_with_remote_config: Path
     ) -> None:
         """Explicit DESTINATION argument should override configured remote."""
-        from portolan_cli.sync.push import PushResult
-
-        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
-                files_uploaded=0,
-                versions_pushed=0,
-                conflicts=[],
-                errors=[],
-            )
-
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "s3://explicit-bucket/path",  # Explicit destination
-                    "--collection",
-                    "test-collection",
-                    "--catalog",
-                    str(catalog_with_remote_config),
-                ],
+        with _patched_push() as mock_push:
+            result = _invoke(
+                runner,
+                ["push", "s3://explicit-bucket/path"],  # Explicit destination
+                catalog_with_remote_config,
                 catch_exceptions=False,
             )
 
@@ -192,16 +199,7 @@ class TestPushDefaultRemote:
         self, runner: CliRunner, catalog_without_remote_config: Path
     ) -> None:
         """Push should fail with clear error when no destination and no remote configured."""
-        result = runner.invoke(
-            cli,
-            [
-                "push",
-                "--collection",
-                "test-collection",
-                "--catalog",
-                str(catalog_without_remote_config),
-            ],
-        )
+        result = _invoke(runner, ["push"], catalog_without_remote_config)
 
         assert result.exit_code != 0
         # Should have a clear error message about missing destination
@@ -226,30 +224,10 @@ class TestPushRemoteConfigPrecedence:
         self, runner: CliRunner, catalog_with_remote_config: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """PORTOLAN_REMOTE env var should override config file."""
-        from portolan_cli.sync.push import PushResult
-
         monkeypatch.setenv("PORTOLAN_REMOTE", "s3://env-bucket/catalog")
 
-        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
-                files_uploaded=0,
-                versions_pushed=0,
-                conflicts=[],
-                errors=[],
-            )
-
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "--collection",
-                    "test-collection",
-                    "--catalog",
-                    str(catalog_with_remote_config),
-                ],
-                catch_exceptions=False,
-            )
+        with _patched_push() as mock_push:
+            result = _invoke(runner, ["push"], catalog_with_remote_config, catch_exceptions=False)
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             call_kwargs = mock_push.call_args[1]
@@ -260,29 +238,13 @@ class TestPushRemoteConfigPrecedence:
         self, runner: CliRunner, catalog_with_remote_config: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Explicit DESTINATION should override PORTOLAN_REMOTE env var."""
-        from portolan_cli.sync.push import PushResult
-
         monkeypatch.setenv("PORTOLAN_REMOTE", "s3://env-bucket/catalog")
 
-        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
-                files_uploaded=0,
-                versions_pushed=0,
-                conflicts=[],
-                errors=[],
-            )
-
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "s3://explicit-bucket/catalog",  # CLI arg wins
-                    "--collection",
-                    "test-collection",
-                    "--catalog",
-                    str(catalog_with_remote_config),
-                ],
+        with _patched_push() as mock_push:
+            result = _invoke(
+                runner,
+                ["push", "s3://explicit-bucket/catalog"],  # CLI arg wins
+                catalog_with_remote_config,
                 catch_exceptions=False,
             )
 
@@ -299,28 +261,11 @@ class TestPushDefaultRemoteJSONOutput:
         self, runner: CliRunner, catalog_with_remote_config: Path
     ) -> None:
         """Push with --json should work with configured remote."""
-        from portolan_cli.sync.push import PushResult
-
-        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
-                files_uploaded=0,
-                versions_pushed=0,
-                conflicts=[],
-                errors=[],
-            )
-
-            result = runner.invoke(
-                cli,
-                [
-                    "--format",
-                    "json",
-                    "push",
-                    "--collection",
-                    "test-collection",
-                    "--catalog",
-                    str(catalog_with_remote_config),
-                ],
+        with _patched_push():
+            result = _invoke(
+                runner,
+                ["--format", "json", "push"],
+                catalog_with_remote_config,
                 catch_exceptions=False,
             )
 
@@ -333,18 +278,7 @@ class TestPushDefaultRemoteJSONOutput:
         self, runner: CliRunner, catalog_without_remote_config: Path
     ) -> None:
         """Push with --json should return error envelope when no remote configured."""
-        result = runner.invoke(
-            cli,
-            [
-                "--format",
-                "json",
-                "push",
-                "--collection",
-                "test-collection",
-                "--catalog",
-                str(catalog_without_remote_config),
-            ],
-        )
+        result = _invoke(runner, ["--format", "json", "push"], catalog_without_remote_config)
 
         assert result.exit_code != 0
         output = json.loads(result.output)
@@ -364,27 +298,11 @@ class TestPushDefaultRemoteDryRun:
         self, runner: CliRunner, catalog_with_remote_config: Path
     ) -> None:
         """Push --dry-run should work with configured remote."""
-        from portolan_cli.sync.push import PushResult
-
-        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
-                files_uploaded=0,
-                versions_pushed=0,
-                conflicts=[],
-                errors=[],
-            )
-
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "--collection",
-                    "test-collection",
-                    "--dry-run",
-                    "--catalog",
-                    str(catalog_with_remote_config),
-                ],
+        with _patched_push() as mock_push:
+            result = _invoke(
+                runner,
+                ["push", "--dry-run"],
+                catalog_with_remote_config,
                 catch_exceptions=False,
             )
 
@@ -421,43 +339,24 @@ class TestPushDefaultRemoteInvariants:
         max_examples=20,
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
         ],
         deadline=None,  # A CliRunner run takes as long as the host load makes it.
     )
     def test_configured_remote_used_when_no_arg(self, remote_url: str, tmp_path: Path) -> None:
         """Any valid remote URL via env var should be used when no arg provided."""
-        from portolan_cli.sync.push import PushResult
-
         # Set up catalog (no sensitive settings in config.yaml per Issue #356)
         catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir(exist_ok=True)
-
-        (catalog_dir / "catalog.json").write_text(
-            json.dumps({"type": "Catalog", "id": "test", "description": "Test"})
-        )
-
-        portolan_dir = catalog_dir / ".portolan"
-        portolan_dir.mkdir(exist_ok=True)
-        (portolan_dir / "config.yaml").write_text("# No sensitive settings\n")
-
-        collection_dir = catalog_dir / "test"
-        collection_dir.mkdir(exist_ok=True)
-        (collection_dir / "versions.json").write_text(
-            json.dumps({"spec_version": "1.0.0", "current_version": "1.0.0", "versions": []})
+        _write_catalog(
+            catalog_dir,
+            catalog_id="test",
+            collection="test",
+            config_text="# No sensitive settings\n",
+            versions=[],
         )
 
         runner = CliRunner()
 
-        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
-                files_uploaded=0,
-                versions_pushed=0,
-                conflicts=[],
-                errors=[],
-            )
-
+        with _patched_push() as mock_push:
             # Use env var for remote (Issue #356)
             with patch.dict(os.environ, {"PORTOLAN_REMOTE": remote_url}):
                 result = runner.invoke(
@@ -481,7 +380,6 @@ class TestPushDefaultRemoteInvariants:
         max_examples=20,
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
         ],
         deadline=None,  # A CliRunner run takes as long as the host load makes it.
     )
@@ -489,37 +387,19 @@ class TestPushDefaultRemoteInvariants:
         self, explicit_url: str, env_url: str, tmp_path: Path
     ) -> None:
         """Explicit destination should always override env var, regardless of values."""
-        from portolan_cli.sync.push import PushResult
-
         # Set up catalog (no sensitive settings in config.yaml per Issue #356)
         catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir(exist_ok=True)
-
-        (catalog_dir / "catalog.json").write_text(
-            json.dumps({"type": "Catalog", "id": "test", "description": "Test"})
-        )
-
-        portolan_dir = catalog_dir / ".portolan"
-        portolan_dir.mkdir(exist_ok=True)
-        (portolan_dir / "config.yaml").write_text("# No sensitive settings\n")
-
-        collection_dir = catalog_dir / "test"
-        collection_dir.mkdir(exist_ok=True)
-        (collection_dir / "versions.json").write_text(
-            json.dumps({"spec_version": "1.0.0", "current_version": "1.0.0", "versions": []})
+        _write_catalog(
+            catalog_dir,
+            catalog_id="test",
+            collection="test",
+            config_text="# No sensitive settings\n",
+            versions=[],
         )
 
         runner = CliRunner()
 
-        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
-                files_uploaded=0,
-                versions_pushed=0,
-                conflicts=[],
-                errors=[],
-            )
-
+        with _patched_push() as mock_push:
             # Use env var for remote (Issue #356)
             with patch.dict(os.environ, {"PORTOLAN_REMOTE": env_url}):
                 result = runner.invoke(
@@ -552,8 +432,6 @@ class TestPushDefaultRemoteIntegration:
     @pytest.mark.integration
     def test_push_workflow_with_env_var(self, runner: CliRunner, tmp_path: Path) -> None:
         """Full workflow: init -> set PORTOLAN_REMOTE env var -> push (no destination)."""
-        from portolan_cli.sync.push import PushResult
-
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize catalog
             result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -572,15 +450,7 @@ class TestPushDefaultRemoteIntegration:
             )
 
             # Push without destination - should use PORTOLAN_REMOTE env var
-            with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-                mock_push.return_value = PushResult(
-                    success=True,
-                    files_uploaded=0,
-                    versions_pushed=0,
-                    conflicts=[],
-                    errors=[],
-                )
-
+            with _patched_push() as mock_push:
                 # Set remote via env var (Issue #356: sensitive settings via env vars only)
                 with patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://workflow-bucket/catalog"}):
                     result = runner.invoke(
@@ -598,16 +468,7 @@ class TestPushDefaultRemoteIntegration:
         self, runner: CliRunner, catalog_without_remote_config: Path
     ) -> None:
         """Error message should tell user how to fix the issue."""
-        result = runner.invoke(
-            cli,
-            [
-                "push",
-                "--collection",
-                "test-collection",
-                "--catalog",
-                str(catalog_without_remote_config),
-            ],
-        )
+        result = _invoke(runner, ["push"], catalog_without_remote_config)
 
         assert result.exit_code != 0
         # Error should be actionable - mention how to fix
@@ -637,30 +498,8 @@ class TestSyncDefaultRemote:
         self, runner: CliRunner, catalog_with_remote_config: Path
     ) -> None:
         """Sync should use configured remote when no DESTINATION provided."""
-        from portolan_cli.sync.core import SyncResult
-
-        with patch("portolan_cli.sync.core.sync") as mock_sync:
-            mock_sync.return_value = SyncResult(
-                success=True,
-                init_performed=False,
-                pull_result=None,
-                scan_result=None,
-                check_result=None,
-                push_result=None,
-                errors=[],
-            )
-
-            result = runner.invoke(
-                cli,
-                [
-                    "sync",
-                    "--collection",
-                    "test-collection",
-                    "--catalog",
-                    str(catalog_with_remote_config),
-                ],
-                catch_exceptions=False,
-            )
+        with _patched_sync() as mock_sync:
+            result = _invoke(runner, ["sync"], catalog_with_remote_config, catch_exceptions=False)
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             call_kwargs = mock_sync.call_args[1]
@@ -671,29 +510,11 @@ class TestSyncDefaultRemote:
         self, runner: CliRunner, catalog_with_remote_config: Path
     ) -> None:
         """Explicit DESTINATION argument should override configured remote."""
-        from portolan_cli.sync.core import SyncResult
-
-        with patch("portolan_cli.sync.core.sync") as mock_sync:
-            mock_sync.return_value = SyncResult(
-                success=True,
-                init_performed=False,
-                pull_result=None,
-                scan_result=None,
-                check_result=None,
-                push_result=None,
-                errors=[],
-            )
-
-            result = runner.invoke(
-                cli,
-                [
-                    "sync",
-                    "s3://explicit-bucket/path",
-                    "--collection",
-                    "test-collection",
-                    "--catalog",
-                    str(catalog_with_remote_config),
-                ],
+        with _patched_sync() as mock_sync:
+            result = _invoke(
+                runner,
+                ["sync", "s3://explicit-bucket/path"],
+                catalog_with_remote_config,
                 catch_exceptions=False,
             )
 
@@ -706,16 +527,7 @@ class TestSyncDefaultRemote:
         self, runner: CliRunner, catalog_without_remote_config: Path
     ) -> None:
         """Sync should fail with clear error when no destination and no remote configured."""
-        result = runner.invoke(
-            cli,
-            [
-                "sync",
-                "--collection",
-                "test-collection",
-                "--catalog",
-                str(catalog_without_remote_config),
-            ],
-        )
+        result = _invoke(runner, ["sync"], catalog_without_remote_config)
 
         assert result.exit_code != 0
         assert "destination" in result.output.lower() or "remote" in result.output.lower()
@@ -729,30 +541,11 @@ class TestSyncDefaultRemoteJSONOutput:
         self, runner: CliRunner, catalog_with_remote_config: Path
     ) -> None:
         """Sync with --json should work with configured remote."""
-        from portolan_cli.sync.core import SyncResult
-
-        with patch("portolan_cli.sync.core.sync") as mock_sync:
-            mock_sync.return_value = SyncResult(
-                success=True,
-                init_performed=False,
-                pull_result=None,
-                scan_result=None,
-                check_result=None,
-                push_result=None,
-                errors=[],
-            )
-
-            result = runner.invoke(
-                cli,
-                [
-                    "--format",
-                    "json",
-                    "sync",
-                    "--collection",
-                    "test-collection",
-                    "--catalog",
-                    str(catalog_with_remote_config),
-                ],
+        with _patched_sync():
+            result = _invoke(
+                runner,
+                ["--format", "json", "sync"],
+                catalog_with_remote_config,
                 catch_exceptions=False,
             )
 
@@ -765,18 +558,7 @@ class TestSyncDefaultRemoteJSONOutput:
         self, runner: CliRunner, catalog_without_remote_config: Path
     ) -> None:
         """Sync with --json should return error envelope when no remote configured."""
-        result = runner.invoke(
-            cli,
-            [
-                "--format",
-                "json",
-                "sync",
-                "--collection",
-                "test-collection",
-                "--catalog",
-                str(catalog_without_remote_config),
-            ],
-        )
+        result = _invoke(runner, ["--format", "json", "sync"], catalog_without_remote_config)
 
         assert result.exit_code != 0
         output = json.loads(result.output)

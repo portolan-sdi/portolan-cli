@@ -9,9 +9,6 @@ when a job drops out of the aggregate check or a nightly gate stops failing.
 The last tests run the cheap faults of ``scripts/gate_selftest.py`` on a copy
 of the tree, so a gate that stops catching its fault fails a pull request and
 not only the nightly run.
-
-The module lives in ``tests/docs/`` because it reads repository files that the
-mutmut sandbox does not copy (#997).
 """
 
 from __future__ import annotations
@@ -30,7 +27,7 @@ import yaml
 if TYPE_CHECKING:
     from types import ModuleType
 
-pytestmark = [pytest.mark.unit, pytest.mark.source_scan]
+pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
@@ -102,6 +99,9 @@ def test_pytest_rejects_unknown_markers(pytestconfig: pytest.Config) -> None:
 
 
 COVERAGE_PATTERN = "coverage-*"
+COVERAGE_OS = "ubuntu-latest"
+COVERAGE_PYTHON = "3.11"
+COVERAGE_CONDITION = f"matrix.os == '{COVERAGE_OS}' && matrix.python-version == '{COVERAGE_PYTHON}'"
 
 
 def _cells(job: dict[str, Any]) -> list[dict[str, str]]:
@@ -117,10 +117,10 @@ def _cells(job: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def coverage_artifacts(job: dict[str, Any]) -> list[str]:
-    """Return the coverage artifact name that each matrix cell of ``job`` uploads.
+    """Return the coverage artifact names that ``job`` uploads.
 
-    A conditional upload step returns no names, so the list is shorter than
-    the matrix.
+    The upload step runs on the ubuntu 3.11 cell only. The list holds the
+    name of that cell, and holds no name when the condition matches no cell.
     """
     uploads = [
         step
@@ -131,41 +131,72 @@ def coverage_artifacts(job: dict[str, Any]) -> list[str]:
     (upload,) = uploads
     assert upload["with"]["path"] == "coverage.xml"
     assert upload["with"]["if-no-files-found"] == "error"
-    if "if" in upload:
-        return []
+    assert upload["if"] == COVERAGE_CONDITION
     template = str(upload["with"]["name"])
     return [
         template.replace("${{ matrix.os }}", cell["os"]).replace(
             "${{ matrix.python-version }}", cell["python-version"]
         )
         for cell in _cells(job)
+        if (cell["os"], cell["python-version"]) == (COVERAGE_OS, COVERAGE_PYTHON)
     ]
 
 
-def test_every_test_cell_measures_coverage() -> None:
-    """A line that only Windows or macOS runs is covered when that cell runs it."""
-    step = next(
-        step
-        for step in _jobs("ci.yml")["test"]["steps"]
-        if str(step.get("name", "")).startswith("Run tests")
-    )
-    command = re.search(r"uv run pytest .*", step["run"], re.DOTALL)
-
-    assert command is not None
-    assert "--cov=portolan_cli --cov-report=xml" in command.group(0)
-    assert "cov_args" not in step["run"]
+def _pytest_step(job: dict[str, Any], prefix: str) -> dict[str, Any]:
+    return next(step for step in job["steps"] if str(step.get("name", "")).startswith(prefix))
 
 
-@pytest.mark.parametrize("job", ["test", "iceberg-test"])
-def test_every_cell_uploads_its_coverage_report(job: str) -> None:
+@pytest.mark.parametrize(
+    ("job", "prefix", "flag"),
+    [
+        ("test", "Run tests", "--cov=portolan_cli --cov-report=xml"),
+        ("iceberg-test", "Run unit and integration tests", "--cov=portolan_cli/backends/iceberg"),
+    ],
+)
+def test_only_the_linux_cell_measures_coverage(job: str, prefix: str, flag: str) -> None:
+    """The ``coverage`` array is empty except on the ubuntu 3.11 cell, and pytest reads it.
+
+    The step opens with an empty array. Only the block under the ubuntu 3.11
+    condition fills it. The pytest call ends with the array and holds no
+    ``--cov`` flag of its own. A filled first line puts coverage on every
+    cell. A pytest call without the array puts coverage on no cell. An
+    earlier design used a ``cov_args`` variable and lost coverage on some
+    cells, so the pin checks the condition and not a variable name.
+    """
+    step = _pytest_step(_jobs("ci.yml")[job], prefix)
+    run = str(step["run"])
+    lines = [line.strip() for line in run.splitlines() if line.strip()]
+    command = " ".join(run[run.index("uv run pytest ") :].replace("\\\n", " ").split())
+
+    assert lines[:2] == [
+        "coverage=()",
+        f'if [ "$MATRIX_OS" = "{COVERAGE_OS}" ] && [ "$MATRIX_PYTHON" = "{COVERAGE_PYTHON}" ]; then',
+    ]
+    assert lines[2].startswith("coverage=(") and lines[2].endswith(")")
+    assert flag in lines[2]
+    assert lines[3] == "fi"
+    assert [line for line in lines if "coverage=" in line] == lines[0:1] + lines[2:3]
+    assert command.endswith(' "${coverage[@]}"')
+    assert run.count("${coverage[@]}") == 1
+    assert "--cov" not in command
+    assert step["env"]["MATRIX_OS"] == "${{ matrix.os }}"
+    assert step["env"]["MATRIX_PYTHON"] == "${{ matrix.python-version }}"
+
+
+@pytest.mark.parametrize(
+    ("job", "name"),
+    [
+        ("test", "coverage-ubuntu-latest-3.11"),
+        ("iceberg-test", "coverage-iceberg-ubuntu-latest-3.11"),
+    ],
+)
+def test_only_the_linux_cell_uploads_its_coverage_report(job: str, name: str) -> None:
     jobs = _jobs("ci.yml")
-    prefix = {"test": "coverage-", "iceberg-test": "coverage-iceberg-"}[job]
-    expected = [f"{prefix}{c['os']}-{c['python-version']}" for c in _cells(jobs[job])]
 
-    assert coverage_artifacts(jobs[job]) == expected
+    assert coverage_artifacts(jobs[job]) == [name]
 
 
-def test_diff_cover_reads_the_report_of_every_cell() -> None:
+def test_diff_cover_reads_the_two_linux_reports() -> None:
     jobs = _jobs("ci.yml")
     names = coverage_artifacts(jobs["test"]) + coverage_artifacts(jobs["iceberg-test"])
     downloads = [
@@ -175,7 +206,7 @@ def test_diff_cover_reads_the_report_of_every_cell() -> None:
     ]
     run = _run_text(jobs["diff-cover"])
 
-    assert len(names) == 15
+    assert len(names) == 2
     assert len(set(names)) == len(names)
     assert [step["with"] for step in downloads] == [
         {"pattern": COVERAGE_PATTERN, "path": "coverage"}
@@ -186,12 +217,11 @@ def test_diff_cover_reads_the_report_of_every_cell() -> None:
 
 
 def test_coverage_reports_name_files_relative_to_the_checkout() -> None:
-    """diff-cover on Linux cannot match an absolute Windows or macOS source path.
+    """The report names each file relative to the checkout.
 
-    Without the key, the Windows report names the source
-    ``D:\\a\\portolan-cli\\portolan-cli\\portolan_cli`` and the macOS report names
-    ``/Users/runner/work/...``. diff-cover joins that source with each file name
-    and finds no file of the Linux checkout.
+    The diff-cover job reads the report from the artifact store and joins
+    each file name with the checkout of its own runner. A relative name
+    matches that checkout. An absolute source path does not.
     """
     config = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
@@ -286,7 +316,6 @@ def test_the_property_selector_picks_decorated_tests_only() -> None:
     }
 
     assert "tests/docs/test_ci_wiring.py" not in selected
-    assert "tests/integration/test_mutmut_hypothesis_guard.py" not in selected
     assert "tests/unit/test_add_rm_hypothesis.py" in selected
 
 
@@ -301,7 +330,9 @@ def test_no_hypothesis_profile_keeps_a_deadline() -> None:
 
     import tests.conftest  # noqa: F401  (registers the profiles)
 
-    assert settings.default.deadline is None
+    default = settings.default
+    assert default is not None
+    assert default.deadline is None
     for name in ("ci", "nightly", "local"):
         try:
             profile = settings.get_profile(name)

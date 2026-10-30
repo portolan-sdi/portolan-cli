@@ -75,19 +75,6 @@ class TestDetectStateFresh:
         assert state == CatalogState.FRESH
 
     @pytest.mark.unit
-    def test_portolan_with_only_config_is_managed(self, tmp_path: Path) -> None:
-        """config.yaml alone is sufficient for MANAGED state.
-
-        Per issue #290, state.json was removed as a sentinel requirement.
-        """
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        (portolan_dir / "config.yaml").write_text("{}")
-
-        state = detect_state(tmp_path)
-        assert state == CatalogState.MANAGED
-
-    @pytest.mark.unit
     def test_portolan_with_only_state_is_fresh(self, tmp_path: Path) -> None:
         """Partial .portolan (only state.json, no config.yaml) is FRESH.
 

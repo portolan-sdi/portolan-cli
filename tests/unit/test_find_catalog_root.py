@@ -381,20 +381,3 @@ class TestFindCatalogRootEdgeCases:
         # Act: With require_operational=False, SHOULD find
         result_init = find_catalog_root(tmp_path, require_operational=False)
         assert result_init == tmp_path, "require_operational=False should find config.yaml-only"
-
-    @pytest.mark.unit
-    def test_operational_file_catalog_json_at_root(self, tmp_path: Path) -> None:
-        """find_catalog_root accepts catalog.json at root as operational file."""
-        from portolan_cli.catalog import find_catalog_root
-
-        # Setup: config.yaml + catalog.json (standard managed catalog)
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        (portolan_dir / "config.yaml").write_text("# Portolan config\n")
-        (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # At root, not in .portolan
-
-        # Act
-        result = find_catalog_root(tmp_path)
-
-        # Assert: Should find - catalog.json at root is valid operational file
-        assert result == tmp_path

@@ -1044,8 +1044,8 @@ class TestRemoveFromVersionsEdgeCases:
         test_file = tmp_path / "test.parquet"
         versions_path = tmp_path / "versions.json"
 
-        # Should not raise
-        _remove_from_versions(test_file, versions_path)
+        assert _remove_from_versions(test_file, versions_path) is False
+        assert not versions_path.exists()
 
     @pytest.mark.unit
     def test_remove_from_versions_noop_empty_versions(self, tmp_path: Path) -> None:
@@ -1057,9 +1057,10 @@ class TestRemoveFromVersionsEdgeCases:
         versions_path.write_text(
             '{"spec_version": "1.0.0", "current_version": null, "versions": []}'
         )
+        before = versions_path.read_text()
 
-        # Should not raise
-        _remove_from_versions(test_file, versions_path)
+        assert _remove_from_versions(test_file, versions_path) is False
+        assert versions_path.read_text() == before
 
         # File unchanged
         content = versions_path.read_text()

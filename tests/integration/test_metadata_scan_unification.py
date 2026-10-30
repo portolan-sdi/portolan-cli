@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import shutil
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from click.testing import CliRunner
@@ -67,7 +67,7 @@ def _write_collection_json(
     collection_dir: Path,
     *,
     collection_id: str,
-    extra_assets: dict | None = None,
+    extra_assets: dict[str, Any] | None = None,
 ) -> None:
     """Write a minimal valid collection.json with optional extra assets."""
     data = {
@@ -124,6 +124,85 @@ def _write_item_json(
         },
     }
     (item_dir / f"{item_id}.json").write_text(json.dumps(data, indent=2))
+
+
+def _write_catalog_with_data_asset(
+    catalog_dir: Path,
+    source: Path,
+    *,
+    collection_id: str,
+    filename: str,
+) -> tuple[Path, Path]:
+    """Write a catalog with one collection that registers a copy of SOURCE.
+
+    Return the collection directory and the path of the data file.
+    """
+    catalog_dir.mkdir()
+    _write_catalog_json(catalog_dir)
+    collection_dir = catalog_dir / collection_id
+    collection_dir.mkdir()
+    data_path = collection_dir / filename
+    shutil.copy(source, data_path)
+    _write_collection_json(
+        collection_dir,
+        collection_id=collection_id,
+        extra_assets={
+            "data": {
+                "href": f"./{filename}",
+                "type": "application/vnd.apache.parquet",
+                "roles": ["data"],
+            }
+        },
+    )
+    return collection_dir, data_path
+
+
+def _write_catalog_with_iceberg_asset(catalog_dir: Path, *, href: str) -> Path:
+    """Write a catalog with an agriculture collection that has one Iceberg asset at HREF."""
+    catalog_dir.mkdir()
+    _write_catalog_json(catalog_dir)
+    collection_dir = catalog_dir / "agriculture"
+    collection_dir.mkdir()
+    _write_collection_json(
+        collection_dir,
+        collection_id="agriculture",
+        extra_assets={
+            "data": {
+                "href": href,
+                "type": "application/x-iceberg",
+                "roles": ["data"],
+            }
+        },
+    )
+    return collection_dir
+
+
+def _write_year_subcatalog_item(collection_dir: Path, source_cog: Path) -> Path:
+    """Write a 2024 sub-catalog with item scene-001 in COLLECTION_DIR. Return the tif path."""
+    year_sub = collection_dir / "2024"
+    year_sub.mkdir()
+    (year_sub / "catalog.json").write_text(
+        json.dumps(
+            {
+                "type": "Catalog",
+                "id": "2024",
+                "stac_version": "1.1.0",
+                "description": "year subcatalog",
+                "links": [{"rel": "self", "href": "./catalog.json"}],
+            }
+        )
+    )
+    item_dir = year_sub / "scene-001"
+    item_dir.mkdir()
+    item_data = item_dir / "scene-001.tif"
+    shutil.copy(source_cog, item_data)
+    _write_item_json(
+        item_dir,
+        item_id="scene-001",
+        asset_href="scene-001.tif",
+        media_type="image/tiff; application=geotiff",
+    )
+    return item_data
 
 
 def _make_raster_collection_with_items_parquet(
@@ -441,21 +520,7 @@ class TestVectorCollectionLevelAsset:
         hrefs are out of scope.
         """
         catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir()
-        _write_catalog_json(catalog_dir)
-        collection_dir = catalog_dir / "agriculture"
-        collection_dir.mkdir()
-        _write_collection_json(
-            collection_dir,
-            collection_id="agriculture",
-            extra_assets={
-                "data": {
-                    "href": href,
-                    "type": "application/x-iceberg",
-                    "roles": ["data"],
-                }
-            },
-        )
+        _write_catalog_with_iceberg_asset(catalog_dir, href=href)
 
         report = scan_catalog_metadata(catalog_dir)
         assert report.missing_count == 0, (
@@ -490,21 +555,7 @@ class TestVectorCollectionLevelAsset:
         errors with "Data file not found".
         """
         catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir()
-        _write_catalog_json(catalog_dir)
-        collection_dir = catalog_dir / "agriculture"
-        collection_dir.mkdir()
-        _write_collection_json(
-            collection_dir,
-            collection_id="agriculture",
-            extra_assets={
-                "data": {
-                    "href": href,
-                    "type": "application/x-iceberg",
-                    "roles": ["data"],
-                }
-            },
-        )
+        _write_catalog_with_iceberg_asset(catalog_dir, href=href)
 
         report = scan_catalog_metadata(catalog_dir)
         assert report.missing_count == 0, (
@@ -524,21 +575,7 @@ class TestVectorCollectionLevelAsset:
         nested warehouse contents.
         """
         catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir()
-        _write_catalog_json(catalog_dir)
-        collection_dir = catalog_dir / "agriculture"
-        collection_dir.mkdir()
-        _write_collection_json(
-            collection_dir,
-            collection_id="agriculture",
-            extra_assets={
-                "data": {
-                    "href": "data/v3/statfi_paavo",
-                    "type": "application/x-iceberg",
-                    "roles": ["data"],
-                }
-            },
-        )
+        collection_dir = _write_catalog_with_iceberg_asset(catalog_dir, href="data/v3/statfi_paavo")
         # Materialize the warehouse with real Iceberg-style data + metadata.
         warehouse = collection_dir / "data" / "v3" / "statfi_paavo"
         (warehouse / "data").mkdir(parents=True)
@@ -634,22 +671,8 @@ class TestCollectionLevelFreshness:
     ) -> None:
         """data.parquet registered + tracked in versions.json → FRESH."""
         catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir()
-        _write_catalog_json(catalog_dir)
-        collection_dir = catalog_dir / "boundaries"
-        collection_dir.mkdir()
-        data_path = collection_dir / "data.parquet"
-        shutil.copy(valid_points_parquet, data_path)
-        _write_collection_json(
-            collection_dir,
-            collection_id="boundaries",
-            extra_assets={
-                "data": {
-                    "href": "./data.parquet",
-                    "type": "application/vnd.apache.parquet",
-                    "roles": ["data"],
-                }
-            },
+        collection_dir, data_path = _write_catalog_with_data_asset(
+            catalog_dir, valid_points_parquet, collection_id="boundaries", filename="data.parquet"
         )
         _write_versions_json_for(
             collection_dir,
@@ -684,22 +707,8 @@ class TestCollectionLevelFreshness:
         import pyarrow.parquet as pq
 
         catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir()
-        _write_catalog_json(catalog_dir)
-        collection_dir = catalog_dir / "boundaries"
-        collection_dir.mkdir()
-        data_path = collection_dir / "data.parquet"
-        shutil.copy(valid_points_parquet, data_path)
-        _write_collection_json(
-            collection_dir,
-            collection_id="boundaries",
-            extra_assets={
-                "data": {
-                    "href": "./data.parquet",
-                    "type": "application/vnd.apache.parquet",
-                    "roles": ["data"],
-                }
-            },
+        collection_dir, data_path = _write_catalog_with_data_asset(
+            catalog_dir, valid_points_parquet, collection_id="boundaries", filename="data.parquet"
         )
         _write_versions_json_for(
             collection_dir,
@@ -732,22 +741,8 @@ class TestCollectionLevelFreshness:
         collection asset stale. Tests the heuristics_changed guard for
         the both-bboxes-None case."""
         catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir()
-        _write_catalog_json(catalog_dir)
-        collection_dir = catalog_dir / "boundaries"
-        collection_dir.mkdir()
-        data_path = collection_dir / "data.parquet"
-        shutil.copy(valid_points_parquet, data_path)
-        _write_collection_json(
-            collection_dir,
-            collection_id="boundaries",
-            extra_assets={
-                "data": {
-                    "href": "./data.parquet",
-                    "type": "application/vnd.apache.parquet",
-                    "roles": ["data"],
-                }
-            },
+        collection_dir, data_path = _write_catalog_with_data_asset(
+            catalog_dir, valid_points_parquet, collection_id="boundaries", filename="data.parquet"
         )
         _write_versions_json_for(
             collection_dir,
@@ -908,29 +903,7 @@ class TestNestedCatalogPatterns:
         _write_collection_json(collection_dir, collection_id="rasters")
 
         # Year sub-catalog inside the collection.
-        year_sub = collection_dir / "2024"
-        year_sub.mkdir()
-        (year_sub / "catalog.json").write_text(
-            json.dumps(
-                {
-                    "type": "Catalog",
-                    "id": "2024",
-                    "stac_version": "1.1.0",
-                    "description": "year subcatalog",
-                    "links": [{"rel": "self", "href": "./catalog.json"}],
-                }
-            )
-        )
-        item_dir = year_sub / "scene-001"
-        item_dir.mkdir()
-        item_data = item_dir / "scene-001.tif"
-        shutil.copy(valid_singleband_cog, item_data)
-        _write_item_json(
-            item_dir,
-            item_id="scene-001",
-            asset_href="scene-001.tif",
-            media_type="image/tiff; application=geotiff",
-        )
+        item_data = _write_year_subcatalog_item(collection_dir, valid_singleband_cog)
 
         # versions.json at the COLLECTION root, keyed by basename.
         _write_versions_json_for(
@@ -965,29 +938,7 @@ class TestNestedCatalogPatterns:
         collection_dir.mkdir()
         _write_collection_json(collection_dir, collection_id="rasters")
 
-        year_sub = collection_dir / "2024"
-        year_sub.mkdir()
-        (year_sub / "catalog.json").write_text(
-            json.dumps(
-                {
-                    "type": "Catalog",
-                    "id": "2024",
-                    "stac_version": "1.1.0",
-                    "description": "year subcatalog",
-                    "links": [{"rel": "self", "href": "./catalog.json"}],
-                }
-            )
-        )
-        item_dir = year_sub / "scene-001"
-        item_dir.mkdir()
-        item_data = item_dir / "scene-001.tif"
-        shutil.copy(valid_singleband_cog, item_data)
-        _write_item_json(
-            item_dir,
-            item_id="scene-001",
-            asset_href="scene-001.tif",
-            media_type="image/tiff; application=geotiff",
-        )
+        item_data = _write_year_subcatalog_item(collection_dir, valid_singleband_cog)
         _write_versions_json_for(
             collection_dir,
             asset_filename="scene-001.tif",
@@ -1308,22 +1259,8 @@ class TestIssue512CollectionFreshnessAfterAdd:
         unchanged — heals the reporter's on-disk catalogs without re-add.
         """
         catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir()
-        _write_catalog_json(catalog_dir)
-        collection_dir = catalog_dir / "boundaries"
-        collection_dir.mkdir()
-        data_path = collection_dir / "data.parquet"
-        shutil.copy(valid_points_parquet, data_path)
-        _write_collection_json(
-            collection_dir,
-            collection_id="boundaries",
-            extra_assets={
-                "data": {
-                    "href": "./data.parquet",
-                    "type": "application/vnd.apache.parquet",
-                    "roles": ["data"],
-                }
-            },
+        collection_dir, data_path = _write_catalog_with_data_asset(
+            catalog_dir, valid_points_parquet, collection_id="boundaries", filename="data.parquet"
         )
         _write_versions_json_mtime_only(
             collection_dir, asset_filename="data.parquet", file_path=data_path
@@ -1347,28 +1284,12 @@ class TestIssue512CollectionFreshnessAfterAdd:
         break, so an mtime change on a heuristic-less entry must degrade to
         STALE at worst — never a (blocking) BREAKING error.
         """
-        import os
-
         import pyarrow as pa
         import pyarrow.parquet as pq
 
         catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir()
-        _write_catalog_json(catalog_dir)
-        collection_dir = catalog_dir / "boundaries"
-        collection_dir.mkdir()
-        data_path = collection_dir / "data.parquet"
-        shutil.copy(valid_points_parquet, data_path)
-        _write_collection_json(
-            collection_dir,
-            collection_id="boundaries",
-            extra_assets={
-                "data": {
-                    "href": "./data.parquet",
-                    "type": "application/vnd.apache.parquet",
-                    "roles": ["data"],
-                }
-            },
+        collection_dir, data_path = _write_catalog_with_data_asset(
+            catalog_dir, valid_points_parquet, collection_id="boundaries", filename="data.parquet"
         )
         _write_versions_json_mtime_only(
             collection_dir, asset_filename="data.parquet", file_path=data_path
@@ -1376,8 +1297,7 @@ class TestIssue512CollectionFreshnessAfterAdd:
 
         # Change the schema (new columns) and bump mtime past the fast path.
         pq.write_table(pa.table({"a": [1, 2], "b": [3, 4]}), data_path)
-        bumped = data_path.stat().st_mtime + 120.0
-        os.utime(data_path, (bumped, bumped))
+        _bump_mtime(data_path, delta=120.0)
 
         report = scan_catalog_metadata(catalog_dir)
 
@@ -1405,25 +1325,9 @@ class TestIssue512CollectionFreshnessAfterAdd:
 
         Regression: RED before the sha256 fallback (STALE), GREEN after.
         """
-        import os
-
         catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir()
-        _write_catalog_json(catalog_dir)
-        collection_dir = catalog_dir / "boundaries"
-        collection_dir.mkdir()
-        data_path = collection_dir / "data.parquet"
-        shutil.copy(valid_points_parquet, data_path)
-        _write_collection_json(
-            collection_dir,
-            collection_id="boundaries",
-            extra_assets={
-                "data": {
-                    "href": "./data.parquet",
-                    "type": "application/vnd.apache.parquet",
-                    "roles": ["data"],
-                }
-            },
+        collection_dir, data_path = _write_catalog_with_data_asset(
+            catalog_dir, valid_points_parquet, collection_id="boundaries", filename="data.parquet"
         )
         _write_versions_json_mtime_only(
             collection_dir, asset_filename="data.parquet", file_path=data_path
@@ -1431,8 +1335,7 @@ class TestIssue512CollectionFreshnessAfterAdd:
 
         # Simulate a clone/checkout: mtime moves well past the fast-path
         # tolerance, but the bytes are untouched.
-        bumped = data_path.stat().st_mtime + 120.0
-        os.utime(data_path, (bumped, bumped))
+        _bump_mtime(data_path, delta=120.0)
 
         report = scan_catalog_metadata(catalog_dir)
 
@@ -1453,28 +1356,12 @@ class TestIssue512CollectionFreshnessAfterAdd:
 
         Guards against the fallback degenerating into an always-FRESH shortcut.
         """
-        import os
-
         import pyarrow as pa
         import pyarrow.parquet as pq
 
         catalog_dir = tmp_path / "catalog"
-        catalog_dir.mkdir()
-        _write_catalog_json(catalog_dir)
-        collection_dir = catalog_dir / "boundaries"
-        collection_dir.mkdir()
-        data_path = collection_dir / "data.parquet"
-        shutil.copy(valid_points_parquet, data_path)
-        _write_collection_json(
-            collection_dir,
-            collection_id="boundaries",
-            extra_assets={
-                "data": {
-                    "href": "./data.parquet",
-                    "type": "application/vnd.apache.parquet",
-                    "roles": ["data"],
-                }
-            },
+        collection_dir, data_path = _write_catalog_with_data_asset(
+            catalog_dir, valid_points_parquet, collection_id="boundaries", filename="data.parquet"
         )
         _write_versions_json_mtime_only(
             collection_dir, asset_filename="data.parquet", file_path=data_path
@@ -1482,8 +1369,7 @@ class TestIssue512CollectionFreshnessAfterAdd:
 
         # Genuinely change the bytes (and bump mtime past the fast path).
         pq.write_table(pa.table({"a": [1, 2, 3], "b": [4, 5, 6]}), data_path)
-        bumped = data_path.stat().st_mtime + 120.0
-        os.utime(data_path, (bumped, bumped))
+        _bump_mtime(data_path, delta=120.0)
 
         report = scan_catalog_metadata(catalog_dir)
 

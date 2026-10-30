@@ -143,6 +143,8 @@ class TestTabularParquetSkip:
             )
         except Exception as e:
             pytest.fail(f"add_files raised an exception for tabular parquet: {e}")
+        assert added == []
+        assert [f.path for f in failures] == [tabular_parquet]
 
 
 class TestTabularParquetWithGeoAsset:
@@ -550,10 +552,11 @@ class TestTabularParquetHypothesis:
                     catalog_root=tmp_path,
                     collection_id="collection",
                 )
-                # Should either be added (if somehow detected as geo) or skipped
-                assert len(added) == 0 or len(skipped) >= 0
             except Exception as e:
                 pytest.fail(f"add_files raised for non-geo parquet: {e}")
+            # A lone non-geo parquet is a failure that names the file, never an item
+            assert added == []
+            assert [f.path for f in failures] == [parquet_file]
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -598,7 +601,9 @@ class TestTabularParquetHypothesis:
                 geojson_file = collection_dir / f"geo_{i}.geojson"
                 write_point_geojson(geojson_file, i)
 
-            add_mixed_directory_without_raising(collection_dir, tmp_path, "item")
+            prepared = add_mixed_directory_without_raising(collection_dir, tmp_path, "item")
+            # prepare_item decides geometry, so it sees every Parquet and GeoJSON once
+            assert prepared == sorted(collection_dir.iterdir())
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -650,5 +655,7 @@ class TestTabularParquetHypothesis:
                 )
             except Exception as e:
                 pytest.fail(f"add_files raised for parquet content: {e}")
+            assert added == []
+            assert [f.path for f in failures] == [parquet_file]
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)

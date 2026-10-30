@@ -11,8 +11,7 @@ import pytest
 
 from scripts import gate_selftest as selftest
 
-# The scan copies portolan_cli, which mutmut rewrites in its sandbox.
-pytestmark = [pytest.mark.integration, pytest.mark.source_scan]
+pytestmark = pytest.mark.integration
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -81,11 +80,16 @@ def test_only_patched_python_is_compiled(tmp_path: Path, monkeypatch: pytest.Mon
     def apply(root: Path, _enabled: bool) -> None:
         (root / "valid.py").write_text("pass\n")
 
-    run = Mock(return_value=subprocess.CompletedProcess([], 1, "fault caught", ""))
+    run = Mock(
+        side_effect=[
+            subprocess.CompletedProcess([], 0, "clean", ""),
+            subprocess.CompletedProcess([], 1, "fault caught", ""),
+        ]
+    )
     monkeypatch.setattr(selftest, "copy_head", copy)
     monkeypatch.setattr(selftest, "run", run)
     result = selftest.run_fault(
-        selftest.Fault("valid", apply, (selftest.Gate(("gate",)),), control=False), REPO, tmp_path
+        selftest.Fault("valid", apply, (selftest.Gate(("gate",)),)), REPO, tmp_path
     )
     assert result.status == "CAUGHT"
-    run.assert_called_once()
+    assert run.call_count == 2

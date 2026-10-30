@@ -79,7 +79,7 @@ class TestExtractGeoParquetMetadata:
     def test_extracts_geometry_column_name(self, valid_points_parquet: Path) -> None:
         """Should identify the geometry column name."""
         metadata = extract_geoparquet_metadata(valid_points_parquet)
-        assert metadata.geometry_column is not None
+        assert metadata.geometry_column == "geometry"
 
     @pytest.mark.unit
     def test_raises_for_nonexistent_file(self, tmp_path: Path) -> None:

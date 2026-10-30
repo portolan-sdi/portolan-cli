@@ -101,3 +101,14 @@ def parquet_file_v2(tmp_path):
     path = tmp_path / "test_data_v2.parquet"
     pq.write_table(table, path)
     return path
+
+
+def publish_boundaries(backend, parquet_file) -> None:
+    """Publish the one-column test schema to the boundaries collection."""
+    backend.publish(
+        collection="boundaries",
+        assets={"item1/data.parquet": str(parquet_file)},
+        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
+        breaking=False,
+        message="test",
+    )

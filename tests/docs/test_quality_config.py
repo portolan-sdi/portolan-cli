@@ -3,9 +3,6 @@
 Each ratchet below is a list of exemptions that exists today. A ratchet only
 shrinks. When a module becomes clean, delete its line from the config and from
 the pinned set here in the same commit. Never add a line to either side.
-
-The tests read repo-root files, so they live under ``tests/docs/``. The mutmut
-sandbox guard in ``tests/conftest.py`` fails such a read anywhere else.
 """
 
 from __future__ import annotations
@@ -28,7 +25,7 @@ JSCPD_CONFIG = REPO_ROOT / ".jscpd.json"
 JSCPD_BASELINE = REPO_ROOT / ".jscpd-baseline.json"
 VULTURE_WHITELIST = REPO_ROOT / "vulture_whitelist.py"
 
-pytestmark = [pytest.mark.unit, pytest.mark.source_scan]
+pytestmark = pytest.mark.unit
 
 BANNED_API = {
     "portolan_cli.output": (
@@ -101,8 +98,8 @@ OBJECT_STORE_IMPORTERS = frozenset(
 )
 
 # Delete only. Lower these numbers when a name or a clone goes away.
-VULTURE_WHITELIST_NAMES = 100
-JSCPD_BASELINE_FINGERPRINTS = 747
+VULTURE_WHITELIST_NAMES = 96
+JSCPD_BASELINE_FINGERPRINTS = 546
 
 
 def _pyproject() -> dict[str, Any]:

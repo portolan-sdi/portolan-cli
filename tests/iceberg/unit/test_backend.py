@@ -24,12 +24,6 @@ def _write_parquet(path, rows=None):
 
 
 @pytest.mark.integration
-def test_instantiates_with_no_args(iceberg_backend):
-    """IcebergBackend should instantiate with no arguments."""
-    assert iceberg_backend is not None
-
-
-@pytest.mark.integration
 def test_isinstance_versioning_backend(iceberg_backend):
     """IcebergBackend should satisfy the VersioningBackend protocol."""
     assert isinstance(iceberg_backend, VersioningBackend)

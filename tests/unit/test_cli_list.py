@@ -25,6 +25,31 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
+def _write_catalog() -> None:
+    """Write an empty catalog and its config sentinel in the current directory."""
+    Path("catalog.json").write_text(
+        json.dumps(
+            {
+                "type": "Catalog",
+                "stac_version": "1.0.0",
+                "id": "test",
+                "description": "Test",
+                "links": [],
+            }
+        )
+    )
+    Path(".portolan").mkdir()
+    # config.yaml is the sentinel for catalog detection
+    Path(".portolan/config.yaml").write_text("version: 1\n")
+
+
+def _write_asset(path: str, size: int) -> None:
+    """Write a file of the given size and create its parent directories."""
+    asset = Path(path)
+    asset.parent.mkdir(parents=True, exist_ok=True)
+    asset.write_bytes(b"x" * size)
+
+
 # =============================================================================
 # Top-level 'portolan list' command tests
 # =============================================================================
@@ -45,21 +70,7 @@ class TestTopLevelList:
     def test_list_empty_catalog(self, runner: CliRunner) -> None:
         """portolan list shows empty message for catalog with no items."""
         with runner.isolated_filesystem():
-            # Create catalog structure
-            Path("catalog.json").write_text(
-                json.dumps(
-                    {
-                        "type": "Catalog",
-                        "stac_version": "1.0.0",
-                        "id": "test",
-                        "description": "Test",
-                        "links": [],
-                    }
-                )
-            )
-            Path(".portolan").mkdir()
-            # config.yaml is the sentinel for catalog detection
-            Path(".portolan/config.yaml").write_text("version: 1\n")
+            _write_catalog()
 
             result = runner.invoke(cli, ["list"])
 
@@ -70,21 +81,7 @@ class TestTopLevelList:
     def test_list_empty_shows_guidance_scan(self, runner: CliRunner) -> None:
         """portolan list shows guidance about scan command when empty."""
         with runner.isolated_filesystem():
-            # Create catalog structure
-            Path("catalog.json").write_text(
-                json.dumps(
-                    {
-                        "type": "Catalog",
-                        "stac_version": "1.0.0",
-                        "id": "test",
-                        "description": "Test",
-                        "links": [],
-                    }
-                )
-            )
-            Path(".portolan").mkdir()
-            # config.yaml is the sentinel for catalog detection
-            Path(".portolan/config.yaml").write_text("version: 1\n")
+            _write_catalog()
 
             result = runner.invoke(cli, ["list"])
 
@@ -96,21 +93,7 @@ class TestTopLevelList:
     def test_list_empty_shows_guidance_add(self, runner: CliRunner) -> None:
         """portolan list shows guidance about add command when empty."""
         with runner.isolated_filesystem():
-            # Create catalog structure
-            Path("catalog.json").write_text(
-                json.dumps(
-                    {
-                        "type": "Catalog",
-                        "stac_version": "1.0.0",
-                        "id": "test",
-                        "description": "Test",
-                        "links": [],
-                    }
-                )
-            )
-            Path(".portolan").mkdir()
-            # config.yaml is the sentinel for catalog detection
-            Path(".portolan/config.yaml").write_text("version: 1\n")
+            _write_catalog()
 
             result = runner.invoke(cli, ["list"])
 
@@ -122,21 +105,7 @@ class TestTopLevelList:
     def test_list_empty_guidance_not_shown_in_json_mode(self, runner: CliRunner) -> None:
         """portolan list --json returns valid empty envelope without guidance text."""
         with runner.isolated_filesystem():
-            # Create catalog structure
-            Path("catalog.json").write_text(
-                json.dumps(
-                    {
-                        "type": "Catalog",
-                        "stac_version": "1.0.0",
-                        "id": "test",
-                        "description": "Test",
-                        "links": [],
-                    }
-                )
-            )
-            Path(".portolan").mkdir()
-            # config.yaml is the sentinel for catalog detection
-            Path(".portolan/config.yaml").write_text("version: 1\n")
+            _write_catalog()
 
             result = runner.invoke(cli, ["list", "--json"])
 
@@ -154,21 +123,7 @@ class TestTopLevelList:
     def test_list_empty_guidance_mentions_portolan_commands(self, runner: CliRunner) -> None:
         """portolan list empty guidance mentions full portolan commands."""
         with runner.isolated_filesystem():
-            # Create catalog structure
-            Path("catalog.json").write_text(
-                json.dumps(
-                    {
-                        "type": "Catalog",
-                        "stac_version": "1.0.0",
-                        "id": "test",
-                        "description": "Test",
-                        "links": [],
-                    }
-                )
-            )
-            Path(".portolan").mkdir()
-            # config.yaml is the sentinel for catalog detection
-            Path(".portolan/config.yaml").write_text("version: 1\n")
+            _write_catalog()
 
             result = runner.invoke(cli, ["list"])
 
@@ -189,28 +144,10 @@ class TestTopLevelList:
             + boundaries.parquet (GeoParquet, 1.1MB)  [untracked]
         """
         with runner.isolated_filesystem():
-            Path("catalog.json").write_text(
-                json.dumps(
-                    {
-                        "type": "Catalog",
-                        "stac_version": "1.0.0",
-                        "id": "test",
-                        "description": "Test",
-                        "links": [],
-                    }
-                )
-            )
-            Path(".portolan").mkdir()
-            # config.yaml is the sentinel for catalog detection
-            Path(".portolan/config.yaml").write_text("version: 1\n")
+            _write_catalog()
             # Create actual files for scanning
-            Path("demographics").mkdir()
-            Path("demographics/census").mkdir()
-            census_file = Path("demographics/census/census.parquet")
-            census_file.write_bytes(b"x" * 4_400_000)  # ~4.2MB
-            Path("demographics/boundaries").mkdir()
-            boundaries_file = Path("demographics/boundaries/boundaries.parquet")
-            boundaries_file.write_bytes(b"x" * 1_100_000)  # ~1.1MB
+            _write_asset("demographics/census/census.parquet", 4_400_000)  # ~4.2MB
+            _write_asset("demographics/boundaries/boundaries.parquet", 1_100_000)  # ~1.1MB
 
             result = runner.invoke(cli, ["list"])
 
@@ -225,25 +162,9 @@ class TestTopLevelList:
     def test_list_shows_file_sizes(self, runner: CliRunner) -> None:
         """portolan list displays human-readable file sizes."""
         with runner.isolated_filesystem():
-            Path("catalog.json").write_text(
-                json.dumps(
-                    {
-                        "type": "Catalog",
-                        "stac_version": "1.0.0",
-                        "id": "test",
-                        "description": "Test",
-                        "links": [],
-                    }
-                )
-            )
-            Path(".portolan").mkdir()
-            # config.yaml is the sentinel for catalog detection
-            Path(".portolan/config.yaml").write_text("version: 1\n")
+            _write_catalog()
             # Create actual file for scanning
-            Path("imagery").mkdir()
-            Path("imagery/large-raster").mkdir()
-            raster_file = Path("imagery/large-raster/satellite.tif")
-            raster_file.write_bytes(b"x" * 120_000_000)  # ~120MB
+            _write_asset("imagery/large-raster/satellite.tif", 120_000_000)  # ~120MB
 
             result = runner.invoke(cli, ["list"])
 
@@ -255,27 +176,10 @@ class TestTopLevelList:
     def test_list_shows_format_type(self, runner: CliRunner) -> None:
         """portolan list displays format type (GeoParquet, COG)."""
         with runner.isolated_filesystem():
-            Path("catalog.json").write_text(
-                json.dumps(
-                    {
-                        "type": "Catalog",
-                        "stac_version": "1.0.0",
-                        "id": "test",
-                        "description": "Test",
-                        "links": [],
-                    }
-                )
-            )
-            Path(".portolan").mkdir()
-            # config.yaml is the sentinel for catalog detection
-            Path(".portolan/config.yaml").write_text("version: 1\n")
+            _write_catalog()
             # Create actual files for scanning
-            Path("data").mkdir()
-            Path("data/vector-item").mkdir()
-            Path("data/vector-item/data.parquet").write_bytes(b"x" * 1000)
-            Path("imagery").mkdir()
-            Path("imagery/raster-item").mkdir()
-            Path("imagery/raster-item/data.tif").write_bytes(b"x" * 1000)
+            _write_asset("data/vector-item/data.parquet", 1000)
+            _write_asset("imagery/raster-item/data.tif", 1000)
 
             result = runner.invoke(cli, ["list"])
 
@@ -288,27 +192,10 @@ class TestTopLevelList:
     def test_list_filter_by_collection(self, runner: CliRunner) -> None:
         """portolan list --collection filters by collection."""
         with runner.isolated_filesystem():
-            Path("catalog.json").write_text(
-                json.dumps(
-                    {
-                        "type": "Catalog",
-                        "stac_version": "1.0.0",
-                        "id": "test",
-                        "description": "Test",
-                        "links": [],
-                    }
-                )
-            )
-            Path(".portolan").mkdir()
-            # config.yaml is the sentinel for catalog detection
-            Path(".portolan/config.yaml").write_text("version: 1\n")
+            _write_catalog()
             # Create two collections
-            Path("target").mkdir()
-            Path("target/item1").mkdir()
-            Path("target/item1/data.parquet").write_bytes(b"x" * 1000)
-            Path("other").mkdir()
-            Path("other/item2").mkdir()
-            Path("other/item2/other.parquet").write_bytes(b"x" * 1000)
+            _write_asset("target/item1/data.parquet", 1000)
+            _write_asset("other/item2/other.parquet", 1000)
 
             result = runner.invoke(cli, ["list", "--collection", "target"])
 
@@ -324,23 +211,8 @@ class TestTopLevelList:
     def test_list_json_output(self, runner: CliRunner) -> None:
         """portolan list --json outputs valid JSON envelope."""
         with runner.isolated_filesystem():
-            Path("catalog.json").write_text(
-                json.dumps(
-                    {
-                        "type": "Catalog",
-                        "stac_version": "1.0.0",
-                        "id": "test",
-                        "description": "Test",
-                        "links": [],
-                    }
-                )
-            )
-            Path(".portolan").mkdir()
-            # config.yaml is the sentinel for catalog detection
-            Path(".portolan/config.yaml").write_text("version: 1\n")
-            Path("col1").mkdir()
-            Path("col1/item1").mkdir()
-            Path("col1/item1/data.parquet").write_bytes(b"x" * 1000)
+            _write_catalog()
+            _write_asset("col1/item1/data.parquet", 1000)
 
             result = runner.invoke(cli, ["list", "--json"])
 

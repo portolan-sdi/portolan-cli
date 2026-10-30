@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.mutation_sandbox import MUTMUT_ENV_KEY
 from tests.perf.gates import COUNTER_OWNER, measure
 from tests.perf.scenarios import SCENARIOS
 
@@ -82,10 +80,6 @@ def _rewrite_and_audit(source: Path) -> tuple[dict[str, int], int, int]:
     return reported, actual_opens, actual_connections
 
 
-@pytest.mark.skipif(
-    MUTMUT_ENV_KEY in os.environ,
-    reason="a spawn worker breaks in the mutmut sandbox (see tests/mutation_sandbox.py)",
-)
 def test_spawned_worker_counts_delegated_footer_reads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

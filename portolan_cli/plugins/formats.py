@@ -55,9 +55,8 @@ class FormatContext:
     state: ConfigSource | None = None
 
 
-# Generated methods become extra protocol requirements: https://github.com/boxed/mutmut/issues/590
 @runtime_checkable
-class FormatMetadata(Protocol):  # pragma: no mutate block
+class FormatMetadata(Protocol):
     """What a handler reads from a converted file.
 
     Attributes:
@@ -78,7 +77,7 @@ class FormatMetadata(Protocol):  # pragma: no mutate block
 
 
 @runtime_checkable
-class FormatHandler(Protocol):  # pragma: no mutate block
+class FormatHandler(Protocol):
     """Convert one file format to a cloud-native file and read its metadata.
 
     Attributes:

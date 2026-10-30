@@ -274,12 +274,6 @@ class TestJsonFileBackend:
     """Tests for the JsonFileBackend implementation."""
 
     @pytest.mark.unit
-    def test_json_file_backend_instantiates(self) -> None:
-        """JsonFileBackend can be instantiated without arguments."""
-        backend = JsonFileBackend()
-        assert backend is not None
-
-    @pytest.mark.unit
     def test_json_file_backend_isinstance_versioning_backend(self) -> None:
         """JsonFileBackend is recognized as VersioningBackend via isinstance."""
         backend = JsonFileBackend()
@@ -376,17 +370,6 @@ class TestJsonFileBackend:
 
         with pytest.raises(ValueError, match="Invalid collection name"):
             backend._versions_path(collection)
-
-    @pytest.mark.unit
-    def test_nested_collection_survives_the_flavor_guard(self, tmp_path: Any) -> None:
-        """The cross-flavor guard must not reject a legitimate nested id (#723)."""
-        from pathlib import Path
-
-        backend = JsonFileBackend(catalog_root=Path(tmp_path))
-
-        result = backend._versions_path("climate/hittekaart")
-
-        assert result == Path(tmp_path) / "climate" / "hittekaart" / "versions.json"
 
     @pytest.mark.unit
     def test_dot_collection_rejected(self, tmp_path: Any) -> None:

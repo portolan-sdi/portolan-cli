@@ -68,8 +68,9 @@ class TestAddProgress:
             env={"NO_COLOR": "1"},
         )
 
-        # Should show progress messages with "Adding:"
-        assert "Adding:" in result.output or result.exit_code == 0
+        # A non-TTY run prints no progress bar, only the summary
+        assert result.exit_code == 0, result.output
+        assert "Added 3 files" in result.output
 
     @pytest.mark.integration
     def test_add_single_file_shows_progress(
@@ -90,8 +91,9 @@ class TestAddProgress:
             env={"NO_COLOR": "1"},
         )
 
-        # Should show progress or succeed
-        assert "Adding:" in result.output or result.exit_code == 0
+        # A non-TTY run prints no progress bar, only the summary
+        assert result.exit_code == 0, result.output
+        assert "Added 1 file to" in result.output
 
 
 class TestCheckFixProgress:
@@ -126,6 +128,6 @@ class TestCheckFixProgress:
             env={"NO_COLOR": "1"},
         )
 
-        # Should complete (may have no files to convert)
-        # Exit code 0 or 1 depending on catalog state
-        assert result.exit_code in (0, 1)
+        # The catalog holds no shapefiles, so there is nothing to convert
+        assert result.exit_code == 0, result.output
+        assert "No files to convert" in result.output

@@ -495,7 +495,7 @@ class TestConvertFileVector:
         assert result.format_from == "GeoJSON"
         assert result.format_to == "GeoParquet"
         assert result.error is None
-        assert result.duration_ms >= 0
+        assert result.duration_ms > 0
 
     @pytest.mark.unit
     def test_convert_vector_output_in_source_dir_by_default(
@@ -1124,12 +1124,11 @@ class TestConvertDirectoryPoolFallback:
 
     A ``ProcessPoolExecutor`` can fail to spawn workers in restricted
     environments: locked-down containers with no ``/dev/shm``, seccomp filters
-    that block ``clone``, or a nested multiprocessing context such as mutmut's
-    mutation runner (which re-sets the start method during worker bootstrap and
-    surfaces as ``BrokenProcessPool`` in the parent). Without a fallback every
-    file is reported FAILED even though the inputs are valid. Conversion must
-    still complete by dropping to the serial path. Regression guard for the
-    mutation-testing baseline (issue #612).
+    that block ``clone``, or a nested multiprocessing context inside another
+    test runner. Each one surfaces as ``BrokenProcessPool`` in the parent.
+    Without a fallback every file is reported FAILED even though the inputs are
+    valid. Conversion must still complete by dropping to the serial path
+    (issue #612).
     """
 
     @pytest.mark.unit
@@ -1641,7 +1640,7 @@ class TestConvertFileEdgeCases:
 
         result = convert_file(geojson, output_dir=tmp_path)
 
-        assert result.duration_ms >= 0
+        assert result.duration_ms > 0
 
     @pytest.mark.unit
     def test_format_from_never_empty(self, tmp_path: Path) -> None:

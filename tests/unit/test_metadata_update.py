@@ -259,14 +259,17 @@ class TestUpdateItemMetadata:
             data_path=data_file,
             collection_id="my-collection",
         )
+        # A stale bbox on disk, so only a written update can replace it
+        item.bbox = [0.0, 0.0, 1.0, 1.0]
         item_path = write_item_json(item, collection_dir)
 
         # Update item metadata
-        update_item_metadata(item_path, data_file)
+        updated_item = update_item_metadata(item_path, data_file)
 
         # Verify file was updated on disk
         updated_from_disk = read_item_json(item_path)
-        assert updated_from_disk.bbox is not None
+        assert updated_from_disk.bbox != [0.0, 0.0, 1.0, 1.0]
+        assert updated_from_disk.bbox == updated_item.bbox
 
     @pytest.mark.unit
     def test_update_item_metadata_preserves_thumbnail_asset(self, tmp_path: Path) -> None:
@@ -901,11 +904,13 @@ class TestEdgeCases:
             data_path=data_file,
             collection_id="cog-collection",
         )
+        original_bbox = list(item.bbox)
         item_path = write_item_json(item, collection_dir)
 
         # Update should work for COG files too
         updated_item = update_item_metadata(item_path, data_file)
-        assert updated_item.bbox is not None
+        # The file did not change, so the re-extracted bbox matches
+        assert updated_item.bbox == original_bbox
 
     @pytest.mark.unit
     def test_prepare_missing_item_collection_json_missing(self, tmp_path: Path) -> None:

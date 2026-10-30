@@ -1,7 +1,7 @@
 """Tests for output.py - standardized terminal output utilities.
 
 These tests verify the observable behavior of output functions,
-specifically targeting mutations that survived initial testing:
+specifically targeting behavior that earlier tests did not catch:
 - Default nl=True parameter (newlines added by default)
 - Prefix symbols are used (✓, ✗, →, ⚠)
 - Colors are applied (green, red, blue, yellow)
@@ -18,7 +18,7 @@ from io import StringIO
 from typing import TYPE_CHECKING
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 from portolan_cli.output import detail, error, info, success, warn
@@ -249,7 +249,6 @@ class TestDryRunMode:
         result = output.getvalue()
         assert "[DRY RUN]" not in result
 
-    @settings(suppress_health_check=[HealthCheck.differing_executors])
     @given(st.text(min_size=1))
     @pytest.mark.unit
     def test_dry_run_preserves_message_content(self, message: str) -> None:

@@ -25,9 +25,8 @@ if TYPE_CHECKING:
     from portolan_cli.extract.common.report import ExtractionReport
 
 
-# Generated methods become extra protocol requirements: https://github.com/boxed/mutmut/issues/590
 @runtime_checkable
-class Extractor(Protocol):  # pragma: no mutate block
+class Extractor(Protocol):
     """A source of data that Portolan can extract into a catalog.
 
     Attributes:

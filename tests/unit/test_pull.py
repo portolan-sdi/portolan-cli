@@ -13,16 +13,113 @@ Test categories:
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 # =============================================================================
 # Test Fixtures
 # =============================================================================
+
+
+def _initial_version_entry() -> dict[str, Any]:
+    """Return the 1.0.0 versions.json entry for test-collection/data.parquet."""
+    return {
+        "version": "1.0.0",
+        "created": "2024-01-15T10:00:00Z",
+        "breaking": False,
+        "message": "Initial version",
+        "assets": {
+            "data.parquet": {
+                "sha256": "abc123",
+                "size_bytes": 1000,
+                "href": "test-collection/data.parquet",
+            }
+        },
+        "changes": ["data.parquet"],
+    }
+
+
+def _initial_versions_data() -> dict[str, Any]:
+    """Return a versions.json document that holds only the 1.0.0 entry."""
+    return {
+        "spec_version": "1.0.0",
+        "current_version": "1.0.0",
+        "versions": [_initial_version_entry()],
+    }
+
+
+def _data_version(version: str, *, day: int, sha256: str, size_bytes: int) -> Any:
+    """Return a Version from January 2024 with one data.parquet asset."""
+    from portolan_cli.versions import Asset, Version
+
+    return Version(
+        version=version,
+        created=datetime(2024, 1, day, tzinfo=UTC),
+        breaking=False,
+        assets={"data.parquet": Asset(sha256=sha256, size_bytes=size_bytes, href="data.parquet")},
+        changes=["data.parquet"],
+    )
+
+
+def _make_item_file(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Write catalog/test/data/data.parquet. Return the catalog, collection, and file paths."""
+    catalog_root = tmp_path / "catalog"
+    catalog_root.mkdir()
+    collection_dir = catalog_root / "test"
+    collection_dir.mkdir(parents=True)
+    item_dir = collection_dir / "data"
+    item_dir.mkdir(parents=True)
+    data_file = item_dir / "data.parquet"
+    data_file.write_bytes(b"x" * 1000)
+    return catalog_root, collection_dir, data_file
+
+
+def _write_one_asset_versions(collection_dir: Path, asset: dict[str, Any]) -> None:
+    """Write a 1.0.0 versions.json that tracks one data.parquet asset."""
+    versions_data = {
+        "spec_version": "1.0.0",
+        "current_version": "1.0.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2024-01-15T10:00:00Z",
+                "breaking": False,
+                "message": "Test",
+                "assets": {"data.parquet": asset},
+                "changes": ["data.parquet"],
+            }
+        ],
+    }
+    (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+
+
+@contextmanager
+def _patched_pull_io(
+    remote_versions_data: dict[str, Any],
+    *,
+    download_result: tuple[int, int],
+    checksum: str,
+) -> Iterator[None]:
+    """Patch the remote fetch, the asset download, and the checksum with fixed results."""
+    from portolan_cli.versions import _parse_versions_file
+
+    with (
+        patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
+        patch("portolan_cli.sync.pull._download_assets_async") as mock_download,
+        patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum,
+    ):
+        mock_fetch.return_value = _parse_versions_file(remote_versions_data)
+        mock_download.return_value = download_result
+        mock_checksum.return_value = checksum
+        yield
 
 
 @pytest.fixture
@@ -54,26 +151,7 @@ def catalog_with_versions(tmp_path: Path) -> Path:
 
     # Create versions.json in collection directory
     # Note: href is relative to catalog_root, not collection_dir
-    versions_data = {
-        "spec_version": "1.0.0",
-        "current_version": "1.0.0",
-        "versions": [
-            {
-                "version": "1.0.0",
-                "created": "2024-01-15T10:00:00Z",
-                "breaking": False,
-                "message": "Initial version",
-                "assets": {
-                    "data.parquet": {
-                        "sha256": "abc123",
-                        "size_bytes": 1000,
-                        "href": "test-collection/data.parquet",
-                    }
-                },
-                "changes": ["data.parquet"],
-            }
-        ],
-    }
+    versions_data = _initial_versions_data()
     (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
 
     # Create the actual data file in collection
@@ -93,20 +171,7 @@ def remote_versions_data() -> dict[str, Any]:
         "spec_version": "1.0.0",
         "current_version": "1.1.0",
         "versions": [
-            {
-                "version": "1.0.0",
-                "created": "2024-01-15T10:00:00Z",
-                "breaking": False,
-                "message": "Initial version",
-                "assets": {
-                    "data.parquet": {
-                        "sha256": "abc123",
-                        "size_bytes": 1000,
-                        "href": "test-collection/data.parquet",
-                    }
-                },
-                "changes": ["data.parquet"],
-            },
+            _initial_version_entry(),
             {
                 "version": "1.1.0",
                 "created": "2024-01-20T10:00:00Z",
@@ -319,43 +384,21 @@ class TestUncommittedChangeDetection:
         """Should skip checksum when mtime and size match (fast path)."""
         from portolan_cli.sync.pull import detect_uncommitted_changes
 
-        catalog_root = tmp_path / "catalog"
-        catalog_root.mkdir()
-
-        portolan_dir = catalog_root / "test"
-        portolan_dir.mkdir(parents=True)
-
         # Create file first to get its mtime (at collection/item/filename)
-        item_dir = catalog_root / "test" / "data"
-        item_dir.mkdir(parents=True, exist_ok=True)
-        data_file = item_dir / "data.parquet"
-        data_file.write_bytes(b"x" * 1000)
+        catalog_root, collection_dir, data_file = _make_item_file(tmp_path)
         stat = data_file.stat()
 
         # Create versions.json with matching mtime and size
         # hrefs are catalog-root-relative: collection/item/filename
-        versions_data = {
-            "spec_version": "1.0.0",
-            "current_version": "1.0.0",
-            "versions": [
-                {
-                    "version": "1.0.0",
-                    "created": "2024-01-15T10:00:00Z",
-                    "breaking": False,
-                    "message": "Test",
-                    "assets": {
-                        "data.parquet": {
-                            "sha256": "abc123",
-                            "size_bytes": 1000,
-                            "href": "test/data/data.parquet",
-                            "mtime": stat.st_mtime,
-                        }
-                    },
-                    "changes": ["data.parquet"],
-                }
-            ],
-        }
-        (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+        _write_one_asset_versions(
+            collection_dir,
+            {
+                "sha256": "abc123",
+                "size_bytes": 1000,
+                "href": "test/data/data.parquet",
+                "mtime": stat.st_mtime,
+            },
+        )
 
         with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
             changes = detect_uncommitted_changes(
@@ -372,42 +415,20 @@ class TestUncommittedChangeDetection:
         """Should compute checksum when mtime differs from recorded value."""
         from portolan_cli.sync.pull import detect_uncommitted_changes
 
-        catalog_root = tmp_path / "catalog"
-        catalog_root.mkdir()
-
-        portolan_dir = catalog_root / "test"
-        portolan_dir.mkdir(parents=True)
-
         # Create file at collection/item/filename
-        item_dir = portolan_dir / "data"
-        item_dir.mkdir(parents=True)
-        data_file = item_dir / "data.parquet"
-        data_file.write_bytes(b"x" * 1000)
+        catalog_root, collection_dir, _ = _make_item_file(tmp_path)
 
         # Create versions.json with different mtime
         # hrefs are catalog-root-relative: collection/item/filename
-        versions_data = {
-            "spec_version": "1.0.0",
-            "current_version": "1.0.0",
-            "versions": [
-                {
-                    "version": "1.0.0",
-                    "created": "2024-01-15T10:00:00Z",
-                    "breaking": False,
-                    "message": "Test",
-                    "assets": {
-                        "data.parquet": {
-                            "sha256": "abc123",
-                            "size_bytes": 1000,
-                            "href": "test/data/data.parquet",
-                            "mtime": 0.0,  # Different mtime
-                        }
-                    },
-                    "changes": ["data.parquet"],
-                }
-            ],
-        }
-        (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+        _write_one_asset_versions(
+            collection_dir,
+            {
+                "sha256": "abc123",
+                "size_bytes": 1000,
+                "href": "test/data/data.parquet",
+                "mtime": 0.0,  # Different mtime
+            },
+        )
 
         with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
             mock_checksum.return_value = "abc123"  # Same checksum
@@ -426,43 +447,21 @@ class TestUncommittedChangeDetection:
         """Should compute checksum when size differs from recorded value."""
         from portolan_cli.sync.pull import detect_uncommitted_changes
 
-        catalog_root = tmp_path / "catalog"
-        catalog_root.mkdir()
-
-        portolan_dir = catalog_root / "test"
-        portolan_dir.mkdir(parents=True)
-
         # Create file at collection/item/filename
-        item_dir = portolan_dir / "data"
-        item_dir.mkdir(parents=True)
-        data_file = item_dir / "data.parquet"
-        data_file.write_bytes(b"x" * 1000)
+        catalog_root, collection_dir, data_file = _make_item_file(tmp_path)
         stat = data_file.stat()
 
         # Create versions.json with matching mtime but different size
         # hrefs are catalog-root-relative: collection/item/filename
-        versions_data = {
-            "spec_version": "1.0.0",
-            "current_version": "1.0.0",
-            "versions": [
-                {
-                    "version": "1.0.0",
-                    "created": "2024-01-15T10:00:00Z",
-                    "breaking": False,
-                    "message": "Test",
-                    "assets": {
-                        "data.parquet": {
-                            "sha256": "abc123",
-                            "size_bytes": 500,  # Different size
-                            "href": "test/data/data.parquet",
-                            "mtime": stat.st_mtime,
-                        }
-                    },
-                    "changes": ["data.parquet"],
-                }
-            ],
-        }
-        (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+        _write_one_asset_versions(
+            collection_dir,
+            {
+                "sha256": "abc123",
+                "size_bytes": 500,  # Different size
+                "href": "test/data/data.parquet",
+                "mtime": stat.st_mtime,
+            },
+        )
 
         with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
             mock_checksum.return_value = "different_checksum"
@@ -481,42 +480,20 @@ class TestUncommittedChangeDetection:
         """Should compute checksum when mtime is not recorded in versions.json."""
         from portolan_cli.sync.pull import detect_uncommitted_changes
 
-        catalog_root = tmp_path / "catalog"
-        catalog_root.mkdir()
-
-        portolan_dir = catalog_root / "test"
-        portolan_dir.mkdir(parents=True)
-
         # Create file at collection/item/filename
-        item_dir = portolan_dir / "data"
-        item_dir.mkdir(parents=True)
-        data_file = item_dir / "data.parquet"
-        data_file.write_bytes(b"x" * 1000)
+        catalog_root, collection_dir, _ = _make_item_file(tmp_path)
 
         # Create versions.json WITHOUT mtime
         # hrefs are catalog-root-relative: collection/item/filename
-        versions_data = {
-            "spec_version": "1.0.0",
-            "current_version": "1.0.0",
-            "versions": [
-                {
-                    "version": "1.0.0",
-                    "created": "2024-01-15T10:00:00Z",
-                    "breaking": False,
-                    "message": "Test",
-                    "assets": {
-                        "data.parquet": {
-                            "sha256": "abc123",
-                            "size_bytes": 1000,
-                            "href": "test/data/data.parquet",
-                            # No mtime field
-                        }
-                    },
-                    "changes": ["data.parquet"],
-                }
-            ],
-        }
-        (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+        _write_one_asset_versions(
+            collection_dir,
+            {
+                "sha256": "abc123",
+                "size_bytes": 1000,
+                "href": "test/data/data.parquet",
+                # No mtime field
+            },
+        )
 
         with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
             mock_checksum.return_value = "abc123"  # Matches
@@ -624,46 +601,20 @@ class TestVersionDiffing:
     def test_diff_versions_newer_remote(self) -> None:
         """Should identify files changed between local and remote versions."""
         from portolan_cli.sync.pull import diff_versions
-        from portolan_cli.versions import Asset, Version, VersionsFile
+        from portolan_cli.versions import VersionsFile
 
         local_versions = VersionsFile(
             spec_version="1.0.0",
             current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime(2024, 1, 15, tzinfo=UTC),
-                    breaking=False,
-                    assets={
-                        "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
-                    },
-                    changes=["data.parquet"],
-                )
-            ],
+            versions=[_data_version("1.0.0", day=15, sha256="abc123", size_bytes=1000)],
         )
 
         remote_versions = VersionsFile(
             spec_version="1.0.0",
             current_version="1.1.0",
             versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime(2024, 1, 15, tzinfo=UTC),
-                    breaking=False,
-                    assets={
-                        "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
-                    },
-                    changes=["data.parquet"],
-                ),
-                Version(
-                    version="1.1.0",
-                    created=datetime(2024, 1, 20, tzinfo=UTC),
-                    breaking=False,
-                    assets={
-                        "data.parquet": Asset(sha256="def456", size_bytes=2000, href="data.parquet")
-                    },
-                    changes=["data.parquet"],
-                ),
+                _data_version("1.0.0", day=15, sha256="abc123", size_bytes=1000),
+                _data_version("1.1.0", day=20, sha256="def456", size_bytes=2000),
             ],
         )
 
@@ -678,22 +629,12 @@ class TestVersionDiffing:
     def test_diff_versions_up_to_date(self) -> None:
         """Should indicate no changes when versions match."""
         from portolan_cli.sync.pull import diff_versions
-        from portolan_cli.versions import Asset, Version, VersionsFile
+        from portolan_cli.versions import VersionsFile
 
         versions = VersionsFile(
             spec_version="1.0.0",
             current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime(2024, 1, 15, tzinfo=UTC),
-                    breaking=False,
-                    assets={
-                        "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
-                    },
-                    changes=["data.parquet"],
-                )
-            ],
+            versions=[_data_version("1.0.0", day=15, sha256="abc123", size_bytes=1000)],
         )
 
         diff = diff_versions(versions, versions)
@@ -839,26 +780,7 @@ class TestPullOperation:
         from portolan_cli.sync.pull import pull
 
         # Use same version as local (href is relative to catalog_root)
-        same_versions_data = {
-            "spec_version": "1.0.0",
-            "current_version": "1.0.0",
-            "versions": [
-                {
-                    "version": "1.0.0",
-                    "created": "2024-01-15T10:00:00Z",
-                    "breaking": False,
-                    "message": "Initial version",
-                    "assets": {
-                        "data.parquet": {
-                            "sha256": "abc123",
-                            "size_bytes": 1000,
-                            "href": "test-collection/data.parquet",
-                        }
-                    },
-                    "changes": ["data.parquet"],
-                }
-            ],
-        }
+        same_versions_data = _initial_versions_data()
 
         with (
             patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
@@ -886,17 +808,7 @@ class TestPullOperation:
         """Pull should update local versions.json after successful download."""
         from portolan_cli.sync.pull import pull
 
-        with (
-            patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
-            patch("portolan_cli.sync.pull._download_assets_async") as mock_download,
-            patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum,
-        ):
-            from portolan_cli.versions import _parse_versions_file
-
-            mock_fetch.return_value = _parse_versions_file(remote_versions_data)
-            mock_download.return_value = (1, 0)
-            mock_checksum.return_value = "abc123"
-
+        with _patched_pull_io(remote_versions_data, download_result=(1, 0), checksum="abc123"):
             result = pull(
                 remote_url="s3://bucket/catalog",
                 local_root=catalog_with_versions,
@@ -982,17 +894,8 @@ class TestErrorHandling:
         """Pull should handle download failures gracefully."""
         from portolan_cli.sync.pull import pull
 
-        with (
-            patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
-            patch("portolan_cli.sync.pull._download_assets_async") as mock_download,
-            patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum,
-        ):
-            from portolan_cli.versions import _parse_versions_file
-
-            mock_fetch.return_value = _parse_versions_file(remote_versions_data)
-            mock_download.return_value = (0, 1)  # 0 downloaded, 1 failed
-            mock_checksum.return_value = "abc123"
-
+        # 0 downloaded, 1 failed
+        with _patched_pull_io(remote_versions_data, download_result=(0, 1), checksum="abc123"):
             result = pull(
                 remote_url="s3://bucket/catalog",
                 local_root=catalog_with_versions,
@@ -1147,31 +1050,15 @@ class TestLocalAheadDetection:
     def test_diff_versions_detects_local_ahead(self) -> None:
         """Should detect when local has versions not in remote."""
         from portolan_cli.sync.pull import diff_versions
-        from portolan_cli.versions import Asset, Version, VersionsFile
+        from portolan_cli.versions import VersionsFile
 
         # Local has v1.0.0 and v1.1.0
         local_versions = VersionsFile(
             spec_version="1.0.0",
             current_version="1.1.0",
             versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime(2024, 1, 15, tzinfo=UTC),
-                    breaking=False,
-                    assets={
-                        "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
-                    },
-                    changes=["data.parquet"],
-                ),
-                Version(
-                    version="1.1.0",
-                    created=datetime(2024, 1, 20, tzinfo=UTC),
-                    breaking=False,
-                    assets={
-                        "data.parquet": Asset(sha256="def456", size_bytes=2000, href="data.parquet")
-                    },
-                    changes=["data.parquet"],
-                ),
+                _data_version("1.0.0", day=15, sha256="abc123", size_bytes=1000),
+                _data_version("1.1.0", day=20, sha256="def456", size_bytes=2000),
             ],
         )
 
@@ -1180,15 +1067,7 @@ class TestLocalAheadDetection:
             spec_version="1.0.0",
             current_version="1.0.0",
             versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime(2024, 1, 15, tzinfo=UTC),
-                    breaking=False,
-                    assets={
-                        "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
-                    },
-                    changes=["data.parquet"],
-                ),
+                _data_version("1.0.0", day=15, sha256="abc123", size_bytes=1000),
             ],
         )
 
@@ -1202,33 +1081,15 @@ class TestLocalAheadDetection:
     def test_diff_versions_detects_diverged(self) -> None:
         """Should detect when local and remote have diverged."""
         from portolan_cli.sync.pull import diff_versions
-        from portolan_cli.versions import Asset, Version, VersionsFile
+        from portolan_cli.versions import VersionsFile
 
         # Local has v1.0.0 and v1.1.0-local
         local_versions = VersionsFile(
             spec_version="1.0.0",
             current_version="1.1.0",
             versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime(2024, 1, 15, tzinfo=UTC),
-                    breaking=False,
-                    assets={
-                        "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
-                    },
-                    changes=["data.parquet"],
-                ),
-                Version(
-                    version="1.1.0",
-                    created=datetime(2024, 1, 20, tzinfo=UTC),
-                    breaking=False,
-                    assets={
-                        "data.parquet": Asset(
-                            sha256="local456", size_bytes=2000, href="data.parquet"
-                        )
-                    },
-                    changes=["data.parquet"],
-                ),
+                _data_version("1.0.0", day=15, sha256="abc123", size_bytes=1000),
+                _data_version("1.1.0", day=20, sha256="local456", size_bytes=2000),
             ],
         )
 
@@ -1237,26 +1098,8 @@ class TestLocalAheadDetection:
             spec_version="1.0.0",
             current_version="1.0.1",
             versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime(2024, 1, 15, tzinfo=UTC),
-                    breaking=False,
-                    assets={
-                        "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
-                    },
-                    changes=["data.parquet"],
-                ),
-                Version(
-                    version="1.0.1",
-                    created=datetime(2024, 1, 18, tzinfo=UTC),
-                    breaking=False,
-                    assets={
-                        "data.parquet": Asset(
-                            sha256="remote789", size_bytes=1500, href="data.parquet"
-                        )
-                    },
-                    changes=["data.parquet"],
-                ),
+                _data_version("1.0.0", day=15, sha256="abc123", size_bytes=1000),
+                _data_version("1.0.1", day=18, sha256="remote789", size_bytes=1500),
             ],
         )
 

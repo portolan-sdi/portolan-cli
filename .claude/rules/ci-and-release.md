@@ -15,7 +15,7 @@ paths:
 |------|------|------|
 | Tier 1 | Local hooks | ruff, mypy, import-linter, vulture, jscpd, deptry at pre-commit, fast tests at pre-push (`prek.toml`) |
 | Tier 2 | Every PR | lint, mypy, security, full tests, perf counter gates, CodSpeed, docs build |
-| Tier 3 | Nightly | mutation testing, perf scenarios (wall time and peak RSS), live network tests |
+| Tier 3 | Nightly | rashid main conformance, perf scenarios (wall time and peak RSS), live network tests, slow tests, property tests, gate self-test |
 
 **All checks are strict**, no `continue-on-error`. Fix issues or they block.
 

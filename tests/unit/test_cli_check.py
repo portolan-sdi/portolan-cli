@@ -394,7 +394,7 @@ class TestCheckMetadataGeoAssetsFlags:
         assert flag in result.output
 
     @pytest.mark.unit
-    def test_metadata_flag_alone_skips_the_source_scan(
+    def test_metadata_flag_alone_skips_the_source_file_scan(
         self, runner: CliRunner, valid_catalog: Path
     ) -> None:
         result = runner.invoke(cli, ["check", str(valid_catalog), "--metadata"])
@@ -422,12 +422,9 @@ class TestCheckMetadataGeoAssetsFlags:
 class TestCheckFlagCombinationsHypothesis:
     """Property-based tests for check command flag combinations."""
 
-    # differing_executors: mutmut re-invokes each test through its own runner,
-    # so these class methods legitimately run under more than one executor.
     @settings(
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
         ],
         max_examples=20,
     )
@@ -458,12 +455,9 @@ class TestCheckFlagCombinationsHypothesis:
             assert output["success"] is True
             assert output["command"] == "check"
 
-    # differing_executors: mutmut re-invokes each test through its own runner,
-    # so these class methods legitimately run under more than one executor.
     @settings(
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
         ],
         max_examples=20,
     )
@@ -491,12 +485,9 @@ class TestCheckFlagCombinationsHypothesis:
 
         assert json.loads(result.output)["data"]["mode"] == expected_mode
 
-    # differing_executors: mutmut re-invokes each test through its own runner,
-    # so these class methods legitimately run under more than one executor.
     @settings(
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
         ],
         max_examples=20,
     )

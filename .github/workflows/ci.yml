@@ -217,11 +217,12 @@ jobs:
         # Speed decisions:
         # - `-n logical`: `-n auto` counts physical cores and started only 2
         #   workers on the 4-vCPU ubuntu/windows runners. Logical count starts 4.
-        # - Every cell measures coverage. The diff-cover job reads the
-        #   report of every cell, so a line that only Windows or macOS runs
-        #   counts as covered there. No `# pragma: no cover` for
-        #   platform-only code. The diff-cover summary lists the missed
-        #   lines, so no cell prints the term-missing report.
+        # - Only the ubuntu-latest 3.11 cell measures coverage. The other
+        #   cells run pytest without --cov, which saves their trace
+        #   overhead. A line that only Windows or macOS runs shows as
+        #   missed in the diff-cover summary. No `# pragma: no cover` for
+        #   platform-only code. The summary lists the missed lines, so no
+        #   cell prints the term-missing report.
         # - HYPOTHESIS_PROFILE=ci selects the reduced deterministic profile
         #   from tests/conftest.py. Nightly keeps the full default profile.
         # - --durations=25 records the slowest tests so a slow-test regression
@@ -230,8 +231,14 @@ jobs:
         env:
           HYPOTHESIS_PROFILE: ci
           MATRIX_SUITE: ${{ matrix.suite }}
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_PYTHON: ${{ matrix.python-version }}
         shell: bash
         run: |
+          coverage=()
+          if [ "$MATRIX_OS" = "ubuntu-latest" ] && [ "$MATRIX_PYTHON" = "3.11" ]; then
+            coverage=(--cov=portolan_cli --cov-report=xml)
+          fi
           marker="not network and not slow and not benchmark"
           if [ "$MATRIX_SUITE" = "unit" ] && [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             marker="unit and not network and not slow and not benchmark"
@@ -240,7 +247,7 @@ jobs:
             -m "$marker" \
             -n logical --dist loadscope \
             --durations=25 --durations-min=1.0 \
-            --cov=portolan_cli --cov-report=xml
+            "${coverage[@]}"
 
       - name: Upload coverage reports to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
@@ -250,9 +257,11 @@ jobs:
           slug: portolan-sdi/portolan-cli
           flags: main
 
-      # The diff-cover job reads this report. A missing report fails the
-      # upload, so a cell that stops writing it cannot pass quietly.
+      # Only the ubuntu-latest 3.11 cell writes a report. The diff-cover job
+      # reads it. A missing report fails the upload, so the cell cannot stop
+      # writing it quietly.
       - name: Upload coverage XML
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-${{ matrix.os }}-${{ matrix.python-version }}
@@ -443,7 +452,17 @@ jobs:
           command: uv sync --extra iceberg --extra dev
 
       - name: Run unit and integration tests
-        run: uv run pytest tests/iceberg/ -v --tb=short -m "not e2e and not e2e_slow and not network and not slow" --cov-reset --cov=portolan_cli/backends/iceberg --cov-report=term-missing --cov-report=xml
+        # Only the ubuntu-latest 3.11 cell measures coverage.
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_PYTHON: ${{ matrix.python-version }}
+        shell: bash
+        run: |
+          coverage=()
+          if [ "$MATRIX_OS" = "ubuntu-latest" ] && [ "$MATRIX_PYTHON" = "3.11" ]; then
+            coverage=(--cov-reset --cov=portolan_cli/backends/iceberg --cov-report=term-missing --cov-report=xml)
+          fi
+          uv run pytest tests/iceberg/ -v --tb=short -m "not e2e and not e2e_slow and not network and not slow" "${coverage[@]}"
 
       - name: Upload coverage reports to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
@@ -453,9 +472,11 @@ jobs:
           slug: portolan-sdi/portolan-cli
           flags: iceberg
 
-      # Every cell uploads its report. On a change that touches neither
-      # filter, the job skips and the diff-cover job reads no Iceberg report.
+      # Only the ubuntu-latest 3.11 cell uploads a report. On a change that
+      # touches neither filter, the job skips and the diff-cover job reads no
+      # Iceberg report.
       - name: Upload coverage XML
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-iceberg-${{ matrix.os }}-${{ matrix.python-version }}
@@ -467,14 +488,13 @@ jobs:
     # The coverage gate on the lines a pull request changes. Codecov reports
     # but never blocks (codecov.yml), so this job is the gate.
     #
-    # Every cell of the test and Iceberg matrices uploads a coverage report
-    # named coverage-<os>-<python> or coverage-iceberg-<os>-<python>. This
-    # job downloads every artifact that matches coverage-* and passes all
-    # the reports to diff-cover. diff-cover marks a line as missed only when
-    # every report that measures the file misses it. Thus a line that only
-    # Windows or macOS runs counts as covered. relative_files in
-    # [tool.coverage.run] writes paths relative to the checkout, so the
-    # Windows and macOS reports match the Linux checkout here.
+    # Only the ubuntu-latest 3.11 cell of the test matrix and of the Iceberg
+    # matrix uploads a coverage report, named coverage-ubuntu-latest-3.11 and
+    # coverage-iceberg-ubuntu-latest-3.11. This job downloads every artifact
+    # that matches coverage-* and passes the two reports to diff-cover. A line
+    # that only Windows or macOS runs shows as missed in the diff-cover
+    # summary. relative_files in [tool.coverage.run] writes paths relative to
+    # the checkout, so the reports match the checkout here.
     #
     # FLOOR comes from the last five merged pull requests that changed
     # portolan_cli, measured with the marker sets of the two coverage cells:

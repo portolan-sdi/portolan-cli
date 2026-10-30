@@ -17,12 +17,14 @@ Test categories:
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 # =============================================================================
@@ -89,6 +91,47 @@ def fresh_directory(tmp_path: Path) -> Path:
     fresh_dir = tmp_path / "fresh"
     fresh_dir.mkdir()
     return fresh_dir
+
+
+def _successful_pull(*args: Any, **kwargs: Any) -> MagicMock:
+    """Return a pull result that succeeds and is up to date."""
+    result = MagicMock()
+    result.success = True
+    result.up_to_date = True
+    return result
+
+
+def _successful_push(*args: Any, **kwargs: Any) -> MagicMock:
+    """Return a push result that succeeds and uploads nothing."""
+    result = MagicMock()
+    result.success = True
+    result.files_uploaded = 0
+    result.versions_pushed = 0
+    return result
+
+
+@contextmanager
+def _patched_sync_steps(
+    *,
+    pull_side_effect: Any = None,
+    init_side_effect: Any = None,
+    push_side_effect: Any = None,
+) -> Iterator[tuple[MagicMock, MagicMock, MagicMock, MagicMock, AsyncMock]]:
+    """Patch pull, init, scan, check, and push. Give scan and check a clean empty result."""
+    with (
+        patch("portolan_cli.sync.core.pull", side_effect=pull_side_effect) as mock_pull,
+        patch("portolan_cli.sync.core.init_catalog", side_effect=init_side_effect) as mock_init,
+        patch("portolan_cli.sync.core.scan_directory") as mock_scan,
+        patch("portolan_cli.sync.core.check_directory") as mock_check,
+        patch(
+            "portolan_cli.sync.core.push_async",
+            new_callable=AsyncMock,
+            side_effect=push_side_effect,
+        ) as mock_push,
+    ):
+        mock_scan.return_value = MagicMock(ready=[], has_errors=False)
+        mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
+        yield mock_pull, mock_init, mock_scan, mock_check, mock_push
 
 
 # =============================================================================
@@ -274,12 +317,12 @@ class TestEarlyExit:
             result.uncommitted_changes = ["data.parquet"]
             return result
 
-        with (
-            patch("portolan_cli.sync.core.pull", side_effect=failing_pull),
-            patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.core.check_directory") as mock_check,
-            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
+        with _patched_sync_steps(pull_side_effect=failing_pull) as (
+            _,
+            _,
+            mock_scan,
+            mock_check,
+            mock_push,
         ):
             result = sync(
                 catalog_root=managed_catalog,
@@ -305,28 +348,9 @@ class TestEarlyExit:
             result.files_downloaded = 0
             return result
 
-        def successful_push(*args: Any, **kwargs: Any) -> MagicMock:
-            result = MagicMock()
-            result.success = True
-            result.files_uploaded = 0
-            result.versions_pushed = 0
-            return result
-
-        with (
-            patch("portolan_cli.sync.core.pull", side_effect=up_to_date_pull),
-            patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.core.check_directory") as mock_check,
-            patch(
-                "portolan_cli.sync.core.push_async",
-                new_callable=AsyncMock,
-                side_effect=successful_push,
-            ),
-        ):
-            # Set up mock returns
-            mock_scan.return_value = MagicMock(ready=[], has_errors=False)
-            mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
-
+        with _patched_sync_steps(
+            pull_side_effect=up_to_date_pull, push_side_effect=_successful_push
+        ) as (_, _, mock_scan, mock_check, _):
             result = sync(
                 catalog_root=managed_catalog,
                 collection="test-collection",
@@ -352,33 +376,9 @@ class TestInitSkip:
         """Sync should skip init if catalog is already in MANAGED state."""
         from portolan_cli.sync.core import sync
 
-        def successful_pull(*args: Any, **kwargs: Any) -> MagicMock:
-            result = MagicMock()
-            result.success = True
-            result.up_to_date = True
-            return result
-
-        def successful_push(*args: Any, **kwargs: Any) -> MagicMock:
-            result = MagicMock()
-            result.success = True
-            result.files_uploaded = 0
-            result.versions_pushed = 0
-            return result
-
-        with (
-            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
-            patch("portolan_cli.sync.core.init_catalog") as mock_init,
-            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.core.check_directory") as mock_check,
-            patch(
-                "portolan_cli.sync.core.push_async",
-                new_callable=AsyncMock,
-                side_effect=successful_push,
-            ),
-        ):
-            mock_scan.return_value = MagicMock(ready=[], has_errors=False)
-            mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
-
+        with _patched_sync_steps(
+            pull_side_effect=_successful_pull, push_side_effect=_successful_push
+        ) as (_, mock_init, _, _, _):
             result = sync(
                 catalog_root=managed_catalog,
                 collection="test-collection",
@@ -394,19 +394,6 @@ class TestInitSkip:
         """Sync should call init if directory is in FRESH state."""
         from portolan_cli.sync.core import sync
 
-        def successful_pull(*args: Any, **kwargs: Any) -> MagicMock:
-            result = MagicMock()
-            result.success = True
-            result.up_to_date = True
-            return result
-
-        def successful_push(*args: Any, **kwargs: Any) -> MagicMock:
-            result = MagicMock()
-            result.success = True
-            result.files_uploaded = 0
-            result.versions_pushed = 0
-            return result
-
         def mock_init_catalog(path: Path, **kwargs: Any) -> tuple[Path, list[str]]:
             # Simulate init creating the .portolan directory
             portolan_dir = path / ".portolan"
@@ -414,22 +401,11 @@ class TestInitSkip:
             (portolan_dir / "config.yaml").write_text("{}\n")
             return path / "catalog.json", []
 
-        with (
-            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
-            patch(
-                "portolan_cli.sync.core.init_catalog", side_effect=mock_init_catalog
-            ) as mock_init,
-            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.core.check_directory") as mock_check,
-            patch(
-                "portolan_cli.sync.core.push_async",
-                new_callable=AsyncMock,
-                side_effect=successful_push,
-            ),
-        ):
-            mock_scan.return_value = MagicMock(ready=[], has_errors=False)
-            mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
-
+        with _patched_sync_steps(
+            pull_side_effect=_successful_pull,
+            init_side_effect=mock_init_catalog,
+            push_side_effect=_successful_push,
+        ) as (_, mock_init, _, _, _):
             result = sync(
                 catalog_root=fresh_directory,
                 collection="test-collection",
@@ -454,21 +430,7 @@ class TestDryRunMode:
         """Sync --dry-run should pass dry_run=True to push."""
         from portolan_cli.sync.core import sync
 
-        def successful_pull(*args: Any, **kwargs: Any) -> MagicMock:
-            result = MagicMock()
-            result.success = True
-            result.up_to_date = True
-            return result
-
-        with (
-            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
-            patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.core.check_directory") as mock_check,
-            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
-        ):
-            mock_scan.return_value = MagicMock(ready=[], has_errors=False)
-            mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
+        with _patched_sync_steps(pull_side_effect=_successful_pull) as (_, _, _, _, mock_push):
             mock_push.return_value = MagicMock(success=True, files_uploaded=0, versions_pushed=0)
 
             sync(
@@ -488,16 +450,8 @@ class TestDryRunMode:
         """Sync --dry-run should pass dry_run=True to pull."""
         from portolan_cli.sync.core import sync
 
-        with (
-            patch("portolan_cli.sync.core.pull") as mock_pull,
-            patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.core.check_directory") as mock_check,
-            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
-        ):
+        with _patched_sync_steps() as (mock_pull, _, _, _, mock_push):
             mock_pull.return_value = MagicMock(success=True, up_to_date=True)
-            mock_scan.return_value = MagicMock(ready=[], has_errors=False)
-            mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
             mock_push.return_value = MagicMock(success=True, files_uploaded=0, versions_pushed=0)
 
             sync(
@@ -526,21 +480,7 @@ class TestForceMode:
         """Sync --force should pass force=True to push."""
         from portolan_cli.sync.core import sync
 
-        def successful_pull(*args: Any, **kwargs: Any) -> MagicMock:
-            result = MagicMock()
-            result.success = True
-            result.up_to_date = True
-            return result
-
-        with (
-            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
-            patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.core.check_directory") as mock_check,
-            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
-        ):
-            mock_scan.return_value = MagicMock(ready=[], has_errors=False)
-            mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
+        with _patched_sync_steps(pull_side_effect=_successful_pull) as (_, _, _, _, mock_push):
             mock_push.return_value = MagicMock(success=True, files_uploaded=0, versions_pushed=0)
 
             sync(
@@ -560,16 +500,8 @@ class TestForceMode:
         """Sync --force should pass force=True to pull."""
         from portolan_cli.sync.core import sync
 
-        with (
-            patch("portolan_cli.sync.core.pull") as mock_pull,
-            patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.core.check_directory") as mock_check,
-            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
-        ):
+        with _patched_sync_steps() as (mock_pull, _, _, _, mock_push):
             mock_pull.return_value = MagicMock(success=True, up_to_date=True)
-            mock_scan.return_value = MagicMock(ready=[], has_errors=False)
-            mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
             mock_push.return_value = MagicMock(success=True, files_uploaded=0, versions_pushed=0)
 
             sync(
@@ -598,21 +530,13 @@ class TestFixMode:
         """Sync --fix should pass fix=True to check_directory."""
         from portolan_cli.sync.core import sync
 
-        def successful_pull(*args: Any, **kwargs: Any) -> MagicMock:
-            result = MagicMock()
-            result.success = True
-            result.up_to_date = True
-            return result
-
-        with (
-            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
-            patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.core.check_directory") as mock_check,
-            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
+        with _patched_sync_steps(pull_side_effect=_successful_pull) as (
+            _,
+            _,
+            _,
+            mock_check,
+            mock_push,
         ):
-            mock_scan.return_value = MagicMock(ready=[], has_errors=False)
-            mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
             mock_push.return_value = MagicMock(success=True, files_uploaded=0, versions_pushed=0)
 
             sync(
@@ -641,16 +565,8 @@ class TestProfilePassthrough:
         """Sync --profile should pass profile to both pull and push."""
         from portolan_cli.sync.core import sync
 
-        with (
-            patch("portolan_cli.sync.core.pull") as mock_pull,
-            patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.core.check_directory") as mock_check,
-            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
-        ):
+        with _patched_sync_steps() as (mock_pull, _, _, _, mock_push):
             mock_pull.return_value = MagicMock(success=True, up_to_date=True)
-            mock_scan.return_value = MagicMock(ready=[], has_errors=False)
-            mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
             mock_push.return_value = MagicMock(success=True, files_uploaded=0, versions_pushed=0)
 
             sync(
@@ -702,21 +618,7 @@ class TestErrorHandling:
         from portolan_cli.sync.core import sync
         from portolan_cli.sync.push import PushConflictError
 
-        def successful_pull(*args: Any, **kwargs: Any) -> MagicMock:
-            result = MagicMock()
-            result.success = True
-            result.up_to_date = True
-            return result
-
-        with (
-            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
-            patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.core.check_directory") as mock_check,
-            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
-        ):
-            mock_scan.return_value = MagicMock(ready=[], has_errors=False)
-            mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
+        with _patched_sync_steps(pull_side_effect=_successful_pull) as (_, _, _, _, mock_push):
             mock_push.side_effect = PushConflictError("Remote diverged")
 
             result = sync(

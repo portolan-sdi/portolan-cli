@@ -35,6 +35,53 @@ from portolan_cli.run_state import RunState
 from tests.unit.add_stubs import add_mixed_directory_without_raising, write_point_geojson
 
 
+def _write_test_point_geojson(path: Path) -> None:
+    """Write a FeatureCollection with one Point named "Test" to PATH."""
+    path.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
+                        "properties": {"name": "Test"},
+                    }
+                ],
+            }
+        )
+    )
+
+
+def _write_test_catalog(root: Path) -> None:
+    """Write the metadata.yaml and the catalog.json of a test catalog into ROOT."""
+    portolan_dir = root / ".portolan"
+    portolan_dir.mkdir(exist_ok=True)
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
+    catalog_data = {
+        "type": "Catalog",
+        "stac_version": "1.0.0",
+        "id": "portolan-catalog",
+        "description": "Test catalog",
+        "links": [],
+    }
+    (root / "catalog.json").write_text(json.dumps(catalog_data))
+
+
+def _minimal_item(item_id: str, assets: dict[str, object]) -> dict[str, object]:
+    """Return a STAC item dict with one Point geometry and the given ASSETS."""
+    return {
+        "type": "Feature",
+        "stac_version": "1.0.0",
+        "id": item_id,
+        "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
+        "bbox": [-122.4, 37.8, -122.4, 37.8],
+        "properties": {"datetime": "2024-01-01T00:00:00Z"},
+        "links": [],
+        "assets": assets,
+    }
+
+
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
     """Create an initialized Portolan catalog structure."""
@@ -145,8 +192,10 @@ class TestNonGeospatialCsvSkip:
                 collection_id="collection",
             )
 
-            # Should have attempted to prepare the GeoJSON
-            assert mock_prepare.called, "Should have called prepare_item for GeoJSON"
+            # prepare_item decides geometry, so it sees both files once
+            prepared = sorted(c.kwargs["path"] for c in mock_prepare.call_args_list)
+            assert prepared == sorted([geojson_file, non_geo_csv])
+            assert failures == []
 
     @pytest.mark.unit
     def test_add_files_error_message_is_user_friendly(
@@ -183,6 +232,8 @@ class TestNonGeospatialCsvSkip:
             )
         except Exception as e:
             pytest.fail(f"add_files raised an exception for non-geo CSV: {e}")
+        assert added == []
+        assert [f.path for f in failures] == [non_geo_csv]
 
 
 class TestMixedDirectoryProcessing:
@@ -202,20 +253,7 @@ class TestMixedDirectoryProcessing:
 
         # Create a valid GeoJSON
         geojson = collection_dir / "data.geojson"
-        geojson.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(geojson)
 
         # Mock prepare_item and finalize_items to track calls
         # Per Issue #281: add_files now calls prepare_item + finalize_items
@@ -302,9 +340,13 @@ class TestCsvGeometryDetection:
                 collection_id="collection",
             )
 
-            # Should attempt to add the CSV (whether it succeeds depends on geoparquet-io)
-            # The key is it's not preemptively skipped
-            # mock_add.called would be True if CSV was attempted
+        mock_add.assert_called_once()
+        assert mock_add.call_args.kwargs["path"] == geo_csv
+        assert (skipped, failures) == ([], [])
+
+        # Should attempt to add the CSV (whether it succeeds depends on geoparquet-io)
+        # The key is it's not preemptively skipped
+        # mock_add.called would be True if CSV was attempted
 
     @pytest.mark.unit
     def test_empty_csv_is_skipped(
@@ -359,8 +401,12 @@ class TestCsvGeometryDetection:
                 collection_id="collection",
             )
 
-            # Should attempt to process the WKT CSV
-            # (success depends on geoparquet-io)
+        mock_add.assert_called_once()
+        assert mock_add.call_args.kwargs["path"] == wkt_csv
+        assert (skipped, failures) == ([], [])
+
+        # Should attempt to process the WKT CSV
+        # (success depends on geoparquet-io)
 
 
 class TestWarningMessages:
@@ -451,18 +497,7 @@ class TestCsvSkipHypothesis:
         tmp_dir = tempfile.mkdtemp()
         tmp_path = Path(tmp_dir)
         try:
-            # Set up catalog
-            portolan_dir = tmp_path / ".portolan"
-            portolan_dir.mkdir(exist_ok=True)
-            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
-            catalog_data = {
-                "type": "Catalog",
-                "stac_version": "1.0.0",
-                "id": "portolan-catalog",
-                "description": "Test catalog",
-                "links": [],
-            }
-            (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+            _write_test_catalog(tmp_path)
 
             # Generate non-geo CSV with random columns
             collection_dir = tmp_path / "collection"
@@ -484,10 +519,11 @@ class TestCsvSkipHypothesis:
                     catalog_root=tmp_path,
                     collection_id="collection",
                 )
-                # Should either be added (if somehow detected as geo) or skipped
-                assert len(added) == 0 or len(skipped) >= 0
             except Exception as e:
                 pytest.fail(f"add_files raised for non-geo CSV: {e}")
+            # A lone non-geo CSV is a failure that names the file, never an item
+            assert added == []
+            assert [f.path for f in failures] == [csv_file]
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -504,18 +540,7 @@ class TestCsvSkipHypothesis:
         tmp_dir = tempfile.mkdtemp()
         tmp_path = Path(tmp_dir)
         try:
-            # Set up catalog
-            portolan_dir = tmp_path / ".portolan"
-            portolan_dir.mkdir(exist_ok=True)
-            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
-            catalog_data = {
-                "type": "Catalog",
-                "stac_version": "1.0.0",
-                "id": "portolan-catalog",
-                "description": "Test catalog",
-                "links": [],
-            }
-            (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+            _write_test_catalog(tmp_path)
 
             collection_dir = tmp_path / "collection"
             collection_dir.mkdir(exist_ok=True)
@@ -532,7 +557,9 @@ class TestCsvSkipHypothesis:
                 write_point_geojson(geojson_file, i)
                 geojson_paths.append(geojson_file)
 
-            add_mixed_directory_without_raising(collection_dir, tmp_path, "test")
+            prepared = add_mixed_directory_without_raising(collection_dir, tmp_path, "test")
+            # prepare_item decides geometry, so it sees every CSV and GeoJSON once
+            assert prepared == sorted(collection_dir.iterdir())
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -555,18 +582,7 @@ class TestCsvSkipHypothesis:
         tmp_dir = tempfile.mkdtemp()
         tmp_path = Path(tmp_dir)
         try:
-            # Set up catalog
-            portolan_dir = tmp_path / ".portolan"
-            portolan_dir.mkdir(exist_ok=True)
-            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
-            catalog_data = {
-                "type": "Catalog",
-                "stac_version": "1.0.0",
-                "id": "portolan-catalog",
-                "description": "Test catalog",
-                "links": [],
-            }
-            (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+            _write_test_catalog(tmp_path)
 
             collection_dir = tmp_path / "collection"
             collection_dir.mkdir(exist_ok=True)
@@ -588,6 +604,8 @@ class TestCsvSkipHypothesis:
                 )
             except Exception as e:
                 pytest.fail(f"add_files raised for CSV content: {e}")
+            assert added == []
+            assert [f.path for f in failures] == [csv_file]
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -666,7 +684,9 @@ class TestTsvSupport:
             )
 
             # Should attempt to process
-            assert mock_add.called, "Should have called prepare_item for geo TSV"
+            mock_add.assert_called_once()
+            assert mock_add.call_args.kwargs["path"] == geo_tsv
+            assert (skipped, failures) == ([], [])
 
     @pytest.mark.unit
     def test_iter_files_with_sidecars_includes_tsv(self, tmp_path: Path) -> None:
@@ -740,20 +760,7 @@ class TestAdr0028AssetTracking:
 
         # Create valid GeoJSON
         geojson = collection_dir / "data.geojson"
-        geojson.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(geojson)
 
         # Mock prepare_item and finalize_items to simulate successful geo file processing
         # Per Issue #281: add_files now calls prepare_item + finalize_items
@@ -771,8 +778,10 @@ class TestAdr0028AssetTracking:
                     collection_id="collection",
                 )
 
-            # Should process geo file
-            assert mock_add.called, "Should have called prepare_item for geo file"
+            # Should process geo file; prepare_item decides geometry, so it sees both
+            prepared = sorted(c.kwargs["path"] for c in mock_add.call_args_list)
+            assert prepared == sorted([geojson, metadata_csv])
+            assert failures == []
 
     @pytest.mark.unit
     def test_non_geo_only_directory_logs_warning(
@@ -926,22 +935,16 @@ class TestUpdateItemWithAsset:
 
         # Create initial item.json
         item_json_path = item_dir / f"{item_id}.json"
-        initial_item = {
-            "type": "Feature",
-            "stac_version": "1.0.0",
-            "id": item_id,
-            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-            "bbox": [-122.4, 37.8, -122.4, 37.8],
-            "properties": {"datetime": "2024-01-01T00:00:00Z"},
-            "links": [],
-            "assets": {
+        initial_item = _minimal_item(
+            item_id,
+            {
                 "data": {
                     "href": "./data.parquet",
                     "type": "application/vnd.apache.parquet",
                     "roles": ["data"],
                 }
             },
-        }
+        )
         item_json_path.write_text(json.dumps(initial_item, indent=2))
 
         # Create versions.json with correct schema (dict-based assets, not list)
@@ -1026,20 +1029,7 @@ class TestUpdateItemWithAsset:
 
         # Create item.json but no data files
         item_json_path = item_dir / f"{item_id}.json"
-        item_json_path.write_text(
-            json.dumps(
-                {
-                    "type": "Feature",
-                    "stac_version": "1.0.0",
-                    "id": item_id,
-                    "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                    "bbox": [-122.4, 37.8, -122.4, 37.8],
-                    "properties": {"datetime": "2024-01-01T00:00:00Z"},
-                    "links": [],
-                    "assets": {},
-                }
-            )
-        )
+        item_json_path.write_text(json.dumps(_minimal_item(item_id, {})))
 
         with caplog.at_level(logging.WARNING):
             _update_item_with_asset(
@@ -1069,20 +1059,7 @@ class TestAddFilesCodePaths:
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir(parents=True)
         real_file = collection_dir / "data.geojson"
-        real_file.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(real_file)
 
         # Create a symlink
         link_dir = tmp_path / "links"
@@ -1105,7 +1082,8 @@ class TestAddFilesCodePaths:
             )
 
             # Should have called prepare_item with the resolved path
-            assert mock_add.called, "Should have called prepare_item for symlink"
+            mock_add.assert_called_once()
+            assert mock_add.call_args.kwargs["path"] == real_file.resolve()
 
     @pytest.mark.unit
     def test_duplicate_file_skipping(self, initialized_catalog: Path, tmp_path: Path) -> None:
@@ -1114,20 +1092,7 @@ class TestAddFilesCodePaths:
         collection_dir.mkdir(parents=True)
 
         geojson = collection_dir / "data.geojson"
-        geojson.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(geojson)
 
         # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
@@ -1183,20 +1148,7 @@ class TestAddFilesCodePaths:
         collection_dir.mkdir(parents=True)
 
         geojson = collection_dir / "data.geojson"
-        geojson.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(geojson)
 
         with (
             patch("portolan_cli.add.prepare_item") as mock_add,
@@ -1220,20 +1172,7 @@ class TestAddFilesCodePaths:
         collection_dir.mkdir(parents=True)
 
         geojson = collection_dir / "data.geojson"
-        geojson.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(geojson)
 
         # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
@@ -1256,6 +1195,7 @@ class TestAddFilesCodePaths:
 
             # Should have inferred collection_id using nested inference
             mock_infer.assert_called_once()
+            assert mock_add.call_args.kwargs["collection_id"] == "my-collection"
 
     @pytest.mark.unit
     def test_deferred_non_geo_processing_with_geo_file(
@@ -1268,20 +1208,7 @@ class TestAddFilesCodePaths:
 
         # Create both geo and non-geo files in same directory
         geojson = source_dir / "data.geojson"
-        geojson.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(geojson)
 
         csv_file = source_dir / "metadata.csv"
         csv_file.write_text("name,value\ntest,100\n")
@@ -1292,20 +1219,7 @@ class TestAddFilesCodePaths:
 
         # Create item.json
         item_json = item_dir / "data.json"
-        item_json.write_text(
-            json.dumps(
-                {
-                    "type": "Feature",
-                    "stac_version": "1.0.0",
-                    "id": "data",
-                    "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                    "bbox": [-122.4, 37.8, -122.4, 37.8],
-                    "properties": {"datetime": "2024-01-01T00:00:00Z"},
-                    "links": [],
-                    "assets": {},
-                }
-            )
-        )
+        item_json.write_text(json.dumps(_minimal_item("data", {})))
 
         # Create primary data file
         primary_file = item_dir / "data.parquet"
@@ -1481,20 +1395,7 @@ class TestMixedFormatIntegration:
 
         # Create valid GeoJSON
         geojson = collection_dir / "data.geojson"
-        geojson.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(geojson)
 
         # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
@@ -1531,18 +1432,7 @@ class TestMixedFormatIntegration:
         tmp_dir = tempfile.mkdtemp()
         tmp_path = Path(tmp_dir)
         try:
-            # Set up catalog
-            portolan_dir = tmp_path / ".portolan"
-            portolan_dir.mkdir(exist_ok=True)
-            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
-            catalog_data = {
-                "type": "Catalog",
-                "stac_version": "1.0.0",
-                "id": "portolan-catalog",
-                "description": "Test catalog",
-                "links": [],
-            }
-            (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+            _write_test_catalog(tmp_path)
 
             collection_dir = tmp_path / "collection"
             collection_dir.mkdir(exist_ok=True)
@@ -1557,24 +1447,7 @@ class TestMixedFormatIntegration:
 
             # Create GeoJSONs
             for i in range(num_geo):
-                geojson = collection_dir / f"geo_{i}.geojson"
-                geojson.write_text(
-                    json.dumps(
-                        {
-                            "type": "FeatureCollection",
-                            "features": [
-                                {
-                                    "type": "Feature",
-                                    "geometry": {
-                                        "type": "Point",
-                                        "coordinates": [-122.4 + i, 37.8],
-                                    },
-                                    "properties": {"name": f"Point {i}"},
-                                }
-                            ],
-                        }
-                    )
-                )
+                write_point_geojson(collection_dir / f"geo_{i}.geojson", i)
 
             # Per Issue #281: add_files now calls prepare_item + finalize_items
             with (
@@ -1592,5 +1465,7 @@ class TestMixedFormatIntegration:
                     )
                 except Exception as e:
                     pytest.fail(f"add_files raised for mixed formats: {e}")
+                # prepare_item decides geometry, so it sees every file once
+                assert mock_add.call_count == num_csv + num_tsv + num_geo
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)

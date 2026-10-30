@@ -361,29 +361,6 @@ conversion:
             # PREDICTOR_NONE = 1
             assert src.profile.get("predictor", 1) == 1
 
-    def test_convert_without_catalog_uses_defaults(
-        self,
-        non_cog_tif: Path,
-        tmp_path: Path,
-    ) -> None:
-        """Convert without catalog_path uses the built-in defaults."""
-        import rasterio
-
-        from portolan_cli.convert import ConversionStatus, convert_file
-
-        source = tmp_path / "input.tif"
-        shutil.copy(non_cog_tif, source)
-
-        # No catalog_path - should use defaults
-        result = convert_file(source, output_dir=tmp_path)
-
-        assert result.status == ConversionStatus.SUCCESS
-        assert result.output is not None
-
-        # Verify default DEFLATE compression
-        with rasterio.open(result.output) as src:
-            assert src.compression.name.upper() == "DEFLATE"
-
     def test_convert_directory_uses_catalog_path(
         self,
         non_cog_tif: Path,

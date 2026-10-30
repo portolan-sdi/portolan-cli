@@ -1833,7 +1833,7 @@ def _convert_files_parallel(
 
     If the pool itself cannot run (``BrokenProcessPool`` -- e.g. a restricted
     container with no ``/dev/shm``, a seccomp-filtered ``clone``, or a nested
-    multiprocessing context such as mutmut's mutation runner), the remaining
+    multiprocessing context inside another test runner), the remaining
     files are converted serially in this process instead of all being reported
     FAILED.
 
@@ -1906,7 +1906,7 @@ def _convert_files_parallel(
     except BrokenProcessPool:
         # A ProcessPoolExecutor can fail to start or keep workers in restricted
         # environments (no /dev/shm, seccomp-filtered clone, or a nested
-        # multiprocessing context such as mutmut's mutation runner). Rather than
+        # multiprocessing context inside another test runner). Rather than
         # report every file FAILED, finish the batch serially in this process.
         remaining = [file_path for file_path in files if file_path not in completed]
         logger.warning(
