@@ -185,6 +185,8 @@ _DUCKDB_EXTENSIONS: tuple[tuple[str, str | None], ...] = (
     ("spatial", None),
     ("httpfs", None),
     ("encodings", None),
+    # The Iceberg backend attaches a REST catalog through this one.
+    ("iceberg", None),
     ("h3", "community"),
     ("geography", "community"),
     ("a5", "community"),

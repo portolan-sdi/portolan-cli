@@ -151,6 +151,7 @@ def _pytest_step(job: dict[str, Any], prefix: str) -> dict[str, Any]:
     [
         ("test", "Run tests", "--cov=portolan_cli --cov-report=xml"),
         ("iceberg-test", "Run unit and integration tests", "--cov=portolan_cli/backends/iceberg"),
+        ("iceberg-e2e", "Run E2E tests", "--cov=portolan_cli --cov-report=xml"),
     ],
 )
 def test_only_the_linux_cell_measures_coverage(job: str, prefix: str, flag: str) -> None:
@@ -188,6 +189,7 @@ def test_only_the_linux_cell_measures_coverage(job: str, prefix: str, flag: str)
     [
         ("test", "coverage-ubuntu-latest-3.11"),
         ("iceberg-test", "coverage-iceberg-ubuntu-latest-3.11"),
+        ("iceberg-e2e", "coverage-e2e-ubuntu-latest-3.11"),
     ],
 )
 def test_only_the_linux_cell_uploads_its_coverage_report(job: str, name: str) -> None:
@@ -196,9 +198,13 @@ def test_only_the_linux_cell_uploads_its_coverage_report(job: str, name: str) ->
     assert coverage_artifacts(jobs[job]) == [name]
 
 
-def test_diff_cover_reads_the_two_linux_reports() -> None:
+def test_diff_cover_reads_the_three_linux_reports() -> None:
     jobs = _jobs("ci.yml")
-    names = coverage_artifacts(jobs["test"]) + coverage_artifacts(jobs["iceberg-test"])
+    names = (
+        coverage_artifacts(jobs["test"])
+        + coverage_artifacts(jobs["iceberg-test"])
+        + coverage_artifacts(jobs["iceberg-e2e"])
+    )
     downloads = [
         step
         for step in jobs["diff-cover"]["steps"]
@@ -206,7 +212,7 @@ def test_diff_cover_reads_the_two_linux_reports() -> None:
     ]
     run = _run_text(jobs["diff-cover"])
 
-    assert len(names) == 2
+    assert len(names) == 3
     assert len(set(names)) == len(names)
     assert [step["with"] for step in downloads] == [
         {"pattern": COVERAGE_PATTERN, "path": "coverage"}
@@ -238,7 +244,7 @@ def test_diff_cover_gates_the_changed_lines() -> None:
     job = jobs["diff-cover"]
     run = _run_text(job)
 
-    assert job["needs"] == ["test", "iceberg-test"]
+    assert job["needs"] == ["test", "iceberg-test", "iceberg-e2e"]
     assert job["if"] == (
         "always() && github.event_name == 'pull_request' && needs.test.result == 'success'"
     )
