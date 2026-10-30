@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,6 +24,19 @@ from tests.conftest import aws_files_environ, cleared_environ
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
+
+
+def _aws_test_env() -> Any:
+    """Return a patch that puts test AWS keys into os.environ."""
+    return patch.dict(os.environ, {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"})
+
+
+def _streaming_response(data: bytes) -> MagicMock:
+    """Return a mock obstore get response that gives DATA in one chunk and its true size."""
+    response = MagicMock()
+    response.meta = {"size": len(data)}
+    response.__iter__ = lambda self: iter([data])
+    return response
 
 
 # =============================================================================
@@ -168,15 +181,9 @@ class TestDownloadFile:
 
             # Mock get to return a response with metadata and bytes
             # Size MUST match actual data length for integrity verification
-            mock_response = MagicMock()
-            mock_response.meta = {"size": len(test_data)}
-            mock_response.__iter__ = lambda self: iter([test_data])
-            mock_obs.get.return_value = mock_response
+            mock_obs.get.return_value = _streaming_response(test_data)
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_file(
                     source="s3://mybucket/data.parquet",
                     destination=dest_file,
@@ -222,15 +229,9 @@ class TestDownloadFile:
             mock_store = MagicMock()
             mock_s3_store.return_value = mock_store
 
-            mock_response = MagicMock()
-            mock_response.meta = {"size": len(test_data)}
-            mock_response.__iter__ = lambda self: iter([test_data])
-            mock_obs.get.return_value = mock_response
+            mock_obs.get.return_value = _streaming_response(test_data)
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_file(
                     source="s3://mybucket/data.parquet",
                     destination=dest_file,
@@ -254,10 +255,7 @@ class TestDownloadFile:
             mock_s3_store.return_value = mock_store
             mock_obs.get.side_effect = OSError("Network error")
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_file(
                     source="s3://mybucket/data.parquet",
                     destination=dest_file,
@@ -280,10 +278,7 @@ class TestDownloadFile:
             patch("portolan_cli.sync.download.obs") as mock_obs,
             patch("portolan_cli.sync.upload.obs") as mock_upload_obs,
         ):
-            mock_response = MagicMock()
-            mock_response.meta = {"size": len(test_data)}
-            mock_response.__iter__ = lambda self: iter([test_data])
-            mock_obs.get.return_value = mock_response
+            mock_obs.get.return_value = _streaming_response(test_data)
             mock_upload_obs.store.from_url.return_value = MagicMock()
 
             # GCS uses ADC - mock the exists check for credentials
@@ -308,10 +303,7 @@ class TestDownloadFile:
             patch("portolan_cli.sync.download.obs") as mock_obs,
             patch("portolan_cli.sync.upload.obs") as mock_upload_obs,
         ):
-            mock_response = MagicMock()
-            mock_response.meta = {"size": len(test_data)}
-            mock_response.__iter__ = lambda self: iter([test_data])
-            mock_obs.get.return_value = mock_response
+            mock_obs.get.return_value = _streaming_response(test_data)
 
             # Mock the store creation in upload module
             mock_store = MagicMock()
@@ -360,15 +352,9 @@ class TestDownloadDirectory:
             ]
 
             # Mock get for each file - content must match size
-            mock_response = MagicMock()
-            mock_response.meta = {"size": file_size}
-            mock_response.__iter__ = lambda self: iter([test_data])
-            mock_obs.get.return_value = mock_response
+            mock_obs.get.return_value = _streaming_response(test_data)
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_directory(
                     source="s3://mybucket/data/",
                     destination=temp_download_dir,
@@ -403,15 +389,9 @@ class TestDownloadDirectory:
                 ]
             ]
 
-            mock_response = MagicMock()
-            mock_response.meta = {"size": file_size}
-            mock_response.__iter__ = lambda self: iter([test_data])
-            mock_obs.get.return_value = mock_response
+            mock_obs.get.return_value = _streaming_response(test_data)
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_directory(
                     source="s3://mybucket/data/",
                     destination=temp_download_dir,
@@ -461,10 +441,7 @@ class TestDownloadDirectory:
             # Mock list to return empty
             mock_obs.list.return_value = [[]]
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_directory(
                     source="s3://mybucket/empty/",
                     destination=temp_download_dir,
@@ -498,10 +475,7 @@ class TestDownloadDirectory:
             # Mock get to fail
             mock_obs.get.side_effect = OSError("Download failed")
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_directory(
                     source="s3://mybucket/data/",
                     destination=temp_download_dir,
@@ -536,10 +510,7 @@ class TestDownloadDirectory:
             # Mock get to always fail
             mock_obs.get.side_effect = OSError("Download failed")
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_directory(
                     source="s3://mybucket/data/",
                     destination=temp_download_dir,
@@ -561,10 +532,7 @@ class TestDownloadDirectory:
         def capture_download(store: object, key: str) -> MagicMock:
             # Track what paths would be downloaded
             _ = store  # Mark as used (vulture)
-            mock_response = MagicMock()
-            mock_response.meta = {"size": file_size}
-            mock_response.__iter__ = lambda self: iter([test_data])
-            return mock_response
+            return _streaming_response(test_data)
 
         with (
             patch("portolan_cli.sync.download.obs") as mock_obs,
@@ -583,10 +551,7 @@ class TestDownloadDirectory:
             ]
             mock_obs.get.side_effect = capture_download
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_directory(
                     source="s3://mybucket/data/",
                     destination=temp_download_dir,
@@ -621,15 +586,9 @@ class TestCustomS3Endpoint:
             mock_store = MagicMock()
             mock_s3_store.return_value = mock_store
 
-            mock_response = MagicMock()
-            mock_response.meta = {"size": len(test_data)}
-            mock_response.__iter__ = lambda self: iter([test_data])
-            mock_obs.get.return_value = mock_response
+            mock_obs.get.return_value = _streaming_response(test_data)
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_file(
                     source="s3://mybucket/data.parquet",
                     destination=dest_file,
@@ -660,10 +619,7 @@ class TestCustomS3Endpoint:
             mock_store = MagicMock()
             mock_s3_store.return_value = mock_store
 
-            mock_response = MagicMock()
-            mock_response.meta = {"size": len(test_data)}
-            mock_response.__iter__ = lambda self: iter([test_data])
-            mock_obs.get.return_value = mock_response
+            mock_obs.get.return_value = _streaming_response(test_data)
 
             with (
                 cleared_environ(),
@@ -716,10 +672,7 @@ class TestStreamingDownload:
             mock_response.__iter__ = lambda self: iter(chunks)
             mock_obs.get.return_value = mock_response
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_file(
                     source="s3://mybucket/large.parquet",
                     destination=dest_file,
@@ -755,10 +708,7 @@ class TestUploadModuleReuse:
         from portolan_cli.sync.upload import check_credentials
 
         # Test with env vars set
-        with patch.dict(
-            os.environ,
-            {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-        ):
+        with _aws_test_env():
             valid, hint = check_credentials("s3://bucket/path")
             assert valid is True
             assert hint == ""
@@ -772,10 +722,7 @@ class TestUploadModuleReuse:
             mock_store = MagicMock()
             mock_s3_store.return_value = mock_store
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 store, kwargs = _setup_store_and_kwargs("s3://bucket", None, 12)
 
             assert store is not None
@@ -805,15 +752,9 @@ class TestFileIntegrity:
             mock_store = MagicMock()
             mock_s3_store.return_value = mock_store
 
-            mock_response = MagicMock()
-            mock_response.meta = {"size": len(expected_content)}
-            mock_response.__iter__ = lambda self: iter([expected_content])
-            mock_obs.get.return_value = mock_response
+            mock_obs.get.return_value = _streaming_response(expected_content)
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_file(
                     source="s3://mybucket/data.parquet",
                     destination=dest_file,
@@ -846,10 +787,7 @@ class TestFileIntegrity:
             mock_response.__iter__ = lambda self: iter([actual_content])
             mock_obs.get.return_value = mock_response
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_file(
                     source="s3://mybucket/data.parquet",
                     destination=dest_file,
@@ -886,10 +824,7 @@ class TestFileIntegrity:
             mock_response.__iter__ = lambda self: fail_mid_stream()
             mock_obs.get.return_value = mock_response
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_file(
                     source="s3://mybucket/data.parquet",
                     destination=dest_file,
@@ -972,15 +907,9 @@ class TestOverwriteProtection:
             mock_store = MagicMock()
             mock_s3_store.return_value = mock_store
 
-            mock_response = MagicMock()
-            mock_response.meta = {"size": len(new_content)}
-            mock_response.__iter__ = lambda self: iter([new_content])
-            mock_obs.get.return_value = mock_response
+            mock_obs.get.return_value = _streaming_response(new_content)
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_file(
                     source="s3://mybucket/existing.parquet",
                     destination=dest_file,
@@ -1021,10 +950,7 @@ class TestOverwriteProtection:
             mock_response.__iter__ = lambda self: iter([new_content])
             mock_obs.get.return_value = mock_response
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_directory(
                     source="s3://mybucket/data/",
                     destination=temp_download_dir,
@@ -1114,15 +1040,9 @@ class TestPathTraversalProtection:
                 ]
             ]
 
-            mock_response = MagicMock()
-            mock_response.meta = {"size": file_size}
-            mock_response.__iter__ = lambda self: iter([test_data])
-            mock_obs.get.return_value = mock_response
+            mock_obs.get.return_value = _streaming_response(test_data)
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_directory(
                     source="s3://mybucket/data/",
                     destination=temp_download_dir,
@@ -1222,10 +1142,7 @@ class TestErrorTypeConsistency:
             mock_s3_store.return_value = mock_store
             mock_obs.get.side_effect = OSError("Network error")
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_file(
                     source="s3://mybucket/data.parquet",
                     destination=dest_file,
@@ -1260,10 +1177,7 @@ class TestDryRunCoverage:
             mock_s3_store.return_value = mock_store
             mock_obs.list.return_value = mock_files
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_directory(
                     source="s3://mybucket/data/",
                     destination=temp_download_dir,
@@ -1301,10 +1215,7 @@ class TestFailFastSubmitNextFile:
             mock_obs.list.return_value = mock_files
             mock_obs.get.side_effect = mock_get
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_directory(
                     source="s3://mybucket/data/",
                     destination=temp_download_dir,
@@ -1340,10 +1251,7 @@ class TestExceptionCleanupInDownloadFile:
             mock_s3_store.return_value = mock_store
             mock_obs.get.side_effect = mock_get
 
-            with patch.dict(
-                os.environ,
-                {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-            ):
+            with _aws_test_env():
                 result = download_file(
                     source="s3://mybucket/data.parquet",
                     destination=dest_file,
@@ -1376,10 +1284,7 @@ class TestExceptionCleanupInDownloadFile:
                 patch.object(Path, "exists", return_value=True),
                 patch.object(Path, "unlink", side_effect=OSError("Permission denied")),
             ):
-                with patch.dict(
-                    os.environ,
-                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-                ):
+                with _aws_test_env():
                     result = download_file(
                         source="s3://mybucket/data.parquet",
                         destination=dest_file,
