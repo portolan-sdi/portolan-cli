@@ -1,13 +1,23 @@
 ## v0.9.0 (2026-10-30)
 
+Some entries come from pull requests whose title type hides a user-facing
+change, such as `chore:`, `test:`, or `build:`. Others split one squash commit
+into the changes it carries.
+
 ### BREAKING CHANGE
 
 - `check --json` reports spec_version as "0.2.0" instead of
 "0.1.0", and generation stamps the 0.2.0 profile schema URI in stac_extensions.
 A consumer that matches on the 0.1.0 string or URI has to accept 0.2.0.
+- Python 3.11 is the minimum version. 0.8.0 supported Python 3.10 (#1063)
+- `add` publishes one version per collection. Companion files, thumbnails, and
+PMTiles join that version. Before, each companion file made its own version
+in versions.json (#1072)
 
 ### Feat
 
+- **thumbnails**: use Esri World Gray Canvas as the default basemap, and add `thumbnails.basemap.api_key` and `PORTOLAN_THUMBNAILS_BASEMAP_API_KEY` for a keyed provider (#1072)
+- **config**: let a collection config.yaml set `backend`, and use the backend of the collection that each command acts on (#1072)
 - **push**: add --verify to repair objects that disagree with the manifest (#967)
 - ask for a P0 to P3 priority in the docs issue form (#1029)
 - **cli**: add log flags, stage spans, and a timings meta block (#1004)
@@ -20,6 +30,20 @@ A consumer that matches on the 0.1.0 string or URI has to accept 0.2.0.
 
 ### Fix
 
+- **add**: keep a GeoParquet file when a CSV with the same stem sits beside it. `add` deleted the GeoParquet (#1072)
+- **add**: never overwrite a file that the conversion did not create, including the output of a 0.8.0 add (#1072)
+- **add**: embed band statistics in each COG that `add` writes. Each such COG failed the band-statistics check (#748, #1072)
+- **add**: commit the versions of an add when a later PMTiles, mirror, or thumbnail step fails (#1072)
+- **add**: re-add an edited companion CSV beside an unchanged GeoParquet (#1072)
+- **add**: write no empty version on a no-op `add --force` (#1072)
+- **add**: walk each real directory once during discovery. A directory symlink to the catalog root made `add` convert one GeoJSON 41 times (#970)
+- **cog**: write lossless COGs (DEFLATE, LZW, ZSTD, RAW) through the GDAL driver, accept `RAW`, keep nodata per band, and handle a band with no valid pixels (#1072)
+- **thumbnails**: honor `max_size`, keep polygon holes, draw PMTiles points upright, and draw data east of 180° or north of 85° (#1072)
+- **config**: store a negative number with `config set KEY -1`, and accept `1e-3`, `-.5`, and `+.25` (#1072)
+- **check**: apply the catalog `conversion` overrides to `check sub/` (#1072)
+- **logging**: redact credentials in URLs in log output (#1072)
+- **partitioning**: pass partition sizing to geoparquet-io 1.6, and make S2 partitioning work again (#956)
+- **imageserver**: keep the resume fallback for a start time that is not a string (#1063)
 - **ci**: preserve runtime protocols during mutation instrumentation (#1085)
 - **ci**: read mutant names from mutmut file result (#1084)
 - **ci**: isolate mutation workers from baseline async state (#1083)
@@ -53,6 +77,18 @@ A consumer that matches on the 0.1.0 string or URI has to accept 0.2.0.
 ### Perf
 
 - one RunState per command, counter scale gates, and cheaper add, check, and thumbnails (#1072)
+- **cli**: `portolan --help` takes 0.22 s and 33 MB peak RSS. It took 0.87 s and 195 MB (#1072)
+- **add**: an add of 100 collections with thumbnails takes 8.4 s. It took 42.5 s. It writes versions.json 101 times instead of 200, collection.json 100 times instead of 500, and merges config 202 times instead of 1,701 (#1072)
+- **add**: an add of 100,000 polygons takes 3.5 s and 558 MB. It took 13.0 s and 874 MB (#1072)
+- **add**: read the footer of a conformant GeoParquet once per file instead of 7 times, and stop writing a file twice to restore its schema metadata (#1072)
+- **check**: an unchanged `check --metadata` opens no data file, and `check --fix` writes the catalog index once (#1072)
+- **status**: hash no unchanged file (#1072)
+- **thumbnails**: draw each thumbnail once in EPSG:3857 at the requested size, and download basemap tiles in parallel (#1072)
+
+### Build
+
+- raise the floors to geoparquet-io 1.7.0, DuckDB 1.5.6, shapely 2.1.0, geopandas 1.0.0, and obstore 0.12.1. Allow PyArrow 26 and DuckDB 2.0 (#956, #1072, #1097)
+- adopt rashid 0.1.8 and pyiceberg 0.12.0 (#885)
 
 ## v0.8.0 (2026-08-31)
 
