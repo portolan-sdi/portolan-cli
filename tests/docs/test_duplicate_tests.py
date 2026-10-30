@@ -16,8 +16,9 @@ change what the test does.
 A body that is only ``pass`` or ``pytest.skip(...)`` is a duplicate too. Delete
 the extra copy. Do not edit the body to make it different.
 
-The module lives in ``tests/docs/`` because it reads repository files that the
-mutmut sandbox does not copy (#997).
+The module reads the files under ``tests/`` and runs no product code. It lives
+in ``tests/docs/`` next to ``test_ci_wiring.py``, ``test_quality_config.py``, and
+``test_guardrail_exemptions.py``, which also read repository files and pin a gate.
 """
 
 from __future__ import annotations

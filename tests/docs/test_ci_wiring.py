@@ -154,23 +154,31 @@ def _pytest_step(job: dict[str, Any], prefix: str) -> dict[str, Any]:
     ],
 )
 def test_only_the_linux_cell_measures_coverage(job: str, prefix: str, flag: str) -> None:
-    """Coverage flags sit under the ubuntu 3.11 condition and not in the plain command.
+    """The ``coverage`` array is empty except on the ubuntu 3.11 cell, and pytest reads it.
 
-    The condition names the OS and the Python version exactly. An earlier
-    design used a ``cov_args`` variable and lost coverage on some cells, so
-    the pin checks the condition and not a variable name.
+    The step opens with an empty array. Only the block under the ubuntu 3.11
+    condition fills it. The pytest call ends with the array and holds no
+    ``--cov`` flag of its own. A filled first line puts coverage on every
+    cell. A pytest call without the array puts coverage on no cell. An
+    earlier design used a ``cov_args`` variable and lost coverage on some
+    cells, so the pin checks the condition and not a variable name.
     """
     step = _pytest_step(_jobs("ci.yml")[job], prefix)
     run = str(step["run"])
-    guard = re.search(r"if (\[ \"\$MATRIX_OS\".*?); then\n(.*?)\n\s*fi\n", run, re.DOTALL)
-    command = re.search(r"uv run pytest .*", run[guard.end() :] if guard else "", re.DOTALL)
+    lines = [line.strip() for line in run.splitlines() if line.strip()]
+    command = " ".join(run[run.index("uv run pytest ") :].replace("\\\n", " ").split())
 
-    assert guard is not None
-    assert command is not None
-    assert f'"$MATRIX_OS" = "{COVERAGE_OS}"' in guard.group(1)
-    assert f'"$MATRIX_PYTHON" = "{COVERAGE_PYTHON}"' in guard.group(1)
-    assert flag in guard.group(2)
-    assert "--cov" not in command.group(0)
+    assert lines[:2] == [
+        "coverage=()",
+        f'if [ "$MATRIX_OS" = "{COVERAGE_OS}" ] && [ "$MATRIX_PYTHON" = "{COVERAGE_PYTHON}" ]; then',
+    ]
+    assert lines[2].startswith("coverage=(") and lines[2].endswith(")")
+    assert flag in lines[2]
+    assert lines[3] == "fi"
+    assert [line for line in lines if "coverage=" in line] == lines[0:1] + lines[2:3]
+    assert command.endswith(' "${coverage[@]}"')
+    assert run.count("${coverage[@]}") == 1
+    assert "--cov" not in command
     assert step["env"]["MATRIX_OS"] == "${{ matrix.os }}"
     assert step["env"]["MATRIX_PYTHON"] == "${{ matrix.python-version }}"
 
