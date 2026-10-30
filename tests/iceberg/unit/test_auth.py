@@ -1,7 +1,7 @@
 """Token providers for the Iceberg REST catalog.
 
-Three modes: none (the Apache fixture), a static bearer (Google's access
-token), and OAuth2 client credentials (LakehouseBox). Each one also tells the
+Three modes: none (the e2e stack), a static bearer (a token an identity
+provider minted), and OAuth2 client credentials. Each one also tells the
 DuckDB session which ``CREATE SECRET (TYPE iceberg)`` options to write.
 """
 

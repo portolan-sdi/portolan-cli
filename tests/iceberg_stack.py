@@ -3,8 +3,8 @@
 Lane A is the docker-compose stack in ``tests/iceberg/e2e/docker-compose.yml``:
 the Apache REST fixture on port 8181 and RustFS on port 9000. It is
 deterministic and needs no secret, so it is the catalog of PR CI. A second
-lane, LakehouseBox, reuses the same helpers with its own endpoint and
-credential; it arrives with the backend rewrite.
+lane, a hosted REST catalog service, reuses the same helpers with its own
+endpoint and credential; it arrives with the backend rewrite.
 
 This module holds no fixture. ``tests/iceberg/e2e/conftest.py`` declares the
 fixtures and calls these functions, so a test in another directory can do

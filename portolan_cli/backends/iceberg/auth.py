@@ -5,11 +5,11 @@ session asks the same provider for the options of its
 ``CREATE SECRET (TYPE iceberg, ...)``, so both speak to the catalog with one
 credential. Three providers cover the catalogs the backend targets:
 
-- ``NoAuth`` for the Apache REST fixture of the e2e stack.
-- ``StaticBearer`` for a token minted elsewhere, such as Google's
-  ``gcloud auth application-default print-access-token``.
-- ``OAuth2ClientCredentials`` for LakehouseBox, which issues a client id and
-  secret and exchanges them at ``/v1/oauth/tokens``.
+- ``NoAuth`` for a catalog with no authentication, such as the e2e stack.
+- ``StaticBearer`` for an access token an identity provider minted, which
+  the caller passes in whole.
+- ``OAuth2ClientCredentials`` for the client credentials grant the Iceberg
+  REST specification defines, at ``/v1/oauth/tokens`` by default.
 
 The OAuth2 provider caches its token and fetches a new one a minute before
 it expires, or at once after ``invalidate()``, which the REST client calls
